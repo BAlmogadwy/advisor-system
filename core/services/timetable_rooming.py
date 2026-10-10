@@ -18,6 +18,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from core.models import DeliveryBoard, Room, SectionPlacement
+from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
@@ -170,6 +171,9 @@ def room_type_for_placement(
     budget_maps: dict[str, dict] | None = None,
 ) -> str:
     """Classify a placement's required room type using rooming's budget rules."""
+    section = placement.term_section
+    if get_course_meeting_policy(section.course_code, section.course_key, section.course_number):
+        return "lecture"
     if budget_maps is None:
         from core.models import ScenarioSectionBudget
 
@@ -640,6 +644,16 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
     def is_online_placement(p: SectionPlacement) -> bool:
         return normalise_course_code(p.term_section.course_code) in online_codes
 
+    def is_room_exempt_placement(p: SectionPlacement) -> bool:
+        section = p.term_section
+        return is_online_placement(p) or bool(
+            get_course_meeting_policy(
+                section.course_code,
+                section.course_key,
+                section.course_number,
+            )
+        )
+
     # Load all placements for THIS board
     placements = list(
         SectionPlacement.objects.filter(board=board)
@@ -683,7 +697,11 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         .select_related("board", "term_section")
     )
     for other in other_placements:
-        if online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
+        if get_course_meeting_policy(
+            other.term_section.course_code,
+            other.term_section.course_key,
+            other.term_section.course_number,
+        ) or online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
             continue
         # Overlap-aware seeding so e.g. a 10:30-11:45 booking blocks a
         # 10:50-12:05 booking in the same room on the same day; the old
@@ -706,7 +724,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
     # prior pass become repair candidates below rather than being treated
     # as if the sentinel occupied a slot.
     for p in placements:
-        if is_online_placement(p):
+        if is_room_exempt_placement(p):
             continue
         if p.room and p.room != "UNASSIGNED":
             _s = (
@@ -741,7 +759,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         1
         for p in placements
         if (
-            not is_online_placement(p)
+            not is_room_exempt_placement(p)
             and respect_locked
             and p.is_locked
             and (not p.room or p.room == "UNASSIGNED")
@@ -751,7 +769,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         p
         for p in placements
         if (
-            not is_online_placement(p)
+            not is_room_exempt_placement(p)
             and (not p.room or p.room == "UNASSIGNED")
             and not (respect_locked and p.is_locked)
         )
@@ -978,8 +996,15 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
 
     board_gender = get_board_gender(board_id)
 
-    def is_online_placement(p: SectionPlacement) -> bool:
-        return normalise_course_code(p.term_section.course_code) in online_codes
+    def is_room_exempt_placement(p: SectionPlacement) -> bool:
+        section = p.term_section
+        return normalise_course_code(section.course_code) in online_codes or bool(
+            get_course_meeting_policy(
+                section.course_code,
+                section.course_key,
+                section.course_number,
+            )
+        )
 
     # Stable pre-population: rooms consumed by OTHER boards in this scenario.
     other_usage = list(
@@ -1005,7 +1030,11 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
     for buf in buffers:
         tracker = RoomTracker(rooms)
         for other in other_usage:
-            if online_lookup.is_online_course_for_board(
+            if get_course_meeting_policy(
+                other.term_section.course_code,
+                other.term_section.course_key,
+                other.term_section.course_number,
+            ) or online_lookup.is_online_course_for_board(
                 other.board, other.term_section.course_code
             ):
                 continue
@@ -1022,7 +1051,7 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
             tracker.mark_used(other.day, _s, _e, other.room)
         # Seed with rooms already permanently assigned on THIS board.
         for p in placements:
-            if is_online_placement(p):
+            if is_room_exempt_placement(p):
                 continue
             if p.room and p.room != "UNASSIGNED":
                 _s = (
@@ -1044,7 +1073,7 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
         targets = [
             p
             for p in placements
-            if not is_online_placement(p) and (not p.room or p.room == "UNASSIGNED")
+            if not is_room_exempt_placement(p) and (not p.room or p.room == "UNASSIGNED")
         ]
         targets.sort(key=lambda p: -_budget_value_for_placement(p, budget_maps, "raw", 40))
 

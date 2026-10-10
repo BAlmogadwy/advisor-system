@@ -35,8 +35,13 @@ from core.services.timetable_autoplace import (
     placeable_slots,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_course_policy import (
+    get_course_meeting_policy,
+    meeting_options_for_policy,
+)
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_optimisation_policy import evaluation_is_better
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
@@ -132,8 +137,8 @@ def polish_scenario_with_cpsat(
         return None
     scenario_obj = scenario.scenario
 
-    slot_config = scenario_obj.slot_config or DEFAULT_SLOTS
     # Placement path: online-only windows are columns, not options.
+    slot_config = placeable_slots(scenario_obj.slot_config or DEFAULT_SLOTS)
     lab_slot_config = placeable_slots(scenario_obj.lab_slot_config or DEFAULT_LAB_SLOTS)
 
     # Build cross-board overlap matrix
@@ -142,7 +147,14 @@ def polish_scenario_with_cpsat(
     # Determine which sections to include in the model. Locked sections
     # remain fixed; otherwise the verified score could assume a move that
     # persistence later refuses to write.
-    locked = locked_section_ids or set()
+    # This stage has campus slot domains. Keep remote sessions at their given
+    # times until a modality-aware domain is supplied; never reclassify a remote
+    # session simply to reduce the overlap proxy.
+    locked = (locked_section_ids or set()) | {
+        section.section_id
+        for section in current_sections
+        if section.is_online or getattr(section, "delivery_is_online", False)
+    }
     if hotspot_only:
         hotspot_set = set(current_eval.hotspot_courses[:10])
         # Add overlap partners
@@ -204,7 +216,10 @@ def polish_scenario_with_cpsat(
             slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min, end_min))
 
     def get_options(duration: int):
-        return slots_75 if duration <= 75 else slots_lab
+        # A custom grid can contain several durations. Polishing must preserve
+        # contact time rather than substitute a longer or shorter session.
+        slots = slots_75 if duration <= 75 else slots_lab
+        return [opt for opt in slots if opt[7] - opt[6] == duration]
 
     # ── Build CP-SAT model ───────────────────────────────────────
     model = cp_model.CpModel()
@@ -222,8 +237,38 @@ def polish_scenario_with_cpsat(
     for i, _sec in enumerate(sections_to_polish):
         sec_assign = []
         sec_opts = []
+        policy = get_course_meeting_policy(_sec.course_code)
+        bundles = (
+            meeting_options_for_policy(
+                policy,
+                blocked_slots=scenario_obj.blocked_slots or [],
+                slots=slot_config + lab_slot_config,
+            )
+            if policy
+            else []
+        )
+        if policy and not policy.accepts(_sec.meetings):
+            raise ValueError("English polish requires a valid complete section pattern")
         for m_idx, duration in enumerate(sec_durations[i]):
-            options = get_options(duration)
+            if policy:
+                day = WEEKDAYS[_sec.meetings[m_idx].day]
+                options = []
+                for b_idx, bundle in enumerate(bundles):
+                    meeting = next(m for m in bundle if m["day"] == day)
+                    options.append(
+                        (
+                            _sec.meetings[m_idx].day,
+                            b_idx,
+                            day,
+                            meeting["start"],
+                            meeting["end"],
+                            _time_mask(day, meeting["start"], meeting["end"]),
+                            _to_minutes(meeting["start"]),
+                            _to_minutes(meeting["end"]),
+                        )
+                    )
+            else:
+                options = get_options(duration)
             if not options:
                 # A fully-blocked grid for this duration leaves no feasible
                 # slot — abort the polish (keep the current timetable) rather
@@ -239,6 +284,12 @@ def polish_scenario_with_cpsat(
 
             # Exactly one option per meeting
             model.add_exactly_one(m_assign)
+
+        if policy:
+            # One bundle decision controls all four days; mixed AM/PM is illegal.
+            for m_idx in range(1, len(sec_assign)):
+                for o_idx in range(len(bundles)):
+                    model.add(sec_assign[m_idx][o_idx] == sec_assign[0][o_idx])
 
         assign.append(sec_assign)
         sec_options.append(sec_opts)
@@ -262,6 +313,8 @@ def polish_scenario_with_cpsat(
         course_groups[sec.course_code].append(i)
 
     for _code, indices in course_groups.items():
+        if get_course_meeting_policy(_code):
+            continue
         if len(indices) < 2:
             continue
         for ia in range(len(indices)):
@@ -284,6 +337,8 @@ def polish_scenario_with_cpsat(
     # could legally land on a locked section's exact slot when their recorded
     # student overlap is zero. Hard-separate them, matching greedy + the solver.
     for fixed_sec in fixed_sections:
+        if get_course_meeting_policy(fixed_sec.course_code):
+            continue
         for i_a, sec_a in enumerate(sections_to_polish):
             if sec_a.course_code != fixed_sec.course_code:
                 continue
@@ -420,7 +475,11 @@ def polish_scenario_with_cpsat(
                 opts_a = sec_options[i_a][m_a]
                 for fixed_meeting in fixed_sec.meetings:
                     for oa, opt_a in enumerate(opts_a):
-                        if opt_a[0] == fixed_meeting.day and opt_a[5] & fixed_meeting.mask:
+                        if (
+                            opt_a[0] == fixed_meeting.day
+                            and opt_a[6] < fixed_meeting.end_min
+                            and fixed_meeting.start_min < opt_a[7]
+                        ):
                             penalties.append((assign[i_a][m_a][oa], None, weight))
 
     # Build penalty objective
@@ -505,6 +564,10 @@ def polish_scenario_with_cpsat(
                     )
                     break
 
+        policy = get_course_meeting_policy(sec.course_code)
+        permitted = policy.pattern_for(new_meetings) if policy else None
+        if policy and permitted is None:
+            raise ValueError("CP-SAT returned an invalid English weekly pattern")
         improved_sections.append(
             SectionState(
                 section_id=sec.section_id,
@@ -516,10 +579,12 @@ def polish_scenario_with_cpsat(
                 demand_capacity=sec.demand_capacity,
                 assigned_room_id=sec.assigned_room_id,
                 pattern_family=sec.pattern_family,
-                pattern_id=sec.pattern_id,
+                pattern_id=permitted.pattern_id if permitted else sec.pattern_id,
                 # Carry the online marker through, or the polished board would be
                 # rescored as if every online session were on campus.
                 is_online=sec.is_online,
+                delivery_is_online=sec.delivery_is_online,
+                uses_shared_room=sec.uses_shared_room,
             )
         )
 
@@ -617,7 +682,7 @@ def polish_scenario_with_cpsat(
         logger.info("CP-SAT polisher rejected: same-course instructor clash in polished result")
         return None
 
-    if polished_eval.lexicographic_score < current_eval.lexicographic_score:
+    if evaluation_is_better(polished_eval, current_eval):
         logger.info(
             "CP-SAT polisher IMPROVED: %s -> %s",
             current_eval.lexicographic_score,

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
+
 from core.services.timetable_assignment_models import (
     CanonicalPattern,
     RoomOccupancy,
@@ -24,6 +26,12 @@ from core.services.timetable_constraints import (
     move_exceeds_instructor_daily_cap,
     move_introduces_instructor_clash,
     move_introduces_same_course_overlap,
+)
+from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_optimisation_policy import (
+    evaluation_is_better,
+    instructor_focus_courses,
+    schedule_metrics_of,
 )
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
@@ -40,6 +48,22 @@ from core.services.timetable_room_repair import (
 logger = logging.getLogger(__name__)
 
 
+def _pattern_preserves_contact_time(
+    section: SectionState, pattern: CanonicalPattern | None
+) -> bool:
+    """A move changes the slot, while retaining family and each meeting duration."""
+    return (
+        pattern is not None
+        and (
+            not (policy := get_course_meeting_policy(section.course_code))
+            or policy.accepts(pattern.meetings)
+        )
+        and pattern.pattern_family == section.pattern_family
+        and sorted(meeting.end_min - meeting.start_min for meeting in pattern.meetings)
+        == sorted(meeting.end_min - meeting.start_min for meeting in section.meetings)
+    )
+
+
 def generate_all_repattern_moves(
     sections_by_id: dict[str, SectionState],
     pattern_catalog: dict[str, list[CanonicalPattern]],
@@ -52,7 +76,11 @@ def generate_all_repattern_moves(
     """
     moves: list[TimetableMove] = []
     targets = priority_sections if priority_sections else set(sections_by_id.keys())
-    locked = locked_section_ids or set()
+    locked = (locked_section_ids or set()) | {
+        sid
+        for sid, section in sections_by_id.items()
+        if section.is_online or getattr(section, "delivery_is_online", False)
+    }
 
     for sec_id in sorted(targets):
         if sec_id in locked:
@@ -62,7 +90,7 @@ def generate_all_repattern_moves(
             continue
         family_patterns = pattern_catalog.get(sec.pattern_family, [])
         for alt in family_patterns:
-            if alt.pattern_id != sec.pattern_id:
+            if alt.pattern_id != sec.pattern_id and _pattern_preserves_contact_time(sec, alt):
                 moves.append(
                     TimetableMove(
                         move_type="repattern",
@@ -87,7 +115,11 @@ def generate_swap_moves(
     """
     moves: list[TimetableMove] = []
     hotspot_set = set(hotspot_courses[:10])
-    locked = locked_section_ids or set()
+    locked = (locked_section_ids or set()) | {
+        sid
+        for sid, section in sections_by_id.items()
+        if section.is_online or getattr(section, "delivery_is_online", False)
+    }
 
     # Group sections by pattern_family
     family_sections: dict[str, list[str]] = {}
@@ -101,20 +133,30 @@ def generate_swap_moves(
         family_pats = pattern_catalog.get(family, [])
         if len(family_pats) < 2:
             continue
+        # Match apply_move_to_grid's first matching catalog entry. Imported
+        # placements can carry a known family with noncanonical contact times.
+        patterns_by_id: dict[str, CanonicalPattern] = {}
+        for pattern in family_pats:
+            patterns_by_id.setdefault(pattern.pattern_id, pattern)
 
         for i, sid_a in enumerate(sec_ids):
             if sid_a in locked:
                 continue
             sec_a = sections_by_id[sid_a]
-            if sec_a.course_code not in hotspot_set:
-                continue
             for sid_b in sec_ids[i + 1 :]:
                 if sid_b in locked:
                     continue
                 sec_b = sections_by_id[sid_b]
+                if sec_a.course_code not in hotspot_set and sec_b.course_code not in hotspot_set:
+                    continue
                 if sec_a.course_code == sec_b.course_code:
                     continue
                 if sec_a.pattern_id == sec_b.pattern_id:
+                    continue
+                if not (
+                    _pattern_preserves_contact_time(sec_a, patterns_by_id.get(sec_b.pattern_id))
+                    and _pattern_preserves_contact_time(sec_b, patterns_by_id.get(sec_a.pattern_id))
+                ):
                     continue
                 # Swap: A gets B's pattern, B gets A's pattern
                 moves.append(
@@ -181,12 +223,18 @@ def diagnostic_driven_local_search(
     # Large scenarios: switch to first-improvement to avoid multi-minute
     # iterations. 80 sections is the threshold (~45 courses × 2 sections).
     use_first_improvement = len(sections_by_id) > 80
-    locked = locked_section_ids or set()
+    locked = (locked_section_ids or set()) | {
+        sid
+        for sid, section in sections_by_id.items()
+        if section.is_online or getattr(section, "delivery_is_online", False)
+    }
 
     # Time budget: stop after 3 minutes regardless of iteration count.
     # Prevents the server from freezing on large scenarios.
-    time_budget_seconds = 180.0
-    t_start = _time.time()
+    time_budget_seconds = max(
+        0.0, float(getattr(settings, "TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS", 180.0))
+    )
+    deadline = _time.monotonic() + time_budget_seconds
 
     if use_first_improvement:
         logger.info(
@@ -197,21 +245,22 @@ def diagnostic_driven_local_search(
 
     for iteration in range(max_iterations):
         # Time budget check
-        elapsed = _time.time() - t_start
-        if elapsed > time_budget_seconds:
+        if _time.monotonic() >= deadline:
             logger.info(
-                "Time budget exhausted (%.0fs) at iteration %d, stopping",
-                elapsed,
+                "Time budget exhausted at iteration %d, stopping",
                 iteration,
             )
             break
 
         # Build priority set from current diagnostics
         hotspot_courses = current_best.hotspot_courses
+        instructor_courses = instructor_focus_courses(
+            sections_by_id.values(), section_instructor_ids
+        )
         reserve_heavy = [sid for sid, _ratio in current_best.reserve_heavy_sections]
 
         priority_sections = set(reserve_heavy)
-        for course_code in hotspot_courses[:10]:
+        for course_code in set(hotspot_courses[:10]) | set(instructor_courses):
             for sec in sections_by_id.values():
                 if sec.course_code == course_code:
                     priority_sections.add(sec.section_id)
@@ -238,22 +287,15 @@ def diagnostic_driven_local_search(
                 locked_section_ids=locked,
             )
         )
-        # Phase 3 (after iteration 5): Exhaustive — try ALL sections.
-        # Expensive but catches improvements the focused phases miss.
-        if iteration >= 5:
+        if instructor_courses:
             all_moves.extend(
-                generate_all_repattern_moves(
+                generate_swap_moves(
                     sections_by_id,
                     pattern_catalog,
-                    None,
+                    instructor_courses,
                     locked_section_ids=locked,
                 )
             )
-
-        if not all_moves:
-            logger.info("No moves available at iteration %d, stopping", iteration)
-            break
-
         # Best-improvement strategy: try ALL moves before committing.
         # This avoids greedy traps where the first improving move leads
         # to a worse neighbourhood than a different improving move.
@@ -261,8 +303,43 @@ def diagnostic_driven_local_search(
         best_move_score = current_score
         best_move_snapshot = None
         moves_tried = 0
+        # Pin ceilings to the board at the start of this iteration, so trial
+        # alternatives do not accidentally use one another's day distribution.
+        day_ceilings = schedule_metrics_of(current_best)
 
-        for move in all_moves:
+        broad_moves_added = iteration >= 5
+        if broad_moves_added:
+            all_moves.extend(
+                generate_all_repattern_moves(
+                    sections_by_id, pattern_catalog, None, locked_section_ids=locked
+                )
+            )
+        seen: set[TimetableMove] = set()
+        move_index = 0
+        while move_index < len(all_moves) or not broad_moves_added:
+            # Check inside the neighbourhood as a single scan can contain
+            # thousands of evaluations. Each completed trial has been rolled
+            # back; an already discovered winner is still committed below.
+            if _time.monotonic() >= deadline:
+                logger.info("Time budget exhausted during move scan at iteration %d", iteration)
+                break
+            if move_index >= len(all_moves):
+                if best_move_result is not None:
+                    break
+                # A stalled focused neighbourhood is not a local optimum.
+                # Expand now, including when the focused set supplied no moves.
+                all_moves.extend(
+                    generate_all_repattern_moves(
+                        sections_by_id, pattern_catalog, None, locked_section_ids=locked
+                    )
+                )
+                broad_moves_added = True
+                continue
+            move = all_moves[move_index]
+            move_index += 1
+            if move in seen:
+                continue
+            seen.add(move)
             try:
                 snapshot = apply_move_to_grid(move, sections_by_id, pattern_catalog)
             except PatternNotInCatalog:
@@ -333,7 +410,12 @@ def diagnostic_driven_local_search(
             )
             moves_tried += 1
 
-            if test_result.lexicographic_score < best_move_score:
+            if evaluation_is_better(
+                test_result,
+                best_move_result or current_best,
+                day_ceilings=day_ceilings,
+                feasibility_ceilings=current_best,
+            ):
                 best_move_result = test_result
                 best_move_score = test_result.lexicographic_score
                 best_move_snapshot = (move, snapshot)
@@ -349,15 +431,18 @@ def diagnostic_driven_local_search(
         if best_move_result is not None and best_move_snapshot is not None:
             # Re-apply the winning move
             winning_move, _ = best_move_snapshot
-            apply_move_to_grid(winning_move, sections_by_id, pattern_catalog)
+            winning_snapshot = apply_move_to_grid(winning_move, sections_by_id, pattern_catalog)
             if rooms_by_id is not None and room_occupancies is not None:
-                try_repair_rooms_locally(
-                    _,
+                room_ok = try_repair_rooms_locally(
+                    winning_snapshot,
                     sections_by_id,
                     rooms_by_id,
                     room_occupancies,
                     course_room_requirements or {},
                 )
+                if not room_ok:
+                    _rollback(winning_snapshot, sections_by_id, room_occupancies)
+                    break
 
             current_best = best_move_result
             current_score = best_move_score

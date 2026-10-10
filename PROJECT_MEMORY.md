@@ -5,6 +5,67 @@ as the first local reference when continuing timetable optimisation work.
 
 ## Current Product North Star
 
+Generate and Optimise now put **instructor campus working days, then instructor
+idle minutes** ahead of student schedule-quality tie-breaks. This is the user's
+2026-10-10 direction. Hard student coverage, instructor constraints, locked
+placements, contact minutes and delivery mode remain safeguards. Optional
+improvements must not add a campus day or idle minutes for any individual
+instructor. Optimise Current protects the saved week even through mandatory
+cap/clash repairs: an incompatible repair rolls back and reports the remaining
+constraint instead of silently granting a teacher exception. Full Generate
+still prioritises repairing hard constraints while constructing its new board.
+
+The classic selection policy lives in
+`core/services/timetable_optimisation_policy.py`, controlled by
+`TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED` (default on). The serialized 6/7/9-element
+student score is unchanged; instructor days/idle are separate metrics. Setting
+the flag off restores the previous classic candidate-comparison policy. The
+scheduler uses strict instructor days then gaps by default and confirms actual
+student seating among finalists after room assignment.
+See [real-data validation](docs/TIMETABLE-INSTRUCTOR-PRIORITY-VALIDATION.md)
+for replay budgets, safeguards, results and remaining trade-offs.
+
+The follow-up adds `timetable_secondary_recovery.py` and its atomic runner after
+the teacher passes. It recovers soft-course seats and physical room coverage
+inside per-teacher day/idle ceilings, protects both secondary counts, then
+polishes student gaps without losing recovered seats. Room evaluation uses strict
+per-meeting exact assignment, including capacity buffer, locks, gender and
+department eligibility. Count-only solves share the exact model and distinguish
+count proofs from full lexicographic proofs. Actual shortages include assigned
+rooms that are undersized; the old blank-room count understated shortages.
+Targeting follows congested room components and their blockers, including
+unlinked teachers' sections, rather than wasting searches on capacity-impossible
+meetings. Persistence preserves placement/meeting identities, locked metadata
+and unchanged meetings; local rollback retains preceding mandatory repairs.
+`TIMETABLE_SECONDARY_RECOVERY_ENABLED` defaults on with 45 seconds/12 recovery
+iterations and bounded polishing in the same remaining budget. Turning off
+instructor priority also skips this pass for legacy compatibility.
+See [secondary validation](docs/TIMETABLE-SECONDARY-RECOVERY-VALIDATION.md).
+
+The follow-up UI fixes add canonical read-only scenario quality, coordinated
+toolbar/background-card job ownership, server-side write guards, safe running
+cancellation with complete snapshot restoration, repeated Undo/Redo support,
+saved-board manual section search, accessible responsive menus/tabs, and scoped
+MRI/Graph/Split navigation. Cancellation is cooperative at V2 phase/scheduler
+progress boundaries; Classic checks at call completion. A live worker cannot
+be stale-swept locally, and lost ownership prevents later restoration over
+manual edits. Browser tests used a copy of real scenario 663; cancellation
+restored all snapshot fields and retained 18 instructor days/780 idle minutes.
+The final broad regression run passed 1,120 tests (3 existing skips). See
+[UI validation](docs/TIMETABLE-UI-VALIDATION.md). The local main server uses
+port 8001; the temporary browser test server on 8002 was stopped.
+
+Final replay of the user's latest saved AI/DS board recovers soft unresolved
+18 -> 2 and true room shortages 3 -> 2 while retaining 18 instructor days and
+reducing idle 780 -> 755 minutes. A three-meeting Sunday repair removes the
+existing instructor clash without losing hard student coverage. It preserves
+shared physical groups and locks; failed Current-mode attempts restore the
+original board and report remaining violations accurately. The earlier compact
+AI board improves soft 17 -> 4 and idle 380 -> 370 with 20 days unchanged;
+IS/IS2 improves soft 28 -> 1 and rooms 16 -> 2 (no instructor links). Student
+gaps can increase as additional enrolments are seated. The remaining two classic
+room deficits per cohort are capacity-impossible under the existing inventory.
+
 The timetable builder is optimised for actual student outcomes, but **not all
 enrolments are worth the same**. The flat "register every student where
 feasible" goal was replaced by a **course-tier-aware** policy (merged PR #40 /
@@ -204,6 +265,15 @@ Important implementation detail:
   section occupies the same visual pane slot.
 
 ## Data/Domain Notes
+
+- ENG101 and ENG102 alone use the shared `ENG_INTENSIVE_V1` weekly policy:
+  SUN/MON/WED/THU, all 09:00–12:00 or all 13:00–16:00. Each section selects one
+  whole pattern. They require no room assignment (owner clarification,
+  2026-10-10), while actual times and instructor/student constraints remain
+  active. Keep ordinary courses unchanged; do not infer English labs from
+  180-minute durations. One locked meeting protects all companions and board
+  copies. Saved timetables are not migrated; generate new ones to use this rule.
+  See `docs/TIMETABLE-ENGLISH-PATTERNS-VALIDATION.md` for checks and limitations.
 
 - `StudentTermSection` is the persistent student-section assignment table.
 - Generated scenarios may initially have no `StudentTermSection` rows; the

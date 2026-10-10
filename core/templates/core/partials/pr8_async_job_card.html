@@ -18,39 +18,41 @@ to pre-PR8. Hidden controls are toggled client-side by the adapter based on stat
       class="pr8-status-pill status-{{ pr8_job.status|default:'idle' }}"
       data-pr8-status
     >{{ pr8_job.status|default:'idle' }}</span>
-    <span class="pr8-async-job-card__title">Planner run</span>
+    <span class="pr8-async-job-card__title">{% if LANGUAGE_CODE == 'ar' %}تشغيل المخطط{% else %}Planner run{% endif %}</span>
   </header>
 
   <dl class="pr8-async-job-card__fields">
-    <dt>Scenario</dt><dd data-pr8-field="scenario">-</dd>
-    <dt>Output</dt><dd data-pr8-field="output_scenario">-</dd>
-    <dt>Submitted</dt><dd data-pr8-field="submitted_at">{{ pr8_job.submitted_at|default:'-' }}</dd>
-    <dt>Started</dt><dd data-pr8-field="started_at">{{ pr8_job.started_at|default:'-' }}</dd>
-    <dt>Finished</dt><dd data-pr8-field="finished_at">{{ pr8_job.finished_at|default:'-' }}</dd>
-    <dt>Last stage</dt><dd data-pr8-field="last_stage_seen">{{ pr8_job.last_stage_seen|default:'-' }}</dd>
-    {% if pr8_job.status == 'failed' %}
-      <dt>Error</dt><dd data-pr8-field="error_message">{{ pr8_job.error_message|default:'-' }}</dd>
-    {% endif %}
+    <dt>{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}</dt><dd data-pr8-field="scenario">-</dd>
+    <dt>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</dt><dd data-pr8-field="output_scenario">-</dd>
+    <dt>{% if LANGUAGE_CODE == 'ar' %}وقت الإرسال{% else %}Submitted{% endif %}</dt><dd data-pr8-field="submitted_at">{{ pr8_job.submitted_at|default:'-' }}</dd>
+    <dt>{% if LANGUAGE_CODE == 'ar' %}وقت البدء{% else %}Started{% endif %}</dt><dd data-pr8-field="started_at">{{ pr8_job.started_at|default:'-' }}</dd>
+    <dt>{% if LANGUAGE_CODE == 'ar' %}وقت الانتهاء{% else %}Finished{% endif %}</dt><dd data-pr8-field="finished_at">{{ pr8_job.finished_at|default:'-' }}</dd>
+    <dt>{% if LANGUAGE_CODE == 'ar' %}آخر مرحلة{% else %}Last stage{% endif %}</dt><dd data-pr8-field="last_stage_seen">{{ pr8_job.last_stage_seen|default:'-' }}</dd>
+    <dt data-pr8-error-row{% if not pr8_job.error_message %} hidden{% endif %}>{% if LANGUAGE_CODE == 'ar' %}الخطأ{% else %}Error{% endif %}</dt>
+    <dd data-pr8-error-row data-pr8-field="error_message"{% if not pr8_job.error_message %} hidden{% endif %}>{{ pr8_job.error_message|default:'-' }}</dd>
   </dl>
+
+  <p data-pr8-message role="status" hidden></p>
 
   <div class="pr8-async-job-card__controls">
     <button type="button" data-pr8-action="submit"{% if pr8_job.status == 'queued' or pr8_job.status == 'running' %} disabled{% endif %}>
-      Run in background
+      {% if LANGUAGE_CODE == 'ar' %}تشغيل في الخلفية{% else %}Run in background{% endif %}
     </button>
     <button type="button" data-pr8-action="cancel"{% if pr8_job.status != 'queued' and pr8_job.status != 'running' %} hidden{% endif %}>
-      Cancel
+      {% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}
     </button>
     <button type="button" data-pr8-action="view-result"{% if pr8_job.status != 'succeeded' %} hidden{% endif %}>
-      View result
+      {% if LANGUAGE_CODE == 'ar' %}عرض النتيجة{% else %}View result{% endif %}
     </button>
     <button type="button" data-pr8-action="rerun"{% if pr8_job.status != 'failed' and pr8_job.status != 'cancelled' %} hidden{% endif %}>
-      Run again
+      {% if LANGUAGE_CODE == 'ar' %}تشغيل مجددًا{% else %}Run again{% endif %}
     </button>
   </div>
 
   <script data-pr8-config type="application/json">
     {{ pr8_config_json|default:'{"pollIntervalMs": 2000}'|safe }}
   </script>
-  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=4" defer></script>
+  {{ pr8_job|json_script:"pr8-initial-job" }}
+  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=5" defer></script>
 </section>
 {% endif %}

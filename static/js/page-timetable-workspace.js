@@ -29,7 +29,7 @@ const T = {
   overlap: IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash',
   instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
   roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
-  crossBoardClash: IS_AR ? 'تعارض عبر اللوحات' : 'Cross-board clash',
+  crossBoardClash: IS_AR ? 'تداخل محتمل في الطلب عبر اللوحات' : 'Potential cross-board demand overlap',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 'djCsrfToken';
@@ -71,16 +71,103 @@ const TW = {
 // whatever scenario the registrar currently has active).
 window.TW = TW;
 
+/* One owner for operations that can replace timetable rows. Read-only board
+ * inspection and export remain available while the owner finishes. State is
+ * derived afresh when controls are rendered, so a newly rendered Lock button
+ * cannot escape the same guard and published scenarios never become editable. */
+const TW_ACTIVITY = { owner: null, writes: 0, adapterPending: false, refresh: false, loading: 0, boardLoading: 0 };
+const ACTIVE_PLANNER_STATUSES = new Set(['queued', 'running', 'unknown']);
+function workspaceBusy() {
+  return Boolean(TW_ACTIVITY.owner || TW_ACTIVITY.writes || TW_ACTIVITY.adapterPending
+    || TW_ACTIVITY.refresh || TW_ACTIVITY.loading || TW_ACTIVITY.boardLoading || ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status));
+}
+function workspaceCanEdit() {
+  return Boolean(TW.scenarioId && TW.scenario?.status !== 'published' && !workspaceBusy());
+}
+function syncWorkspaceControls() {
+  const busy = workspaceBusy();
+  TW.busy = busy;
+  const editable = workspaceCanEdit();
+  ['twGenerate', 'twGenerateMenu', 'twMapElectives', 'twNewScenario', 'twScenario',
+    'twYear', 'twTerm', 'twProgram', 'twSection', 'twStrategy'].forEach(id => {
+    if ($(id)) $(id).disabled = busy;
+  });
+  ['twNewBoard', 'twSlotEdit', 'twOptimise', 'twOptimiseMenu', 'twPublish'].forEach(id => {
+    if ($(id)) $(id).disabled = !editable;
+  });
+  if ($('twUndo')) $('twUndo').disabled = !editable || !TW.undoStack.length;
+  if ($('twRedo')) $('twRedo').disabled = !editable || !TW.redoStack.length;
+  document.querySelectorAll('.tw-gen-item').forEach(el => { el.disabled = busy; });
+  document.querySelectorAll('.tw-opt-item, [data-tw-mutation]').forEach(el => { el.disabled = !editable; });
+  document.querySelectorAll('[data-tw-draggable]').forEach(el => { el.draggable = editable && !el.classList.contains('locked'); });
+  document.querySelector('.tw-workspace')?.setAttribute('aria-busy', String(busy));
+  if ($('twGraphPage')) $('twGraphPage').href = '/timetable-workspace/graph/'
+    + (TW.scenarioId ? `?scenario=${encodeURIComponent(TW.scenarioId)}` : '');
+  window.dispatchEvent(new CustomEvent('tw:planner-busy', { detail: { busy } }));
+}
+function beginWorkspaceOperation(kind) {
+  if (workspaceBusy()) {
+    notify.warning(IS_AR ? 'انتظر انتهاء العملية الحالية.' : 'Wait for the current operation to finish.');
+    return null;
+  }
+  const token = { kind, scenarioId: TW.scenarioId };
+  TW_ACTIVITY.owner = token;
+  syncWorkspaceControls();
+  return token;
+}
+function finishWorkspaceOperation(token) {
+  if (TW_ACTIVITY.owner === token) TW_ACTIVITY.owner = null;
+  syncWorkspaceControls();
+}
+function announcePlannerJob(job, scenarioId, jobId) {
+  window.dispatchEvent(new CustomEvent('tw:planner-job', {
+    detail: { job, scenarioId, jobId: jobId || job?.job_id, source: 'workspace' },
+  }));
+}
+window.addEventListener('tw:planner-request', event => {
+  TW_ACTIVITY.adapterPending = Boolean(event.detail?.pending);
+  syncWorkspaceControls();
+});
+window.addEventListener('tw:planner-job', async event => {
+  const { job, scenarioId, source } = event.detail || {};
+  if (String(scenarioId) !== String(TW.scenarioId)) return;
+  const previous = TW.plannerJob;
+  if (previous && job && previous.job_id === job.job_id
+      && !ACTIVE_PLANNER_STATUSES.has(previous.status) && ACTIVE_PLANNER_STATUSES.has(job.status)) return;
+  // A late poll from an older job must never replace a newly submitted job.
+  if (previous && job && previous.job_id !== job.job_id
+      && ACTIVE_PLANNER_STATUSES.has(previous.status)) return;
+  TW.plannerJob = job || null;
+  if (source !== 'workspace' && job && !ACTIVE_PLANNER_STATUSES.has(job.status)
+      && previous && ACTIVE_PLANNER_STATUSES.has(previous.status) && !TW_ACTIVITY.owner) {
+    TW_ACTIVITY.refresh = true;
+    syncWorkspaceControls();
+    TW.undoStack = []; TW.redoStack = [];
+    try { await onScenarioChange(); } finally { TW_ACTIVITY.refresh = false; }
+  }
+  syncWorkspaceControls();
+});
+
 /* ── API ── */
 async function twFetch(url, opts = {}) {
+  const { _workspaceToken, ...requestOptions } = opts;
+  const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
+  if (writes && workspaceBusy() && (!TW_ACTIVITY.owner || _workspaceToken !== TW_ACTIVITY.owner)) {
+    notify.warning(IS_AR ? 'الجدول قيد التحديث؛ انتظر انتهاء العملية.' : 'The timetable is being updated; wait for the operation to finish.');
+    return null;
+  }
+  if (writes) { TW_ACTIVITY.writes++; syncWorkspaceControls(); }
   // Wrap safeFetch with better error extraction for our {ok, error: {code, message}} format
   try {
-    const response = await fetch(url, _injectCsrf(opts));
+    const response = await fetch(url, _injectCsrf(requestOptions));
     if (!response.ok) {
       let msg = `${response.status}`;
       try {
         const d = await response.json();
         const e = d.error;
+        if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) {
+          announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
+        }
         msg = (e && typeof e === 'object') ? (e.message || e.code || JSON.stringify(e)) : (e || d.message || msg);
       } catch {}
       notify.error(msg);
@@ -90,6 +177,8 @@ async function twFetch(url, opts = {}) {
   } catch (err) {
     notify.error(err.message || String(err));
     return null;
+  } finally {
+    if (writes) { TW_ACTIVITY.writes--; syncWorkspaceControls(); }
   }
 }
 
@@ -98,11 +187,8 @@ const _sleep = ms => new Promise(r => setTimeout(r, ms));
 /* Poll an async planner job until it reaches a terminal status. Uses a raw
    fetch (not twFetch) so transient poll blips don't spam error toasts during a
    long solve. Calls onTick(job, elapsedMs) each poll for progress UI. */
-/* Abandoning a poll does NOT stop the job — it keeps running and keeps
-   PERSISTING to the scenario. So whenever we give up (timeout or lost contact)
-   we ask the server to cancel, otherwise the registrar sees a failure while the
-   board silently changes underneath them minutes later. Best-effort: if the
-   cancel itself fails there is nothing further we can do from here. */
+/* Losing contact does not prove a job failed. Keep its write guard in place
+   until a later poll confirms its terminal status; the card keeps monitoring. */
 async function cancelPlannerJob(jobId) {
   try {
     await fetch(`/planner-jobs/${jobId}/cancel/`, {
@@ -113,7 +199,7 @@ async function cancelPlannerJob(jobId) {
   } catch { /* best-effort */ }
 }
 
-async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8 } = {}) {
+async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8, scenarioId = TW.scenarioId } = {}) {
   const start = Date.now();
   let consecutiveErrors = 0;
   while (Date.now() - start < maxMs) {
@@ -124,11 +210,13 @@ async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 180000
     } catch { /* transient — tolerate below */ }
     if (!job) {
       if (++consecutiveErrors >= maxConsecutiveErrors) {
-        await cancelPlannerJob(jobId);
-        return { status: 'failed', error_message: 'lost contact with the planner job' };
+        const unknown = { job_id: jobId, status: 'unknown', error_message: 'Connection lost; planner status is unconfirmed.' };
+        announcePlannerJob(unknown, scenarioId, jobId);
+        return unknown;
       }
     } else {
       consecutiveErrors = 0;
+      announcePlannerJob(job, scenarioId, jobId);
       onTick && onTick(job, Date.now() - start);
       if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
         return job;
@@ -139,8 +227,9 @@ async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 180000
     // interval of latency.
     await _sleep(intervalMs);
   }
-  await cancelPlannerJob(jobId);
-  return { status: 'failed', error_message: 'optimisation timed out while polling' };
+  const unknown = { job_id: jobId, status: 'unknown', error_message: 'Monitoring timed out; planner status is unconfirmed.' };
+  announcePlannerJob(unknown, scenarioId, jobId);
+  return unknown;
 }
 
 /* Single optimise request. BOTH modes run off the request thread as a planner
@@ -157,17 +246,19 @@ async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 180000
 
    Returns the same {ok, optimisation} envelope the sync path returns, so the
    results dialog is identical either way. */
-async function runOptimiseRequest(mode, payload, btn, modeLabel) {
-  const url = `/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`;
+async function runOptimiseRequest(mode, payload, btn, modeLabel, token) {
+  const scenarioId = token.scenarioId;
+  const url = `/ops/tw/scenarios/${scenarioId}/optimise-v2/`;
   const post = b => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
-  const sub = await twFetch(url, post({ ...payload, async_run: true }));
+  const sub = await twFetch(url, { ...post({ ...payload, async_run: true }), _workspaceToken: token });
   if (sub === null) return null;  // HTTP error — twFetch already toasted
   if (sub.job_id) {
+    announcePlannerJob({ job_id: sub.job_id, status: sub.status || 'queued' }, scenarioId, sub.job_id);
     const job = await pollPlannerJob(sub.job_id, (j, ms) => {
       const secs = Math.round((ms || 0) / 1000);
       const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
       btn.innerHTML = `&#x23F3; ${modeLabel}${detail}`;
-    });
+    }, { scenarioId });
     if (job.status === 'succeeded') {
       const res = await twFetch(`/planner-jobs/${sub.job_id}/result/`);
       return (res && res.result)
@@ -175,6 +266,7 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
         : { ok: false, error: { code: 'NO_RESULT', message: 'job finished but result was missing' } };
     }
     const code = job.status === 'cancelled' ? 'CANCELLED' : 'FAILED';
+    if (job.status === 'unknown') return { ok: false, error: { code: 'STATUS_UNCONFIRMED', message: job.error_message } };
     return { ok: false, error: { code, message: job.error_message || job.status } };
   }
   // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran the
@@ -186,6 +278,86 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
   // throw it away.
   return sub;
 }
+
+/* Timetable outcome helpers — pure renderers, also used by the split workspace. */
+function instructorScheduleOf(result) {
+  return result.instructor_schedule_metric || result.instructor_schedule || {};
+}
+
+function instructorScheduleImproved(result) {
+  const { before, after } = instructorScheduleOf(result);
+  return !result.safety_blocked && before && after && (
+    (Number.isFinite(before.working_days) && Number.isFinite(after.working_days)
+      && after.working_days < before.working_days)
+    || (Number.isFinite(before.idle_minutes) && Number.isFinite(after.idle_minutes)
+      && after.idle_minutes < before.idle_minutes)
+  );
+}
+
+function secondaryRecoveryImproved(result) {
+  const recovery = result.secondary_recovery;
+  return !result.safety_blocked && recovery?.applied && (
+    recovery.soft_unresolved_after < recovery.soft_unresolved_before
+    || recovery.room_shortages_after < recovery.room_shortages_before
+  );
+}
+
+function renderSecondaryRecoveryOutcome(result) {
+  if (!secondaryRecoveryImproved(result)) return '';
+  const recovery = result.secondary_recovery;
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
+    <b>${IS_AR ? 'تحسين المقاعد والقاعات' : 'Seat and room recovery'}</b>
+    <div>${IS_AR ? 'مقاعد المقررات المرنة غير المعينة' : 'Soft-course unresolved seats'}: ${number(recovery.soft_unresolved_before)} → ${number(recovery.soft_unresolved_after)}</div>
+    <div>${IS_AR ? 'الاجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room'}: ${number(recovery.room_shortages_before)} → ${number(recovery.room_shortages_after)}</div>
+    <div style="font-size:11px;color:var(--t3)">${IS_AR ? 'يشمل نقص القاعات القاعات الأصغر من السعة المطلوبة. تمت حماية أيام وفراغات كل مدرس.' : 'Room shortages include undersized rooms. Each instructor’s days and gaps were protected.'}</div>
+  </div>`;
+}
+
+function renderInstructorOutcome(result) {
+  const metric = instructorScheduleOf(result);
+  const after = metric.after || result.quality_score?.instructor_schedule;
+  const before = metric.before || result.baseline_instructor_schedule;
+  const priority = result.optimisation_policy === 'instructor_first';
+  if (!after && !priority) return '';
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  const row = (label, key) => `<div>${label}: <b>${before ? `${number(before[key])} → ` : ''}${number(after?.[key])}</b></div>`;
+  return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
+    <div style="font-weight:700;color:var(--teal)">${IS_AR ? 'جدول المدرسين' : 'Instructor schedule'}</div>
+    ${row(IS_AR ? 'مجموع أيام العمل' : 'Total working days', 'working_days')}
+    ${row(IS_AR ? 'دقائق الانتظار' : 'Idle minutes', 'idle_minutes')}
+    ${priority ? `<div style="font-size:11px;color:var(--t3);margin-top:5px">${IS_AR ? 'الأولوية لتقليل أيام المدرسين ثم الانتظار، مع حماية التسجيل والقيود الأساسية. قد تتغير فراغات الطلاب.' : 'Priority: fewer instructor days, then less idle time, with hard enrolment and operational constraints protected. Student gaps may change.'}</div>` : ''}
+  </div>`;
+}
+
+function schedulerSeatingText(result) {
+  const seating = result.student_seating;
+  if (!seating || !seating.solution_found) {
+    return IS_AR ? 'تعيين الطلاب الفعلي لم يُؤكد؛ المقاعد الناقصة والتعارضات غير معروفة.'
+      : 'Actual student seating not confirmed; missing seats and clashes are unknown.';
+  }
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : (IS_AR ? 'غير معروف' : 'unknown');
+  const proof = seating.proven_optimal
+    ? (IS_AR ? 'الحل الأمثل مثبت' : 'optimum proven')
+    : (IS_AR ? 'حل ممكن؛ المثالية غير مثبتة' : 'feasible solution; optimality not proven');
+  return (IS_AR ? 'تعيين الطلاب الفعلي: ' : 'Actual student seating: ')
+    + `${proof}; ${IS_AR ? 'الطلاب المعينون بالكامل' : 'fully seated students'} ${number(seating.students_fully_seated)}/${number(seating.students)}; `
+    + `${IS_AR ? 'المقاعد الناقصة' : 'missing seats'} ${number(seating.unseated_demands)}; `
+    + `${IS_AR ? 'التعارضات' : 'clashes'} ${number(seating.total_clashes)}.`;
+}
+
+function schedulerOutcomeText(result) {
+  const bits = [];
+  if (result.instructor_days != null) bits.push((IS_AR ? 'مجموع أيام المدرسين: ' : 'Total instructor working days: ') + result.instructor_days);
+  if (result.instructor_idle_minutes != null) bits.push((IS_AR ? 'دقائق الانتظار: ' : 'Instructor idle minutes: ') + result.instructor_idle_minutes);
+  if (result.unroomed != null) bits.push((IS_AR ? 'بلا قاعة: ' : 'Unroomed: ') + result.unroomed
+    + (result.unroomed_floor != null ? (IS_AR ? ' (الحد الأدنى: ' : ' (floor: ') + result.unroomed_floor + ')' : ''));
+  if (result.sections_on_the_same_hour_percent != null) bits.push((IS_AR ? 'نفس التوقيت طوال الأسبوع: ' : 'Same hour all week: ') + result.sections_on_the_same_hour_percent + '%');
+  bits.push(schedulerSeatingText(result));
+  if (result.expected_clashes != null) bits.push((IS_AR ? 'تقدير التعارضات (تقريبي): ' : 'Estimated overlaps (proxy): ') + result.expected_clashes);
+  return bits.join(' | ');
+}
+/* End timetable outcome helpers. */
 
 /* What the new engine actually achieved, said out loud.
  *
@@ -205,26 +377,12 @@ async function showSchedulerOutcome(jobId) {
     const res = await fetch(`/planner-jobs/${jobId}/result/`, { credentials: 'same-origin' });
     if (res.ok) r = (await res.json()).result;
   } catch { /* the build succeeded; the summary is decoration */ }
-  if (!r) return;
+  if (!r) {
+    $('twGenStatus').textContent = schedulerSeatingText({});
+    return;
+  }
 
-  const bits = [];
-  if (r.instructor_days != null) {
-    const floor = r.instructor_days === r.instructor_days_floor
-      ? (IS_AR ? ' (الحد الأدنى المثبت)' : ' (proven floor)') : '';
-    bits.push((IS_AR ? 'أيام المدرسين: ' : 'Instructor days: ') + r.instructor_days + floor);
-  }
-  if (r.sections_on_the_same_hour_percent != null
-      && r.sections_within_one_slot_percent != null) {
-    bits.push((IS_AR ? 'نفس التوقيت: ' : 'Same hour all week: ')
-      + r.sections_on_the_same_hour_percent + '%'
-      + (IS_AR ? ' (ضمن فترة واحدة: ' : ' (within one slot: ')
-      + r.sections_within_one_slot_percent + '%)');
-  }
-  if (r.unroomed != null) {
-    bits.push((IS_AR ? 'بلا قاعة: ' : 'Unroomed: ') + r.unroomed
-      + (IS_AR ? ' (لا مفر منها: ' : ' (unavoidable: ') + r.unroomed_floor + ')');
-  }
-  if (bits.length) $('twGenStatus').textContent = bits.join('  |  ');
+  $('twGenStatus').textContent = schedulerOutcomeText(r);
   // `warnings` only, never `notes`. Notes are a mixed channel — every successful
   // two-pass run appends one ("19 working days held; idle 3255 -> 1635") — so
   // showing them as warnings would put an amber triangle on every good build and
@@ -334,11 +492,26 @@ const TW_ENGINE = 'classic';
 
   // Prime the selector on first paint using the default year/term so it is
   // never empty when the page loads.
-  loadScenarios();
+  loadScenarios().then(restoreWorkspaceContext);
 })();
+
+/* MRI/Graph/Split handoffs carry the saved scenario and board in the URL. */
+async function restoreWorkspaceContext() {
+  const params = new URLSearchParams(window.location.search);
+  const scenarioId = params.get('scenario');
+  if (!scenarioId || TW.scenarioId || workspaceBusy()) return;
+  const select = $('twScenario');
+  if (![...select.options].some(option => option.value === scenarioId)) return;
+  select.value = scenarioId;
+  await onScenarioChange();
+  const boardId = params.get('board');
+  const board = TW.boards.find(item => String(item.id) === boardId);
+  if (board && String(TW.scenarioId) === scenarioId) await selectBoard(board.id);
+}
 
 /* ── Generate Workspace ── */
 async function runGenerate(engine = 'classic') {
+  if ($('twGenerate').disabled) return;
   const year = $('twYear').value.trim();
   const term = $('twTerm').value.trim();
   const program = $('twProgram').value.trim().toUpperCase();
@@ -350,105 +523,150 @@ async function runGenerate(engine = 'classic') {
     return;
   }
 
-  $('twGenerate').disabled = true;
-  $('twGenStatus').textContent = engine === 'scheduler'
-    ? (IS_AR ? 'جاري التوليد بالمحرك الجديد...' : 'Generating with the new engine...')
-    : (IS_AR ? 'جاري التوليد...' : 'Generating...');
+  const token = beginWorkspaceOperation('generate');
+  if (!token) return;
+  try {
+    $('twGenStatus').textContent = engine === 'scheduler'
+      ? (IS_AR ? 'جاري التوليد بالمحرك الجديد...' : 'Generating with the new engine...')
+      : (IS_AR ? 'جاري التوليد...' : 'Generating...');
 
-  const data = await twFetch('/ops/tw/generate-workspace/', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      year: parseInt(year),
-      semester: parseInt(term),
-      program: program,
-      section: section,
-      strategy: strategy,
-      engine: engine,     // 'classic' = the original placer, 'scheduler' = the new engine
-      defer_build: true,  // place sections via an async job (won't block the request)
-    }),
-  });
-
-  $('twGenerate').disabled = false;
-
-  if (!data) { $('twGenStatus').textContent = ''; return; }
-
-  // Store generated data
-  TW.generatedPlan = data.section_plan || [];
-  TW.sectionBudget = data.section_budget || [];
-  TW.studentSummary = data.student_summary || {};
-
-  // Auto-set scenario
-  TW.scenarioId = data.scenario.id;
-  TW.scenario = data.scenario;
-  TW.boards = data.boards || [];
-
-  const ss = TW.studentSummary;
-  $('twGenStatus').textContent = IS_AR
-    ? `${ss.classified || 0} طالب | خطة: ${ss.on_plan || 0} | متقاطع: ${ss.cross_term || 0} | ${TW.boards.length} لوحات`
-    : `${ss.classified || 0} students | On-plan: ${ss.on_plan || 0} | Cross-term: ${ss.cross_term || 0} | ${TW.boards.length} boards`;
-
-  // Show workspace command bar
-  $('twCmdBar').style.display = 'flex';
-  updateValidationBadge();
-  $('twPublish').disabled = false;
-  $('twNewBoard').style.display = '';
-  $('twSlotEdit').style.display = '';
-  $('twExportGroup').style.display = '';
-  $('twExport').disabled = false;
-  $('twExportMenu').disabled = false;
-  $('twOptimiseGroup').style.display = '';
-
-  // Populate scenario dropdown with just this scenario
-  const sel = $('twScenario');
-  sel.innerHTML = `<option value="${data.scenario.id}">${esc(data.scenario.name)}</option>`;
-
-  // Render boards and sidebar
-  renderBoardsNav();
-  renderBoardTabs();
-  renderBudgetSidebar();
-
-  // Auto-select first board
-  if (TW.boards.length > 0) {
-    await selectBoard(TW.boards[0].id);
-  }
-
-  // Deferred build: the heavy section placement (+ optimise + compaction) runs
-  // as an async planner job so the request never blocks on a long multi-program
-  // build. Poll it and refresh the board when it lands. (No build_job_id → the
-  // build already ran synchronously, e.g. async planner disabled.)
-  if (data.build_job_id) {
-    const building = IS_AR ? 'جاري بناء الجدول...' : 'Building timetable...';
-    $('twGenStatus').textContent = building;
-    const job = await pollPlannerJob(data.build_job_id, (j, ms) => {
-      const secs = Math.round((ms || 0) / 1000);
-      const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
-      $('twGenStatus').textContent = building + detail;
+    const data = await twFetch('/ops/tw/generate-workspace/', {
+      _workspaceToken: token,
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        year: parseInt(year),
+        semester: parseInt(term),
+        program: program,
+        section: section,
+        strategy: strategy,
+        engine: engine,     // 'classic' = the original placer, 'scheduler' = the new engine
+        defer_build: true,  // place sections via an async job (won't block the request)
+      }),
     });
-    if (job.status === 'succeeded') {
-      await onScenarioChange();
-      $('twGenStatus').textContent = '';
-      notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
-      if (engine === 'scheduler') await showSchedulerOutcome(data.build_job_id);
-    } else {
-      notify.error((IS_AR ? 'فشل البناء: ' : 'Build failed: ') + (job.error_message || job.status));
-    }
-    return;
-  }
 
-  notify.success(IS_AR ? 'تم التوليد' : `Generated: ${TW.boards.length} boards`);
+    if (!data) { $('twGenStatus').textContent = ''; return; }
+
+    // Store generated data
+    TW.generatedPlan = data.section_plan || [];
+    TW.sectionBudget = data.section_budget || [];
+    TW.studentSummary = data.student_summary || {};
+
+    // Auto-set scenario
+    TW.scenarioId = data.scenario.id;
+    TW.scenario = data.scenario;
+    TW.boards = data.boards || [];
+    token.scenarioId = data.scenario.id;
+    TW.boardId = null;
+    TW.loadedBoardId = null;
+    TW.selectedPlacementId = null;
+    TW.undoStack = []; TW.redoStack = [];
+    TW.quality = null;
+    TW.plannerJob = null;
+    if (data.build_job_id) announcePlannerJob({ job_id: data.build_job_id, status: 'queued' }, token.scenarioId, data.build_job_id);
+
+    const ss = TW.studentSummary;
+    $('twGenStatus').textContent = IS_AR
+      ? `${ss.classified || 0} طالب | خطة: ${ss.on_plan || 0} | متقاطع: ${ss.cross_term || 0} | ${TW.boards.length} لوحات`
+      : `${ss.classified || 0} students | On-plan: ${ss.on_plan || 0} | Cross-term: ${ss.cross_term || 0} | ${TW.boards.length} boards`;
+
+    // Show workspace command bar
+    $('twCmdBar').style.display = 'flex';
+    updateValidationBadge();
+    $('twPublish').disabled = false;
+    $('twNewBoard').style.display = '';
+    $('twSlotEdit').style.display = '';
+    $('twNewBoard').classList.remove('d-none');
+    $('twSlotEdit').classList.remove('d-none');
+    $('twExportGroup').style.display = '';
+    $('twExport').disabled = false;
+    $('twExportMenu').disabled = false;
+    $('twOptimiseGroup').style.display = '';
+    syncWorkspaceControls();
+
+    // Keep other saved scenarios available after the build finishes.
+    const sel = $('twScenario');
+    const option = document.createElement('option');
+    option.value = data.scenario.id; option.textContent = data.scenario.name;
+    sel.appendChild(option); sel.value = data.scenario.id;
+    window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob } }));
+
+    // Render boards and sidebar
+    renderBoardsNav();
+    renderBoardTabs();
+    renderBudgetSidebar();
+
+    // Auto-select first board
+    if (TW.boards.length > 0) {
+      await selectBoard(TW.boards[0].id);
+    }
+
+    // Deferred build: the heavy section placement (+ optimise + compaction) runs
+    // as an async planner job so the request never blocks on a long multi-program
+    // build. Poll it and refresh the board when it lands. (No build_job_id → the
+    // build already ran synchronously, e.g. async planner disabled.)
+    if (data.build_job_id) {
+      const building = IS_AR ? 'جاري بناء الجدول ومقارنة المرشحين...' : 'Building timetable and comparing candidates...';
+      $('twGenStatus').textContent = building;
+      const job = await pollPlannerJob(data.build_job_id, (j, ms) => {
+        const secs = Math.round((ms || 0) / 1000);
+        const detail = ` (${secs}s)${j.last_stage_seen ? ` · ${j.last_stage_seen}` : ''}`;
+        $('twGenStatus').textContent = building + detail;
+      }, { scenarioId: token.scenarioId });
+      if (job.status === 'succeeded') {
+        if (String(TW.scenarioId) !== String(token.scenarioId)) return;
+        await onScenarioChange();
+        $('twGenStatus').textContent = '';
+        notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
+        if (engine === 'scheduler') await showSchedulerOutcome(data.build_job_id);
+        else {
+          const report = await twFetch(`/planner-jobs/${data.build_job_id}/result/`);
+          if (report?.result) {
+            $('twGenStatus').innerHTML = renderInstructorOutcome(report.result);
+          }
+        }
+      } else {
+        const uncertain = job.status === 'unknown';
+        $('twGenStatus').textContent = uncertain
+          ? (IS_AR ? 'تعذر تأكيد حالة البناء؛ تستمر متابعة المخطط.' : 'Build status unconfirmed; the planner card continues monitoring.')
+          : (IS_AR ? 'لم يكتمل البناء: ' : 'Build did not complete: ') + (job.error_message || job.status);
+        if (uncertain) notify.warning($('twGenStatus').textContent);
+        else { notify.error($('twGenStatus').textContent); await onScenarioChange(); }
+      }
+      return;
+    }
+
+    if (data.build_summary) {
+      if (engine === 'scheduler') {
+        $('twGenStatus').textContent = schedulerOutcomeText(data.build_summary);
+        (data.build_summary.warnings || []).forEach(warning => notify.warning(warning));
+      } else {
+        $('twGenStatus').innerHTML = renderInstructorOutcome(data.build_summary);
+      }
+      notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
+    } else {
+      $('twGenStatus').textContent = IS_AR ? 'أُنشئ السيناريو؛ لم يبدأ البناء. استخدم إعادة البناء الكاملة.' : 'Scenario created; build did not start. Use Full rebuild.';
+      notify.warning($('twGenStatus').textContent);
+    }
+    await refreshWorkspaceQuality();
+  } catch (error) {
+    notify.error(error.message || String(error));
+  } finally {
+    finishWorkspaceOperation(token);
+  }
 }
 
 /* debounce() now in shared-utils.js */
 
 /* ── Scenarios ── */
 async function loadScenarios() {
+  if (workspaceBusy()) return;
   const year = $('twYear').value.trim();
   const term = $('twTerm').value;
   if (!year || !term) return;
 
   const data = await twFetch(`/ops/tw/scenarios/?year=${year}&term=${term}`);
-  if (!data) return;
+  if (!data || year !== $('twYear').value.trim() || term !== $('twTerm').value || workspaceBusy()) return;
 
   const sel = $('twScenario');
   sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
@@ -461,36 +679,73 @@ async function loadScenarios() {
   TW.scenarioId = null;
   TW.scenario = null;
   TW.boardId = null;
+  TW.loadedBoardId = null;
+  TW.plannerJob = null;
   resetWorkspace();
+  window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: null, job: null } }));
 }
 
+let scenarioLoadRevision = 0;
 async function onScenarioChange() {
   const sid = $('twScenario').value;
-  if (!sid) { TW.scenarioId = null; resetWorkspace(); return; }
+  const revision = ++scenarioLoadRevision;
+  TW_ACTIVITY.loading = revision;
+  syncWorkspaceControls();
+  try {
+    if (!sid) {
+      TW.scenarioId = null; TW.scenario = null; TW.boardId = null; TW.plannerJob = null; resetWorkspace();
+      window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: null, job: null } }));
+      return;
+    }
+    const sameScenario = String(TW.scenarioId) === String(sid);
+    const preferredBoard = sameScenario ? TW.boardId : null;
 
-  resetPlanLens();
-  const data = await twFetch(`/ops/tw/scenarios/${sid}/`);
-  if (!data) return;
+    resetPlanLens();
+    const data = await twFetch(`/ops/tw/scenarios/${sid}/`);
+    if (revision !== scenarioLoadRevision || sid !== $('twScenario').value) return;
+    if (!data) {
+      $('twScenario').value = TW.scenarioId || '';
+      window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob || null } }));
+      return;
+    }
 
-  TW.scenarioId = data.scenario.id;
-  TW.scenario = data.scenario;
-  const search = $('twSearch');
-  if (search) {
-    search.value = '';
-    search.title = 'Search timetable';
+    TW.scenarioId = data.scenario.id;
+    TW.scenario = data.scenario;
+    TW.boardId = null;
+    TW.loadedBoardId = null;
+    TW.selectedPlacementId = null;
+    TW.placements = []; TW.conflicts = {}; TW.capacityData = null; TW.quality = null;
+    if (!sameScenario) { TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null; }
+    if (data.active_job) TW.plannerJob = data.active_job;
+    else if (!TW_ACTIVITY.owner && ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) TW.plannerJob = null;
+    window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob || null } }));
+    if (data.active_job) announcePlannerJob(data.active_job, TW.scenarioId, data.active_job.job_id);
+    const search = $('twSearch');
+    if (search) {
+      search.value = '';
+      search.title = 'Search timetable';
+    }
+
+    updateValidationBadge();
+    $('twPublish').disabled = data.scenario.status === 'published';
+    $('twNewBoard').style.display = '';
+    $('twSlotEdit').style.display = data.scenario.status === 'published' ? 'none' : '';
+    $('twExportGroup').style.display = '';
+    $('twExport').disabled = false;
+    $('twExportMenu').disabled = false;
+    $('twOptimiseGroup').style.display = '';
+    $('twNewBoard').classList.remove('d-none');
+    $('twSlotEdit').classList.remove('d-none');
+    syncWorkspaceControls();
+
+    await loadPlanLens();
+    if (revision !== scenarioLoadRevision) return;
+    await loadBoards(preferredBoard);
+    syncWorkspaceControls();
+  } finally {
+    if (TW_ACTIVITY.loading === revision) TW_ACTIVITY.loading = 0;
+    syncWorkspaceControls();
   }
-
-  updateValidationBadge();
-  $('twPublish').disabled = data.scenario.status === 'published';
-  $('twNewBoard').style.display = '';
-  $('twSlotEdit').style.display = data.scenario.status === 'published' ? 'none' : '';
-  $('twExportGroup').style.display = '';
-  $('twExport').disabled = false;
-  $('twExportMenu').disabled = false;
-  $('twOptimiseGroup').style.display = '';
-
-  await loadPlanLens();
-  await loadBoards();
 }
 
 async function createScenarioPrompt() {
@@ -520,39 +775,66 @@ async function createScenarioPrompt() {
 }
 
 /* ── Boards ── */
-async function loadBoards() {
+async function loadBoards(preferredBoard = TW.boardId) {
   if (!TW.scenarioId) return;
-  const data = await twFetch(`/ops/tw/boards/?scenario_id=${TW.scenarioId}`);
-  if (!data) return;
+  const scenarioId = TW.scenarioId;
+  const data = await twFetch(`/ops/tw/boards/?scenario_id=${scenarioId}`);
+  if (!data || TW.scenarioId !== scenarioId) return;
 
   TW.boards = data.boards || [];
   renderBoardsNav();
   renderBoardTabs();
 
-  if (TW.boards.length > 0 && !TW.boardId) {
-    await selectBoard(TW.boards[0].id);
+  if (TW.boards.length > 0) {
+    const target = TW.boards.find(board => String(board.id) === String(preferredBoard));
+    await selectBoard(target ? target.id : TW.boards[0].id);
   }
 }
 
+let boardLoadRevision = 0;
 async function selectBoard(boardId) {
+  const revision = ++boardLoadRevision;
+  const scenarioId = TW.scenarioId;
+  TW_ACTIVITY.boardLoading = revision;
   TW.boardId = boardId;
-  const data = await twFetch(`/ops/tw/boards/${boardId}/`);
-  if (!data) return;
+  syncWorkspaceControls();
+  try {
+    const data = await twFetch(`/ops/tw/boards/${boardId}/`);
+    if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
+    if (!data) {
+      TW.boardId = TW.loadedBoardId || null;
+      renderBoardsNav(); renderBoardTabs();
+      if (!TW.boardId) { $('twGrid').classList.add('d-none'); $('twEmptyState').style.display = ''; }
+      return;
+    }
+    if (TW.loadedBoardId !== boardId) TW.selectedPlacementId = null;
+    TW.loadedBoardId = boardId;
 
-  TW.placements = data.placements || [];
-  TW.scenario = { ...TW.scenario, slot_config: data.slot_config };
+    TW.placements = data.placements || [];
+    TW.scenario = { ...TW.scenario, slot_config: data.slot_config };
 
-  renderBoardsNav();
-  renderBoardTabs();
-  await loadConflicts();   // load conflicts BEFORE rendering grid so colors are correct
-  renderGrid();
-  renderBoardStrip();
-  await loadCapacity();
-  await loadBudget();
-
+    renderBoardsNav();
+    renderBoardTabs();
+    await loadConflicts();   // load conflicts BEFORE rendering grid so colors are correct
+    if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
+    renderGrid();
+    renderBoardStrip();
+    await loadCapacity();
+    if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
+    await loadBudget();
+    if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
+    await refreshWorkspaceQuality();
+    renderWorkspaceQuality();
+    syncWorkspaceControls();
+  } finally {
+    if (TW_ACTIVITY.boardLoading === revision) TW_ACTIVITY.boardLoading = 0;
+    syncWorkspaceControls();
+  }
 }
 
 async function createBoardPrompt() {
+  if (!workspaceCanEdit()) return;
+  const scenarioId = TW.scenarioId;
   const label = await dlg.confirm({
     title: T.createBoard,
     inputLabel: T.boardLabel,
@@ -560,6 +842,7 @@ async function createBoardPrompt() {
     confirmText: IS_AR ? 'إنشاء' : 'Create',
   });
   if (!label || label === true) return;
+  if (!workspaceCanEdit() || TW.scenarioId !== scenarioId) return;
 
   const data = await twFetch('/ops/tw/boards/create/', {
     method: 'POST',
@@ -576,14 +859,24 @@ async function createBoardPrompt() {
 /* ── Budget Sidebar ── */
 async function loadBudget() {
   if (!TW.scenarioId) return;
+  const scenarioId = TW.scenarioId;
+  const boardId = TW.boardId;
   const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/budget/`);
+  if (TW.scenarioId !== scenarioId) return;
   if (data) {
     TW.sectionBudget = data.budget || [];
+    TW.unplacedSections = [];
+    if (!TW.sectionBudget.length && boardId) {
+      const sections = await twFetch(`/ops/tw/boards/${boardId}/unplaced/`);
+      if (TW.scenarioId !== scenarioId || TW.boardId !== boardId) return;
+      TW.unplacedSections = sections?.unplaced || [];
+    }
     renderBudgetSidebar();
   }
 }
 
 function renderBudgetSidebar() {
+  if (TW.boardId && !TW.sectionBudget?.length) { renderUnplacedList(); return; }
   const list = $('twSectionList');
   const budget = TW.sectionBudget || [];
   const search = sectionBudgetSearch();
@@ -648,16 +941,21 @@ function renderBudgetSidebar() {
         const secLabel = `S${s}`;
         const div = document.createElement('div');
         div.className = 'tw-section-item';
-        div.draggable = true;
+        div.draggable = workspaceCanEdit();
+        div.dataset.twDraggable = 'true';
         div.innerHTML = `
           <span class="code">${esc(c.course_code)} ${secLabel}</span>
           <span class="meta">${esc(c.department || '')} | ${c.credit_hours || '?'}cr | ${IS_AR ? 'سعة' : 'cap'}: ${c.max_per_section || '?'}</span>
           <span class="meta">${IS_AR ? 'الميزانية' : 'budget'}: ${used}/${planned} | ${IS_AR ? 'طلاب' : 'demand'}: ${c.total_demand}</span>
         `;
         div.addEventListener('dragstart', (e) => {
+          if (!workspaceCanEdit()) { e.preventDefault(); return; }
           e.dataTransfer.setData('text/plain', JSON.stringify({
             type: 'create_planned',
             course_code: c.course_code,
+            course_key: c.course_key,
+            course_number: c.course_number,
+            course_name: c.course_name,
             section_label: secLabel,
             department: c.department || '',
             credit_hours: c.credit_hours || 0,
@@ -666,6 +964,13 @@ function renderBudgetSidebar() {
           }));
           e.dataTransfer.effectAllowed = 'copy';
         });
+        if (globalThis.TimetableMeetingPolicy?.isEnglish(c)) {
+          const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'tw-pattern-action';
+          choose.dataset.twMutation = ''; choose.disabled = !workspaceCanEdit();
+          choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
+          choose.addEventListener('click', () => chooseEnglishWorkspacePattern({ ...c, type: 'create_planned', section_label: secLabel }));
+          div.appendChild(choose);
+        }
         list.appendChild(div);
       }
     });
@@ -674,8 +979,11 @@ function renderBudgetSidebar() {
 
 /* ── Conflicts ── */
 async function loadConflicts() {
+  const boardId = TW.boardId;
+  const scenarioId = TW.scenarioId;
   if (!TW.boardId) return;
   const data = await twFetch(`/ops/tw/boards/${TW.boardId}/conflicts/`);
+  if (TW.boardId !== boardId || TW.scenarioId !== scenarioId) return;
   if (data) {
     TW.conflicts = data;
     const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
@@ -686,6 +994,8 @@ async function loadConflicts() {
 
 /* ── Publish ── */
 async function publishScenario() {
+  if (!workspaceCanEdit()) return;
+  const scenarioId = TW.scenarioId;
   if (!TW.scenarioId) return;
 
   // Gather readiness summary across all boards
@@ -716,6 +1026,7 @@ async function publishScenario() {
 
   const ok = await dlg.confirm({ title: T.publishConfirm, body: summaryHtml, kind: 'warning', confirmText: IS_AR ? 'نشر' : 'Publish' });
   if (!ok) return;
+  if (!workspaceCanEdit() || TW.scenarioId !== scenarioId) return;
 
   const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/publish/`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
@@ -726,9 +1037,11 @@ async function publishScenario() {
   updateValidationBadge();
   $('twPublish').disabled = true;
   $('twSlotEdit').style.display = 'none';
+  syncWorkspaceControls();
 }
 
 function openGraphTwinPage(event) {
+  if (event && (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0)) return;
   if (event) event.preventDefault();
   const params = new URLSearchParams();
   if (TW.scenarioId) params.set('scenario', TW.scenarioId);
@@ -757,6 +1070,7 @@ function openFullMriPage() {
 /* ── Rendering ── */
 function resetWorkspace() {
   TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
+  TW.quality = null; TW.undoStack = []; TW.redoStack = []; TW.selectedPlacementId = null;
   resetPlanLens();
   $('twBoardTabs').innerHTML = '';
   $('twBoardsNav').innerHTML = '';
@@ -772,6 +1086,8 @@ function resetWorkspace() {
   $('twExportMenu').disabled = true;
   $('twOptimiseGroup').style.display = 'none';
   updateQuickStats();
+  renderWorkspaceQuality();
+  syncWorkspaceControls();
 }
 
 function renderBoardsNav() {
@@ -897,11 +1213,13 @@ function resetPlanLens() {
 }
 
 async function loadPlanLens() {
+  const scenarioId = TW.scenarioId;
   if (!TW.scenarioId) {
     resetPlanLens();
     return;
   }
   const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/plan-lens/`);
+  if (TW.scenarioId !== scenarioId) return;
   if (!data || !data.plan_lens) {
     TW.planLens.loaded = false;
     return;
@@ -1062,6 +1380,7 @@ function renderGridWithSlots(slots, labSlots) {
 
   // Helper: classify a placement as lab (100-min) based on duration
   function isLabPlacement(p) {
+    if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return false;
     const toMin = t => { const [h,m] = t.split(':').map(Number); return h*60+m; };
     return (toMin(p.end_time) - toMin(p.start_time)) > 80;
   }
@@ -1102,7 +1421,14 @@ function renderGridWithSlots(slots, labSlots) {
     // Lecture grid
     const gridInner = document.createElement('div');
     gridInner.className = 'tw-grid-inner';
-    _renderSingleGrid(gridInner, slots, lecturePlacements, 'tw-grid-table', secKey);
+    const englishPlacements = lecturePlacements.filter(p => globalThis.TimetableMeetingPolicy?.isEnglish(p));
+    _renderSingleGrid(gridInner, slots, lecturePlacements.filter(p => !globalThis.TimetableMeetingPolicy?.isEnglish(p)), 'tw-grid-table', secKey);
+    if (englishPlacements.length) {
+      const heading = document.createElement('div'); heading.className = 'tw-english-heading';
+      heading.textContent = IS_AR ? 'الإنجليزية · لقاءات متصلة لمدة ثلاث ساعات' : 'English · continuous three-hour meetings';
+      gridInner.appendChild(heading);
+      _renderSingleGrid(gridInner, TimetableMeetingPolicy.gridSlots(englishPlacements), englishPlacements, 'tw-grid-table tw-english-grid', secKey);
+    }
     gridEl.appendChild(gridInner);
 
     // Lab grid (if any lab slots exist)
@@ -1199,7 +1525,8 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
 function createPlacementCard(p) {
   const card = document.createElement('div');
   card.className = 'tw-card';
-  card.draggable = true;
+  card.draggable = workspaceCanEdit() && !p.is_locked;
+  card.dataset.twDraggable = 'true';
   card.dataset.placementId = p.id;
   card.style.background = courseColor(p.course_code);
   if (p.is_locked) card.classList.add('locked');
@@ -1245,10 +1572,12 @@ function createPlacementCard(p) {
   }
   card.innerHTML = `
     <div class="cc">${esc(p.course_code)} ${esc(p.section)}</div>
-    <div class="ci">${showCourseName ? esc(courseName) : esc(instructor)}${p.room ? ' | ' + esc(p.room) : ''}${p.available_capacity ? ' | ' + p.available_capacity : ''}</div>
+    ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))}</div>` : ''}
+    <div class="ci">${showCourseName ? esc(courseName) : esc(instructor)}${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? ' | ' + esc(TimetableMeetingPolicy.roomLabel(p, IS_AR)) : p.room ? ' | ' + esc(p.room) : ''}${p.available_capacity ? ' | ' + p.available_capacity : ''}</div>
   `;
 
   card.addEventListener('dragstart', (e) => {
+    if (!workspaceCanEdit() || p.is_locked) { e.preventDefault(); return; }
     e.dataTransfer.setData('text/plain', JSON.stringify({type:'move', placement_id: p.id}));
     e.dataTransfer.effectAllowed = 'move';
   });
@@ -1272,6 +1601,8 @@ function createPlacementCard(p) {
 function renderUnplacedList() {
   const list = $('twSectionList');
   const search = sectionBudgetSearch();
+  if (TW.unplacedSearch !== search) { TW.unplacedSearch = search; TW.unplacedVisibleLimit = 100; }
+  const visibleLimit = TW.unplacedVisibleLimit || 100;
   list.innerHTML = '';
 
   let items = TW.unplacedSections;
@@ -1283,10 +1614,16 @@ function renderUnplacedList() {
     );
   }
 
-  items.slice(0, 100).forEach(s => {
+  if (!items.length) {
+    list.innerHTML = `<p class="text-t4 fs-md" style="padding:12px">${IS_AR ? 'لا توجد شعب متاحة تطابق البحث.' : 'No available sections match the filter.'}</p>`;
+    return;
+  }
+
+  items.slice(0, visibleLimit).forEach(s => {
     const div = document.createElement('div');
     div.className = 'tw-section-item';
-    div.draggable = true;
+    div.draggable = workspaceCanEdit();
+    div.dataset.twDraggable = 'true';
     const instructor = (s.meetings && s.meetings[0]) ? s.meetings[0].instructor : '';
     const meetingInfo = (s.meetings || []).map(m => `${m.day} ${m.start_time}-${m.end_time}`).join(', ');
     div.innerHTML = `
@@ -1294,10 +1631,21 @@ function renderUnplacedList() {
       <span class="meta">${esc(instructor)}${s.available_capacity ? ' | Cap: ' + s.available_capacity : ''}</span>
       <span class="meta">${esc(meetingInfo)}</span>
     `;
+    if (globalThis.TimetableMeetingPolicy?.isEnglish(s)) {
+      const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'tw-pattern-action'; choose.dataset.twMutation = '';
+      choose.disabled = !workspaceCanEdit(); choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
+      choose.addEventListener('click', () => chooseEnglishWorkspacePattern({ ...s, type: 'create', section_label: s.section }));
+      div.appendChild(choose);
+    }
     div.addEventListener('dragstart', (e) => {
+      if (!workspaceCanEdit()) { e.preventDefault(); return; }
       const firstMeeting = (s.meetings && s.meetings[0]) || {};
       e.dataTransfer.setData('text/plain', JSON.stringify({
         type: 'create',
+        course_code: s.course_code,
+        course_key: s.course_key,
+        course_number: s.course_number,
+        section_label: s.section,
         term_section_id: s.term_section_id,
         default_day: firstMeeting.day || '',
         default_start: firstMeeting.start_time || '',
@@ -1308,10 +1656,67 @@ function renderUnplacedList() {
     });
     list.appendChild(div);
   });
+  if (items.length > visibleLimit) {
+    const more = document.createElement('button');
+    more.type = 'button'; more.className = 'tw-btn';
+    more.textContent = IS_AR ? `عرض المزيد (${visibleLimit}/${items.length})` : `Show more (${visibleLimit}/${items.length})`;
+    more.addEventListener('click', () => { TW.unplacedVisibleLimit = visibleLimit + 100; renderUnplacedList(); });
+    list.appendChild(more);
+  }
+}
+
+/* Fixed English patterns are chosen as one section action. */
+async function chooseEnglishWorkspacePattern(payload) {
+  if (!workspaceCanEdit() || TW.englishPicker) return null;
+  const policy = globalThis.TimetableMeetingPolicy;
+  const placement = payload.type === 'move' ? TW.placements.find(row => row.id === payload.placement_id) : null;
+  const source = placement || payload;
+  if (!policy?.isEnglish(source)) return null;
+  const scenarioId = TW.scenarioId, boardId = TW.boardId;
+  TW.englishPicker = true;
+  try {
+    const bundle = placement ? TW.placements.filter(row => row.term_section_id === placement.term_section_id) : [];
+    if (bundle.some(row => row.is_locked)) { notify.warning(IS_AR ? 'افتح قفل الشعبة قبل تغيير النمط.' : 'Unlock the section before changing its pattern.'); return null; }
+    const choices = placement
+      ? await twFetch(`/ops/tw/placements/${placement.id}/slot-candidates/`)
+      : await twFetch(`/ops/tw/boards/${boardId}/planned-slot-candidates/?${new URLSearchParams({ course_code: source.course_code, course_key: source.course_key || source.course_code, section_label: source.section_label || 'S1' })}`);
+    if (!choices) return null;
+    const current = choices.section_policy?.current_pattern_id || policy.identify(bundle);
+    if (placement && !current) { notify.warning(IS_AR ? 'هذا الجدول المحفوظ لا يستخدم نمط الإنجليزية الجديد.' : 'This saved section does not use the new English pattern.'); return null; }
+    const selected = await policy.choose(source.course_code, { arabic: IS_AR, candidates: choices.candidates || [], currentPatternId: current });
+    if (!selected || TW.scenarioId !== scenarioId || TW.boardId !== boardId || !workspaceCanEdit()) return null;
+    if (selected.pattern_id === current) return null;
+    const token = beginWorkspaceOperation(placement ? 'switch-pattern' : 'create-pattern');
+    if (!token) return null;
+    try {
+      const path = placement ? `/ops/tw/placements/${placement.id}/switch-pattern/`
+        : `/ops/tw/placements/${payload.type === 'create' ? 'create' : 'create-planned'}/`;
+      const body = placement ? { pattern_id: selected.pattern_id } : {
+        board_id: boardId, term_section_id: payload.term_section_id, course_code: source.course_code,
+        course_key: source.course_key || source.course_code, course_name: source.course_name || source.course_code,
+        section_label: source.section_label, capacity: source.max_per_section || 40, pattern_id: selected.pattern_id,
+        meetings: selected.meetings.map(row => ({ ...row, room: payload.default_room || '' })),
+      };
+      const data = await twFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _workspaceToken: token });
+      if (!data || data.ok === false) return null;
+      const rows = data.placements || [data.placement].filter(Boolean);
+      if (placement) TW.undoStack.push({ type: 'pattern', placement_id: placement.id,
+        old_pattern_id: data.before_section_policy?.current_pattern_id || current, new_pattern_id: selected.pattern_id,
+        before_placements: policy.snapshot(data.before_placements || bundle), placements: policy.snapshot(rows) });
+      else TW.undoStack.push({ type: 'create', placement_id: data.placement.id, board_id: boardId,
+        term_section_id: data.placement.term_section_id, day: rows[0].day, start_time: rows[0].start_time,
+        end_time: rows[0].end_time, room: rows[0].room || '', meetings: policy.snapshot(rows) });
+      TW.redoStack = []; notifyInstructorClashBackstop(data);
+      await selectBoard(boardId); updateUndoRedoButtons();
+      notify.success(IS_AR ? 'تم حفظ نمط الشعبة كاملاً.' : 'Full section pattern saved.');
+      return data;
+    } finally { finishWorkspaceOperation(token); }
+  } finally { TW.englishPicker = false; }
 }
 
 /* ── Drag & Drop ── */
 function onDragOver(e) {
+  if (!workspaceCanEdit()) return;
   e.preventDefault();
   e.currentTarget.classList.add('drop-valid');
 }
@@ -1335,6 +1740,9 @@ function notifyInstructorClashBackstop(data) {
 
 async function onDrop(e) {
   e.preventDefault();
+  if (!workspaceCanEdit()) return;
+  const boardAtStart = TW.boardId;
+  const scenarioAtStart = TW.scenarioId;
   const cell = e.currentTarget;
   cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
 
@@ -1344,6 +1752,11 @@ async function onDrop(e) {
   const day = cell.dataset.day;
   const startTime = cell.dataset.start;
   const endTime = cell.dataset.end;
+  const source = payload.type === 'move' ? TW.placements.find(row => row.id === payload.placement_id) : payload;
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(source)) {
+    await chooseEnglishWorkspacePattern(payload);
+    return;
+  }
 
   if (payload.type === 'create_planned') {
     // From generated plan — need to find or create a TermSection first
@@ -1352,7 +1765,7 @@ async function onDrop(e) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        board_id: TW.boardId,
+        board_id: boardAtStart,
         course_code: payload.course_code,
         section_label: payload.section_label,
         day: day,
@@ -1363,7 +1776,7 @@ async function onDrop(e) {
     });
     if (!data) return;
     TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
-      board_id: TW.boardId, term_section_id: data.placement.term_section_id,
+      board_id: boardAtStart, term_section_id: data.placement.term_section_id,
       day: day, start_time: startTime, end_time: endTime, room: '' });
     TW.redoStack = [];
     const v = data.validation || {};
@@ -1378,7 +1791,7 @@ async function onDrop(e) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        board_id: TW.boardId,
+        board_id: boardAtStart,
         term_section_id: payload.term_section_id,
         day: day,
         start_time: startTime,
@@ -1388,7 +1801,7 @@ async function onDrop(e) {
     });
     if (!data) return;
     TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
-      board_id: TW.boardId, term_section_id: payload.term_section_id,
+      board_id: boardAtStart, term_section_id: payload.term_section_id,
       day: day, start_time: startTime, end_time: endTime, room: payload.default_room || '' });
     TW.redoStack = [];
     const v = data.validation || {};
@@ -1425,81 +1838,62 @@ async function onDrop(e) {
   }
 
   // Refresh board
+  if (TW.scenarioId !== scenarioAtStart) return;
   await selectBoard(TW.boardId);
   updateUndoRedoButtons();
 }
 
 /* ── Undo / Redo ── */
 function updateUndoRedoButtons() {
-  $('twUndo').disabled = TW.undoStack.length === 0;
-  $('twRedo').disabled = TW.redoStack.length === 0;
+  syncWorkspaceControls();
 }
 
-$('twUndo').addEventListener('click', async () => {
-  const action = TW.undoStack.pop();
-  if (!action) return;
-
-  if (action.type === 'create') {
-    // Undo create = remove the placement
-    await twFetch(`/ops/tw/placements/${action.placement_id}/remove/`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
-    });
-    TW.redoStack.push({ type: 'remove_undo', ...action });
-  } else if (action.type === 'move') {
-    // Undo move = move back to original position
-    await twFetch(`/ops/tw/placements/${action.placement_id}/move/`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ day: action.old_day, start_time: action.old_start, end_time: action.old_end }),
-    });
-    TW.redoStack.push({ type: 'move_undo', placement_id: action.placement_id,
-      old_day: action.new_day, old_start: action.new_start, old_end: action.new_end,
-      new_day: action.old_day, new_start: action.old_start, new_end: action.old_end });
-  } else if (action.type === 'remove') {
-    // Undo remove = re-create placement
-    const data = await twFetch('/ops/tw/placements/create/', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ board_id: action.board_id, term_section_id: action.term_section_id,
-        day: action.day, start_time: action.start_time, end_time: action.end_time, room: action.room || '' }),
-    });
-    if (data) TW.redoStack.push({ type: 'create_undo', placement_id: data.placement.id });
+/* History retains the original action in both stacks. Recreated rows receive
+ * their new ID without losing the board/section/time data for another cycle. */
+async function applyHistoryAction(action, undo, token) {
+  const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body), _workspaceToken: token });
+  if (action.type === 'pattern') {
+    return twFetch(`/ops/tw/placements/${action.placement_id}/switch-pattern/`, post({
+      pattern_id: undo ? action.old_pattern_id : action.new_pattern_id,
+      placements: undo ? action.before_placements : action.placements,
+    }));
   }
-
-  await selectBoard(TW.boardId);
-  updateUndoRedoButtons();
-});
-
-$('twRedo').addEventListener('click', async () => {
-  const action = TW.redoStack.pop();
-  if (!action) return;
-
-  if (action.type === 'remove_undo') {
-    // Redo the create = re-create
-    const data = await twFetch('/ops/tw/placements/create/', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ board_id: action.board_id, term_section_id: action.term_section_id,
-        day: action.day, start_time: action.start_time, end_time: action.end_time, room: action.room || '' }),
-    });
-    if (data) TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
-      board_id: action.board_id, term_section_id: action.term_section_id,
-      day: action.day, start_time: action.start_time, end_time: action.end_time, room: action.room });
-  } else if (action.type === 'move_undo') {
-    await twFetch(`/ops/tw/placements/${action.placement_id}/move/`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ day: action.new_day, start_time: action.new_start, end_time: action.new_end }),
-    });
-    TW.undoStack.push({ type: 'move', placement_id: action.placement_id,
-      old_day: action.old_day, old_start: action.old_start, old_end: action.old_end,
-      new_day: action.new_day, new_start: action.new_start, new_end: action.new_end });
-  } else if (action.type === 'create_undo') {
-    await twFetch(`/ops/tw/placements/${action.placement_id}/remove/`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
-    });
-    TW.undoStack.push({ type: 'remove', placement_id: action.placement_id });
+  if (action.type === 'move') {
+    const prefix = undo ? 'old' : 'new';
+    return twFetch(`/ops/tw/placements/${action.placement_id}/move/`, post({
+      day: action[`${prefix}_day`], start_time: action[`${prefix}_start`], end_time: action[`${prefix}_end`],
+    }));
   }
-
-  await selectBoard(TW.boardId);
-  updateUndoRedoButtons();
-});
+  if (!['create', 'remove'].includes(action.type)) return null;
+  const recreate = (action.type === 'create') !== undo;
+  return recreate
+    ? twFetch('/ops/tw/placements/create/', post({ board_id: action.board_id,
+      term_section_id: action.term_section_id, day: action.day, start_time: action.start_time,
+      end_time: action.end_time, room: action.room || '', ...(action.meetings ? { meetings: action.meetings } : {}) }))
+    : twFetch(`/ops/tw/placements/${action.placement_id}/remove/`, post({}));
+}
+async function runHistoryAction(undo) {
+  if (!workspaceCanEdit()) return;
+  const from = undo ? TW.undoStack : TW.redoStack;
+  const to = undo ? TW.redoStack : TW.undoStack;
+  const action = from.at(-1);
+  if (!action) return;
+  const token = beginWorkspaceOperation(undo ? 'undo' : 'redo');
+  if (!token) return;
+  try {
+    const data = await applyHistoryAction(action, undo, token);
+    if (!data || data.ok === false || TW.scenarioId !== token.scenarioId) return;
+    from.pop();
+    if (action.meetings && data.placements) globalThis.TimetableMeetingPolicy?.remapHistory([action, ...TW.undoStack, ...TW.redoStack], action.meetings, data.placements);
+    to.push({ ...action, placement_id: data.placement?.id || action.placement_id });
+    await selectBoard(TW.boardId);
+  } finally {
+    finishWorkspaceOperation(token);
+  }
+}
+$('twUndo').addEventListener('click', () => runHistoryAction(true));
+$('twRedo').addEventListener('click', () => runHistoryAction(false));
 
 /* ── Right Panel ── */
 function renderRightPanel(tab) {
@@ -1510,14 +1904,21 @@ function renderRightPanel(tab) {
     const iClashes = TW.conflicts.instructor_clashes || [];
     const rClashes = TW.conflicts.room_clashes || [];
     const xConflictsEarly = activeBoardCrossBoardClashes();
-    const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length;
+    const roomShortages = activeBoardRoomShortages();
+    const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length + roomShortages.length;
 
     if (total === 0) {
-      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${T.noIssues}</p></div>`;
+      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${T.noIssues}</p><small>${TW.quality?.rooms?.assessed ? '' : (IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.')}</small></div>`;
       return;
     }
 
     let html = '';
+    if (roomShortages.length) {
+      html += `<h4 class="fs-xs text-danger">${IS_AR ? 'اجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room'} (${roomShortages.length})</h4>`;
+      roomShortages.forEach(room => {
+          html += `<button type="button" class="tw-issue-row tw-btn" data-ids='${JSON.stringify(room.placement_ids || [])}'><span class="tw-issue-dot warning"></span><span>${esc(room.course_code || room.course_key || '')} · ${esc(room.rooms?.join(', ') || 'UNASSIGNED')}<small class="d-block text-t4">${esc((room.reasons || []).join(', '))} · ${IS_AR ? 'السعة المطلوبة' : 'Required capacity'}: ${esc(room.required_capacity ?? '—')}</small></span></button>`;
+      });
+    }
     if (overlaps.length) {
       html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.overlap} (${overlaps.length})</div>`;
       overlaps.forEach(o => {
@@ -1559,7 +1960,7 @@ function renderRightPanel(tab) {
           <span class="tw-issue-dot info"></span>
           <div>
             <div class="fw-semibold">${esc(c.section_a)} &harr; ${esc(c.section_b)}</div>
-            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب مشتركين' : 'shared students'} at the same time | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
+            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب يطلبون المقررين المتداخلين' : 'students requesting both overlapping courses'} | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
           </div>
         </div>`;
       });
@@ -1591,15 +1992,16 @@ function renderRightPanel(tab) {
     body.innerHTML = `
       <div class="tw-sel-field"><span class="label">Course</span><span class="value">${esc(p.course_code)}</span></div>
       <div class="tw-sel-field"><span class="label">Section</span><span class="value">${esc(p.section)}</span></div>
+      ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
       <div class="tw-sel-field"><span class="label">Day</span><span class="value">${esc(p.day)}</span></div>
       <div class="tw-sel-field"><span class="label">Time</span><span class="value">${esc(p.start_time)} - ${esc(p.end_time)}</span></div>
-      <div class="tw-sel-field"><span class="label">Room</span><span class="value">${esc(p.room || '-')}</span></div>
+      <div class="tw-sel-field"><span class="label">Room</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR, '-') || p.room || '-')}</span></div>
       <div class="tw-sel-field"><span class="label">Instructor</span><span class="value">${esc(instructor)}</span></div>
       <div class="tw-sel-field"><span class="label">Capacity</span><span class="value">${p.available_capacity || '-'}</span></div>
       <div class="tw-sel-field"><span class="label">Locked</span><span class="value">${p.is_locked ? 'Yes' : 'No'}</span></div>
       <div class="d-flex" style="margin-top:12px; gap:6px">
-        <button class="tw-btn" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
-        <button class="tw-btn text-danger" onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
+        <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
+        <button class="tw-btn text-danger" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
       </div>
     `;
   } else if (tab === 'capacity') {
@@ -1640,6 +2042,8 @@ function renderMriPanel(body) {
   const iClashes = TW.conflicts.instructor_clashes || [];
   const rClashes = TW.conflicts.room_clashes || [];
   const crossBoard = activeBoardCrossBoardClashes();
+  const roomShortages = activeBoardRoomShortages();
+  const roomsAssessed = Boolean(TW.quality?.rooms?.assessed);
   const impact = TW.conflicts.student_impact || {};
   const capacity = TW.capacityData || {};
   const capTotals = capacity.totals || {};
@@ -1654,13 +2058,14 @@ function renderMriPanel(body) {
     : 0;
   const studentDelta = Math.abs(students - avgBoardStudents);
   const critical = overlaps.length + iClashes.length;
-  const warnings = rClashes.length + crossBoard.length + deficitCourses.length;
+  const warnings = rClashes.length + crossBoard.length + deficitCourses.length + roomShortages.length;
   const affected = impact.affected_count || 0;
   const blocked = impact.blocked_count || 0;
   const pressure = Math.min(100, Math.round(
     overlaps.length * 28 +
     iClashes.length * 20 +
     rClashes.length * 12 +
+    roomShortages.length * 12 +
     crossBoard.length * 4 +
     deficitCourses.length * 8 +
     Math.min(25, Math.ceil(affected / 4)) +
@@ -1671,7 +2076,7 @@ function renderMriPanel(body) {
   const rows = [
     {
       key: 'student-flow',
-      label: 'Student flow',
+      label: 'Student flow (selected board)',
       value: affected,
       max: Math.max(1, students),
       tone: blocked > 0 ? 'critical' : affected > 0 ? 'watch' : 'stable',
@@ -1687,11 +2092,11 @@ function renderMriPanel(body) {
     },
     {
       key: 'cross-board-clash',
-      label: 'Cross-board clash',
+      label: 'Potential demand overlap',
       value: crossBoard.length,
       max: Math.max(1, TW.boards.length * 4),
       tone: crossBoard.length ? 'watch' : 'stable',
-      detail: `${crossBoard.length} verified shared-student clashes`,
+      detail: `${crossBoard.length} overlapping course-demand pairs; assigned seating is assessed separately`,
     },
     {
       key: 'capacity-layer',
@@ -1704,10 +2109,10 @@ function renderMriPanel(body) {
     {
       key: 'resource-layer',
       label: 'Room/instructor layer',
-      value: iClashes.length + rClashes.length,
+      value: iClashes.length + rClashes.length + roomShortages.length,
       max: Math.max(1, TW.placements.length),
-      tone: iClashes.length ? 'critical' : rClashes.length ? 'watch' : 'stable',
-      detail: `${iClashes.length} instructor, ${rClashes.length} room`,
+      tone: iClashes.length ? 'critical' : (rClashes.length || roomShortages.length || !roomsAssessed) ? 'watch' : 'stable',
+      detail: `${iClashes.length} instructor clashes, ${rClashes.length} room double-bookings; ${roomsAssessed ? roomShortages.length + ' meetings lack a suitable room' : 'room suitability unknown'}`,
     },
     {
       key: 'term-layer',
@@ -1720,6 +2125,9 @@ function renderMriPanel(body) {
   ];
 
   const topPairs = [
+    ...roomShortages.map(room => ({ kind: 'Room suitability', tone: 'watch', ids: room.placement_ids,
+      title: room.course_code || room.course_key || room.room || 'UNASSIGNED',
+      detail: `${(room.reasons || []).join(', ')}; required capacity ${room.required_capacity ?? '—'}` })),
     ...overlaps.map(o => ({
       kind: 'Same-board time clash',
       tone: 'critical',
@@ -1728,12 +2136,12 @@ function renderMriPanel(body) {
       detail: o.detail || '',
     })),
     ...crossBoard.slice(0, 6).map(c => ({
-      kind: 'Cross-board clash',
+      kind: 'Potential demand overlap',
       tone: 'watch',
       ids: c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean),
       targetBoard: c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id,
       title: `${c.section_a} <-> ${c.section_b}`,
-      detail: `${c.overlap_count} shared students at the same time | ${c.board_a_label} <-> ${c.board_b_label}`,
+      detail: `${c.overlap_count} students requesting both courses | ${c.board_a_label} <-> ${c.board_b_label}`,
     })),
     ...deficitCourses.slice(0, 4).map(c => ({
       kind: 'Capacity',
@@ -1792,7 +2200,7 @@ function renderMriPanel(body) {
         </button>
       `).join('') : `<div class="tw-mri-empty">No active hot spots in this board.</div>`}
 
-      <div class="tw-mri-section-title">Student Impact Slice</div>
+      <div class="tw-mri-section-title">Student Impact Slice (selected board)</div>
       ${studentDetails.length ? studentDetails.map(d => `
         <div class="tw-mri-students ${d.blocked ? 'critical' : 'stable'}">
           <div><strong>${esc((d.courses || []).join(' / '))}</strong><span>${d.affected} affected</span></div>
@@ -1845,6 +2253,7 @@ function wireMriInteractions(body) {
 }
 
 async function toggleLock(pid) {
+  if (!workspaceCanEdit()) return;
   await twFetch(`/ops/tw/placements/${pid}/lock/`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
   });
@@ -1852,17 +2261,23 @@ async function toggleLock(pid) {
 }
 
 async function removePlacement(pid) {
+  if (!workspaceCanEdit()) return;
+  const scenarioAtStart = TW.scenarioId;
+  const boardAtStart = TW.boardId;
   const ok = await dlg.confirm({ title: IS_AR ? 'إزالة الشعبة؟' : 'Remove placement?', kind: 'danger' });
   if (!ok) return;
+  if (TW.scenarioId !== scenarioAtStart || TW.boardId !== boardAtStart || !workspaceCanEdit()) return;
   // Capture placement data before removing for undo
   const p = TW.placements.find(x => x.id === pid);
-  await twFetch(`/ops/tw/placements/${pid}/remove/`, {
+  const data = await twFetch(`/ops/tw/placements/${pid}/remove/`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
   });
+  if (!data) return;
   if (p) {
     TW.undoStack.push({ type: 'remove', placement_id: pid,
-      board_id: TW.boardId, term_section_id: p.term_section_id,
+      board_id: boardAtStart, term_section_id: p.term_section_id,
       day: p.day, start_time: p.start_time, end_time: p.end_time, room: p.room || '' });
+    if (data.removed_placements?.length > 1) TW.undoStack.at(-1).meetings = TimetableMeetingPolicy.snapshot(data.removed_placements);
     TW.redoStack = [];
   }
   TW.selectedPlacementId = null;
@@ -1887,6 +2302,50 @@ function updateQuickStats() {
   $('qsPlaced').textContent = TW.placements.length;
   const critical = (TW.conflicts.summary || {}).critical || 0;
   $('qsConflicts').textContent = critical;
+  renderWorkspaceQuality();
+}
+
+let qualityLoadRevision = 0;
+async function refreshWorkspaceQuality() {
+  const scenarioId = TW.scenarioId;
+  const revision = ++qualityLoadRevision;
+  if (!scenarioId) { TW.quality = null; renderWorkspaceQuality(); return; }
+  if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
+  const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
+  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) return;
+  TW.quality = data?.ok ? data : null;
+  renderWorkspaceQuality();
+  const active = document.querySelector('.tw-right .tw-panel-tab.active');
+  if (active) renderRightPanel(active.dataset.tab);
+}
+function renderWorkspaceQuality() {
+  const quality = TW.quality;
+  const put = (id, value, danger = false) => {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = Number.isFinite(value) ? value.toLocaleString() : '—';
+    el.classList.toggle('danger', Boolean(danger));
+  };
+  const issues = TW.conflicts.summary?.critical;
+  put('twQualityPlaced', TW.boardId ? TW.placements.length : null);
+  put('twQualityConflicts', TW.boardId ? issues : null, issues > 0);
+  put('twQualityInstructorDays', quality?.instructor?.assessed ? quality.instructor.working_days : null);
+  put('twQualityInstructorIdle', quality?.instructor?.assessed ? quality.instructor.idle_minutes : null);
+  put('twQualityUnplaced', quality?.soft_seats?.assessed ? quality.soft_seats.unresolved : null, quality?.soft_seats?.unresolved > 0);
+  put('twQualityRooms', quality?.rooms?.assessed ? quality.rooms.shortages : null, quality?.rooms?.shortages > 0);
+  const status = $('twQualityStatus');
+  if (!status) return;
+  if (!TW.scenarioId) { status.textContent = IS_AR ? 'اختر سيناريو لعرض جودة الجدول.' : 'Select a scenario to view timetable quality.'; return; }
+  if (!quality) { status.textContent = IS_AR ? 'التقييم غير متاح؛ — تعني غير معروف.' : 'Assessment unavailable; — means unknown.'; return; }
+  const clashes = quality.assigned_student_clashes;
+  const seating = clashes?.assessed
+    ? `${IS_AR ? 'تعارضات التعيين المُقيّم' : 'Evaluated seating clashes'}: ${clashes.count}.`
+    : (IS_AR ? 'تعيين الطلاب غير مُقيّم؛ عدد التعارضات غير معروف.' : 'Student seating not assessed; clash count unknown.');
+  status.textContent = (IS_AR ? 'المقاييس للسيناريو كاملاً؛ الاجتماعات والمشاكل الحرجة للوحة الحالية. ' : 'Scenario totals; meetings and critical issues refer to the selected board. ') + seating;
+}
+function activeBoardRoomShortages() {
+  const ids = new Set(TW.placements.map(placement => String(placement.id)));
+  return (TW.quality?.rooms?.details || []).filter(detail => (detail.placement_ids || []).some(id => ids.has(String(id))));
 }
 
 /* esc() now in shared-utils.js */
@@ -1894,7 +2353,10 @@ function updateQuickStats() {
 /* ── Capacity ── */
 async function loadCapacity() {
   if (!TW.boardId) return;
+  const boardId = TW.boardId;
+  const scenarioId = TW.scenarioId;
   const data = await twFetch(`/ops/tw/boards/${TW.boardId}/capacity/`);
+  if (TW.boardId !== boardId || TW.scenarioId !== scenarioId) return;
   if (data) {
     TW.capacityData = data;
     // If capacity tab is active, re-render
@@ -2003,7 +2465,7 @@ function openSectionDrawer(placementId) {
 
   const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '-';
   const meetingsHtml = (p.meetings || []).map(m =>
-    `<div class="fs-12" style="padding:2px 0">${esc(m.day)} ${esc(m.start_time)}-${esc(m.end_time)} | ${esc(m.room || '-')} | ${esc(m.instructor || '-')}</div>`
+    `<div class="fs-12" style="padding:2px 0">${esc(m.day)} ${esc(m.start_time)}-${esc(m.end_time)} | ${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '-')} | ${esc(m.instructor || '-')}</div>`
   ).join('');
 
   const drawer = document.createElement('div');
@@ -2017,17 +2479,18 @@ function openSectionDrawer(placementId) {
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name)}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section)}</span></div>
+    ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} - ${esc(p.end_time)}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(p.room || '-')}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR, '-') || p.room || '-')}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '-'}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value">${p.registered_count || '-'}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
     <div style="margin-top:12px"><strong class="fs-md text-t3">${IS_AR ? 'جميع اللقاءات' : 'All Meetings'}</strong>${meetingsHtml || '<div class="fs-12 text-t4">-</div>'}</div>
     <div class="d-flex" style="margin-top:16px; gap:8px">
-      <button class="tw-btn" onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
-      <button class="tw-btn text-danger" onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
+      <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
+      <button class="tw-btn text-danger" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
     </div>
   `;
   document.body.appendChild(drawer);
@@ -2234,6 +2697,9 @@ $('twMapElectives').addEventListener('click', async () => {
 /* ── V2 Optimiser ── */
 async function runOptimiseV2(mode = 'current') {
   if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
+  if (!workspaceCanEdit()) { notify.warning(IS_AR ? 'السيناريو غير متاح للتعديل حاليا.' : 'This scenario cannot be edited right now.'); return; }
+  const token = beginWorkspaceOperation('optimise');
+  if (!token) return;
 
   // Both modes now poll for minutes, during which the registrar can switch
   // scenario. Capture the target up front and refuse to apply results to a
@@ -2260,7 +2726,7 @@ async function runOptimiseV2(mode = 'current') {
   payload.cpsat_time_limit = 60;
 
   try {
-    const data = await runOptimiseRequest(mode, payload, btn, modeLabel);
+    const data = await runOptimiseRequest(mode, payload, btn, modeLabel, token);
 
     if (TW.scenarioId !== scenarioAtStart) {
       notify.warning(IS_AR
@@ -2270,6 +2736,10 @@ async function runOptimiseV2(mode = 'current') {
     }
 
     if (!data || !data.ok) {
+      if (data?.error?.code === 'STATUS_UNCONFIRMED') {
+        notify.warning(IS_AR ? 'حالة التحسين غير مؤكدة؛ تستمر متابعة المخطط.' : 'Optimisation status unconfirmed; the planner card continues monitoring.');
+        return;
+      }
       // Surface the real error code + message from the backend envelope
       // instead of the generic "failed" so the registrar can tell which
       // failure class they hit. twFetch() already toasts on HTTP non-2xx
@@ -2333,6 +2803,10 @@ async function runOptimiseV2(mode = 'current') {
 
     // Build results dialog
     let body = `<div style="font-size:.82rem;line-height:1.6">`;
+    body += renderInstructorOutcome(o) + renderSecondaryRecoveryOutcome(o);
+    if (o.safety_blocked) {
+      body += `<div style="padding:10px;margin-bottom:10px;color:var(--danger)">${IS_AR ? 'لم تُطبق النتيجة: أعيد الجدول لحماية التسجيل والقيود وأيام المدرسين.' : 'Result not applied: the board was restored to protect enrolment, hard constraints and instructor days.'}</div>`;
+    }
 
     // Summary cards
     body += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">`;
@@ -2413,14 +2887,14 @@ async function runOptimiseV2(mode = 'current') {
         .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
         .map(([name, value]) => `<span style="padding:2px 8px;border-radius:999px;background:rgba(80,104,240,.08);color:var(--royal);font-size:11px">${name.replace(/_/g, ' ')}: ${Number(value || 0).toLocaleString()}</span>`)
         .join('');
-      body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps" style="color:var(--royal)">${IS_AR ? 'Ø¬ÙˆØ¯Ø© Ø§Ù„Ø¬Ø¯ÙˆÙ„' : 'Timetable quality'}</span>`;
+      body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps" style="color:var(--royal)">${IS_AR ? 'جودة الجدول' : 'Timetable quality'}</span>`;
       body += `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span style="padding:2px 8px;border-radius:999px;background:rgba(10,142,110,.08);color:var(--teal);font-size:11px">Penalty: ${Number(quality.penalty || 0).toLocaleString()}</span>${rows}</div></div>`;
     }
 
     if (o.mode === 'current' && o.baseline_score) {
       const bs = decodeScore(o.baseline_score);
       const fs = decodeScore(o.final_score);
-      const gotBetter = fs.unresolved < bs.unresolved || fs.clashes < bs.clashes || fs.gap < bs.gap;
+      const gotBetter = !o.safety_blocked && (instructorScheduleImproved(o) || secondaryRecoveryImproved(o) || fs.unresolved < bs.unresolved || fs.clashes < bs.clashes || fs.gap < bs.gap);
       if (gotBetter) {
         body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.1); border:1px solid rgba(10,142,110,.2)">`;
         body += `<div class="fw-bold text-teal" style="margin-bottom:4px">&#x2714; ${IS_AR ? 'تم التحسين' : 'Board Improved'}</div>`;
@@ -2430,7 +2904,7 @@ async function runOptimiseV2(mode = 'current') {
         body += `</div>`;
       } else {
         body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
-        body += `<span class="fw-semibold" style="color:var(--royal)">&#x2501; ${IS_AR ? 'الجدول الحالي بالفعل في أفضل حالة' : 'Current board is already optimal'}</span>`;
+        body += `<span class="fw-semibold" style="color:var(--royal)">&#x2501; ${IS_AR ? 'لم يتم العثور على تحسين تلقائي' : 'No automatic improvement was found'}</span>`;
         body += `</div>`;
       }
     }
@@ -2442,12 +2916,12 @@ async function runOptimiseV2(mode = 'current') {
       const improved = before.unresolved !== after.unresolved || before.gap !== after.gap;
       if (improved) {
         body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.08)">`;
-        body += `<span class="text-teal fw-semibold">&#x2714; ${IS_AR ? 'تحسين محلي' : 'Local search improved'}:</span> `;
+        body += `<span class="text-teal fw-semibold">${IS_AR ? 'مؤشرات الطلاب أثناء التحسين' : 'Student metrics during optimisation'}:</span> `;
         body += `unresolved ${before.unresolved} → ${after.unresolved}, gaps ${before.gap.toLocaleString()} → ${after.gap.toLocaleString()}`;
         body += `</div>`;
       } else {
         body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
-        body += `<span class="text-royal">&#x2501; ${IS_AR ? 'لم يتحسن' : 'Local search: already optimal'}</span>`;
+        body += `<span class="text-royal">&#x2501; ${IS_AR ? 'مؤشرات الطلاب لم تتغير أثناء التحسين' : 'Student metrics unchanged during optimisation'}</span>`;
         body += `</div>`;
       }
     }
@@ -2481,7 +2955,7 @@ async function runOptimiseV2(mode = 'current') {
     await dlg.confirm({
       title: dlgTitle,
       body,
-      confirmText: IS_AR ? 'تطبيق' : 'Apply & Refresh',
+      confirmText: IS_AR ? 'إغلاق' : 'Close',
       kind: 'info',
     });
 
@@ -2490,7 +2964,8 @@ async function runOptimiseV2(mode = 'current') {
     const modeMsg = mode === 'full'
       ? `Rebuilt: ${o.best_candidate_id.replace(/_\d+$/, '')} won`
       : 'Optimised current board';
-    notify.success(IS_AR ? 'تم التحسين والتطبيق' : `${modeMsg} (${o.elapsed_seconds}s)`);
+    if (o.safety_blocked) notify.warning(IS_AR ? 'لم تُطبق النتيجة' : 'Result not applied');
+    else notify.success(IS_AR ? 'اكتمل التحسين' : `${modeMsg} (${o.elapsed_seconds}s)`);
 
   } catch (e) {
     notify.error(e.message || String(e));
@@ -2504,7 +2979,7 @@ async function runOptimiseV2(mode = 'current') {
     // Leaving the stale grid up means the next drag targets a placement id that
     // no longer exists. The undo/redo stacks hold those same dead ids, so they
     // are cleared too: an undo across an optimise boundary was never coherent.
-    if (TW.scenarioId === scenarioAtStart) {
+    if (TW.scenarioId === scenarioAtStart && !ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) {
       TW.undoStack = [];
       TW.redoStack = [];
       updateUndoRedoButtons();
@@ -2520,8 +2995,7 @@ async function runOptimiseV2(mode = 'current') {
     // click dispatches a second ~7-minute run. Previously the refresh sat inside
     // `try` with the button still disabled, so moving it here reopened that
     // window — this closes it again.
-    btn.disabled = false;
-    menuBtn.disabled = false;
+    finishWorkspaceOperation(token);
   }
 }
 

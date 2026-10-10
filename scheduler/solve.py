@@ -43,6 +43,7 @@ from itertools import combinations
 from scheduler.domain import DeliveryMode, Snapshot
 from scheduler.domain.board import Board, Placement
 from scheduler.domain.calendar import Day, TimeWindow
+from scheduler.meeting_patterns import legal_cells, occupancy_windows, pattern_cells, teaching_days
 
 #: Expected-clash weights are fractional; CP-SAT is integral. Scale, then round.
 _SCALE = 1000
@@ -97,6 +98,9 @@ class SolveResult:
     #: Never report this as a clash count; it exists so a caller (or a test) can
     #: tell which terms were actually in the objective at all.
     objective_value: float = 0.0
+    #: Actual capacity-aware assignment of the selected finished board. None
+    #: means confirmation was not requested, rather than zero student harm.
+    seating_confirmation: dict | None = None
 
     def summary(self) -> dict:
         return {
@@ -105,6 +109,7 @@ class SolveResult:
             "expected_clashes": round(self.expected_clashes, 1),
             "wall_time_seconds": round(self.wall_time_seconds, 2),
             "unplaced": list(self.unplaced),
+            "student_seating": self.seating_confirmation,
             **self.board.summary(),
         }
 
@@ -169,33 +174,17 @@ def solve(
         for requirement in offering.requirements:
             for _ in range(requirement.count_per_week):
                 index += 1
-                legal = [
-                    (s.day, s.window)
-                    for s in snapshot.grid.day_windows_for(
-                        requirement.duration, requirement.delivery
-                    )
-                    # A requirement may be confined to a SUBSET of its family's
-                    # starts (D19). It never adds one: the grid remains the sole
-                    # authority on what times exist.
-                    if not requirement.allowed_starts
-                    or s.window.start in requirement.allowed_starts
-                ]
+                legal = legal_cells(snapshot, offering, requirement, index)
                 meetings.append((section.id, index, requirement, offering))
                 cells[(section.id, index)] = legal
 
-    # ── D19: sections whose hours are given, not chosen ───────────────────
-    #
-    # ENG101/ENG102 occupy the full morning every day, every section in the same
-    # hours. Five rules below assume the solver is CHOOSING an hour, and each is
-    # suspended for these sections at the point it is imposed, with the reason
-    # stated there. They are suspensions of rules about choice, not licence to
-    # break anything physical: rooms (H9), instructor clash (H7) and student
-    # clash all still bind, because those are about the world rather than about
-    # our preferences.
-    fixed_block_sections = {
+    # Institutional patterns choose a complete week per section. Their scoped
+    # alternatives supersede ordinary sibling timing preferences; physical
+    # instructor clashes, daily caps and student overlaps still apply.
+    pattern_sections = {
         section.id
         for section in snapshot.sections
-        if offerings[section.offering_id].occupies_fixed_block
+        if offerings[section.offering_id].meeting_policy is not None
     }
 
     model = cp_model.CpModel()
@@ -208,6 +197,20 @@ def solve(
             options.append(var)
         if options:
             model.add_exactly_one(options)
+
+    # One bundle choice PER SECTION, linking all four days. Independent daily
+    # choices would permit mixed AM/PM weeks, which the institution forbids.
+    for section in snapshot.sections:
+        policy = offerings[section.offering_id].meeting_policy
+        if policy is None:
+            continue
+        choices = [
+            model.new_bool_var(f"pattern_{section.id}_{p.pattern_id}") for p in policy.patterns
+        ]
+        model.add_exactly_one(choices)
+        for pattern, chosen in zip(policy.patterns, choices, strict=True):
+            for index, (day, window) in enumerate(pattern_cells(pattern), start=1):
+                model.add(x[(section.id, index, day, window)] == 1).only_enforce_if(chosen)
 
     # ── LNS support: pin everything except a chosen neighbourhood ─────────
     # Destroy/repair works by fixing most of an incumbent and re-solving a small
@@ -222,7 +225,9 @@ def solve(
         }
         for (sid, idx), (day, window) in pinned.items():
             var = x.get((sid, idx, day, window))
-            if var is not None:
+            if var is None:
+                model.add(False)
+            else:
                 model.add(var == 1)
 
     # ── warm start: seed the search with a known feasible board ───────────
@@ -238,22 +243,10 @@ def solve(
                 model.add_hint(var, 1)
 
     # ── H2: at most one meeting per section per day ───────────────────────
-    #
-    # EXEMPT for D19 sections: meeting twice in one morning is the entire point
-    # of an intensive language course. They get the weaker rule that is actually
-    # physical — no two meetings of one section in the SAME cell — which, since
-    # their allowed starts are mutually disjoint, is enough to keep a section
-    # from being in two places at once.
     per_section_day: dict[tuple[str, Day], list] = {}
-    per_section_cell: dict[tuple[str, Day, int], list] = {}
-    for (section_id, _index, day, window), var in x.items():
-        if section_id in fixed_block_sections:
-            per_section_cell.setdefault((section_id, day, window.start), []).append(var)
-        else:
-            per_section_day.setdefault((section_id, day), []).append(var)
+    for (section_id, _index, day, _window), var in x.items():
+        per_section_day.setdefault((section_id, day), []).append(var)
     for vars_ in per_section_day.values():
-        model.add_at_most_one(vars_)
-    for vars_ in per_section_cell.values():
         model.add_at_most_one(vars_)
 
     # ── symmetry breaking between interchangeable sibling sections ────────
@@ -291,10 +284,9 @@ def solve(
         }
         interchangeable: list[list[str]] = []
         for siblings in sections_by_offering.values():
-            # EXEMPT for D19: their siblings occupy IDENTICAL cells by design, so
-            # ordering them by the cell of their first meeting demands a strict
-            # increase that no feasible board can supply.
-            if any(sec.id in fixed_block_sections for sec in siblings):
+            # Multiple siblings may legitimately choose the same complete
+            # pattern; strict ordinary sibling ordering would prohibit that.
+            if any(sec.id in pattern_sections for sec in siblings):
                 continue
             by_owner: dict[object, list[str]] = {}
             for section in siblings:
@@ -346,12 +338,9 @@ def solve(
             siblings = sorted(s.id for s in sections_by_offering[offering_id])
             if len(siblings) < 2:
                 continue
-            if offerings[offering_id].occupies_fixed_block:
-                # D19: every section occupies every cell of the block, so which
-                # cell holds "meeting #3" of S1 versus of S2 is an artefact of
-                # the solver's own numbering — the board is identical either
-                # way. Left in, this spends hundreds of booleans and a matching
-                # per index steering a decision that changes nothing.
+            if offerings[offering_id].meeting_policy is not None:
+                # Complete institutional patterns provide the whole weekly
+                # schedule; ordinary sibling adjacency cannot redefine it.
                 continue
             # Scoped to this offering: sections belong to exactly one course, so
             # a shared dict would only ever be re-scanned and filtered.
@@ -535,10 +524,9 @@ def solve(
             if offerings[section.offering_id].tier in exact_block_tiers
             and not offerings[section.offering_id].is_fully_online
         }
-        # EXEMPT for D19: a section that fills every morning cell uses the whole
-        # block by design, so a "stay within one slot of your usual hour"
-        # ceiling is both meaningless and unsatisfiable for it.
-        blocked_sections |= fixed_block_sections
+        # Complete bundles already guarantee their own time consistency and
+        # have no ranks in the ordinary grid's timing families.
+        blocked_sections |= pattern_sections
         for (section_id, duration, delivery), indexes in sorted(
             by_family.items(), key=lambda kv: (kv[0][0], kv[0][1], str(kv[0][2]))
         ):
@@ -645,11 +633,9 @@ def solve(
             offering = offerings[offering_id]
             if offering.tier not in exact_block_tiers or offering.is_fully_online:
                 continue
-            # EXEMPT for D19. The block rule gives a PAIR of sections a pair of
-            # slots to share and alternate between; these sections each occupy
-            # every slot of their block, which is a different arrangement of the
-            # same idea and already stricter than anything D17 would impose.
-            if offering.occupies_fixed_block:
+            # An institutional pattern applies to each section independently;
+            # ordinary alternating sibling pairs cannot redefine its week.
+            if offering.meeting_policy is not None:
                 continue
             siblings = sorted(sections_by_offering[offering_id], key=lambda s: s.index)
             # Pairs by section order — S1+S2, S3+S4, leftover last. Structural
@@ -676,7 +662,7 @@ def solve(
                     # lone section, two for a pair.
                     model.add(sum(uses.values()) == len(ids))
 
-                    for day in snapshot.grid.days():
+                    for day in teaching_days(snapshot):
                         here = {
                             start: [
                                 var
@@ -713,7 +699,7 @@ def solve(
                             model.add(runs == 0)
 
     # ── occupancy atoms, per delivery family ──────────────────────────────
-    all_windows = [s.window for s in snapshot.grid.slots]
+    all_windows = occupancy_windows(snapshot)
     atoms = _atoms(all_windows)
 
     def covering(day: Day, window: TimeWindow) -> list[tuple[Day, int, int]]:
@@ -752,11 +738,9 @@ def solve(
     # groups here become unbuildable at any budget. `same_offering_penalty`
     # exists so that trade can be measured rather than argued about.
     for siblings in sections_by_offering.values():
-        # EXEMPT for D19: the owner's rule IS that every section sits at the same
-        # time. H10 buys student choice between sections; a course that owns the
-        # whole morning offers no choice of hour to begin with, and forbidding
-        # the overlap would make it unschedulable rather than more flexible.
-        if any(sec.id in fixed_block_sections for sec in siblings):
+        # Institutional courses may have parallel sections in either complete
+        # bundle. H7 still forbids one instructor teaching overlapping sections.
+        if any(sec.id in pattern_sections for sec in siblings):
             continue
         for sa, sb in combinations(sorted(s.id for s in siblings), 2):
             for day, start, end in {(k[1], k[2], k[3]) for k in busy if k[0] in (sa, sb)}:
@@ -913,7 +897,7 @@ def solve(
                 b = busy.get((sb, day, start, end))
                 if a is not None and b is not None:
                     model.add(a + b <= 1)
-        for day in snapshot.grid.days():
+        for day in teaching_days(snapshot):
             same_day = [
                 var for (sid, _i, d, _w), var in x.items() if sid in section_ids and d is day
             ]
@@ -943,7 +927,7 @@ def solve(
             by_instructor_sections.setdefault(section.instructor_id, []).append(section.id)
 
     for instructor_id, section_ids in sorted(by_instructor_sections.items()):
-        for day in snapshot.grid.days():
+        for day in teaching_days(snapshot):
             # Campus presence only. `works` is a commute proxy and `span` is
             # time spent waiting AT the university, and an online session is
             # neither — teaching it from home does not turn a free day into a
@@ -1337,10 +1321,8 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
         for _day, items in by_day.items():
             span = max(i.window.end for i in items) - min(i.window.start for i in items)
             idle += span - sum(i.window.duration for i in items)
-        # DAYS the biggest section needs, not its meeting count: a fixed-block
-        # section (D19) meets twice a morning, so counting meetings gave a
-        # "proven floor" of 10 days in a 5-day week. `section_min_days` is the
-        # single definition, shared with `instructors.py`.
+        # Derive each section's mandatory day count from its full compiled
+        # requirements or institutional pattern, shared with instructor intake.
         largest = max(
             (
                 section_min_days(offerings[s.offering_id])
@@ -1601,7 +1583,7 @@ def plan(
     remaining = max(1.0, time_limit_seconds - first.wall_time_seconds)
 
     per_instructor = _days_by_instructor(snapshot, first.board)
-    if not per_instructor:  # no instructor data — nothing to protect, nothing to gain
+    if not any(per_instructor.values()):  # no campus presence to improve
         return first
     budget = sum(per_instructor.values())
 
@@ -1781,11 +1763,18 @@ def unroomed_count(snapshot: Snapshot, board: Board) -> int:
 
 
 def _days_by_instructor(snapshot: Snapshot, board: Board) -> dict[int, int]:
-    """How many distinct days each instructor works on this board."""
+    """Distinct campus days, matching the solver and instructor quality report.
+
+    Online sessions still occupy real time for clash constraints but do not
+    require a commute. Include online-only instructors at zero campus days so
+    coverage of the portfolio's instructor vector does not change by seed.
+    """
     seen: dict[int, set] = {}
     for p in board.placements:
         if p.instructor_id is not None:
-            seen.setdefault(p.instructor_id, set()).add(p.day)
+            days = seen.setdefault(p.instructor_id, set())
+            if p.delivery is DeliveryMode.IN_PERSON:
+                days.add(p.day)
     return {instructor_id: len(days) for instructor_id, days in seen.items()}
 
 
@@ -1819,7 +1808,27 @@ def astray_count(drift: dict, ceiling: int | None) -> int:
     return sum(count for spread, count in spreads.items() if spread > ceiling)
 
 
-def choose_run(runs: list[dict], *, idle_band: float = 0.10) -> dict:
+def _portfolio_finalists(runs: list[dict], idle_band: float) -> list[dict]:
+    if not runs:
+        raise ValueError("cannot choose from an empty portfolio")
+    if idle_band < 0:
+        raise ValueError("idle_band must be nonnegative")
+    contenders = list(runs)
+    for rank in (
+        lambda r: r.get("violations", 0),
+        lambda r: r.get("unplaced", 0),
+        lambda r: sorted(r["days"], reverse=True),
+        lambda r: r["unroomed"],
+        lambda r: r["astray"],
+    ):
+        best = min(rank(r) for r in contenders)
+        contenders = [r for r in contenders if rank(r) == best]
+    best_idle = min(r["metrics"]["idle_minutes"] for r in contenders)
+    cutoff = best_idle * (1.0 + idle_band) + 1e-9
+    return [r for r in contenders if r["metrics"]["idle_minutes"] <= cutoff]
+
+
+def choose_run(runs: list[dict], *, idle_band: float = 0.0) -> dict:
     """Pick one board out of several, by a stated order of preference.
 
     Separated from the search so the policy can be read, argued with and tested
@@ -1827,9 +1836,11 @@ def choose_run(runs: list[dict], *, idle_band: float = 0.10) -> dict:
     Each run is a dict of already-measured facts: ``days`` (per-instructor
     counts), ``unroomed``, ``astray``, ``metrics['idle_minutes']``, ``clashes``.
 
-    1. **Never lengthen anyone's week.** Compared per instructor rather than on
-       the total, so a day moved from one person to another is not mistaken for
-       neutral.
+    Incomplete or independently invalid boards never outrank complete valid
+    ones simply because their missing meetings improve every quality metric.
+
+    1. **Shortest instructor weeks.** Compared by sorted instructor day counts,
+       preserving the existing minimax fairness policy rather than by total.
     2. **Then rooms**, because a class with nowhere to meet cannot be taught at
        all — without this the selector would strand five classes to save a
        minute of waiting.
@@ -1839,24 +1850,27 @@ def choose_run(runs: list[dict], *, idle_band: float = 0.10) -> dict:
        under a time limit, so one seed can return having kept the rule and
        another having abandoned it. Ranking on idle minutes alone could then
        prefer the one that gave the rule up.
-    4. **Then the shortest total waiting**, the owner's stated priority — but
-       treating idle times within ``idle_band`` of the best as equivalent and
-       breaking that tie on student clashes. Without the band a board saving one
-       minute of waiting would beat one saving thirty clashes.
+    4. **Then the shortest total waiting**, the owner's stated priority,
+       with no implicit tolerance by default. Callers may explicitly request an
+       ``idle_band``; otherwise student quality only breaks a true gap tie.
+    5. **Actual capacity-aware student assignment**, when confirmation found a
+       solution: unseated demands, then actual clashes. Unknown confirmation is
+       never treated as zero harm. The cheap clash proxy is the final tie-break.
     """
-    contenders = list(runs)
-    for rank in (
-        lambda r: sorted(r["days"], reverse=True),
-        lambda r: r["unroomed"],
-        lambda r: r["astray"],
-    ):
-        best = min(rank(r) for r in contenders)
-        contenders = [r for r in contenders if rank(r) == best]
 
-    best_idle = min(r["metrics"]["idle_minutes"] for r in contenders)
-    cutoff = best_idle * (1.0 + idle_band) + 1e-9
-    within = [r for r in contenders if r["metrics"]["idle_minutes"] <= cutoff] or contenders
-    return min(within, key=lambda r: (r["clashes"], r["metrics"]["idle_minutes"]))
+    def student_rank(run):
+        seating = run.get("seating") or {}
+        known = seating.get("solution_found", False)
+        return (
+            0 if known else 1,
+            seating["unseated_demands"] if known else math.inf,
+            seating["total_clashes"] if known else math.inf,
+            seating["students_with_a_clash"] if known else math.inf,
+            run["clashes"],
+            run["metrics"]["idle_minutes"],
+        )
+
+    return min(_portfolio_finalists(runs, idle_band), key=student_rank)
 
 
 def plan_portfolio(
@@ -1864,7 +1878,8 @@ def plan_portfolio(
     *,
     seeds: tuple[int, ...] = (1, 2, 3),
     time_limit_seconds: float = 120.0,
-    idle_band: float = 0.10,
+    idle_band: float = 0.0,
+    confirmation_seconds: float = 20.0,
     **kwargs,
 ) -> SolveResult:
     """Run the planner from several starting points and keep the best board.
@@ -1881,27 +1896,73 @@ def plan_portfolio(
     `choose_run` — separate from the search, so it can be read and tested
     without spending minutes of solver time to produce two boards to compare.
     """
+    from scheduler.rooms import assign_rooms_exact
+    from scheduler.seating import seat_students
+    from scheduler.validate import validate
+
+    if not seeds:
+        raise ValueError("portfolio requires at least one seed")
+    if confirmation_seconds < 0:
+        raise ValueError("confirmation_seconds must be nonnegative")
+    started = time.perf_counter()
     runs: list[dict] = []
+    attempted: list[SolveResult] = []
     for seed in seeds:
         result = plan(snapshot, time_limit_seconds=time_limit_seconds, seed=seed, **kwargs)
+        attempted.append(result)
         if not result.board.placements:
             continue
+        # Keep the roomed board we measured, rather than re-running a bounded
+        # room assignment after selection and potentially reporting another one.
+        result.board = assign_rooms_exact(snapshot, result.board, time_limit_seconds=5.0)
         drift = time_of_day_drift(snapshot, result.board)
         runs.append(
             {
                 "result": result,
                 "metrics": instructor_metrics(snapshot, result.board),
                 "clashes": expected_clashes(snapshot, result.board),
-                "unroomed": unroomed_count(snapshot, result.board),
+                "unroomed": len(result.board.unroomed),
+                "violations": validate(snapshot, result.board).violation_count,
+                "unplaced": len(result.unplaced),
                 "astray": astray_count(drift, kwargs.get("max_time_of_day_slots", 1)),
                 "days": list(_days_by_instructor(snapshot, result.board).values()),
             }
         )
     if not runs:
-        return plan(snapshot, time_limit_seconds=time_limit_seconds, **kwargs)
+        attempted[0].wall_time_seconds = time.perf_counter() - started
+        return attempted[0]
+
+    finalists = _portfolio_finalists(runs, idle_band)
+    if confirmation_seconds:
+        # One bounded confirmation budget for the whole portfolio, independent
+        # of the number of seeds. Actual seating stays outside the search loop.
+        deadline = time.perf_counter() + confirmation_seconds
+        for run in finalists:
+            run["seating"] = {"solution_found": False, "status": "UNKNOWN"}
+        for index, run in enumerate(finalists):
+            remaining = max(0.0, deadline - time.perf_counter())
+            if remaining <= 0:
+                break
+            run["seating"] = seat_students(
+                snapshot,
+                run["result"].board,
+                time_limit_seconds=remaining / (len(finalists) - index),
+            ).summary()
 
     best = choose_run(runs, idle_band=idle_band)
     chosen = best["result"]
+    chosen.seating_confirmation = best.get("seating")
+    chosen.wall_time_seconds = time.perf_counter() - started
+    if chosen.seating_confirmation is not None:
+        seating = chosen.seating_confirmation
+        if seating["solution_found"]:
+            chosen.notes.append(
+                f"student seating {seating['status']}: {seating['unseated_demands']} "
+                f"unseated demands, {seating['total_clashes']} actual clashes "
+                f"({len(finalists)} instructor-priority finalist(s) confirmed)"
+            )
+        else:
+            chosen.warnings.append("student seating could not be confirmed within the time budget")
     chosen.notes.append(
         f"portfolio of {len(runs)}: kept days {best['metrics']['working_days']}, "
         f"unroomed {best['unroomed']}, idle {best['metrics']['idle_minutes']}, "
@@ -1954,11 +2015,9 @@ def sibling_adjacency(snapshot: Snapshot, board: Board) -> dict:
         if len(ids) < 2:
             continue
         offering = snapshot.offerings_by_id[offering_id]
-        if offering.occupies_fixed_block:
-            # Same reason as the objective: pairing siblings by meeting index is
-            # meaningless when every section holds every cell. ENG101 alone
-            # contributed 20 "achievable" pairs against a typical course's 2-3,
-            # which is published as the back-to-back percentage.
+        if offering.meeting_policy is not None:
+            # Complete weekly alternatives supersede the ordinary adjacency
+            # preference, so include only courses to which it applies.
             continue
         code = offering.course_code
         hits = target = 0
@@ -2010,24 +2069,14 @@ def time_of_day_drift(snapshot: Snapshot, board: Board) -> dict:
     13:00, 14:30, 14:45, 16:00, and no number of minutes separates "the next
     slot" from "after lunch".
     """
-    # D19 sections are excluded outright: a course that owns a whole block of
-    # the day uses every slot in it by definition, so "wander" is 90 minutes for
-    # every one of them and they drag the same-hour percentage down for keeping
-    # exactly the rule they were given.
-    fixed = {
-        section.id
-        for section in snapshot.sections
-        if snapshot.offerings_by_id[section.offering_id].occupies_fixed_block
-    }
     families: dict[tuple[str, int, object], list[int]] = {}
     for placement in board.placements:
-        if placement.section_id in fixed:
-            continue
         families.setdefault(
             (placement.section_id, placement.window.duration, placement.delivery), []
         ).append(placement.window.start)
 
     total = same = within = 0
+    offering_of_section = {s.id: snapshot.offerings_by_id[s.offering_id] for s in snapshot.sections}
     drift_minutes = 0
     worst: tuple[int, str] = (0, "")
     by_rank_spread: dict[int, int] = {}
@@ -2036,7 +2085,13 @@ def time_of_day_drift(snapshot: Snapshot, board: Board) -> dict:
     ):
         if len(starts) < 2:
             continue
-        legal = sorted({w.start for w in snapshot.grid.windows_for(duration, delivery)})
+        offering = offering_of_section[section_id]
+        if offering.meeting_policy is not None:
+            legal = sorted(
+                {w.start for p in offering.meeting_policy.patterns for _d, w in pattern_cells(p)}
+            )
+        else:
+            legal = sorted({w.start for w in snapshot.grid.windows_for(duration, delivery)})
         if len(legal) < 2:
             continue
         rank_of = {start: i for i, start in enumerate(legal)}

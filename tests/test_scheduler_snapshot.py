@@ -33,7 +33,6 @@ from scheduler.intake import (
     build_snapshot,
     compile_requirements,
     default_grid,
-    morning_block,
 )
 from scheduler.readiness import Severity, assess
 
@@ -62,7 +61,7 @@ def test_domain_is_pure_python_no_django():
         assert not offenders, f"{path.name} imports Django: {offenders}"
 
 
-#: The one `core.services.timetable_*` module this subsystem may import.
+#: The named institutional-policy modules this subsystem may import.
 #:
 #: The rule exists to keep the old BUILDER out — its placer, optimiser, repair
 #: passes and scenario state. `timetable_course_tier` is none of those: it is a
@@ -71,11 +70,13 @@ def test_domain_is_pure_python_no_django():
 #: college. That is institutional policy, and this project's most expensive
 #: mistakes have all come from restating policy instead of consuming it —
 #: section sizing, elective resolution, the cross-term split. One named
-#: exemption is cheaper than a fourth divergent copy.
+#: exemption is cheaper than a fourth divergent copy. `timetable_course_policy`
+#: is a pure, frozen description of the authoritative ENG weekly alternatives;
+#: consuming it keeps generators and independent checkers on the same rule.
 #:
 #: Everything else under that prefix stays forbidden. Add to this set only for
 #: something that is policy rather than engine, and say why.
-POLICY_MODULES = {"core.services.timetable_course_tier"}
+POLICY_MODULES = {"core.services.timetable_course_tier", "core.services.timetable_course_policy"}
 
 
 def test_scheduler_never_imports_the_old_timetable_engine():
@@ -849,7 +850,7 @@ def test_every_metric_is_stored_beside_the_floor_it_should_be_read_against():
 def test_a_plan_is_stamped_with_all_three_fingerprints():
     snap, board = _tiny_plan_inputs()
     plan = _save(snap, board)
-    assert plan.snapshot_fingerprint == snap.source_fingerprint
+    assert plan.snapshot_fingerprint == snap.fingerprint()
     for stamp in (plan.snapshot_fingerprint, plan.rulebook_fingerprint, plan.config_fingerprint):
         assert len(stamp) == 64, "full SHA-256; a comparability stamp is not a cache key"
 
@@ -1466,31 +1467,17 @@ def test_the_rule_is_off_at_one_so_nothing_inherits_it_by_accident():
     ), "with the rule off, a two-student course still runs"
 
 
-# ── D19: the morning block comes from the grid, never from a literal ──────
+# ── intensive English has authoritative complete weekly alternatives ────
 
 
-def test_the_morning_block_is_the_widest_non_overlapping_set_of_morning_starts():
-    """MUTATION: take every start before noon. The declared grid offers 09:00,
-    10:30 AND 10:50 — and 10:30+75 runs to 11:45, so 10:50 overlaps it. A course
-    cannot be in two places at once, so the block is 09:00 and 10:30."""
-    assert morning_block(default_grid()) == (9 * 60, 10 * 60 + 30)
-
-
-def test_the_morning_block_is_read_from_the_grid_it_is_given():
-    """D2: the grid is the sole time authority. This rule narrows a choice; it
-    must never be the thing that invents an hour."""
-    grid = Grid.from_spec(
-        lecture_starts={"08:00": 75, "09:20": 75, "11:00": 75, "13:00": 75},
-        lab_starts={"09:00": 100},
-    )
-    assert morning_block(grid) == (8 * 60, 9 * 60 + 20, 11 * 60)
-
-
-def test_eng101_is_compiled_as_a_fixed_block_and_ordinary_english_is_not():
+@pytest.mark.parametrize("code", ["ENG101", "ENG102"])
+def test_intensive_english_is_compiled_as_complete_weekly_patterns_and_ordinary_english_is_not(
+    code,
+):
     """MUTATION: match the rule by prefix ("ENG") instead of by exact code.
     ENGL103/104/214 are ordinary three-credit courses and would be dragged into
-    owning the morning."""
-    _plan("AI", "ENG101", credits=4, term=1, name="ENGLISH LANGUAGE SKILLS I")
+    using the intensive weekly pattern."""
+    _plan("AI", code, credits=4, term=1, name="ENGLISH LANGUAGE SKILLS")
     _plan("AI", "ENGL103", credits=3, term=1, name="ENGLISH COMPOSITION")
     _student(440001, "AI", "M")
     _room("M-1", "M", capacity=40)
@@ -1499,17 +1486,67 @@ def test_eng101_is_compiled_as_a_fixed_block_and_ordinary_english_is_not():
     )
     by_code = {o.course_code: o for o in snap.offerings}
 
-    eng = by_code["ENG101"]
-    assert eng.occupies_fixed_block
+    eng = by_code[code]
+    assert eng.meeting_policy is not None
     (requirement,) = eng.requirements
-    assert requirement.allowed_starts == frozenset(morning_block(snap.grid))
-    assert requirement.count_per_week == len(morning_block(snap.grid)) * len(snap.grid.days())
+    assert requirement.duration == 180
+    assert requirement.count_per_week == 4
+    assert len(eng.meeting_policy.patterns) == 2
+    assert {m.day for p in eng.meeting_policy.patterns for m in p.meetings} == {
+        "SUN",
+        "MON",
+        "WED",
+        "THU",
+    }
     assert not requirement.uses_shared_room, "ENG has rooms of its own"
     assert requirement.delivery is DeliveryMode.IN_PERSON, "it is on campus, not online"
 
     ordinary = by_code["ENGL103"]
-    assert not ordinary.occupies_fixed_block
+    assert ordinary.meeting_policy is None
     assert all(not r.allowed_starts and r.uses_shared_room for r in ordinary.requirements)
+
+
+def test_intensive_english_build_persists_a_complete_bundle_on_its_board():
+    from core.models import (
+        DeliveryBoard,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.timetable_course_policy import get_course_meeting_policy
+    from scheduler.bridge import build_into_scenario
+
+    _plan("AI", "ENG101", credits=4, term=1, name="ENGLISH LANGUAGE SKILLS I")
+    for sid in range(440001, 440007):
+        _student(sid, "AI", "M")
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term=1,
+        name="Intensive bundle",
+        gender="M",
+    )
+    DeliveryBoard.objects.create(scenario=scenario, label="Term 1", nominal_term=1)
+    summary = build_into_scenario(
+        scenario.id,
+        academic_year="1448",
+        term=1,
+        programs=["AI"],
+        gender="M",
+        seconds=3,
+        runs=1,
+        confirmation_seconds=3,
+    )
+    assert summary["meetings_written"] == 4
+    assert summary["violations"] == 0
+    sections = list(TermSection.objects.filter(scenario=scenario))
+    assert len(sections) == 1
+    meetings = list(TermSectionMeeting.objects.filter(term_section=sections[0]))
+    assert get_course_meeting_policy("ENG101").accepts(meetings)
+    assert SectionPlacement.objects.filter(term_section=sections[0]).count() == 4
+    assert summary["student_seating"]["unseated_demands"] == 0
+    scenario.refresh_from_db()
+    assert any(c["end"] in {"12:00", "16:00"} for c in scenario.slot_config)
 
 
 # ── the parts a test audit proved were never exercised ────────────────────
@@ -1544,7 +1581,8 @@ def test_section_sizing_uses_the_institution_s_rules_when_no_capacity_is_declare
     assert len(sections) == 4, f"100 students / 25 seats = 4 sections, got {len(sections)}"
 
 
-def test_the_generate_button_withholds_small_courses_by_default():
+@pytest.mark.django_db
+def test_the_generate_button_withholds_small_courses_by_default(monkeypatch):
     """MUTATION: `min_demand: int = 5` -> 1 in `bridge.py`. Every test passes
     `min_demand` explicitly, so nothing pinned the value the workspace actually
     uses and the rule could ship switched off."""
@@ -1554,10 +1592,26 @@ def test_the_generate_button_withholds_small_courses_by_default():
 
     assert inspect.signature(build_into_scenario).parameters["min_demand"].default == 5
 
+    from core.models import PlannerJob, TimetableScenario
     from core.services import planner_job_runner
 
-    source = inspect.getsource(planner_job_runner.run_planner_job)
-    assert 'p.get("min_demand", 5)' in source, "the async job path lost the default"
+    received = []
+
+    def build(*args, **kwargs):
+        received.append(kwargs["min_demand"])
+        return {}
+
+    monkeypatch.setattr("scheduler.bridge.build_into_scenario", build)
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="Demand policy"
+    )
+    for params in ({}, {"min_demand": 3}):
+        job_id = planner_job_runner.submit_planner_job(
+            scenario_id=scenario.id, mode=PlannerJob.MODE_SCHEDULER_BUILD, params=params
+        )
+        planner_job_runner.run_planner_job(job_id)
+        assert PlannerJob.objects.get(pk=job_id).status == PlannerJob.STATUS_SUCCEEDED
+    assert received == [5, 3], "async generation must retain the default and explicit tuning"
 
 
 def test_a_shared_code_no_programme_claims_is_reported_not_guessed():
@@ -1628,19 +1682,11 @@ _RAW_SLOT_READERS_ALLOWED = {
     "timetable_per_plan_export.py",  # draws, never places
     "group_availability.py",  # already filters at its one call site
     "timetable_cpsat_polisher.py",  # already filters
-    "timetable_instructor_compaction.py",  # see note below
 }
 
 
 def test_no_automatic_placer_reads_the_unfiltered_slot_grid():
-    """Every `... or DEFAULT_SLOTS` in a placing module must be wrapped.
-
-    NOTE on `timetable_instructor_compaction.py`: it reads the raw list at two
-    sites and is NOT exempt on merit — it is exempt because a large uncommitted
-    rewrite of that file is in flight from another author, and editing inside it
-    would collide. It must be fixed there, and this list is where that debt is
-    recorded rather than forgotten.
-    """
+    """Every campus default slot grid in a placing module must be filtered."""
     import re
     from pathlib import Path
 

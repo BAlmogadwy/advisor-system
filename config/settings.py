@@ -795,10 +795,12 @@ TIMETABLE_INSTRUCTOR_DAILY_CAP = int(os.getenv("TIMETABLE_INSTRUCTOR_DAILY_CAP",
 # (unresolved/unassigned/clashes) and reserve never worsen; student schedule
 # spread may rise only within a small budget, with tier-A + graduating students
 # protected and a per-student ceiling; an unfavourable instructor/student trade
-# is rejected. Default OFF — opt-in after scenario replays; meaningful only with
-# TIMETABLE_INSTRUCTOR_LINKS_ENABLED. Env override ``=false`` is the kill-switch.
+# is rejected. Optional compaction also rolls back its own writes if physical
+# room coverage or locked assignments worsen, preserving mandatory repairs.
+# Default ON; meaningful only with TIMETABLE_INSTRUCTOR_LINKS_ENABLED.
+# Env override ``=false`` is the kill-switch.
 TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED = os.getenv(
-    "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED", "false"
+    "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 # Tunables (env-overridable). Defaults match the validated scenario-627 replay.
 TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET = float(
@@ -978,6 +980,27 @@ TIMETABLE_CHAIN_TIME_LIMIT_SECONDS = float(os.getenv("TIMETABLE_CHAIN_TIME_LIMIT
 # per-strategy budgets, pre-change behaviour).
 TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS = float(
     os.getenv("TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS", "1.5")
+)
+
+# Selection policy is independent of the public student-score tuple layout.
+# Disable to restore the former student-first candidate comparisons.
+TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
+TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS = float(
+    os.getenv("TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS", "180")
+)
+
+# Recover soft-course seats and physical rooms after instructor improvement,
+# accepting only candidates that preserve every teacher's achieved days/gaps.
+TIMETABLE_SECONDARY_RECOVERY_ENABLED = (
+    os.getenv("TIMETABLE_SECONDARY_RECOVERY_ENABLED", "true").lower() == "true"
+)
+TIMETABLE_SECONDARY_RECOVERY_SECONDS = float(
+    os.getenv("TIMETABLE_SECONDARY_RECOVERY_SECONDS", "45")
+)
+TIMETABLE_SECONDARY_RECOVERY_ITERATIONS = int(
+    os.getenv("TIMETABLE_SECONDARY_RECOVERY_ITERATIONS", "12")
 )
 
 # ── Exam rooming wall budget ────────────────────────────────────

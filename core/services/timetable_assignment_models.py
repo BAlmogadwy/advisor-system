@@ -63,6 +63,11 @@ class SectionState:
     # loops only read a bool — and with the exclusion flag off nothing is ever
     # marked online, which is what makes flag-off byte-identical.
     is_online: bool = False
+    # Physical delivery is independent of the legacy gap-score exclusion flag.
+    # Optimisation domains must preserve it even when that score flag is off.
+    delivery_is_online: bool = False
+    # Dedicated English teaching space is distinct from remote delivery.
+    uses_shared_room: bool = True
 
     def __post_init__(self) -> None:
         if self.max_capacity < 0:

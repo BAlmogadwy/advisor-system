@@ -9,6 +9,7 @@ from core.services.timetable_assignment_models import (
     SectionState,
     TimetableMove,
 )
+from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
     RoomFailureReason,
@@ -70,6 +71,9 @@ def apply_move_to_grid(
     pat_a_new = _find_pattern_in_catalog(
         move.to_pattern_id_a, sec_a.pattern_family, pattern_catalog
     )
+    policy_a = get_course_meeting_policy(sec_a.course_code)
+    if policy_a and not policy_a.accepts(pat_a_new.meetings):
+        raise PatternNotInCatalog("English moves require a complete permitted weekly pattern")
     if move.move_type == "repattern":
         sec_a.meetings = list(pat_a_new.meetings)
         sec_a.pattern_id = pat_a_new.pattern_id
@@ -78,6 +82,9 @@ def apply_move_to_grid(
         pat_b_new = _find_pattern_in_catalog(
             move.to_pattern_id_b or "", sec_b.pattern_family, pattern_catalog
         )
+        policy_b = get_course_meeting_policy(sec_b.course_code)
+        if policy_b and not policy_b.accepts(pat_b_new.meetings):
+            raise PatternNotInCatalog("English moves require a complete permitted weekly pattern")
         sec_a.meetings = list(pat_a_new.meetings)
         sec_a.pattern_id = pat_a_new.pattern_id
         sec_b.meetings = list(pat_b_new.meetings)
@@ -109,6 +116,8 @@ def try_repair_rooms_locally(
     affected_sections = [sections_by_id[s.section_id] for s in snapshot.snapshots]
     affected_sections.sort(key=lambda s: (s.room_demand(), s.section_id), reverse=True)
     for sec in affected_sections:
+        if not sec.uses_shared_room:
+            continue
         # Determine room type from the MAJORITY of meeting durations.
         # A 4-credit course has 2×75min lectures + 1×100min lab — the
         # majority are lectures, so assign a lecture room. The auto-placer

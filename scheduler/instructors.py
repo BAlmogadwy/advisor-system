@@ -29,6 +29,7 @@ from collections import Counter
 from dataclasses import replace
 
 from scheduler.domain import Snapshot
+from scheduler.meeting_patterns import pattern_cells
 
 #: Sections of one course a single instructor may hold (D10), once the course
 #: runs more than `_CAP_APPLIES_ABOVE` sections.
@@ -42,26 +43,12 @@ DERIVED_WEEKLY_SESSION_CAP = 15
 def section_min_days(offering) -> int:
     """Fewest distinct days one section's weekly meetings can occupy.
 
-    For an ordinary section this is its meeting count, because H2 puts each
-    meeting on a different day. A **fixed-block** section (D19) is exempt from
-    H2 and meets once in every cell of its block, so it needs
-    `meetings / cells-per-day` days instead.
-
-    Getting this wrong is not cosmetic: an ENG101 section has ten meetings, and
-    feeding ten to the floor below produced a "proven minimum" of **10 working
-    days in a 5-day week** and a board reported as 5 days *below* its own floor.
-    That figure is published as `instructor_days_floor` and is what
-    `at_proven_floor` is computed from — the number every result in this
-    subsystem is quoted against.
+    Ordinary sections meet on distinct days under H2. Institutional patterns
+    carry their own complete day sets; intensive English requires four days.
     """
-    meetings = sum(r.count_per_week for r in offering.requirements)
-    if not offering.occupies_fixed_block:
-        return meetings
-    per_day = max(
-        (len(r.allowed_starts) for r in offering.requirements if r.allowed_starts),
-        default=1,
-    )
-    return math.ceil(meetings / max(1, per_day))
+    if offering.meeting_policy is not None:
+        return min(len({m.day for m in p.meetings}) for p in offering.meeting_policy.patterns)
+    return offering.meetings_per_week
 
 
 def instructor_floor_days(sessions: int, largest_section_days: int, daily_cap: int = 3) -> int:
@@ -87,6 +74,7 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
     load: Counter[int] = Counter()
     per_course: Counter[tuple[int, str]] = Counter()
     assigned: dict[str, int] = {}
+    reserved_patterns: dict[int, list] = {}
 
     # Deterministic order: instructor id, then offering id, then section index.
     for instructor in sorted(snapshot.instructors, key=lambda i: i.id):
@@ -98,18 +86,11 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
             course_cap = (
                 MAX_SECTIONS_PER_COURSE if len(siblings) > _CAP_APPLIES_ABOVE else len(siblings)
             )
-            if offerings[offering_id].occupies_fixed_block:
-                # D19: every section of a fixed-block course sits in the SAME
-                # cells, so one person holding two of them is not a heavy week —
-                # it is a physical impossibility, and H7 is right to refuse it.
-                #
-                # This is not a small failure. `solve()` has no way to drop the
-                # assignment, so the whole model goes INFEASIBLE and the ENTIRE
-                # cohort comes back with zero placements, not just the course at
-                # fault. Dormant on live data today only because ENG101 has no
-                # `course_instructors` rows; one data entry away from a total
-                # build failure.
-                course_cap = 1
+            policy = offerings[offering_id].meeting_policy
+            if policy is not None:
+                # Only two disjoint complete bundles exist. A third assigned
+                # section would force this instructor to overlap themselves.
+                course_cap = min(course_cap, len(policy.patterns))
             weekly = sessions_of.get(offering_id, 0)
             for section in sorted(siblings, key=lambda s: s.index):
                 if section.id in assigned:
@@ -118,9 +99,34 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
                     break  # D10
                 if load[instructor.id] + weekly > weekly_cap:
                     continue  # derived weekly cap — leave unlinked (D5)
+                chosen_pattern = None
+                if policy is not None:
+                    occupied = reserved_patterns.get(instructor.id, [])
+                    # ENG101 and ENG102 share the same two alternatives. Their
+                    # combined assignments must fit, not merely each course's
+                    # independent section cap.
+                    chosen_pattern = next(
+                        (
+                            pattern_cells(pattern)
+                            for pattern in policy.patterns
+                            if all(
+                                sum(other_day is day for other_day, _ in occupied) < daily_cap
+                                and all(
+                                    other_day is not day or not window.overlaps(other_window)
+                                    for other_day, other_window in occupied
+                                )
+                                for day, window in pattern_cells(pattern)
+                            )
+                        ),
+                        None,
+                    )
+                    if chosen_pattern is None:
+                        continue
                 assigned[section.id] = instructor.id
                 load[instructor.id] += weekly
                 per_course[(instructor.id, offering_id)] += 1
+                if chosen_pattern is not None:
+                    reserved_patterns.setdefault(instructor.id, []).extend(chosen_pattern)
 
     return replace(
         snapshot,

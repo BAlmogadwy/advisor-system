@@ -23,12 +23,15 @@ import random
 import time
 from collections import defaultdict
 
+from django.db import transaction
+
 from core.models import (
     DeliveryBoard,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
 )
+from core.services.course_identity import course_display_code
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
@@ -36,7 +39,25 @@ from core.services.timetable_autoplace import (
     _time_mask,
     placeable_slots,
 )
+from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_local_search import (
+    _apply_move,
+    _capture_persist_guard,
+    _check_hard_constraints,
+    _generate_relocate_move,
+    _instructor_quality,
+    _original_schedule,
+    _persist_guard_rejections,
+    _policy_bundles,
+    _serializable_sections,
+    _undo_move,
+)
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_optimisation_policy import (
+    instructor_schedule_regressions,
+    is_instructor_priority_enabled,
+)
+from core.services.timetable_pr4_instructor import build_section_instructor_ids
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -69,7 +90,7 @@ def _same_course_spread_cost(schedule: dict[int, list[dict]], sections: list[dic
 
 def _has_same_course_overlap(schedule: dict[int, list[dict]], sections: list[dict]) -> bool:
     return any(
-        same_course_windows_overlap(meetings)
+        same_course_windows_overlap([meeting for section in meetings for meeting in section])
         for meetings in _same_course_windows_by_course(schedule, sections).values()
     )
 
@@ -97,7 +118,7 @@ def _build_schedule_from_db(
     sec_map: dict[tuple[str, str], int] = {}
 
     for p in placements:
-        key = (p.term_section.course_code, p.term_section.section)
+        key = (p.term_section.course_key or p.term_section.course_code, p.term_section.section)
         if key not in sec_map:
             idx = len(sections)
             sec_map[key] = idx
@@ -107,13 +128,22 @@ def _build_schedule_from_db(
             )
             sections.append(
                 {
-                    "code": p.term_section.course_code,
+                    "code": course_display_code(
+                        p.term_section.course_key,
+                        p.term_section.course_code,
+                        p.term_section.course_number,
+                    ),
                     "course_key": p.term_section.course_key or p.term_section.course_code,
                     "sec_num": sec_num,
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
                     "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
                     "is_locked": False,
+                    "meeting_policy": get_course_meeting_policy(
+                        p.term_section.course_code,
+                        p.term_section.course_key,
+                        p.term_section.course_number,
+                    ),
                 }
             )
             schedule[idx] = []
@@ -146,6 +176,11 @@ def _build_schedule_from_db(
             }
         )
 
+    resolved = build_section_instructor_ids(board.scenario)
+    for section in sections:
+        section["instructor_ids"] = resolved.get(
+            f"{section['course_key']}|{section['label']}", set()
+        )
     return sections, schedule, online_codes
 
 
@@ -215,43 +250,8 @@ def _compute_balance_score(
 
 
 def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | None = None) -> bool:
-    """Check all hard constraints using real student overlap."""
-    from core.services.timetable_overlap import (
-        HARD_OVERLAP_THRESHOLD,
-        SAME_COURSE_SENTINEL,
-    )
-    from core.services.timetable_overlap import (
-        shared_student_count as _ssc_ck,
-    )
-
-    all_masks: list[tuple[str, int]] = []
-    for i, meetings in schedule.items():
-        sec = sections[i]
-        for m in meetings:
-            all_masks.append((sec["code"], m["mask"]))
-
-    for a in range(len(all_masks)):
-        for b in range(a + 1, len(all_masks)):
-            if all_masks[a][0] == all_masks[b][0]:
-                continue
-            if all_masks[a][1] & all_masks[b][1]:
-                shared = (
-                    _ssc_ck(overlap_matrix, all_masks[a][0], all_masks[b][0])
-                    if overlap_matrix
-                    else SAME_COURSE_SENTINEL
-                )
-                if shared >= HARD_OVERLAP_THRESHOLD:
-                    return False
-
-    if _has_same_course_overlap(schedule, sections):
-        return False
-
-    for i, meetings in schedule.items():  # noqa: B007
-        days = [m["day"] for m in meetings]
-        if len(days) != len(set(days)):
-            return False
-
-    return True
+    """Use the shared SA hard rules, including full patterns and instructors."""
+    return _check_hard_constraints(schedule, sections, overlap_matrix)
 
 
 def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> dict:
@@ -301,11 +301,19 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     rng = random.Random(seed)
     score_before = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
     best_score = score_before
+    teacher_before = _instructor_quality(schedule, sections)
+    best_rank = (teacher_before["working_days"], teacher_before["idle_minutes"], score_before)
     best_schedule = {k: [m.copy() for m in v] for k, v in schedule.items()}
 
     # Build valid options per meeting
     valid_opts: dict[tuple[int, int], list[dict]] = {}
     for i, meetings in schedule.items():  # noqa: B007
+        policy = sections[i].get("meeting_policy")
+        if policy is not None:
+            sections[i]["bundles"] = _policy_bundles(
+                policy, board.scenario, [*slot_config, *lab_slot_config]
+            )
+            continue
         for m_idx, m in enumerate(meetings):
             duration = _to_min(m["end"]) - _to_min(m["start"])
             opts = []
@@ -339,6 +347,11 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
                         )
             valid_opts[(i, m_idx)] = opts
 
+    valid_options = {
+        i: [valid_opts.get((i, m), []) for m in range(len(meetings))]
+        for i, meetings in schedule.items()
+    }
+
     # Iterative improvement
     current_score = score_before
     iterations = 0
@@ -350,27 +363,19 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         iterations += 1
         temperature *= 0.9995
 
-        # Pick random section and meeting (never a locked section)
-        sec_idx = rng.randint(0, len(sections) - 1)
-        if sec_idx in locked_idx:
+        move = _generate_relocate_move(schedule, sections, valid_options, rng, locked_idx)
+        if move is None:
             continue
-        meetings = schedule[sec_idx]
-        if not meetings:
-            continue
-        m_idx = rng.randint(0, len(meetings) - 1)
-
-        opts = valid_opts.get((sec_idx, m_idx), [])
-        if not opts:
-            continue
-
-        new_opt = rng.choice(opts)
-        old = meetings[m_idx].copy()
-
-        # Apply move
-        meetings[m_idx] = {**new_opt, "placement_id": old.get("placement_id")}
-
+        sec_idx, m_idx, new_opt = move
+        old = _apply_move(schedule, sec_idx, m_idx, new_opt)
         if not _check_constraints(schedule, sections, overlap_matrix):
-            meetings[m_idx] = old
+            _undo_move(schedule, sec_idx, m_idx, old)
+            continue
+        teacher_after = _instructor_quality(schedule, sections)
+        if is_instructor_priority_enabled() and instructor_schedule_regressions(
+            teacher_before, teacher_after
+        ):
+            _undo_move(schedule, sec_idx, m_idx, old)
             continue
 
         new_score = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
@@ -378,15 +383,24 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
 
         import math
 
-        if delta < 0 or (temperature > 0.01 and rng.random() < math.exp(-delta / temperature)):
+        rank = (teacher_after["working_days"], teacher_after["idle_minutes"], new_score)
+        if (
+            delta < 0
+            or (is_instructor_priority_enabled() and rank < best_rank)
+            or (temperature > 0.01 and rng.random() < math.exp(-delta / temperature))
+        ):
             current_score = new_score
             if delta < 0:
                 improvements += 1
-            if new_score < best_score:
+            better = (
+                rank < best_rank if is_instructor_priority_enabled() else new_score < best_score
+            )
+            if better:
+                best_rank = rank
                 best_score = new_score
                 best_schedule = {k: [m.copy() for m in v] for k, v in schedule.items()}
         else:
-            meetings[m_idx] = old
+            _undo_move(schedule, sec_idx, m_idx, old)
 
     # Compute final daily loads
     schedule.update(best_schedule)
@@ -400,10 +414,11 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         "improvements": improvements,
         "daily_loads": loads_after,
         "schedule": best_schedule,
-        "sections": sections,
+        "sections": _serializable_sections(sections),
     }
 
 
+@transaction.atomic
 def rebalance_and_persist_board(
     board_id: int,
     max_seconds: float = 8.0,
@@ -429,6 +444,9 @@ def rebalance_and_persist_board(
     except DeliveryBoard.DoesNotExist:
         return result
 
+    guard_before = _capture_persist_guard(board)
+    original_schedule = _original_schedule(board, sections)
+
     # The rebalancer models rooms and student overlap but carries no instructor
     # constraint, so it can move a section onto a slot where its instructor is
     # already teaching.
@@ -450,7 +468,7 @@ def rebalance_and_persist_board(
 
     auto = SectionPlacement.objects.filter(board=board, term_section__source_tag="tw_auto")
     if locks_on:
-        auto = auto.exclude(is_locked=True)
+        auto = auto.exclude(term_section_id__in=locked_ts_ids)
     ts_ids = set(auto.values_list("term_section_id", flat=True))
     auto.delete()
     for ts_id in ts_ids:
@@ -485,13 +503,31 @@ def rebalance_and_persist_board(
         # Re-fan the primary instructor onto the recreated meeting rows so the
         # rebalance does not drop the greedy write-through (blank Instructors
         # export sheet otherwise).
-        apply_primary_instructor(ts, board.scenario, board, ts.course_code)
+        apply_primary_instructor(
+            ts,
+            board.scenario,
+            board,
+            course_display_code(ts.course_key, ts.course_code, ts.course_number),
+        )
 
     # Assign rooms after re-persisting
     from core.services.timetable_rooming import assign_rooms_to_board
 
     assign_rooms_to_board(board_id, respect_locked=locks_on)
 
+    rejections = _persist_guard_rejections(board, guard_before)
+    if rejections:
+        transaction.set_rollback(True)
+        result["attempted_schedule"] = result["schedule"]
+        result["schedule"] = original_schedule
+        result.update(
+            persist_rolled_back=True,
+            rollback_reasons=rejections,
+            attempted_score_after=result["score_after"],
+            score_after=result["score_before"],
+            improvements=0,
+        )
+        return result
     if verify_instructor_clashes:
         result["instructor_clash_backstop"] = verify_persisted_scenario(
             board.scenario_id, context="load_balanced_rebalance"

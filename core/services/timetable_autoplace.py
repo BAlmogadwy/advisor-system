@@ -73,6 +73,10 @@ from core.models import (
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
+from core.services.timetable_course_policy import (
+    get_course_meeting_policy,
+    meeting_options_for_policy,
+)
 from core.services.timetable_decision_trace import (
     INSTRUCTOR_CLASH,
     INSTRUCTOR_DAILY_CAP,
@@ -177,7 +181,7 @@ def get_meeting_pattern_variants(credit_hours: int) -> list[list[int]]:
     ]
 
 
-def get_meeting_pattern(credit_hours: int) -> list[int]:
+def get_meeting_pattern(credit_hours: int, course_code: str = "") -> list[int]:
     """Return the list of per-meeting durations for a given credit-hour count.
 
     Parameters
@@ -191,7 +195,35 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
         Durations in minutes for each weekly meeting.
         Falls back to the 3-credit pattern if *credit_hours* is not in the map.
     """
-    return MEETING_PATTERNS.get(credit_hours, MEETING_PATTERNS[3])
+    policy = get_course_meeting_policy(course_code)
+    return (
+        list(policy.durations)
+        if policy
+        else MEETING_PATTERNS.get(credit_hours, MEETING_PATTERNS[3])
+    )
+
+
+def generate_course_meeting_options(
+    course_code: str,
+    credit_hours: int,
+    slot_config: list[dict] | None = None,
+    lab_slot_config: list[dict] | None = None,
+    blocked_slots: list[dict] | None = None,
+    *,
+    course_key: str = "",
+) -> list[list[dict]]:
+    """Complete course-scoped patterns; ordinary slot domains stay unchanged."""
+    policy = get_course_meeting_policy(course_code, course_key)
+    if policy:
+        return meeting_options_for_policy(
+            policy,
+            blocked_slots=blocked_slots or [],
+            slots=placeable_slots(slot_config or DEFAULT_SLOTS)
+            + placeable_slots(lab_slot_config or DEFAULT_LAB_SLOTS),
+        )
+    return _generate_meeting_options(
+        get_meeting_pattern(credit_hours), slot_config or [], lab_slot_config, blocked_slots
+    )
 
 
 # ── Default Slots ────────────────────────────────────────────────
@@ -1108,7 +1140,11 @@ def auto_place_board(
             .select_related("board", "term_section")
         )
         for other in other_placements:
-            if online_lookup.is_online_course_for_board(
+            if get_course_meeting_policy(
+                other.term_section.course_code,
+                other.term_section.course_key,
+                other.term_section.course_number,
+            ) or online_lookup.is_online_course_for_board(
                 other.board, other.term_section.course_code
             ):
                 continue
@@ -1402,8 +1438,20 @@ def auto_place_board(
     # that section index. One LOCK_RESPECT telemetry row is emitted per
     # locked cell so the payload records which locks were respected.
     if lock_rule_on:
+        protected_sections = {
+            p.term_section_id
+            for p in SectionPlacement.objects.filter(
+                board__scenario=scenario, is_locked=True
+            ).select_related("term_section")
+            if get_course_meeting_policy(
+                p.term_section.course_code, p.term_section.course_key, p.term_section.course_number
+            )
+        }
+        from django.db.models import Q
+
         locked_placements = (
-            SectionPlacement.objects.filter(board=board, is_locked=True)
+            SectionPlacement.objects.filter(board=board)
+            .filter(Q(is_locked=True) | Q(term_section_id__in=protected_sections))
             .select_related("term_section")
             .order_by("day", "start_time")
         )
@@ -1426,6 +1474,11 @@ def auto_place_board(
                 and lp.room
                 and lp.room != "UNASSIGNED"
                 and normalise_course_code(lp.term_section.course_code) not in online_codes
+                and not get_course_meeting_policy(
+                    lp.term_section.course_code,
+                    lp.term_section.course_key,
+                    lp.term_section.course_number,
+                )
             ):
                 room_tracker.mark_used(
                     lp.day, str(lp.start_time)[:5], str(lp.end_time)[:5], lp.room
@@ -1483,7 +1536,8 @@ def auto_place_board(
         display_code = budget.course_code
         course_name = budget.course_name or display_code
         credit_hours = budget.credit_hours or 3
-        pattern = get_meeting_pattern(credit_hours)
+        policy = get_course_meeting_policy(display_code, code)
+        pattern = list(policy.durations) if policy else get_meeting_pattern(credit_hours)
         already = (
             SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
@@ -1494,7 +1548,9 @@ def auto_place_board(
         if to_place == 0:
             continue
         blocked = scenario.blocked_slots if scenario.blocked_slots else []
-        all_options = _generate_meeting_options(pattern, slot_config, lab_slot_config, blocked)
+        all_options = generate_course_meeting_options(
+            display_code, credit_hours, slot_config, lab_slot_config, blocked, course_key=code
+        )
         if not all_options:
             total_skipped += to_place
             continue
@@ -1506,6 +1562,7 @@ def auto_place_board(
                 "budget": budget,
                 "credit_hours": credit_hours,
                 "pattern": pattern,
+                "meeting_policy": policy,
                 "already": already,
                 "to_place": to_place,
                 "all_options": all_options,
@@ -1612,7 +1669,8 @@ def auto_place_board(
             section_cap = int(raw_cap * capacity_buffer)
             # Only 4-credit courses have actual lab meetings. 2-credit
             # courses have 100-min meetings that are long lectures, not labs.
-            is_lab_course = budget.credit_hours == 4
+            meeting_policy = cd.get("meeting_policy")
+            is_lab_course = budget.credit_hours == 4 and meeting_policy is None
             for option in all_options:
                 # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
                 # Reject any option that would double-book the current
@@ -1716,7 +1774,11 @@ def auto_place_board(
                 # same trace bucket as INSTRUCTOR_CLASH.
                 # Interval-overlap detection (catches e.g. 10:30-11:45 vs
                 # 10:50-12:05) via the shared same-course window helper.
-                same_course_ctx = _same_course_overlap_context(option, placed_schedule, code)
+                same_course_ctx = (
+                    None
+                    if meeting_policy
+                    else _same_course_overlap_context(option, placed_schedule, code)
+                )
                 if same_course_ctx is not None:
                     if trace_enabled:
                         pr4_instructor_rejected.append(
@@ -1726,7 +1788,7 @@ def auto_place_board(
 
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
-                if room_tracker and not is_online:
+                if room_tracker and not is_online and not meeting_policy:
                     for m in option:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
                         # Rule: only 4-credit courses (is_lab_course) go to
@@ -1758,6 +1820,8 @@ def auto_place_board(
                     overlap_matrix=overlap_matrix,
                     slot_density=slot_density,
                 )
+                if meeting_policy:
+                    raw_score = (raw_score[0], 0, *raw_score[2:])
                 # Apply the group-dependent gap weight (element [2] is
                 # student_gap).  This makes S1 gap-averse and S2+ tolerant.
                 # Apply strategy weights:
@@ -1934,7 +1998,7 @@ def auto_place_board(
             for m in best_option:
                 # Assign room if tracker available
                 assigned_room = ""
-                if room_tracker and not is_online:
+                if room_tracker and not is_online and not meeting_policy:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
                     # Same cr==4 (is_lab_course) gate as the scoring loop above.
                     if is_lab_heuristic_unified():

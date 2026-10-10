@@ -215,6 +215,7 @@ from .timetable_workspace_views import (
     tw_placement_create_view,
     tw_placement_lock_view,
     tw_placement_move_view,
+    tw_placement_pattern_switch_view,
     tw_placement_remove_view,
     tw_placement_room_candidates_view,
     tw_placement_slot_candidates_view,
@@ -253,6 +254,7 @@ from .timetable_workspace_views import (
     tw_scenario_graph_view_view,
     tw_scenario_plan_lens_view,
     tw_scenario_publish_view,
+    tw_scenario_quality_view,
     tw_scenario_readiness_view,
     tw_scenario_safe_time_moves_apply_view,
     tw_scenario_safe_time_moves_view,
@@ -878,6 +880,11 @@ urlpatterns = [
     path("ops/tw/scenarios/create/", tw_scenario_create_view, name="tw_scenario_create"),
     path("ops/tw/scenarios/<int:scenario_id>/", tw_scenario_detail_view, name="tw_scenario_detail"),
     path(
+        "ops/tw/scenarios/<int:scenario_id>/quality/",
+        tw_scenario_quality_view,
+        name="tw_scenario_quality",
+    ),
+    path(
         "ops/tw/scenarios/<int:scenario_id>/slots/update/",
         tw_scenario_slots_update_view,
         name="tw_scenario_slots_update",
@@ -971,6 +978,11 @@ urlpatterns = [
         "ops/tw/placements/<int:placement_id>/move/",
         tw_placement_move_view,
         name="tw_placement_move",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/switch-pattern/",
+        tw_placement_pattern_switch_view,
+        name="tw_placement_pattern_switch",
     ),
     path(
         "ops/tw/placements/<int:placement_id>/slot-candidates/",

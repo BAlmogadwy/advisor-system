@@ -53,7 +53,7 @@ def save_plan(
         gender=snapshot.gender,
         programs=",".join(snapshot.programs),
         label=label,
-        snapshot_fingerprint=snapshot.source_fingerprint,
+        snapshot_fingerprint=snapshot.fingerprint(),
         rulebook_fingerprint=rulebook_fingerprint(),
         config_fingerprint=config_fingerprint(config),
         config=config,

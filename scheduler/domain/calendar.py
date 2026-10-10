@@ -1,9 +1,10 @@
 """Temporal semantics for the scheduler — pure Python, no Django.
 
-The declared slot grid is the **only** authority on legal meeting times (owner
-decision D2: there is no prayer rule and no implicit blackout). A meeting is
-legal iff it occupies a declared slot. Time-of-day policy is therefore changed by
-editing the grid, which is versioned and fingerprinted, never by code.
+The declared slot grid governs ordinary meeting times (owner decision D2:
+there is no prayer rule and no implicit blackout). An explicitly compiled
+institutional weekly pattern supplies scoped alternatives for its own offering.
+Both authorities are fingerprinted; a special course never widens the ordinary
+grid's legal windows.
 
 All intervals are **half-open** ``[start, end)``: a meeting ending at 10:15 and
 one starting at 10:15 do *not* overlap. This is stated once, here, and every

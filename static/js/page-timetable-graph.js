@@ -102,6 +102,36 @@
     return String(template || '').replace('__SCENARIO_ID__', encodeURIComponent(scenarioId));
   }
 
+  function workspaceContextUrl(path, boardId = '') {
+    const params = new URLSearchParams();
+    if (state.selectedScenarioId) params.set('scenario', state.selectedScenarioId);
+    if (boardId) params.set('board', String(boardId));
+    return `${path}${params.size ? '?' + params.toString() : ''}`;
+  }
+
+  function updateWorkspaceContextLinks() {
+    const workspace = $('tgWorkspaceLink');
+    const mri = $('tgMriLink');
+    if (workspace) workspace.href = workspaceContextUrl('/timetable-workspace/');
+    if (mri) mri.href = workspaceContextUrl('/timetable-workspace/mri/');
+  }
+
+  function graphBoardContext(item) {
+    const explicit = item?.board_id || item?.meta?.['Board ID'];
+    if (explicit) return String(explicit);
+    const edge = (state.graphData.edges || []).find(row => row.type === 'ON_BOARD' && row.source === item?.id);
+    const attachedBoard = String(edge?.target || '').match(/^board:(\d+)$/)?.[1];
+    if (attachedBoard) return attachedBoard;
+    const seen = new Set();
+    let node = item;
+    while (node && !seen.has(node.id)) {
+      seen.add(node.id);
+      if (node.type === 'TTBoard') return String(node.id || '').match(/^board:(\d+)$/)?.[1] || '';
+      node = getPlanParent(node.id);
+    }
+    return '';
+  }
+
   function placementUrlFor(template, placementId) {
     return String(template || '').replace('__PLACEMENT_ID__', encodeURIComponent(placementId));
   }
@@ -184,6 +214,8 @@
   }
 
   async function previewScenario(scenarioId) {
+    state.selectedScenarioId = String(scenarioId || '');
+    updateWorkspaceContextLinks();
     if (!scenarioId) {
       renderEmpty('Select a scenario to preview its graph twin.');
       return;
@@ -304,6 +336,8 @@
 
   async function loadGraphView(mode) {
     const scenarioId = $('tgScenario').value || state.selectedScenarioId;
+    state.selectedScenarioId = String(scenarioId || '');
+    updateWorkspaceContextLinks();
     if (!scenarioId) {
       clearGraphExplorer('Select a scenario to load a graph view.');
       return;
@@ -922,6 +956,20 @@
     return matrix ? point.matrixTransform(matrix.inverse()) : { x: event.offsetX, y: event.offsetY };
   }
 
+  function demandEvidenceView(item) {
+    const crossDemand = item?.detail === 'cross_board_student_clash' || item?.meta?.Kind === 'cross_board_student_clash';
+    const meta = Object.fromEntries(Object.entries(item?.meta || {}).map(([label, value]) => [
+      label === 'Shared students' ? 'Students with common course demand' : label,
+      label === 'Kind' && value === 'cross_board_student_clash' ? 'Potential cross-board course-demand overlap' : value,
+    ]));
+    return {
+      ...item,
+      meta,
+      label: crossDemand ? 'Potential course-demand overlap' : item.label,
+      detail: crossDemand ? 'Common course demand overlaps in time across boards. Assignment to both sections has not been confirmed.' : item.detail,
+    };
+  }
+
   function renderGraphDetail(item, isEdge = false) {
     const target = $('tgExplorerDetail');
     if (!item) {
@@ -932,7 +980,7 @@
       `;
       return;
     }
-    const viewItem = !isEdge && state.graphMode === 'plan' ? enrichPlanDetail(item) : item;
+    const viewItem = demandEvidenceView(!isEdge && state.graphMode === 'plan' ? enrichPlanDetail(item) : item);
     const metaHtml = renderMetaRows(viewItem.meta || {});
     const pathHtml = !isEdge && state.graphMode === 'plan' ? renderTreePath(viewItem) : '';
     const actionsHtml = renderDetailActions(viewItem, isEdge);
@@ -946,7 +994,7 @@
         ${pathHtml}
         <div><dt>Type</dt><dd>${esc(viewItem.type || '-')}</dd></div>
         <div><dt>ID</dt><dd>${esc(viewItem.id || '-')}</dd></div>
-        ${viewItem.shared_students != null ? `<div><dt>Shared students</dt><dd>${esc(viewItem.shared_students)}</dd></div>` : ''}
+        ${viewItem.shared_students != null ? `<div><dt>Students with common course demand</dt><dd>${esc(viewItem.shared_students)}</dd></div>` : ''}
         ${viewItem.source ? `<div><dt>Source</dt><dd>${esc(viewItem.source)}</dd></div>` : ''}
         ${viewItem.target ? `<div><dt>Target</dt><dd>${esc(viewItem.target)}</dd></div>` : ''}
         ${metaHtml}
@@ -1016,7 +1064,7 @@
     const expanded = isPlan && state.planExplore.expanded.has(item.id);
     const parent = isPlan ? getPlanParent(item.id) : null;
     const sectionLink = item.type === 'TTSection'
-      ? '<a href="/timetable-workspace/split/" class="tg-detail-link">Open Split Workspace</a>'
+      ? `<a href="${esc(workspaceContextUrl('/timetable-workspace/split/', graphBoardContext(item)))}" class="tg-detail-link">Open Split Workspace</a>`
       : '';
     const sectionOps = item.type === 'TTSection'
       ? '<button type="button" data-tg-detail-action="safe-slots">Safe Slots</button>'
@@ -1091,10 +1139,11 @@
     if (!edges.length) return sectionOps;
     const rows = edges.slice(0, 12).map(edge => {
       const other = counterpartForEdge(edge, item.id);
-      const shared = edge.shared_students != null ? ` | ${edge.shared_students} shared` : '';
+      const shared = edge.shared_students != null ? ` | ${edge.shared_students} students with common course demand` : '';
+      const evidence = demandEvidenceView(edge);
       return `
         <button type="button" class="tg-detail-row" data-tg-focus-node="${esc(other.id)}">
-          <span>${esc(edge.type || 'REL')}${esc(shared)}</span><strong>${esc(other.label || other.id)}</strong>
+          <span>${esc(evidence.label || edge.type || 'REL')}${esc(shared)}</span><strong>${esc(other.label || other.id)}</strong>
         </button>
       `;
     }).join('');
@@ -1471,6 +1520,7 @@
   }
 
   bind();
+  updateWorkspaceContextLinks();
   checkStatus();
   loadScenarios();
 })();

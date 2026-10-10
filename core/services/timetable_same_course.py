@@ -4,6 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from core.services.timetable_course_policy import get_course_meeting_policy
+
 SAME_COURSE_BACK_TO_BACK_GRACE_MINUTES = 15
 SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY = 5000
 SAME_COURSE_DIFFERENT_DAY_PENALTY = 1000
@@ -78,6 +80,8 @@ def first_overlapping_same_course_window(
     existing_meetings: Sequence[SameCourseMeetingWindow],
 ) -> tuple[SameCourseMeetingWindow, SameCourseMeetingWindow] | None:
     for candidate in candidate_meetings:
+        if get_course_meeting_policy(candidate.course_code):
+            continue
         for existing in existing_meetings:
             if candidate.course_code != existing.course_code:
                 continue
@@ -88,6 +92,8 @@ def first_overlapping_same_course_window(
 
 def has_same_course_overlap(meetings: Sequence[SameCourseMeetingWindow]) -> bool:
     for idx, left in enumerate(meetings):
+        if get_course_meeting_policy(left.course_code):
+            continue
         for right in meetings[idx + 1 :]:
             if left.course_code != right.course_code:
                 continue
@@ -104,6 +110,8 @@ def same_course_candidate_penalty(
 ) -> int:
     """Penalty for placing a section away from existing same-course sections."""
     if not existing_meetings:
+        return 0
+    if candidate_meetings and get_course_meeting_policy(candidate_meetings[0].course_code):
         return 0
 
     existing_pair = has_back_to_back_pair(existing_meetings)
@@ -155,7 +163,9 @@ def same_course_section_spread_penalty(
     * three-or-more-section courses should have at least one back-to-back pair
     """
     total = 0
-    for sections in section_meetings_by_course.values():
+    for code, sections in section_meetings_by_course.items():
+        if get_course_meeting_policy(code):
+            continue
         if len(sections) < 2:
             continue
 

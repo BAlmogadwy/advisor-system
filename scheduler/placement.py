@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from scheduler.domain import Snapshot, TimeWindow
 from scheduler.domain.board import Board, Placement
 from scheduler.domain.calendar import Day
+from scheduler.meeting_patterns import pattern_cells
 
 
 @dataclass
@@ -33,10 +34,6 @@ class _Occupancy:
         self.by_instructor: dict[tuple[int, Day], list[TimeWindow]] = {}
         self.by_offering: dict[tuple[str, Day], list[TimeWindow]] = {}
         self.by_section_day: set[tuple[str, Day]] = set()
-        #: (section, day) -> the windows it already occupies. Needed by D19,
-        #: where a section legitimately meets more than once a day and the rule
-        #: is "not twice in the same cell" rather than "not twice in a day".
-        self.by_section: dict[tuple[str, Day], list[TimeWindow]] = {}
         self.instructor_day_count: dict[tuple[int, Day], int] = {}
 
     @staticmethod
@@ -63,7 +60,6 @@ class _Occupancy:
             self.instructor_day_count[key] = self.instructor_day_count.get(key, 0) + 1
         self.by_offering.setdefault((p.offering_id, p.day), []).append(p.window)
         self.by_section_day.add((p.section_id, p.day))
-        self.by_section.setdefault((p.section_id, p.day), []).append(p.window)
 
 
 def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
@@ -79,6 +75,13 @@ def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
 
     for section in sections:
         offering = offerings[section.offering_id]
+        if offering.meeting_policy is not None:
+            bundle = _place_pattern(snapshot, occupancy, section, offering, instructor_cap)
+            if bundle is not None:
+                placements.extend(bundle)
+                for placed in bundle:
+                    occupancy.take(placed)
+            continue
         meeting_index = 0
         for requirement in offering.requirements:
             for _ in range(requirement.count_per_week):
@@ -98,13 +101,30 @@ def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
     return Board(placements=tuple(placements))
 
 
+def _place_pattern(snapshot, occupancy, section, offering, cap):
+    requirements = [r for r in offering.requirements for _ in range(r.count_per_week)]
+    for pattern in offering.meeting_policy.patterns:
+        cells = pattern_cells(pattern)
+        if len(cells) != len(requirements):
+            continue
+        if section.instructor_id is not None and any(
+            not occupancy.instructor_free(section.instructor_id, day, window, cap)
+            for day, window in cells
+        ):
+            continue
+        # Dedicated space is part of this institutional pattern's contract;
+        # reserve the entire week only after every day passes its hard checks.
+        return tuple(
+            _make(section, offering, index, requirement, day, window, None)
+            for index, (requirement, (day, window)) in enumerate(
+                zip(requirements, cells, strict=True), start=1
+            )
+        )
+    return None
+
+
 def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
     needs_room = requirement.needs_shared_room
-    # D19: a course whose hours are given meets more than once a day, and its
-    # sections are REQUIRED to share hours. Enforcing H2 and H10 here left five
-    # of ENG101's ten weekly meetings unplaced on every board this placer built
-    # — including the naive baseline the whole search is measured against.
-    fixed_block = offering.occupies_fixed_block
     candidate_rooms = (
         [
             r
@@ -121,18 +141,11 @@ def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
     for slot in snapshot.grid.day_windows_for(requirement.duration, requirement.delivery):
         day, window = slot.day, slot.window
         if requirement.allowed_starts and window.start not in requirement.allowed_starts:
-            continue  # D19: confined to a subset of its family's windows
-        if fixed_block:
-            # The finer rule H2 stands in for: not twice in the same CELL.
-            if any(
-                w.start == window.start for w in occupancy.by_section.get((section.id, day), ())
-            ):
-                continue
-        else:
-            if (section.id, day) in occupancy.by_section_day:
-                continue  # H2: one meeting per section per day
-            if not occupancy.offering_free(offering.id, day, window):
-                continue  # H10: sibling sections must not collide
+            continue  # requirement narrows this grid family
+        if (section.id, day) in occupancy.by_section_day:
+            continue  # H2: one meeting per section per day
+        if not occupancy.offering_free(offering.id, day, window):
+            continue  # H10: sibling sections must not collide
         if section.instructor_id is not None and not occupancy.instructor_free(
             section.instructor_id, day, window, cap
         ):
@@ -149,16 +162,10 @@ def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
         day, window = slot.day, slot.window
         if requirement.allowed_starts and window.start not in requirement.allowed_starts:
             continue
-        if fixed_block:
-            if any(
-                w.start == window.start for w in occupancy.by_section.get((section.id, day), ())
-            ):
-                continue
-        else:
-            if (section.id, day) in occupancy.by_section_day:
-                continue
-            if not occupancy.offering_free(offering.id, day, window):
-                continue
+        if (section.id, day) in occupancy.by_section_day:
+            continue
+        if not occupancy.offering_free(offering.id, day, window):
+            continue
         if section.instructor_id is not None and not occupancy.instructor_free(
             section.instructor_id, day, window, cap
         ):

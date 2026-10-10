@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from django.db import transaction
 
 from core.models import SectionPlacement, TermSectionMeeting
+from core.services.timetable_course_policy import get_course_meeting_policy
 
 # Placement fields captured for restore. ``id`` is kept so identity is preserved
 # across a snapshot/restore. ``created_at``/``updated_at`` are deliberately
@@ -111,29 +112,42 @@ def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult
     constraints: each surviving locked placement keeps the meeting that backs it.
     Locking is per-placement (the UI toggles ``is_locked`` on a single placement),
     so a section may have a mix of locked and unlocked placements — meetings are
-    preserved per ``(section, day, start)`` to match the *surviving placements*,
-    never per whole section, so a partially-locked section stays
-    placement == meeting consistent. Passing ``keep_locked=False`` performs a
-    hard wipe of the whole scenario board.
+    preserved per ``(section, day, start)`` to match the *surviving placements*.
+    Fixed weekly policies such as ENG101/ENG102 protect the entire section when
+    any constituent meeting is locked, because its meetings form one indivisible
+    pattern. Passing ``keep_locked=False`` performs a hard wipe of the whole
+    scenario board.
 
     Runs in a single transaction. Returns the row counts removed.
     """
     with transaction.atomic():
         # (section, day, start) of each locked placement that will survive.
-        # Meetings are preserved to match these exact slots — not by section —
-        # so an unlocked meeting on a partially-locked section is still cleared.
+        # Ordinary meetings follow individual locks. Fixed policy sections add
+        # every companion slot before either table is cleared.
         locked_slot_keys: set[tuple[int, str, str]] = set()
         locked_ts_ids: set[int] = set()
+        bundle_ts_ids: set[int] = set()
         if keep_locked:
             for ts_id, day, start in SectionPlacement.objects.filter(
                 board__scenario_id=scenario_id, is_locked=True
             ).values_list("term_section_id", "day", "start_time"):
                 locked_slot_keys.add((ts_id, day, start))
                 locked_ts_ids.add(ts_id)
+            for placement in SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id, term_section_id__in=locked_ts_ids
+            ).select_related("term_section"):
+                section = placement.term_section
+                if get_course_meeting_policy(
+                    section.course_code, section.course_key, section.course_number
+                ):
+                    bundle_ts_ids.add(section.id)
+                    locked_slot_keys.add((section.id, placement.day, placement.start_time))
 
         placements_qs = SectionPlacement.objects.filter(board__scenario_id=scenario_id)
         if keep_locked:
-            placements_qs = placements_qs.filter(is_locked=False)
+            placements_qs = placements_qs.filter(is_locked=False).exclude(
+                term_section_id__in=bundle_ts_ids
+            )
         placements_deleted, _ = placements_qs.delete()
 
         meetings_qs = TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id)

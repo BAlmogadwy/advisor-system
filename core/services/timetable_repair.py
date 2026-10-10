@@ -79,6 +79,12 @@ from core.services.timetable_repair_eligibility import (
     repair_eligibility_summary,
     repair_section_id_ineligibility_reasons,
 )
+from core.services.timetable_section_policy import (
+    placement_snapshot,
+    policy_move_rejections,
+    section_policy,
+    sync_policy_meeting_changes,
+)
 from core.services.timetable_validation import validate_candidate
 from core.services.timetable_workspace import (
     preview_placement_room_candidates,
@@ -3238,6 +3244,7 @@ def apply_approved_repair_candidate(
                 }
             )
 
+        sync_policy_meeting_changes(placements_by_id, old_placements)
         applied_counts = _apply_student_changes(run, candidate, changes, source_tag)
         after_snapshot = build_assignment_snapshot(run.scenario_id)
         TimetableRepairSnapshot.objects.create(
@@ -3331,6 +3338,7 @@ def rollback_repair_run(
         rolled_back_counts = _rollback_student_changes(run, candidate, changes, source_tag)
 
         restored_placements: list[dict[str, Any]] = []
+        before_restore = [placement_snapshot(row) for row in placements_by_id.values()]
         for scoped_placement in placements_by_id.values():
             before_placement = _before_placement_row(run, scoped_placement.id)
             scoped_placement.day = before_placement["day"]
@@ -3350,6 +3358,7 @@ def rollback_repair_run(
                 }
             )
 
+        sync_policy_meeting_changes(placements_by_id, before_restore)
         after_snapshot = build_assignment_snapshot(run.scenario_id)
         TimetableRepairSnapshot.objects.create(
             run=run,
@@ -5086,6 +5095,8 @@ def hard_feasibility_rejections(
     """Reject impossible candidates before any future student solver."""
 
     reasons: list[dict[str, Any]] = []
+    if section_policy(placement.term_section):
+        room, room_reasons = "", []
     if placement.is_locked:
         reasons.append({"code": "TARGET_PLACEMENT_LOCKED", "message": "Target placement is locked"})
     if room_reasons:
@@ -6649,6 +6660,8 @@ def _placement_duration_minutes(placement: SectionPlacement) -> int:
 
 
 def _placement_meeting_kind(placement: SectionPlacement) -> str:
+    if section_policy(placement.term_section):
+        return "lect"
     return "lab" if _placement_duration_minutes(placement) > 80 else "lect"
 
 
@@ -6657,6 +6670,15 @@ def _placements_for_move_scope(
     move_scope: str,
 ) -> tuple[list[SectionPlacement], list[SectionPlacement]]:
     move_scope = _normalise_move_scope(move_scope)
+    if section_policy(placement.term_section):
+        return list(
+            SectionPlacement.objects.filter(
+                term_section_id=placement.term_section_id,
+                board__scenario_id=placement.board.scenario_id,
+            )
+            .select_related("board__scenario", "term_section")
+            .order_by("day", "start_time", "id")
+        ), []
     scoped = list(
         SectionPlacement.objects.filter(
             board_id=placement.board_id,
@@ -6888,6 +6910,7 @@ def _hard_feasibility_rejections_for_move_set(
                 details.setdefault("placement_id", placement_id)
                 filtered["details"] = details
                 rejections.append(filtered)
+    rejections.extend(policy_move_rejections(placements_by_id, moves))
     return rejections
 
 
@@ -6923,6 +6946,13 @@ def _filter_move_set_self_conflict_reason(
 def _move_scope_self_overlap_rejections(moves: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rejections: list[dict[str, Any]] = []
     for left, right in combinations(moves, 2):
+        if (
+            left.get("term_section_id")
+            and left.get("term_section_id") == right.get("term_section_id")
+            and (left.get("day"), left.get("start"), left.get("end"))
+            == (right.get("day"), right.get("start"), right.get("end"))
+        ):
+            continue  # The same physical section can be displayed on several delivery boards.
         if str(left.get("day") or "") != str(right.get("day") or ""):
             continue
         if not _intervals_overlap(
@@ -7412,6 +7442,21 @@ def _select_room_for_candidate(
     *,
     planning_scope: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    policy = section_policy(placement.term_section)
+    if policy and not policy.uses_shared_room:
+        return (
+            "",
+            [],
+            {
+                "is_online": False,
+                "uses_shared_room": False,
+                "room_required": False,
+                "no_room_required": True,
+                "selected_room": "",
+                "policy_clean": True,
+                "available": True,
+            },
+        )
     if OnlineCourseLookup().is_online_course_for_board(
         placement.board,
         placement.term_section.course_code,
@@ -10142,6 +10187,7 @@ def _candidate_move_set(
     normalized = [
         {
             "placement_id": int(move["placement_id"]),
+            "term_section_id": move.get("term_section_id"),
             "day": str(move.get("day") or ""),
             "start": str(move.get("start") or move.get("start_time") or ""),
             "end": str(move.get("end") or move.get("end_time") or ""),
@@ -10443,12 +10489,14 @@ def _locked_cells_for_scenario(scenario_id: int, exclude_placement_id: int) -> l
         {
             "day": row.day,
             "start_time": row.start_time,
-            "room": row.room or "",
+            "room": "" if section_policy(row.term_section) else row.room or "",
         }
         for row in SectionPlacement.objects.filter(
             board__scenario_id=scenario_id,
             is_locked=True,
-        ).exclude(id=exclude_placement_id)
+        )
+        .exclude(id=exclude_placement_id)
+        .select_related("term_section")
     ]
 
 

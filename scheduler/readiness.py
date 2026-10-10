@@ -153,16 +153,9 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
         siblings = len(snapshot.sections_by_offering.get(offering.id, ()))
         if siblings < 2:
             continue
-        if offering.occupies_fixed_block:
-            # This check's entire premise is H10 — "no two of them may overlap"
-            # — and D19 suspends exactly that: every section of a fixed-block
-            # course is REQUIRED to sit in the same cells. Counting 4 sections x
-            # 10 meetings against 25 non-overlapping slots declared the live
-            # ENG101 input BLOCKED_INPUT and told the registrar to cut its
-            # section count, when the input builds perfectly. The check that
-            # does apply to these courses — enough cells for one section's
-            # meetings — is enforced at intake, where both numbers are
-            # constructed together.
+        if offering.meeting_policy is not None:
+            # Parallel institutional sections may use the same bundle. Their
+            # legal weekly capacity is not the ordinary H10 slot inventory.
             continue
         durations = frozenset(
             r.duration for r in offering.requirements if r.needs_shared_room
@@ -207,6 +200,8 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
     # genuinely unplaceable.
     unplaceable: dict[int, list[str]] = {}
     for offering in snapshot.offerings:
+        if offering.meeting_policy is not None:
+            continue  # scoped policy windows need not belong to ordinary grid families
         for requirement in offering.requirements:
             if not grid.windows_for(requirement.duration):
                 unplaceable.setdefault(requirement.duration, []).append(offering.course_code)

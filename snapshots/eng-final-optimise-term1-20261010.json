@@ -1,0 +1,1988 @@
+{
+  "source_root": "C:\\Users\\user\\myUniproject",
+  "snapshot": "C:\\Users\\user\\myUniproject\\snapshots\\eng-classic-term1-20261010.sqlite3",
+  "scratch_database": "C:\\Users\\user\\myUniproject\\snapshots\\eng-final-optimise-term1-20261010.sqlite3",
+  "scenario": 665,
+  "action": "current",
+  "budget": {
+    "seconds": 15.0,
+    "runs": 1,
+    "iterations": 8
+  },
+  "before": {
+    "instructors": {
+      "working_days": 21,
+      "idle_minutes": 670,
+      "days": {
+        "6": 5,
+        "8": 4,
+        "124": 4,
+        "134": 5,
+        "7": 3
+      },
+      "idle_by_instructor": {
+        "6": 130,
+        "8": 45,
+        "124": 365,
+        "134": 130,
+        "7": 0
+      }
+    },
+    "students": 258,
+    "unresolved_students": 5,
+    "student_score": {
+      "layout": "tiered",
+      "highrisk_unresolved": 0,
+      "actual_assigned_clashes": 0,
+      "t1_unresolved": 1,
+      "t2_unresolved_over_tol": 0,
+      "student_cost": 14615,
+      "gap_minutes": 14135,
+      "soft_unresolved": 4,
+      "reserve_used": 7,
+      "same_course_spread": 5285,
+      "instructor_idle": 0,
+      "unresolved_tier_a": 0,
+      "unresolved_courses": 5
+    },
+    "sections": 44,
+    "meetings": 100,
+    "unassigned_room_rows": 8,
+    "physical_rooming": {
+      "unassigned": 2,
+      "incompatible": 0,
+      "shortages": 2
+    },
+    "safety": {
+      "boards": 5,
+      "placements": 100,
+      "unique_students": 258,
+      "board_student_links_total": 336,
+      "primary_student_links": 258,
+      "visitor_student_links": 78,
+      "room_assigned": 92,
+      "physical_unassigned_rooms": 2,
+      "online_without_room": 6,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 26,
+      "cross_board_affected_students": 36,
+      "cross_board_student_conflict_incidences": 77,
+      "high_cross_board_conflicts": 0,
+      "high_cross_board_affected_students": 0,
+      "max_cross_board_conflicts_per_student": 4,
+      "budget": {
+        "rows": 39,
+        "planned_sections": 44,
+        "used_sections": 44,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "signatures": {
+      "PHYS103::PHYSICS_I_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "CS111::FUNDAMENTALS_OF_PROGRAMMING_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "DS225::DATA_MINING_AND_ANALYTICS_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          780,
+          880
+        ],
+        [
+          4,
+          650,
+          725
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "MATH105::CALCULUS_I_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ]
+      ],
+      "PHYS103::PHYSICS_I_S2": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          885,
+          985
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "CS113::PROGRAMMING_II_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "MATH106::CALCULUS_II_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "DS113::INTRODUCTION_TO_DATA_SCIENCE_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          2,
+          960,
+          1035
+        ]
+      ],
+      "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          650,
+          725
+        ]
+      ],
+      "MATH203::203_CALCULUS_I_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "ENGL103::ENGLISH_COMPOSITION_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "GS111::ARABIC_LANGUAGE_SKILLS_I_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          540,
+          640
+        ]
+      ],
+      "CS211::ALGORITHMS_AND_DATA_STRUCTURES_S1": [
+        [
+          1,
+          645,
+          745
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "COE223::COMPUTER_ARCHITECTURE_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "CS285::SOFTWARE_ENGINEERING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "IS251::DATABASE_MANAGEMENT_SYSTEMS_I_S1": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS_S1": [
+        [
+          2,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "STAT307::APPLIED_PROBABILITY__STATISTICS_S1": [
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          4,
+          885,
+          960
+        ]
+      ],
+      "COE215::DIGITAL_LOGIC_DESIGN_S1": [
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP_S1": [
+        [
+          0,
+          885,
+          960
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_S1": [
+        [
+          2,
+          780,
+          880
+        ]
+      ],
+      "GS102::ISLAMIC_STUDIES_FEATURES_OF_THE_PROPHETS_BIOGRAPHY_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "CS323::OPERATING_SYSTEMS_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          640
+        ]
+      ],
+      "AI331::MACHINE_LEARNING_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "CS372::DATABASE_SYSTEMS_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          3,
+          885,
+          985
+        ]
+      ],
+      "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "DS332::DATA_MINING_AND_ANALYTICS_II_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          960,
+          1035
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "FE2::FREE_ELECTIVE_COURSE_II_S1": [
+        [
+          1,
+          645,
+          745
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S2": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S3": [
+        [
+          0,
+          780,
+          880
+        ]
+      ],
+      "DS433::BIG_DATA_ANALYTICS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "CS424::INTRO_TO_PARALLEL_COMPUTING_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "AI463_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "DS487_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING_S1": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "DS432::WEB_DEVELOPMENT_FOR_DATA_SCIENCE_S1": [
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_I_S1": [
+        [
+          1,
+          540,
+          640
+        ]
+      ],
+      "MGT405::LEADERSHIP_AND_ENTREPRENEURSHIP_S1": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "AI463_S2": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "DS487_S2": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ]
+    }
+  },
+  "result": {
+    "mode": "current",
+    "candidates_evaluated": 1,
+    "best_candidate_id": "current",
+    "baseline_score": [
+      0,
+      0,
+      1,
+      0,
+      14615,
+      4,
+      7,
+      5285,
+      0
+    ],
+    "baseline_room_shortages": 2,
+    "optimisation_policy": "instructor_first",
+    "baseline_instructor_schedule": {
+      "working_days": 21,
+      "idle_minutes": 670,
+      "idle_minutes_by_instructor": {
+        "124": 365,
+        "134": 130,
+        "6": 130,
+        "7": 0,
+        "8": 45
+      },
+      "working_days_by_instructor": {
+        "124": 4,
+        "134": 5,
+        "6": 5,
+        "7": 3,
+        "8": 4
+      },
+      "affected_instructors": 5
+    },
+    "best_score": [
+      0,
+      0,
+      1,
+      0,
+      14615,
+      4,
+      7,
+      5285,
+      0
+    ],
+    "final_score": [
+      0,
+      0,
+      0,
+      0,
+      11785,
+      0,
+      7,
+      11285,
+      0
+    ],
+    "hotspot_courses": [],
+    "capacity_pressure_courses": [],
+    "reserve_heavy_sections": [
+      {
+        "section": "AI463_S1",
+        "ratio": 0.67
+      },
+      {
+        "section": "AI463_S2",
+        "ratio": 0.67
+      },
+      {
+        "section": "CS323::OPERATING_SYSTEMS_S1",
+        "ratio": 0.5
+      }
+    ],
+    "quality_score": {
+      "policy": "timetable-quality-v1",
+      "penalty": 1545,
+      "components": {
+        "weak_slot": 895,
+        "day_balance": 131,
+        "spare_capacity": 336,
+        "section_balance": 33,
+        "room_change": 0,
+        "student_day_overload": 150
+      },
+      "day_load": {
+        "SUN": 22,
+        "MON": 22,
+        "TUE": 22,
+        "WED": 15,
+        "THU": 19
+      },
+      "reasons": [
+        {
+          "component": "weak_slot",
+          "label": "Uses weaker teaching slots",
+          "penalty": 895
+        },
+        {
+          "component": "spare_capacity",
+          "label": "Consumes spare capacity",
+          "penalty": 336
+        },
+        {
+          "component": "student_day_overload",
+          "label": "Creates heavy student days",
+          "penalty": 150
+        },
+        {
+          "component": "day_balance",
+          "label": "Uneven day distribution",
+          "penalty": 131
+        },
+        {
+          "component": "section_balance",
+          "label": "Uneven same-course section load",
+          "penalty": 33
+        }
+      ],
+      "instructor_schedule": {
+        "working_days": 21,
+        "idle_minutes": 395,
+        "idle_minutes_by_instructor": {
+          "124": 145,
+          "134": 110,
+          "6": 110,
+          "7": 0,
+          "8": 30
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      }
+    },
+    "unresolved_students": 0,
+    "baseline_unresolved_students": 5,
+    "total_students": 258,
+    "local_search_applied": true,
+    "persist_result": {
+      "action": "persisted_secondary_recovery",
+      "updated": 70
+    },
+    "decision_trace": {
+      "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING|S1": {
+        "section_code": "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING|S1",
+        "course_code": "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING",
+        "chosen_day": "SUN",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "",
+        "alternatives": [],
+        "stage_origin": "chain",
+        "stage_context": {
+          "code": "CHAIN_ROTATED",
+          "chain_length": 2,
+          "chain_id": "chain_0",
+          "previous_slot": "MON 16:00-17:15",
+          "new_slot": "SUN 09:00-10:15"
+        }
+      },
+      "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS|S1": {
+        "section_code": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS|S1",
+        "course_code": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "",
+        "alternatives": [],
+        "stage_origin": "chain",
+        "stage_context": {
+          "code": "CHAIN_ROTATED",
+          "chain_length": 2,
+          "chain_id": "chain_0",
+          "previous_slot": "THU 16:00-17:15",
+          "new_slot": "SUN 10:30-11:45"
+        }
+      }
+    },
+    "perturbation_metric": {
+      "changes_from_baseline_count": 0,
+      "unchanged_count": 0,
+      "newly_placed_count": 0,
+      "removed_count": 0
+    },
+    "stage_telemetry": {
+      "stage_ms": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 2001,
+        "chain": 2972,
+        "rooming_repair": 0
+      },
+      "stage_iterations": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 1,
+        "chain": 2,
+        "rooming_repair": 0
+      }
+    },
+    "score_before_local_search": [
+      0,
+      0,
+      1,
+      0,
+      14615,
+      4,
+      7,
+      5285,
+      0
+    ],
+    "chain_search_applied": true,
+    "cpsat_polish_applied": false,
+    "meeting_sync": {
+      "sections": 44,
+      "written": 100
+    },
+    "safety_before_instructor_passes": {
+      "boards": 5,
+      "placements": 100,
+      "unique_students": 258,
+      "board_student_links_total": 336,
+      "primary_student_links": 258,
+      "visitor_student_links": 78,
+      "room_assigned": 92,
+      "physical_unassigned_rooms": 2,
+      "online_without_room": 6,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 26,
+      "cross_board_affected_students": 36,
+      "cross_board_student_conflict_incidences": 77,
+      "high_cross_board_conflicts": 0,
+      "high_cross_board_affected_students": 0,
+      "max_cross_board_conflicts_per_student": 4,
+      "budget": {
+        "rows": 39,
+        "planned_sections": 44,
+        "used_sections": 44,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "instructor_cap_repair": {
+      "enabled": true,
+      "detected": [],
+      "repaired": [],
+      "unplaced": [],
+      "locked_blocked": [],
+      "remaining_violations": 0,
+      "student_score_before": null,
+      "student_score_after": null
+    },
+    "instructor_clash_repair": {
+      "enabled": true,
+      "detected": [],
+      "repaired": [],
+      "unplaced": [],
+      "locked_blocked": [],
+      "remaining_clashes": 0,
+      "student_score_before": null,
+      "student_score_after": null,
+      "weekly_pattern_search": {
+        "evaluated": 0,
+        "accepted": 0
+      }
+    },
+    "instructor_compaction": {
+      "enabled": true,
+      "weekly_pattern_search": {
+        "evaluated": 0,
+        "accepted": 0
+      },
+      "neighbourhood_version": "relocation-v1",
+      "rolled_back": false,
+      "rollback_reason": null,
+      "room_safety": {
+        "physical_unassigned_before": 2,
+        "physical_unassigned_candidate": 2,
+        "physical_unassigned_after": 2,
+        "candidate_locked_assignments_preserved": true,
+        "locked_assignments_preserved": true
+      },
+      "candidate_instructor_impact": {
+        "working_days": 21,
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "total_idle": 395,
+        "largest_hole": 55
+      },
+      "candidate_student_total_gap": 11910,
+      "candidate_relocations": [
+        {
+          "section": "DS225::DATA_MINING_AND_ANALYTICS S1",
+          "from": "SUN 13:00",
+          "to": "SUN 09:00"
+        }
+      ],
+      "protected": {
+        "feasibility_before": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "feasibility_after": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reserve_before": 7,
+        "reserve_after": 7
+      },
+      "student_impact": {
+        "total_gap_before": 11995,
+        "total_gap_after": 11910,
+        "total_gap_delta": -85,
+        "budget_ceiling": 12354,
+        "max_added_gap_any_student": 0,
+        "students_worsened": 0,
+        "students_improved": 1,
+        "tierA_gap_delta": -85,
+        "graduating_gap_delta": 0
+      },
+      "instructor_impact": {
+        "working_days_before": 21,
+        "working_days_after": 21,
+        "working_days_by_instructor_before": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "working_days_by_instructor_after": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "idle_minutes_by_instructor_before": {
+          "124": 145,
+          "134": 110,
+          "6": 130,
+          "7": 0,
+          "8": 30
+        },
+        "idle_minutes_by_instructor_after": {
+          "124": 145,
+          "134": 110,
+          "6": 110,
+          "7": 0,
+          "8": 30
+        },
+        "total_idle_before": 415,
+        "total_idle_after": 395,
+        "total_idle_saved": 20,
+        "largest_hole_before": 55,
+        "largest_hole_after": 55,
+        "over90_before": 0,
+        "over90_after": 0,
+        "worst_weekly_before": 145,
+        "worst_weekly_after": 145,
+        "instructors_improved": 1,
+        "instructors_worsened": 0
+      },
+      "search": {
+        "moves_evaluated": 748,
+        "moves_accepted": 1,
+        "candidate_moves_accepted": 1,
+        "rounds_used": 2,
+        "residual_largest_hole": 55,
+        "timed_out": false,
+        "elapsed_seconds": 4.3
+      },
+      "relocations": [
+        {
+          "section": "DS225::DATA_MINING_AND_ANALYTICS S1",
+          "from": "SUN 13:00",
+          "to": "SUN 09:00"
+        }
+      ]
+    },
+    "score_before_instructor_passes": [
+      0,
+      0,
+      0,
+      0,
+      12115,
+      1,
+      7,
+      5285,
+      0
+    ],
+    "instructor_schedule_before_passes": {
+      "working_days": 21,
+      "idle_minutes": 415,
+      "idle_minutes_by_instructor": {
+        "124": 145,
+        "134": 110,
+        "6": 130,
+        "7": 0,
+        "8": 30
+      },
+      "working_days_by_instructor": {
+        "124": 4,
+        "134": 5,
+        "6": 5,
+        "7": 3,
+        "8": 4
+      },
+      "affected_instructors": 5
+    },
+    "secondary_recovery": {
+      "applied": true,
+      "accepted_moves": [
+        {
+          "section_id": "CS424::INTRO_TO_PARALLEL_COMPUTING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 1,
+          "soft_after": 1,
+          "rooms_before": 3,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 1,
+          "soft_after": 0,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "PHYS103::PHYSICS_I_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 0,
+          "soft_after": 0,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        },
+        {
+          "section_id": "CS424::INTRO_TO_PARALLEL_COMPUTING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 0,
+          "soft_after": 0,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        },
+        {
+          "section_id": "PHYS103::PHYSICS_I_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 0,
+          "soft_after": 0,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        },
+        {
+          "section_id": "DS487_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 0,
+          "soft_after": 0,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        }
+      ],
+      "soft_unresolved_before": 1,
+      "soft_unresolved_after": 0,
+      "room_shortages_before": 3,
+      "room_shortages_after": 2,
+      "room_shortage_target": 2,
+      "instructor_before": {
+        "working_days": 21,
+        "idle_minutes": 395,
+        "idle_minutes_by_instructor": {
+          "124": 145,
+          "134": 110,
+          "6": 110,
+          "7": 0,
+          "8": 30
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "instructor_after": {
+        "working_days": 21,
+        "idle_minutes": 395,
+        "idle_minutes_by_instructor": {
+          "124": 145,
+          "134": 110,
+          "6": 110,
+          "7": 0,
+          "8": 30
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "score_before": [
+        0,
+        0,
+        0,
+        0,
+        12030,
+        1,
+        7,
+        5285,
+        0
+      ],
+      "score_after": [
+        0,
+        0,
+        0,
+        0,
+        11785,
+        0,
+        7,
+        11285,
+        0
+      ],
+      "student_gap_minutes_before": 11910,
+      "student_gap_minutes_after": 11785,
+      "evaluations": 1754,
+      "room_evaluations": 7,
+      "unrelated_room_trials_skipped": 109,
+      "recovery_iterations": 2,
+      "polish_iterations": 4,
+      "structural_rejections": 58,
+      "instructor_rejections": 0,
+      "elapsed_seconds": 10.703,
+      "stop_reason": "polish_iteration_limit",
+      "room_shortages_before_search": 3,
+      "unassigned_room_rows_before": 2,
+      "incompatible_rooms_before": 1,
+      "placements_updated": 70,
+      "unassigned_room_rows_after": 2,
+      "incompatible_rooms_after": 0
+    },
+    "elapsed_seconds": 51.3,
+    "instructor_gap_metric": {
+      "idle_minutes_before": 0,
+      "idle_minutes_after": 0,
+      "idle_delta": 0,
+      "affected_instructors": 0
+    },
+    "tiered_soft_gap_budget": 120,
+    "instructor_schedule_metric": {
+      "before": {
+        "working_days": 21,
+        "idle_minutes": 670,
+        "idle_minutes_by_instructor": {
+          "124": 365,
+          "134": 130,
+          "6": 130,
+          "7": 0,
+          "8": 45
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "after": {
+        "working_days": 21,
+        "idle_minutes": 395,
+        "idle_minutes_by_instructor": {
+          "124": 145,
+          "134": 110,
+          "6": 110,
+          "7": 0,
+          "8": 30
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "working_days_saved": 0,
+      "idle_minutes_saved": 275,
+      "repair_exceptions": []
+    },
+    "safety_blocked": false,
+    "safety_regression": {
+      "blocked": false,
+      "regressions": []
+    },
+    "cross_board_before": 26,
+    "cross_board_after": 21,
+    "cross_board_delta": 5,
+    "cross_board_affected_students_before": 36,
+    "cross_board_affected_students_after": 34,
+    "cross_board_affected_students_delta": 2,
+    "cross_board_student_conflict_incidences_before": 77,
+    "cross_board_student_conflict_incidences_after": 62,
+    "cross_board_student_conflict_incidences_delta": 15
+  },
+  "after": {
+    "instructors": {
+      "working_days": 21,
+      "idle_minutes": 395,
+      "days": {
+        "6": 5,
+        "8": 4,
+        "124": 4,
+        "134": 5,
+        "7": 3
+      },
+      "idle_by_instructor": {
+        "6": 110,
+        "8": 30,
+        "124": 145,
+        "134": 110,
+        "7": 0
+      }
+    },
+    "students": 258,
+    "unresolved_students": 0,
+    "student_score": {
+      "layout": "tiered",
+      "highrisk_unresolved": 0,
+      "actual_assigned_clashes": 0,
+      "t1_unresolved": 0,
+      "t2_unresolved_over_tol": 0,
+      "student_cost": 11785,
+      "gap_minutes": 11785,
+      "soft_unresolved": 0,
+      "reserve_used": 7,
+      "same_course_spread": 11285,
+      "instructor_idle": 0,
+      "unresolved_tier_a": 0,
+      "unresolved_courses": 0
+    },
+    "sections": 44,
+    "meetings": 100,
+    "unassigned_room_rows": 8,
+    "physical_rooming": {
+      "unassigned": 2,
+      "incompatible": 0,
+      "shortages": 2
+    },
+    "safety": {
+      "boards": 5,
+      "placements": 100,
+      "unique_students": 258,
+      "board_student_links_total": 336,
+      "primary_student_links": 258,
+      "visitor_student_links": 78,
+      "room_assigned": 92,
+      "physical_unassigned_rooms": 2,
+      "online_without_room": 6,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 21,
+      "cross_board_affected_students": 34,
+      "cross_board_student_conflict_incidences": 62,
+      "high_cross_board_conflicts": 0,
+      "high_cross_board_affected_students": 0,
+      "max_cross_board_conflicts_per_student": 3,
+      "budget": {
+        "rows": 39,
+        "planned_sections": 44,
+        "used_sections": 44,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "signatures": {
+      "PHYS103::PHYSICS_I_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "CS111::FUNDAMENTALS_OF_PROGRAMMING_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "DS225::DATA_MINING_AND_ANALYTICS_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          780,
+          880
+        ],
+        [
+          4,
+          650,
+          725
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "MATH105::CALCULUS_I_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ]
+      ],
+      "PHYS103::PHYSICS_I_S2": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          885,
+          985
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "CS113::PROGRAMMING_II_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "MATH106::CALCULUS_II_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "DS113::INTRODUCTION_TO_DATA_SCIENCE_S1": [
+        [
+          1,
+          885,
+          960
+        ],
+        [
+          2,
+          885,
+          960
+        ]
+      ],
+      "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          650,
+          725
+        ]
+      ],
+      "MATH203::203_CALCULUS_I_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "ENGL103::ENGLISH_COMPOSITION_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "GS111::ARABIC_LANGUAGE_SKILLS_I_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          3,
+          885,
+          985
+        ]
+      ],
+      "CS211::ALGORITHMS_AND_DATA_STRUCTURES_S1": [
+        [
+          1,
+          645,
+          745
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "COE223::COMPUTER_ARCHITECTURE_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "CS285::SOFTWARE_ENGINEERING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "IS251::DATABASE_MANAGEMENT_SYSTEMS_I_S1": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ]
+      ],
+      "STAT307::APPLIED_PROBABILITY__STATISTICS_S1": [
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          4,
+          885,
+          960
+        ]
+      ],
+      "COE215::DIGITAL_LOGIC_DESIGN_S1": [
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP_S1": [
+        [
+          0,
+          885,
+          960
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_S1": [
+        [
+          2,
+          780,
+          880
+        ]
+      ],
+      "GS102::ISLAMIC_STUDIES_FEATURES_OF_THE_PROPHETS_BIOGRAPHY_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "CS323::OPERATING_SYSTEMS_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          640
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI331::MACHINE_LEARNING_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "CS372::DATABASE_SYSTEMS_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          3,
+          885,
+          985
+        ]
+      ],
+      "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "DS332::DATA_MINING_AND_ANALYTICS_II_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "FE2::FREE_ELECTIVE_COURSE_II_S1": [
+        [
+          1,
+          645,
+          745
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S2": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S3": [
+        [
+          0,
+          780,
+          880
+        ]
+      ],
+      "DS433::BIG_DATA_ANALYTICS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "CS424::INTRO_TO_PARALLEL_COMPUTING_S1": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          990,
+          1090
+        ]
+      ],
+      "AI463_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "DS487_S1": [
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          2,
+          960,
+          1035
+        ]
+      ],
+      "DS432::WEB_DEVELOPMENT_FOR_DATA_SCIENCE_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_I_S1": [
+        [
+          1,
+          540,
+          640
+        ]
+      ],
+      "MGT405::LEADERSHIP_AND_ENTREPRENEURSHIP_S1": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "AI463_S2": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "DS487_S2": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ]
+    }
+  },
+  "elapsed_seconds": 51.641
+}

@@ -45,8 +45,76 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.timetable_autoplace import DEFAULT_SLOTS, get_meeting_pattern
+from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
+
+
+def _english_lecture(placement) -> bool:
+    section = placement.term_section
+    return (
+        get_course_meeting_policy(section.course_code, section.course_key, section.course_number)
+        is not None
+    )
+
+
+def _merge_english_spans(ws, row: int, slots: list[dict], placements: list) -> None:
+    """Show continuous three-hour lectures across normal slot/break columns.
+
+    Preserve text from every covered cell, including conflicting courses.
+    Exact saved meeting times remain visible inside each merged span.
+    """
+
+    def minutes(value):
+        hour, minute = map(int, str(value).split(":"))
+        return hour * 60 + minute
+
+    spans = set()
+    for placement in placements:
+        if not _english_lecture(placement):
+            continue
+        start, end = minutes(placement.start_time), minutes(placement.end_time)
+        if end - start != 180:
+            continue
+        covered = [
+            index + 2
+            for index, slot in enumerate(slots)
+            if minutes(slot["start"]) < end and start < minutes(slot["end"])
+        ]
+        if covered:
+            spans.add((min(covered), max(covered), placement.start_time, placement.end_time))
+    for first, last, start, end in sorted(spans):
+        values = list(
+            dict.fromkeys(
+                str(ws.cell(row, column).value)
+                for column in range(first, last + 1)
+                if ws.cell(row, column).value
+            )
+        )
+        for placement in placements:
+            if not _english_lecture(placement) or (placement.start_time, placement.end_time) != (
+                start,
+                end,
+            ):
+                continue
+            section = placement.term_section
+            marker = f"{section.course_code} {getattr(section, 'section', '')}".strip()
+            if not any(marker in value for value in values):
+                values.append(marker)
+        if not values:
+            continue
+        value = "\n---\n".join(values) + f"\n{start}–{end} · continuous lecture · No room required"
+        ws.merge_cells(start_row=row, start_column=first, end_row=row, end_column=last)
+        ws.cell(row, first).value = value
+        if len(values) > 1:
+            from openpyxl.styles import PatternFill
+
+            ws.cell(row, first).fill = PatternFill(
+                start_color="F4CCCC", end_color="F4CCCC", fill_type="solid"
+            )
+        ws.row_dimensions[row].height = max(
+            ws.row_dimensions[row].height or 0, 13 * (value.count("\n") + 1), 58
+        )
 
 
 def export_scenario_xlsx(scenario_id: int) -> Path:
@@ -366,6 +434,8 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
                 # Helper: classify placement as lab (>80 min duration)
                 def _is_lab_p(pp):
+                    if _english_lecture(pp):
+                        return False
                     return (_tm(pp.end_time) - _tm(pp.start_time)) > 80
 
                 # Helper: find the best-overlapping lecture slot for a lab placement
@@ -420,8 +490,14 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             term_section=ts, day=day
                         ).first()
                         instructor = meeting.instructor if meeting else ""
-                        room = pp.room or (meeting.room if meeting else "")
+                        room = (
+                            "No room required"
+                            if _english_lecture(pp)
+                            else pp.room or (meeting.room if meeting else "")
+                        )
                         text = f"{ts.course_code} {ts.section}"
+                        if _english_lecture(pp):
+                            text += f"\n{pp.start_time}–{pp.end_time} · lecture"
                         if instructor:
                             text += f"\n{instructor}"
                         if room:
@@ -481,13 +557,24 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                         elif len(cd["courses"]) == 1:
                             cell.fill = _course_fill(cd["courses"][0], course_color_map)
 
+                    _merge_english_spans(
+                        ws,
+                        row,
+                        slot_config,
+                        [
+                            pp
+                            for representative in group_placements
+                            for pp in section_all_placements.get(representative.term_section_id, [])
+                            if pp.day.upper()[:3] == day_code
+                        ],
+                    )
                     # Increase row height if any cell has lab time (needs 2 lines)
                     has_lab_in_row = any(
                         grid.get(day_code, {}).get(f"{s['start']}-{s['end']}", {}).get("lab_time")
                         for s in slot_config
                     )
                     if has_lab_in_row:
-                        ws.row_dimensions[row].height = 42
+                        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 0, 42)
                     row += 1
 
                 # Outer border for this group's grid
@@ -726,13 +813,15 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     from core.models import Room
 
     # Get all rooms actually used in this scenario's placements
-    used_room_codes = set(
-        SectionPlacement.objects.filter(board__scenario=scenario)
+    physical_room_placements = [
+        placement
+        for placement in SectionPlacement.objects.filter(board__scenario=scenario)
         .exclude(room="")
         .exclude(room="UNASSIGNED")
-        .values_list("room", flat=True)
-        .distinct()
-    )
+        .select_related("term_section")
+        if not _english_lecture(placement)
+    ]
+    used_room_codes = {placement.room for placement in physical_room_placements}
     all_rooms = list(
         Room.objects.filter(room_code__in=used_room_codes).order_by("room_type", "room_code")
     )
@@ -752,12 +841,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
         )
 
         # Collect all placements across all boards for the room view
-        all_board_placements = list(
-            SectionPlacement.objects.filter(board__scenario=scenario)
-            .exclude(room="")
-            .exclude(room="UNASSIGNED")
-            .select_related("term_section")
-        )
+        all_board_placements = physical_room_placements
 
         if all_board_placements:
             room_info = {r.room_code: r for r in all_rooms}
@@ -769,6 +853,8 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             )
             for p in all_board_placements:
                 text = f"{p.term_section.course_code} {p.term_section.section}"
+                if _english_lecture(p):
+                    text += f"\n{p.start_time}–{p.end_time} · lecture"
                 room_grid[p.room][(p.day, p.start_time)].append(text)
 
             # Build separate slot lists for lecture and lab rooms
@@ -888,6 +974,16 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                                 cell.fill = PatternFill(
                                     start_color="FADBD8", end_color="FADBD8", fill_type="solid"
                                 )
+                    _merge_english_spans(
+                        ws,
+                        row,
+                        slots,
+                        [
+                            p
+                            for p in all_board_placements
+                            if p.room == room_code and p.day == day_code
+                        ],
+                    )
                     row += 1
 
                 return row + 1  # gap between room tables
@@ -985,6 +1081,7 @@ def _render_instructors_sheet(wb, scenario, fill_for) -> None:
     # belong on the instructor's timetable, so (unlike the Rooms sheet) we do not
     # exclude on room.
     grid: dict[str, dict[tuple[str, str], list[str]]] = defaultdict(lambda: defaultdict(list))
+    english_by_instructor: dict[str, list] = defaultdict(list)
     for p in (
         SectionPlacement.objects.filter(board__scenario=scenario)
         .exclude(day="")
@@ -996,6 +1093,8 @@ def _render_instructors_sheet(wb, scenario, fill_for) -> None:
         grid[name][(p.day, p.start_time)].append(
             f"{p.term_section.course_code} {p.term_section.section}"
         )
+        if _english_lecture(p):
+            english_by_instructor[name].append(p)
     if not grid:
         return
 
@@ -1078,6 +1177,9 @@ def _render_instructors_sheet(wb, scenario, fill_for) -> None:
                     cell.font = cell_font
                     # >1 course in the same slot = a clash for this instructor.
                     cell.fill = conflict_fill if len(texts) > 1 else fill_for(texts[0].split()[0])
+            _merge_english_spans(
+                ws, row, slots, [p for p in english_by_instructor[name] if p.day == day_code]
+            )
             row += 1
         row += 1  # gap between instructor tables
 

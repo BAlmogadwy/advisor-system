@@ -34,18 +34,26 @@ import random
 import time
 from collections import defaultdict
 
+from django.db import transaction
+
 from core.models import (
     DeliveryBoard,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
 )
+from core.services.course_identity import course_display_code
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
     _time_mask,
     placeable_slots,
+)
+from core.services.timetable_course_policy import (
+    get_course_meeting_policy,
+    meeting_options_for_policy,
+    meeting_signature,
 )
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
@@ -103,7 +111,7 @@ def _same_course_spread_cost(schedule: dict[int, list[dict]], sections: list[dic
 
 def _has_same_course_overlap(schedule: dict[int, list[dict]], sections: list[dict]) -> bool:
     return any(
-        same_course_windows_overlap(meetings)
+        same_course_windows_overlap([m for rows in meetings for m in rows])
         for meetings in _same_course_windows_by_course(schedule, sections).values()
     )
 
@@ -220,6 +228,12 @@ def _check_hard_constraints(
 
     # 3. All different days per section
     for i, meetings in schedule.items():  # noqa: B007
+        policy = sections[i].get("meeting_policy") or get_course_meeting_policy(
+            sections[i]["code"],
+            sections[i].get("course_key", ""),
+        )
+        if policy is not None and not policy.accepts(meetings):
+            return False
         days = [m["day"] for m in meetings]
         if len(days) != len(set(days)):
             return False
@@ -297,6 +311,18 @@ def _generate_relocate_move(
     if not meetings:
         return None
 
+    if sections[sec_idx].get("meeting_policy") is not None:
+        bundles = sections[sec_idx].get("bundles") or []
+        current = {(m["day"], m["start"], m["end"]) for m in meetings}
+        alternatives = [
+            bundle
+            for bundle in bundles
+            if {(m["day"], m["start"], m["end"]) for m in bundle} != current
+        ]
+        if not alternatives:
+            return None
+        return sec_idx, -1, {"bundle": rng.choice(alternatives)}
+
     m_idx = rng.randint(0, len(meetings) - 1)
     current = meetings[m_idx]
     options = valid_options[sec_idx][m_idx]
@@ -326,6 +352,10 @@ def _apply_move(
     new_opt: dict,
 ) -> dict:
     """Apply a move and return the old option (for undo)."""
+    if m_idx == -1:
+        old = {"bundle": schedule[sec_idx]}
+        schedule[sec_idx] = [m.copy() for m in new_opt["bundle"]]
+        return old
     old = schedule[sec_idx][m_idx].copy()
     schedule[sec_idx][m_idx] = new_opt
     return old
@@ -337,7 +367,206 @@ def _undo_move(
     m_idx: int,
     old_opt: dict,
 ) -> None:
+    if m_idx == -1:
+        schedule[sec_idx] = old_opt["bundle"]
+        return
     schedule[sec_idx][m_idx] = old_opt
+
+
+def _instructor_quality(schedule, sections):
+    from core.services.timetable_assignment_models import SectionMeeting, SectionState
+    from core.services.timetable_optimisation_policy import instructor_schedule_metrics
+
+    states = [
+        SectionState(
+            section_id=str(i),
+            course_code=sections[i]["code"],
+            meetings=[
+                SectionMeeting(WEEKDAYS.index(m["day"]), _to_min(m["start"]), _to_min(m["end"]))
+                for m in meetings
+            ],
+            max_capacity=0,
+            reserve_capacity=0,
+            delivery_is_online=sections[i].get("is_online", False),
+        )
+        for i, meetings in schedule.items()
+    ]
+    return instructor_schedule_metrics(
+        states,
+        {str(i): frozenset(sec.get("instructor_ids") or ()) for i, sec in enumerate(sections)},
+    )
+
+
+def _policy_bundles(policy, scenario, slots):
+    return [
+        [dict(row, mask=_time_mask(row["day"], row["start"], row["end"])) for row in bundle]
+        for bundle in meeting_options_for_policy(
+            policy,
+            blocked_slots=scenario.blocked_slots or [],
+            slots=slots,
+        )
+    ]
+
+
+def _serializable_sections(sections):
+    return [
+        dict(
+            {
+                key: value
+                for key, value in section.items()
+                if key not in {"meeting_policy", "bundles", "instructor_ids"}
+            },
+            instructor_ids=sorted(section.get("instructor_ids") or []),
+        )
+        for section in sections
+    ]
+
+
+def _original_schedule(board, sections):
+    index = {sec["term_section_id"]: i for i, sec in enumerate(sections)}
+    schedule = {i: [] for i in range(len(sections))}
+    for row in SectionPlacement.objects.filter(board=board).order_by(
+        "term_section_id", "day", "start_time"
+    ):
+        if row.term_section_id in index:
+            schedule[index[row.term_section_id]].append(
+                {
+                    "day": row.day,
+                    "start": row.start_time,
+                    "end": row.end_time,
+                    "mask": _time_mask(row.day, row.start_time, row.end_time),
+                    "placement_id": row.pk,
+                }
+            )
+    return schedule
+
+
+def _capture_persist_guard(board):
+    """Read the scenario baseline before a writer opens its pass-local changes."""
+    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_constraints import (
+        count_instructor_clashes,
+        count_instructor_daily_overloads,
+    )
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimisation_policy import instructor_schedule_metrics
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
+        build_section_instructor_map_for_scenario,
+        build_section_states_for_scenario,
+        build_student_profiles_for_scenario,
+    )
+    from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+
+    scenario_id = board.scenario_id
+    states = build_section_states_for_scenario(scenario_id)
+    ids = build_section_instructor_map_for_scenario(scenario_id)
+    profiles = build_student_profiles_for_scenario(scenario_id)
+    rigidity = build_course_rigidity_for_scenario(scenario_id) if profiles else {}
+    evaluation = (
+        evaluate_generated_timetable_candidate(
+            "classic_persist_guard",
+            states,
+            profiles,
+            rigidity,
+            section_instructor_ids=ids,
+            course_tiers=build_course_tier_map_for_scenario(scenario_id)
+            if is_tiered_objective_enabled()
+            else None,
+        )
+        if profiles
+        else None
+    )
+    state_map = {s.section_id: s for s in states}
+    room_report = build_recovery_room_evaluator(scenario_id).original_room_report
+    unusable_rooms = set().union(
+        *(
+            set(room_report[key])
+            for key in (
+                "original_unassigned_demand_ids",
+                "original_incompatible_demand_ids",
+                "original_room_conflict_demand_ids",
+            )
+        )
+    )
+    placed_meetings = defaultdict(set)
+    for section_id, day, start, end in SectionPlacement.objects.filter(
+        board__scenario_id=scenario_id,
+    ).values_list("term_section_id", "day", "start_time", "end_time"):
+        placed_meetings[section_id].add((day, start, end))
+    return {
+        "teachers": instructor_schedule_metrics(states, ids),
+        "clashes": count_instructor_clashes(state_map, ids),
+        "overloads": count_instructor_daily_overloads(state_map, ids, get_instructor_daily_cap()),
+        "student_feasibility": tuple(evaluation.lexicographic_score[:4]) if evaluation else None,
+        "unusable_room_count": len(unusable_rooms),
+        "meeting_durations": {
+            section_id: sorted(_to_min(end) - _to_min(start) for _day, start, end in meetings)
+            for section_id, meetings in placed_meetings.items()
+        },
+        "locked": list(
+            SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
+            .order_by("pk")
+            .values(
+                "pk",
+                "board_id",
+                "term_section_id",
+                "day",
+                "start_time",
+                "end_time",
+                "room",
+                "is_locked",
+            )
+        ),
+    }
+
+
+def _persist_guard_rejections(board, before, *, preserve_teacher_quality=True):
+    from core.services.timetable_optimisation_policy import instructor_schedule_regressions
+    from core.services.timetable_section_policy import (
+        assert_pattern_available,
+        assert_policy_placement_rows,
+        section_policy,
+    )
+    from core.services.timetable_validation import is_lock_enforcement_enabled
+
+    reasons = []
+    after = _capture_persist_guard(board)
+    if after["clashes"] > before["clashes"]:
+        reasons.append("instructor clashes increased")
+    if after["overloads"] > before["overloads"]:
+        reasons.append("instructor daily overloads increased")
+    if preserve_teacher_quality and instructor_schedule_regressions(
+        before["teachers"], after["teachers"]
+    ):
+        reasons.append("instructor working days or idle minutes increased")
+    if preserve_teacher_quality and after["unusable_room_count"] > before["unusable_room_count"]:
+        reasons.append("physical room availability worsened")
+    if preserve_teacher_quality and after["meeting_durations"] != before["meeting_durations"]:
+        reasons.append("required meeting count or continuous duration changed")
+    old_student, new_student = before["student_feasibility"], after["student_feasibility"]
+    if old_student is not None and (
+        new_student is None
+        or any(new > old for old, new in zip(old_student, new_student, strict=True))
+    ):
+        reasons.append("student assignment feasibility worsened")
+    if is_lock_enforcement_enabled() and after["locked"] != before["locked"]:
+        reasons.append("locked meeting changed")
+    for section in TermSection.objects.filter(scenario_id=board.scenario_id):
+        policy = section_policy(section)
+        if policy is None:
+            continue
+        rows = list(SectionPlacement.objects.filter(term_section=section))
+        if not rows:
+            continue  # an intentionally unplaced complete section has no candidate week
+        try:
+            assert_policy_placement_rows(policy, rows)
+            unique = {meeting_signature(row): row for row in rows}
+            assert_pattern_available(policy, list(unique.values()), board.scenario)
+        except ValueError as exc:
+            reasons.append(str(exc))
+    return reasons
 
 
 # ── Main Algorithm ───────────────────────────────────────────────
@@ -401,7 +630,7 @@ def optimize_board(
     sec_map: dict[tuple[str, str], int] = {}  # (code, section) -> index
 
     for p in placements:
-        key = (p.term_section.course_code, p.term_section.section)
+        key = (p.term_section.course_key or p.term_section.course_code, p.term_section.section)
         if key not in sec_map:
             idx = len(sections)
             sec_map[key] = idx
@@ -412,13 +641,22 @@ def optimize_board(
             )
             sections.append(
                 {
-                    "code": p.term_section.course_code,
+                    "code": course_display_code(
+                        p.term_section.course_key,
+                        p.term_section.course_code,
+                        p.term_section.course_number,
+                    ),
                     "sec_num": sec_num,
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
                     "course_key": p.term_section.course_key,
                     "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
                     "is_locked": False,
+                    "meeting_policy": get_course_meeting_policy(
+                        p.term_section.course_code,
+                        p.term_section.course_key,
+                        p.term_section.course_number,
+                    ),
                 }
             )
             schedule[idx] = []
@@ -455,7 +693,16 @@ def optimize_board(
     # constraint). Uses the same CourseInstructor link source as the greedy /
     # evaluator, keyed by "course_key|section". No-op (and zero overhead) when
     # both the cap and clash flags are off, so those SA runs are byte-identical.
-    if is_instructor_daily_cap_enabled() or is_instructor_clash_enabled():
+    from core.services.timetable_optimisation_policy import (
+        instructor_schedule_regressions,
+        is_instructor_priority_enabled,
+    )
+
+    if (
+        is_instructor_daily_cap_enabled()
+        or is_instructor_clash_enabled()
+        or is_instructor_priority_enabled()
+    ):
         _cap_link_map = build_section_instructor_ids(scenario)
         for _sec in sections:
             _sec["instructor_ids"] = _cap_link_map.get(
@@ -494,6 +741,11 @@ def optimize_board(
     valid_options: dict[int, list[list[dict]]] = {}
     for i, _sec in enumerate(sections):
         meetings = schedule[i]
+        policy = _sec.get("meeting_policy")
+        if policy is not None:
+            _sec["bundles"] = _policy_bundles(policy, scenario, [*slot_config, *lab_slot_config])
+            valid_options[i] = []  # moved only as a complete bundle
+            continue
         sec_opts = []
         for m in meetings:
             # Determine duration from current meeting
@@ -537,6 +789,8 @@ def optimize_board(
     rng = random.Random(seed)
     cost_before = _compute_cost(schedule, sections, online_codes, overlap_matrix)
     best_cost = cost_before
+    instructor_before = _instructor_quality(schedule, sections)
+    best_rank = (instructor_before["working_days"], instructor_before["idle_minutes"], cost_before)
     best_schedule = {k: [m.copy() for m in v] for k, v in schedule.items()}
     current_cost = cost_before
     temperature = initial_temp
@@ -569,16 +823,26 @@ def optimize_board(
             _undo_move(schedule, sec_idx, m_idx, old_opt)
             continue
 
+        instructor_after = _instructor_quality(schedule, sections)
+        if is_instructor_priority_enabled() and instructor_schedule_regressions(
+            instructor_before, instructor_after
+        ):
+            _undo_move(schedule, sec_idx, m_idx, old_opt)
+            continue
+
         # Compute new cost
         new_cost = _compute_cost(schedule, sections, online_codes, overlap_matrix)
         delta = new_cost - current_cost
 
         # Accept or reject
-        if delta < 0:
+        rank = (instructor_after["working_days"], instructor_after["idle_minutes"], new_cost)
+        if delta < 0 or (is_instructor_priority_enabled() and rank < best_rank):
             # Improvement — always accept
             current_cost = new_cost
             improvements += 1
-            if new_cost < best_cost:
+            better = rank < best_rank if is_instructor_priority_enabled() else new_cost < best_cost
+            if better:
+                best_rank = rank
                 best_cost = new_cost
                 best_schedule = {k: [m.copy() for m in v] for k, v in schedule.items()}
         elif temperature > 0.01 and rng.random() < math.exp(-delta / temperature):
@@ -647,7 +911,7 @@ def optimize_board(
         "iterations": iterations,
         "improvements": improvements,
         "schedule": schedule,
-        "sections": sections,
+        "sections": _serializable_sections(sections),
         "decision_trace": decision_trace,
         # PR6 commit 4 — schema-stable telemetry block; sa.* populated
         # when flag on, zero otherwise. Other stage keys stay at zero
@@ -723,6 +987,7 @@ def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
     return tuple(evaluation.lexicographic_score)
 
 
+@transaction.atomic
 def optimize_and_persist_board(
     board_id: int,
     max_seconds: float = 8.0,
@@ -763,6 +1028,9 @@ def optimize_and_persist_board(
     except DeliveryBoard.DoesNotExist:
         return result
 
+    guard_before = _capture_persist_guard(board)
+    original_schedule = _original_schedule(board, sections)
+
     # ── SA evaluator gate (WS-B) — capture the pre-SA baseline ──────
     scenario_id = board.scenario_id
     from core.services.timetable_optimizer_v2 import (
@@ -773,12 +1041,10 @@ def optimize_and_persist_board(
     _gate_profiles = build_student_profiles_for_scenario(scenario_id)
     _gate_rigidity = build_course_rigidity_for_scenario(scenario_id) if _gate_profiles else {}
     _baseline_score = None
-    _baseline_snapshot: list[dict] = []
     if _gate_profiles:
         _baseline_score = _sa_scenario_score(
             scenario_id, _gate_profiles, _gate_rigidity, "sa_baseline"
         )
-        _baseline_snapshot = _snapshot_board_placements(board_id)
 
     # Delete all current placements + meetings for auto sections on this board.
     # When lock enforcement is on, locked sections are preserved untouched
@@ -799,7 +1065,7 @@ def optimize_and_persist_board(
         board=board, term_section__source_tag="tw_auto"
     )
     if locks_on:
-        auto_placements = auto_placements.exclude(is_locked=True)
+        auto_placements = auto_placements.exclude(term_section_id__in=locked_ts_ids)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()
 
@@ -838,9 +1104,14 @@ def optimize_and_persist_board(
 
         # Re-fan the primary instructor onto the recreated meeting rows so the
         # SA polish does not drop the greedy write-through (blank Instructors
-        # export sheet otherwise). Survives the evaluator-gate rollback below,
-        # which restores placements only — the instructor rides on the meetings.
-        apply_primary_instructor(ts, board.scenario, board, ts.course_code)
+        # export sheet otherwise). The atomic rollback also preserves canonical
+        # room/instructor metadata and row identities on a rejected pass.
+        apply_primary_instructor(
+            ts,
+            board.scenario,
+            board,
+            course_display_code(ts.course_key, ts.course_code, ts.course_number),
+        )
 
     # Assign rooms after re-persisting (annealing may have moved sections)
     from core.services.timetable_rooming import assign_rooms_to_board
@@ -854,13 +1125,32 @@ def optimize_and_persist_board(
     if _baseline_score is not None:
         _after_score = _sa_scenario_score(scenario_id, _gate_profiles, _gate_rigidity, "sa_after")
         if _after_score is not None and _after_score > _baseline_score:
-            _restore_board_placements(board_id, _baseline_snapshot)
-            assign_rooms_to_board(board_id, respect_locked=locks_on)
+            transaction.set_rollback(True)
             result["sa_evaluator_rolled_back"] = True
             result["sa_baseline_score"] = list(_baseline_score)
             result["sa_regressed_score"] = list(_after_score)
+            result["attempted_schedule"] = result["schedule"]
+            result["schedule"] = original_schedule
+            result["attempted_cost_after"] = result["cost_after"]
+            result["cost_after"] = result["cost_before"]
+            result["improvements"] = 0
+            return result
         else:
             result["sa_evaluator_rolled_back"] = False
+
+    rejections = _persist_guard_rejections(board, guard_before)
+    if rejections:
+        transaction.set_rollback(True)
+        result["attempted_schedule"] = result["schedule"]
+        result["schedule"] = original_schedule
+        result.update(
+            persist_rolled_back=True,
+            rollback_reasons=rejections,
+            attempted_cost_after=result["cost_after"],
+            cost_after=result["cost_before"],
+            improvements=0,
+        )
+        return result
 
     if verify_instructor_clashes:
         from core.services.timetable_instructor_backstop import verify_persisted_scenario

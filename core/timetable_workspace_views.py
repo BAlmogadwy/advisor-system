@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 
 from django.contrib.auth.decorators import login_required
@@ -92,6 +93,14 @@ from core.services.timetable_graph_twin import (
     sync_scenario_graph_to_neo4j,
 )
 from core.services.timetable_move_outcome import preview_placement_student_outcome_candidates
+from core.services.timetable_mutation_guard import (
+    ScenarioPlannerBusy,
+    ScenarioPublished,
+    active_planner_job,
+    guard_manual_scenario_write,
+    reject_active_planner_job,
+    scenario_busy_response,
+)
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_plan_lens import build_scenario_plan_lens
 from core.services.timetable_repair import (
@@ -113,6 +122,14 @@ from core.services.timetable_repair_jobs import (
     serialize_repair_job,
     submit_repair_analysis_job,
     submit_repair_simulation_job,
+)
+from core.services.timetable_section_policy import (
+    SectionPolicyError,
+    create_policy_section_bundle,
+    policy_payload,
+    remove_policy_section_bundle,
+    section_policy,
+    switch_policy_section_bundle,
 )
 from core.services.timetable_student_blockers import build_scenario_student_blockers
 from core.services.timetable_workspace import (
@@ -280,11 +297,42 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
         "end_time": p.end_time,
         "room": p.room,
         "is_locked": p.is_locked,
+        **({"room_required": False, "no_room_required": True} if section_policy(ts) else {}),
         "meetings": meetings,
+        "section_policy": policy_payload(section_policy(ts), meetings)
+        if section_policy(ts)
+        else None,
     }
 
 
 # ── Page View ────────────────────────────────────────────────────
+
+
+def _workspace_page_scope(request: HttpRequest) -> dict[str, str]:
+    """Use an explicitly requested scenario's scope before filter lists load."""
+    defaults = load_defaults()
+    scope = {
+        "default_year": str(defaults.get("academic_year", "") or ""),
+        "default_term": str(defaults.get("term", "") or ""),
+        "initial_scenario": "",
+        "initial_board": request.GET.get("board") or "",
+    }
+    try:
+        scenario_id = int(request.GET.get("scenario") or "0")
+    except (ValueError, TypeError):
+        return scope
+    if not 0 < scenario_id <= 2**63 - 1:
+        return scope
+    scenario = (
+        TimetableScenario.objects.filter(pk=scenario_id).values("academic_year", "term").first()
+    )
+    if scenario:
+        scope.update(
+            default_year=str(scenario["academic_year"] or ""),
+            default_term=str(scenario["term"] or ""),
+            initial_scenario=str(scenario_id),
+        )
+    return scope
 
 
 @login_required(login_url="login")
@@ -292,13 +340,12 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
 def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
     """Render the Timetable Workspace SPA shell page.
 
-    Injects default academic year and term from the system settings so the
-    frontend can pre-populate filter controls.
+    Uses an explicit scenario's academic year and term, otherwise saved system
+    defaults, so the frontend initializes its filters in the requested scope.
     """
     deny = _require_general_advisor(request)
     if deny:
         return deny
-    defaults = load_defaults()
     import json as _json
 
     from django.conf import settings as _settings
@@ -323,8 +370,7 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
     }
     context = {
         **get_sidebar_context(request),
-        "default_year": defaults.get("academic_year", ""),
-        "default_term": defaults.get("term", ""),
+        **_workspace_page_scope(request),
         "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED": pr8_on,
         "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED": getattr(
             _settings, "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", False
@@ -347,13 +393,9 @@ def timetable_workspace_split_page(request: HttpRequest) -> HttpResponse:
     deny = _require_general_advisor(request)
     if deny:
         return deny
-    defaults = load_defaults()
     context = {
         **get_sidebar_context(request),
-        "default_year": defaults.get("academic_year", ""),
-        "default_term": defaults.get("term", ""),
-        "initial_scenario": request.GET.get("scenario") or "",
-        "initial_board": request.GET.get("board") or "",
+        **_workspace_page_scope(request),
     }
     return render(request, "core/timetable_workspace_split.html", context)
 
@@ -365,13 +407,9 @@ def timetable_workspace_mri_page(request: HttpRequest) -> HttpResponse:
     deny = _require_general_advisor(request)
     if deny:
         return deny
-    defaults = load_defaults()
     context = {
         **get_sidebar_context(request),
-        "default_year": defaults.get("academic_year", ""),
-        "default_term": defaults.get("term", ""),
-        "initial_scenario": request.GET.get("scenario") or "",
-        "initial_board": request.GET.get("board") or "",
+        **_workspace_page_scope(request),
     }
     return render(request, "core/timetable_workspace_mri.html", context)
 
@@ -383,12 +421,9 @@ def timetable_workspace_graph_page(request: HttpRequest) -> HttpResponse:
     deny = _require_general_advisor(request)
     if deny:
         return deny
-    defaults = load_defaults()
     context = {
         **get_sidebar_context(request),
-        "default_year": defaults.get("academic_year", ""),
-        "default_term": defaults.get("term", ""),
-        "initial_scenario": request.GET.get("scenario") or "",
+        **_workspace_page_scope(request),
     }
     return render(request, "core/timetable_workspace_graph.html", context)
 
@@ -444,6 +479,56 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     # scaffold first — same students, same boards, same section budgets — so the
     # two differ in exactly one respect: where the classes go.
     engine = str(payload.get("engine") or "classic").strip().lower()
+    if engine not in {"classic", "scheduler"}:
+        return _err("Unknown timetable engine", code="VALIDATION_GENERATE", status=400)
+    scheduler_params: dict | None = None
+    if engine == "scheduler":
+        if section not in {"M", "F"}:
+            return _err(
+                "Choose M or F for the scheduler's single-gender timetable.",
+                code="VALIDATION_GENERATE",
+                status=400,
+            )
+        # Validate before creating the scaffold: invalid tuning must not leave
+        # an empty scenario behind. Existing `seconds` means per attempt;
+        # `total_seconds` includes the shared seating-confirmation allowance.
+        try:
+            runs = int(str(payload.get("runs", 3)))
+            confirmation_seconds = float(str(payload.get("confirmation_seconds", 20)))
+            if "total_seconds" in payload:
+                total_seconds = float(str(payload["total_seconds"]))
+                seconds = (total_seconds - confirmation_seconds) / max(1, runs)
+            else:
+                seconds = float(str(payload.get("seconds", 120)))
+            clash_tolerance = float(str(payload.get("clash_tolerance", 0.20)))
+            if not (
+                1 <= runs <= 8
+                and math.isfinite(seconds)
+                and seconds > 0
+                and math.isfinite(confirmation_seconds)
+                and confirmation_seconds > 0
+                and math.isfinite(clash_tolerance)
+                and 0 <= clash_tolerance <= 1
+            ):
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            return _err(
+                "Scheduler requires 1-8 runs, positive finite search/confirmation "
+                "budgets, and clash_tolerance between 0 and 1.",
+                code="VALIDATION_GENERATE",
+                status=400,
+            )
+        scheduler_params = {
+            "academic_year": str(year_int),
+            "term": semester_int,
+            "programs": programs,
+            "gender": section or "M",
+            "seconds": seconds,
+            "runs": runs,
+            "confirmation_seconds": confirmation_seconds,
+            "clash_tolerance": clash_tolerance,
+            "default_capacity": max_local_4cr,
+        }
 
     # WS-E follow-up — defer the heavy section placement off the request thread.
     # When ``defer_build`` is set and the async planner is available, build only
@@ -468,7 +553,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             max_external=max_external,
             course_overrides=course_overrides,
             created_by=request.user.username,
-            run_autoplace=not use_async_build,
+            run_autoplace=False,
         )
     except Exception as exc:
         logger.exception("Generate workspace failed")
@@ -481,16 +566,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         try:
             if engine == "scheduler":
                 job_mode = PlannerJob.MODE_SCHEDULER_BUILD
-                job_params = {
-                    "academic_year": str(year_int),
-                    "term": semester_int,
-                    "programs": programs,
-                    "gender": section or "M",
-                    "seconds": float(payload.get("seconds", 120)),
-                    "runs": int(payload.get("runs", 1)),
-                    "clash_tolerance": float(payload.get("clash_tolerance", 0.20)),
-                    "default_capacity": max_local_4cr,
-                }
+                job_params = scheduler_params
             else:
                 job_mode = PlannerJob.MODE_OPTIMISE_V2_FULL
                 job_params = {"cpsat_time_limit": 60}
@@ -508,6 +584,32 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
                 "Deferred build dispatch failed for scenario %s", result["scenario"]["id"]
             )
             result["build_job_id"] = None  # frontend falls back to a manual rebuild
+    else:
+        # The same engine/policy runs when background execution is disabled.
+        # Choosing scheduler must never silently build a classic timetable.
+        try:
+            if engine == "scheduler":
+                from scheduler.bridge import build_into_scenario
+
+                assert scheduler_params is not None
+                build_summary = build_into_scenario(
+                    result["scenario"]["id"],
+                    **scheduler_params,
+                )
+            else:
+                build_summary = run_v2_optimisation_guarded(
+                    result["scenario"]["id"],
+                    mode="full",
+                    cpsat_limit=60,
+                )
+            if "error" in build_summary:
+                return _err(str(build_summary["error"]), code="GENERATE_FAILED", status=500)
+            result["engine"] = engine
+            result["build_summary"] = build_summary
+            result["section_budget"] = compute_scenario_budget(result["scenario"]["id"])
+        except Exception as exc:
+            logger.exception("Synchronous build failed for scenario %s", result["scenario"]["id"])
+            return _err(str(exc), code="GENERATE_FAILED", status=500)
 
     log_audit_event(
         request,
@@ -655,11 +757,36 @@ def tw_scenario_detail_view(request: HttpRequest, scenario_id: int) -> JsonRespo
         scenario = TimetableScenario.objects.get(id=scenario_id)
     except TimetableScenario.DoesNotExist:
         return _err("Scenario not found", code="NOT_FOUND", status=404)
-    return _ok({"scenario": _scenario_to_dict(scenario)})
+    from core.services.planner_job_runner import (
+        is_async_planner_enabled,
+        serialize_planner_job,
+    )
+
+    active_job = None
+    if is_async_planner_enabled():
+        job = active_planner_job(scenario_id)
+        if job is not None:
+            active_job = serialize_planner_job(job)
+    return _ok({"scenario": _scenario_to_dict(scenario), "active_job": active_job})
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return current scenario-wide quality without modifying or solving rooms."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    if not TimetableScenario.objects.filter(id=scenario_id).exists():
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    from core.services.timetable_scenario_quality import build_scenario_quality
+
+    return _ok(build_scenario_quality(scenario_id))
 
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Replace the slot configuration (time periods) for a draft scenario.
 
@@ -765,6 +892,7 @@ def tw_scenario_clean_room_assignments_view(request: HttpRequest, scenario_id: i
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_scenario_clean_room_assignments_apply_view(
     request: HttpRequest, scenario_id: int
 ) -> JsonResponse:
@@ -825,6 +953,7 @@ def tw_scenario_safe_time_moves_view(request: HttpRequest, scenario_id: int) -> 
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_scenario_safe_time_moves_apply_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Apply conservative clean time moves in a single revalidated batch."""
     deny = _require_general_advisor(request)
@@ -948,6 +1077,7 @@ def tw_scenario_graph_sync_view(request: HttpRequest, scenario_id: int) -> JsonR
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Publish (lock) a scenario, preventing further modifications.
 
@@ -1115,6 +1245,7 @@ def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_board_create_view(request: HttpRequest) -> JsonResponse:
     """Create a new delivery board within a draft scenario.
 
@@ -1401,6 +1532,7 @@ def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     """Create one planned section, including full multi-meeting patterns."""
     deny = _require_general_advisor(request)
@@ -1511,6 +1643,7 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     """Place an existing ``TermSection`` onto a board at a given day/time.
 
@@ -1531,7 +1664,9 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     end_time = str(payload.get("end_time", "")).strip()
     room = str(payload.get("room", "")).strip()
 
-    if not all([board_id, term_section_id, day, start_time, end_time]):
+    if not all([board_id, term_section_id]) or not (
+        all([day, start_time, end_time]) or isinstance(payload.get("meetings"), list)
+    ):
         return _err(
             "board_id, term_section_id, day, start_time, end_time are required",
             code="VALIDATION_PLACEMENT",
@@ -1564,6 +1699,50 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
 
     if OnlineCourseLookup().is_online_course_for_board(board, ts.course_code):
         room = ""
+
+    if section_policy(ts):
+        try:
+            placements = create_policy_section_bundle(
+                board,
+                ts,
+                meetings=payload.get("meetings"),
+                day=day,
+                start_time=start_time,
+                end_time=end_time,
+                room=room,
+            )
+        except (SectionPolicyError, ValueError, TypeError, DeliveryBoard.DoesNotExist) as exc:
+            return _err(str(exc), code=SectionPolicyError.code, status=400)
+        except IntegrityError:
+            return _err(
+                "Duplicate English section placement", code="PLACEMENT_DUPLICATE", status=409
+            )
+        placement = placements[0]
+        log_audit_event(
+            request,
+            action="tw.placement.create",
+            status="success",
+            details={
+                "placement_id": placement.id,
+                "placement_ids": [row.id for row in placements],
+                "board_id": board.id,
+                "term_section_id": ts.id,
+            },
+        )
+        return _ok(
+            {
+                "placement": _placement_to_dict(placement),
+                "placements": [_placement_to_dict(row) for row in placements],
+                "section_policy": policy_payload(section_policy(ts), placements),
+                **_policy_bundle_feedback(placements),
+            },
+            status=201,
+        )
+
+    if not all([day, start_time, end_time]):
+        return _err(
+            "day, start_time and end_time are required", code="VALIDATION_PLACEMENT", status=400
+        )
 
     # Validate before persisting. NOTE: validate_placement is BOARD-scoped and
     # keys on the free-text meeting.instructor, so it cannot see an instructor
@@ -1852,6 +2031,7 @@ def tw_repair_global_plan_approve_view(request: HttpRequest, plan_id) -> JsonRes
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_repair_global_plan_apply_view(request: HttpRequest, plan_id) -> JsonResponse:
     """Apply an approved global repair plan."""
     deny = _require_general_advisor(request)
@@ -1874,6 +2054,7 @@ def tw_repair_global_plan_apply_view(request: HttpRequest, plan_id) -> JsonRespo
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_repair_global_plan_rollback_view(request: HttpRequest, plan_id) -> JsonResponse:
     """Rollback all applied items in a global repair plan."""
     deny = _require_general_advisor(request)
@@ -2215,6 +2396,7 @@ def tw_repair_candidate_approve_view(
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_repair_candidate_apply_view(request: HttpRequest, run_id, candidate_id: str) -> JsonResponse:
     """Apply an approved repair candidate inside one transaction."""
     deny = _require_general_advisor(request)
@@ -2241,6 +2423,7 @@ def tw_repair_candidate_apply_view(request: HttpRequest, run_id, candidate_id: s
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_repair_run_rollback_view(request: HttpRequest, run_id) -> JsonResponse:
     """Rollback the applied repair candidate for a run."""
     deny = _require_general_advisor(request)
@@ -2298,8 +2481,114 @@ def tw_placement_student_evidence_view(request: HttpRequest, placement_id: int) 
     return _ok(preview)
 
 
+def _policy_bundle_feedback(rows: list[SectionPlacement]) -> dict[str, object]:
+    from core.services.timetable_instructor_backstop import (
+        clashes_involving,
+        section_id_for,
+        verify_persisted_scenario,
+    )
+
+    validations = [
+        validate_placement(
+            board_id=row.board_id,
+            day=row.day,
+            start_time=row.start_time,
+            end_time=row.end_time,
+            room=row.room,
+            term_section_id=row.term_section_id,
+            exclude_placement_id=row.id,
+        )
+        for row in rows
+    ]
+    backstop = verify_persisted_scenario(rows[0].board.scenario_id, context="english_section_edit")
+    backstop["involving_this_section"] = clashes_involving(
+        backstop, section_id_for(rows[0].term_section)
+    )
+    return {
+        "validation": {
+            "valid": all(row["valid"] for row in validations),
+            "items": validations,
+            "critical_count": sum(row.get("critical_count", 0) for row in validations),
+            "warning_count": sum(row.get("warning_count", 0) for row in validations),
+            "overlaps": [item for row in validations for item in row.get("overlaps", [])],
+            "instructor_clashes": [
+                item for row in validations for item in row.get("instructor_clashes", [])
+            ],
+            "room_clashes": [item for row in validations for item in row.get("room_clashes", [])],
+        },
+        "validations": validations,
+        "instructor_clash_backstop": backstop,
+    }
+
+
+def _switch_policy_response(
+    request: HttpRequest, placement: SectionPlacement, payload: dict
+) -> JsonResponse:
+    try:
+        result = switch_policy_section_bundle(
+            placement,
+            pattern_id=payload.get("pattern_id"),
+            day=payload.get("day"),
+            start_time=payload.get("start_time"),
+            end_time=payload.get("end_time"),
+            room=payload.get("room"),
+            override=bool(payload.get("override")),
+            placements=payload.get("placements"),
+        )
+    except (SectionPolicyError, ValueError, TypeError, KeyError) as exc:
+        return _err(str(exc), code=SectionPolicyError.code, status=400)
+    except IntegrityError:
+        return _err(
+            "Duplicate placement at English pattern destination",
+            code="PLACEMENT_DUPLICATE",
+            status=409,
+        )
+    rows = result["placements"]
+    log_audit_event(
+        request,
+        action="tw.placement.switch_pattern",
+        status="success",
+        details={
+            "placement_id": placement.id,
+            "placement_ids": [row.id for row in rows],
+            "before_pattern_id": result["before_section_policy"]["current_pattern_id"],
+            "pattern_id": result["section_policy"]["current_pattern_id"],
+        },
+    )
+    return _ok(
+        {
+            **result,
+            "placement": _placement_to_dict(result["placement"]),
+            "placements": [_placement_to_dict(row) for row in rows],
+            **_policy_bundle_feedback(rows),
+        }
+    )
+
+
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
+def tw_placement_pattern_switch_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
+            pk=placement_id
+        )
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    if not payload.get("pattern_id"):
+        return _err("pattern_id is required", code=SectionPolicyError.code, status=400)
+    return _switch_policy_response(request, placement, payload)
+
+
+@login_required(login_url="login")
+@require_POST
+@guard_manual_scenario_write
 def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Move an existing placement to a new day/time/room.
 
@@ -2338,6 +2627,13 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         placement.board, placement.term_section.course_code
     ):
         new_room = ""
+
+    if section_policy(placement.term_section) and (
+        payload.get("pattern_id")
+        or (new_day, new_start, new_end)
+        != (placement.day, placement.start_time, placement.end_time)
+    ):
+        return _switch_policy_response(request, placement, payload)
 
     old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
 
@@ -2396,6 +2692,7 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Remove a placement from its board.
 
@@ -2428,6 +2725,15 @@ def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonRes
     pid = placement.id
     ts_id = placement.term_section_id
     board_id = placement.board_id
+    if section_policy(placement.term_section):
+        try:
+            removed = remove_policy_section_bundle(
+                placement, override=bool(payload.get("override"))
+            )
+        except SectionPolicyError as exc:
+            return _err(str(exc), code=SectionPolicyError.code, status=400)
+        log_audit_event(request, action="tw.placement.remove", status="success", details=removed)
+        return _ok(removed)
     placement.delete()
 
     log_audit_event(
@@ -2441,6 +2747,7 @@ def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonRes
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Toggle the lock flag on a placement (locked placements resist move/remove)."""
     deny = _require_general_advisor(request)
@@ -2462,6 +2769,7 @@ def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonRespo
 
 @login_required(login_url="login")
 @require_POST
+@guard_manual_scenario_write
 def tw_blocked_slots_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Toggle a ``(day, start)`` cell in the scenario's blocked-slots list.
 
@@ -2613,9 +2921,15 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         return deny
 
     try:
-        TimetableScenario.objects.get(pk=scenario_id)
+        scenario = TimetableScenario.objects.get(pk=scenario_id)
     except TimetableScenario.DoesNotExist:
         return _err("Scenario not found", code="NOT_FOUND", status=404)
+
+    if scenario.status == "published":
+        return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
+    busy = reject_active_planner_job(scenario_id)
+    if busy is not None:
+        return busy
 
     payload, err = _safe_json(request)
     if err:
@@ -2656,9 +2970,14 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
             "cpsat_time_limit": payload.get("cpsat_time_limit", 60),
             "max_chain_iterations": payload.get("max_chain_iterations", 10),
         }
-        job_id = submit_planner_job(
-            scenario_id=scenario_id, mode=job_mode, user=request.user, params=job_params
-        )
+        try:
+            job_id = submit_planner_job(
+                scenario_id=scenario_id, mode=job_mode, user=request.user, params=job_params
+            )
+        except ScenarioPlannerBusy as exc:
+            return scenario_busy_response(exc.job)
+        except ScenarioPublished:
+            return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
         dispatch_planner_job(job_id)
         return _ok({"job_id": str(job_id), "mode": mode, "async": True}, status=202)
 

@@ -158,6 +158,8 @@ class Snapshot:
         """Content hash of the whole problem. Two runs with different
         fingerprints are **not comparable** and must not be ranked against each
         other — the failure mode that made 297 of 326 research runs worthless."""
+        from scheduler.meeting_patterns import policy_fingerprint
+
         payload = {
             "year": self.academic_year,
             "term": self.term,
@@ -170,12 +172,7 @@ class Snapshot:
                     o.id,
                     o.capacity,
                     sorted(o.programs),
-                    # `occupies_fixed_block` decides which RULES the offering
-                    # is graded under — it suspends H2, H10, D14, D17 and
-                    # symmetry breaking — so two runs differing in it are not
-                    # merely different instances, they are judged by different
-                    # rulebooks. Omitting it declared them comparable (N8).
-                    o.occupies_fixed_block,
+                    policy_fingerprint(o.meeting_policy),
                     [
                         # allowed_starts and uses_shared_room are part of the
                         # problem, not of the answer: two runs that differ in

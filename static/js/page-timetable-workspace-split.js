@@ -282,6 +282,86 @@ async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 180000
   return { status: 'failed', error_message: 'optimisation timed out while polling' };
 }
 
+/* Timetable outcome helpers — pure renderers, also used by the split workspace. */
+function instructorScheduleOf(result) {
+  return result.instructor_schedule_metric || result.instructor_schedule || {};
+}
+
+function instructorScheduleImproved(result) {
+  const { before, after } = instructorScheduleOf(result);
+  return !result.safety_blocked && before && after && (
+    (Number.isFinite(before.working_days) && Number.isFinite(after.working_days)
+      && after.working_days < before.working_days)
+    || (Number.isFinite(before.idle_minutes) && Number.isFinite(after.idle_minutes)
+      && after.idle_minutes < before.idle_minutes)
+  );
+}
+
+function secondaryRecoveryImproved(result) {
+  const recovery = result.secondary_recovery;
+  return !result.safety_blocked && recovery?.applied && (
+    recovery.soft_unresolved_after < recovery.soft_unresolved_before
+    || recovery.room_shortages_after < recovery.room_shortages_before
+  );
+}
+
+function renderSecondaryRecoveryOutcome(result) {
+  if (!secondaryRecoveryImproved(result)) return '';
+  const recovery = result.secondary_recovery;
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
+    <b>${IS_AR ? 'تحسين المقاعد والقاعات' : 'Seat and room recovery'}</b>
+    <div>${IS_AR ? 'مقاعد المقررات المرنة غير المعينة' : 'Soft-course unresolved seats'}: ${number(recovery.soft_unresolved_before)} → ${number(recovery.soft_unresolved_after)}</div>
+    <div>${IS_AR ? 'الاجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room'}: ${number(recovery.room_shortages_before)} → ${number(recovery.room_shortages_after)}</div>
+    <div style="font-size:11px;color:var(--t3)">${IS_AR ? 'يشمل نقص القاعات القاعات الأصغر من السعة المطلوبة. تمت حماية أيام وفراغات كل مدرس.' : 'Room shortages include undersized rooms. Each instructor’s days and gaps were protected.'}</div>
+  </div>`;
+}
+
+function renderInstructorOutcome(result) {
+  const metric = instructorScheduleOf(result);
+  const after = metric.after || result.quality_score?.instructor_schedule;
+  const before = metric.before || result.baseline_instructor_schedule;
+  const priority = result.optimisation_policy === 'instructor_first';
+  if (!after && !priority) return '';
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  const row = (label, key) => `<div>${label}: <b>${before ? `${number(before[key])} → ` : ''}${number(after?.[key])}</b></div>`;
+  return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
+    <div style="font-weight:700;color:var(--teal)">${IS_AR ? 'جدول المدرسين' : 'Instructor schedule'}</div>
+    ${row(IS_AR ? 'مجموع أيام العمل' : 'Total working days', 'working_days')}
+    ${row(IS_AR ? 'دقائق الانتظار' : 'Idle minutes', 'idle_minutes')}
+    ${priority ? `<div style="font-size:11px;color:var(--t3);margin-top:5px">${IS_AR ? 'الأولوية لتقليل أيام المدرسين ثم الانتظار، مع حماية التسجيل والقيود الأساسية. قد تتغير فراغات الطلاب.' : 'Priority: fewer instructor days, then less idle time, with hard enrolment and operational constraints protected. Student gaps may change.'}</div>` : ''}
+  </div>`;
+}
+
+function schedulerSeatingText(result) {
+  const seating = result.student_seating;
+  if (!seating || !seating.solution_found) {
+    return IS_AR ? 'تعيين الطلاب الفعلي لم يُؤكد؛ المقاعد الناقصة والتعارضات غير معروفة.'
+      : 'Actual student seating not confirmed; missing seats and clashes are unknown.';
+  }
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : (IS_AR ? 'غير معروف' : 'unknown');
+  const proof = seating.proven_optimal
+    ? (IS_AR ? 'الحل الأمثل مثبت' : 'optimum proven')
+    : (IS_AR ? 'حل ممكن؛ المثالية غير مثبتة' : 'feasible solution; optimality not proven');
+  return (IS_AR ? 'تعيين الطلاب الفعلي: ' : 'Actual student seating: ')
+    + `${proof}; ${IS_AR ? 'الطلاب المعينون بالكامل' : 'fully seated students'} ${number(seating.students_fully_seated)}/${number(seating.students)}; `
+    + `${IS_AR ? 'المقاعد الناقصة' : 'missing seats'} ${number(seating.unseated_demands)}; `
+    + `${IS_AR ? 'التعارضات' : 'clashes'} ${number(seating.total_clashes)}.`;
+}
+
+function schedulerOutcomeText(result) {
+  const bits = [];
+  if (result.instructor_days != null) bits.push((IS_AR ? 'مجموع أيام المدرسين: ' : 'Total instructor working days: ') + result.instructor_days);
+  if (result.instructor_idle_minutes != null) bits.push((IS_AR ? 'دقائق الانتظار: ' : 'Instructor idle minutes: ') + result.instructor_idle_minutes);
+  if (result.unroomed != null) bits.push((IS_AR ? 'بلا قاعة: ' : 'Unroomed: ') + result.unroomed
+    + (result.unroomed_floor != null ? (IS_AR ? ' (الحد الأدنى: ' : ' (floor: ') + result.unroomed_floor + ')' : ''));
+  if (result.sections_on_the_same_hour_percent != null) bits.push((IS_AR ? 'نفس التوقيت طوال الأسبوع: ' : 'Same hour all week: ') + result.sections_on_the_same_hour_percent + '%');
+  bits.push(schedulerSeatingText(result));
+  if (result.expected_clashes != null) bits.push((IS_AR ? 'تقدير التعارضات (تقريبي): ' : 'Estimated overlaps (proxy): ') + result.expected_clashes);
+  return bits.join(' | ');
+}
+/* End timetable outcome helpers. */
+
 /* ── Utilities ── */
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -387,7 +467,7 @@ function refreshSplitSearch() {
   });
   const input = $('twsSearch');
   if (input) {
-    input.title = q ? `${matched}/${total} timetable matches` : (IS_AR ? 'Ø¨Ø­Ø« ÙÙŠ Ø§Ù„Ø¬Ø¯ÙˆÙ„' : 'Search timetable');
+    input.title = q ? `${matched}/${total} timetable matches` : (IS_AR ? 'بحث في الجدول' : 'Search timetable');
   }
   const status = $('twsStatusHover');
   if (status) {
@@ -550,6 +630,7 @@ function courseColorBorder(code) {
   return _courseColorMap[key][1];
 }
 function isLabPlacement(p) {
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return false;
   if (!p || !p.start_time || !p.end_time) return false;
   const toMin = t => {
     const parts = String(t).split(':');
@@ -747,7 +828,8 @@ function classifySplitTargets(boardData, targets) {
 
     const room = String(target.placement.room || '').trim().toUpperCase();
     const otherRoom = String(other.room || otherPlacement.room || '').trim().toUpperCase();
-    if (room && otherRoom && room !== 'UNASSIGNED' && room === otherRoom && add('room', target.placement.id, otherId)) {
+    if (!globalThis.TimetableMeetingPolicy?.isEnglish(target.placement) && !globalThis.TimetableMeetingPolicy?.isEnglish(otherPlacement)
+      && room && otherRoom && room !== 'UNASSIGNED' && room === otherRoom && add('room', target.placement.id, otherId)) {
       warning += 1;
       evidence.push(`${target.placement.room} is already occupied`);
     }
@@ -1641,7 +1723,7 @@ function paintCreateSectionTargets() {
       if (highlighted === 1 && tone !== 'avoid') cell.classList.add('assist-best');
       if (candidateHasEvidence(candidate, ['students', 'cross_board_students'])) cell.classList.add('assist-student');
       if (candidateHasEvidence(candidate, ['instructor', 'same_course'])) cell.classList.add('assist-instructor');
-      cell.title = `${IS_AR ? 'Ø¶Ø¹' : 'Place'} ${label} | ${createAssistTargetLabel(candidate)} | ${createAssistDetail(candidate)}`;
+      cell.title = `${IS_AR ? 'ضع' : 'Place'} ${label} | ${createAssistTargetLabel(candidate)} | ${createAssistDetail(candidate)}`;
       if (highlighted <= 12) {
         const badge = document.createElement('span');
         badge.className = 'slot-assist-badge';
@@ -1747,6 +1829,7 @@ async function applyCreateAssistCandidate(candidate) {
 }
 
 function beginCreateSectionAssist(payload) {
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(payload)) { chooseEnglishSplitCreate(payload); return true; }
   if (!payload?.course_code) return false;
   clearPlacementSelection({ announce: false });
   clearSlotAssist();
@@ -1912,6 +1995,10 @@ function slotCellForCandidate(paneIdx, candidate, kind = null) {
   if (!pane || !candidate) return null;
   const slotKind = normaliseSlotKind(kind || candidate.kind || S.slotAssist.kind || 'lect');
   const grid = slotKind === 'lab' ? '.lab-grid' : '.lect-grid';
+  if (candidate.pattern_id || durationMinutes(candidate.start, candidate.end) === 180) {
+    const english = pane.querySelector(`.english-grid .cell[data-day="${candidate.day}"][data-start="${candidate.start}"][data-end="${candidate.end}"]`);
+    if (english) return english;
+  }
   return pane.querySelector(`${grid} .cell[data-day="${candidate.day}"][data-start="${candidate.start}"]`)
     || pane.querySelector(`.block-grid .cell[data-day="${candidate.day}"][data-start="${candidate.start}"]`);
 }
@@ -2279,13 +2366,27 @@ function groupPlacements(placements) {
 }
 
 /* ── Scenario loading ── */
-async function loadScenarios() {
+async function loadScenarios(preferredScenarioId = null) {
+  const requested = preferredScenarioId || S.scenarioId || INITIAL_SCENARIO || '';
   const qs = (DEFAULT_YEAR && DEFAULT_TERM)
     ? `?year=${DEFAULT_YEAR}&term=${DEFAULT_TERM}`
     : '';
   const data = await api(`/ops/tw/scenarios/${qs}`);
   if (!data) return;
   S.scenarios = data.scenarios || [];
+  // Direct links and newly-created scenarios can belong to another term.
+  // Resolve the requested scenario before selecting a default list entry.
+  if (requested && !S.scenarios.some(scenario => String(scenario.id) === String(requested))) {
+    const detail = await api(`/ops/tw/scenarios/${encodeURIComponent(requested)}/`);
+    if (detail?.scenario) {
+      const scope = new URLSearchParams({ year: detail.scenario.academic_year, term: detail.scenario.term });
+      const scoped = await api(`/ops/tw/scenarios/?${scope}`);
+      S.scenarios = scoped?.scenarios || [detail.scenario];
+      if (!S.scenarios.some(scenario => String(scenario.id) === String(requested))) S.scenarios.unshift(detail.scenario);
+    } else {
+      notify.warning(IS_AR ? 'تعذر فتح السيناريو المحدد.' : 'The requested scenario could not be opened.');
+    }
+  }
   const sel = $('twsScenario');
   sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
   S.scenarios.forEach(s => {
@@ -2293,11 +2394,14 @@ async function loadScenarios() {
     opt.value = s.id; opt.textContent = `${s.name} (${s.status})`;
     sel.appendChild(opt);
   });
-  const want = INITIAL_SCENARIO && S.scenarios.find(s => String(s.id) === String(INITIAL_SCENARIO))
-    ? INITIAL_SCENARIO
+  const want = requested
+    ? (S.scenarios.some(scenario => String(scenario.id) === String(requested)) ? String(requested) : '')
     : (S.scenarios.length > 0 ? String(S.scenarios[0].id) : '');
   if (want) {
     sel.value = want;
+    await onScenarioChange();
+  } else if (requested) {
+    sel.value = '';
     await onScenarioChange();
   }
 }
@@ -2420,12 +2524,12 @@ function updateAggregateMetrics() {
     const affected = Number(summary.cross_board_affected_students ?? S.crossBoardAffectedCount ?? 0);
     const pairs = Number(summary.cross_board_conflicts ?? S.crossBoardClashCount ?? 0);
     const incidences = Number(summary.cross_board_student_conflict_incidences || 0);
-    $('twsStCross').textContent = affected ? `${affected} students` : String(pairs || 0);
+    $('twsStCross').textContent = affected ? `${affected} potential` : String(pairs || 0);
     const metric = $('twsStCross').closest('.metric');
     if (metric) {
       metric.title = affected
-        ? `${affected} actual students affected by ${pairs} cross-board section clashes (${incidences} student-clash incidences)`
-        : `${pairs} cross-board section clashes`;
+        ? `${affected} students with common course demand across ${pairs} potential cross-board overlaps (${incidences} demand incidences). Assignment to both sections is not confirmed.`
+        : `${pairs} potential course-demand overlaps across boards; section assignment is not confirmed`;
     }
   }
 }
@@ -2640,19 +2744,25 @@ function renderPane(idx) {
 }
 
 function renderGridHTML(slots, placements, issueMap, kind) {
+  if (kind === 'lect' && globalThis.TimetableMeetingPolicy) {
+    const english = placements.filter(TimetableMeetingPolicy.isEnglish);
+    if (english.length) return renderGridHTML(slots, placements.filter(row => !TimetableMeetingPolicy.isEnglish(row)), issueMap, 'ordinary-lect')
+      + `<div class="tw-english-heading">${IS_AR ? 'الإنجليزية · ثلاث ساعات متصلة' : 'English · three continuous hours'}</div>`
+      + renderGridHTML(TimetableMeetingPolicy.gridSlots(english), english, issueMap, 'english');
+  }
   // Mockup layout: slots on Y-axis (rows), days on X-axis (columns).
   // pane-ruler: one header row — "SLOT"/"LAB" corner + day labels.
   // slot-row × N: one per slot — slot number + cells for each day.
   const isLab = kind === 'lab';
   const blockedSet = new Set(((S.scenarioMeta && S.scenarioMeta.blocked_slots) || []).map(b => `${b.day}|${b.start}`));
-  let h = `<div class="block-grid ${isLab ? 'lab-grid' : 'lect-grid'}">`;
+  let h = `<div class="block-grid ${isLab ? 'lab-grid' : 'lect-grid'}${kind === 'english' ? ' english-grid' : ''}">`;
   h += `<div class="pane-ruler"><div class="cor">${isLab ? 'LAB' : 'SLOT'}</div>`;
   DAYS.forEach((day, di) => h += `<div class="dh">${esc(DAY_LABELS[di])}</div>`);
   h += `</div>`;
   slots.forEach((slot, si) => {
     // Always label with a compact number/prefix — full time lives in the
     // title tooltip and (for labs) in the lab-head ruler meta line.
-    const label = isLab ? `L${si + 1}` : String(si + 1);
+    const label = kind === 'english' ? `${slot.start}–${slot.end}` : isLab ? `L${si + 1}` : String(si + 1);
     h += `<div class="slot-row" title="${esc(slot.start)}–${esc(slot.end)}">`;
     h += `<div class="slbl">${label}</div>`;
     DAYS.forEach((day) => {
@@ -2667,7 +2777,8 @@ function renderGridHTML(slots, placements, issueMap, kind) {
         : '';
       const cellAttrs = `data-day="${day}" data-start="${slot.start}" data-end="${slot.end}"`;
       if (placement) {
-        const room = placement.room ? esc(placement.room) : '';
+        const room = globalThis.TimetableMeetingPolicy?.isEnglish(placement)
+          ? esc(TimetableMeetingPolicy.roomLabel(placement, IS_AR)) : placement.room ? esc(placement.room) : '';
         const stu = placement.available_capacity || '';
         const placementTitle = [
           `${placement.course_code || ''} ${placement.section || ''}`.trim(),
@@ -2682,6 +2793,7 @@ function renderGridHTML(slots, placements, issueMap, kind) {
         const title = issueTitle || ` title="${esc(placementTitle)}"`;
         h += `<div class="${cls}" ${cellAttrs}${title} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
         h += `<span class="cid">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
+        if (globalThis.TimetableMeetingPolicy?.isEnglish(placement)) h += `<span class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(placement, IS_AR))}</span>`;
         h += `<span class="cmeta">${room}${stu ? '·' + stu : ''}</span>`;
         h += planLensBadgesHtml(placement);
         h += `</div>`;
@@ -2863,6 +2975,10 @@ async function movePlacementToSlot({
   const oldStart = located.placement.start_time;
   const oldEnd = located.placement.end_time;
   const oldRoom = located.placement.room || '';
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(located.placement) && (day !== oldDay || start !== oldStart || end !== oldEnd)) {
+    const pattern = TimetableMeetingPolicy.patterns.find(row => row.start === start && row.end === end);
+    return switchEnglishSplitPattern(placementId, pattern?.pattern_id, null, { room, refresh, clearAssist, notifyResult, recordUndo, reportBackstop, allowProtected });
+  }
   const newRoom = room === undefined ? oldRoom : room;
   if (!force && day === oldDay && start === oldStart && newRoom === oldRoom) return null;
 
@@ -2933,6 +3049,10 @@ function canBundleCandidate(candidate) {
 async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, candidate, day, start, end, room, auto = false }) {
   const located = findPlacement(placementId);
   if (!located) return null;
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(located.placement)) {
+    return movePlacementToSlot({ placementId, targetPaneIdx, sourcePaneIdx, day: day || candidate?.day,
+      start: start || candidate?.start, end: end || candidate?.end, room, notifyResult: !auto });
+  }
   const pair = candidate && canBundleCandidate(candidate) ? candidate.pair : null;
   const bundleLabel = pair ? `${placementShortLabel(located.placement)} + ${placementShortLabel(pair.companion)}` : placementShortLabel(located.placement);
   const targetRoom = room === undefined ? (located.placement.room || '') : room;
@@ -3064,7 +3184,7 @@ async function applyDeepRepairCandidateFromSlot(candidate, placementId, cell = n
   const ready = candidateDirectRepairReady({ ...candidate, ...fullCandidate, deepRepair: true, deepRepairCandidateId: candidateId });
   if (!ready) {
     openDeepRepairCandidateFromSlot(candidate, placementId);
-    notify.error(IS_AR ? 'Ù‡Ø°Ø§ Ø§Ù„Ù…ÙˆØ¶Ø¹ Ù„ÙŠØ³ Ø¥ØµÙ„Ø§Ø­Ø§Ù‹ Ù‚Ø§Ø¨Ù„Ø§Ù‹ Ù„Ù„ØªØ·Ø¨ÙŠÙ‚.' : 'This slot is not an apply-ready repair. Review the repair panel details.');
+    notify.error(IS_AR ? 'هذا الموضع ليس إصلاحاً قابلاً للتطبيق. راجع تفاصيل لوحة الإصلاح.' : 'This slot is not an apply-ready repair. Review the repair panel details.');
     return true;
   }
   const ok = await confirmRepairAction({
@@ -3089,7 +3209,7 @@ async function applyDeepRepairCandidateFromSlot(candidate, placementId, cell = n
   const runId = run?.run?.id;
   if (!runId) {
     if (cell) cell.classList.remove('assist-loading');
-    notify.error(IS_AR ? 'Ù„Ø§ ÙŠÙˆØ¬Ø¯ ØªØ­Ù„ÙŠÙ„ Ø¥ØµÙ„Ø§Ø­ Ù†Ø´Ø·.' : 'No active repair run is available for this slot.');
+    notify.error(IS_AR ? 'لا يوجد تحليل إصلاح نشط.' : 'No active repair run is available for this slot.');
     return true;
   }
   const approved = await api(`/ops/tw/repair/runs/${runId}/candidates/${candidateId}/approve/`, {
@@ -3099,7 +3219,7 @@ async function applyDeepRepairCandidateFromSlot(candidate, placementId, cell = n
   });
   if (!approved) {
     if (cell) cell.classList.remove('assist-loading');
-    notify.error(IS_AR ? 'ÙØ´Ù„ Ø§Ø¹ØªÙ…Ø§Ø¯ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : 'Repair approval failed');
+    notify.error(IS_AR ? 'فشل اعتماد الإصلاح' : 'Repair approval failed');
     openDeepRepairCandidateFromSlot(candidate, placementId);
     return true;
   }
@@ -3112,7 +3232,7 @@ async function applyDeepRepairCandidateFromSlot(candidate, placementId, cell = n
   });
   if (!applied) {
     if (cell) cell.classList.remove('assist-loading');
-    notify.error(IS_AR ? 'ÙØ´Ù„ ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : 'Repair apply failed');
+    notify.error(IS_AR ? 'فشل تطبيق الإصلاح' : 'Repair apply failed');
     toggleRpanel(true);
     setRpanelTab('repair');
     return true;
@@ -3122,7 +3242,7 @@ async function applyDeepRepairCandidateFromSlot(candidate, placementId, cell = n
   await refreshAfterRepairMutation();
   clearSlotAssist();
   $('twsStatusHover').textContent = `Optimisation ${candidateId} applied. Rollback is available from the repair panel.`;
-  notify.success(IS_AR ? 'ØªÙ… ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : `Optimisation ${candidateId} applied`);
+  notify.success(IS_AR ? 'تم تطبيق الإصلاح' : `Optimisation ${candidateId} applied`);
   if (RP.open) renderRpanel();
   return true;
 }
@@ -3142,7 +3262,7 @@ function previewSelectedMoveToSlot(paneIdx, cell) {
     cell.classList.add('assist-preview');
     applyDeepRepairCandidateFromSlot(candidate, S.selectedPlacementId, cell).catch(() => {
       cell.classList.remove('assist-loading');
-      notify.error(IS_AR ? 'ÙØ´Ù„ ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : 'Repair apply failed');
+      notify.error(IS_AR ? 'فشل تطبيق الإصلاح' : 'Repair apply failed');
     });
     return true;
   }
@@ -3210,6 +3330,7 @@ async function createPlannedPlacementFromMeetings(boardId, payload, meetings) {
 }
 
 async function createPlannedPlacementFromCell(paneIdx, cell, payload) {
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(payload)) return chooseEnglishSplitCreate(payload, paneIdx);
   const boardId = S.panes[paneIdx].boardId;
   if (!boardId) {
     notify.error(IS_AR ? 'Select a board in this pane first' : 'Select a board in this pane first');
@@ -3245,7 +3366,7 @@ async function createPlannedPlacementFromCandidate(candidate, payload) {
     end_time: meeting.end,
   }));
   if (!boardId || !meetings.length) {
-    notify.warning(IS_AR ? 'Ø§Ø®ØªØ± Ø®Ø§Ù†Ø© ÙØ§Ø±ØºØ©' : 'Choose an empty slot');
+    notify.warning(IS_AR ? 'اختر خانة فارغة' : 'Choose an empty slot');
     return null;
   }
   const data = await createPlannedPlacementFromMeetings(boardId, payload, meetings);
@@ -3267,6 +3388,7 @@ async function createPlannedPlacementFromCandidate(candidate, payload) {
       },
       meetings,
       label: createAssistLabel(payload),
+      english_pattern: globalThis.TimetableMeetingPolicy?.isEnglish(payload) || false,
     });
   } else if (placements[0]) {
     S.undoStack.push({
@@ -3712,7 +3834,7 @@ function placementIssueMap(conflicts, boardId) {
   (conflicts.overlaps || []).forEach(row => {
     const sections = (row.sections || []).join(' / ');
     const shared = row.shared_students != null
-      ? ` | ${row.shared_students} shared students`
+      ? ` | ${row.shared_students} students with common course demand`
       : '';
     issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
       kind: 'Same-board time clash',
@@ -3744,10 +3866,10 @@ function placementIssueMap(conflicts, boardId) {
     const otherSection = isBoardA ? row.section_b : row.section_a;
     const otherBoard = isBoardA ? row.board_b_label : row.board_a_label;
     issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
-      kind: 'Student clash across boards',
+      kind: 'Potential course-demand overlap across boards',
       tone: 'cross',
       title: `${isBoardA ? row.section_a : row.section_b} vs ${otherSection}`,
-      detail: `${row.overlap_count || 0} affected students | across boards with ${otherBoard || 'Other board'}${row.time ? ' | ' + row.time : ''}`,
+      detail: `${row.overlap_count || 0} students with common course demand | across boards with ${otherBoard || 'Other board'}${row.time ? ' | ' + row.time : ''}`,
     }));
   });
   return map;
@@ -4847,7 +4969,7 @@ function renderRpanelIssues(body) {
     const paneBadges = panesInvolved.map(n => `<span class="pane-badge">P${n}</span>`).join(' ');
     const ids = issueRowIds(c);
     const count = Number(c.overlap_count || c.affected_student_count || 0);
-    const headline = `${count} ${count === 1 ? 'Student Clash' : 'Student Clashes'}`;
+    const headline = `${count} students with common course demand`;
     const timeParts = String(c.time || '').split(' vs ');
     const timeA = c.time_a || timeParts[0] || '';
     const timeB = c.time_b || timeParts[1] || '';
@@ -4864,7 +4986,7 @@ function renderRpanelIssues(body) {
       placement_id: c.placement_a_id,
       placement_ids: ids,
       title: headline,
-      detail: `${c.section_a} vs ${c.section_b} | ${count} affected students`,
+      detail: `${c.section_a} vs ${c.section_b} | ${count} students with common course demand`,
     };
     const fixPayloadB = {
       a: c.board_a_id,
@@ -4873,7 +4995,7 @@ function renderRpanelIssues(body) {
       placement_id: c.placement_b_id,
       placement_ids: ids,
       title: headline,
-      detail: `${c.section_a} vs ${c.section_b} | ${count} affected students`,
+      detail: `${c.section_a} vs ${c.section_b} | ${count} students with common course demand`,
     };
     return `<div class="tws-issue tws-student-clash" data-cross='${esc(JSON.stringify(crossPayload))}'>
       <span class="dot cross"></span>
@@ -4915,7 +5037,7 @@ function renderRpanelIssues(body) {
     html += rClashes.map(o => issueRow('warn', `${o.room || '—'} · ${(o.sections || []).join(' / ')}`, `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
   }
   if (crossBoard.length) {
-    html += `<div class="section-head cross">${IS_AR ? 'تعارض طلاب عبر اللوحات' : 'Cross-board student clashes'}<span class="n">${crossBoard.length}</span></div>`;
+    html += `<div class="section-head cross">${IS_AR ? 'تداخل محتمل في طلب المقررات عبر اللوحات' : 'Potential course-demand overlaps across boards'}<span class="n">${crossBoard.length}</span></div>`;
     html += crossBoard.map(crossRow).join('');
   }
   body.innerHTML = html;
@@ -5009,7 +5131,7 @@ async function beginCrossBoardStudentFix(action) {
   await beginGuidedAction({
     kind: 'student_time_clash',
     severity: 'block',
-    title: action.title || (IS_AR ? 'تعارض طلاب عبر اللوحات' : 'Student clash across boards'),
+    title: action.title || (IS_AR ? 'تداخل محتمل في طلب المقررات عبر اللوحات' : 'Potential course-demand overlap across boards'),
     detail: action.detail || (IS_AR ? 'راجع النقلات المرشحة. يظهر تطبيق مباشر فقط عند عدم وجود تراجع.' : 'Review candidate moves. Direct apply appears only when no regression is found.'),
     cta: IS_AR ? 'راجع النقلات' : 'Review moves',
     board_id: action.board_id,
@@ -6535,7 +6657,7 @@ function renderRpanelRepair(body) {
   body.innerHTML = `<div class="tws-repair-panel">
     <div class="tws-repair-target">
       <b>${esc(placement.course_code)} ${esc(placement.section || '')}</b><br>
-      <span>${esc(placement.day)} ${esc(placement.start_time)}-${esc(placement.end_time)} · ${esc(placement.room || 'No room')} · ${esc(placement.course_name || '')}</span>
+      <span>${esc(placement.day)} ${esc(placement.start_time)}-${esc(placement.end_time)} · ${esc(globalThis.TimetableMeetingPolicy?.roomLabel(placement, IS_AR, 'No room') || placement.room || 'No room')} · ${esc(placement.course_name || '')}</span>
     </div>
     <div class="tws-repair-form">
       <select id="twsRepairMode" class="tws-repair-mode">
@@ -6673,6 +6795,10 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
   const oldDay = p.day;
   const oldStart = p.start_time;
   const oldEnd = p.end_time;
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p) && (oldDay !== slot.day || oldStart !== slot.start || oldEnd !== slot.end)) {
+    const pattern = TimetableMeetingPolicy.patterns.find(row => row.start === slot.start && row.end === slot.end);
+    return switchEnglishSplitPattern(placementId, pattern?.pattern_id, null, { room: room.room_code, refresh, notifyResult, recordUndo });
+  }
   if (oldRoom === room.room_code && oldDay === slot.day && oldStart === slot.start) {
     if (notifyResult) notify.success('Room already assigned');
     return { already_assigned: true };
@@ -6741,7 +6867,11 @@ async function refreshSelectionBuilderPanels(body, placement, pending) {
     const rooms = roomData?.candidates || [];
     const target = roomData?.target || {};
     const onlineRoom = !!(target.is_online || roomData?.summary?.is_online);
-    roomBox.innerHTML = onlineRoom
+    const noRoomRequired = globalThis.TimetableMeetingPolicy?.isEnglish(placement) || roomData?.summary?.room_required === false;
+    roomBox.innerHTML = noRoomRequired
+      ? `<div class="tws-room-target"><b>${esc(slot.label)}</b><span>${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)} · ${IS_AR ? 'لا يحتاج إلى قاعة' : 'No room required'}</span></div>
+         <div class="tws-fix-empty">${IS_AR ? 'محاضرة الإنجليزية لا تحتاج إلى قاعة. تبقى مواعيد اللقاءات وفحوص المحاضر سارية.' : 'No room required. Meeting times and instructor checks still apply.'}</div>`
+      : onlineRoom
       ? `<div class="tws-room-target">
           <b>${esc(slot.label)}</b>
           <span>${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)} · online</span>
@@ -6793,11 +6923,12 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section || '—')}</span></div>
+    ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" id="twsEnglishPattern">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
     ${planLensDetailsFieldsHtml(p)}
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اللوحة' : 'Board'}</span><span class="value">${esc(board.label)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
-    <div class="tws-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(p.room || '—')}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
@@ -6832,6 +6963,7 @@ function renderRpanelSelection(body) {
     </div>
   `;
   // Wire the button — no inline onclick
+  body.querySelector('#twsEnglishPattern')?.addEventListener('click', () => switchEnglishSplitPattern(p.id));
   const openBtn = body.querySelector('#twsSelOpen');
   if (openBtn) openBtn.addEventListener('click', () => openDrawer(located.paneIdx, p.id));
   const repairBtn = body.querySelector('#twsSelRepair');
@@ -7050,15 +7182,6 @@ function confirmCloseSplitWorkspace() {
 
 /* ── Generate Scenario (inline) ──────────────────────────────────── */
 async function openGenerateModal() {
-  const strategies = [
-    { v: 'compact', l: IS_AR ? 'مضغوط' : 'Compact' },
-    { v: 'morning', l: IS_AR ? 'صباحي' : 'Morning-first' },
-    { v: 'balanced', l: IS_AR ? 'متوازن' : 'Balanced' },
-    { v: 'optimal', l: IS_AR ? 'الأمثل' : 'Optimal (CP-SAT)' },
-    { v: 'hybrid', l: IS_AR ? 'هجين' : 'Hybrid (best)' },
-    { v: 'load_balanced', l: IS_AR ? 'متوازن الأيام' : 'Load-balanced' },
-    { v: 'adaptive', l: IS_AR ? 'تكيّفي' : 'Adaptive (best overall)' },
-  ];
   const body = `
     <div class="tws-form-grid">
       <div><label for="twsGenYear">${IS_AR ? 'السنة' : 'Year'}</label>
@@ -7069,9 +7192,14 @@ async function openGenerateModal() {
         <input id="twsGenProgram" type="text" placeholder="AI,DS" autocapitalize="characters"></div>
       <div><label for="twsGenSection">${IS_AR ? 'شعبة' : 'Section'}</label>
         <input id="twsGenSection" type="text" placeholder="M" autocapitalize="characters"></div>
-      <div class="full"><label for="twsGenStrategy">${IS_AR ? 'الاستراتيجية' : 'Strategy'}</label>
+      <div class="full"><label for="twsGenEngine">${IS_AR ? 'المحرك' : 'Engine'}</label>
+        <select id="twsGenEngine">
+          <option value="classic">${IS_AR ? 'المولد الحالي · مقارنة 7 استراتيجيات' : 'Classic · portfolio of 7 strategies'}</option>
+          <option value="scheduler">${IS_AR ? 'محرك الجدولة · مقارنة عدة محاولات' : 'Scheduler · multiple-run portfolio'}</option>
+        </select></div>
+      <div class="full"><label for="twsGenStrategy">${IS_AR ? 'المقارنة' : 'Portfolio'}</label>
         <select id="twsGenStrategy">
-          ${strategies.map(s => `<option value="${s.v}"${s.v === 'compact' ? ' selected' : ''}>${s.l}</option>`).join('')}
+          <option value="compact">${IS_AR ? 'المولد الحالي: مقارنة 7 استراتيجيات' : 'Classic: compare 7 strategies'}</option>
         </select></div>
       <div class="hint">${IS_AR ? 'يمكن تحديد عدة برامج بفصلها بفاصلة (مثال: AI,DS)' : 'Multiple programs may be comma-separated (e.g. AI,DS). Leave section blank for all sections.'}</div>
       <div id="twsGenStatus" class="full" style="color:var(--t4);font-size:11px;min-height:16px"></div>
@@ -7090,6 +7218,7 @@ async function openGenerateModal() {
         const program = document.getElementById('twsGenProgram').value.trim().toUpperCase();
         const section = (document.getElementById('twsGenSection').value.trim().toUpperCase() || null);
         const strategy = document.getElementById('twsGenStrategy').value;
+        const engine = document.getElementById('twsGenEngine').value;
         if (!year || !semester || !program) {
           notify.error(IS_AR ? 'أدخل السنة، الفصل، والبرنامج' : 'Enter year, semester, and program');
           return false;
@@ -7101,19 +7230,52 @@ async function openGenerateModal() {
         const data = await api('/ops/tw/generate-workspace/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ year, semester, program, section, strategy }),
+          body: JSON.stringify({ year, semester, program, section, strategy, engine, defer_build: true }),
         });
-        submitBtn.disabled = false;
-        if (!data) { statusEl.textContent = IS_AR ? 'فشل' : 'Failed'; return false; }
+        if (!data) { submitBtn.disabled = false; statusEl.textContent = IS_AR ? 'فشل' : 'Failed'; return false; }
+        let buildResult = null;
+        if (data.build_job_id) {
+          const building = IS_AR ? 'جاري بناء الجدول ومقارنة المرشحين…' : 'Building timetable and comparing candidates…';
+          const job = await pollPlannerJob(data.build_job_id, (progress, ms) => {
+            statusEl.textContent = `${building} ${Math.round(ms / 1000)}s${progress.last_stage_seen ? ` · ${progress.last_stage_seen}` : ''}`;
+          });
+          submitBtn.disabled = false;
+          if (job.status !== 'succeeded') {
+            statusEl.textContent = job.error_message || job.status;
+            notify.error(statusEl.textContent);
+            return false;
+          }
+          const report = await api(`/planner-jobs/${data.build_job_id}/result/`);
+          buildResult = report?.result;
+        } else {
+          submitBtn.disabled = false;
+          buildResult = data.build_summary || null;
+        }
         const ss = data.student_summary || {};
-        notify.success(IS_AR
-          ? `تم التوليد — ${data.boards.length} لوحة · ${ss.classified || 0} طالب`
-          : `Generated — ${data.boards.length} boards · ${ss.classified || 0} students`);
+        if (data.build_job_id || buildResult) notify.success(IS_AR
+          ? `تم التوليد والبناء — ${data.boards.length} لوحة · ${ss.classified || 0} طالب`
+          : `Generated + built — ${data.boards.length} boards · ${ss.classified || 0} students`);
         // Refresh scenarios list and jump to the new scenario
-        await loadScenarios();
+        await loadScenarios(String(data.scenario.id));
         const sel = $('twsScenario');
         sel.value = String(data.scenario.id);
         await onScenarioChange();
+        if (!data.build_job_id && !buildResult) {
+          notify.warning(IS_AR ? 'أُنشئ السيناريو؛ لم يبدأ البناء. استخدم إعادة البناء الكاملة.' : 'Scenario created; build did not start. Use Full rebuild.');
+          return;
+        }
+        if (engine === 'scheduler') {
+            openModal({
+              title: IS_AR ? 'نتائج التوليد' : 'Generate results',
+              body: `<div style="line-height:1.8">${esc(schedulerOutcomeText(buildResult || {}))}</div>`,
+              buttons: [{ label: IS_AR ? 'إغلاق' : 'Close' }],
+            });
+            (buildResult?.warnings || []).forEach(warning => notify.warning(warning));
+            return false; // Keep the newly opened results modal visible.
+        } else if (buildResult?.final_score) {
+          showOptimiseResults(buildResult, 'full');
+          return false;
+        }
       } },
     ],
   });
@@ -7149,7 +7311,7 @@ async function openNewScenarioModal() {
         });
         if (!data) return false;
         notify.success(IS_AR ? 'تم الإنشاء' : 'Scenario created');
-        await loadScenarios();
+        await loadScenarios(String(data.scenario.id));
         $('twsScenario').value = String(data.scenario.id);
         await onScenarioChange();
       } },
@@ -7580,7 +7742,7 @@ function openDrawer(paneIdx, placementId) {
       : '<span class="pill ok">● Clean</span>';
 
   const meetings = (p.meetings || []).map(m =>
-    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(m.room || '—')} · ${esc(m.instructor || '—')}</span></div>`
+    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')} · ${esc(m.instructor || '—')}</span></div>`
   ).join('') || '<div class="meeting-row"><span class="r">—</span></div>';
 
   $('twsDrawerBody').innerHTML = `
@@ -7590,7 +7752,7 @@ function openDrawer(paneIdx, placementId) {
     ${planLensDetailsFieldsHtml(p, 'field')}
     <div class="field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value mono">${esc(p.day)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
-    <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(p.room || '—')}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'المدرسون' : 'Instructors'}</span><span class="value" id="twsDrawerInstrChips"></span></div>
     ${(S.scenarioMeta && S.scenarioMeta.status === 'published') ? '' : `
     <div class="tws-drawer-instr-edit">
@@ -7602,10 +7764,12 @@ function openDrawer(paneIdx, placementId) {
     <div class="field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value mono">${p.registered_count || '—'}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الحالة' : 'Status'}</span><span class="value">${statusPill}</span></div>
     <div class="section-title">${IS_AR ? 'جميع اللقاءات' : 'All meetings'}</div>
+    ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" id="twsDrawerEnglishPattern">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
     ${meetings}
   `;
 
   // Instructor editor — links are the source of truth; the backend writes the
+  $('twsDrawerEnglishPattern')?.addEventListener('click', () => switchEnglishSplitPattern(p.id));
   // primary name through to the meeting rows so clash badges recompute on reload.
   drawerRenderInstructorChips(p);
   if (!(S.scenarioMeta && S.scenarioMeta.status === 'published')) {
@@ -7770,6 +7934,74 @@ async function doToggleBlockedSlot(day, start) {
   for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
 }
 
+async function refreshEnglishSplit() {
+  clearSlotAssist(); clearCreateSectionAssist();
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
+  await refreshBoardsSummary(); await loadSidebarBudget(); updateUndoRedoButtons();
+  if (RP.open) renderRpanel();
+}
+async function switchEnglishSplitPattern(placementId, patternId = null, replay = null, opts = {}) {
+  const { room, refresh = true, clearAssist = true, notifyResult = true, recordUndo = true, reportBackstop = true, allowProtected = false } = opts;
+  const located = findPlacement(placementId);
+  if (!located || !globalThis.TimetableMeetingPolicy?.isEnglish(located.placement) || S.englishPicker) return null;
+  if (S.scenarioMeta?.status === 'published') { notify.warning(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return null; }
+  S.englishPicker = true;
+  const scenarioId = S.scenarioId;
+  try {
+    const choices = await api(`/ops/tw/placements/${placementId}/slot-candidates/`);
+    if (!choices) return null;
+    const bundle = (S.panes[located.paneIdx].boardData?.placements || []).filter(row => row.term_section_id === located.placement.term_section_id);
+    if (!replay && !allowProtected && bundle.some(row => placementProtectionReasons(row).length)) { notify.warning(IS_AR ? 'الشعبة محمية من النقل.' : 'The section is protected from moving.'); return null; }
+    const current = choices.section_policy?.current_pattern_id || TimetableMeetingPolicy.identify(bundle);
+    if (!current) { notify.warning(IS_AR ? 'هذا الجدول المحفوظ لا يستخدم نمط الإنجليزية الجديد.' : 'This saved section does not use the new English pattern.'); return null; }
+    const selected = patternId ? TimetableMeetingPolicy.patterns.find(row => row.pattern_id === patternId)
+      : await TimetableMeetingPolicy.choose(located.placement.course_code, { arabic: IS_AR, candidates: choices.candidates || [], currentPatternId: current });
+    if (!selected || (!replay && selected.pattern_id === current) || S.scenarioId !== scenarioId) return null;
+    const snapshots = replay || (room === undefined ? null : TimetableMeetingPolicy.snapshot(bundle).map(row => ({ ...row, room: row.id === placementId ? room : row.room })));
+    const data = await api(`/ops/tw/placements/${placementId}/switch-pattern/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pattern_id: selected.pattern_id, ...(snapshots ? { placements: snapshots } : {}) }),
+    });
+    if (!data) return null;
+    if (!replay && recordUndo) {
+      S.undoStack.push({ type: 'pattern', placement_id: placementId,
+        old_pattern_id: data.before_section_policy?.current_pattern_id || current, new_pattern_id: selected.pattern_id,
+        before_placements: TimetableMeetingPolicy.snapshot(data.before_placements || bundle), placements: TimetableMeetingPolicy.snapshot(data.placements || []) });
+      S.redoStack = []; updateUndoRedoButtons();
+    }
+    if (!replay && notifyResult) notify.success(IS_AR ? 'تم حفظ نمط الشعبة.' : 'Full section pattern saved.');
+    if (reportBackstop) notifyInstructorClashBackstop(data);
+    if (clearAssist) clearSlotAssist();
+    if (refresh) await refreshEnglishSplit();
+    return data;
+  } finally { S.englishPicker = false; }
+}
+async function chooseEnglishSplitCreate(payload, paneIdx = null) {
+  if (S.englishPicker) return null;
+  if (S.scenarioMeta?.status === 'published') { notify.warning(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return null; }
+  const targets = Number.isFinite(paneIdx) ? [{ idx: paneIdx, pane: S.panes[paneIdx] }] : createAssistTargetPanes(payload);
+  if (!targets[0]?.pane?.boardId) { notify.warning(IS_AR ? 'اختر لوحة أولاً.' : 'Select a board first.'); return null; }
+  S.englishPicker = true;
+  const scenarioId = S.scenarioId;
+  try {
+    const boards = [];
+    for (const target of targets) {
+      const data = await api(`/ops/tw/boards/${target.pane.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`);
+      if (data) boards.push({ id: target.pane.boardId, label: data.board?.label || target.pane.boardData?.board?.label || `Board ${target.pane.boardId}`, candidates: data.candidates || [] });
+    }
+    if (!boards.length) return null;
+    const selected = await TimetableMeetingPolicy.choose(payload.course_code, { arabic: IS_AR, boards });
+    if (!selected || S.scenarioId !== scenarioId) return null;
+    const target = targets.find(row => row.pane.boardId === selected.boardId) || targets[0];
+    const result = await createPlannedPlacementFromMeetings(target.pane.boardId, payload, selected.meetings);
+    if (!result) return null;
+    const rows = result.placements || [result.placement].filter(Boolean);
+    S.undoStack.push({ type: 'bundle_create', english_pattern: true, placement_ids: rows.map(row => row.id),
+      board_id: target.pane.boardId, payload: { ...payload }, meetings: TimetableMeetingPolicy.snapshot(rows), label: createAssistLabel(payload) });
+    S.redoStack = []; await refreshEnglishSplit(); return result;
+  } finally { S.englishPicker = false; }
+}
+
 /* ── Remove + undo ── */
 async function doRemove(placementId, paneIdx) {
   const located = findPlacement(placementId);
@@ -7795,6 +8027,7 @@ async function doRemove(placementId, paneIdx) {
   if (!data) return;
   notify.success(IS_AR ? 'تم الحذف' : 'Removed');
   S.undoStack.push({ type: 'remove', ...snapshot });
+  if (data.removed_placements?.length > 1) S.undoStack.at(-1).meetings = TimetableMeetingPolicy.snapshot(data.removed_placements);
   S.redoStack = [];
   updateUndoRedoButtons();
   closeDrawer();
@@ -7875,6 +8108,7 @@ async function doCreate(action) {
       start_time: action.start_time,
       end_time: action.end_time,
       room: action.room || '',
+      ...(action.meetings ? { meetings: action.meetings } : {}),
     }),
   });
 }
@@ -7902,9 +8136,10 @@ async function doRemoveApi(placementId) {
 async function removePlacementList(placementIds = []) {
   const removed = [];
   for (const placementId of [...placementIds].reverse()) {
+    if (removed.includes(placementId)) continue;
     const data = await doRemoveApi(placementId);
     if (!data) return { ok: false, removed };
-    removed.push(placementId);
+    removed.push(...(data.removed_ids || [placementId]));
   }
   return { ok: true, removed };
 }
@@ -7912,6 +8147,11 @@ async function removePlacementList(placementIds = []) {
 async function doUndo() {
   const action = S.undoStack.pop();
   if (!action) return;
+  if (action.type === 'pattern') {
+    const data = await switchEnglishSplitPattern(action.placement_id, action.old_pattern_id, action.before_placements);
+    if (!data) S.undoStack.push(action); else S.redoStack.push(action);
+    updateUndoRedoButtons(); return;
+  }
   if (action.type === 'move') {
     const data = await doMove(action.placement_id, action.old_day, action.old_start, action.old_end, action.old_room);
     if (!data) { S.undoStack.push(action); return; }
@@ -7926,6 +8166,7 @@ async function doUndo() {
     // Undo remove = re-create the placement at its original position.
     const data = await doCreate(action);
     if (!data) { S.undoStack.push(action); return; }
+    if (action.meetings && data.placements) globalThis.TimetableMeetingPolicy?.remapHistory([action, ...S.undoStack, ...S.redoStack], action.meetings, data.placements);
     const newId = data.placement && data.placement.id;
     S.redoStack.push({ ...action, restored_placement_id: newId });
     notify.success(IS_AR ? 'تم استرجاع الشعبة' : 'Placement restored');
@@ -7950,6 +8191,11 @@ async function doUndo() {
 async function doRedo() {
   const action = S.redoStack.pop();
   if (!action) return;
+  if (action.type === 'pattern') {
+    const data = await switchEnglishSplitPattern(action.placement_id, action.new_pattern_id, action.placements);
+    if (!data) S.redoStack.push(action); else S.undoStack.push(action);
+    updateUndoRedoButtons(); return;
+  }
   if (action.type === 'move') {
     const data = await doMove(action.placement_id, action.new_day, action.new_start, action.new_end, action.new_room);
     if (!data) { S.redoStack.push(action); return; }
@@ -7971,6 +8217,7 @@ async function doRedo() {
     // Redo create = re-create at the original position.
     const data = await doCreate(action);
     if (!data) { S.redoStack.push(action); return; }
+    if (action.meetings && data.placements) globalThis.TimetableMeetingPolicy?.remapHistory([action, ...S.undoStack, ...S.redoStack], action.meetings, data.placements);
     const newId = data.placement && data.placement.id;
     S.undoStack.push({ ...action, placement_id: newId });
     notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
@@ -7978,6 +8225,7 @@ async function doRedo() {
     const data = await doCreatePlanned(action);
     if (!data) { S.redoStack.push(action); return; }
     const placements = Array.isArray(data.placements) ? data.placements : [];
+    if (action.meetings) globalThis.TimetableMeetingPolicy?.remapHistory([action, ...S.undoStack, ...S.redoStack], action.meetings, placements);
     S.undoStack.push({ ...action, placement_ids: placements.map(item => item.id) });
     notify.success('Full pattern redone');
   }
@@ -8207,31 +8455,31 @@ function showOptimiseResults(o, mode) {
     .join('');
   const qualityBlock = quality.penalty != null ? `
     <div style="margin-bottom:10px">
-      <span class="section-title">${IS_AR ? 'Ø¬ÙˆØ¯Ø© Ø§Ù„Ø¬Ø¯ÙˆÙ„' : 'Timetable quality'}</span>
+      <span class="section-title">${IS_AR ? 'جودة الجدول' : 'Timetable quality'}</span>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-        <span class="tws-repair-chip good">${IS_AR ? 'Ø§Ù„Ø¹Ù‚ÙˆØ¨Ø©' : 'Penalty'}: ${Number(quality.penalty || 0).toLocaleString()}</span>
-        ${qualityRows || `<span class="tws-repair-chip">${IS_AR ? 'Ù„Ø§ Ø¶ØºØ· Ù†Ø§Ø¹Ù…' : 'No soft pressure'}</span>`}
+        <span class="tws-repair-chip good">${IS_AR ? 'العقوبة' : 'Penalty'}: ${Number(quality.penalty || 0).toLocaleString()}</span>
+        ${qualityRows || `<span class="tws-repair-chip">${IS_AR ? 'لا ضغط ناعم' : 'No soft pressure'}</span>`}
       </div>
     </div>` : '';
   const safetyBlock = safetyBlocked ? `
     <div style="padding:10px 12px;border-radius:6px;background:rgba(240,96,96,0.1);border:1px solid rgba(240,96,96,0.3);margin:10px 0">
       <div style="font-weight:800;color:#F06060;margin-bottom:5px">Result not applied</div>
-      <div style="font-size:11px;color:var(--t3)">The optimiser candidate was rejected because it worsened unresolved students, solver clashes, or hard operational constraints.</div>
+      <div style="font-size:11px;color:var(--t3)">The optimiser candidate was rejected because it worsened protected student enrolment, hard operational constraints, or an instructor's working days.</div>
       ${safetyRegressions.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">${safetyRegressions.map(r =>
         `<span class="tws-repair-chip" style="border-color:rgba(240,96,96,0.35);color:#F06060">${esc(r.label || r.metric)}: ${Number(r.before || 0).toLocaleString()} -> ${Number(r.after || 0).toLocaleString()}</span>`
       ).join('')}</div>` : ''}
     </div>` : '';
   const crossTradeoffBlock = (!safetyBlocked && hasCrossMetric && crossPrimaryDelta < 0) ? `
     <div style="padding:8px 12px;border-radius:6px;background:rgba(245,183,49,0.08);border:1px solid rgba(245,183,49,.25);margin-top:10px;color:#F5B731;font-weight:600">
-      Tradeoff: ${hasCrossAffectedMetric ? 'affected cross-board students' : 'cross-board overlaps'} increased from ${crossPrimaryBefore} to ${crossPrimaryAfter}.
-      <div style="margin-top:4px;font-size:11px;color:var(--t3);font-weight:500">Student unresolved outcome remains the primary optimisation target.</div>
+      Tradeoff: ${hasCrossAffectedMetric ? 'students with potential course-demand overlaps' : 'cross-board overlaps'} increased from ${crossPrimaryBefore} to ${crossPrimaryAfter}.
+      <div style="margin-top:4px;font-size:11px;color:var(--t3);font-weight:500">${o.optimisation_policy === 'instructor_first' ? 'Instructor days and idle lead quality selection, with hard student enrolment protected.' : 'Student unresolved outcome remains the primary optimisation target.'}</div>
     </div>` : '';
   let diffBlock = '';
   if (mode === 'current' && Array.isArray(o.baseline_score) && Array.isArray(o.final_score)
       && o.baseline_score.length >= 5 && o.final_score.length >= 5) {
     const bs = decodeScore(o.baseline_score), fs = decodeScore(o.final_score);
     const improved = !safetyBlocked && (
-      fs.unresolved < bs.unresolved || fs.clashes < bs.clashes || fs.gap < bs.gap || crossPrimaryDelta > 0
+      instructorScheduleImproved(o) || secondaryRecoveryImproved(o) || fs.unresolved < bs.unresolved || fs.clashes < bs.clashes || fs.gap < bs.gap || crossPrimaryDelta > 0
     );
     const safeToLocale = v => (typeof v === 'number' ? v.toLocaleString() : String(v ?? '—'));
     diffBlock = safetyBlocked
@@ -8243,19 +8491,19 @@ function showOptimiseResults(o, mode) {
           <div style="font-weight:700;color:var(--teal);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
           <div style="font-size:11px">Unresolved: <b>${bs.unresolved}</b> → <b style="color:var(--teal)">${fs.unresolved}</b></div>
           ${bs.clashes !== fs.clashes ? `<div style="font-size:11px">Clashes: <b>${bs.clashes}</b> → <b style="color:var(--teal)">${fs.clashes}</b></div>` : ''}
-          ${hasCrossMetric && crossPrimaryBefore !== crossPrimaryAfter ? `<div style="font-size:11px">${hasCrossAffectedMetric ? 'Affected students' : 'Cross-board'}: <b>${crossPrimaryBefore}</b> → <b style="color:${crossPrimaryDelta > 0 ? 'var(--teal)' : '#F06060'}">${crossPrimaryAfter}</b>${hasCrossAffectedMetric ? ` <span style="color:var(--t4)">(${crossAfter} section clashes)</span>` : ''}</div>` : ''}
+          ${hasCrossMetric && crossPrimaryBefore !== crossPrimaryAfter ? `<div style="font-size:11px">${hasCrossAffectedMetric ? 'Potential demand overlap students' : 'Cross-board demand overlaps'}: <b>${crossPrimaryBefore}</b> → <b style="color:${crossPrimaryDelta > 0 ? 'var(--teal)' : '#F06060'}">${crossPrimaryAfter}</b>${hasCrossAffectedMetric ? ` <span style="color:var(--t4)">(${crossAfter} potential course-demand overlaps)</span>` : ''}</div>` : ''}
           <div style="font-size:11px">Gaps: <b>${safeToLocale(bs.gap)}</b> → <b>${safeToLocale(fs.gap)}</b></div>
         </div>`
       : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);border:1px solid rgba(80,104,240,.22);margin-top:10px;color:#aeb9ff;font-weight:600">
           ━ ${IS_AR ? 'لم يتم العثور على تحسين تلقائي' : 'No automatic improvement was found'}
-          ${hasCrossMetric && crossPrimaryAfter > 0 ? `<div style="margin-top:5px;font-size:11px;color:var(--t3);font-weight:500">${hasCrossAffectedMetric ? 'Affected cross-board students' : 'Cross-board overlaps'} remain <b style="color:#F06060">${crossPrimaryAfter}</b>. Use guided fixes or Full rebuild to target this metric.</div>` : ''}
+          ${hasCrossMetric && crossPrimaryAfter > 0 ? `<div style="margin-top:5px;font-size:11px;color:var(--t3);font-weight:500">${hasCrossAffectedMetric ? 'Students with potential course-demand overlaps' : 'Cross-board overlaps'} remain <b style="color:#F06060">${crossPrimaryAfter}</b>. Use guided fixes or Full rebuild to target this metric.</div>` : ''}
         </div>`;
   }
   const crossCard = hasCrossMetric ? `
       <div style="padding:12px;border-radius:8px;background:rgba(240,96,96,0.08);text-align:center">
         <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'عبر اللوحات' : 'Cross'}</div>
         <div style="font-weight:700;color:${crossPrimaryAfter > 0 ? '#F06060' : 'var(--teal)'};font-size:20px">${crossPrimaryAfter}<span style="color:var(--t4);font-size:12px;font-weight:400">${crossPrimaryBefore !== crossPrimaryAfter ? `/${crossPrimaryBefore}` : ''}</span></div>
-        ${hasCrossAffectedMetric ? `<div style="font-size:10px;color:var(--t4);margin-top:2px">${crossAfter} section clashes</div>` : ''}
+        ${hasCrossAffectedMetric ? `<div style="font-size:10px;color:var(--t4);margin-top:2px">${crossAfter} potential course-demand overlaps</div>` : ''}
       </div>` : '';
   const hotspots = (o.hotspot_courses || []).length ? `
     <div class="section-title" style="color:#F06060;margin-top:12px">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot courses'}</div>
@@ -8270,6 +8518,7 @@ function showOptimiseResults(o, mode) {
     ).join('')}</div>
   ` : '';
   const body = `
+    ${renderInstructorOutcome(o)}${renderSecondaryRecoveryOutcome(o)}
     <div style="display:grid;grid-template-columns:repeat(${hasCrossMetric ? 4 : 3},1fr);gap:8px;margin-bottom:14px">
       <div style="padding:12px;border-radius:8px;background:rgba(10,142,110,0.08);text-align:center">
         <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>
@@ -8300,7 +8549,7 @@ function showOptimiseResults(o, mode) {
     sub: S.scenarioMeta ? S.scenarioMeta.name : '',
     body, width: 'xwide',
     buttons: [
-      { label: IS_AR ? 'تطبيق' : 'Apply & refresh', variant: 'primary' },
+      { label: IS_AR ? 'إغلاق' : 'Close', variant: 'primary' },
     ],
   });
   if (safetyBlocked) {

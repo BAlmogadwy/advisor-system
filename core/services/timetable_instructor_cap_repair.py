@@ -32,11 +32,14 @@ No-op (and zero DB work) when the cap flag is off.
 from __future__ import annotations
 
 import logging
+import time
+from typing import Any, cast
 
 from django.db import transaction
 
 from core.models import SectionPlacement, TermSection, TimetableScenario
 from core.models import TermSectionMeeting as _TSM
+from core.services.course_identity import course_display_code
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
@@ -46,6 +49,8 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     placeable_slots,
 )
+from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
@@ -69,6 +74,56 @@ def _day_idx(day_str: str) -> int:
     return WEEKDAYS.index(up) if up in WEEKDAYS else -1
 
 
+def _repair_slot_domain(
+    scenario: TimetableScenario,
+    placement: SectionPlacement,
+    online_lookup: OnlineCourseLookup,
+) -> list[tuple[str, str]]:
+    """Preserve physical delivery and exact contact minutes during hard repair.
+
+    Programme delivery comes from the same per-board resolver as rooming and
+    generation, independently of any optional gap-scoring feature flag.
+    """
+    duration = _to_min(placement.end_time) - _to_min(placement.start_time)
+    if get_course_meeting_policy(_display_code(placement.term_section)):
+        # These domains are for individual sessions. Whole English alternatives
+        # are evaluated by the bundle neighbourhood before hard clash repair.
+        return []
+    online = online_lookup.is_online_course_for_board(
+        placement.board, _display_code(placement.term_section)
+    )
+    if online:
+        # Remote repair never falls back to a campus grid. It needs explicit
+        # online windows configured by the owner.
+        lecture = cast(list[dict[str, Any]], scenario.slot_config) or []
+        lab = cast(list[dict[str, Any]], scenario.lab_slot_config) or []
+        slots = [slot for slot in [*lecture, *lab] if slot.get("online_only")]
+    else:
+        slots = (
+            placeable_slots(
+                cast(list[dict[str, Any]], scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
+            )
+            if duration > 75
+            else placeable_slots(cast(list[dict[str, Any]], scenario.slot_config or DEFAULT_SLOTS))
+        )
+    return list(
+        dict.fromkeys(
+            (slot["start"], slot["end"])
+            for slot in slots
+            if _to_min(slot["end"]) - _to_min(slot["start"]) == duration
+        )
+    )
+
+
+def _display_code(section: TermSection) -> str:
+    return course_display_code(section.course_key, section.course_code, section.course_number)
+
+
+def _offering_key(section: TermSection) -> str:
+    """Stable offering identity for occupancy; split code prefixes are not IDs."""
+    return section.course_key or _display_code(section)
+
+
 def _creates_board_interval_overlap(p, day2, s2_min, e2_min, iid_set, placements, instr_ids_fn):
     """True if relocating ``p`` to ``[s2_min, e2_min)`` on ``day2`` would create a
     same-course-same-board OR same-instructor INTERVAL overlap.
@@ -83,7 +138,7 @@ def _creates_board_interval_overlap(p, day2, s2_min, e2_min, iid_set, placements
     so it already reflects every move applied so far this pass.
     """
     day2u = (day2 or "").upper()
-    course = p.term_section.course_code
+    course = _offering_key(p.term_section)
     bid = p.board_id
     for q in placements:
         if q is p or (q.day or "").upper() != day2u:
@@ -91,7 +146,7 @@ def _creates_board_interval_overlap(p, day2, s2_min, e2_min, iid_set, placements
         qs, qe = _to_min(q.start_time), _to_min(q.end_time)
         if s2_min >= qe or e2_min <= qs:
             continue  # disjoint in time
-        if q.board_id == bid and q.term_section.course_code == course:
+        if q.board_id == bid and _offering_key(q.term_section) == course:
             return True  # sibling section of the same course overlaps on this board
         if iid_set and (instr_ids_fn(q) & iid_set):
             return True  # the instructor is double-booked across the overlap
@@ -132,13 +187,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     )
     cap_map = build_section_instructor_map_for_scenario(scenario_id)  # section_id -> frozenset[int]
 
-    lecture_slots = [
-        (s["start"], s["end"]) for s in placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
-    ]
-    lab_slots = [
-        (s["start"], s["end"])
-        for s in placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
-    ]
+    online_lookup = OnlineCourseLookup()
     blocked = {(d.upper(), st) for (d, st) in _blocked_keys(scenario)}
 
     placements = list(
@@ -162,7 +211,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     for p in placements:
         day = (p.day or "").upper()
         section_days.setdefault(p.term_section_id, set()).add(day)
-        course_slots.setdefault(p.term_section.course_code, set()).add((day, p.start_time))
+        course_slots.setdefault(_offering_key(p.term_section), set()).add((day, p.start_time))
         for iid in _instr_ids(p):
             count[(iid, day)] = count.get((iid, day), 0) + 1
             instr_slots.setdefault(iid, set()).add((day, p.start_time))
@@ -214,10 +263,9 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
         """Yield structurally-feasible (day2, s2, e2) targets for ``p``."""
         from core.services.timetable_assignment_models import SectionMeeting  # noqa: F401
 
-        dur = _to_min(p.end_time) - _to_min(p.start_time)
-        slots = lab_slots if dur > 75 else lecture_slots
+        slots = _repair_slot_domain(scenario, p, online_lookup)
         cur_section_days = section_days.get(p.term_section_id, set())
-        course = p.term_section.course_code
+        course = _offering_key(p.term_section)
         cur_day = (p.day or "").upper()
         for day2 in WEEKDAYS:
             if day2 == cur_day or day2 in cur_section_days:
@@ -241,6 +289,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
         for entry in detected:
             iid, day = entry["instructor_id"], entry["day"]
             excess = count.get((iid, day), 0) - cap
+            online_blocked = False
             day_ps = sorted(
                 (
                     p
@@ -258,6 +307,8 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
             for p in day_ps:
                 if excess <= 0:
                     break
+                if get_course_meeting_policy(_display_code(p.term_section)):
+                    continue  # Changing AM/PM cannot remove its required teaching day.
                 iid_set = _instr_ids(p)
                 s, midx = _meeting_idx(p)
                 orig_meeting = s.meetings[midx] if (s is not None and midx is not None) else None
@@ -287,6 +338,14 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         break
 
                 if best is None:
+                    if online_lookup.is_online_course_for_board(
+                        p.board, _display_code(p.term_section)
+                    ):
+                        # Remote delivery may have no configured legal alternative.
+                        # Keep the session and report the remaining violation rather
+                        # than changing modality or silently deleting its teaching.
+                        online_blocked = True
+                        continue
                     # No cap-satisfying, clash-free slot exists on ANY other day
                     # (all at cap, blocked, or overlapping). Only now unplace, as
                     # the documented last resort, so the hard cap still holds.
@@ -333,7 +392,16 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 excess -= 1
             if excess > 0:
                 report["locked_blocked"].append(
-                    {"instructor_id": iid, "day": day, "excess": excess}
+                    {
+                        "instructor_id": iid,
+                        "day": day,
+                        "excess": excess,
+                        **(
+                            {"reason": "no_online_slot_preserving_duration"}
+                            if online_blocked
+                            else {}
+                        ),
+                    }
                 )
 
         # PR29: re-fan instructor name onto touched sections + re-room their boards.
@@ -341,7 +409,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
         for ts_id, board in touched.items():
             ts = ts_by_id.get(ts_id)
             if ts is not None:
-                _apply_course_instructor(ts, scenario, board, ts.course_code)
+                _apply_course_instructor(ts, scenario, board, _display_code(ts))
         for board_id in touched_boards:
             assign_rooms_to_board(board_id, respect_locked=True)
 
@@ -384,6 +452,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
 
     from core.services.timetable_assignment_models import SectionMeeting
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_fixed_pattern_search import improve_fixed_course_patterns
     from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
@@ -393,17 +462,14 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         build_student_profiles_for_scenario,
     )
 
+    report["weekly_pattern_search"] = improve_fixed_course_patterns(
+        scenario_id, repair_clashes=True
+    )
     scenario = TimetableScenario.objects.get(id=scenario_id)
     cap_map = build_section_instructor_map_for_scenario(scenario_id)
     cap_on = is_instructor_daily_cap_enabled()
     cap = get_instructor_daily_cap() if cap_on else 10**9
-    lecture_slots = [
-        (s["start"], s["end"]) for s in placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
-    ]
-    lab_slots = [
-        (s["start"], s["end"])
-        for s in placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
-    ]
+    online_lookup = OnlineCourseLookup()
     blocked = {(d.upper(), st) for (d, st) in _blocked_keys(scenario)}
 
     placements = list(
@@ -419,6 +485,15 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     def _instr_ids(p):
         return cap_map.get(_sid(p), frozenset())
 
+    def _physical_key(p: SectionPlacement) -> tuple[int, str, str, str]:
+        return p.term_section_id, p.day.upper(), p.start_time, p.end_time
+
+    locked_physical = {_physical_key(p) for p in placements if p.is_locked}
+    locked_sections = {p.term_section_id for p in placements if p.is_locked}
+
+    def _physical_locked(p: SectionPlacement) -> bool:
+        return _physical_key(p) in locked_physical
+
     # Count-based occupancy (a clash means >1 at a slot, which a set can't hold).
     slot_count: dict[tuple[object, str, str], int] = {}
     daily_count: dict[tuple[object, str], int] = {}
@@ -427,7 +502,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     for p in placements:
         day = (p.day or "").upper()
         section_days.setdefault(p.term_section_id, set()).add(day)
-        course_slots.setdefault(p.term_section.course_code, set()).add((day, p.start_time))
+        course_slots.setdefault(_offering_key(p.term_section), set()).add((day, p.start_time))
         for iid in _instr_ids(p):
             slot_count[(iid, day, p.start_time)] = slot_count.get((iid, day, p.start_time), 0) + 1
             daily_count[(iid, day)] = daily_count.get((iid, day), 0) + 1
@@ -451,7 +526,8 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         if len(ps) < 2:
             continue
         ordered = sorted(
-            ps, key=lambda pp: (not pp.is_locked, _to_min(pp.start_time), _to_min(pp.end_time))
+            ps,
+            key=lambda pp: (not _physical_locked(pp), _to_min(pp.start_time), _to_min(pp.end_time)),
         )
         kept: list[tuple[int, int]] = []
         for pp in ordered:
@@ -460,7 +536,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 detected.append(
                     {"instructor_id": iid, "day": day, "start": pp.start_time, "end": pp.end_time}
                 )
-                if pp.is_locked:
+                if _physical_locked(pp):
                     # A locked session can't be relocated — it stays and remains
                     # a clash the pass cannot fix.
                     report["locked_blocked"].append(
@@ -507,7 +583,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
             return None, None
         di, sm = _day_idx(p.day), _to_min(p.start_time)
         for i, m in enumerate(s.meetings):
-            if m.day == di and m.start_min == sm:
+            if m.day == di and m.start_min == sm and m.end_min == _to_min(p.end_time):
                 return s, i
         return s, None
 
@@ -516,11 +592,246 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     touched: dict[int, object] = {}
     touched_boards: set[int] = set()
 
+    from core.services.timetable_optimisation_policy import (
+        instructor_schedule_metrics,
+        instructor_schedule_regressions,
+        is_instructor_priority_enabled,
+    )
+
+    teacher_baseline = instructor_schedule_metrics(states, cap_map)
+    report["instructor_before"] = teacher_baseline
+    report["coordinated_repairs"] = 0
+    report["safe_search_trials"] = 0
+    report["safe_search_budget_exhausted"] = False
+    # One deadline for the whole pass prevents many existing clashes from
+    # multiplying the optional coordinated-search budget.
+    safe_deadline = time.monotonic() + 5.0
+
+    def _safe_choices(
+        mover: SectionPlacement,
+    ) -> tuple[tuple[int, ...], list[tuple[SectionPlacement, str, str, str]]] | None:
+        """Try direct, paired, and one student-blocker move before hard fallback.
+
+        The temporary placements and SectionStates are restored in finally;
+        neither trial writes to the database. Comparing the union-based teacher
+        metrics only after both changes avoids rejecting the necessary first
+        step of a compact, clash-free pair.
+        """
+        if not is_instructor_priority_enabled():
+            return None
+
+        # Shared placement rows describe one physical meeting. Until this pass
+        # moves such a group together, keep it out of coordinated trials; a
+        # lock on any section constituent freezes the whole optional move.
+        def movable(placement: SectionPlacement) -> bool:
+            return (
+                placement.term_section_id not in locked_sections
+                and sum(_physical_key(q) == _physical_key(placement) for q in placements) == 1
+            )
+
+        if not movable(mover):
+            return None
+        incumbent_teachers = instructor_schedule_metrics(states, cap_map)
+        incumbent_score = _score()
+        near_safe: list[
+            tuple[tuple[int, ...], list[tuple[SectionPlacement, str, str, str]], set[str]]
+        ] = []
+        incumbent_unresolved = {}
+        if profiles:
+            incumbent_eval = evaluate_generated_timetable_candidate(
+                "clash_repair_incumbent",
+                states,
+                profiles,
+                rigidity,
+                section_instructor_ids=cap_map,
+                course_tiers=course_tiers,
+            )
+            incumbent_unresolved = {
+                sid: set(student.unresolved_courses)
+                for sid, student in incumbent_eval.assignment_states.items()
+            }
+
+        def domains(placement: SectionPlacement) -> list[tuple[str, str, str]]:
+            days = sorted(
+                WEEKDAYS,
+                key=lambda day: (
+                    day != placement.day.upper(),
+                    not any(
+                        q.day.upper() == day and _instr_ids(q) & _instr_ids(placement)
+                        for q in placements
+                    ),
+                    WEEKDAYS.index(day),
+                ),
+            )
+            return [
+                (day, start, end)
+                for day in days
+                for start, end in _repair_slot_domain(scenario, placement, online_lookup)
+                if (day, start) not in blocked
+                and (day, start, end)
+                != (placement.day.upper(), placement.start_time, placement.end_time)
+            ]
+
+        def check(changes: list[tuple[SectionPlacement, str, str, str]]) -> tuple[int, ...] | None:
+            saved = []
+            try:
+                for placement, day2, start2, end2 in changes:
+                    section, index = _meeting_idx(placement)
+                    if section is None or index is None or placement.is_locked:
+                        return None
+                    saved.append(
+                        (
+                            placement,
+                            placement.day,
+                            placement.start_time,
+                            placement.end_time,
+                            section,
+                            index,
+                            section.meetings[index],
+                        )
+                    )
+                    placement.day, placement.start_time, placement.end_time = day2, start2, end2
+                    section.meetings[index] = SectionMeeting(
+                        _day_idx(day2), _to_min(start2), _to_min(end2)
+                    )
+                report["safe_search_trials"] += 1
+                for placement, day2, start2, end2 in changes:
+                    # These checks see the final pair, and ignore pre-existing
+                    # clashes elsewhere that this particular repair cannot fix.
+                    if any(
+                        q is not placement
+                        and q.term_section_id == placement.term_section_id
+                        and q.day.upper() == day2
+                        for q in placements
+                    ):
+                        return None
+                    if _creates_board_interval_overlap(
+                        placement,
+                        day2,
+                        _to_min(start2),
+                        _to_min(end2),
+                        _instr_ids(placement),
+                        placements,
+                        _instr_ids,
+                    ):
+                        return None
+                    if cap_on and any(
+                        sum(q.day.upper() == day2 and iid in _instr_ids(q) for q in placements)
+                        > cap
+                        for iid in _instr_ids(placement)
+                    ):
+                        return None
+                teachers = instructor_schedule_metrics(states, cap_map)
+                if instructor_schedule_regressions(
+                    teacher_baseline, teachers
+                ) or instructor_schedule_regressions(incumbent_teachers, teachers):
+                    return None
+                evaluated = (
+                    evaluate_generated_timetable_candidate(
+                        "clash_repair_trial",
+                        states,
+                        profiles,
+                        rigidity,
+                        section_instructor_ids=cap_map,
+                        course_tiers=course_tiers,
+                    )
+                    if profiles
+                    else None
+                )
+                score = tuple(evaluated.lexicographic_score) if evaluated is not None else ()
+                if (
+                    baseline
+                    and any(new > old for new, old in zip(score[:4], baseline[:4], strict=True))
+                ) or (
+                    incumbent_score
+                    and any(
+                        new > old for new, old in zip(score[:4], incumbent_score[:4], strict=True)
+                    )
+                ):
+                    if len(changes) < 3 and evaluated is not None:
+                        newly_unresolved = {
+                            course
+                            for sid, student in evaluated.assignment_states.items()
+                            for course in set(student.unresolved_courses)
+                            - incumbent_unresolved.get(sid, set())
+                        }
+                        near_safe.append((score, list(changes), newly_unresolved))
+                    return None
+                return tuple(score)
+            finally:
+                for placement, day, start, end, section, index, meeting in reversed(saved):
+                    placement.day, placement.start_time, placement.end_time = day, start, end
+                    section.meetings[index] = meeting
+
+        primary_domain = domains(mover)
+        for slot in primary_domain:
+            if time.monotonic() >= safe_deadline:
+                report["safe_search_budget_exhausted"] = True
+                return None
+            changes = [(mover, *slot)]
+            score = check(changes)
+            if score is not None:
+                return score, changes
+        partners = [
+            q
+            for q in placements
+            if q is not mover
+            and movable(q)
+            and q.term_section_id != mover.term_section_id
+            and _instr_ids(q) & _instr_ids(mover)
+        ]
+        partners.sort(
+            key=lambda q: (
+                not (
+                    q.day.upper() == mover.day.upper()
+                    and _to_min(q.start_time) < _to_min(mover.end_time)
+                    and _to_min(mover.start_time) < _to_min(q.end_time)
+                ),
+                q.day.upper() != mover.day.upper(),
+                q.id,
+            )
+        )
+        for partner in partners:
+            partner_domain = domains(partner)
+            for first in primary_domain:
+                for second in partner_domain:
+                    if time.monotonic() >= safe_deadline:
+                        report["safe_search_budget_exhausted"] = True
+                        return None
+                    changes = [(mover, *first), (partner, *second)]
+                    score = check(changes)
+                    if score is not None:
+                        return score, changes
+        # A teacher-safe pair can conflict with a student's formerly seated
+        # course. Try relocating one meeting of that newly blocked course too;
+        # every final three-meeting candidate still passes all original gates.
+        for _score_value, first_changes, courses in sorted(near_safe, key=lambda row: row[0])[:12]:
+            changed_ids = {placement.id for placement, *_slot in first_changes}
+            blockers = [
+                q
+                for q in placements
+                if q.id not in changed_ids
+                and movable(q)
+                and (blocker_state := sections_by_id.get(_sid(q))) is not None
+                and blocker_state.course_code in courses
+                and not blocker_state.delivery_is_online
+            ]
+            blockers.sort(key=lambda q: (bool(_instr_ids(q)), q.id))
+            for blocker in blockers:
+                for slot in domains(blocker):
+                    if time.monotonic() >= safe_deadline:
+                        report["safe_search_budget_exhausted"] = True
+                        return None
+                    changes = [*first_changes, (blocker, *slot)]
+                    score = check(changes)
+                    if score is not None:
+                        return score, changes
+        return None
+
     def _candidates(p, iid_set):
-        dur = _to_min(p.end_time) - _to_min(p.start_time)
-        slots = lab_slots if dur > 75 else lecture_slots
+        slots = _repair_slot_domain(scenario, p, online_lookup)
         others = section_days.get(p.term_section_id, set()) - {(p.day or "").upper()}
-        course = p.term_section.course_code
+        course = _offering_key(p.term_section)
         cur_day = (p.day or "").upper()
         for day2 in WEEKDAYS:
             if day2 == cur_day or day2 in others:
@@ -544,12 +855,40 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     with transaction.atomic():
         for pid in mover_pids:
             p = placements_by_id[pid]
+            if (
+                is_instructor_priority_enabled()
+                and sum(_physical_key(q) == _physical_key(p) for q in placements) > 1
+            ):
+                report["locked_blocked"].append(
+                    {
+                        "instructor_id": next(iter(sorted(_instr_ids(p))), None),
+                        "day": p.day.upper(),
+                        "start": p.start_time,
+                        "excess": 1,
+                        "reason": "shared_physical_meeting_requires_group_repair",
+                    }
+                )
+                continue
+            if not _creates_board_interval_overlap(
+                p,
+                p.day,
+                _to_min(p.start_time),
+                _to_min(p.end_time),
+                _instr_ids(p),
+                placements,
+                _instr_ids,
+            ):
+                continue  # An earlier coordinated repair already cleared it.
             day, start = (p.day or "").upper(), p.start_time
             iid_set = _instr_ids(p)
             s, midx = _meeting_idx(p)
             orig = s.meetings[midx] if (s is not None and midx is not None) else None
             best = None
-            for day2, s2, e2 in _candidates(p, iid_set):
+            safe = _safe_choices(p)
+            if safe is not None:
+                score, choices = safe
+                best = (score, *choices[0][1:])
+            for day2, s2, e2 in () if safe is not None else _candidates(p, iid_set):
                 if orig is not None:
                     s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
                     sc = _score()
@@ -568,43 +907,60 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                         "day": day,
                         "start": start,
                         "excess": 1,
-                        "reason": "no_clash_free_slot",
+                        "reason": (
+                            "no_online_slot_preserving_duration"
+                            if online_lookup.is_online_course_for_board(
+                                p.board, _display_code(p.term_section)
+                            )
+                            else "no_clash_free_slot_preserving_duration"
+                        ),
                     }
                 )
                 continue
-            _, day2, s2, e2 = best
-            if orig is not None:
-                s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
-            _relocate(p, day2, s2, e2)
-            course_slots.get(p.term_section.course_code, set()).discard((day, start))
-            section_days.get(p.term_section_id, set()).discard(day)
-            section_days.setdefault(p.term_section_id, set()).add(day2)
-            course_slots.setdefault(p.term_section.course_code, set()).add((day2, s2))
-            for _iid in iid_set:
-                slot_count[(_iid, day, start)] = slot_count.get((_iid, day, start), 0) - 1
-                slot_count[(_iid, day2, s2)] = slot_count.get((_iid, day2, s2), 0) + 1
-                daily_count[(_iid, day)] = daily_count.get((_iid, day), 0) - 1
-                daily_count[(_iid, day2)] = daily_count.get((_iid, day2), 0) + 1
-            report["repaired"].append(
-                {
-                    "section": f"{p.term_section.course_code} {p.term_section.section}",
-                    "from": f"{day} {start}",
-                    "to": f"{day2} {s2}",
-                    "instructor_id": next(iter(sorted(iid_set)), None),
-                }
-            )
-            touched[p.term_section_id] = p.board
-            touched_boards.add(p.board_id)
+            choices = safe[1] if safe is not None else [(p, *best[1:])]
+            report["coordinated_repairs"] += int(len(choices) > 1)
+            for moved, day2, s2, e2 in choices:
+                old_day, old_start = moved.day.upper(), moved.start_time
+                moved_ids = _instr_ids(moved)
+                state, index = _meeting_idx(moved)
+                if state is not None and index is not None:
+                    state.meetings[index] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
+                _relocate(moved, day2, s2, e2)
+                course_slots.get(_offering_key(moved.term_section), set()).discard(
+                    (old_day, old_start)
+                )
+                section_days.get(moved.term_section_id, set()).discard(old_day)
+                section_days.setdefault(moved.term_section_id, set()).add(day2)
+                course_slots.setdefault(_offering_key(moved.term_section), set()).add((day2, s2))
+                for iid in moved_ids:
+                    slot_count[(iid, old_day, old_start)] = (
+                        slot_count.get((iid, old_day, old_start), 0) - 1
+                    )
+                    slot_count[(iid, day2, s2)] = slot_count.get((iid, day2, s2), 0) + 1
+                    daily_count[(iid, old_day)] = daily_count.get((iid, old_day), 0) - 1
+                    daily_count[(iid, day2)] = daily_count.get((iid, day2), 0) + 1
+                report["repaired"].append(
+                    {
+                        "section": f"{moved.term_section.course_code} {moved.term_section.section}",
+                        "from": f"{old_day} {old_start}",
+                        "to": f"{day2} {s2}",
+                        "instructor_id": next(iter(sorted(moved_ids)), None),
+                        "instructor_safe": safe is not None,
+                    }
+                )
+                touched[moved.term_section_id] = moved.board
+                touched_boards.add(moved.board_id)
 
         ts_by_id = {ts.id: ts for ts in TermSection.objects.filter(id__in=touched.keys())}
         for ts_id, board in touched.items():
             ts = ts_by_id.get(ts_id)
             if ts is not None:
-                _apply_course_instructor(ts, scenario, board, ts.course_code)
+                _apply_course_instructor(ts, scenario, board, _display_code(ts))
         for board_id in touched_boards:
             assign_rooms_to_board(board_id, respect_locked=True)
 
     report["student_score_after"] = list(_score()) if profiles else None
+    report["instructor_after"] = instructor_schedule_metrics(states, cap_map)
     report["remaining_clashes"] = sum(e["excess"] for e in report["locked_blocked"])
     logger.info(
         "Instructor clash repair (scenario %d): %d relocated, %d remaining; student %s -> %s",
@@ -625,7 +981,7 @@ def _blocked_keys(scenario):
 
 def _relocate(p, day2, s2, e2) -> None:
     _TSM.objects.filter(
-        term_section_id=p.term_section_id, day=p.day, start_time=p.start_time
+        term_section_id=p.term_section_id, day=p.day, start_time=p.start_time, end_time=p.end_time
     ).update(day=day2, start_time=s2, end_time=e2)
     p.day, p.start_time, p.end_time, p.room = day2, s2, e2, ""
     p.save(update_fields=["day", "start_time", "end_time", "room"])
@@ -641,7 +997,7 @@ def _unplace(p) -> None:
 def _shift_state(p, old, new, iid_set, count, section_days, instr_slots, course_slots) -> None:
     old_day, old_start = old
     new_day, new_start = new
-    code = p.term_section.course_code
+    code = _offering_key(p.term_section)
     section_days.get(p.term_section_id, set()).discard(old_day)
     section_days.setdefault(p.term_section_id, set()).add(new_day)
     course_slots.get(code, set()).discard((old_day, old_start))
@@ -655,7 +1011,7 @@ def _shift_state(p, old, new, iid_set, count, section_days, instr_slots, course_
 
 def _drop_state(p, old, iid_set, count, section_days, instr_slots, course_slots) -> None:
     old_day, old_start = old
-    code = p.term_section.course_code
+    code = _offering_key(p.term_section)
     course_slots.get(code, set()).discard((old_day, old_start))
     for iid in iid_set:
         count[(iid, old_day)] = count.get((iid, old_day), 0) - 1
