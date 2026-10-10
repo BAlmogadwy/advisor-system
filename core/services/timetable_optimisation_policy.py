@@ -263,7 +263,7 @@ def evaluation_is_better(
     because of enumeration order. Ranking always compares against incumbent.
     """
     if not is_instructor_priority_enabled():
-        return candidate.lexicographic_score < incumbent.lexicographic_score
+        return bool(candidate.lexicographic_score < incumbent.lexicographic_score)
     feasibility = feasibility_ceilings if feasibility_ceilings is not None else incumbent
     old_score, new_score = feasibility.lexicographic_score, candidate.lexicographic_score
     if len(old_score) != len(new_score) or len(incumbent.lexicographic_score) != len(new_score):

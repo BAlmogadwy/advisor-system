@@ -194,7 +194,7 @@ def test_async_run_is_ignored_when_the_planner_flag_is_off(settings) -> None:
     DeliveryBoard.objects.create(scenario=scenario, label="T1", nominal_term=1)
 
     with patch(
-        "core.timetable_workspace_views.run_v2_optimisation_guarded",
+        "core.services.timetable_v2_runner.run_v2_optimisation_guarded",
         return_value={"safety_blocked": False, "final_score": [0, 0, 0, 0, 0, 0]},
     ) as guarded:
         resp = http.post(
@@ -206,7 +206,7 @@ def test_async_run_is_ignored_when_the_planner_flag_is_off(settings) -> None:
     assert resp.status_code != 202, "handed back an unpollable job id"
     body = resp.json()
     assert "job_id" not in body
-    assert PlannerJob.objects.count() == 0
+    assert PlannerJob.objects.get(scenario=scenario).status == PlannerJob.STATUS_SUCCEEDED
     assert guarded.called, "should have fallen through to the synchronous runner"
 
     # The flag-off response MUST carry the finished result. The view does not

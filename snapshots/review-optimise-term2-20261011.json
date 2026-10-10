@@ -1,0 +1,2878 @@
+{
+  "source_root": "C:\\Users\\user\\myUniproject",
+  "snapshot": "C:\\Users\\user\\myUniproject\\snapshots\\eng-final-term2-20261010.sqlite3",
+  "scratch_database": "C:\\Users\\user\\myUniproject\\snapshots\\review-optimise-term2-20261011.sqlite3",
+  "scenario": 665,
+  "action": "current",
+  "budget": {
+    "seconds": 15.0,
+    "runs": 1,
+    "iterations": 8
+  },
+  "before": {
+    "instructors": {
+      "working_days": 0,
+      "idle_minutes": 0,
+      "days": {},
+      "idle_by_instructor": {}
+    },
+    "students": 405,
+    "unresolved_students": 73,
+    "student_score": {
+      "layout": "tiered",
+      "highrisk_unresolved": 7,
+      "actual_assigned_clashes": 0,
+      "t1_unresolved": 23,
+      "t2_unresolved_over_tol": 24,
+      "student_cost": 117210,
+      "gap_minutes": 113490,
+      "soft_unresolved": 31,
+      "reserve_used": 41,
+      "same_course_spread": 61715,
+      "instructor_idle": 0,
+      "unresolved_tier_a": 7,
+      "unresolved_courses": 78
+    },
+    "sections": 82,
+    "meetings": 187,
+    "unassigned_room_rows": 33,
+    "physical_rooming": {
+      "unassigned": 9,
+      "incompatible": 0,
+      "shortages": 9
+    },
+    "safety": {
+      "boards": 5,
+      "placements": 187,
+      "unique_students": 405,
+      "board_student_links_total": 633,
+      "primary_student_links": 405,
+      "visitor_student_links": 228,
+      "room_assigned": 154,
+      "physical_unassigned_rooms": 9,
+      "online_without_room": 8,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 188,
+      "cross_board_affected_students": 171,
+      "cross_board_student_conflict_incidences": 956,
+      "high_cross_board_conflicts": 2,
+      "high_cross_board_affected_students": 42,
+      "max_cross_board_conflicts_per_student": 24,
+      "budget": {
+        "rows": 41,
+        "planned_sections": 82,
+        "used_sections": 82,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "signatures": {
+      "CS112::PROGRAMMING_I_S1": [
+        [
+          0,
+          540,
+          640
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S1": [
+        [
+          0,
+          540,
+          720
+        ],
+        [
+          1,
+          540,
+          720
+        ],
+        [
+          3,
+          540,
+          720
+        ],
+        [
+          4,
+          540,
+          720
+        ]
+      ],
+      "CS163::DISCRETE_STRUCTURES_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          960,
+          1035
+        ]
+      ],
+      "STAT103::PRINCIPLES_OF_PROBABILITY_AND_STATISTICS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "GS152::COMPUTER_SKILLS_S1": [
+        [
+          1,
+          885,
+          985
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S2": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S2": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS163::DISCRETE_STRUCTURES_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "STAT103::PRINCIPLES_OF_PROBABILITY_AND_STATISTICS_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S2": [
+        [
+          2,
+          885,
+          985
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S3": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS163::DISCRETE_STRUCTURES_S3": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S4": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          990,
+          1090
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S4": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S5": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          540,
+          640
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "AI124::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "CS112::PROGRAMMING_II_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "MATH243::243_LINEAR_ALGEBRA_I_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "ENGL104::TECHNICAL_COMMUNICATION_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ]
+      ],
+      "MATH204::CALCULUS_II_S1": [
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          3,
+          650,
+          725
+        ]
+      ],
+      "DS103::INTRODUCTION_TO_DATA_SCIENCE_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          4,
+          870,
+          945
+        ]
+      ],
+      "GS112::ARABIC_LANGUAGE_SKILLS_II_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S2": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "AI124::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S2": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ]
+      ],
+      "MATH243::243_LINEAR_ALGEBRA_I_S2": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "ENGL104::TECHNICAL_COMMUNICATION_S2": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "GS112::ARABIC_LANGUAGE_SKILLS_II_S2": [
+        [
+          2,
+          885,
+          985
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "AI124::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S3": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          885,
+          985
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "MATH243::243_LINEAR_ALGEBRA_I_S3": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S4": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          990,
+          1090
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S5": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          1,
+          540,
+          640
+        ],
+        [
+          2,
+          960,
+          1035
+        ]
+      ],
+      "IS124::DATABASE_MANAGEMENT_SYSTEM_I_S1": [
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ],
+        [
+          4,
+          870,
+          945
+        ]
+      ],
+      "AI236::MACHINE_LEARNING_S1": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "IS252::DATABASE_MANAGEMENT_SYSTEMS_II_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "CS289::SOFTWARE_ENGINEERING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "DS331::DATA_MINING_AND_ANALYTICS_I_S1": [
+        [
+          1,
+          885,
+          960
+        ],
+        [
+          2,
+          540,
+          640
+        ],
+        [
+          3,
+          885,
+          960
+        ]
+      ],
+      "IS244::INFORMATION_SYSTEMS_ANALYSIS_AND_DESIGN_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "ENGL214::TECHNICAL_WRITING_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "COE226::COMPUTER_ARCHITECTURE_AND_ORGANIZATION_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          1,
+          650,
+          725
+        ]
+      ],
+      "CYB215::OPERATING_SYSTEMS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          1,
+          650,
+          725
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_I_S1": [
+        [
+          3,
+          885,
+          985
+        ]
+      ],
+      "IS124::DATABASE_MANAGEMENT_SYSTEM_I_S2": [
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          640
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI236::MACHINE_LEARNING_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          640
+        ]
+      ],
+      "ENGL214::TECHNICAL_WRITING_S2": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          3,
+          870,
+          945
+        ]
+      ],
+      "AI342::IMAGE_PROCESSING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "COE332::COMPUTER_NETWORKS_S1": [
+        [
+          2,
+          645,
+          745
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "DS352::DATA_EXPLORATION__VISUALIZATION_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          1,
+          650,
+          725
+        ],
+        [
+          3,
+          780,
+          880
+        ]
+      ],
+      "AI201::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "AI352::NATURAL_LANGUAGE_PROCESSING_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          1,
+          630,
+          705
+        ]
+      ],
+      "DS1::PROGRAM_ELECTIVE_COURSE_I_S1": [
+        [
+          2,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "AI371::COGNITIVE_ROBOTICS_S1": [
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT_S1": [
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "GS103::ISLAMIC_STUDIES_HUMAN_RIGHTS_IN_ISLAM_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "AI342::IMAGE_PROCESSING_S2": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          2,
+          645,
+          745
+        ]
+      ],
+      "COE332::COMPUTER_NETWORKS_S2": [
+        [
+          2,
+          540,
+          640
+        ],
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI201::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S2": [
+        [
+          2,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "AI352::NATURAL_LANGUAGE_PROCESSING_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          615
+        ]
+      ],
+      "DS1::PROGRAM_ELECTIVE_COURSE_I_S2": [
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          4,
+          885,
+          960
+        ]
+      ],
+      "AI371::COGNITIVE_ROBOTICS_S2": [
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT_S2": [
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          870,
+          945
+        ]
+      ],
+      "AI342::IMAGE_PROCESSING_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          885,
+          985
+        ]
+      ],
+      "AI2::PROGRAM_ELECTIVE_COURSE_II_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ]
+      ],
+      "AI3::PROGRAM_ELECTIVE_COURSE_III_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "DS3::PROGRAM_ELECTIVE_COURSE_III_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "AI482::ARTIFICIAL_INTELLIGENCE_FOR_CYBERSECURITY_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "DS451::INFORMATION_RETRIEVAL_S1": [
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "GSE2::UNIVERSITY_ELECTIVE_COURSE_II_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "FE2::FREE_ELECTIVE_COURSE_II_S1": [
+        [
+          0,
+          780,
+          880
+        ]
+      ],
+      "IS482::COMPUTING_ETHICS_AND_SOCIETY_S1": [
+        [
+          2,
+          650,
+          725
+        ]
+      ],
+      "AI2::PROGRAM_ELECTIVE_COURSE_II_S2": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "AI3::PROGRAM_ELECTIVE_COURSE_III_S2": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "DS3::PROGRAM_ELECTIVE_COURSE_III_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI482::ARTIFICIAL_INTELLIGENCE_FOR_CYBERSECURITY_S2": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "GSE2::UNIVERSITY_ELECTIVE_COURSE_II_S2": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "IS482::COMPUTING_ETHICS_AND_SOCIETY_S2": [
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "AI2::PROGRAM_ELECTIVE_COURSE_II_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "AI3::PROGRAM_ELECTIVE_COURSE_III_S3": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "IS482::COMPUTING_ETHICS_AND_SOCIETY_S3": [
+        [
+          2,
+          960,
+          1035
+        ]
+      ]
+    }
+  },
+  "result": {
+    "mode": "current",
+    "candidates_evaluated": 1,
+    "best_candidate_id": "current",
+    "baseline_score": [
+      7,
+      0,
+      23,
+      24,
+      117210,
+      31,
+      41,
+      61715,
+      0
+    ],
+    "baseline_room_shortages": 9,
+    "optimisation_policy": "instructor_first",
+    "baseline_instructor_schedule": {
+      "working_days": 0,
+      "idle_minutes": 0,
+      "idle_minutes_by_instructor": {},
+      "working_days_by_instructor": {},
+      "affected_instructors": 0
+    },
+    "best_score": [
+      7,
+      0,
+      23,
+      24,
+      117210,
+      31,
+      41,
+      61715,
+      0
+    ],
+    "final_score": [
+      2,
+      0,
+      4,
+      18,
+      130165,
+      17,
+      44,
+      82035,
+      0
+    ],
+    "hotspot_courses": [
+      "CS112::PROGRAMMING_I",
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II",
+      "ENGL104::TECHNICAL_COMMUNICATION",
+      "GS112::ARABIC_LANGUAGE_SKILLS_II",
+      "CS112::PROGRAMMING_II",
+      "DS103::INTRODUCTION_TO_DATA_SCIENCE",
+      "DS1::PROGRAM_ELECTIVE_COURSE_I",
+      "DS352::DATA_EXPLORATION__VISUALIZATION",
+      "FE2::FREE_ELECTIVE_COURSE_II",
+      "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT"
+    ],
+    "capacity_pressure_courses": [],
+    "reserve_heavy_sections": [
+      {
+        "section": "AI2::PROGRAM_ELECTIVE_COURSE_II_S3",
+        "ratio": 1.0
+      },
+      {
+        "section": "AI3::PROGRAM_ELECTIVE_COURSE_III_S3",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS112::PROGRAMMING_I_S1",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS112::PROGRAMMING_I_S2",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS112::PROGRAMMING_I_S5",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS114::ALGORITHMS__DATA_STRUCTURES_S1",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS114::ALGORITHMS__DATA_STRUCTURES_S2",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS114::ALGORITHMS__DATA_STRUCTURES_S3",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS114::ALGORITHMS__DATA_STRUCTURES_S4",
+        "ratio": 1.0
+      },
+      {
+        "section": "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S1",
+        "ratio": 1.0
+      }
+    ],
+    "quality_score": {
+      "policy": "timetable-quality-v1",
+      "penalty": 8696,
+      "components": {
+        "weak_slot": 1935,
+        "day_balance": 186,
+        "spare_capacity": 2361,
+        "section_balance": 854,
+        "room_change": 0,
+        "student_day_overload": 3360
+      },
+      "day_load": {
+        "SUN": 44,
+        "MON": 34,
+        "TUE": 37,
+        "WED": 33,
+        "THU": 39
+      },
+      "reasons": [
+        {
+          "component": "student_day_overload",
+          "label": "Creates heavy student days",
+          "penalty": 3360
+        },
+        {
+          "component": "spare_capacity",
+          "label": "Consumes spare capacity",
+          "penalty": 2361
+        },
+        {
+          "component": "weak_slot",
+          "label": "Uses weaker teaching slots",
+          "penalty": 1935
+        },
+        {
+          "component": "section_balance",
+          "label": "Uneven same-course section load",
+          "penalty": 854
+        },
+        {
+          "component": "day_balance",
+          "label": "Uneven day distribution",
+          "penalty": 186
+        }
+      ],
+      "instructor_schedule": {
+        "working_days": 0,
+        "idle_minutes": 0,
+        "idle_minutes_by_instructor": {},
+        "working_days_by_instructor": {},
+        "affected_instructors": 0
+      }
+    },
+    "unresolved_students": 39,
+    "baseline_unresolved_students": 73,
+    "total_students": 405,
+    "local_search_applied": true,
+    "persist_result": {
+      "action": "persisted_secondary_recovery",
+      "updated": 126
+    },
+    "decision_trace": {
+      "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT|S1": {
+        "section_code": "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT|S1",
+        "course_code": "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT",
+        "chosen_day": "SUN",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:15",
+        "chosen_room": "",
+        "alternatives": [],
+        "stage_origin": "chain",
+        "stage_context": {
+          "code": "CHAIN_ROTATED",
+          "chain_length": 2,
+          "chain_id": "chain_0",
+          "previous_slot": "THU 13:00-14:15",
+          "new_slot": "SUN 13:00-14:15"
+        }
+      },
+      "DS352::DATA_EXPLORATION__VISUALIZATION|S1": {
+        "section_code": "DS352::DATA_EXPLORATION__VISUALIZATION|S1",
+        "course_code": "DS352::DATA_EXPLORATION__VISUALIZATION",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "",
+        "alternatives": [],
+        "stage_origin": "chain",
+        "stage_context": {
+          "code": "CHAIN_ROTATED",
+          "chain_length": 2,
+          "chain_id": "chain_0",
+          "previous_slot": "MON 10:50-12:05",
+          "new_slot": "SUN 10:30-11:45"
+        }
+      }
+    },
+    "perturbation_metric": {
+      "changes_from_baseline_count": 0,
+      "unchanged_count": 0,
+      "newly_placed_count": 0,
+      "removed_count": 0
+    },
+    "stage_telemetry": {
+      "stage_ms": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 14510,
+        "chain": 20003,
+        "rooming_repair": 0
+      },
+      "stage_iterations": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 1,
+        "chain": 1,
+        "rooming_repair": 0
+      }
+    },
+    "score_before_local_search": [
+      7,
+      0,
+      23,
+      24,
+      117210,
+      31,
+      41,
+      61715,
+      0
+    ],
+    "chain_search_applied": true,
+    "cpsat_polish_applied": false,
+    "meeting_sync": {
+      "sections": 82,
+      "written": 187
+    },
+    "safety_before_instructor_passes": {
+      "boards": 5,
+      "placements": 187,
+      "unique_students": 405,
+      "board_student_links_total": 633,
+      "primary_student_links": 405,
+      "visitor_student_links": 228,
+      "room_assigned": 153,
+      "physical_unassigned_rooms": 10,
+      "online_without_room": 8,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 191,
+      "cross_board_affected_students": 172,
+      "cross_board_student_conflict_incidences": 970,
+      "high_cross_board_conflicts": 2,
+      "high_cross_board_affected_students": 43,
+      "max_cross_board_conflicts_per_student": 24,
+      "budget": {
+        "rows": 41,
+        "planned_sections": 82,
+        "used_sections": 82,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "instructor_cap_repair": {
+      "enabled": true,
+      "detected": [],
+      "repaired": [],
+      "unplaced": [],
+      "locked_blocked": [],
+      "remaining_violations": 0,
+      "student_score_before": null,
+      "student_score_after": null
+    },
+    "instructor_clash_repair": {
+      "enabled": true,
+      "detected": [],
+      "repaired": [],
+      "unplaced": [],
+      "locked_blocked": [],
+      "remaining_clashes": 0,
+      "student_score_before": null,
+      "student_score_after": null,
+      "weekly_pattern_search": {
+        "evaluated": 15,
+        "accepted": 1
+      }
+    },
+    "instructor_compaction": {
+      "enabled": true,
+      "weekly_pattern_search": {
+        "evaluated": 8,
+        "accepted": 0
+      },
+      "note": "no instructor assignments (links off?)"
+    },
+    "secondary_recovery": {
+      "applied": true,
+      "accepted_moves": [
+        {
+          "section_id": "ENGL104::TECHNICAL_COMMUNICATION_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 42,
+          "soft_after": 38,
+          "rooms_before": 10,
+          "rooms_after": 10,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "CS112::PROGRAMMING_I_S5",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 38,
+          "soft_after": 38,
+          "rooms_before": 10,
+          "rooms_after": 9,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "ENGL104::TECHNICAL_COMMUNICATION_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 38,
+          "soft_after": 27,
+          "rooms_before": 9,
+          "rooms_after": 8,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "CS112::PROGRAMMING_I_S4",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 27,
+          "soft_after": 27,
+          "rooms_before": 8,
+          "rooms_after": 7,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "COE332::COMPUTER_NETWORKS_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 27,
+          "soft_after": 27,
+          "rooms_before": 7,
+          "rooms_after": 6,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "AI342::IMAGE_PROCESSING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 27,
+          "soft_after": 27,
+          "rooms_before": 6,
+          "rooms_after": 5,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "AI342::IMAGE_PROCESSING_S2",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 27,
+          "soft_after": 26,
+          "rooms_before": 5,
+          "rooms_after": 5,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "AI352::NATURAL_LANGUAGE_PROCESSING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 26,
+          "soft_after": 26,
+          "rooms_before": 5,
+          "rooms_after": 4,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "CS114::ALGORITHMS__DATA_STRUCTURES_S3",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 26,
+          "soft_after": 26,
+          "rooms_before": 4,
+          "rooms_after": 3,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "MATH204::CALCULUS_II_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 26,
+          "soft_after": 25,
+          "rooms_before": 3,
+          "rooms_after": 3,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "ENGL214::TECHNICAL_WRITING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 25,
+          "soft_after": 23,
+          "rooms_before": 3,
+          "rooms_after": 3,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "ENGL214::TECHNICAL_WRITING_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 23,
+          "soft_after": 20,
+          "rooms_before": 3,
+          "rooms_after": 3,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "ENGL214::TECHNICAL_WRITING_S2",
+          "partner_section_id": "AI201::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S2",
+          "move_type": "swap",
+          "soft_before": 20,
+          "soft_after": 17,
+          "rooms_before": 3,
+          "rooms_after": 3,
+          "phase": "polish"
+        }
+      ],
+      "soft_unresolved_before": 42,
+      "soft_unresolved_after": 17,
+      "room_shortages_before": 11,
+      "room_shortages_after": 3,
+      "room_shortage_target": 9,
+      "instructor_before": {
+        "working_days": 0,
+        "idle_minutes": 0,
+        "idle_minutes_by_instructor": {},
+        "working_days_by_instructor": {},
+        "affected_instructors": 0
+      },
+      "instructor_after": {
+        "working_days": 0,
+        "idle_minutes": 0,
+        "idle_minutes_by_instructor": {},
+        "working_days_by_instructor": {},
+        "affected_instructors": 0
+      },
+      "score_before": [
+        5,
+        0,
+        5,
+        22,
+        109330,
+        42,
+        38,
+        68805,
+        0
+      ],
+      "score_after": [
+        2,
+        0,
+        4,
+        18,
+        130165,
+        17,
+        44,
+        82035,
+        0
+      ],
+      "student_gap_minutes_before": 104290,
+      "student_gap_minutes_after": 128125,
+      "evaluations": 1114,
+      "room_evaluations": 53,
+      "unrelated_room_trials_skipped": 68,
+      "recovery_iterations": 12,
+      "polish_iterations": 2,
+      "structural_rejections": 5745,
+      "instructor_rejections": 0,
+      "elapsed_seconds": 45.0,
+      "stop_reason": "time_limit",
+      "room_shortages_before_search": 10,
+      "unassigned_room_rows_before": 10,
+      "incompatible_rooms_before": 1,
+      "placements_updated": 126,
+      "unassigned_room_rows_after": 3,
+      "incompatible_rooms_after": 0
+    },
+    "elapsed_seconds": 117.2,
+    "instructor_gap_metric": {
+      "idle_minutes_before": 0,
+      "idle_minutes_after": 0,
+      "idle_delta": 0,
+      "affected_instructors": 0
+    },
+    "tiered_soft_gap_budget": 120,
+    "instructor_schedule_metric": {
+      "before": {
+        "working_days": 0,
+        "idle_minutes": 0,
+        "idle_minutes_by_instructor": {},
+        "working_days_by_instructor": {},
+        "affected_instructors": 0
+      },
+      "after": {
+        "working_days": 0,
+        "idle_minutes": 0,
+        "idle_minutes_by_instructor": {},
+        "working_days_by_instructor": {},
+        "affected_instructors": 0
+      },
+      "working_days_saved": 0,
+      "idle_minutes_saved": 0,
+      "repair_exceptions": []
+    },
+    "safety_blocked": false,
+    "safety_regression": {
+      "blocked": false,
+      "regressions": []
+    },
+    "cross_board_before": 188,
+    "cross_board_after": 172,
+    "cross_board_delta": 16,
+    "cross_board_affected_students_before": 171,
+    "cross_board_affected_students_after": 155,
+    "cross_board_affected_students_delta": 16,
+    "cross_board_student_conflict_incidences_before": 956,
+    "cross_board_student_conflict_incidences_after": 925,
+    "cross_board_student_conflict_incidences_delta": 31
+  },
+  "after": {
+    "instructors": {
+      "working_days": 0,
+      "idle_minutes": 0,
+      "days": {},
+      "idle_by_instructor": {}
+    },
+    "students": 405,
+    "unresolved_students": 39,
+    "student_score": {
+      "layout": "tiered",
+      "highrisk_unresolved": 2,
+      "actual_assigned_clashes": 0,
+      "t1_unresolved": 4,
+      "t2_unresolved_over_tol": 18,
+      "student_cost": 130165,
+      "gap_minutes": 128125,
+      "soft_unresolved": 17,
+      "reserve_used": 44,
+      "same_course_spread": 82035,
+      "instructor_idle": 0,
+      "unresolved_tier_a": 2,
+      "unresolved_courses": 39
+    },
+    "sections": 82,
+    "meetings": 187,
+    "unassigned_room_rows": 27,
+    "physical_rooming": {
+      "unassigned": 3,
+      "incompatible": 0,
+      "shortages": 3
+    },
+    "safety": {
+      "boards": 5,
+      "placements": 187,
+      "unique_students": 405,
+      "board_student_links_total": 633,
+      "primary_student_links": 405,
+      "visitor_student_links": 228,
+      "room_assigned": 160,
+      "physical_unassigned_rooms": 3,
+      "online_without_room": 8,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 172,
+      "cross_board_affected_students": 155,
+      "cross_board_student_conflict_incidences": 925,
+      "high_cross_board_conflicts": 2,
+      "high_cross_board_affected_students": 21,
+      "max_cross_board_conflicts_per_student": 19,
+      "budget": {
+        "rows": 41,
+        "planned_sections": 82,
+        "used_sections": 82,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "signatures": {
+      "CS112::PROGRAMMING_I_S1": [
+        [
+          0,
+          540,
+          640
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S1": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS163::DISCRETE_STRUCTURES_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          960,
+          1035
+        ]
+      ],
+      "STAT103::PRINCIPLES_OF_PROBABILITY_AND_STATISTICS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "GS152::COMPUTER_SKILLS_S1": [
+        [
+          1,
+          885,
+          985
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S2": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S2": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS163::DISCRETE_STRUCTURES_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "STAT103::PRINCIPLES_OF_PROBABILITY_AND_STATISTICS_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S2": [
+        [
+          2,
+          885,
+          985
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S3": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS163::DISCRETE_STRUCTURES_S3": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S4": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          990,
+          1090
+        ]
+      ],
+      "ENG102::ENGLISH_LANGUAGE_SKILLS_II_S4": [
+        [
+          0,
+          780,
+          960
+        ],
+        [
+          1,
+          780,
+          960
+        ],
+        [
+          3,
+          780,
+          960
+        ],
+        [
+          4,
+          780,
+          960
+        ]
+      ],
+      "CS112::PROGRAMMING_I_S5": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          1,
+          540,
+          640
+        ],
+        [
+          3,
+          960,
+          1035
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "AI124::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S1": [
+        [
+          0,
+          990,
+          1090
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          870,
+          945
+        ]
+      ],
+      "CS112::PROGRAMMING_II_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "MATH243::243_LINEAR_ALGEBRA_I_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "ENGL104::TECHNICAL_COMMUNICATION_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "MATH204::CALCULUS_II_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "DS103::INTRODUCTION_TO_DATA_SCIENCE_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          4,
+          870,
+          945
+        ]
+      ],
+      "GS112::ARABIC_LANGUAGE_SKILLS_II_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S2": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "AI124::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S2": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ]
+      ],
+      "MATH243::243_LINEAR_ALGEBRA_I_S2": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "ENGL104::TECHNICAL_COMMUNICATION_S2": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "GS112::ARABIC_LANGUAGE_SKILLS_II_S2": [
+        [
+          2,
+          885,
+          985
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          1,
+          885,
+          985
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "AI124::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S3": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "MATH243::243_LINEAR_ALGEBRA_I_S3": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S4": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          990,
+          1090
+        ]
+      ],
+      "CS114::ALGORITHMS__DATA_STRUCTURES_S5": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          1,
+          540,
+          640
+        ],
+        [
+          2,
+          960,
+          1035
+        ]
+      ],
+      "IS124::DATABASE_MANAGEMENT_SYSTEM_I_S1": [
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ],
+        [
+          4,
+          870,
+          945
+        ]
+      ],
+      "AI236::MACHINE_LEARNING_S1": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "IS252::DATABASE_MANAGEMENT_SYSTEMS_II_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "CS289::SOFTWARE_ENGINEERING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "DS331::DATA_MINING_AND_ANALYTICS_I_S1": [
+        [
+          1,
+          885,
+          960
+        ],
+        [
+          2,
+          540,
+          640
+        ],
+        [
+          3,
+          885,
+          960
+        ]
+      ],
+      "IS244::INFORMATION_SYSTEMS_ANALYSIS_AND_DESIGN_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "ENGL214::TECHNICAL_WRITING_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "COE226::COMPUTER_ARCHITECTURE_AND_ORGANIZATION_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          1,
+          650,
+          725
+        ]
+      ],
+      "CYB215::OPERATING_SYSTEMS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          1,
+          650,
+          725
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_I_S1": [
+        [
+          3,
+          885,
+          985
+        ]
+      ],
+      "IS124::DATABASE_MANAGEMENT_SYSTEM_I_S2": [
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          640
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI236::MACHINE_LEARNING_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          640
+        ]
+      ],
+      "ENGL214::TECHNICAL_WRITING_S2": [
+        [
+          2,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "AI342::IMAGE_PROCESSING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "COE332::COMPUTER_NETWORKS_S1": [
+        [
+          0,
+          645,
+          745
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "DS352::DATA_EXPLORATION__VISUALIZATION_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "AI201::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "AI352::NATURAL_LANGUAGE_PROCESSING_S1": [
+        [
+          0,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "DS1::PROGRAM_ELECTIVE_COURSE_I_S1": [
+        [
+          2,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "AI371::COGNITIVE_ROBOTICS_S1": [
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "GS103::ISLAMIC_STUDIES_HUMAN_RIGHTS_IN_ISLAM_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "AI342::IMAGE_PROCESSING_S2": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          1,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "COE332::COMPUTER_NETWORKS_S2": [
+        [
+          2,
+          540,
+          640
+        ],
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI201::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S2": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          3,
+          870,
+          945
+        ]
+      ],
+      "AI352::NATURAL_LANGUAGE_PROCESSING_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          615
+        ]
+      ],
+      "DS1::PROGRAM_ELECTIVE_COURSE_I_S2": [
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          4,
+          885,
+          960
+        ]
+      ],
+      "AI371::COGNITIVE_ROBOTICS_S2": [
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "IS362::INFORMATION_SYSTEMS_PROJECT_MANAGEMENT_S2": [
+        [
+          2,
+          870,
+          945
+        ],
+        [
+          4,
+          870,
+          945
+        ]
+      ],
+      "AI342::IMAGE_PROCESSING_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          885,
+          985
+        ]
+      ],
+      "AI2::PROGRAM_ELECTIVE_COURSE_II_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "AI3::PROGRAM_ELECTIVE_COURSE_III_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "DS3::PROGRAM_ELECTIVE_COURSE_III_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "AI482::ARTIFICIAL_INTELLIGENCE_FOR_CYBERSECURITY_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "DS451::INFORMATION_RETRIEVAL_S1": [
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "GSE2::UNIVERSITY_ELECTIVE_COURSE_II_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "FE2::FREE_ELECTIVE_COURSE_II_S1": [
+        [
+          0,
+          780,
+          880
+        ]
+      ],
+      "IS482::COMPUTING_ETHICS_AND_SOCIETY_S1": [
+        [
+          2,
+          650,
+          725
+        ]
+      ],
+      "AI2::PROGRAM_ELECTIVE_COURSE_II_S2": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "AI3::PROGRAM_ELECTIVE_COURSE_III_S2": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "DS3::PROGRAM_ELECTIVE_COURSE_III_S2": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "AI482::ARTIFICIAL_INTELLIGENCE_FOR_CYBERSECURITY_S2": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "GSE2::UNIVERSITY_ELECTIVE_COURSE_II_S2": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "IS482::COMPUTING_ETHICS_AND_SOCIETY_S2": [
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "AI2::PROGRAM_ELECTIVE_COURSE_II_S3": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "AI3::PROGRAM_ELECTIVE_COURSE_III_S3": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "IS482::COMPUTING_ETHICS_AND_SOCIETY_S3": [
+        [
+          2,
+          960,
+          1035
+        ]
+      ]
+    }
+  },
+  "elapsed_seconds": 117.948
+}

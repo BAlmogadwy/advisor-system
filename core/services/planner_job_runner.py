@@ -168,14 +168,19 @@ def submit_planner_job(
     from core.services.timetable_mutation_guard import (
         ScenarioPlannerBusy,
         ScenarioPublished,
-        active_planner_job,
+        conflicting_planner_job,
+        scenario_resource_ids,
+        scenario_write_scope,
     )
 
-    with transaction.atomic():
-        scenario = TimetableScenario.objects.select_for_update().get(pk=scenario_id)
+    with scenario_write_scope(scenario_id) as (scenarios, owned_scenario_ids):
+        scenario = next((row for row in scenarios if row.pk == scenario_id), None)
+        if scenario is None:
+            raise TimetableScenario.DoesNotExist
         if scenario.status == "published":
             raise ScenarioPublished("Cannot modify published scenario")
-        active = active_planner_job(scenario_id)
+        owned_section_ids = scenario_resource_ids(scenario_id)[1]
+        active = conflicting_planner_job(owned_scenario_ids, owned_section_ids)
         if active is not None:
             raise ScenarioPlannerBusy(active)
         job = PlannerJob.objects.create(
@@ -186,7 +191,11 @@ def submit_planner_job(
             status=PlannerJob.STATUS_QUEUED,
             submitted_by=user if getattr(user, "is_authenticated", False) else None,
             request_signature=_compute_request_signature(scenario_id, mode),
-            params=params or {},
+            params={
+                **(params or {}),
+                "owned_scenario_ids": sorted(owned_scenario_ids),
+                "owned_term_section_ids": sorted(owned_section_ids),
+            },
         )
     return job.id
 
@@ -209,6 +218,18 @@ def serialize_planner_job(job: PlannerJob) -> dict[str, Any]:
         "cancel_requested": job.cancel_requested,
         "error_message": job.error_message,
     }
+
+
+def run_planner_job_synchronously(
+    *, scenario_id: int, mode: str, user: Any | None = None, params: dict | None = None
+) -> dict[str, Any]:
+    """Execute with a durable lease without requiring async polling endpoints."""
+    job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=user, params=params)
+    run_planner_job(job_id)
+    job = get_planner_job(job_id)
+    if job is not None and isinstance(job.result_json, dict):
+        return job.result_json
+    return {"error": f"Optimiser error: {job.error_message if job else 'planner result missing'}"}
 
 
 def cancel_planner_job(
@@ -442,5 +463,6 @@ __all__ = [
     "is_async_planner_enabled",
     "reconcile_stale_planner_jobs",
     "run_planner_job",
+    "run_planner_job_synchronously",
     "submit_planner_job",
 ]

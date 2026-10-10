@@ -777,6 +777,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             course_code=placement.term_section.course_code,
             course_key=placement.term_section.course_key,
             section_label=placement.term_section.section,
+            exclude_term_section_id=placement.term_section_id,
         )
         for candidate in result["candidates"]:
             target = next(
@@ -1113,6 +1114,7 @@ def preview_planned_section_slot_candidates(
     max_per_section: int | None = None,
     kind: str | None = None,
     limit: int = 80,
+    exclude_term_section_id: int | None = None,
 ) -> dict:
     """Return ranked target slots for creating a planned missing section.
 
@@ -1163,16 +1165,25 @@ def preview_planned_section_slot_candidates(
         slot_sets.append(("lab", placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)))
 
     existing_section = (
-        TermSection.objects.filter(scenario=scenario, course_key=key, section=section)
-        .prefetch_related("meetings")
-        .first()
+        TermSection.objects.filter(pk=exclude_term_section_id).prefetch_related("meetings").first()
+        if exclude_term_section_id is not None
+        else (
+            TermSection.objects.filter(scenario=scenario, course_key=key, section=section)
+            .prefetch_related("meetings")
+            .first()
+        )
     )
     existing_meetings = list(existing_section.meetings.all()) if existing_section else []
     new_instructor = (existing_meetings[0].instructor if existing_meetings else "").strip().upper()
 
-    board_items = _load_board_placements(board.id)
+    board_items = [
+        row
+        for row in _load_board_placements(board.id)
+        if row.term_section_id != exclude_term_section_id
+    ]
     scenario_placements = list(
         SectionPlacement.objects.filter(board__scenario=scenario)
+        .exclude(term_section_id=exclude_term_section_id)
         .select_related("board", "term_section")
         .prefetch_related("term_section__meetings")
     )
@@ -1239,6 +1250,7 @@ def preview_planned_section_slot_candidates(
         overlap_critical = 0
         overlap_warning = 0
         instructor_critical = 0
+        instructor_sessions: set[tuple[int, str, str, str]] = set()
         cross_critical = 0
         cross_warning = 0
 
@@ -1280,6 +1292,9 @@ def preview_planned_section_slot_candidates(
                 and new_instructor == item.instructor.strip().upper()
             ):
                 instructor_critical += 1
+                instructor_sessions.add(
+                    (item.term_section_id, item.day, item.start_time, item.end_time)
+                )
                 candidate_evidence.append(
                     evidence(
                         "instructor",
@@ -1295,6 +1310,24 @@ def preview_planned_section_slot_candidates(
             other_mask = _time_mask(other.day, other.start_time, other.end_time)
             if not (candidate_mask & other_mask):
                 continue
+            other_meetings = list(other.term_section.meetings.all())
+            other_instructor = other_meetings[0].instructor if other_meetings else ""
+            identity = (other.term_section_id, other.day, other.start_time, other.end_time)
+            if (
+                new_instructor
+                and new_instructor == other_instructor.strip().upper()
+                and identity not in instructor_sessions
+            ):
+                instructor_sessions.add(identity)
+                instructor_critical += 1
+                candidate_evidence.append(
+                    evidence(
+                        "instructor",
+                        "critical",
+                        f"Instructor clash: {other_instructor}",
+                        f"{other.board.label}: {other.term_section.course_code}-{other.term_section.section} is at {other.day} {other.start_time}-{other.end_time}",
+                    )
+                )
             shared = shared_students(
                 other.term_section.course_key or other.term_section.course_code
             )

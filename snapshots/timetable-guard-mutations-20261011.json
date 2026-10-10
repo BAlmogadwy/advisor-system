@@ -1,0 +1,63 @@
+{
+  "revision": "8e4d49c",
+  "baseline_exit": 0,
+  "mutations": [
+    {
+      "guard": "per-teacher idle ceiling",
+      "test": "tests/test_timetable_instructor_priority.py::test_total_idle_gain_cannot_hide_an_individual_gap_regression",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "1 failed in 0.25s"
+    },
+    {
+      "guard": "per-teacher day ceiling",
+      "test": "tests/test_timetable_instructor_priority.py::test_individual_ceiling_prevents_swapping_longer_weeks",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "1 failed in 0.24s"
+    },
+    {
+      "guard": "hard student component ceilings",
+      "test": "tests/test_timetable_instructor_priority.py::test_each_hard_student_component_is_a_gate",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "3 failed, 1 passed in 0.26s"
+    },
+    {
+      "guard": "priority kill switch",
+      "test": "tests/test_timetable_instructor_priority.py::test_kill_switch_restores_exact_student_lex_comparison",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "1 failed in 0.25s"
+    },
+    {
+      "guard": "secondary room nonregression",
+      "test": "tests/test_timetable_secondary_recovery.py::test_soft_seat_cannot_be_paid_for_with_more_room_shortages",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "1 failed in 0.24s"
+    },
+    {
+      "guard": "complete English pattern",
+      "test": "tests/test_timetable_english_policy.py::test_validator_rejects_mixed_partial_extra_and_shifted_patterns",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "1 failed in 0.24s"
+    },
+    {
+      "guard": "English no-room requirement",
+      "test": "tests/test_timetable_english_policy.py::test_new_generation_places_three_plus_english_sections_as_complete_lectures",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "2 failed in 2.06s"
+    },
+    {
+      "guard": "cancelled worker ownership",
+      "test": "tests/test_planner_job_cancellation_review.py::test_reconciled_worker_cannot_restore_over_later_manual_edit",
+      "killed": true,
+      "exit_code": 1,
+      "summary": "1 failed in 1.97s"
+    }
+  ],
+  "restored_exit": 0
+}

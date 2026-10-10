@@ -277,7 +277,10 @@ DEFAULT_LAB_SLOTS = [
 def placeable_slots(slots: list[dict] | None) -> list[dict]:
     """The windows an automatic placer may use, from a declared slot list.
 
-    Drops anything flagged ``online_only``. Those windows exist so an online
+    Drops anything flagged ``online_only`` or ``policy_only``. Policy windows
+    are display columns for course-scoped weekly bundles, whose alternatives
+    come from the course policy rather than the ordinary placement grid.
+    Online windows exist so an online
     class scheduled there has a column to be drawn in; they are not places a
     placer may put a class, because no engine here carries delivery mode
     through to placement and one would otherwise book a room at 18:30, when
@@ -288,7 +291,7 @@ def placeable_slots(slots: list[dict] | None) -> list[dict]:
     Manual placement deliberately does not: a human choosing an online-only
     window for an online course is making a decision, not an error.
     """
-    return [s for s in (slots or []) if not s.get("online_only")]
+    return [s for s in (slots or []) if not s.get("online_only") and not s.get("policy_only")]
 
 
 def _get_slots(slot_config: list[dict]) -> list[dict]:

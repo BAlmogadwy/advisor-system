@@ -44,6 +44,7 @@ from django.db import transaction
 
 from core.services.course_identity import course_display_code
 from core.services.timetable_assignment_models import RiskTier, SectionMeeting
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_optimisation_policy import (
     evaluation_is_better,
@@ -127,6 +128,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     if not states:
         report["note"] = "no placements"
         return report
+    # Ordinary shared sections have a placement copy on each board. Search
+    # physical meetings once; duplicate copies are not extra teaching sessions.
+    for state in states:
+        state.meetings = list({(m.day, m.start_min, m.end_min): m for m in state.meetings}.values())
     sbi = {s.section_id: s for s in states}
     # Empty profiles are fine: the student gates simply become vacuous and the
     # pass optimises instructor idle freely (still respecting the daily cap).
@@ -163,15 +168,28 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         ts = p.term_section
         return f"{ts.course_key or ts.course_code}_{ts.section}"
 
-    placement_of: dict[tuple[str, int, int], object] = {}
+    placement_of: dict[tuple[str, int, int, int], list] = defaultdict(list)
+    board_signatures: dict[str, dict[int, set]] = defaultdict(lambda: defaultdict(set))
     sid2board: dict[str, object] = {}
     sid2ts: dict[str, object] = {}
     for p in placements:
         sid = _sid(p)
         di = WEEKDAYS.index(p.day.upper()) if p.day.upper() in WEEKDAYS else -1
-        placement_of[(sid, di, _to_min(p.start_time))] = p
+        signature = (di, _to_min(p.start_time), _to_min(p.end_time))
+        placement_of[(sid, *signature)].append(p)
+        board_signatures[sid][p.board_id].add(signature)
         sid2board.setdefault(sid, p.board)
         sid2ts.setdefault(sid, p.term_section)
+    external_ids = external_shared_section_ids(scenario_id)
+    report["externally_owned_sections_frozen"] = sorted(external_ids)
+    locked.update(_sid(p) for p in placements if p.term_section_id in external_ids)
+    # Existing divergent copies cannot be mapped to one physical schedule.
+    # Leave the entire section fixed until an explicit shared-section repair.
+    locked.update(
+        sid
+        for sid, copies in board_signatures.items()
+        if len({frozenset(signature) for signature in copies.values()}) > 1
+    )
 
     # Capture the board at this optional pass's entry, AFTER mandatory repairs.
     # Its persistence savepoint must never roll those repairs back with it.
@@ -526,22 +544,29 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     }
     candidate_total_gap = student_metrics(cur_eval)[1]
     candidate_locked_preserved = True
+    moved_shared_group = False
+    shared_room_error = None
     with transaction.atomic():
         for sid, s in sbi.items():
             for i, m in enumerate(s.meetings):
                 od, os_, oe = orig_pos[sid][i]
                 if (m.day, m.start_min, m.end_min) == (od, os_, oe):
                     continue
-                p = placement_of.get((sid, od, os_))
-                if p is None:
+                copies = placement_of.get((sid, od, os_, oe))
+                if not copies:
                     continue
+                moved_shared_group |= len(copies) > 1
                 new_day, new_start, new_end = WEEKDAYS[m.day], _hhmm(m.start_min), _hhmm(m.end_min)
                 TermSectionMeeting.objects.filter(
-                    term_section=p.term_section, day=p.day, start_time=p.start_time
+                    term_section=copies[0].term_section,
+                    day=WEEKDAYS[od],
+                    start_time=_hhmm(os_),
+                    end_time=_hhmm(oe),
                 ).update(day=new_day, start_time=new_start, end_time=new_end)
-                p.day, p.start_time, p.end_time, p.room = new_day, new_start, new_end, ""
-                p.save(update_fields=["day", "start_time", "end_time", "room"])
-                touched_boards.add(p.board_id)
+                for p in copies:
+                    p.day, p.start_time, p.end_time, p.room = new_day, new_start, new_end, ""
+                    p.save(update_fields=["day", "start_time", "end_time", "room"])
+                    touched_boards.add(p.board_id)
                 relocations.append(
                     {
                         "section": f"{code_of[sid]} {sid.split('_')[-1]}",
@@ -561,6 +586,35 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 )
         for board_id in touched_boards:
             assign_rooms_to_board(board_id, respect_locked=True)
+
+        if moved_shared_group:
+            # Per-board rooming sees another copy as competing occupancy.
+            # Resolve the physical scenario once, then fan that exact room
+            # assignment to all copies and canonical meetings in this savepoint.
+            from core.services.timetable_exact_rooming import ExactRoomingError
+            from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+            from core.services.timetable_secondary_recovery_runner import (
+                _persist_exact_room_result,
+                _sync_recovered_meetings,
+            )
+
+            try:
+                room_evaluator = build_recovery_room_evaluator(scenario_id)
+                room_result = room_evaluator(states)
+                physical_rows = list(
+                    SectionPlacement.objects.filter(board__scenario_id=scenario_id).values()
+                )
+                physical_meetings = list(
+                    TermSectionMeeting.objects.filter(
+                        term_section__scenario_id=scenario_id
+                    ).values()
+                )
+                _persist_exact_room_result(scenario_id, room_result, physical_rows)
+                _sync_recovered_meetings(
+                    physical_rows, physical_meetings, room_result, scenario_id=scenario_id
+                )
+            except ExactRoomingError as exc:
+                shared_room_error = str(exc)
 
         if touched_boards:
             candidate_rows = list(
@@ -583,6 +637,8 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 locked_after == locked_before and locked_meetings_after == locked_meetings_before
             )
             reasons = []
+            if shared_room_error:
+                reasons.append(f"shared physical room assignment unavailable: {shared_room_error}")
             if candidate_rooms > rooms_before:
                 reasons.append(
                     f"physical meetings without rooms increased from {rooms_before} to {candidate_rooms}"

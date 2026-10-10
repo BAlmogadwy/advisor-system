@@ -109,12 +109,15 @@ def baseline():
         candidate=candidate,
         placement=placement,
     )
-    # Current creation APIs reject this ownership mismatch, but historical
-    # imported references must also survive a section's cascade/recreation.
-    external_scenario = TimetableScenario.objects.create(name="Historical board owner")
-    external_board = DeliveryBoard.objects.create(scenario=external_scenario, label="Historical")
-    external_placement = SectionPlacement.objects.create(
-        board=external_board,
+    # A second board owned by the same scenario keeps physical copies and
+    # repair-plan references in the valid rebuild scope. Cancellation must
+    # restore them after section cascades as well as the primary board.
+    shared_scenario = scenario
+    shared_board = DeliveryBoard.objects.create(
+        scenario=shared_scenario, label="Shared owned board"
+    )
+    shared_placement = SectionPlacement.objects.create(
+        board=shared_board,
         term_section=section,
         day="SUN",
         start_time="09:00",
@@ -122,21 +125,21 @@ def baseline():
         room="OLD",
         is_locked=True,
     )
-    BoardSectionVisibility.objects.create(board=external_board, term_section=section)
-    external_run = TimetableRepairRun.objects.create(
-        scenario=external_scenario,
+    BoardSectionVisibility.objects.create(board=shared_board, term_section=section)
+    shared_run = TimetableRepairRun.objects.create(
+        scenario=shared_scenario,
         target_section=section,
-        target_placement=external_placement,
+        target_placement=shared_placement,
     )
-    external_plan = TimetableRepairGlobalPlan.objects.create(
-        scenario=external_scenario, request_signature="historical"
+    shared_plan = TimetableRepairGlobalPlan.objects.create(
+        scenario=shared_scenario, request_signature="owned-shared"
     )
     TimetableRepairGlobalPlanItem.objects.create(
-        plan=external_plan,
+        plan=shared_plan,
         sequence=1,
-        repair_run=external_run,
+        repair_run=shared_run,
         candidate=candidate,
-        placement=external_placement,
+        placement=shared_placement,
     )
     # Imported global sections and registrar assignments must survive every
     # cancellation exactly; the scenario rollback has no ownership over them.
@@ -392,4 +395,38 @@ def test_v2_full_cancel_after_candidates_skips_ranking_and_restores_baseline(bas
     job = PlannerJob.objects.get(pk=job_id)
     assert job.status == "cancelled" and job.error_message is None
     ranking.assert_not_called()
+    assert rows() == before
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_external_shared_rebuild_fails_before_pipeline_without_cancellation(
+    baseline, monkeypatch, locked
+):
+    from unittest.mock import Mock
+
+    scenario, board = baseline
+    section = TermSection.objects.filter(scenario=scenario).order_by("pk").last()
+    external_scenario = TimetableScenario.objects.create(name="External physical owner")
+    external_board = DeliveryBoard.objects.create(scenario=external_scenario, label="External")
+    SectionPlacement.objects.create(
+        board=external_board,
+        term_section=section,
+        day="SUN",
+        start_time="09:00",
+        end_time="10:15",
+        room="OLD",
+        is_locked=locked,
+    )
+    before = rows()
+    pipeline = Mock(side_effect=AssertionError("external rebuild must stop before the pipeline"))
+    monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", pipeline)
+    job_id = submit_planner_job(scenario_id=scenario.id, mode=PlannerJob.MODE_FULL_REBUILD)
+    run_planner_job(job_id)
+
+    pipeline.assert_not_called()
+    job = PlannerJob.objects.get(pk=job_id)
+    assert job.status == PlannerJob.STATUS_FAILED
+    assert not job.cancel_requested
+    assert "resolve shared section ownership" in job.error_message
+    assert job.result_json is None
     assert rows() == before

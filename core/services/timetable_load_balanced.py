@@ -39,6 +39,7 @@ from core.services.timetable_autoplace import (
     _time_mask,
     placeable_slots,
 )
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_local_search import (
     _apply_move,
@@ -49,6 +50,7 @@ from core.services.timetable_local_search import (
     _original_schedule,
     _persist_guard_rejections,
     _policy_bundles,
+    _reject_external_shared_candidate,
     _serializable_sections,
     _undo_move,
 )
@@ -297,6 +299,8 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         if is_lock_enforcement_enabled()
         else set()
     )
+    external_ids = external_shared_section_ids(board.scenario_id)
+    locked_idx.update(i for i, sec in enumerate(sections) if sec["term_section_id"] in external_ids)
 
     rng = random.Random(seed)
     score_before = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
@@ -446,6 +450,8 @@ def rebalance_and_persist_board(
 
     guard_before = _capture_persist_guard(board)
     original_schedule = _original_schedule(board, sections)
+    if _reject_external_shared_candidate(board, result, original_schedule):
+        return result
 
     # The rebalancer models rooms and student overlap but carries no instructor
     # constraint, so it can move a section onto a slot where its instructor is
@@ -458,16 +464,16 @@ def rebalance_and_persist_board(
     from core.services.timetable_validation import is_lock_enforcement_enabled
 
     locks_on = is_lock_enforcement_enabled()
-    locked_ts_ids: set[int] = set()
+    locked_ts_ids: set[int] = external_shared_section_ids(board.scenario_id)
     if locks_on:
-        locked_ts_ids = set(
+        locked_ts_ids |= set(
             SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
                 "term_section_id", flat=True
             )
         )
 
     auto = SectionPlacement.objects.filter(board=board, term_section__source_tag="tw_auto")
-    if locks_on:
+    if locked_ts_ids:
         auto = auto.exclude(term_section_id__in=locked_ts_ids)
     ts_ids = set(auto.values_list("term_section_id", flat=True))
     auto.delete()

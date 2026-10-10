@@ -33,8 +33,9 @@ from time import perf_counter
 
 from django.db import transaction
 
+from scheduler.domain.calendar import parse_hhmm
 from scheduler.instructors import assign_instructors
-from scheduler.intake import build_snapshot
+from scheduler.intake import DEFAULT_LECTURE_STARTS, build_snapshot
 from scheduler.rooms import assign_rooms_exact, room_shortfall
 from scheduler.seating import seat_students
 from scheduler.solve import (
@@ -80,8 +81,11 @@ def grid_columns_for(
     """
     short_windows: set[tuple[str, str]] = set()
     long_windows: set[tuple[str, str]] = set()
+    policy_windows: set[tuple[str, str]] = set()
     for placement in board.placements:
         pair = (_hhmm(placement.window.start), _hhmm(placement.window.end))
+        if placement.section_id in lecture_section_ids:
+            policy_windows.add(pair)
         if (
             placement.window.duration > LAB_DURATION_MINUTES
             and placement.section_id not in lecture_section_ids
@@ -96,11 +100,28 @@ def grid_columns_for(
         if not missing:
             return list(existing or []), 0
         merged = list(existing or []) + [
-            {"label": f"{start}-{end}", "start": start, "end": end} for start, end in missing
+            {
+                "label": f"{start}-{end}",
+                "start": start,
+                "end": end,
+                **({"policy_only": True} if (start, end) in policy_windows else {}),
+            }
+            for start, end in missing
         ]
         merged.sort(key=lambda row: str(row.get("start")))
         return merged, len(missing)
 
+    if policy_windows and not lecture_config:
+        # An empty config uses the default lecture grid, also declared at
+        # scheduler intake. Retain it when adding only policy display columns.
+        lecture_config = [
+            {
+                "label": f"{start}-{_hhmm(parse_hhmm(start) + duration)}",
+                "start": start,
+                "end": _hhmm(parse_hhmm(start) + duration),
+            }
+            for start, duration in DEFAULT_LECTURE_STARTS.items()
+        ]
     lecture_columns, lecture_added = merge(lecture_config, short_windows)
     lab_columns, lab_added = merge(lab_config, long_windows)
     return lecture_columns, lab_columns, lecture_added, lab_added
@@ -191,6 +212,9 @@ def build_into_scenario(
     figure is reported beside the floor it should be read against, because "18
     working days" says nothing without "and 18 was the proven minimum".
     """
+    from core.services.board_ownership import assert_rebuild_ownership
+
+    assert_rebuild_ownership(scenario_id)
     from core.models import (
         BoardStudentLink,
         DeliveryBoard,
@@ -437,6 +461,7 @@ def build_into_scenario(
     with transaction.atomic():
         # Replace only what this engine put there before; the old engine's rows
         # and any hand-made edits are left untouched.
+        assert_rebuild_ownership(scenario_id)
         TermSection.objects.filter(scenario=scenario, source_tag=SOURCE_TAG).delete()
 
         for section_id, placements in sorted(by_section.items()):

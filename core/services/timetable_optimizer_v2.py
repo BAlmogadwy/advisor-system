@@ -43,6 +43,7 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
 )
 from core.services.timetable_autoplace import WEEKDAYS
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
@@ -566,12 +567,18 @@ def build_locked_section_ids_for_scenario(scenario_id: int) -> set[str]:
     on whole section patterns. If any meeting for a section is locked, the
     safest behaviour is to freeze that whole section.
     """
+    from django.db.models import Q
+
+    frozen = external_shared_section_ids(scenario_id)
     rows = (
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .filter(Q(is_locked=True) | Q(term_section_id__in=frozen))
         .select_related("term_section")
-        .values_list("term_section__course_key", "term_section__section")
+        .values_list(
+            "term_section__course_key", "term_section__course_code", "term_section__section"
+        )
     )
-    return {f"{course_code}_{section}" for course_code, section in rows}
+    return {f"{course_key or course_code}_{section}" for course_key, course_code, section in rows}
 
 
 def _baseline_room_shortages(scenario_id: int) -> int | None:
@@ -778,7 +785,11 @@ def persist_section_states_to_scenario(
     to_update: list[SectionPlacement] = []
     bundle_updates: list[SectionPlacement] = []
 
+    frozen = external_shared_section_ids(scenario_id)
     for _ts_id, pls in grouped.items():
+        if _ts_id in frozen:
+            skipped += len(pls)
+            continue
         ts = pls[0].term_section
         key = (ts.course_key or ts.course_code, ts.section)
         state = state_lookup.get(key)
@@ -1516,7 +1527,7 @@ def optimise_scenario_timetable_v2(
                 board=board,
                 room="UNASSIGNED",
                 is_locked=False,
-            ).update(room="")
+            ).exclude(term_section_id__in=external_shared_section_ids(scenario_id)).update(room="")
             rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
@@ -1944,7 +1955,7 @@ def optimise_current_timetable(
                 board=board,
                 room="UNASSIGNED",
                 is_locked=False,
-            ).update(room="")
+            ).exclude(term_section_id__in=external_shared_section_ids(scenario_id)).update(room="")
             rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():

@@ -305,9 +305,22 @@ def test_unlocked_shared_physical_group_does_not_split_in_mandatory_fallback(mak
     before = list(SectionPlacement.objects.order_by("id").values())
     meetings = list(TermSectionMeeting.objects.order_by("id").values())
     report = repair.repair_instructor_clashes(scenario.id)
-    assert report["repaired"] == []
-    assert {row["reason"] for row in report["locked_blocked"]} == {
-        "shared_physical_meeting_requires_group_repair",
-    }
-    assert list(SectionPlacement.objects.order_by("id").values()) == before
-    assert list(TermSectionMeeting.objects.order_by("id").values()) == meetings
+    assert len(report["repaired"]) == 1
+    assert report["remaining_clashes"] == 0
+    after = list(SectionPlacement.objects.order_by("id").values())
+    assert {row["id"] for row in after} == {row["id"] for row in before}
+    assert [row for row in after if row["is_locked"]] == [row for row in before if row["is_locked"]]
+    shared = [row for row in after if row["term_section_id"] == rows[1].term_section_id]
+    assert (
+        len({(row["day"], row["start_time"], row["end_time"], row["room"]) for row in shared}) == 1
+    )
+    canonical = list(TermSectionMeeting.objects.order_by("id").values())
+    assert {row["id"] for row in canonical} == {row["id"] for row in meetings}
+    moved_meeting = next(
+        row for row in canonical if row["term_section_id"] == rows[1].term_section_id
+    )
+    assert (moved_meeting["day"], moved_meeting["start_time"], moved_meeting["end_time"]) == (
+        shared[0]["day"],
+        shared[0]["start_time"],
+        shared[0]["end_time"],
+    )

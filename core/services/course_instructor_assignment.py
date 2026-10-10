@@ -339,7 +339,7 @@ def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
     return False
 
 
-def reconcile_scenario_instructors(scenario) -> int:
+def reconcile_scenario_instructors(scenario, *, excluded_section_ids=()) -> int:
     """Re-fan the current primary ``CourseInstructor`` names into an existing
     scenario's ``TermSectionMeeting.instructor`` rows (the display/clash cache).
 
@@ -360,7 +360,7 @@ def reconcile_scenario_instructors(scenario) -> int:
         primaries[(prog, normalise_course_code(code))] = name
 
     updated = 0
-    for ts in TermSection.objects.filter(scenario=scenario):
+    for ts in TermSection.objects.filter(scenario=scenario).exclude(id__in=excluded_section_ids):
         name: str | None = None
         for prog in scenario.programs or []:
             name = primaries.get((prog, normalise_course_code(ts.course_code)))

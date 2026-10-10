@@ -18,6 +18,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from core.models import DeliveryBoard, Room, SectionPlacement
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_lab_predicate import (
@@ -414,10 +415,14 @@ def repair_unassigned_after_greedy(
 
     from core.models import SectionPlacement
 
+    external_ids = external_shared_section_ids(board.scenario_id)
     repaired = 0
     still_unassigned: list[dict] = []
 
     for rec in unassigned_records:
+        if rec["ts_id"] in external_ids:
+            still_unassigned.append(rec)
+            continue
         day = rec["day"]
         start = rec["start"]
         end = rec.get("end")
@@ -466,7 +471,7 @@ def repair_unassigned_after_greedy(
                     occupant = SectionPlacement.objects.filter(
                         board=board, day=day, start_time=start, room=target_room_code
                     ).first()
-                if not occupant:
+                if not occupant or occupant.term_section_id in external_ids:
                     continue
 
                 occ_ts = occupant.term_section
@@ -663,10 +668,11 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
 
     # Online courses keep their time slots but must not consume physical rooms.
     # A lock protects the placement/time, not a stale physical room value.
+    external_ids = external_shared_section_ids(board.scenario_id)
     online_room_updates: list[SectionPlacement] = []
     now = timezone.now()
     for p in placements:
-        if is_online_placement(p) and p.room:
+        if is_online_placement(p) and p.room and p.term_section_id not in external_ids:
             p.room = ""
             p.updated_at = now
             online_room_updates.append(p)
@@ -760,8 +766,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         for p in placements
         if (
             not is_room_exempt_placement(p)
-            and respect_locked
-            and p.is_locked
+            and (p.term_section_id in external_ids or (respect_locked and p.is_locked))
             and (not p.room or p.room == "UNASSIGNED")
         )
     )
@@ -771,7 +776,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         if (
             not is_room_exempt_placement(p)
             and (not p.room or p.room == "UNASSIGNED")
-            and not (respect_locked and p.is_locked)
+            and not (p.term_section_id in external_ids or (respect_locked and p.is_locked))
         )
     ]
     unassigned_placements.sort(

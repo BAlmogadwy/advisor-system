@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 
 from core.models import DeliveryBoard, PlannerJob, TimetableScenario
+from core.services.planner_job_runner import submit_planner_job as real_submit_planner_job
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
 
 
@@ -108,7 +109,10 @@ def test_scheduler_sync_fallback_honours_engine_and_policy(generation_client, mo
     build = Mock(return_value={"engine": "scheduler", "instructor_days": 2})
     classic = Mock()
     monkeypatch.setattr("scheduler.bridge.build_into_scenario", build)
-    monkeypatch.setattr("core.timetable_workspace_views.run_v2_optimisation_guarded", classic)
+    monkeypatch.setattr("core.services.timetable_v2_runner.run_v2_optimisation_guarded", classic)
+    monkeypatch.setattr(
+        "core.services.planner_job_runner.submit_planner_job", real_submit_planner_job
+    )
     monkeypatch.setattr("core.services.planner_job_runner.is_async_planner_enabled", lambda: False)
     response = post(http)
     assert response.status_code == 201
@@ -118,13 +122,17 @@ def test_scheduler_sync_fallback_honours_engine_and_policy(generation_client, mo
     assert scaffold.call_args.kwargs["run_autoplace"] is False
     classic.assert_not_called()
     submit.assert_not_called()
+    assert PlannerJob.objects.get(scenario=scenario).status == PlannerJob.STATUS_SUCCEEDED
 
 
 @pytest.mark.django_db
 def test_classic_sync_generation_uses_full_guarded_portfolio(generation_client, monkeypatch):
     http, scenario, scaffold, submit, _ = generation_client
     classic = Mock(return_value={"optimisation_policy": "instructor_first"})
-    monkeypatch.setattr("core.timetable_workspace_views.run_v2_optimisation_guarded", classic)
+    monkeypatch.setattr("core.services.timetable_v2_runner.run_v2_optimisation_guarded", classic)
+    monkeypatch.setattr(
+        "core.services.planner_job_runner.submit_planner_job", real_submit_planner_job
+    )
     response = post(http, engine="classic", defer_build=False)
     assert response.status_code == 201
     assert response.json()["build_summary"]["optimisation_policy"] == "instructor_first"
@@ -132,3 +140,4 @@ def test_classic_sync_generation_uses_full_guarded_portfolio(generation_client, 
     assert classic.call_args.kwargs["mode"] == "full"
     assert scaffold.call_args.kwargs["run_autoplace"] is False
     submit.assert_not_called()
+    assert PlannerJob.objects.get(scenario=scenario).status == PlannerJob.STATUS_SUCCEEDED

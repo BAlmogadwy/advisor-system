@@ -50,6 +50,7 @@ from core.services.timetable_autoplace import (
     _time_mask,
     placeable_slots,
 )
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -441,6 +442,37 @@ def _original_schedule(board, sections):
     return schedule
 
 
+def _reject_external_shared_candidate(board, result, original_schedule):
+    """Reject stale/foreign candidates instead of reporting an unapplied gain."""
+    frozen = external_shared_section_ids(board.scenario_id)
+    if not frozen:
+        return False
+
+    def signatures(meetings):
+        return sorted((m["day"], m["start"], m["end"]) for m in meetings)
+
+    changed = any(
+        sec["term_section_id"] in frozen
+        and signatures(result["schedule"].get(i, [])) != signatures(original_schedule.get(i, []))
+        for i, sec in enumerate(result["sections"])
+    )
+    result["externally_owned_sections_frozen"] = sorted(frozen)
+    if not changed:
+        return False
+    result["attempted_schedule"] = result["schedule"]
+    result["schedule"] = original_schedule
+    result.update(
+        persist_rolled_back=True,
+        rollback_reasons=["externally owned physical section cannot move"],
+        improvements=0,
+    )
+    for prefix in ("cost", "score"):
+        if f"{prefix}_after" in result:
+            result[f"attempted_{prefix}_after"] = result[f"{prefix}_after"]
+            result[f"{prefix}_after"] = result[f"{prefix}_before"]
+    return True
+
+
 def _capture_persist_guard(board):
     """Read the scenario baseline before a writer opens its pass-local changes."""
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
@@ -495,7 +527,10 @@ def _capture_persist_guard(board):
         board__scenario_id=scenario_id,
     ).values_list("term_section_id", "day", "start_time", "end_time"):
         placed_meetings[section_id].add((day, start, end))
+    from core.services.timetable_board_persistence import external_shared_snapshot
+
     return {
+        "external_shared": external_shared_snapshot(scenario_id),
         "teachers": instructor_schedule_metrics(states, ids),
         "clashes": count_instructor_clashes(state_map, ids),
         "overloads": count_instructor_daily_overloads(state_map, ids, get_instructor_daily_cap()),
@@ -523,7 +558,10 @@ def _capture_persist_guard(board):
 
 
 def _persist_guard_rejections(board, before, *, preserve_teacher_quality=True):
-    from core.services.timetable_optimisation_policy import instructor_schedule_regressions
+    from core.services.timetable_optimisation_policy import (
+        instructor_schedule_regressions,
+        is_instructor_priority_enabled,
+    )
     from core.services.timetable_section_policy import (
         assert_pattern_available,
         assert_policy_placement_rows,
@@ -533,12 +571,16 @@ def _persist_guard_rejections(board, before, *, preserve_teacher_quality=True):
 
     reasons = []
     after = _capture_persist_guard(board)
+    if after["external_shared"] != before["external_shared"]:
+        reasons.append("externally owned physical section changed")
     if after["clashes"] > before["clashes"]:
         reasons.append("instructor clashes increased")
     if after["overloads"] > before["overloads"]:
         reasons.append("instructor daily overloads increased")
-    if preserve_teacher_quality and instructor_schedule_regressions(
-        before["teachers"], after["teachers"]
+    if (
+        preserve_teacher_quality
+        and is_instructor_priority_enabled()
+        and instructor_schedule_regressions(before["teachers"], after["teachers"])
     ):
         reasons.append("instructor working days or idle minutes increased")
     if preserve_teacher_quality and after["unusable_room_count"] > before["unusable_room_count"]:
@@ -736,6 +778,8 @@ def optimize_board(
         if is_lock_enforcement_enabled()
         else set()
     )
+    external_ids = external_shared_section_ids(scenario.id)
+    locked_idx.update(i for i, sec in enumerate(sections) if sec["term_section_id"] in external_ids)
 
     # Build valid options per section per meeting
     valid_options: dict[int, list[list[dict]]] = {}
@@ -952,18 +996,14 @@ def _restore_board_placements(board_id: int, snapshot: list[dict]) -> None:
         )
 
 
-def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
-    """Lexicographic student-assignment score of the scenario's DB placements.
-
-    Returns the score tuple, or ``None`` when there is nothing to evaluate.
-    This is the SAME objective the V2 pipeline ranks candidates by, so the SA
-    gate optimises (or at least never regresses) the canonical objective rather
-    than SA's private gap-cost.
-    """
+def _sa_scenario_evaluation(scenario_id: int, profiles, rigidity, candidate_id: str):
+    """Reconstruct canonical seating and teacher quality for the persisted SA board."""
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimisation_policy import is_instructor_priority_enabled
     from core.services.timetable_optimizer_v2 import (
         build_course_tier_map_for_scenario,
+        build_section_instructor_map_for_scenario,
         build_section_states_for_scenario,
     )
 
@@ -983,8 +1023,18 @@ def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
         student_profiles=profiles,
         course_rigidity=rigidity,
         course_tiers=course_tiers,
+        section_instructor_ids=(
+            build_section_instructor_map_for_scenario(scenario_id)
+            if is_instructor_priority_enabled()
+            else None
+        ),
     )
-    return tuple(evaluation.lexicographic_score)
+    return evaluation
+
+
+def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
+    evaluation = _sa_scenario_evaluation(scenario_id, profiles, rigidity, candidate_id)
+    return tuple(evaluation.lexicographic_score) if evaluation is not None else None
 
 
 @transaction.atomic
@@ -995,9 +1045,10 @@ def optimize_and_persist_board(
 ) -> dict:
     """Optimize and update placements in the database.
 
-    Runs simulated annealing in memory, then persists the result — but only if
-    the full student-assignment evaluator confirms SA did not regress the
-    student outcome versus the greedy/CP-SAT baseline (WS-B evaluator gate).
+    Runs simulated annealing in memory, then persists the result only after
+    canonical seating and teacher metrics confirm the active selection policy.
+    Teacher priority permits student-gap trades inside hard coverage and each
+    teacher's day/idle ceilings; the disabled flag retains the student-score gate.
     On regression the baseline is restored. The gate is inactive when the
     scenario has no student profiles (nothing to protect).
 
@@ -1030,6 +1081,8 @@ def optimize_and_persist_board(
 
     guard_before = _capture_persist_guard(board)
     original_schedule = _original_schedule(board, sections)
+    if _reject_external_shared_candidate(board, result, original_schedule):
+        return result
 
     # ── SA evaluator gate (WS-B) — capture the pre-SA baseline ──────
     scenario_id = board.scenario_id
@@ -1041,10 +1094,13 @@ def optimize_and_persist_board(
     _gate_profiles = build_student_profiles_for_scenario(scenario_id)
     _gate_rigidity = build_course_rigidity_for_scenario(scenario_id) if _gate_profiles else {}
     _baseline_score = None
+    _baseline_evaluation = None
     if _gate_profiles:
-        _baseline_score = _sa_scenario_score(
+        _baseline_evaluation = _sa_scenario_evaluation(
             scenario_id, _gate_profiles, _gate_rigidity, "sa_baseline"
         )
+        if _baseline_evaluation is not None:
+            _baseline_score = tuple(_baseline_evaluation.lexicographic_score)
 
     # Delete all current placements + meetings for auto sections on this board.
     # When lock enforcement is on, locked sections are preserved untouched
@@ -1053,9 +1109,9 @@ def optimize_and_persist_board(
     from core.services.timetable_validation import is_lock_enforcement_enabled
 
     locks_on = is_lock_enforcement_enabled()
-    locked_ts_ids: set[int] = set()
+    locked_ts_ids: set[int] = external_shared_section_ids(board.scenario_id)
     if locks_on:
-        locked_ts_ids = set(
+        locked_ts_ids |= set(
             SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
                 "term_section_id", flat=True
             )
@@ -1064,7 +1120,7 @@ def optimize_and_persist_board(
     auto_placements = SectionPlacement.objects.filter(
         board=board, term_section__source_tag="tw_auto"
     )
-    if locks_on:
+    if locked_ts_ids:
         auto_placements = auto_placements.exclude(term_section_id__in=locked_ts_ids)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()
@@ -1119,16 +1175,44 @@ def optimize_and_persist_board(
     assign_rooms_to_board(board_id, respect_locked=locks_on)
 
     # ── SA evaluator gate (WS-B) — roll back a regression ───────────
-    # If SA strictly worsened the canonical student-assignment score, restore
-    # the greedy/CP-SAT baseline so SA can never persist a worse student
-    # outcome by chasing its private gap-cost.
+    # Remeasure the persisted board against the active policy. A teacher gain
+    # may trade student gap quality, while legacy mode retains its tuple gate.
     if _baseline_score is not None:
-        _after_score = _sa_scenario_score(scenario_id, _gate_profiles, _gate_rigidity, "sa_after")
-        if _after_score is not None and _after_score > _baseline_score:
+        from core.services.timetable_optimisation_policy import (
+            evaluation_is_better,
+            evaluation_order_key,
+            instructor_schedule_regressions,
+            is_instructor_priority_enabled,
+            schedule_metrics_of,
+        )
+
+        _after_evaluation = _sa_scenario_evaluation(
+            scenario_id, _gate_profiles, _gate_rigidity, "sa_after"
+        )
+        _after_score = (
+            tuple(_after_evaluation.lexicographic_score) if _after_evaluation is not None else None
+        )
+        if is_instructor_priority_enabled():
+            # Teacher days/idle lead the student quality trade, while each hard
+            # outcome and each teacher's ceiling remains protected independently.
+            rejected = _after_evaluation is None or not (
+                evaluation_is_better(_after_evaluation, _baseline_evaluation)
+                or (
+                    evaluation_order_key(_after_evaluation)
+                    == evaluation_order_key(_baseline_evaluation)
+                    and not instructor_schedule_regressions(
+                        schedule_metrics_of(_baseline_evaluation),
+                        schedule_metrics_of(_after_evaluation),
+                    )
+                )
+            )
+        else:
+            rejected = _after_score is not None and _after_score > _baseline_score
+        if rejected:
             transaction.set_rollback(True)
             result["sa_evaluator_rolled_back"] = True
             result["sa_baseline_score"] = list(_baseline_score)
-            result["sa_regressed_score"] = list(_after_score)
+            result["sa_regressed_score"] = list(_after_score) if _after_score is not None else None
             result["attempted_schedule"] = result["schedule"]
             result["schedule"] = original_schedule
             result["attempted_cost_after"] = result["cost_after"]

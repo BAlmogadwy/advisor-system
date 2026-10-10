@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_course_policy import get_course_meeting_policy, meeting_signature
 from scheduler.domain import (
     CapacityPolicy,
     DeliveryMode,
@@ -361,6 +361,82 @@ def test_bridge_keeps_intensive_lecture_in_lecture_columns():
         [],
         lecture_section_ids=frozenset({"eng#S1"}),
     )
-    assert lectures == [{"label": "13:00-16:00", "start": "13:00", "end": "16:00"}]
+    assert [row for row in lectures if row.get("policy_only")] == [
+        {"label": "13:00-16:00", "start": "13:00", "end": "16:00", "policy_only": True}
+    ]
     assert labs == []
     assert (added, lab_added) == (1, 0)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("pattern_index", [0, 1])
+@pytest.mark.parametrize("empty_grid", [False, True])
+def test_saved_english_display_columns_never_expand_ordinary_course_options(
+    pattern_index, empty_grid
+):
+    from core.models import (
+        DeliveryBoard,
+        ScenarioSectionBudget,
+        SectionPlacement,
+        TimetableScenario,
+    )
+    from core.services.timetable_autoplace import (
+        DEFAULT_SLOTS,
+        auto_place_board,
+        generate_course_meeting_options,
+    )
+    from scheduler.bridge import grid_columns_for
+
+    snap = snapshot()
+    columns, _, _, _ = grid_columns_for(
+        Board(bundle(snap, pattern_index=pattern_index)),
+        [] if empty_grid else DEFAULT_SLOTS,
+        [],
+        lecture_section_ids=frozenset({"eng#S1"}),
+    )
+    scenario = TimetableScenario.objects.create(academic_year="1448", term="1", slot_config=columns)
+    scenario.refresh_from_db()
+    options = generate_course_meeting_options("AI123", 3, scenario.slot_config)
+    assert options
+    assert all(
+        int(m["end"][:2]) * 60 + int(m["end"][3:]) - int(m["start"][:2]) * 60 - int(m["start"][3:])
+        == 75
+        for option in options
+        for m in option
+    )
+    rebuilt, _, added, _ = grid_columns_for(
+        Board(bundle(snap, pattern_index=pattern_index)),
+        scenario.slot_config,
+        [],
+        lecture_section_ids=frozenset({"eng#S1"}),
+    )
+    assert rebuilt == columns and added == 0
+    assert len(generate_course_meeting_options("ENG101", 4, rebuilt)) == 2
+    board = DeliveryBoard.objects.create(
+        scenario=scenario, label="T1", nominal_term=1, program="AI"
+    )
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        programme_term=1,
+        course_code="AI123",
+        course_key="AI123",
+        credit_hours=3,
+        total_demand=25,
+        planned_sections=1,
+        max_per_section=25,
+    )
+    auto_place_board(board.pk)
+    rows = list(SectionPlacement.objects.filter(board=board))
+    assert len(rows) == 2
+    assert all(meeting_signature(row)[2] - meeting_signature(row)[1] == 75 for row in rows)
+
+
+def test_bridge_preserves_explicit_existing_ordinary_columns():
+    from scheduler.bridge import grid_columns_for
+
+    snap = snapshot()
+    existing = [{"label": "Custom lecture", "start": "09:00", "end": "12:00"}]
+    lectures, _, added, _ = grid_columns_for(
+        Board(bundle(snap)), existing, [], lecture_section_ids=frozenset({"eng#S1"})
+    )
+    assert lectures == existing and added == 0

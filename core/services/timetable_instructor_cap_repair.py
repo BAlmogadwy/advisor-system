@@ -49,6 +49,7 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     placeable_slots,
 )
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_pr4_instructor import (
@@ -124,6 +125,64 @@ def _offering_key(section: TermSection) -> str:
     return section.course_key or _display_code(section)
 
 
+def _physical_groups(rows):
+    """Count a shared meeting once and retain all copies for atomic writes."""
+    groups = {}
+    for row in rows:
+        key = (row.term_section_id, row.day.upper(), row.start_time, row.end_time)
+        groups.setdefault(key, []).append(row)
+    representatives = []
+    copies_by_id = {}
+    for copies in groups.values():
+        representative = next((row for row in copies if row.is_locked), copies[0])
+        representatives.append(representative)
+        copies_by_id[representative.pk] = copies
+    return representatives, copies_by_id
+
+
+def _physical_states(states):
+    for state in states:
+        state.meetings = list({(m.day, m.start_min, m.end_min): m for m in state.meetings}.values())
+    return states
+
+
+def _divergent_shared_sections(copies_by_id):
+    signatures = {}
+    for copies in copies_by_id.values():
+        for row in copies:
+            signatures.setdefault(row.term_section_id, {}).setdefault(row.board_id, set()).add(
+                (row.day.upper(), row.start_time, row.end_time)
+            )
+    return {
+        section_id
+        for section_id, boards in signatures.items()
+        if len({frozenset(slots) for slots in boards.values()}) > 1
+    }
+
+
+def _assign_repaired_rooms(scenario_id, touched_boards, copies_by_id):
+    """Shared copies reserve one strict room, including locks on any board."""
+    if not any(
+        len(copies) > 1 and any(row.board_id in touched_boards for row in copies)
+        for copies in copies_by_id.values()
+    ):
+        for board_id in touched_boards:
+            assign_rooms_to_board(board_id, respect_locked=True)
+        return
+    from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+    from core.services.timetable_secondary_recovery_runner import (
+        _persist_exact_room_result,
+        _sync_recovered_meetings,
+    )
+
+    rows = list(SectionPlacement.objects.filter(board__scenario_id=scenario_id).values())
+    meetings = list(_TSM.objects.filter(term_section__scenario_id=scenario_id).values())
+    evaluator = build_recovery_room_evaluator(scenario_id)
+    room_result = evaluator(None)
+    _persist_exact_room_result(scenario_id, room_result, rows)
+    _sync_recovered_meetings(rows, meetings, room_result, scenario_id=scenario_id)
+
+
 def _creates_board_interval_overlap(p, day2, s2_min, e2_min, iid_set, placements, instr_ids_fn):
     """True if relocating ``p`` to ``[s2_min, e2_min)`` on ``day2`` would create a
     same-course-same-board OR same-instructor INTERVAL overlap.
@@ -195,6 +254,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
         .exclude(day="")
         .select_related("term_section", "board")
     )
+    placements, copies_by_id = _physical_groups(placements)
+    external_ids = external_shared_section_ids(scenario_id)
+    report["externally_owned_sections_frozen"] = sorted(external_ids)
+    divergent_sections = _divergent_shared_sections(copies_by_id) | external_ids
 
     def _sid(p) -> str:
         ts = p.term_section
@@ -226,7 +289,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
         return report
 
     # In-memory section states for student-impact scoring of candidate moves.
-    states = build_section_states_for_scenario(scenario_id)
+    states = _physical_states(build_section_states_for_scenario(scenario_id))
     sections_by_id = {s.section_id: s for s in states}
     profiles = build_student_profiles_for_scenario(scenario_id)
     rigidity = build_course_rigidity_for_scenario(scenario_id) if profiles else {}
@@ -298,6 +361,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                     and (p.day or "").upper() == day
                     and iid in _instr_ids(p)
                     and not p.is_locked
+                    and p.term_section_id not in divergent_sections
                 ),
                 key=lambda p: p.start_time,
                 reverse=True,
@@ -310,6 +374,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 if get_course_meeting_policy(_display_code(p.term_section)):
                     continue  # Changing AM/PM cannot remove its required teaching day.
                 iid_set = _instr_ids(p)
+                copies = copies_by_id[p.pk]
                 s, midx = _meeting_idx(p)
                 orig_meeting = s.meetings[midx] if (s is not None and midx is not None) else None
                 old = (day, p.start_time)
@@ -355,7 +420,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 if kind == "relocate":
                     if orig_meeting is not None:
                         s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
-                    _relocate(p, day2, s2, e2)
+                    if len(copies) > 1:
+                        _relocate(p, day2, s2, e2, copies=copies)
+                    else:
+                        _relocate(p, day2, s2, e2)
                     _shift_state(
                         p, old, (day2, s2), iid_set, count, section_days, instr_slots, course_slots
                     )
@@ -370,7 +438,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 else:
                     if orig_meeting is not None:
                         s.meetings.pop(midx)
-                    _unplace(p)
+                    if len(copies) > 1:
+                        _unplace(p, copies=copies)
+                    else:
+                        _unplace(p)
                     _drop_state(p, old, iid_set, count, section_days, instr_slots, course_slots)
                     # _unplace deleted the row (p.pk is now None). Drop it from the
                     # working list so a LATER over-cap entry on the same day — which
@@ -388,7 +459,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         }
                     )
                 touched[p.term_section_id] = p.board
-                touched_boards.add(p.board_id)
+                touched_boards.update(row.board_id for row in copies)
                 excess -= 1
             if excess > 0:
                 report["locked_blocked"].append(
@@ -410,8 +481,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
             ts = ts_by_id.get(ts_id)
             if ts is not None:
                 _apply_course_instructor(ts, scenario, board, _display_code(ts))
-        for board_id in touched_boards:
-            assign_rooms_to_board(board_id, respect_locked=True)
+        _assign_repaired_rooms(scenario_id, touched_boards, copies_by_id)
 
     report["student_score_after"] = list(_score()) if profiles else None
     report["remaining_violations"] = sum(e["excess"] for e in report["locked_blocked"])
@@ -478,6 +548,12 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         .select_related("term_section", "board")
     )
 
+    # Board copies are the same physical session for clash/cap decisions.
+    placements, copies_by_id = _physical_groups(placements)
+    external_ids = external_shared_section_ids(scenario_id)
+    report["externally_owned_sections_frozen"] = sorted(external_ids)
+    divergent_sections = _divergent_shared_sections(copies_by_id) | external_ids
+
     def _sid(p):
         ts = p.term_section
         return f"{ts.course_key or ts.course_code}_{ts.section}"
@@ -489,10 +565,10 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         return p.term_section_id, p.day.upper(), p.start_time, p.end_time
 
     locked_physical = {_physical_key(p) for p in placements if p.is_locked}
-    locked_sections = {p.term_section_id for p in placements if p.is_locked}
+    locked_sections = {p.term_section_id for p in placements if p.is_locked} | divergent_sections
 
     def _physical_locked(p: SectionPlacement) -> bool:
-        return _physical_key(p) in locked_physical
+        return _physical_key(p) in locked_physical or p.term_section_id in divergent_sections
 
     # Count-based occupancy (a clash means >1 at a slot, which a set can't hold).
     slot_count: dict[tuple[object, str, str], int] = {}
@@ -555,7 +631,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         report["remaining_clashes"] = sum(e["excess"] for e in report["locked_blocked"])
         return report
 
-    states = build_section_states_for_scenario(scenario_id)
+    states = _physical_states(build_section_states_for_scenario(scenario_id))
     sections_by_id = {s.section_id: s for s in states}
     profiles = build_student_profiles_for_scenario(scenario_id)
     rigidity = build_course_rigidity_for_scenario(scenario_id) if profiles else {}
@@ -925,7 +1001,11 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 state, index = _meeting_idx(moved)
                 if state is not None and index is not None:
                     state.meetings[index] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
-                _relocate(moved, day2, s2, e2)
+                copies = copies_by_id[moved.pk]
+                if len(copies) > 1:
+                    _relocate(moved, day2, s2, e2, copies=copies)
+                else:
+                    _relocate(moved, day2, s2, e2)
                 course_slots.get(_offering_key(moved.term_section), set()).discard(
                     (old_day, old_start)
                 )
@@ -949,15 +1029,14 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                     }
                 )
                 touched[moved.term_section_id] = moved.board
-                touched_boards.add(moved.board_id)
+                touched_boards.update(row.board_id for row in copies)
 
         ts_by_id = {ts.id: ts for ts in TermSection.objects.filter(id__in=touched.keys())}
         for ts_id, board in touched.items():
             ts = ts_by_id.get(ts_id)
             if ts is not None:
                 _apply_course_instructor(ts, scenario, board, _display_code(ts))
-        for board_id in touched_boards:
-            assign_rooms_to_board(board_id, respect_locked=True)
+        _assign_repaired_rooms(scenario_id, touched_boards, copies_by_id)
 
     report["student_score_after"] = list(_score()) if profiles else None
     report["instructor_after"] = instructor_schedule_metrics(states, cap_map)
@@ -979,19 +1058,21 @@ def _blocked_keys(scenario):
     return blocked_slot_keys(scenario.blocked_slots)
 
 
-def _relocate(p, day2, s2, e2) -> None:
+def _relocate(p, day2, s2, e2, *, copies=None) -> None:
     _TSM.objects.filter(
         term_section_id=p.term_section_id, day=p.day, start_time=p.start_time, end_time=p.end_time
     ).update(day=day2, start_time=s2, end_time=e2)
-    p.day, p.start_time, p.end_time, p.room = day2, s2, e2, ""
-    p.save(update_fields=["day", "start_time", "end_time", "room"])
+    for row in copies or [p]:
+        row.day, row.start_time, row.end_time, row.room = day2, s2, e2, ""
+        row.save(update_fields=["day", "start_time", "end_time", "room"])
 
 
-def _unplace(p) -> None:
+def _unplace(p, *, copies=None) -> None:
     _TSM.objects.filter(
-        term_section_id=p.term_section_id, day=p.day, start_time=p.start_time
+        term_section_id=p.term_section_id, day=p.day, start_time=p.start_time, end_time=p.end_time
     ).delete()
-    p.delete()
+    for row in copies or [p]:
+        row.delete()
 
 
 def _shift_state(p, old, new, iid_set, count, section_days, instr_slots, course_slots) -> None:

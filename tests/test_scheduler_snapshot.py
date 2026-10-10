@@ -1687,20 +1687,43 @@ _RAW_SLOT_READERS_ALLOWED = {
 
 def test_no_automatic_placer_reads_the_unfiltered_slot_grid():
     """Every campus default slot grid in a placing module must be filtered."""
-    import re
+    import ast
     from pathlib import Path
 
     services = Path(__file__).resolve().parent.parent / "core" / "services"
-    pattern = re.compile(r"(?<!placeable_slots\()\b\w*slot_config or DEFAULT_(?:LAB_)?SLOTS")
     offenders: dict[str, list[str]] = {}
     for path in sorted(services.glob("timetable_*.py")) + [services / "group_availability.py"]:
         if path.name in _RAW_SLOT_READERS_ALLOWED:
             continue
-        hits = [
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if pattern.search(line) and "placeable_slots" not in line
-        ]
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        hits = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
+                continue
+            if not any(
+                isinstance(value, ast.Name) and value.id in {"DEFAULT_SLOTS", "DEFAULT_LAB_SLOTS"}
+                for value in node.values
+            ) or not any(
+                isinstance(value, ast.Attribute)
+                and value.attr.endswith("slot_config")
+                or isinstance(value, ast.Name)
+                and value.id.endswith("slot_config")
+                for value in node.values
+            ):
+                continue
+            ancestor = parents.get(node)
+            while ancestor is not None:
+                if (
+                    isinstance(ancestor, ast.Call)
+                    and isinstance(ancestor.func, ast.Name)
+                    and ancestor.func.id == "placeable_slots"
+                ):
+                    break
+                ancestor = parents.get(ancestor)
+            else:
+                hits.append(ast.get_source_segment(source, node) or str(node.lineno))
         if hits:
             offenders[path.name] = hits[:3]
     assert not offenders, (

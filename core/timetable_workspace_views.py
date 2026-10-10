@@ -162,7 +162,6 @@ logger = logging.getLogger(__name__)
 # WS-E — the V2 optimiser's safety gate (snapshot/restore + regression checks)
 # lives in ``timetable_v2_runner`` so it runs identically from the request
 # thread and the async planner job runner.
-from core.services.timetable_v2_runner import run_v2_optimisation_guarded  # noqa: E402
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -589,19 +588,18 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         # Choosing scheduler must never silently build a classic timetable.
         try:
             if engine == "scheduler":
-                from scheduler.bridge import build_into_scenario
-
                 assert scheduler_params is not None
-                build_summary = build_into_scenario(
-                    result["scenario"]["id"],
-                    **scheduler_params,
-                )
-            else:
-                build_summary = run_v2_optimisation_guarded(
-                    result["scenario"]["id"],
-                    mode="full",
-                    cpsat_limit=60,
-                )
+            from core.models import PlannerJob
+            from core.services.planner_job_runner import run_planner_job_synchronously
+
+            build_summary = run_planner_job_synchronously(
+                scenario_id=result["scenario"]["id"],
+                mode=PlannerJob.MODE_SCHEDULER_BUILD
+                if engine == "scheduler"
+                else PlannerJob.MODE_OPTIMISE_V2_FULL,
+                user=request.user,
+                params=scheduler_params if engine == "scheduler" else {"cpsat_time_limit": 60},
+            )
             if "error" in build_summary:
                 return _err(str(build_summary["error"]), code="GENERATE_FAILED", status=500)
             result["engine"] = engine
@@ -2981,19 +2979,32 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         dispatch_planner_job(job_id)
         return _ok({"job_id": str(job_id), "mode": mode, "async": True}, status=202)
 
-    # Delegate to the shared, safety-gated runner (WS-E). The same function
-    # runs from the async planner job, so the snapshot → run → regression →
-    # rollback gate is identical on both paths.
-    result = run_v2_optimisation_guarded(
-        scenario_id,
-        mode=mode,
-        max_iterations=int(payload.get("max_iterations", 50)),
-        run_chain=bool(payload.get("run_chain_search", True)),
-        run_cpsat=bool(payload.get("run_cpsat_polish", True)),
-        cpsat_limit=float(payload.get("cpsat_time_limit", 60)),
-        strategies=payload.get("strategies") or None,
-        max_chain_iterations=int(payload.get("max_chain_iterations", 10)),
-    )
+    # Synchronous clients still receive the existing result envelope, while
+    # using the same durable ownership as background jobs. The async feature
+    # flag controls dispatch/polling only, never this scenario write lease.
+    from core.models import PlannerJob
+    from core.services.planner_job_runner import run_planner_job_synchronously
+
+    try:
+        result = run_planner_job_synchronously(
+            scenario_id=scenario_id,
+            mode=PlannerJob.MODE_OPTIMISE_V2_FULL
+            if mode == "full"
+            else PlannerJob.MODE_OPTIMISE_V2_CURRENT,
+            user=request.user,
+            params={
+                "strategies": payload.get("strategies") or None,
+                "max_iterations": payload.get("max_iterations", 50),
+                "run_chain_search": payload.get("run_chain_search", True),
+                "run_cpsat_polish": payload.get("run_cpsat_polish", True),
+                "cpsat_time_limit": payload.get("cpsat_time_limit", 60),
+                "max_chain_iterations": payload.get("max_chain_iterations", 10),
+            },
+        )
+    except ScenarioPlannerBusy as exc:
+        return scenario_busy_response(exc.job)
+    except ScenarioPublished:
+        return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
 
     if "error" in result:
         # Internal optimiser exception → 500; no-data (no candidates / no

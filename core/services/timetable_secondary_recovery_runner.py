@@ -11,6 +11,7 @@ from django.db import transaction
 
 from core.models import SectionPlacement, TermSectionMeeting
 from core.services.timetable_assignment_models import SectionState, TimetableEvaluationResult
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_optimisation_policy import (
     instructor_schedule_regressions,
     is_instructor_priority_enabled,
@@ -29,6 +30,7 @@ def _signatures(sections: Iterable[SectionState]) -> dict[str, Counter[int]]:
     }
 
 
+@transaction.atomic
 def _persist_exact_room_result(
     scenario_id: int, room_result: Mapping[str, Any], original_rows: Sequence[Mapping[str, Any]]
 ) -> int:
@@ -39,6 +41,7 @@ def _persist_exact_room_result(
     if set(candidate_slots) != set(assignments) or not set(assignments).issubset(originals):
         raise ValueError("Recovery room assignment does not match the original placements")
     changed = []
+    external_ids = external_shared_section_ids(scenario_id)
     for pk, (day, start, end) in candidate_slots.items():
         row = originals[pk]
         replacement = {
@@ -52,25 +55,70 @@ def _persist_exact_room_result(
             replacement[field] == row[field] for field in ("day", "start_time", "end_time", "room")
         ):
             continue
-        if row["is_locked"]:
+        if row["is_locked"] or row["term_section_id"] in external_ids:
             # An empty locked room is itself frozen, including its representation.
             if (day, start, end) == (row["day"], row["start_time"], row["end_time"]) and (
                 not assignments[pk] and row["room"] in {"", "UNASSIGNED"}
             ):
                 continue
-            raise ValueError("Recovery attempted to alter a locked placement")
+            raise ValueError("Recovery attempted to alter a locked or externally owned placement")
         changed.append(replacement)
     if changed:
-        # Delete/recreate together avoids a transient UNIQUE conflict for swaps.
-        # Reusing primary keys preserves the placement identities and all fields.
-        SectionPlacement.objects.filter(id__in=[row["id"] for row in changed]).delete()
+        # A delete/recreate with the same PK still SET_NULLs repair-run and
+        # global-plan references. Vacate the unique slot keys without deleting
+        # rows, then write final keys in this savepoint. Audit and lock fields
+        # remain untouched by both bulk updates.
+        from core.services.timetable_exact_rooming import ExactRoomingError
+
+        changed_ids = {row["id"] for row in changed}
+        final_keys = {
+            (row["board_id"], row["term_section_id"], row["day"], row["start_time"])
+            for row in changed
+        }
+        unchanged_keys = set(
+            SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+            .exclude(id__in=changed_ids)
+            .values_list("board_id", "term_section_id", "day", "start_time")
+        )
+        if len(final_keys) != len(changed) or final_keys & unchanged_keys:
+            raise ExactRoomingError("Recovery would merge distinct placement records")
+        temporary_day = "TMP"
+        occupied = set(
+            SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id, day=temporary_day
+            ).values_list("board_id", "term_section_id", "start_time")
+        )
+        occupied.update(
+            (board, section, start)
+            for board, section, day, start in final_keys
+            if day == temporary_day
+        )
+        temporary_rows = []
+        for row in changed:
+            start = next(
+                (
+                    f"{minute // 60:02d}:{minute % 60:02d}"
+                    for minute in range(1440)
+                    if (
+                        row["board_id"],
+                        row["term_section_id"],
+                        f"{minute // 60:02d}:{minute % 60:02d}",
+                    )
+                    not in occupied
+                ),
+                None,
+            )
+            if start is None:
+                raise ExactRoomingError("Recovery cannot reserve a temporary placement key")
+            occupied.add((row["board_id"], row["term_section_id"], start))
+            temporary_rows.append(
+                SectionPlacement(**{**row, "day": temporary_day, "start_time": start})
+            )
+        SectionPlacement.objects.bulk_update(temporary_rows, ["day", "start_time"])
         replacements = [SectionPlacement(**row) for row in changed]
-        SectionPlacement.objects.bulk_create(replacements)
-        # auto_now_add runs during bulk_create too. Retain the original creation
-        # audit; updated_at correctly records this newly accepted edit.
-        for placement, row in zip(replacements, changed, strict=True):
-            placement.created_at = row["created_at"]
-        SectionPlacement.objects.bulk_update(replacements, ["created_at"])
+        SectionPlacement.objects.bulk_update(
+            replacements, ["day", "start_time", "end_time", "room"]
+        )
     return len(changed)
 
 
@@ -98,6 +146,8 @@ def _sync_recovered_meetings(
     original_rows: Sequence[Mapping[str, Any]],
     original_meetings: Sequence[Mapping[str, Any]],
     room_result: Mapping[str, Any],
+    *,
+    scenario_id: int,
 ) -> None:
     """Update only changed physical meetings, preserving their identity/metadata."""
     from core.services.timetable_exact_rooming import ExactRoomingError
@@ -112,15 +162,21 @@ def _sync_recovered_meetings(
         )
 
     originals = {row["id"]: row for row in original_rows}
+    external_ids = external_shared_section_ids(scenario_id)
     changes: dict[tuple[int, str, int, int], tuple[str, str, str, str]] = {}
     for pid, slot in room_result["candidate_placements_by_id"].items():
         row = originals[pid]
         target = (*slot, room_result["assignment_by_placement_id"][pid] or "UNASSIGNED")
-        if row["is_locked"] or target == (
-            row["day"],
-            row["start_time"],
-            row["end_time"],
-            row["room"],
+        if (
+            row["is_locked"]
+            or row["term_section_id"] in external_ids
+            or target
+            == (
+                row["day"],
+                row["start_time"],
+                row["end_time"],
+                row["room"],
+            )
         ):
             continue
         source_key = key(row)
@@ -296,7 +352,12 @@ def _run_secondary_recovery_for_scenario(
             scenario_id, recovered["room_evaluation"], original_rows
         )
         try:
-            _sync_recovered_meetings(original_rows, original_meetings, recovered["room_evaluation"])
+            _sync_recovered_meetings(
+                original_rows,
+                original_meetings,
+                recovered["room_evaluation"],
+                scenario_id=scenario_id,
+            )
         except ExactRoomingError as exc:
             transaction.set_rollback(True)
             _reset_rejected_report(report, baseline, "meeting_snapshot_unavailable")

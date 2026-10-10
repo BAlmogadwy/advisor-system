@@ -14,6 +14,7 @@ from typing import Any
 
 from core.models import ScenarioSectionBudget, SectionPlacement
 from core.services.timetable_assignment_models import SectionState
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_exact_rooming import (
     ExactRoomingError,
     MeetingDemand,
@@ -328,11 +329,12 @@ def build_recovery_room_evaluator(
     credits = {}
     locked = {}
     frozen_sections = set()
+    external_ids = external_shared_section_ids(scenario_id)
     for p in placements:
         ts = p.term_section
         section_ids[ts.id] = f"{ts.course_key or ts.course_code}_{ts.section}"
         credits[ts.id] = _budget_value_for_placement(p, maps, "credit", 3)
-        if p.is_locked:
+        if p.is_locked or p.term_section_id in external_ids:
             locked[p.id] = p.room or ""
             frozen_sections.add(section_ids[ts.id])
     return RecoveryRoomEvaluator(

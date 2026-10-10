@@ -2,8 +2,9 @@
 
 The canonical board snapshot preserves physical meeting identities and locks.
 Scheduler rebuilds also replace scenario-owned sections, so cancellation must
-restore their dependants and the grid configuration as well. Global sections
-and their registrar records are outside the job's ownership and never deleted.
+restore their dependants and the grid configuration as well. Global section
+records and registrar assignments remain intact; their physical meetings are
+captured when a board placement makes them part of this job's shared resource.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from core.models import (
     SectionPlacement,
     StudentTermSection,
     TermSection,
+    TermSectionMeeting,
     TermSectionProgram,
     TimetableRepairGlobalPlanItem,
     TimetableRepairRun,
@@ -39,6 +41,8 @@ class PlannerJobSnapshot:
     programmes: list[Mapping[str, Any]]
     visibility: list[Mapping[str, Any]]
     external_placements: list[Mapping[str, Any]]
+    nonowned_meeting_section_ids: tuple[int, ...]
+    nonowned_meetings: list[Mapping[str, Any]]
     placement_timestamps: list[Mapping[str, Any]]
     repair_targets: list[Mapping[str, Any]]
     repair_items: list[Mapping[str, Any]]
@@ -46,6 +50,14 @@ class PlannerJobSnapshot:
 
 
 def snapshot_planner_job(scenario_id: int) -> PlannerJobSnapshot:
+    nonowned_section_ids = tuple(
+        SectionPlacement.objects.filter(
+            board__scenario_id=scenario_id,
+        )
+        .exclude(term_section__scenario_id=scenario_id)
+        .values_list("term_section_id", flat=True)
+        .distinct()
+    )
     return PlannerJobSnapshot(
         board=snapshot_scenario(scenario_id),
         sections=list(TermSection.objects.filter(scenario_id=scenario_id).values()),
@@ -66,6 +78,10 @@ def snapshot_planner_job(scenario_id: int) -> PlannerJobSnapshot:
             SectionPlacement.objects.filter(term_section__scenario_id=scenario_id)
             .exclude(board__scenario_id=scenario_id)
             .values()
+        ),
+        nonowned_meeting_section_ids=nonowned_section_ids,
+        nonowned_meetings=list(
+            TermSectionMeeting.objects.filter(term_section_id__in=nonowned_section_ids).values()
         ),
         placement_timestamps=list(
             SectionPlacement.objects.filter(board__scenario_id=scenario_id).values(
@@ -141,6 +157,13 @@ def restore_planner_job(snapshot: PlannerJobSnapshot) -> None:
     _recreate(TermSection, snapshot.sections)
     restore_scenario(scenario_id, snapshot.board)
     _recreate(SectionPlacement, snapshot.external_placements)
+    # SA persists canonical meetings for every section shown on the board,
+    # including imported/shared sections. Related scenario leases protect this
+    # exact baseline, and deleting by section also removes newly created rows.
+    TermSectionMeeting.objects.filter(
+        term_section_id__in=snapshot.nonowned_meeting_section_ids
+    ).delete()
+    _recreate(TermSectionMeeting, snapshot.nonowned_meetings)
     _recreate(StudentTermSection, snapshot.students)
     _recreate(TermSectionProgram, snapshot.programmes)
     _recreate(BoardSectionVisibility, snapshot.visibility)
