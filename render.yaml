@@ -88,6 +88,16 @@ services:
       # many arenas and the 512 MB instance creeps towards an OOM kill.
       - key: MALLOC_ARENA_MAX
         value: "2"
+      # One CP-SAT worker per timetable solve on this 0.5-CPU instance. The
+      # code reads the cgroup CPU quota too; this holds if the quota is hidden.
+      # Eight workers add ~160 MB to a board solve and only share half a CPU.
+      - key: TIMETABLE_CPSAT_WORKERS
+        value: "1"
+      # A timetable CP-SAT model is built only up to this many variables +
+      # constraints here; past it the board keeps its greedy placement. A
+      # 575k-element board model peaked at 800 MB and OOM-killed this instance.
+      - key: TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS
+        value: "40000"
       # Used only by explicit staff scraper operations; never sent to a client.
       - key: PORTAL_ADMIN_USERNAME
         sync: false
