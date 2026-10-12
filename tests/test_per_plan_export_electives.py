@@ -34,10 +34,13 @@ from core.services.timetable_per_plan_export import (
 pytestmark = pytest.mark.django_db
 
 
-def _plan(program: str, rows: list[tuple[str, int]]) -> None:
+def _plan(program: str, rows: list[tuple[str, int]], names: dict[str, str] | None = None) -> None:
     for code, term in rows:
         ProgrammeRequirement.objects.create(
-            program=program, course_code=code, course_name=code, programme_term=term
+            program=program,
+            course_code=code,
+            course_name=(names or {}).get(code, code),
+            programme_term=term,
         )
 
 
@@ -87,8 +90,8 @@ def _place(board: DeliveryBoard, code: str, day: str = "SUN", start: str = "09:0
     )
 
 
-def _workbook(scenario: TimetableScenario):
-    path, _name, is_zip = export_scenario_per_plan(scenario.id)
+def _workbook(scenario: TimetableScenario, search: str | None = None):
+    path, _name, is_zip = export_scenario_per_plan(scenario.id, search=search)
     assert not is_zip
     try:
         return load_workbook(path)
@@ -156,6 +159,7 @@ def test_the_slot_row_is_covered_by_the_course_that_fills_it() -> None:
 
     assert rows["AI2"][4] == "matched"
     assert rows["AI2"][5].startswith("via AI441")
+    assert rows["AI2"][3] == 3  # the course's credit hours, not 0
     assert rows["AI3"][4] == "missing"  # AI462 has no section in this scenario
     assert "AI441" not in rows  # one row per plan requirement, not per course
 
@@ -199,7 +203,7 @@ def test_a_second_cohort_plan_uses_its_base_programmes_mapping_and_its_own_slot_
 # ── the plan-term map itself ───────────────────────────────────
 
 
-def test_an_elective_filling_two_slots_takes_the_earlier_term() -> None:
+def test_an_elective_filling_two_slots_may_sit_on_either_term() -> None:
     _plan("DS", [("DS1", 8), ("DS3", 10)])
     _map("DS1", "DS482", programme="DS")
     _map("DS3", "DS482", programme="DS")
@@ -208,8 +212,43 @@ def test_an_elective_filling_two_slots_takes_the_earlier_term() -> None:
 
     terms, fills = get_plan_elective_terms("DS", scenario, {"DS482"}, plan_map)
 
-    assert terms == {"DS482": 8}
+    assert terms == {"DS482": {8, 10}}
     assert fills == {"DS1": ["DS482"], "DS3": ["DS482"]}
+
+
+def test_an_elective_on_its_later_slots_board_is_in_place_there() -> None:
+    _plan("DS", [("DS101", 8), ("DS1", 8), ("DS3", 10)])
+    _map("DS1", "DS482", programme="DS")
+    _map("DS3", "DS482", programme="DS")
+    scenario, board_8 = _scenario(program="DS", board_term=8)
+    board_10 = DeliveryBoard.objects.create(
+        scenario=scenario, label="Term 10", nominal_term=10, program="DS"
+    )
+    _place(board_8, "DS101", "SUN", "09:00")
+    _place(board_10, "DS482", "MON", "10:30")
+
+    wb = _workbook(scenario)
+    rows = _coverage_rows(wb)
+
+    assert "DS482" in _sheet_text(wb["Term 10"])
+    assert "DS482" not in _sheet_text(wb["Term 8"])
+    assert rows["DS3"][4] == "matched"
+    assert rows["DS1"][4] == "misplaced"
+
+
+def test_a_search_for_the_slot_finds_the_course_filling_it() -> None:
+    _plan("AI", [("AI401", 10), ("AI2", 10)], names={"AI2": "PROGRAM ELECTIVE COURSE II"})
+    _map("AI2", "AI441")
+    scenario, board = _scenario()
+    _place(board, "AI401", "SUN", "09:00")
+    _place(board, "AI441", "MON", "10:30")
+
+    wb = _workbook(scenario, search="AI2")
+    rows = _coverage_rows(wb)
+
+    assert rows["AI2"][4] == "matched"
+    assert "AI441" in _sheet_text(wb["Term 10"])
+    assert "AI401" not in rows
 
 
 def test_a_course_already_in_the_plan_keeps_its_own_term() -> None:
@@ -217,6 +256,19 @@ def test_a_course_already_in_the_plan_keeps_its_own_term() -> None:
     _map("AI2", "AI441")
     scenario, _board = _scenario()
     plan_map = get_plan_term_map("AI")
+
+    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"}, plan_map)
+
+    assert terms == {}
+    assert fills == {}
+
+
+def test_a_plan_course_is_recognised_by_code_whatever_its_name() -> None:
+    _plan("AI", [("AI2", 10), ("AI441", 7)], names={"AI441": "Computer Vision"})
+    _map("AI2", "AI441")
+    scenario, _board = _scenario()
+    plan_map = get_plan_term_map("AI")
+    assert "AI441::COMPUTER_VISION" in plan_map
 
     terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"}, plan_map)
 
@@ -232,5 +284,17 @@ def test_only_courses_the_scenario_has_are_added() -> None:
 
     terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"}, get_plan_term_map("AI"))
 
-    assert terms == {"AI441": 10}
+    assert terms == {"AI441": {10}}
     assert fills == {"AI2": ["AI441"]}
+
+
+def test_an_elective_on_a_board_none_of_its_slots_use_is_misplaced() -> None:
+    _plan("AI", [("AI2", 10)])
+    _map("AI2", "AI441")
+    scenario, board_8 = _scenario(board_term=8)
+    _place(board_8, "AI441", "MON", "10:30")
+
+    wb = _workbook(scenario)
+
+    assert _coverage_rows(wb)["AI2"][4] == "misplaced"
+    assert "AI441 S1 (on T8)" in _sheet_text(wb["Term 10"])

@@ -350,20 +350,21 @@ def get_plan_elective_terms(
     scenario: TimetableScenario,
     course_keys: set[str],
     plan_map: dict[str, int],
-) -> tuple[dict[str, int], dict[str, list[str]]]:
+) -> tuple[dict[str, set[int]], dict[str, list[str]]]:
     """Place this term's real electives on the plan term of the slot they fill.
 
     A plan lists elective *slots* (AI1, AI2, ...), never the courses; the
     department's ElectiveTermMapping says which real courses fill each slot this
     term (e.g. 1448 T2: AI2 -> AI441, AI3 -> AI462). Without this the export
     filed those sections as "not in this plan" and no term sheet showed them.
-    Build follows the same rule ("real electives inherit their placeholder's
-    term"), and the mappings are read exactly as the elective resolver reads them.
+    Build applies the same principle (a real elective inherits its slot's term);
+    the mappings are read exactly as the elective resolver reads them.
 
-    Returns ``(elective_terms, fills)``: ``{course key: plan term}`` for every
-    mapped elective the scenario actually has (a course already in the plan keeps
-    its own term; an elective filling two slots takes the earlier one), and
-    ``{slot key: [course keys filling it]}``.
+    Returns ``(elective_terms, fills)``: ``{course key: {slot plan terms}}`` for
+    every mapped elective the scenario actually has - a section on any of those
+    terms is in place, so DS482 filling DS1 (T8) and DS3 (T10) is right on
+    either board - and ``{slot key: [course keys filling it]}``. A course whose
+    code is already in the plan keeps its own row and term.
     """
     from core.services.elective_resolver import elective_courses_by_placeholder
 
@@ -380,21 +381,19 @@ def get_plan_elective_terms(
         if slot in codes_by_slot and r.programme_term is not None:
             slot_rows[slot] = (_requirement_course_key(r), r.programme_term)
 
+    plan_codes = {_course_code_from_key(key) for key in plan_map}
     keys_by_code: dict[str, set[str]] = defaultdict(set)
     for key in course_keys:
         keys_by_code[_course_code_from_key(key)].add(key)
 
-    elective_terms: dict[str, int] = {}
+    elective_terms: dict[str, set[int]] = defaultdict(set)
     fills: dict[str, list[str]] = defaultdict(list)
     for slot, (slot_key, slot_term) in sorted(slot_rows.items(), key=lambda kv: kv[1][1]):
-        for code in sorted(codes_by_slot[slot]):
+        for code in sorted(codes_by_slot[slot] - plan_codes):
             for key in sorted(keys_by_code.get(code, ())):
-                if key in plan_map:
-                    continue
-                if key not in elective_terms or slot_term < elective_terms[key]:
-                    elective_terms[key] = slot_term
+                elective_terms[key].add(slot_term)
                 fills[slot_key].append(key)
-    return elective_terms, dict(fills)
+    return dict(elective_terms), dict(fills)
 
 
 def _classify_placement_term(
@@ -485,7 +484,7 @@ def export_scenario_per_plan(
         elective_terms, elective_fills = get_plan_elective_terms(
             prog, scenario, scenario_course_keys, plan_map
         )
-        plan_map = {**elective_terms, **plan_map}
+        plan_map = {**{key: min(terms) for key, terms in elective_terms.items()}, **plan_map}
         wb_path = _build_program_workbook(
             scenario,
             prog,
@@ -493,6 +492,7 @@ def export_scenario_per_plan(
             plan_lens=plan_lens,
             export_filter=export_filter,
             elective_fills=elective_fills,
+            elective_terms=elective_terms,
         )
         filename = f"{_slugify(prog)}.xlsx"
         workbook_paths.append((filename, wb_path))
@@ -531,12 +531,14 @@ def _build_program_workbook(
     plan_lens: dict[str, Any],
     export_filter: ExportFilter,
     elective_fills: dict[str, list[str]] | None = None,
+    elective_terms: dict[str, set[int]] | None = None,
 ) -> Path:
     """Produce one XLSX file for a single program's plan view.
 
     ``elective_fills`` maps a plan's elective slot to the real courses filling
-    it this term (see :func:`get_plan_elective_terms`); the slot's coverage row
-    takes its status from them.
+    it this term and ``elective_terms`` the slot terms each of those courses may
+    sit on (see :func:`get_plan_elective_terms`). A slot row is judged against
+    its own term; a course is in place on any of its slots' terms.
     """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -648,9 +650,16 @@ def _build_program_workbook(
         if _matches_text_tokens(export_filter.text_tokens, _course_search_text(key, course_names))
     }
 
+    elective_fills = elective_fills or {}
+    elective_terms = elective_terms or {}
+    for slot_key, filling_keys in elective_fills.items():
+        if slot_key in text_matched_keys:
+            text_matched_keys.update(filling_keys)
+
     # Filter to placements whose identity is in this program's plan and whose
     # section belongs to the same Plan Lens used on the screen.
     in_plan_placements: list[SectionPlacement] = []
+    placement_terms: dict[int, int] = {}
     out_of_plan_codes: set[str] = set()
     course_status: dict[str, str] = {}
     course_board_terms: dict[str, set[int]] = defaultdict(set)
@@ -663,7 +672,13 @@ def _build_program_workbook(
             export_filter.text_tokens,
             _placement_search_text(p, key, course_names),
         )
-        plan_term, status = _classify_placement_term(key, board_term, plan_map)
+        slot_terms = elective_terms.get(key)
+        if slot_terms and board_term in slot_terms:
+            plan_term, status = board_term, "matched"
+        elif slot_terms:
+            plan_term, status = min(slot_terms), "misplaced"
+        else:
+            plan_term, status = _classify_placement_term(key, board_term, plan_map)
         if plan_term is None:
             if not _section_matches_plan_filter(
                 p.term_section_id, program, plan_lens, export_filter
@@ -679,19 +694,21 @@ def _build_program_workbook(
             continue
         text_matched_keys.add(key)
         in_plan_placements.append(p)
+        placement_terms[p.id] = plan_term
         course_board_terms[key].add(board_term or 0)
         prev = course_status.get(key)
         if prev is None or ranking.get(status, 0) > ranking.get(prev, 0):
             course_status[key] = status
 
-    elective_fills = elective_fills or {}
     for slot_key, filling_keys in elective_fills.items():
-        statuses = [course_status[k] for k in filling_keys if k in course_status]
-        if statuses:
-            course_status[slot_key] = min(statuses, key=lambda st: ranking.get(st, 0))
-            course_board_terms[slot_key].update(
-                t for k in filling_keys for t in course_board_terms.get(k, ())
+        placed_on = {
+            t for k in filling_keys if k in course_status for t in course_board_terms.get(k, ())
+        }
+        if placed_on:
+            course_status[slot_key] = (
+                "matched" if plan_map.get(slot_key) in placed_on else "misplaced"
             )
+            course_board_terms[slot_key].update(placed_on)
         if any(k in text_matched_keys for k in filling_keys):
             text_matched_keys.add(slot_key)
 
@@ -704,10 +721,8 @@ def _build_program_workbook(
     # Group filtered placements by plan_term
     by_plan_term: dict[int, list[SectionPlacement]] = defaultdict(list)
     for p in in_plan_placements:
-        key = _term_section_course_key(p.term_section)
-        plan_term = visible_plan_map.get(key)
-        if plan_term is not None:
-            by_plan_term[plan_term].append(p)
+        if _term_section_course_key(p.term_section) in visible_plan_map:
+            by_plan_term[placement_terms[p.id]].append(p)
 
     # ── Build workbook ────────────────────────────────────────────────────
     wb = Workbook()
@@ -757,6 +772,7 @@ def _build_program_workbook(
             program=program,
             term_num=term_num,
             plan_map=visible_plan_map,
+            elective_terms=elective_terms,
             placements=term_placements,
             slot_config=slot_config,
             plan_lens=plan_lens,
@@ -956,6 +972,7 @@ def _render_plan_term_sheet(
     program: str,
     term_num: int,
     plan_map: dict[str, int],
+    elective_terms: dict[str, set[int]] | None = None,
     placements: list[SectionPlacement],
     slot_config: list[dict],
     plan_lens: dict[str, Any],
@@ -1261,7 +1278,15 @@ def _render_plan_term_sheet(
             apply_outer_border(ws, grid_start_row, 1, row - 1, 1 + num_slots)
 
     # ── Course info sidebar (right side) ─────────────────────────────────
-    plan_codes_for_term = sorted(code for code, t in plan_map.items() if t == term_num)
+    # An elective is listed where it has a section; its slots' rows carry the
+    # plan view (DS1 at T8 "On T10" when DS482 sits only on the T10 board).
+    elective_terms = elective_terms or {}
+    keys_on_sheet = {_term_section_course_key(pp.term_section) for pp in placements}
+    plan_codes_for_term = sorted(
+        code
+        for code, t in plan_map.items()
+        if (code in keys_on_sheet if code in elective_terms else t == term_num)
+    )
     if plan_codes_for_term:
         info_row = 1
         info_headers = ["Course", "Name", "Cr", "Sec.", "Students", "Plan", "Status"]
@@ -1673,7 +1698,9 @@ def _write_plan_coverage_sheet(
         ws.cell(
             row=row, column=3, value=_course_display_name(code, course_names)
         ).font = normal_font
-        budget = budget_by_key.get(code)
+        budget = budget_by_key.get(code) or next(
+            (budget_by_key[k] for k in elective_fills.get(code, ()) if k in budget_by_key), None
+        )
         budget_cred = budget.credit_hours if budget else 0
         ws.cell(row=row, column=4, value=budget_cred or 0).alignment = center_align
         ws.cell(row=row, column=5, value=status).alignment = center_align
