@@ -969,16 +969,18 @@ TIMETABLE_CHAIN_TIME_LIMIT_SECONDS = float(os.getenv("TIMETABLE_CHAIN_TIME_LIMIT
 
 # ── Timetable CP-SAT memory and CPU ─────────────────────────────
 # A board solve builds a model that grows with the square of its options, and
-# the time budgets in this file bound only the solve, not the build. On 2026-10-12 a
-# 17-section board built 575k variables + constraints and peaked at 800 MB,
-# killing the 512 MB instance three Builds running. A model is therefore built
-# only up to this many variables + constraints; past it the solve is not run
-# and the board keeps its greedy placement, which is what such a solve returned
-# anyway (it ran out of time with nothing placed). Measured on one worker: a
-# hard 60k-element model peaks ~125 MB above the interpreter over a 60 s solve,
-# which leaves ~40 MB spare when the instance already sits at 60%; 40k keeps
-# ~80 MB. 0 = no limit. See core/services/cpsat_resources.py.
-TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = int(os.getenv("TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS", "40000"))
+# the time budgets in this file bound only the solve, not the build. On
+# 2026-10-12 a 17-section board built 575k variables + constraints and peaked at
+# 800 MB, killing the 512 MB instance three Builds running. Where memory is that
+# tight, a model is built only up to this many variables + constraints; past it
+# the solve is not run, the board keeps its greedy placement and the polisher
+# reports no improvement. On that host such solves ran out of time with nothing
+# placed anyway; on a workstation a ~64k board does solve, so the limit is a
+# deployment setting: 0 (no limit) here, 40000 in render.yaml. Measured on one
+# worker: a hard 60k-element model peaks ~125 MB above the interpreter over a
+# 60 s solve, ~40 MB spare when the instance sits at 60%; 40k keeps ~80 MB.
+# See core/services/cpsat_resources.py.
+TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = int(os.getenv("TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS", "0"))
 # Workers for one timetable CP-SAT solve. 0 = as many as the host has CPUs (its
 # cgroup quota, rounded up), at most 8 — one on the 0.5-CPU production host.
 TIMETABLE_CPSAT_WORKERS = int(os.getenv("TIMETABLE_CPSAT_WORKERS", "0"))

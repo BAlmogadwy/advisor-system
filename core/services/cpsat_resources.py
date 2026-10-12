@@ -11,8 +11,10 @@ process from 130 MB to 330 MB, and loading it into the solver to 800 MB, with
 8, 2 or 1 workers alike. It then ran out of time with nothing placed, and the
 board fell back to the greedy placement it would have had anyway.
 
-So a model is admitted by its size, not by hope: ``BudgetedCpModel`` counts
-what is built and stops at ``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS``, before the
+So on a memory-tight host a model is admitted by its size, not by hope:
+``BudgetedCpModel`` counts what is built and stops at
+``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS`` (set by the deployment; unlimited by
+default, since a workstation solves boards the 0.5-CPU host cannot), before the
 memory is spent. A solve that is turned away reports what a solve that ran out
 of time reports - no placements - so every caller already falls back.
 
@@ -38,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 #: The most CP-SAT workers any timetable solve asks for.
 MAX_WORKERS = 8
-_DEFAULT_MAX_MODEL_ELEMENTS = 40_000
+#: No limit unless the deployment sets one (render.yaml: 40,000).
+_DEFAULT_MAX_MODEL_ELEMENTS = 0
 _CGROUP_V2_CPU_MAX = Path("/sys/fs/cgroup/cpu.max")
 _CGROUP_V1_QUOTA = Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
 _CGROUP_V1_PERIOD = Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
