@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 #: The most CP-SAT workers any timetable solve asks for.
 MAX_WORKERS = 8
-_DEFAULT_MAX_MODEL_ELEMENTS = 60_000
+_DEFAULT_MAX_MODEL_ELEMENTS = 40_000
 _CGROUP_V2_CPU_MAX = Path("/sys/fs/cgroup/cpu.max")
 _CGROUP_V1_QUOTA = Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
 _CGROUP_V1_PERIOD = Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
