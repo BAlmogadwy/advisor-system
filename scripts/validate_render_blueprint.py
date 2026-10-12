@@ -115,6 +115,8 @@ WEB_FIXED_ENV_VALUES = {
     # Arenas default to eight per host CPU, not per the 0.5-CPU quota; two keep
     # freed solver memory reusable across the gthread workers.
     "MALLOC_ARENA_MAX": "2",
+    # One CP-SAT worker per timetable solve on the 0.5-CPU instance.
+    "TIMETABLE_CPSAT_WORKERS": "1",
     "TELEGRAM_ADVISOR_ENABLED": "true",
     "TELEGRAM_PUBLIC_BASE_URL": EXPECTED_PUBLIC_ORIGIN,
     "TELEGRAM_LINK_TOKEN_TTL_SECONDS": "900",

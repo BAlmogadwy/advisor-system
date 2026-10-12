@@ -980,6 +980,21 @@ TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS = float(
     os.getenv("TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS", "1.5")
 )
 
+# ── Timetable CP-SAT memory and CPU ─────────────────────────────
+# A board solve builds a model that grows with the square of its options, and
+# the time budgets above bound only the solve, not the build. On 2026-10-12 a
+# 17-section board built 575k variables + constraints and peaked at 800 MB,
+# killing the 512 MB instance three Builds running. A model is therefore built
+# only up to this many variables + constraints; past it the solve is not run
+# and the board keeps its greedy placement, which is what such a solve returned
+# anyway (it ran out of time with nothing placed). Measured: a 71k-element
+# board peaks ~113 MB above the interpreter on one worker. 0 = no limit.
+# See core/services/cpsat_resources.py.
+TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = int(os.getenv("TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS", "60000"))
+# Workers for one timetable CP-SAT solve. 0 = as many as the host has CPUs (its
+# cgroup quota, rounded up), at most 8 — one on the 0.5-CPU production host.
+TIMETABLE_CPSAT_WORKERS = int(os.getenv("TIMETABLE_CPSAT_WORKERS", "0"))
+
 # ── Exam rooming wall budget ────────────────────────────────────
 # The exam room allocator is bounded twice: a per-phase *deterministic* CP-SAT
 # limit fixes which allocation is produced (so Build, Check, Save and export
