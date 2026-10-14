@@ -25,6 +25,13 @@ types-requests==2.32.4.20250809
 # core/ or config/ imports it, so it belongs here and not in requirements.txt — but
 # it was undeclared entirely, which is how the Pillow-shaped bug happens: the tool
 # runs on the machine that wrote it and nowhere else.
-# pypdf 6.16.1 also resolves GHSA-jp53-mhqp-8xcg,
-# GHSA-23w6-3w8w-8484, and GHSA-763m-79hh-57f2.
-pypdf==6.16.1
+# Keeps resolving GHSA-jp53-mhqp-8xcg, GHSA-23w6-3w8w-8484 and
+# GHSA-763m-79hh-57f2. 6.16.1 then picked up eight advisories of its own
+# (PYSEC-2026-4153..4160), whose highest fix version is 6.19.0.
+#
+# Pinned at 6.19.0 and NOT the latest release. policies/evidence/page_text/ is
+# the verbatim text layer of the student guide (INDEX.json: is_verbatim). 6.19.0
+# reproduces that wording on all 40 pages; 6.20.0 changes it on 16 of them, so
+# bumping to latest would silently invalidate the evidence the policy answers
+# are quoted from. Re-check page-text parity before raising this pin again.
+pypdf==6.19.0

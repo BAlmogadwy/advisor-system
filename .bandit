@@ -7,6 +7,9 @@ exclude_dirs:
   - import_old
   - csv_export
   - tmp
+  # Isolated review/replay source copies (gitignored). Each carries its own
+  # .bandit, and recursive discovery finding several of them stopped the hook.
+  - .tmp
   # Gitignored build/vendor artifacts — not project source. Scanning them made
   # the pre-commit hook fail on third-party Python vendored inside node_modules
   # (e.g. outputs/xlsx_build/node_modules/.../node-gyp/gyp/pylib).

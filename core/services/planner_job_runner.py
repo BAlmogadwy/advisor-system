@@ -16,12 +16,14 @@ import logging
 import os
 import traceback
 import uuid
+from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
+from threading import Lock
 from typing import Any
 
 from django.conf import settings
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -36,6 +38,12 @@ logger = logging.getLogger(__name__)
 # build is ~12-15 min — so a legitimately long job is never swept by mistake.
 PLANNER_JOB_STALE_SETTING = "TIMETABLE_PLANNER_JOB_STALE_MINUTES"
 PLANNER_JOB_STALE_DEFAULT_MIN = 45
+
+# The planner is process-local. A live solver may exceed the orphan timeout;
+# polling must not relinquish its ownership while its worker can still persist.
+# Reference counts also protect against duplicate direct run invocations.
+_EXECUTING_JOBS: Counter[str] = Counter()
+_EXECUTING_JOBS_LOCK = Lock()
 
 
 def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
@@ -52,6 +60,9 @@ def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
     stale = PlannerJob.objects.filter(
         status__in=[PlannerJob.STATUS_RUNNING, PlannerJob.STATUS_QUEUED],
     ).filter(Q(started_at__lt=cutoff) | Q(started_at__isnull=True, submitted_at__lt=cutoff))
+    with _EXECUTING_JOBS_LOCK:
+        executing_ids = tuple(_EXECUTING_JOBS)
+    stale = stale.exclude(pk__in=executing_ids)
     updated = stale.update(
         status=PlannerJob.STATUS_FAILED,
         error_message="reconciled: the server stopped before the job finished (stale job swept)",
@@ -153,21 +164,72 @@ def submit_planner_job(
     # Self-heal: sweep any jobs stranded RUNNING by a prior server death before
     # queueing a new one, so the table never accumulates ghost "running" rows.
     reconcile_stale_planner_jobs()
-    job = PlannerJob.objects.create(
-        id=uuid.uuid4(),
-        scenario_id=scenario_id,
-        board_id=board_id,
-        mode=mode,
-        status=PlannerJob.STATUS_QUEUED,
-        submitted_by=user if getattr(user, "is_authenticated", False) else None,
-        request_signature=_compute_request_signature(scenario_id, mode),
-        params=params or {},
+    from core.models import TimetableScenario
+    from core.services.timetable_mutation_guard import (
+        ScenarioPlannerBusy,
+        ScenarioPublished,
+        conflicting_planner_job,
+        scenario_resource_ids,
+        scenario_write_scope,
     )
+
+    with scenario_write_scope(scenario_id) as (scenarios, owned_scenario_ids):
+        scenario = next((row for row in scenarios if row.pk == scenario_id), None)
+        if scenario is None:
+            raise TimetableScenario.DoesNotExist
+        if scenario.status == "published":
+            raise ScenarioPublished("Cannot modify published scenario")
+        owned_section_ids = scenario_resource_ids(scenario_id)[1]
+        active = conflicting_planner_job(owned_scenario_ids, owned_section_ids)
+        if active is not None:
+            raise ScenarioPlannerBusy(active)
+        job = PlannerJob.objects.create(
+            id=uuid.uuid4(),
+            scenario_id=scenario_id,
+            board_id=board_id,
+            mode=mode,
+            status=PlannerJob.STATUS_QUEUED,
+            submitted_by=user if getattr(user, "is_authenticated", False) else None,
+            request_signature=_compute_request_signature(scenario_id, mode),
+            params={
+                **(params or {}),
+                "owned_scenario_ids": sorted(owned_scenario_ids),
+                "owned_term_section_ids": sorted(owned_section_ids),
+            },
+        )
     return job.id
 
 
 def get_planner_job(job_id: uuid.UUID | str) -> PlannerJob | None:
     return PlannerJob.objects.filter(id=job_id).first()
+
+
+def serialize_planner_job(job: PlannerJob) -> dict[str, Any]:
+    """Read-only metadata shared by job polling and scenario reload discovery."""
+    return {
+        "job_id": str(job.id),
+        "scenario_id": job.scenario_id,
+        "status": job.status,
+        "mode": job.mode,
+        "last_stage_seen": job.last_stage_seen,
+        "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "cancel_requested": job.cancel_requested,
+        "error_message": job.error_message,
+    }
+
+
+def run_planner_job_synchronously(
+    *, scenario_id: int, mode: str, user: Any | None = None, params: dict | None = None
+) -> dict[str, Any]:
+    """Execute with a durable lease without requiring async polling endpoints."""
+    job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=user, params=params)
+    run_planner_job(job_id)
+    job = get_planner_job(job_id)
+    if job is not None and isinstance(job.result_json, dict):
+        return job.result_json
+    return {"error": f"Optimiser error: {job.error_message if job else 'planner result missing'}"}
 
 
 def cancel_planner_job(
@@ -177,23 +239,20 @@ def cancel_planner_job(
 ) -> bool:
     """Cooperatively request cancellation of a planner job.
 
-    Sets ``cancel_requested=True``. The runner checks the flag at each
-    stage boundary (and before starting) and transitions to
-    ``cancelled`` if seen. Returns ``True`` when the flag was set,
+    Sets ``cancel_requested=True``. The runner checks before starting, at
+    scheduler progress boundaries and after a bounded pipeline finishes. It
+    restores the pre-job schedule before transitioning to ``cancelled``.
+    Returns ``True`` when the flag was set,
     ``False`` when the job does not exist or is already terminal.
     """
-    job = PlannerJob.objects.filter(id=job_id).first()
-    if job is None:
-        return False
-    if job.status in {
-        PlannerJob.STATUS_SUCCEEDED,
-        PlannerJob.STATUS_FAILED,
-        PlannerJob.STATUS_CANCELLED,
-    }:
-        return False
-    job.cancel_requested = True
-    job.save(update_fields=["cancel_requested"])
-    return True
+    # One conditional write competes with the terminal decision's row lock.
+    # A caller cannot acknowledge a cancel after success has already committed.
+    return bool(
+        PlannerJob.objects.filter(
+            id=job_id,
+            status__in=(PlannerJob.STATUS_QUEUED, PlannerJob.STATUS_RUNNING),
+        ).update(cancel_requested=True)
+    )
 
 
 def _clear_scenario_placements(scenario_id: int) -> int:
@@ -224,34 +283,62 @@ def _derive_last_stage(result: dict | None) -> str | None:
     return last or "greedy"
 
 
+class _PlannerCancelled(Exception):
+    """Cooperative boundary signal; finalisation owns the snapshot restore."""
+
+
+def _check_planner_cancel(job_id: uuid.UUID | str) -> None:
+    # A lost claim must stop future phases too; finalisation deliberately leaves
+    # that terminal job and any subsequent manual edits untouched.
+    if not PlannerJob.objects.filter(
+        pk=job_id, status=PlannerJob.STATUS_RUNNING, cancel_requested=False
+    ).exists():
+        raise _PlannerCancelled
+
+
 def run_planner_job(job_id: uuid.UUID | str) -> None:
     """Execute a queued ``PlannerJob`` synchronously in-process.
 
-    Commit 3 — coarse happy/failure path. Cooperative cancellation at
-    stage boundaries lands in commit 4; commit 5 wires the ThreadPool
-    dispatcher + REST views.
+    Cancellation is cooperative: bounded solver calls finish, then all of this
+    job's persisted changes are discarded before its terminal state is saved.
     """
+    key = str(job_id)
+    with _EXECUTING_JOBS_LOCK:
+        _EXECUTING_JOBS[key] += 1
+    try:
+        _run_planner_job(job_id)
+    finally:
+        with _EXECUTING_JOBS_LOCK:
+            _EXECUTING_JOBS[key] -= 1
+            if not _EXECUTING_JOBS[key]:
+                del _EXECUTING_JOBS[key]
+
+
+def _run_planner_job(job_id: uuid.UUID | str) -> None:
+    from core.services.planner_job_snapshot import restore_planner_job, snapshot_planner_job
     from core.services.timetable_autoplace import auto_place_scenario
 
-    job = PlannerJob.objects.filter(id=job_id).first()
-    if job is None:
-        return
-
-    if job.status != PlannerJob.STATUS_QUEUED:
-        return
-
-    if job.cancel_requested and job.status == PlannerJob.STATUS_QUEUED:
-        job.status = PlannerJob.STATUS_CANCELLED
+    with transaction.atomic():
+        job = PlannerJob.objects.select_for_update().filter(id=job_id).first()
+        if job is None or job.status != PlannerJob.STATUS_QUEUED:
+            return
         job.started_at = timezone.now()
-        job.finished_at = timezone.now()
-        job.save(update_fields=["status", "started_at", "finished_at"])
-        return
+        if job.cancel_requested:
+            job.status = PlannerJob.STATUS_CANCELLED
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "started_at", "finished_at"])
+            return
+        job.status = PlannerJob.STATUS_RUNNING
+        job.save(update_fields=["status", "started_at"])
 
-    job.status = PlannerJob.STATUS_RUNNING
-    job.started_at = timezone.now()
-    job.save(update_fields=["status", "started_at"])
-
+    baseline = None
+    result = None
+    failure = None
     try:
+        # Capture before the legacy full rebuild clears anything, and before a
+        # scheduler replaces sections or adds grid columns.
+        baseline = snapshot_planner_job(job.scenario_id)
+        _check_planner_cancel(job.id)
         if job.mode in (
             PlannerJob.MODE_OPTIMISE_V2_FULL,
             PlannerJob.MODE_OPTIMISE_V2_CURRENT,
@@ -276,6 +363,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
                 cpsat_limit=float(p.get("cpsat_time_limit", 60)),
                 strategies=p.get("strategies") or None,
                 max_chain_iterations=int(p.get("max_chain_iterations", 10)),
+                checkpoint=lambda: _check_planner_cancel(job.id),
             )
         elif job.mode == PlannerJob.MODE_SCHEDULER_BUILD:
             # The alternative engine. Imported inside the branch so the original
@@ -287,6 +375,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
             p = job.params or {}
 
             def _stage(name: str) -> None:
+                _check_planner_cancel(job.id)
                 job.last_stage_seen = name
                 job.save(update_fields=["last_stage_seen"])
 
@@ -301,6 +390,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
                 clash_tolerance=float(p.get("clash_tolerance", 0.20)),
                 default_capacity=int(p.get("default_capacity", 25)),
                 min_demand=int(p.get("min_demand", 5)),
+                confirmation_seconds=float(p.get("confirmation_seconds", 20)),
                 progress=_stage,
             )
         elif job.mode == PlannerJob.MODE_FULL_REBUILD:
@@ -308,36 +398,61 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
             result = auto_place_scenario(job.scenario_id, strategy="adaptive")
         else:
             result = auto_place_scenario(job.scenario_id)
+    except _PlannerCancelled:
+        pass
     except Exception as exc:
-        job.status = PlannerJob.STATUS_FAILED
         summary = f"{type(exc).__name__}: {exc}"
         tb_tail = "\n".join(traceback.format_exc().splitlines()[-6:])
-        job.error_message = f"{summary}\n...\n{tb_tail}"[:4000]
-        job.finished_at = timezone.now()
-        job.save(update_fields=["status", "error_message", "finished_at"])
-        return
+        failure = f"{summary}\n...\n{tb_tail}"[:4000]
 
     # The V2 guarded runner catches optimiser failures internally and returns
     # ``{"error": ...}`` after rolling back, rather than raising — so a non-empty
     # ``error`` here is a real failure and must NOT be reported as succeeded (the
     # sync view maps the same dict to HTTP 500). Persist the result either way so
     # the payload/telemetry is inspectable.
-    job.result_json = result
-    job.finished_at = timezone.now()
-    error = result.get("error") if isinstance(result, dict) else None
-    if error:
-        job.status = PlannerJob.STATUS_FAILED
-        job.error_message = str(error)[:4000]
-        job.save(
-            update_fields=["status", "result_json", "error_message", "finished_at"],
+    try:
+        with transaction.atomic():
+            # Read the authoritative flag while holding the row lock through
+            # both restoration and the terminal write. Never use the stale job
+            # instance that was loaded before the solver ran.
+            terminal = PlannerJob.objects.select_for_update().get(pk=job.id)
+            if terminal.status != PlannerJob.STATUS_RUNNING:
+                logger.warning("Planner %s lost running ownership; skipping finalisation", job.id)
+                return
+            if terminal.cancel_requested:
+                if baseline is not None:
+                    restore_planner_job(baseline)
+                terminal.status = PlannerJob.STATUS_CANCELLED
+                terminal.result_json = None
+                terminal.error_message = None
+            else:
+                terminal.result_json = result
+                error = result.get("error") if isinstance(result, dict) else None
+                if failure or error:
+                    terminal.status = PlannerJob.STATUS_FAILED
+                    terminal.error_message = failure or str(error)[:4000]
+                else:
+                    terminal.status = PlannerJob.STATUS_SUCCEEDED
+                    terminal.last_stage_seen = _derive_last_stage(result)
+            terminal.finished_at = timezone.now()
+            terminal.save(
+                update_fields=[
+                    "status",
+                    "result_json",
+                    "error_message",
+                    "last_stage_seen",
+                    "finished_at",
+                ]
+            )
+    except Exception as exc:
+        # A failed restore rolls back atomically. It must never be called a
+        # successful cancellation while the modified timetable remains saved.
+        PlannerJob.objects.filter(pk=job.id, status=PlannerJob.STATUS_RUNNING).update(
+            status=PlannerJob.STATUS_FAILED,
+            result_json=None,
+            finished_at=timezone.now(),
+            error_message=f"Cancellation/finalisation failed: {type(exc).__name__}: {exc}"[:4000],
         )
-        return
-
-    job.status = PlannerJob.STATUS_SUCCEEDED
-    job.last_stage_seen = _derive_last_stage(result)
-    job.save(
-        update_fields=["status", "result_json", "last_stage_seen", "finished_at"],
-    )
 
 
 __all__ = [
@@ -348,5 +463,6 @@ __all__ = [
     "is_async_planner_enabled",
     "reconcile_stale_planner_jobs",
     "run_planner_job",
+    "run_planner_job_synchronously",
     "submit_planner_job",
 ]

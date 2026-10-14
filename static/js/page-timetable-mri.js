@@ -7,6 +7,7 @@
     boardId: initialBoard || '',
     mode: 'system',
     scenario: null,
+    quality: null,
     boards: [],
     boardDetails: new Map(),
     conflicts: new Map(),
@@ -107,19 +108,31 @@
     ));
   }
 
+  function boardRoomAudit(quality, placements) {
+    const rooms = quality?.rooms;
+    if (!rooms?.assessed) return { assessed: false, shortages: null, details: [] };
+    const ids = new Set((placements || []).map(placement => String(placement.id)));
+    const details = (rooms.details || []).filter(row => (row.placement_ids || []).some(id => ids.has(String(id))));
+    return { assessed: true, shortages: details.length, details };
+  }
+
   function scanBoard(board) {
     const conflicts = state.conflicts.get(board.id) || {};
     const capacity = state.capacities.get(board.id) || {};
     const capCourses = capacity.courses || [];
     const deficitCourses = capCourses.filter(c => (c.deficit || 0) > 0);
     const impact = conflicts.student_impact || {};
+    const audit = boardRoomAudit(state.quality, (state.boardDetails.get(board.id) || {}).placements);
     const scan = {
       board,
       students: boardStudents(board),
       placements: board.placement_count || 0,
       overlaps: (conflicts.overlaps || []).length,
       instructors: (conflicts.instructor_clashes || []).length,
-      rooms: (conflicts.room_clashes || []).length,
+      rooms: audit.assessed ? audit.shortages : (conflicts.room_clashes || []).length,
+      roomsAssessed: audit.assessed,
+      roomDetails: audit.details,
+      roomClashes: (conflicts.room_clashes || []).length,
       crossBoard: (conflicts.cross_board_conflicts || []).length,
       affected: impact.affected_count || 0,
       blocked: impact.blocked_count || 0,
@@ -142,12 +155,14 @@
   }
 
   function aggregateScan(scans) {
-    return scans.reduce((acc, s) => {
+    const aggregate = scans.reduce((acc, s) => {
       acc.students += s.students;
       acc.placements += s.placements;
       acc.overlaps += s.overlaps;
       acc.instructors += s.instructors;
       acc.rooms += s.rooms;
+      acc.roomClashes += s.roomClashes;
+      acc.roomDetails.push(...s.roomDetails);
       acc.crossBoard += s.crossBoard;
       acc.affected += s.affected;
       acc.blocked += s.blocked;
@@ -162,6 +177,9 @@
       overlaps: 0,
       instructors: 0,
       rooms: 0,
+      roomsAssessed: Boolean(state.quality?.rooms?.assessed),
+      roomClashes: 0,
+      roomDetails: [],
       crossBoard: 0,
       affected: 0,
       blocked: 0,
@@ -170,6 +188,9 @@
       deficitCourses: 0,
       pressure: 0,
     });
+    aggregate.roomDetails = [...new Map(aggregate.roomDetails.map(row => [String(row.demand_id), row])).values()];
+    if (aggregate.roomsAssessed) aggregate.rooms = aggregate.roomDetails.length;
+    return aggregate;
   }
 
   async function loadScenarios() {
@@ -201,6 +222,7 @@
     state.scenarioId = String(id || '');
     state.boardId = '';
     state.scenario = null;
+    state.quality = null;
     state.boards = [];
     state.boardDetails.clear();
     state.conflicts.clear();
@@ -226,12 +248,14 @@
       return;
     }
 
-    const [scenarioData, boardsData, budgetData] = await Promise.all([
+    const [scenarioData, boardsData, budgetData, qualityData] = await Promise.all([
       api(`/ops/tw/scenarios/${state.scenarioId}/`),
       api(`/ops/tw/boards/?scenario_id=${state.scenarioId}`),
       api(`/ops/tw/scenarios/${state.scenarioId}/budget/`),
+      api(`/ops/tw/scenarios/${state.scenarioId}/quality/`).catch(() => null),
     ]);
     state.scenario = scenarioData.scenario;
+    state.quality = qualityData;
     state.boards = boardsData.boards || [];
     state.budget = budgetData.budget || [];
 
@@ -326,10 +350,11 @@
       ['Cross-board', scan.crossBoard],
       ['Affected', scan.affected],
       ['Seat gap', scan.deficit],
+      ['Meetings needing a suitable room', scan.roomsAssessed ? scan.rooms : null],
     ];
     $('twmMetrics').innerHTML = metrics.map(([label, value]) => `
-      <div class="twm-metric">
-        <strong>${num(value)}</strong>
+      <div class="twm-metric${value == null || label === 'Meetings needing a suitable room' ? ' twm-room-audit' : ''}">
+        <strong>${value == null ? 'Not assessed' : num(value)}</strong>
         <span>${esc(label)}</span>
       </div>
     `).join('');
@@ -348,14 +373,15 @@
         detail: `${plural(scan.instructors, 'instructor clash', 'instructor clashes')}`,
       },
       {
-        label: 'Room pressure',
+        label: scan.roomsAssessed ? 'Room suitability' : 'Room sharing (audit unavailable)',
         score: scan.rooms * 10,
-        detail: `${plural(scan.rooms, 'room clash', 'room clashes')}`,
+        detail: scan.roomsAssessed ? `${plural(scan.rooms, 'meeting')} need a suitable room`
+          : `${plural(scan.roomClashes, 'room clash', 'room clashes')}; capacity and type not assessed`,
       },
       {
         label: 'Cross-board network',
         score: scan.crossBoard * 4,
-        detail: `${plural(scan.crossBoard, 'shared-student link')}`,
+        detail: `${plural(scan.crossBoard, 'potential course-demand overlap')}`,
       },
       {
         label: 'Capacity gap',
@@ -443,6 +469,7 @@
       <div class="twm-pressure-note ${esc(capacity.tone)}">
         <b>${scan.pressure >= 100 ? `Capped at 100 from ${num(raw)} raw pressure` : `${num(raw)} raw pressure`}</b>
         <span>${esc(capacity.label)} | ${esc(capacity.detail)}</span>
+        <span>${scan.roomsAssessed ? `${plural(scan.rooms, 'meeting')} need a suitable room (missing, undersized, incompatible or clashing).` : 'Room suitability has not been assessed. Known room-sharing clashes are shown separately.'} Cross-board links indicate potential course-demand overlaps; section assignment is not confirmed.</span>
       </div>
       <div class="twm-pressure-bars">
         ${active.length ? active.map(row => `
@@ -601,9 +628,9 @@
     const layers = [
       ['Student flow', scan.affected, Math.max(1, scan.students), `${scan.affected} affected, ${scan.blocked} blocked`, scan.blocked ? 'critical' : scan.affected ? 'watch' : 'stable'],
       ['Time layer', scan.overlaps, Math.max(1, scan.placements), `${scan.overlaps} time overlaps`, scan.overlaps ? 'critical' : 'stable'],
-      ['Cross-board network', scan.crossBoard, Math.max(1, state.boards.length * 8), `${scan.crossBoard} shared-student links`, scan.crossBoard ? 'watch' : 'stable'],
+      ['Cross-board network', scan.crossBoard, Math.max(1, state.boards.length * 8), `${scan.crossBoard} potential course-demand overlaps`, scan.crossBoard ? 'watch' : 'stable'],
       ['Capacity layer', scan.deficit, Math.max(1, scan.demand), `${scan.deficitCourses} courses under capacity | ${capacityDx.label}`, scan.deficit ? capacityDx.tone : 'stable'],
-      ['Room/instructor layer', scan.rooms + scan.instructors, Math.max(1, scan.placements), `${scan.instructors} instructor, ${scan.rooms} room`, scan.instructors ? 'critical' : scan.rooms ? 'watch' : 'stable'],
+      ['Room/instructor layer', scan.rooms + scan.instructors, Math.max(1, scan.placements), `${scan.instructors} instructor clashes, ${scan.roomsAssessed ? scan.rooms + " meetings needing suitable rooms" : scan.roomClashes + " room clashes; suitability not assessed"}`, scan.instructors ? 'critical' : scan.rooms ? 'watch' : 'stable'],
       ['Term/board layer', currentDelta, Math.max(1, avg), scans.length === 1 ? `${currentDelta} students from board average` : `${state.boards.length} boards compared`, currentDelta > Math.max(15, avg * 0.35) ? 'watch' : 'stable'],
     ];
     $('twmLayerStatus').textContent = `${layers.filter(l => l[4] !== 'stable').length} active layers`;
@@ -660,12 +687,22 @@
           tone: 'watch',
           kind: 'Cross-board',
           title: `${c.section_a} <-> ${c.section_b}`,
-          detail: `${c.overlap_count || 0} shared students | ${c.board_a_label} <-> ${c.board_b_label}`,
+          detail: `${c.overlap_count || 0} students with common course demand | ${c.board_a_label} <-> ${c.board_b_label}`,
           students: c.overlap_count || 0,
           score: 40 + (c.overlap_count || 0),
           boards: [String(c.board_a_id || board.id), String(c.board_b_id || '')].filter(Boolean),
         });
       });
+      (scan.roomDetails || []).forEach(room => add({
+        key: `room-audit:${room.demand_id}`,
+        tone: 'watch',
+        kind: 'Room suitability',
+        title: room.course_code || 'Meeting needs a suitable room',
+        detail: `${board.label} | ${(room.reasons || []).join(', ')} | ${room.required_capacity || 0} seats | ${room.required_type || 'room'}`,
+        score: 55,
+        boards: [String(board.id)],
+        placementIds: (room.placement_ids || []).map(String),
+      }));
       ((scan.capacity.courses || []).filter(c => (c.deficit || 0) > 0)).forEach(c => {
         const diagnosis = capacityCourseDiagnosis(c);
         add({
@@ -684,7 +721,7 @@
       boards: Array.from(item.boards || []),
       placementIds: Array.from(item.placementIds || []),
       detail: item.kind === 'Cross-board' && item.count > 1
-        ? `${num(item.maxStudents || 0)} peak shared students | ${plural(item.count, 'meeting link')} | ${item.detail.split('|').slice(-1)[0].trim()}`
+        ? `${num(item.maxStudents || 0)} peak students with common course demand | ${plural(item.count, 'meeting link')} | ${item.detail.split('|').slice(-1)[0].trim()}`
         : item.detail,
     })).sort((a, b) =>
       (b.tone === 'critical' ? 1 : 0) - (a.tone === 'critical' ? 1 : 0) ||
@@ -782,12 +819,20 @@
         detail: `${item.room || placement.room || 'Room'} | ${item.detail || 'same room pressure'}`,
       });
     });
+    (scan.roomDetails || []).forEach(item => {
+      if (!(item.placement_ids || []).some(other => String(other) === id)) return;
+      rows.push({
+        tone: 'watch',
+        title: 'Meeting needs a suitable room',
+        detail: `${(item.reasons || []).join(', ')} | ${item.required_capacity || 0} seats | ${item.required_type || 'room'} | ${item.rooms?.join(', ') || 'no room assigned'}`,
+      });
+    });
     (scan.conflicts.cross_board_conflicts || []).forEach(item => {
       if (item.section_a !== sectionKey && item.section_b !== sectionKey) return;
       rows.push({
         tone: 'watch',
-        title: 'Cross-board students',
-        detail: `${item.overlap_count || 0} shared students | ${item.board_a_label || ''} <-> ${item.board_b_label || ''}`,
+        title: 'Potential cross-board overlap',
+        detail: `${item.overlap_count || 0} students with common course demand | ${item.board_a_label || ''} <-> ${item.board_b_label || ''}`,
       });
     });
     (scan.capacity.courses || []).forEach(item => {
@@ -989,7 +1034,7 @@
         tone: 'watch',
         label: 'Cross-board',
         title: `${item.section_a} <-> ${item.section_b}`,
-        detail: `${item.overlap_count || 0} shared students | ${item.board_a_label || ''} <-> ${item.board_b_label || ''}`,
+        detail: `${item.overlap_count || 0} students with common course demand | ${item.board_a_label || ''} <-> ${item.board_b_label || ''}`,
       });
     });
 
@@ -1165,8 +1210,8 @@
         {
         priority: 3,
         tone: 'watch',
-        title: `Reduce shared-student bridge ${c.section_a} <-> ${c.section_b}`,
-        detail: `${c.overlap_count} shared students across ${c.board_a_label} and ${c.board_b_label}`,
+        title: `Reduce course-demand bridge ${c.section_a} <-> ${c.section_b}`,
+        detail: `${c.overlap_count} students with common course demand across ${c.board_a_label} and ${c.board_b_label}`,
         }
       ));
       ((scan.capacity.courses || []).filter(c => (c.deficit || 0) > 0)).forEach(c => {
@@ -1232,7 +1277,7 @@
           id: buildSuggestionId('decouple', group.board.id, group.section),
           tone: 'watch',
           title: `Decouple network pressure in ${group.label}`,
-          detail: `Protect the shared-student bridge by moving one high-network course away from neighboring boards.`,
+          detail: `Protect the course-demand bridge by moving one high-network course away from neighboring boards.`,
           before: `${network} network hits`,
           after: `${afterLinks} estimated`,
           impact: network - afterLinks,
@@ -1680,8 +1725,8 @@
         evidence.push({
           kind: 'network',
           tone: 'watch',
-          title: `Cross-board students: ${placementLabel(target.placement)}`,
-          detail: `${link.shared || 0} shared students would still overlap with ${placementContextLabel(other)}.`,
+          title: `Potential cross-board overlap: ${placementLabel(target.placement)}`,
+          detail: `Potential course-demand overlap with ${placementContextLabel(other)} (${link.shared || 0} students seeking both courses).`,
           blockerId: other.id,
           blockerLabel: placementContextLabel(other),
         });

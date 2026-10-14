@@ -20,9 +20,15 @@ from django.test import override_settings
 from ortools.sat.python import cp_model
 
 from core.models import DeliveryBoard, ScenarioSectionBudget, SectionPlacement, TimetableScenario
-from core.services import cpsat_resources, timetable_cpsat_polisher, timetable_solver
+from core.services import (
+    cpsat_resources,
+    timetable_cpsat_polisher,
+    timetable_exact_rooming,
+    timetable_solver,
+)
 from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
 from core.services.timetable_cpsat_polisher import polish_scenario_with_cpsat
+from core.services.timetable_exact_rooming import MeetingDemand, _solve_relaxed
 from core.services.timetable_solver import solve_board, solve_board_with_hints
 
 
@@ -539,7 +545,9 @@ def test_call_sites_use_the_configured_workers(monkeypatch) -> None:
 # ── the guard sees every builder the solver modules use ─────────
 
 
-@pytest.mark.parametrize("module", [timetable_solver, timetable_cpsat_polisher])
+@pytest.mark.parametrize(
+    "module", [timetable_solver, timetable_cpsat_polisher, timetable_exact_rooming]
+)
 def test_every_model_builder_the_solvers_call_is_counted(module) -> None:
     src = inspect.getsource(module)
     used = set(re.findall(r"\bmodel\.((?:add|new)\w*)\(", src))
@@ -565,3 +573,70 @@ def test_a_skipped_polish_is_logged(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         polish_scenario_with_cpsat(**_clashing_pair_polish_inputs())
     assert "polisher not run" in caplog.text
+
+
+# ── exact rooming (secondary recovery calls it per candidate) ──────
+
+
+def _meeting(demand_id: str, rooms: tuple[str, ...]) -> MeetingDemand:
+    return MeetingDemand(
+        demand_id=demand_id,
+        term_section_id=hash(demand_id) & 0xFFFF,
+        course_code=demand_id,
+        day="SUN",
+        start_min=540,
+        end_min=615,
+        required_type="lecture",
+        required_capacity=30,
+        required_gender="M",
+        required_programmes=frozenset({"AI"}),
+        placement_ids=(1,),
+        board_ids=(1,),
+        incumbent_rooms=("",),
+        compatible_rooms=rooms,
+    )
+
+
+_SAME_SLOT = [_meeting(f"C{i}", ("R1", "R2", "R3")) for i in range(3)]
+_ROOM_CAPS = {"R1": 40, "R2": 40, "R3": 40}
+
+
+@override_settings(TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS=0)
+def test_exact_rooming_within_budget_still_solves() -> None:
+    result = _solve_relaxed(_SAME_SLOT, _ROOM_CAPS, time_limit_seconds=5)
+    assert result.status == "OPTIMAL"
+    assert len(set(result.assignment.values())) == 3
+
+
+@override_settings(TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS=5)
+def test_exact_rooming_past_the_budget_keeps_the_greedy_rooms(monkeypatch, caplog) -> None:
+    def no_solve(self, model, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("a model past the budget must not reach the solver")
+
+    monkeypatch.setattr(cp_model.CpSolver, "solve", no_solve)
+    with caplog.at_level(logging.WARNING):
+        result = _solve_relaxed(
+            _SAME_SLOT, _ROOM_CAPS, time_limit_seconds=5, strict_budget=True, count_only=True
+        )
+    assert result.status == "UNKNOWN"
+    assert result.proven_optimal is False and result.unroomed_proven_optimal is False
+    # The greedy start rooms all three overlapping meetings in distinct rooms.
+    assert len(set(result.assignment.values())) == 3 and result.unroomed == ()
+    assert "Exact rooming not solved" in caplog.text and "grew past 5" in caplog.text
+
+
+# _SAME_SLOT builds 24 elements; each solved phase then adds one pin (at most 4).
+@pytest.mark.parametrize("count_only", [True, False])
+@pytest.mark.parametrize("budget", [24, 25, 26, 27])
+def test_exact_rooming_at_the_budget_edge_keeps_greedy_and_never_raises(budget, count_only) -> None:
+    with override_settings(TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS=budget):
+        result = _solve_relaxed(_SAME_SLOT, _ROOM_CAPS, time_limit_seconds=5, count_only=count_only)
+    assert result.status == "UNKNOWN"
+    assert len(set(result.assignment.values())) == 3
+
+
+@pytest.mark.parametrize("count_only", [True, False])
+def test_exact_rooming_with_room_for_every_pin_solves(count_only) -> None:
+    with override_settings(TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS=28):
+        result = _solve_relaxed(_SAME_SLOT, _ROOM_CAPS, time_limit_seconds=5, count_only=count_only)
+    assert result.status == "OPTIMAL"

@@ -6,7 +6,8 @@ Boundaries (blueprint §0):
   instructor eligibility — and the upstream *advising* recommender;
 * never reads a `TimetableScenario`, `DeliveryBoard`, `SectionPlacement` or
   `TermSectionMeeting`. No saved scenario is ever a baseline or a warm start;
-* never imports `core.services.timetable_*`.
+* imports no planner implementation. Shared pure institutional course-policy
+  and course-tier modules are the explicit exceptions to that boundary.
 
 Demand comes from `recommender_batch.batch_recommend`, which already encodes
 academic policy (real-term computation, parity, prerequisites, unlock ranking,
@@ -34,6 +35,7 @@ from core.models import (
 )
 from core.models import Instructor as InstructorRow
 from core.models import Room as RoomRow
+from core.services.timetable_course_policy import get_course_meeting_policy
 from scheduler.domain import (
     CapacityPolicy,
     DeliveryMode,
@@ -164,47 +166,6 @@ UNSCHEDULED_NAME_PREFIXES: tuple[str, ...] = (
     "COOPERATIVE TRAINING",
 )
 UNSCHEDULED_NAME_EXACT: frozenset[str] = frozenset({"TRAINING"})
-
-
-#: Courses whose hours are GIVEN rather than chosen (owner rule, D19).
-#:
-#: ENG101/ENG102 ("English Language Skills I/II") are the intensive language
-#: pair: 4 credits, plan terms 1 and 2, carried by all twelve programmes. They
-#: occupy the FULL MORNING every day of the week, and every section sits in the
-#: same hours — the department teaches them as one timetabled block.
-#:
-#: Named exactly, and deliberately not by prefix: ENGL103, ENGL104 and ENGL214
-#: are ordinary three-credit English courses and must keep the ordinary rules.
-FULL_MORNING_COURSES: frozenset[str] = frozenset({"ENG101", "ENG102"})
-
-
-def is_full_morning_course(course_code: str) -> bool:
-    return str(course_code or "").strip().upper() in FULL_MORNING_COURSES
-
-
-#: Noon, in minutes from midnight — the boundary of "the morning".
-_NOON = 12 * 60
-
-
-def morning_block(grid: Grid) -> tuple[int, ...]:
-    """The widest set of NON-OVERLAPPING morning lecture starts the grid declares.
-
-    Derived from the grid rather than written down, because the grid is the sole
-    time authority (D2) — this rule must never be the thing that invents an hour.
-    Taken greedily from the earliest start, which on the declared grid gives
-    09:00-10:15 and 10:30-11:45; 10:50 is dropped because it overlaps 10:30 and
-    a course cannot be in two places at once.
-    """
-    starts = sorted(
-        {w.start for w in grid.windows_for(75, DeliveryMode.IN_PERSON) if w.start < _NOON}
-    )
-    block: list[int] = []
-    end_of_last = -1
-    for start in starts:
-        if start >= end_of_last:
-            block.append(start)
-            end_of_last = start + 75
-    return tuple(block)
 
 
 def is_online_course(course_code: str) -> bool:
@@ -545,64 +506,17 @@ def build_snapshot(
         unscheduled = any(is_unscheduled_course(r.get("course_name") or "") for r in rows)
         online = is_online_course(code)
 
-        # ── D19: a course whose hours are given, not chosen ────────────────
-        #
-        # ENG101/ENG102 occupy the full morning every day of the week, with
-        # every section in the same hours. That is not a preference the solver
-        # weighs — it is the shape of the course, so it is compiled into the
-        # requirement instead of being pursued by the objective.
-        #
-        # The arithmetic makes it exact rather than merely encouraged: the
-        # meetings are confined to the morning starts, and there are precisely
-        # as many meetings as there are (day, morning start) cells. With one
-        # meeting per cell, the only feasible answer is every cell filled every
-        # day — so "all sections at the same time" is not a further constraint,
-        # it is a consequence.
-        fixed_block = is_full_morning_course(code) and not unscheduled
-        if fixed_block:
-            block = morning_block(grid)
-            if not block:
-                raise IntakeError(
-                    f"{code} must occupy the morning, but the grid declares no "
-                    f"morning lecture window"
-                )
-            # The rule works by pigeonhole: as many meetings as cells, one
-            # meeting per cell, so every cell is filled. That is only a proof if
-            # the two numbers agree, and they are computed from different parts
-            # of the grid — `days()` is the union across the lecture, lab and
-            # online families, while the cells come from the 75-minute in-person
-            # family alone. A grid whose lab family covers a day the lecture
-            # family does not would give more meetings than cells, and the model
-            # would come back INFEASIBLE with the same unhelpful note a timeout
-            # produces. Checked here, where both numbers are built.
-            cells = [
-                s
-                for s in grid.day_windows_for(75, DeliveryMode.IN_PERSON)
-                if s.window.start in set(block)
-            ]
-            wanted = len(block) * len(grid.days())
-            if len(cells) != wanted:
-                raise IntakeError(
-                    f"{code} must fill the morning every day, which needs {wanted} "
-                    f"cells ({len(block)} morning start(s) x {len(grid.days())} day(s)), "
-                    f"but the grid declares {len(cells)}. The 75-minute in-person "
-                    f"family does not cover every day the grid does."
-                )
+        meeting_policy = (
+            None if unscheduled else get_course_meeting_policy(code, course_key=course_key)
+        )
+        if meeting_policy is not None:
             requirements = (
                 MeetingRequirement(
-                    MeetingKind.LECTURE,
+                    MeetingKind(meeting_policy.meeting_kind),
                     DeliveryMode.IN_PERSON,
-                    75,
-                    len(block) * len(grid.days()),
-                    allowed_starts=frozenset(block),
-                    # Owner, 2026-07-28: "we have special rooms for ENG101 and
-                    # ENG102". They are taught in their own space, so they draw
-                    # nothing from the shared estate — which matters here, where
-                    # this cohort has EIGHT lecture rooms and four ENG sections
-                    # would otherwise hold half of them in every morning cell.
-                    # Still in-person: the student is on campus and the hour is
-                    # occupied, so clash, travel and instructor load all count.
-                    uses_shared_room=False,
+                    meeting_policy.durations[0],
+                    len(meeting_policy.durations),
+                    uses_shared_room=meeting_policy.uses_shared_room,
                 ),
             )
         elif unscheduled:
@@ -622,7 +536,7 @@ def build_snapshot(
             capacity_is_declared=bool(declared),
             is_scheduled=not unscheduled,
             tier=classify_course_tier(code, plan_counts.get(code.upper(), 0)),
-            occupies_fixed_block=fixed_block,
+            meeting_policy=meeting_policy,
         )
         offerings.append(offering)
         offerings_by_code[code].append(offering)
@@ -1079,7 +993,8 @@ def build_snapshot(
                 if (
                     half is None
                     or not offering.is_scheduled
-                    or offering.occupies_fixed_block  # D19 already owns its hours
+                    or offering.meeting_policy
+                    is not None  # complete weekly bundles are authoritative
                     or offering.is_fully_online  # D9: its own evening family
                 ):
                     phased.append(offering)

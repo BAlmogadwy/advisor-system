@@ -14,6 +14,10 @@ Identity rules (non-negotiable N1/N2 in the blueprint):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.services.timetable_course_policy import CourseMeetingPolicy
 
 from .calendar import DeliveryMode, MeetingKind
 
@@ -42,20 +46,17 @@ class MeetingRequirement:
     #: Empty (the default) means every window the grid declares for
     #: (duration, delivery) — the normal case, where the solver picks the hour.
     #:
-    #: Used for courses whose hours are given rather than chosen: ENG101/ENG102
-    #: occupy the full morning every day (D19), so their meetings are confined to
-    #: the morning starts. The starts still come from the GRID (D2) — this
-    #: narrows the choice, it never invents a time the grid does not declare.
+    #: Narrows the ordinary grid family without adding new windows. Complete
+    #: institutional weekly bundles are represented by Offering.meeting_policy.
     allowed_starts: frozenset[int] = frozenset()
 
-    #: False when the course is housed in rooms OUTSIDE the shared estate and
-    #: must not consume any of it (owner, D19: "we have special rooms for ENG101
-    #: and ENG102").
+    #: False when no room assignment is required. ENG101/ENG102 have this
+    #: exemption by the owner's 2026-10-10 clarification.
     #:
     #: Deliberately NOT expressed by flipping `needs_room`, which is
     #: delivery-derived and answers a different question. An ENG meeting is
     #: in-person: the student is on campus, the hour is occupied, the instructor
-    #: is teaching. Only the SHARED-ROOM supply is unaffected. Folding the two
+    #: is teaching. The room supply is unaffected. Folding the two
     #: together would make `is_fully_online` true for ENG and silently remove it
     #: from campus travel and the clash model.
     uses_shared_room: bool = True
@@ -104,12 +105,9 @@ class Offering:
     #: everybody's week to avoid.
     tier: str = "T1"
 
-    #: True for a course whose hours are GIVEN, not chosen: every section meets
-    #: in every cell of a fixed block, every day (D19 — ENG101/ENG102 own the
-    #: whole morning). Such a course is exempt from H2, H10, D14, D17 and
-    #: sibling symmetry breaking, each of which assumes the solver is choosing.
-    #: The exemptions are listed in `solve()` beside the rules they suspend.
-    occupies_fixed_block: bool = False
+    #: An authoritative set of complete weekly bundles, scoped to this offering.
+    #: A section chooses exactly one bundle; ordinary courses use the grid.
+    meeting_policy: CourseMeetingPolicy | None = None
 
     @property
     def meetings_per_week(self) -> int:

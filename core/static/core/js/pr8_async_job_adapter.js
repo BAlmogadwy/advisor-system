@@ -1,243 +1,261 @@
-/* PR8 — async job UI adapter.
- *
- * Thin client for the PR7 REST surface. Wires a status card on the
- * scenario page: submit, poll (2s while active, stop on terminal),
- * cancel, fetch final result. No framework — native fetch + DOM.
- *
- * The card element is located by `[data-pr8-card]`. Controls inside it
- * carry `data-pr8-action="submit|cancel|rerun|view-result"`.
- *
- * A `<script data-pr8-config>` tag carries a JSON blob with:
- *   { submitUrl, pollUrl, resultUrl, cancelUrl, pollIntervalMs,
- *     csrfToken, scenarioId, mode }
- * where pollUrl/resultUrl/cancelUrl contain a `{job_id}` placeholder.
+/* Shared planner card: REST client and classic workspace subscriber.
+ * Events: tw:planner-job {job, scenarioId, jobId, source},
+ * tw:planner-request {scenarioId, pending, source}, tw:planner-busy {busy},
+ * tw:scenario-selected {scenarioId, job?}. Only a terminal poll ends a run.
  */
 (function () {
   "use strict";
-
-  var ACTIVE = { queued: 1, running: 1 };
+  var ACTIVE = { queued: 1, running: 1, unknown: 1 };
   var TERMINAL = { succeeded: 1, failed: 1, cancelled: 1 };
-
-  function readConfig() {
-    var node = document.querySelector("script[data-pr8-config]");
+  var AR = document.documentElement.lang === "ar";
+  function say(en, ar) { return AR ? ar : en; }
+  function qs(root, sel) { return root.querySelector(sel); }
+  function same(a, b) { return String(a == null ? "" : a) === String(b == null ? "" : b); }
+  function parse(node) {
     if (!node) return null;
-    try {
-      return JSON.parse(node.textContent || "{}");
-    } catch (e) {
-      return null;
-    }
+    try { return JSON.parse(node.textContent || "{}"); } catch (_) { return null; }
   }
-
-  function qs(root, sel) {
-    return root.querySelector(sel);
-  }
-
-  function setStatusPill(card, status) {
-    var pill = qs(card, "[data-pr8-status]");
-    if (!pill) return;
-    pill.textContent = status || "idle";
-    pill.className = "pr8-status-pill status-" + (status || "idle");
-  }
-
   function setField(card, key, value) {
     var node = qs(card, '[data-pr8-field="' + key + '"]');
-    if (node) node.textContent = value == null ? "" : String(value);
+    if (node) node.textContent = value == null || value === "" ? "-" : String(value);
   }
-
-  function paint(card, job) {
-    if (!job) {
-      setStatusPill(card, "idle");
-      return;
-    }
-    setStatusPill(card, job.status);
-    setField(card, "submitted_at", job.submitted_at);
-    setField(card, "started_at", job.started_at);
-    setField(card, "finished_at", job.finished_at);
-    setField(card, "last_stage_seen", job.last_stage_seen);
-    setField(card, "error_message", job.error_message);
-
-    // Toggle controls by status.
-    var isActive = !!ACTIVE[job.status];
-    var isTerminal = !!TERMINAL[job.status];
-    var submit = qs(card, '[data-pr8-action="submit"]');
-    var cancel = qs(card, '[data-pr8-action="cancel"]');
-    var viewResult = qs(card, '[data-pr8-action="view-result"]');
-    var rerun = qs(card, '[data-pr8-action="rerun"]');
-    if (submit) submit.disabled = isActive;
-    if (cancel) cancel.hidden = !isActive;
-    if (viewResult) viewResult.hidden = job.status !== "succeeded";
-    if (rerun) rerun.hidden = !(job.status === "failed" || job.status === "cancelled");
-  }
-
-  function fillUrl(template, jobId) {
-    return template.replace("{job_id}", encodeURIComponent(jobId));
-  }
-
-  function jsonFetch(url, opts) {
-    opts = opts || {};
-    opts.headers = Object.assign(
-      { "Content-Type": "application/json", Accept: "application/json" },
-      opts.headers || {}
-    );
-    return fetch(url, opts).then(function (r) {
-      if (!r.ok) throw Object.assign(new Error("HTTP " + r.status), { status: r.status });
-      return r.json();
-    });
-  }
-
-  function startPolling(state) {
-    if (state.pollTimer) return;
-    var tick = function () {
-      if (!state.jobId) return;
-      jsonFetch(fillUrl(state.cfg.pollUrl, state.jobId))
-        .then(function (job) {
-          state.currentJob = job;
-          paint(state.card, job);
-          if (TERMINAL[job.status]) stopPolling(state);
-        })
-        .catch(function () {
-          /* non-blocking: UI keeps the previous state; next tick retries */
-        });
-    };
-    state.pollTimer = setInterval(tick, state.cfg.pollIntervalMs || 2000);
-    tick();
-  }
-
-  function stopPolling(state) {
-    if (state.pollTimer) {
-      clearInterval(state.pollTimer);
-      state.pollTimer = null;
-    }
-  }
-
-  function resolveScenarioId(state) {
-    // Static config wins when explicitly set; otherwise fall back to the
-    // workspace page state (window.TW.scenarioId) which the scenario
-    // selector dropdown keeps up to date.
-    if (state.cfg.scenarioId != null) return state.cfg.scenarioId;
-    if (window.TW && window.TW.scenarioId != null) return window.TW.scenarioId;
-    return null;
-  }
-
-  function resolveScenarioLabel(scenarioId) {
-    // Look up the human-readable name from the workspace dropdown if
-    // present, else fall back to "#<id>".
-    if (scenarioId == null) return "-";
-    var sel = document.getElementById("twScenario");
-    if (sel) {
-      for (var i = 0; i < sel.options.length; i++) {
-        var opt = sel.options[i];
-        if (String(opt.value) === String(scenarioId)) {
-          return opt.text + " (#" + scenarioId + ")";
-        }
+  function scenarioLabel(id) {
+    if (id == null) return "-";
+    var select = document.getElementById("twScenario");
+    if (select) {
+      for (var i = 0; i < select.options.length; i++) {
+        if (same(select.options[i].value, id)) return select.options[i].text + " (#" + id + ")";
       }
     }
-    return "#" + scenarioId;
+    return "#" + id;
   }
-
-  function paintScenario(card, scenarioId) {
-    var label = resolveScenarioLabel(scenarioId);
-    setField(card, "scenario", label);
-    // Planner always writes back to the same scenario it read from.
-    setField(
-      card,
-      "output_scenario",
-      scenarioId == null ? "-" : label + " (placements updated in-place)"
-    );
+  function resolveScenarioId(cfg) {
+    if (window.TW && window.TW.scenarioId != null) return window.TW.scenarioId;
+    var select = document.getElementById("twScenario");
+    if (select) return select.value ? Number(select.value) : null;
+    return cfg.scenarioId == null ? null : cfg.scenarioId;
   }
-
-  function onSubmit(state) {
-    if (state.inFlight) return;
-    var scenarioId = resolveScenarioId(state);
-    if (scenarioId == null) {
-      setStatusPill(state.card, "no-scenario");
-      return;
-    }
-    state.inFlight = true;
-    state.scenarioId = scenarioId;
-    paintScenario(state.card, scenarioId);
-    var body = JSON.stringify({
-      scenario_id: scenarioId,
-      mode: state.cfg.mode || "full_rebuild",
+  function readOnly(state) {
+    return !!(window.TW && same(window.TW.scenarioId, state.scenarioId)
+      && window.TW.scenario && window.TW.scenario.status === "published");
+  }
+  function paint(state) {
+    var job = state.currentJob || {};
+    var status = job.status || (state.inFlight === "submit" ? "submitting" : "idle");
+    var names = {
+      idle: say("Ready", "جاهز"), submitting: say("Submitting…", "جارٍ الإرسال…"),
+      queued: say("Queued", "في الانتظار"), running: say("Running", "قيد التشغيل"),
+      unknown: say("Status unconfirmed", "الحالة غير مؤكدة"),
+      succeeded: say("Completed", "اكتمل"), failed: say("Failed", "فشل"), cancelled: say("Cancelled", "ملغي")
+    };
+    var pill = qs(state.card, "[data-pr8-status]");
+    if (pill) { pill.textContent = names[status] || status; pill.className = "pr8-status-pill status-" + status; }
+    setField(state.card, "scenario", scenarioLabel(state.scenarioId));
+    setField(state.card, "output_scenario", state.currentJob ? scenarioLabel(state.scenarioId) : "-");
+    ["submitted_at", "started_at", "finished_at", "last_stage_seen", "error_message"].forEach(function (key) {
+      setField(state.card, key, job[key]);
     });
+    state.card.querySelectorAll("[data-pr8-error-row]").forEach(function (node) { node.hidden = !job.error_message; });
+    var active = !!ACTIVE[job.status];
+    var blocked = !!state.inFlight || state.externalPending || state.externalBusy || readOnly(state);
+    state.card.dataset.scenarioId = state.scenarioId == null ? "" : String(state.scenarioId);
+    state.card.dataset.jobId = state.jobId || "";
+    state.card.setAttribute("aria-busy", String(active || !!state.inFlight || state.externalPending));
+    var submit = qs(state.card, '[data-pr8-action="submit"]');
+    var cancel = qs(state.card, '[data-pr8-action="cancel"]');
+    var view = qs(state.card, '[data-pr8-action="view-result"]');
+    var rerun = qs(state.card, '[data-pr8-action="rerun"]');
+    if (submit) submit.disabled = active || blocked || state.scenarioId == null;
+    if (cancel) {
+      cancel.hidden = !active;
+      cancel.disabled = !!state.inFlight || state.externalPending || !!job.cancel_requested;
+      cancel.textContent = job.cancel_requested ? say("Cancellation requested…", "تم طلب الإلغاء…") : say("Cancel", "إلغاء");
+    }
+    if (view) { view.hidden = job.status !== "succeeded"; view.disabled = !state.jobId; }
+    if (rerun) { rerun.hidden = !(job.status === "failed" || job.status === "cancelled"); rerun.disabled = blocked || state.scenarioId == null; }
+    var message = qs(state.card, "[data-pr8-message]");
+    if (message) { message.textContent = state.message || ""; message.hidden = !state.message; }
+  }
+  function publish(state, name, detail) {
+    state.dispatching = true;
+    try { window.dispatchEvent(new CustomEvent(name, { detail: Object.assign({ source: "adapter" }, detail) })); }
+    finally { state.dispatching = false; }
+  }
+  function fillUrl(template, jobId) { return template.replace("{job_id}", encodeURIComponent(jobId)); }
+  function jsonFetch(url, opts) {
+    opts = Object.assign({ credentials: "same-origin" }, opts || {});
+    opts.headers = Object.assign({ "Content-Type": "application/json", Accept: "application/json" }, opts.headers || {});
+    return fetch(url, opts).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (body) {
+        if (!response.ok) {
+          var error = body.error;
+          throw Object.assign(new Error((error && (error.message || error.code)) || body.detail || body.message || say("Request failed", "فشل الطلب") + " (HTTP " + response.status + ")"),
+            { status: response.status, response: body });
+        }
+        return body;
+      });
+    });
+  }
+  function stopPolling(state) {
+    if (state.pollTimer != null) clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+    state.pollEpoch++;
+  }
+  function acceptJob(state, job, scenarioId, jobId, emit) {
+    if (!job || !(ACTIVE[job.status] || TERMINAL[job.status])) return;
+    jobId = jobId || job.job_id;
+    if (!jobId) return;
+    var previous = state.jobs[String(scenarioId)];
+    if (previous && !same(previous.job_id, jobId) && ACTIVE[previous.status]) return;
+    // A slower poll can arrive after a cancellation/terminal event from another subscriber.
+    if (previous && same(previous.job_id, jobId)) {
+      if (TERMINAL[previous.status] && ACTIVE[job.status]) return;
+      if (previous.cancel_requested && ACTIVE[job.status]) job = Object.assign({}, job, { cancel_requested: true });
+    }
+    job = Object.assign({}, job, { job_id: jobId });
+    state.jobs[String(scenarioId)] = job;
+    if (same(state.scenarioId, scenarioId)) {
+      if (!same(state.jobId, jobId)) stopPolling(state);
+      state.jobId = jobId;
+      state.currentJob = job;
+      state.message = "";
+      paint(state);
+      if (TERMINAL[job.status]) stopPolling(state);
+      else startPolling(state);
+    }
+    if (emit) publish(state, "tw:planner-job", { job: job, scenarioId: scenarioId, jobId: jobId });
+  }
+  function startPolling(state) {
+    if (state.pollTimer != null || state.polling || !state.jobId || !ACTIVE[(state.currentJob || {}).status]) return;
+    var epoch = state.pollEpoch;
+    state.pollTimer = setTimeout(function () {
+      state.pollTimer = null;
+      var jobId = state.jobId;
+      var scenarioId = state.scenarioId;
+      state.polling = true;
+      jsonFetch(fillUrl(state.cfg.pollUrl, jobId)).then(function (job) {
+        if (epoch !== state.pollEpoch || !same(state.jobId, jobId) || !same(state.scenarioId, scenarioId)) return;
+        if ((!ACTIVE[job.status] && !TERMINAL[job.status]) || (job.job_id && !same(job.job_id, jobId))) throw new Error(say("Invalid planner status", "حالة المخطط غير صالحة"));
+        acceptJob(state, job, scenarioId, jobId, true);
+      }).catch(function (error) {
+        if (epoch !== state.pollEpoch) return;
+        state.message = say("Status unavailable; the run may still be active. Retrying. ", "الحالة غير متاحة؛ قد يظل التشغيل نشطًا. جارٍ إعادة المحاولة. ") + error.message;
+        paint(state);
+      }).then(function () { state.polling = false; startPolling(state); });
+    }, state.cfg.pollIntervalMs || 2000);
+  }
+  function selectScenario(state, scenarioId, job) {
+    stopPolling(state);
+    state.scenarioId = scenarioId === "" || scenarioId == null ? null : scenarioId;
+    state.currentJob = null;
+    state.jobId = null;
+    state.message = "";
+    // A selected scenario's authoritative server snapshot can supersede a
+    // cached job after reconciliation or activity in another browser tab.
+    if (job && !same(job.job_id, (state.jobs[String(state.scenarioId)] || {}).job_id)) {
+      delete state.jobs[String(state.scenarioId)];
+    }
+    var saved = job || state.jobs[String(state.scenarioId)];
+    if (saved) acceptJob(state, saved, state.scenarioId, saved.job_id, false);
+    paint(state);
+  }
+  function onSubmit(state) {
+    if (state.inFlight || state.externalPending || state.externalBusy || readOnly(state) || ACTIVE[(state.currentJob || {}).status]) return;
+    var scenarioId = state.scenarioId;
+    if (scenarioId == null) return;
+    state.inFlight = "submit";
+    state.message = "";
+    paint(state);
+    publish(state, "tw:planner-request", { scenarioId: scenarioId, pending: true });
     jsonFetch(state.cfg.submitUrl, {
-      method: "POST",
-      headers: { "X-CSRFToken": state.cfg.csrfToken || "" },
-      body: body,
+      method: "POST", headers: { "X-CSRFToken": state.cfg.csrfToken || "" },
+      body: JSON.stringify({ scenario_id: Number(scenarioId), mode: state.cfg.mode || "full_rebuild" })
+    }).then(function (response) {
+      if (!response.job_id) throw new Error(say("Planner did not return a job ID", "لم يُرجع المخطط معرّف التشغيل"));
+      if (response.status && !ACTIVE[response.status] && !TERMINAL[response.status]) throw new Error(say("Invalid planner status", "حالة المخطط غير صالحة"));
+      acceptJob(state, Object.assign({ status: "queued" }, response), scenarioId, response.job_id, true);
+    }).catch(function (error) {
+      var serverError = error.response && error.response.error;
+      var details = serverError && serverError.details;
+      if (serverError && serverError.code === "SCENARIO_BUSY" && details && details.active_job) {
+        var serverScenario = details.scenario_id == null ? details.active_job.scenario_id : details.scenario_id;
+        if (same(serverScenario, scenarioId)) acceptJob(state, details.active_job, scenarioId, details.active_job.job_id, true);
+      }
+      if (same(state.scenarioId, scenarioId)) state.message = error.message;
     })
-      .then(function (resp) {
-        state.jobId = resp.job_id;
-        state.currentJob = { status: resp.status || "queued", job_id: resp.job_id };
-        paint(state.card, state.currentJob);
-        paintScenario(state.card, scenarioId);
-        startPolling(state);
-      })
-      .catch(function () {
-        // swallow — user can retry
-      })
       .then(function () {
         state.inFlight = false;
+        publish(state, "tw:planner-request", { scenarioId: scenarioId, pending: false });
+        paint(state);
       });
   }
-
   function onCancel(state) {
-    if (!state.jobId) return;
-    jsonFetch(fillUrl(state.cfg.cancelUrl, state.jobId), {
-      method: "POST",
-      headers: { "X-CSRFToken": state.cfg.csrfToken || "" },
-    }).catch(function () {
-      /* non-blocking */
-    });
+    if (state.inFlight || state.externalPending || !state.jobId || !ACTIVE[(state.currentJob || {}).status] || state.currentJob.cancel_requested) return;
+    var jobId = state.jobId;
+    var scenarioId = state.scenarioId;
+    state.inFlight = "cancel";
+    state.message = "";
+    paint(state);
+    jsonFetch(fillUrl(state.cfg.cancelUrl, jobId), {
+      method: "POST", headers: { "X-CSRFToken": state.cfg.csrfToken || "" }
+    }).then(function (response) {
+      var job = state.jobs[String(scenarioId)];
+      if (job && same(job.job_id, jobId) && ACTIVE[job.status]) {
+        acceptJob(state, Object.assign({}, job, { cancel_requested: !!response.cancel_requested }), scenarioId, jobId, true);
+      }
+    }).catch(function (error) { if (same(state.scenarioId, scenarioId)) state.message = error.message; })
+      .then(function () { state.inFlight = false; paint(state); });
   }
-
-  function onRerun(state) {
-    state.jobId = null;
-    state.currentJob = null;
-    stopPolling(state);
-    paint(state.card, null);
-    onSubmit(state);
-  }
-
-  function onViewResult(state) {
-    if (!state.jobId) return;
-    var w = window.open(fillUrl(state.cfg.resultUrl, state.jobId), "_blank");
-    if (w) w.focus();
-  }
-
-  function wire(card, cfg) {
-    var state = {
-      card: card,
-      cfg: cfg,
-      jobId: null,
-      currentJob: null,
-      pollTimer: null,
-      inFlight: false,
-    };
-    card.addEventListener("click", function (ev) {
-      var target = ev.target.closest("[data-pr8-action]");
-      if (!target || !card.contains(target)) return;
-      ev.preventDefault();
-      var action = target.getAttribute("data-pr8-action");
-      if (action === "submit") onSubmit(state);
-      else if (action === "cancel") onCancel(state);
-      else if (action === "rerun") onRerun(state);
-      else if (action === "view-result") onViewResult(state);
-    });
-    paint(card, null);
-  }
-
-  function init() {
-    var cfg = readConfig();
+  function wire(card) {
+    var cfg = parse(qs(card, "script[data-pr8-config]"));
     if (!cfg) return;
-    var cards = document.querySelectorAll("[data-pr8-card]");
-    for (var i = 0; i < cards.length; i++) {
-      wire(cards[i], cfg);
+    var state = { card: card, cfg: cfg, scenarioId: resolveScenarioId(cfg), jobId: null, currentJob: null,
+      jobs: {}, pollTimer: null, pollEpoch: 0, polling: false, inFlight: false,
+      externalPending: false, externalBusy: !!(window.TW && window.TW.busy), message: "", dispatching: false };
+    card.addEventListener("click", function (event) {
+      var target = event.target.closest("[data-pr8-action]");
+      if (!target || !card.contains(target) || target.disabled || target.hidden) return;
+      event.preventDefault();
+      var action = target.getAttribute("data-pr8-action");
+      if (action === "submit" || action === "rerun") onSubmit(state);
+      else if (action === "cancel") onCancel(state);
+      else if (action === "view-result" && state.jobId && (state.currentJob || {}).status === "succeeded") {
+        var opened = window.open(fillUrl(cfg.resultUrl, state.jobId), "_blank", "noopener");
+        if (opened) opened.focus();
+      }
+    });
+    window.addEventListener("tw:planner-job", function (event) {
+      if (state.dispatching) return;
+      var detail = event.detail || {};
+      if (detail.scenarioId == null) return;
+      if (detail.job) acceptJob(state, detail.job, detail.scenarioId, detail.jobId, false);
+      else if (same(state.scenarioId, detail.scenarioId)) {
+        delete state.jobs[String(detail.scenarioId)];
+        selectScenario(state, detail.scenarioId);
+      }
+    });
+    window.addEventListener("tw:planner-request", function (event) {
+      if (state.dispatching) return;
+      state.externalPending = !!(event.detail || {}).pending;
+      paint(state);
+    });
+    window.addEventListener("tw:planner-busy", function (event) { state.externalBusy = !!(event.detail || {}).busy; paint(state); });
+    window.addEventListener("tw:scenario-selected", function (event) {
+      var detail = event.detail || {};
+      if (detail.job === null) delete state.jobs[String(detail.scenarioId)];
+      selectScenario(state, detail.scenarioId, detail.job);
+    });
+    var select = document.getElementById("twScenario");
+    if (select) select.addEventListener("change", function () { selectScenario(state, select.value ? Number(select.value) : null); });
+    var initial = parse(qs(card, "#pr8-initial-job")) || cfg.job || (window.TW && window.TW.plannerJob);
+    if (initial) {
+      // Accept the shared event snapshot or the backend's plain poll JSON.
+      acceptJob(state, initial.job || initial, initial.scenarioId == null ? state.scenarioId : initial.scenarioId,
+        initial.jobId || initial.job_id || (initial.job && initial.job.job_id), false);
     }
+    paint(state);
   }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  function init() { document.querySelectorAll("[data-pr8-card]").forEach(wire); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
+  else init();
 })();

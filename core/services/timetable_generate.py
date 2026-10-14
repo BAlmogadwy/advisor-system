@@ -838,7 +838,7 @@ def generate_workspace_scenario(
     budget_response = compute_scenario_budget(scenario.id)
     for b in budget_response:
         cr = b.get("credit_hours", 3)
-        pattern = get_meeting_pattern(cr)
+        pattern = get_meeting_pattern(cr, b.get("course_key") or b.get("course_code", ""))
         b["meetings_per_week"] = len(pattern)
         b["meeting_durations"] = pattern
 

@@ -8,6 +8,7 @@ from django.db.models import F
 from django.db.models.functions import Trim, Upper
 
 from core.models import ProgrammeRequirement
+from core.services.timetable_course_policy import get_course_meeting_policy
 
 
 def normalise_course_code(code: object | None) -> str:
@@ -36,7 +37,9 @@ class OnlineCourseLookup:
                 is_online=True,
             ).values_list("course_code", flat=True)
             self._cache[key] = {
-                normalise_course_code(code) for code in codes if normalise_course_code(code)
+                normalise_course_code(code)
+                for code in codes
+                if normalise_course_code(code) and not get_course_meeting_policy(str(code))
             }
         return self._cache[key]
 
@@ -55,7 +58,11 @@ def exclude_online_course_codes(
 ):
     """Exclude online courses from a placement queryset using DB-side normalization."""
     codes = sorted(
-        {normalise_course_code(code) for code in online_codes if normalise_course_code(code)}
+        {
+            normalise_course_code(code)
+            for code in online_codes
+            if normalise_course_code(code) and not get_course_meeting_policy(str(code))
+        }
     )
     if not codes:
         return queryset

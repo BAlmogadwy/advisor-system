@@ -25,11 +25,18 @@ from core.services.planner_job_runner import (
     cancel_planner_job,
     dispatch_planner_job,
     get_planner_job,
-    is_async_planner_enabled,
     reconcile_stale_planner_jobs,
+    serialize_planner_job,
     submit_planner_job,
 )
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
+from core.services.timetable_flags import is_async_planner_enabled
+from core.services.timetable_mutation_guard import (
+    ScenarioPlannerBusy,
+    ScenarioPublished,
+    reject_active_planner_job,
+    scenario_busy_response,
+)
 
 
 def _flag_off_404() -> HttpResponse:
@@ -67,7 +74,22 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
     mode = payload.get("mode")
     if not isinstance(scenario_id, int) or mode not in {"optimise_current", "full_rebuild"}:
         return JsonResponse({"detail": "bad scenario_id/mode"}, status=400)
-    job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=request.user)
+    from core.models import TimetableScenario
+
+    scenario = TimetableScenario.objects.filter(pk=scenario_id).first()
+    if scenario is None:
+        return JsonResponse({"detail": "Scenario not found"}, status=404)
+    if scenario.status == "published":
+        return JsonResponse({"detail": "Cannot modify published scenario"}, status=400)
+    busy = reject_active_planner_job(scenario_id)
+    if busy is not None:
+        return busy
+    try:
+        job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=request.user)
+    except ScenarioPlannerBusy as exc:
+        return scenario_busy_response(exc.job)
+    except ScenarioPublished:
+        return JsonResponse({"detail": "Cannot modify published scenario"}, status=400)
     dispatch_planner_job(job_id)
     return JsonResponse({"job_id": str(job_id), "status": "queued"}, status=201)
 
@@ -85,19 +107,7 @@ def planner_job_poll(request: HttpRequest, job_id: str) -> HttpResponse:
     job = get_planner_job(job_id)
     if job is None:
         return JsonResponse({"detail": "not found"}, status=404)
-    return JsonResponse(
-        {
-            "job_id": str(job.id),
-            "status": job.status,
-            "mode": job.mode,
-            "last_stage_seen": job.last_stage_seen,
-            "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
-            "started_at": job.started_at.isoformat() if job.started_at else None,
-            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
-            "cancel_requested": job.cancel_requested,
-            "error_message": job.error_message,
-        }
-    )
+    return JsonResponse(serialize_planner_job(job))
 
 
 @require_http_methods(["GET"])

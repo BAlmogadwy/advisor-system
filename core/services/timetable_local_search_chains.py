@@ -5,8 +5,8 @@ Diagnostic-driven chain-2 local search for cross-board improvements.
 Finds coordinated 2-section moves that single-move search cannot discover:
   "Move section A to pattern X AND section B to pattern Y"
 
-Only generates chains from diagnostic signals — hotspot courses and their
-overlap partners — to keep the neighbourhood tractable.
+Only generates chains from student hotspots and instructor-linked courses,
+with bounded partner and pattern counts to keep the neighbourhood tractable.
 """
 
 from __future__ import annotations
@@ -33,6 +33,12 @@ from core.services.timetable_constraints import (
     move_introduces_same_course_overlap,
 )
 from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_optimisation_policy import (
+    evaluation_is_better,
+    instructor_focus_courses,
+    is_instructor_priority_enabled,
+    schedule_metrics_of,
+)
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
@@ -99,7 +105,6 @@ def _find_overlap_partners(
             course_students.setdefault(code, set()).add(profile.student_id)
 
     partners: dict[str, list[str]] = {}
-    hotspot_set = set(hotspot_courses)
     all_courses = list(course_students.keys())
 
     for hc in hotspot_courses:
@@ -108,15 +113,57 @@ def _find_overlap_partners(
             continue
         overlaps: list[tuple[str, int]] = []
         for other in all_courses:
-            if other == hc or other in hotspot_set:
+            if other == hc:
                 continue
             shared = len(hc_students & course_students.get(other, set()))
             if shared > 0:
                 overlaps.append((other, shared))
-        overlaps.sort(key=lambda x: -x[1])
+        overlaps.sort(key=lambda x: (-x[1], x[0]))
         partners[hc] = [code for code, _ in overlaps[:top_n]]
 
     return partners
+
+
+def _find_instructor_partners(
+    focused_courses: list[str],
+    sections_by_id: dict[str, SectionState],
+    section_instructor_ids: dict[str, frozenset[int]],
+    locked: set[str],
+    top_n: int = 5,
+) -> dict[str, list[str]]:
+    """Bound teacher-linked course partners independently of student overlap."""
+    course_instructors: dict[str, set[int]] = {}
+    for sid, section in sections_by_id.items():
+        if sid not in locked:
+            course_instructors.setdefault(section.course_code, set()).update(
+                section_instructor_ids.get(sid, ())
+            )
+    partners = {}
+    for code in focused_courses:
+        instructors = course_instructors.get(code, set())
+        linked = [
+            (other, len(instructors & other_instructors))
+            for other, other_instructors in course_instructors.items()
+            if other != code and instructors & other_instructors
+        ]
+        linked.sort(key=lambda item: (-item[1], item[0]))
+        partners[code] = [other for other, _ in linked[:top_n]]
+    return partners
+
+
+def _alternative_patterns(
+    section: SectionState,
+    pattern_catalog: dict[str, list[CanonicalPattern]],
+    limit: int,
+) -> list[CanonicalPattern]:
+    durations = sorted(m.end_min - m.start_min for m in section.meetings)
+    return [
+        pattern
+        for pattern in pattern_catalog.get(section.pattern_family, [])
+        if pattern.pattern_id != section.pattern_id
+        and pattern.pattern_family == section.pattern_family
+        and sorted(m.end_min - m.start_min for m in pattern.meetings) == durations
+    ][:limit]
 
 
 def generate_chain_2_moves(
@@ -126,17 +173,46 @@ def generate_chain_2_moves(
     student_profiles: dict[str, StudentProfile],
     max_alternatives_per_section: int = 5,
     locked_section_ids: set[str] | None = None,
+    section_instructor_ids: dict[str, frozenset[int]] | None = None,
+    deadline: float | None = None,
 ) -> list[ChainMove]:
-    """Generate chain-2 moves: hotspot section + overlap partner section.
+    """Generate chains from student-overlap and actual shared-instructor edges.
 
     Pruning strategy:
-      - Only hotspot courses (top 5) as move_a
-      - Only their top overlap partners as move_b
-      - Only top N alternative patterns per section (by pattern diversity)
+      - Separate top-5 student hotspots and top-5 instructor focus courses
+      - At most 5 student partners plus 5 instructor partners per focus course
+      - Top N alternative patterns per section, preserving meeting durations
+      - Each unordered section pair generated once, even if both are focused
     """
     chains: list[ChainMove] = []
-    partners = _find_overlap_partners(hotspot_courses[:5], student_profiles, top_n=5)
-    locked = locked_section_ids or set()
+    locked = (locked_section_ids or set()) | {
+        sid
+        for sid, section in sections_by_id.items()
+        if section.is_online or getattr(section, "delivery_is_online", False)
+    }
+    instructor_map = section_instructor_ids if is_instructor_priority_enabled() else None
+    instructor_courses = (
+        instructor_focus_courses(
+            (section for sid, section in sections_by_id.items() if sid not in locked),
+            instructor_map,
+            limit=5,
+        )
+        if instructor_map
+        else []
+    )
+    focused_courses = list(dict.fromkeys(instructor_courses + hotspot_courses[:5]))
+    student_partners = _find_overlap_partners(focused_courses, student_profiles, top_n=5)
+    instructor_partners = (
+        _find_instructor_partners(focused_courses, sections_by_id, instructor_map, locked, top_n=5)
+        if instructor_map
+        else {}
+    )
+    partners = {
+        code: list(
+            dict.fromkeys(instructor_partners.get(code, []) + student_partners.get(code, []))
+        )
+        for code in focused_courses
+    }
 
     if not partners:
         return chains
@@ -146,6 +222,7 @@ def generate_chain_2_moves(
     for sec_id, sec in sections_by_id.items():
         sections_by_course.setdefault(sec.course_code, []).append(sec_id)
 
+    seen_pairs: set[tuple[str, str]] = set()
     for hotspot_code, partner_codes in partners.items():
         hotspot_sec_ids = sections_by_course.get(hotspot_code, [])
         if not hotspot_sec_ids:
@@ -161,31 +238,41 @@ def generate_chain_2_moves(
                 if h_sid in locked:
                     continue
                 h_sec = sections_by_id[h_sid]
-                h_alts = [
-                    p
-                    for p in pattern_catalog.get(h_sec.pattern_family, [])
-                    if p.pattern_id != h_sec.pattern_id
-                ][:max_alternatives_per_section]
+                h_alts = _alternative_patterns(h_sec, pattern_catalog, max_alternatives_per_section)
 
                 if not h_alts:
                     continue
 
                 # Get alternative patterns for partner sections
                 for p_sid in partner_sec_ids:
+                    if deadline is not None and time.perf_counter() >= deadline:
+                        return chains
                     if p_sid in locked:
                         continue
                     p_sec = sections_by_id[p_sid]
-                    p_alts = [
-                        p
-                        for p in pattern_catalog.get(p_sec.pattern_family, [])
-                        if p.pattern_id != p_sec.pattern_id
-                    ][:max_alternatives_per_section]
+                    # A course-level teacher edge must actually connect these
+                    # two sections; different teachers of siblings do not count.
+                    if partner_code not in student_partners.get(hotspot_code, []) and not (
+                        instructor_map
+                        and instructor_map.get(h_sid, frozenset())
+                        & instructor_map.get(p_sid, frozenset())
+                    ):
+                        continue
+                    pair = tuple(sorted((h_sid, p_sid)))
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+                    p_alts = _alternative_patterns(
+                        p_sec, pattern_catalog, max_alternatives_per_section
+                    )
 
                     if not p_alts:
                         continue
 
                     # Generate all combinations
                     for h_alt, p_alt in product(h_alts, p_alts):
+                        if deadline is not None and time.perf_counter() >= deadline:
+                            return chains
                         chains.append(
                             ChainMove(
                                 move_a=TimetableMove(
@@ -311,7 +398,9 @@ def chain_local_search(
             break
         iterations_attempted = iteration + 1
         hotspot_courses = current_best.hotspot_courses
-        if not hotspot_courses:
+        if not hotspot_courses and not (
+            is_instructor_priority_enabled() and section_instructor_ids
+        ):
             logger.info("Chain search: no hotspot courses at iteration %d", iteration)
             break
 
@@ -321,6 +410,8 @@ def chain_local_search(
             pattern_catalog,
             student_profiles,
             locked_section_ids=locked_section_ids,
+            section_instructor_ids=section_instructor_ids,
+            deadline=_chain_deadline,
         )
 
         if not chains:
@@ -335,6 +426,9 @@ def chain_local_search(
         _timed_out = False
 
         for chain in chains:
+            if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
+                _timed_out = True
+                break
             try:
                 snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
             except (PatternNotInCatalog, KeyError):
@@ -395,7 +489,12 @@ def chain_local_search(
             )
             chains_tried += 1
 
-            if test_result.lexicographic_score < best_chain_score:
+            if evaluation_is_better(
+                test_result,
+                best_chain_result or current_best,
+                day_ceilings=schedule_metrics_of(current_best),
+                feasibility_ceilings=current_best,
+            ):
                 best_chain_result = test_result
                 best_chain_score = test_result.lexicographic_score
                 best_chain = chain

@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from django.db import transaction
 
 from core.models import SectionPlacement, TermSectionMeeting
+from core.services.board_ownership import assert_rebuild_ownership, external_shared_section_ids
+from core.services.timetable_course_policy import get_course_meeting_policy
 
 # Placement fields captured for restore. ``id`` is kept so identity is preserved
 # across a snapshot/restore. ``created_at``/``updated_at`` are deliberately
@@ -99,6 +101,20 @@ class ScenarioSnapshot:
         return not self.placements
 
 
+def external_shared_snapshot(scenario_id: int) -> tuple[list[dict], list[dict]]:
+    section_ids = external_shared_section_ids(scenario_id)
+    return (
+        list(
+            SectionPlacement.objects.filter(term_section_id__in=section_ids).order_by("pk").values()
+        ),
+        list(
+            TermSectionMeeting.objects.filter(term_section_id__in=section_ids)
+            .order_by("pk")
+            .values()
+        ),
+    )
+
+
 def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult:
     """Clear a scenario's board(s) so a placement run starts from a clean slate.
 
@@ -111,29 +127,43 @@ def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult
     constraints: each surviving locked placement keeps the meeting that backs it.
     Locking is per-placement (the UI toggles ``is_locked`` on a single placement),
     so a section may have a mix of locked and unlocked placements — meetings are
-    preserved per ``(section, day, start)`` to match the *surviving placements*,
-    never per whole section, so a partially-locked section stays
-    placement == meeting consistent. Passing ``keep_locked=False`` performs a
-    hard wipe of the whole scenario board.
+    preserved per ``(section, day, start)`` to match the *surviving placements*.
+    Fixed weekly policies such as ENG101/ENG102 protect the entire section when
+    any constituent meeting is locked, because its meetings form one indivisible
+    pattern. Passing ``keep_locked=False`` performs a hard wipe of the whole
+    scenario board.
 
     Runs in a single transaction. Returns the row counts removed.
     """
     with transaction.atomic():
+        assert_rebuild_ownership(scenario_id)
         # (section, day, start) of each locked placement that will survive.
-        # Meetings are preserved to match these exact slots — not by section —
-        # so an unlocked meeting on a partially-locked section is still cleared.
+        # Ordinary meetings follow individual locks. Fixed policy sections add
+        # every companion slot before either table is cleared.
         locked_slot_keys: set[tuple[int, str, str]] = set()
         locked_ts_ids: set[int] = set()
+        bundle_ts_ids: set[int] = set()
         if keep_locked:
             for ts_id, day, start in SectionPlacement.objects.filter(
                 board__scenario_id=scenario_id, is_locked=True
             ).values_list("term_section_id", "day", "start_time"):
                 locked_slot_keys.add((ts_id, day, start))
                 locked_ts_ids.add(ts_id)
+            for placement in SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id, term_section_id__in=locked_ts_ids
+            ).select_related("term_section"):
+                section = placement.term_section
+                if get_course_meeting_policy(
+                    section.course_code, section.course_key, section.course_number
+                ):
+                    bundle_ts_ids.add(section.id)
+                    locked_slot_keys.add((section.id, placement.day, placement.start_time))
 
         placements_qs = SectionPlacement.objects.filter(board__scenario_id=scenario_id)
         if keep_locked:
-            placements_qs = placements_qs.filter(is_locked=False)
+            placements_qs = placements_qs.filter(is_locked=False).exclude(
+                term_section_id__in=bundle_ts_ids
+            )
         placements_deleted, _ = placements_qs.delete()
 
         meetings_qs = TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id)
@@ -192,17 +222,30 @@ def restore_scenario(scenario_id: int, snapshot: ScenarioSnapshot) -> None:
     Term sections and boards are never deleted by the optimiser, so the FKs the
     recreated rows reference still exist.
     """
+    frozen = external_shared_section_ids(scenario_id)
     with transaction.atomic():
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
-        TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id).delete()
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id).exclude(
+            term_section_id__in=frozen
+        ).delete()
+        TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id).exclude(
+            term_section_id__in=frozen
+        ).delete()
         if snapshot.placements:
             SectionPlacement.objects.bulk_create(
-                [SectionPlacement(**row) for row in snapshot.placements],
+                [
+                    SectionPlacement(**row)
+                    for row in snapshot.placements
+                    if row["term_section_id"] not in frozen
+                ],
                 batch_size=500,
             )
         if snapshot.meetings:
             TermSectionMeeting.objects.bulk_create(
-                [TermSectionMeeting(**row) for row in snapshot.meetings],
+                [
+                    TermSectionMeeting(**row)
+                    for row in snapshot.meetings
+                    if row["term_section_id"] not in frozen
+                ],
                 batch_size=500,
             )
 
@@ -238,10 +281,15 @@ def sync_meetings_from_placements(scenario_id: int) -> MeetingSyncResult:
     from core.models import TimetableScenario
     from core.services.course_instructor_assignment import reconcile_scenario_instructors
 
-    placement_rows = SectionPlacement.objects.filter(
-        board__scenario_id=scenario_id,
-        term_section__scenario_id=scenario_id,
-    ).values("term_section_id", "day", "start_time", "end_time", "room")
+    frozen = external_shared_section_ids(scenario_id)
+    placement_rows = (
+        SectionPlacement.objects.filter(
+            board__scenario_id=scenario_id,
+            term_section__scenario_id=scenario_id,
+        )
+        .exclude(term_section_id__in=frozen)
+        .values("term_section_id", "day", "start_time", "end_time", "room")
+    )
 
     by_section: dict[int, list[dict]] = {}
     for row in placement_rows:
@@ -293,7 +341,7 @@ def sync_meetings_from_placements(scenario_id: int) -> MeetingSyncResult:
 
         scenario = TimetableScenario.objects.filter(id=scenario_id).first()
         if scenario is not None:
-            reconcile_scenario_instructors(scenario)
+            reconcile_scenario_instructors(scenario, excluded_section_ids=frozen)
 
     return MeetingSyncResult(
         sections_synced=sections_synced,

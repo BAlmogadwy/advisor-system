@@ -20,6 +20,7 @@ import functools
 import logging
 from collections import defaultdict
 
+from django.db import transaction
 from ortools.sat.python import cp_model
 
 from core.models import (
@@ -37,6 +38,10 @@ from core.services.timetable_autoplace import (
     _time_mask,
     get_meeting_pattern,
     placeable_slots,
+)
+from core.services.timetable_course_policy import (
+    get_course_meeting_policy,
+    meeting_options_for_policy,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_same_course import (
@@ -85,6 +90,111 @@ def _to_min(t: str) -> int:
 MIDDAY_BOUNDARY = 13 * 60
 
 
+def _scoped_meeting_options(section, meeting_index, ordinary_options):
+    if section.get("meeting_policy") is None:
+        return ordinary_options
+    return [
+        (
+            WEEKDAYS.index(row["day"]),
+            row["slot_idx"],
+            row["day"],
+            row["start"],
+            row["end"],
+            _time_mask(row["day"], row["start"], row["end"]),
+            _to_min(row["start"]),
+        )
+        for bundle in section["bundles"]
+        for row in (bundle[meeting_index],)
+    ]
+
+
+def _link_weekly_bundles(model, sections, assign):
+    for i, section in enumerate(sections):
+        if section.get("meeting_policy") is None:
+            continue
+        # Each indexed meeting has one option per surviving whole bundle, in
+        # the same order. One section-level decision links all four weekdays.
+        for meeting in assign[i][1:]:
+            for chosen, first in zip(meeting, assign[i][0], strict=True):
+                model.add(chosen == first)
+
+
+def _instructor_ids_for_sections(board, sections):
+    from core.models import CourseInstructor
+    from core.services.timetable_pr4_instructor import build_section_instructor_ids
+
+    resolved = build_section_instructor_ids(board.scenario)
+    by_course = defaultdict(set)
+    programs = set(board.scenario.programs or []) | set((board.program or "").split(","))
+    for code, instructor in CourseInstructor.objects.filter(
+        program__in=programs,
+        section=board.scenario.gender,
+        instructor__is_active=True,
+    ).values_list("course_code", "instructor_id"):
+        by_course[normalise_course_code(code)].add(instructor)
+    return [
+        resolved.get(
+            f"{s['code']}|{s['label']}", by_course[normalise_course_code(s["display_code"])]
+        )
+        for s in sections
+    ]
+
+
+def _add_instructor_constraints(model, board, sections, options, assign):
+    from core.services.timetable_pr4_instructor import (
+        build_section_instructor_ids,
+        get_instructor_daily_cap,
+        is_instructor_clash_enabled,
+        is_instructor_daily_cap_enabled,
+    )
+
+    clash_on, cap_on = is_instructor_clash_enabled(), is_instructor_daily_cap_enabled()
+    if not (clash_on or cap_on):
+        return
+    ids = _instructor_ids_for_sections(board, sections)
+    if clash_on:
+        for a in range(len(sections)):
+            for b in range(a + 1, len(sections)):
+                if not ids[a] & ids[b]:
+                    continue
+                for ma, choices_a in enumerate(options[a]):
+                    for mb, choices_b in enumerate(options[b]):
+                        for oa, first in enumerate(choices_a):
+                            for ob, second in enumerate(choices_b):
+                                if first[5] & second[5]:
+                                    model.add(assign[a][ma][oa] + assign[b][mb][ob] <= 1)
+    # Existing sections, including other boards and locks, remain fixed. Dedup
+    # board copies so one physical meeting consumes one instructor session.
+    resolved = build_section_instructor_ids(board.scenario)
+    fixed = defaultdict(set)
+    for row in SectionPlacement.objects.filter(board__scenario=board.scenario).select_related(
+        "term_section"
+    ):
+        key = f"{row.term_section.course_key or row.term_section.course_code}|{row.term_section.section}"
+        for instructor in resolved.get(key, ()):
+            fixed[instructor].add((row.term_section_id, row.day, row.start_time, row.end_time))
+    day_terms = defaultdict(list)
+    for i, section_ids in enumerate(ids):
+        for m, choices in enumerate(options[i]):
+            for o, choice in enumerate(choices):
+                for instructor in section_ids:
+                    day_terms[(instructor, choice[2])].append(assign[i][m][o])
+                    if clash_on and any(
+                        day == choice[2]
+                        and choice[6] < _to_min(end)
+                        and _to_min(start) < _to_min(choice[4])
+                        for _ts, day, start, end in fixed.get(instructor, ())
+                    ):
+                        model.add(assign[i][m][o] == 0)
+    if cap_on:
+        cap = get_instructor_daily_cap()
+        for (instructor, day), terms in day_terms.items():
+            existing = sum(
+                row_day == day for _ts, row_day, _start, _end in fixed.get(instructor, ())
+            )
+            model.add(sum(terms) + existing <= cap)
+
+
 def _option_end_min(option: tuple) -> int:
     return option[7] if len(option) > 7 else _to_min(option[4])
 
@@ -109,7 +219,8 @@ def _add_same_course_adjacency_penalties(
 ) -> None:
     by_course: dict[str, list[int]] = defaultdict(list)
     for idx, sec in enumerate(sections):
-        by_course[sec["code"]].append(idx)
+        if sec.get("meeting_policy") is None:
+            by_course[sec["code"]].append(idx)
 
     for _code, indices in by_course.items():
         if len(indices) < 2:
@@ -195,6 +306,8 @@ def _add_locked_reservations(
         code = sec["code"]
         for fm in fixed_meetings:
             same_course = fm["course_code"] == code
+            if same_course and sec.get("meeting_policy") is not None:
+                continue  # institutional siblings may share the complete bundle
             shared = 0 if same_course else _ssc(overlap_matrix, code, fm["course_code"])
             if not same_course and shared <= 0:
                 continue
@@ -263,7 +376,17 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         code = budget.course_key or budget.course_code
         display_code = budget.course_code
         cr = budget.credit_hours or 3
-        pattern = get_meeting_pattern(cr)
+        policy = get_course_meeting_policy(display_code, code)
+        pattern = get_meeting_pattern(cr, code)
+        bundles = (
+            meeting_options_for_policy(
+                policy,
+                blocked_slots=scenario.blocked_slots or [],
+                slots=[*slot_config, *lab_slot_config],
+            )
+            if policy is not None
+            else None
+        )
         already = (
             SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
@@ -280,6 +403,8 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                     "sec_num": sec_num,
                     "label": f"S{sec_num}",
                     "pattern": pattern,
+                    "meeting_policy": policy,
+                    "bundles": bundles,
                     "is_online": normalise_course_code(display_code) in online_codes,
                     "capacity": budget.max_per_section,
                 }
@@ -302,7 +427,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         sec_assign = []
         sec_opts = []
         for m_idx, duration in enumerate(sec["pattern"]):
-            options = get_options(duration)
+            options = _scoped_meeting_options(sec, m_idx, get_options(duration))
             if not options:
                 # A fully-blocked grid for this duration leaves no feasible
                 # slot — report infeasible rather than build an unsatisfiable
@@ -320,6 +445,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
         assign.append(sec_assign)
         sec_options.append(sec_opts)
+
+    _link_weekly_bundles(model, sections, assign)
+    _add_instructor_constraints(model, board, sections, sec_options, assign)
 
     # ── Hard: all-different days per section ──────────────────────
     for i, sec in enumerate(sections):
@@ -353,7 +481,8 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     # ── Hard: same course different sections don't overlap ────────
     by_course: dict[str, list[int]] = defaultdict(list)
     for i, sec in enumerate(sections):
-        by_course[sec["code"]].append(i)
+        if sec.get("meeting_policy") is None:
+            by_course[sec["code"]].append(i)
 
     for _code, indices in by_course.items():
         if len(indices) <= 1:
@@ -614,6 +743,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     }
 
 
+@transaction.atomic
 def persist_solver_result(board_id: int, result: dict) -> dict:
     """Persist a solver result (from solve_board or solve_board_with_hints).
 
@@ -626,10 +756,9 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     The instructor-clash backstop lives HERE rather than in
     ``solve_and_persist_board`` because this function is the actual writer, and
     ``timetable_autoplace`` calls it directly — wiring only the wrapper would
-    leave the primary build path unguarded. The CP-SAT model above constrains
-    rooms and student overlap but has no instructor variable, so it can seat one
-    instructor in two places at once; the backstop cannot prevent that (the model
-    would have to change) but it ensures such a board is never written silently.
+    leave the primary build path unguarded. The model protects resolved
+    instructor overlaps and caps; this independent persistence check also
+    protects locks and complete institutional weekly patterns.
     """
     if result["status"] in ("infeasible", "timeout", "error"):
         return result
@@ -640,6 +769,23 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         return result
 
     from core.services.timetable_instructor_backstop import verify_persisted_scenario
+    from core.services.timetable_local_search import (
+        _capture_persist_guard,
+        _persist_guard_rejections,
+    )
+    from core.services.timetable_section_policy import SectionPolicyError, assert_pattern_available
+
+    guard_before = _capture_persist_guard(board)
+    for placement in result["placements"]:
+        policy = get_course_meeting_policy(
+            placement.get("display_code", ""), placement["course_code"]
+        )
+        if policy is not None:
+            if not policy.accepts(placement["meetings"]):
+                raise SectionPolicyError(
+                    "English sections require exactly four continuous 180-minute meetings in one complete pattern."
+                )
+            assert_pattern_available(policy, placement["meetings"], board.scenario)
 
     # Clear existing auto-placed sections AND their meetings. When lock
     # enforcement is on, locked rows are preserved (never deleted/recreated)
@@ -652,7 +798,10 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         board=board, term_section__source_tag="tw_auto"
     )
     if is_lock_enforcement_enabled():
-        auto_placements = auto_placements.exclude(is_locked=True)
+        locked_sections = SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
+            "term_section_id", flat=True
+        )
+        auto_placements = auto_placements.exclude(term_section_id__in=locked_sections)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()
     for ts_id in ts_ids:
@@ -688,6 +837,11 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
                 "source_tag": "tw_auto",
             },
         )
+        if (
+            is_lock_enforcement_enabled()
+            and SectionPlacement.objects.filter(term_section=ts, is_locked=True).exists()
+        ):
+            continue
         for m in p["meetings"]:
             TermSectionMeeting.objects.get_or_create(
                 term_section=ts,
@@ -710,6 +864,16 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         # goes blank.
         apply_primary_instructor(ts, scenario, board, display_code)
 
+    rejections = _persist_guard_rejections(board, guard_before, preserve_teacher_quality=False)
+    if rejections:
+        transaction.set_rollback(True)
+        result.update(
+            persist_rolled_back=True,
+            rollback_reasons=rejections,
+            attempted_placed=result.get("placed", 0),
+            placed=0,
+        )
+        return result
     result["instructor_clash_backstop"] = verify_persisted_scenario(
         board.scenario_id, context="board_cpsat_solver"
     )
@@ -800,7 +964,17 @@ def solve_board_with_hints(
         code = budget.course_key or budget.course_code
         display_code = budget.course_code
         cr = budget.credit_hours or 3
-        pattern = get_meeting_pattern(cr)
+        policy = get_course_meeting_policy(display_code, code)
+        pattern = get_meeting_pattern(cr, code)
+        bundles = (
+            meeting_options_for_policy(
+                policy,
+                blocked_slots=scenario.blocked_slots or [],
+                slots=[*slot_config, *lab_slot_config],
+            )
+            if policy is not None
+            else None
+        )
         already = (
             SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
@@ -817,6 +991,8 @@ def solve_board_with_hints(
                     "sec_num": sec_num,
                     "label": f"S{sec_num}",
                     "pattern": pattern,
+                    "meeting_policy": policy,
+                    "bundles": bundles,
                     "is_online": normalise_course_code(display_code) in online_codes,
                     "capacity": budget.max_per_section,
                 }
@@ -840,7 +1016,7 @@ def solve_board_with_hints(
         sec_assign = []
         sec_opts = []
         for m_idx, duration in enumerate(sec["pattern"]):
-            options = get_options(duration)
+            options = _scoped_meeting_options(sec, m_idx, get_options(duration))
             if not options:
                 return {
                     "status": "infeasible",
@@ -858,6 +1034,9 @@ def solve_board_with_hints(
             model.add_exactly_one(m_assign)
         assign.append(sec_assign)
         sec_options.append(sec_opts)
+
+    _link_weekly_bundles(model, sections, assign)
+    _add_instructor_constraints(model, board, sections, sec_options, assign)
 
     # Hard: all-different days per section
     for i, sec in enumerate(sections):
@@ -885,7 +1064,8 @@ def solve_board_with_hints(
     # Hard: same course different sections don't overlap
     by_course: dict[str, list[int]] = defaultdict(list)
     for i, sec in enumerate(sections):
-        by_course[sec["code"]].append(i)
+        if sec.get("meeting_policy") is None:
+            by_course[sec["code"]].append(i)
     for _code, indices in by_course.items():
         if len(indices) <= 1:
             continue

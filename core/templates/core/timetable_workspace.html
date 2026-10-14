@@ -9,6 +9,8 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=2" rel="stylesheet">
+  <link href="{% static 'css/timetable-meeting-policy.css' %}?v=2" rel="stylesheet">
 {% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}محطة بناء الجدول{% else %}Timetable Workspace{% endif %}{% endblock %}
@@ -39,15 +41,9 @@
       <input id="twSection" class="fb-w-3ch text-caps" placeholder="M">
     </div>
     <div class="fb-search">
-      <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}الخوارزمية{% else %}Strategy{% endif %}</label>
+      <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}المقارنة{% else %}Portfolio{% endif %}</label>
       <select id="twStrategy">
-        <option value="compact">{% if LANGUAGE_CODE == 'ar' %}مضغوط{% else %}Compact{% endif %}</option>
-        <option value="morning">{% if LANGUAGE_CODE == 'ar' %}صباحي{% else %}Morning-first{% endif %}</option>
-        <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن{% else %}Balanced{% endif %}</option>
-        <option value="optimal">{% if LANGUAGE_CODE == 'ar' %}الأمثل{% else %}Optimal (CP-SAT){% endif %}</option>
-        <option value="hybrid">{% if LANGUAGE_CODE == 'ar' %}هجين{% else %}Hybrid (Best){% endif %}</option>
-        <option value="load_balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن الأيام{% else %}Load-Balanced{% endif %}</option>
-        <option value="adaptive">{% if LANGUAGE_CODE == 'ar' %}تكيّفي (الأفضل){% else %}Adaptive (Best Overall){% endif %}</option>
+        <option value="compact">{% if LANGUAGE_CODE == 'ar' %}المولد الحالي: مقارنة 7 استراتيجيات{% else %}Classic: compare 7 strategies{% endif %}</option>
       </select>
     </div>
   </div>
@@ -61,19 +57,13 @@
       <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 18px;">
         <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
         {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
-      </button><button id="twGenerateMenu" class="btn btn-primary" type="button" style="padding:6px 6px; border-inline-start:1px solid rgba(255,255,255,.35); margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}اختر المحرك{% else %}Choose engine{% endif %}">&#x25BE;</button>
-      <div id="twGenerateDropdown" class="fs-md" style="display:none; position:absolute; top:100%; inset-inline-start:0; z-index:100; min-width:290px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
-        <div class="tw-gen-item u-cursor-pointer" data-engine="classic" style="padding:8px 12px; border-bottom:1px solid var(--line)">
-          <div class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}المولد الحالي{% else %}Current generator{% endif %}</div>
-          <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}المحرك الأصلي مع الاستراتيجية المختارة{% else %}The original engine, with the strategy chosen above{% endif %}</div>
-        </div>
-        <div class="tw-gen-item u-cursor-pointer" data-engine="scheduler" style="padding:8px 12px">
-          <div class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}المحرك الجديد{% else %}New scheduler engine{% endif %}</div>
-          <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}أقل عدد أيام للمدرّس + توزيع الغرف الأمثل (~2 دقيقة){% else %}Fewest instructor days, exact rooming (~2 min){% endif %}</div>
-        </div>
+      </button><button id="twGenerateMenu" class="btn btn-primary" type="button" style="padding:6px 6px; border-inline-start:1px solid rgba(255,255,255,.35); margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}اختر المحرك{% else %}Choose engine{% endif %}" aria-haspopup="menu" aria-expanded="false" aria-controls="twGenerateDropdown" aria-label="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Choose generator engine{% endif %}">&#x25BE;</button>
+      <div id="twGenerateDropdown" role="menu" aria-labelledby="twGenerateMenu" class="fs-md" style="display:none; position:absolute; top:100%; inset-inline-start:0; z-index:100; min-width:290px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
+        <button type="button" role="menuitem" tabindex="-1" class="tw-gen-item u-cursor-pointer" data-engine="classic" style="padding:8px 12px; border-bottom:1px solid var(--line)"><span class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}المولد الحالي{% else %}Current generator{% endif %}</span><span class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}مقارنة 7 استراتيجيات ثم تحسين أيام المدرسين وفراغاتهم{% else %}Compares 7 strategies, then improves instructor days and idle time{% endif %}</span></button>
+        <button type="button" role="menuitem" tabindex="-1" class="tw-gen-item u-cursor-pointer" data-engine="scheduler" style="padding:8px 12px"><span class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}المحرك الجديد{% else %}New scheduler engine{% endif %}</span><span class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}مقارنة عدة محاولات: أيام المدرسين، الفراغات، الغرف وتأكيد تعيين الطلاب{% else %}Multiple-run portfolio: instructor days, idle time, rooms and student seating confirmation{% endif %}</span></button>
       </div>
     </span>
-    <span class="fs-sm text-t4" id="twGenStatus" style="white-space:nowrap"></span>
+    <div class="fs-sm text-t4" id="twGenStatus" role="status" aria-live="polite" aria-atomic="true" style="white-space:normal;flex:1 1 320px;line-height:1.7"></div>
     <div class="flex-fill"></div>
     <button id="twFullscreen" class="btn u-cursor-pointer d-flex align-items-center fs-sm text-t3" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px; background:var(--glass-bg); border:1px solid var(--line); border-radius:6px; gap:4px">
     <svg id="twFsIcon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
@@ -84,11 +74,11 @@
 
 <!-- A2. Workspace Command Bar (always visible — scenario selector and Optimise button live here) -->
 <div class="tw-cmd-bar" id="twCmdBar">
-  <label class="visually-hidden" for="twScenario">Scenario</label>
+  <label class="visually-hidden" for="twScenario">{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}</label>
   <select id="twScenario" title="{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}">
     <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select Scenario{% endif %}</option>
   </select>
-  <button class="tw-btn" id="twNewScenario" type="button">+</button>
+  <button class="tw-btn" id="twNewScenario" type="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}إنشاء سيناريو{% else %}Create scenario{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}إنشاء سيناريو{% else %}Create scenario{% endif %}">+</button>
 
   <div class="tw-cmd-sep"></div>
 
@@ -97,14 +87,15 @@
 
   <div class="flex-fill"></div>
 
+  <label class="visually-hidden" for="twSearch">{% if LANGUAGE_CODE == 'ar' %}البحث في الجدول{% else %}Search timetable{% endif %}</label>
   <input type="search" id="twSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث...{% else %}Search...{% endif %}" style="min-width:140px;">
 
   <button class="tw-btn d-none" id="twSlotEdit" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تعديل الفترات{% else %}Edit Slots{% endif %}">
     &#x23F0; {% if LANGUAGE_CODE == 'ar' %}الفترات{% else %}Slots{% endif %}
   </button>
 
-  <button class="tw-btn" id="twUndo" type="button" disabled title="Undo">&#x21B6;</button>
-  <button class="tw-btn" id="twRedo" type="button" disabled title="Redo">&#x21B7;</button>
+  <button class="tw-btn" id="twUndo" type="button" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Undo{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Undo{% endif %}">&#x21B6;</button>
+  <button class="tw-btn" id="twRedo" type="button" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Redo{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Redo{% endif %}">&#x21B7;</button>
   <button class="tw-btn" id="twMriPage" type="button" title="{% if LANGUAGE_CODE == 'ar' %}فتح تصوير الجدول الكامل{% else %}Open full Timetable MRI{% endif %}">MRI</button>
   <a class="tw-btn" id="twGraphPage" href="/timetable-workspace/graph/" title="Open Neo4j graph twin" style="text-decoration:none">Graph</a>
 
@@ -114,51 +105,55 @@
     <button class="tw-btn" id="twOptimise" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تحسين الجدول الحالي{% else %}Improve current board{% endif %}">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-inline-end:3px"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
       {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
-    </button><button class="tw-btn" id="twOptimiseMenu" type="button" style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Options{% endif %}">&#x25BE;</button>
-    <div class="fs-md" id="twOptimiseDropdown" style="display:none; position:absolute; top:100%; right:0; z-index:100; min-width:220px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
-      <div class="tw-opt-item u-cursor-pointer" data-mode="current" style="padding:8px 12px; border-bottom:1px solid var(--line)">
-        <div class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}تحسين الحالي{% else %}Optimise Current{% endif %}</div>
-        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}تحسين بدون إعادة توليد{% else %}Improve without regenerating{% endif %}</div>
-      </div>
-      <div class="tw-opt-item u-cursor-pointer" data-mode="full" style="padding:8px 12px">
-        <div class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}إعادة بناء كاملة{% else %}Full Rebuild{% endif %}</div>
-        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}7 استراتيجيات + بحث محلي{% else %}7 strategies + local search (~2min){% endif %}</div>
-      </div>
+    </button><button class="tw-btn" id="twOptimiseMenu" type="button" style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Options{% endif %}" aria-haspopup="menu" aria-expanded="false" aria-controls="twOptimiseDropdown" aria-label="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Optimise options{% endif %}">&#x25BE;</button>
+    <div class="fs-md" id="twOptimiseDropdown" role="menu" aria-labelledby="twOptimiseMenu" style="display:none; position:absolute; top:100%; right:0; z-index:100; min-width:220px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
+      <button type="button" role="menuitem" tabindex="-1" class="tw-opt-item u-cursor-pointer" data-mode="current" style="padding:8px 12px; border-bottom:1px solid var(--line)"><span class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}تحسين الحالي{% else %}Optimise Current{% endif %}</span><span class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}تحسين بدون إعادة توليد{% else %}Improve without regenerating{% endif %}</span></button>
+      <button type="button" role="menuitem" tabindex="-1" class="tw-opt-item u-cursor-pointer" data-mode="full" style="padding:8px 12px"><span class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}إعادة بناء كاملة{% else %}Full Rebuild{% endif %}</span><span class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}7 استراتيجيات + بحث محلي{% else %}7 strategies + local search (~2min){% endif %}</span></button>
     </div>
   </span>
 
   <span id="twExportGroup" class="tw-btn-group" style="display:inline-flex; position:relative;">
     <button class="tw-btn" id="twExport" type="button" disabled style="padding:5px 10px;" title="{% if LANGUAGE_CODE == 'ar' %}تصدير حسب الفلتر أو حسب كل خطة{% else %}Filtered export, or one workbook per plan when no filter is active{% endif %}">
       &#x1F4E5; {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
-    </button><button class="tw-btn" id="twExportMenu" type="button" disabled style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات التصدير{% else %}Export options{% endif %}">&#x25BE;</button>
-    <div class="fs-md" id="twExportDropdown" style="display:none; position:absolute; top:100%; right:0; z-index:100; min-width:260px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
-      <div class="tw-export-item u-cursor-pointer" data-mode="combined" style="padding:8px 12px; border-bottom:1px solid var(--line)">
-        <div class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}ملف موحد{% else %}Combined workbook{% endif %}</div>
-        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}ملف واحد بأوراق لكل مدة لوحة{% else %}One XLSX organised by board term{% endif %}</div>
-      </div>
-      <div class="tw-export-item u-cursor-pointer" data-mode="per-plan" style="padding:8px 12px">
-        <div class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}ملف لكل خطة{% else %}One file per plan{% endif %}</div>
-        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}ملف XLSX لكل برنامج بأوراق حسب فصل الخطة{% else %}One XLSX per program, sheets by plan term{% endif %}</div>
-      </div>
+    </button><button class="tw-btn" id="twExportMenu" type="button" disabled style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات التصدير{% else %}Export options{% endif %}" aria-haspopup="menu" aria-expanded="false" aria-controls="twExportDropdown" aria-label="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Export options{% endif %}">&#x25BE;</button>
+    <div class="fs-md" id="twExportDropdown" role="menu" aria-labelledby="twExportMenu" style="display:none; position:absolute; top:100%; right:0; z-index:100; min-width:260px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
+      <button type="button" role="menuitem" tabindex="-1" class="tw-export-item u-cursor-pointer" data-mode="combined" style="padding:8px 12px; border-bottom:1px solid var(--line)"><span class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}ملف موحد{% else %}Combined workbook{% endif %}</span><span class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}ملف واحد بأوراق لكل مدة لوحة{% else %}One XLSX organised by board term{% endif %}</span></button>
+      <button type="button" role="menuitem" tabindex="-1" class="tw-export-item u-cursor-pointer" data-mode="per-plan" style="padding:8px 12px"><span class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}ملف لكل خطة{% else %}One file per plan{% endif %}</span><span class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}ملف XLSX لكل برنامج بأوراق حسب فصل الخطة{% else %}One XLSX per program, sheets by plan term{% endif %}</span></button>
     </div>
   </span>
 
-  <button class="tw-btn tw-btn-primary" id="twPublish" type="button" disabled
+  <button class="tw-btn tw-btn-primary" id="twPublish" type="button" disabled>
     {% if LANGUAGE_CODE == 'ar' %}نشر{% else %}Publish{% endif %}
   </button>
 </div>
+
+<section id="twQualitySummary" class="tw-quality-summary" aria-labelledby="twQualityHeading">
+  <div class="tw-quality-heading">
+    <h2 id="twQualityHeading">{% if LANGUAGE_CODE == 'ar' %}جودة الجدول{% else %}Timetable quality{% endif %}</h2>
+    <p id="twQualityStatus" role="status" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو لعرض المؤشرات{% else %}Select a scenario to see quality metrics{% endif %}</p>
+  </div>
+  <dl class="tw-quality-metrics">
+    <div><dt>{% if LANGUAGE_CODE == 'ar' %}اجتماعات اللوحة{% else %}Board meetings{% endif %}</dt><dd id="twQualityPlaced">—</dd></div>
+    <div><dt>{% if LANGUAGE_CODE == 'ar' %}مشاكل اللوحة الحرجة{% else %}Board critical issues{% endif %}</dt><dd id="twQualityConflicts">—</dd></div>
+    <div><dt>{% if LANGUAGE_CODE == 'ar' %}مقاعد مرنة غير معينة{% else %}Unresolved soft seats{% endif %}</dt><dd id="twQualityUnplaced">—</dd></div>
+    <div><dt>{% if LANGUAGE_CODE == 'ar' %}اجتماعات تحتاج قاعة مناسبة{% else %}Meetings needing a suitable room{% endif %}</dt><dd id="twQualityRooms">—</dd></div>
+    <div><dt>{% if LANGUAGE_CODE == 'ar' %}أيام المدرسين{% else %}Instructor days{% endif %}</dt><dd id="twQualityInstructorDays">—</dd></div>
+    <div><dt>{% if LANGUAGE_CODE == 'ar' %}انتظار المدرسين (دقيقة){% else %}Instructor idle (min){% endif %}</dt><dd id="twQualityInstructorIdle">—</dd></div>
+  </dl>
+</section>
 
 <!-- B+C+D. Three-Column Workspace -->
 <div class="tw-workspace">
 
   <!-- B. Left Sidebar -->
-  <aside class="tw-left" id="twLeft">
+  <aside class="tw-left" id="twLeft" aria-label="{% if LANGUAGE_CODE == 'ar' %}اللوحات والشعب المطلوبة{% else %}Boards and required sections{% endif %}">
     <div class="tw-left-section">
       <h3>{% if LANGUAGE_CODE == 'ar' %}اللوحات{% else %}Boards{% endif %}</h3>
       <div id="twBoardsNav"></div>
     </div>
     <div class="tw-left-section">
       <h3>{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Required Sections{% endif %}</h3>
+      <label class="visually-hidden" for="twSectionSearch">{% if LANGUAGE_CODE == 'ar' %}تصفية الشعب المطلوبة{% else %}Filter required sections{% endif %}</label>
       <input type="search" class="tw-search" id="twSectionSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية المقررات...{% else %}Filter courses...{% endif %}">
       <div class="tw-section-list" id="twSectionList">
         <div class="text-t4 fs-md" style="padding:12px">{% if LANGUAGE_CODE == 'ar' %}اضغط "توليد" أولاً{% else %}Click "Generate" first{% endif %}</div>
@@ -186,14 +181,14 @@
   </div>
 
   <!-- D. Right Panel -->
-  <aside class="tw-right" id="twRight">
-    <div class="tw-panel-tabs">
-      <div class="tw-panel-tab active" data-tab="issues">{% if LANGUAGE_CODE == 'ar' %}المشاكل{% else %}Issues{% endif %}</div>
-      <div class="tw-panel-tab" data-tab="capacity">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</div>
-      <div class="tw-panel-tab" data-tab="selection">{% if LANGUAGE_CODE == 'ar' %}التحديد{% else %}Selection{% endif %}</div>
-      <div class="tw-panel-tab" data-tab="mri">MRI</div>
+  <aside class="tw-right" id="twRight" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
+    <div class="tw-panel-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
+      <button type="button" id="twTabIssues" class="tw-panel-tab active" data-tab="issues" role="tab" aria-selected="true" aria-controls="twRightBody">{% if LANGUAGE_CODE == 'ar' %}المشاكل{% else %}Issues{% endif %}</button>
+      <button type="button" id="twTabCapacity" class="tw-panel-tab" data-tab="capacity" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</button>
+      <button type="button" id="twTabSelection" class="tw-panel-tab" data-tab="selection" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}التحديد{% else %}Selection{% endif %}</button>
+      <button type="button" id="twTabMri" class="tw-panel-tab" data-tab="mri" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">MRI</button>
     </div>
-    <div class="tw-panel-body" id="twRightBody">
+    <div class="tw-panel-body" id="twRightBody" role="tabpanel" aria-labelledby="twTabIssues" tabindex="0">
       <div class="tw-empty" style="padding:24px;">
         <p>{% if LANGUAGE_CODE == 'ar' %}لا توجد مشاكل{% else %}No issues yet{% endif %}</p>
       </div>
@@ -203,15 +198,17 @@
 
 <!-- E. Bottom Panel -->
 <div class="tw-bottom" id="twBottom">
-  <div class="tw-bottom-handle" id="twBottomHandle">
+  <button type="button" class="tw-bottom-handle" id="twBottomHandle" aria-expanded="false" aria-controls="twBottomContent">
     {% if LANGUAGE_CODE == 'ar' %}&#x25B2; تفاصيل{% else %}&#x25B2; Details{% endif %}
+  </button>
+  <div id="twBottomContent">
+  <div class="tw-panel-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}تفاصيل الجدول{% else %}Timetable details{% endif %}">
+    <button type="button" id="twTabDemand" class="tw-panel-tab active" data-tab="demand" role="tab" aria-selected="true" aria-controls="twBottomBody">{% if LANGUAGE_CODE == 'ar' %}الطلب{% else %}Course Demand{% endif %}</button>
+    <button type="button" id="twTabResources" class="tw-panel-tab" data-tab="resources" role="tab" aria-selected="false" aria-controls="twBottomBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}الموارد{% else %}Resources{% endif %}</button>
   </div>
-  <div class="tw-panel-tabs">
-    <div class="tw-panel-tab active" data-tab="demand">{% if LANGUAGE_CODE == 'ar' %}الطلب{% else %}Course Demand{% endif %}</div>
-    <div class="tw-panel-tab" data-tab="resources">{% if LANGUAGE_CODE == 'ar' %}الموارد{% else %}Resources{% endif %}</div>
-  </div>
-  <div class="tw-panel-body" id="twBottomBody">
+  <div class="tw-panel-body" id="twBottomBody" role="tabpanel" aria-labelledby="twTabDemand" tabindex="0">
     <p class="text-t4" style="font-size:.8rem">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات{% else %}No data yet{% endif %}</p>
+  </div>
   </div>
 </div>
 
@@ -223,8 +220,10 @@
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
-  const defaultYear = {{ default_year }};
-  const defaultTerm = {{ default_term }};
+  const defaultYear = "{{ default_year|default:''|escapejs }}";
+  const defaultTerm = "{{ default_term|default:''|escapejs }}";
 </script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=29"></script>
+<script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=34"></script>
+<script src="{% static 'js/timetable-workspace-accessibility.js' %}?v=1"></script>
 {% endblock %}

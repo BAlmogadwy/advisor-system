@@ -39,6 +39,29 @@ modes: **Optimise Current** (in-place improvements) and **Full Rebuild** (7
 strategies from scratch). Entry: `/timetable-workspace/` (JSON API under
 `/ops/tw/`).
 
+Generate and Optimise prioritise instructor campus working days, then idle
+minutes, while protecting hard student coverage and operational constraints.
+Optimise Current cannot add a campus day or idle minutes for any instructor,
+including during mandatory repairs; an incompatible repair is rolled back. The classic
+policy is controlled by `TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED` (default on).
+Scheduler Generate tries three seeds by default and reports confirmed student
+seating separately from estimated course clashes. The existing student score
+format remains stable.
+Classic builds finish with a bounded seat/room recovery pass. It reduces soft
+unresolved seats and physical room shortages without sacrificing either outcome
+or any teacher's achieved days/gaps. Room checks include undersized assigned rooms.
+`TIMETABLE_SECONDARY_RECOVERY_ENABLED=false` disables this pass; its default
+search allowance is 45 seconds and 12 recovery iterations, followed by gap
+polishing within the remaining budget.
+See [real-data validation](docs/TIMETABLE-INSTRUCTOR-PRIORITY-VALIDATION.md)
+for measured improvements, student trade-offs and remaining room shortages.
+The [secondary recovery validation](docs/TIMETABLE-SECONDARY-RECOVERY-VALIDATION.md)
+records the follow-up comparisons and stricter individual instructor guarantees.
+The workspace also shows canonical instructor/seat/room quality, coordinates
+background jobs with manual editing, and restores the saved schedule after
+accepted cooperative cancellation. Menus, tabs, history and sibling-view links
+are covered by [UI and browser validation](docs/TIMETABLE-UI-VALIDATION.md).
+
 **Course-tier-aware objective** (flag `TIMETABLE_TIERED_OBJECTIVE_ENABLED`,
 default **on** as of 2026-07-16). Not all enrolments rank equally — the optimiser ranks
 resolution by course tier, derived from the curriculum:

@@ -146,8 +146,8 @@ def _room_load_by_term(snapshot: Snapshot, term_of: dict[str, int]) -> collectio
     for section in snapshot.sections:
         offering = offerings[section.offering_id]
         term = term_of.get(offering.id)
-        if term is None or not offering.is_scheduled or offering.occupies_fixed_block:
-            # A fixed-block course (D19) has its hours already decided and draws
+        if term is None or not offering.is_scheduled or offering.meeting_policy is not None:
+            # An institutional pattern chooses its complete hours and draws
             # on no shared room, so it neither needs phasing nor competes for
             # the supply this balance is protecting.
             continue

@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_same_course import (
     has_same_course_overlap as _windows_have_overlap,
 )
@@ -304,6 +305,8 @@ def _same_course_windows_by_course(sections_by_id: Mapping[str, Any]) -> dict[st
     """Group every section's meeting windows by course_code."""
     by_course: dict[str, list] = {}
     for sec in sections_by_id.values():
+        if get_course_meeting_policy(sec.course_code):
+            continue
         bucket = by_course.setdefault(sec.course_code, [])
         for meeting in sec.meetings:
             bucket.append(

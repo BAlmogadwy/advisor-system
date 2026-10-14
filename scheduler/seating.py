@@ -30,14 +30,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from time import perf_counter
 
-from scheduler.domain import DeliveryMode, Snapshot
+from scheduler.domain import Day, DeliveryMode, Snapshot, TimeWindow
 from scheduler.domain.board import Board
-
-#: Leaving a student without a seat is far worse than giving them a clash: they
-#: cannot take the course at all. Priced so no amount of clash-avoidance is ever
-#: worth an empty seat.
-_UNSEATED_PENALTY = 1000
+from scheduler.meeting_patterns import policy_accepts
 
 
 @dataclass
@@ -61,6 +58,12 @@ class SeatingResult:
     #: Students who got every class they asked for. A student left with no seat
     #: has no clash, so they must not be counted as clash-free.
     students_fully_seated: int = 0
+    status: str = "UNKNOWN"
+    fully_seated_students_with_a_clash: int | None = None
+
+    @property
+    def solution_found(self) -> bool:
+        return self.proven_optimal or self.status in {"OPTIMAL", "FEASIBLE"}
 
     @property
     def clash_free_percent(self) -> float | None:
@@ -79,10 +82,11 @@ class SeatingResult:
         """
         if not self.proven_optimal or not self.students_fully_seated:
             return None
+        clashed = self.fully_seated_students_with_a_clash
+        if clashed is None:
+            clashed = self.students_with_a_clash
         return round(
-            100.0
-            * (self.students_fully_seated - self.students_with_a_clash)
-            / self.students_fully_seated,
+            100.0 * (self.students_fully_seated - clashed) / self.students_fully_seated,
             1,
         )
 
@@ -91,17 +95,26 @@ class SeatingResult:
             "students": self.students,
             "students_fully_seated": self.students_fully_seated,
             "clash_free_percent": self.clash_free_percent,
-            "students_with_a_clash": self.students_with_a_clash,
-            "total_clashes": self.total_clashes,
-            "unseated_demands": self.unseated_demands,
-            "average_idle_minutes": round(self.idle_minutes / self.students, 1)
-            if self.students
-            else 0.0,
+            "students_with_a_clash": self.students_with_a_clash if self.solution_found else None,
+            "total_clashes": self.total_clashes if self.solution_found else None,
+            "unseated_demands": self.unseated_demands if self.solution_found else None,
+            "average_idle_minutes": (
+                round(self.idle_minutes / self.students, 1) if self.students else 0.0
+            )
+            if self.solution_found
+            else None,
             "regular_students": self.regular_students,
-            "regular_idle_minutes_avg": round(self.regular_idle_minutes / self.regular_students, 1)
-            if self.regular_students
-            else 0.0,
+            "regular_idle_minutes_avg": (
+                round(self.regular_idle_minutes / self.regular_students, 1)
+                if self.regular_students
+                else 0.0
+            )
+            if self.solution_found
+            else None,
             "proven_optimal": self.proven_optimal,
+            "status": self.status,
+            "solution_found": self.solution_found,
+            "seated_demands": self.seated_demands if self.solution_found else None,
             "notes": list(self.notes),
         }
 
@@ -114,8 +127,8 @@ def seat_students(
 ) -> SeatingResult:
     """Assign each student to one section per course they need, respecting capacity.
 
-    Minimises the number of students left with a timetable clash, then their
-    waiting time between classes. Section capacity is a hard constraint, because
+    Minimises unseated demands first, then colliding course pairs. Waiting time
+    is measured after assignment. Section capacity is a hard constraint, because
     ignoring it would flatter the board: the proxy objective is allowed to assume
     students spread evenly across sections, and a registrar is not.
 
@@ -123,6 +136,9 @@ def seat_students(
     """
     from ortools.sat.python import cp_model
 
+    started = perf_counter()
+    if time_limit_seconds < 0:
+        raise ValueError("time_limit_seconds must be nonnegative")
     offerings = snapshot.offerings_by_id
     sections_by_offering = snapshot.sections_by_offering
 
@@ -130,17 +146,41 @@ def seat_students(
     for p in board.placements:
         placements[p.section_id].append(p)
 
+    # An absent or incomplete section offers no deliverable seat. Counting it
+    # as an empty schedule would reward missing meetings with zero clashes.
+    usable: dict[str, bool] = {}
+    for section in snapshot.sections:
+        offering = offerings[section.offering_id]
+        required = [r for r in offering.requirements for _ in range(r.count_per_week)]
+        actual = sorted(placements.get(section.id, ()), key=lambda p: p.meeting_index)
+        usable[section.id] = (
+            bool(required)
+            and len(actual) == len(required)
+            and all(
+                p.meeting_index == index
+                and p.offering_id == offering.id
+                and p.kind is req.kind
+                and p.delivery is req.delivery
+                and p.window.duration == req.duration
+                for index, (p, req) in enumerate(zip(actual, required, strict=False), start=1)
+            )
+        )
+        if usable[section.id]:
+            usable[section.id] = policy_accepts(offering, actual) and not any(
+                a.overlaps(b) for index, a in enumerate(actual) for b in actual[index + 1 :]
+            )
+
     # CLASH counts every meeting, online included: an online class at 15:50 and
     # an on-campus one at 16:00 collide in real time, and a student cannot
     # attend both however either is delivered.
-    def busy_windows(section_id: str):
+    def busy_windows(section_id: str) -> list[tuple[Day, TimeWindow]]:
         return [(p.day, p.window) for p in placements.get(section_id, ())]
 
     # WAITING counts only what puts a student on campus (owner rule): an evening
     # online class is not time spent hanging about between lectures, so it must
     # not inflate the figure -- and it would inflate it badly, since the online
     # family sits hours after the on-campus day ends.
-    def campus_windows(section_id: str):
+    def campus_windows(section_id: str) -> list[tuple[Day, TimeWindow]]:
         return [
             (p.day, p.window)
             for p in placements.get(section_id, ())
@@ -148,21 +188,25 @@ def seat_students(
         ]
 
     model = cp_model.CpModel()
-    y: dict[tuple[int, str, str], object] = {}
-    unseated: dict[tuple[int, str], object] = {}
+    y: dict[tuple[int, str, str], cp_model.IntVar] = {}
+    unseated: dict[tuple[int, str], cp_model.IntVar] = {}
 
     demands = [
         (d.student_id, offering_id)
         for d in snapshot.demand
         for offering_id in sorted(d.offering_ids)
-        if sections_by_offering.get(offering_id) and offerings[offering_id].is_scheduled
+        if offering_id in offerings and offerings[offering_id].is_scheduled
     ]
     if not demands:
-        return SeatingResult(0, 0, 0, 0, 0, 0, True, ["no student demand to seat"])
+        return SeatingResult(
+            0, 0, 0, 0, 0, 0, True, ["no student demand to seat"], status="OPTIMAL"
+        )
 
     for student_id, offering_id in demands:
         choices = []
-        for section in sections_by_offering[offering_id]:
+        for section in sections_by_offering.get(offering_id, ()):
+            if not usable[section.id]:
+                continue
             var = model.new_bool_var(f"y_{student_id}_{section.id}")
             y[(student_id, offering_id, section.id)] = var
             choices.append(var)
@@ -198,30 +242,39 @@ def seat_students(
             )
         return overlap_cache[key]
 
-    clash_terms: list[object] = []
-    per_student_clashes: dict[int, list] = defaultdict(list)
+    clash_terms: list[cp_model.IntVar] = []
+    per_student_clashes: dict[int, list[cp_model.IntVar]] = defaultdict(list)
     for student_id, offering_ids in wanted.items():
         ordered = sorted(offering_ids)
         for i, first in enumerate(ordered):
             for second in ordered[i + 1 :]:
-                for sa in sections_by_offering[first]:
-                    for sb in sections_by_offering[second]:
+                for sa in sections_by_offering.get(first, ()):
+                    for sb in sections_by_offering.get(second, ()):
+                        if not usable[sa.id] or not usable[sb.id]:
+                            continue
                         if not overlaps(sa.id, sb.id):
                             continue
                         va = y[(student_id, first, sa.id)]
                         vb = y[(student_id, second, sb.id)]
                         clash = model.new_bool_var("")
                         model.add(clash >= va + vb - 1)
+                        model.add(clash <= va)
+                        model.add(clash <= vb)
                         clash_terms.append(clash)
                         per_student_clashes[student_id].append(clash)
 
-    objective = [c for c in clash_terms]
-    objective += [v * _UNSEATED_PENALTY for v in unseated.values()]
+    objective: list[cp_model.LinearExpr] = list(clash_terms)
+    # Bound the ENTIRE clash objective: one additional seat must always beat
+    # every possible clash saving, even on a large cohort.
+    missed_weight = len(clash_terms) + 1
+    objective += [v * missed_weight for v in unseated.values()]
     if objective:
         model.minimize(sum(objective))
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_seconds
+    solver.parameters.max_time_in_seconds = max(
+        0.001, time_limit_seconds - (perf_counter() - started)
+    )
     solver.parameters.num_search_workers = 8
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -234,6 +287,7 @@ def seat_students(
             0,
             False,
             [f"no seating found within {time_limit_seconds:.0f}s"],
+            status=solver.status_name(status),
         )
 
     chosen: dict[int, list[str]] = defaultdict(list)
@@ -255,7 +309,7 @@ def seat_students(
     regular_ids = {int(d.student_id) for d in snapshot.demand if not d.is_cross_term}
     idle = regular_idle = 0
     for student_id, section_ids in chosen.items():
-        by_day: dict = defaultdict(list)
+        by_day: dict[Day, list[TimeWindow]] = defaultdict(list)
         for section_id in section_ids:
             for day, window in campus_windows(section_id):
                 by_day[day].append(window)
@@ -263,8 +317,11 @@ def seat_students(
         for windows in by_day.values():
             if len(windows) < 2:
                 continue
-            span = max(w.end for w in windows) - min(w.start for w in windows)
-            theirs += max(0, span - sum(w.duration for w in windows))
+            ordered_windows = sorted(windows, key=lambda w: w.start)
+            end = ordered_windows[0].end
+            for window in ordered_windows[1:]:
+                theirs += max(0, window.start - end)
+                end = max(end, window.end)
         idle += theirs
         if int(student_id) in regular_ids:
             regular_idle += theirs
@@ -280,4 +337,10 @@ def seat_students(
         students_fully_seated=len(wanted) - len(short),
         regular_students=len(regular_ids & set(wanted)),
         regular_idle_minutes=regular_idle,
+        status=solver.status_name(status),
+        fully_seated_students_with_a_clash=sum(
+            1
+            for student_id, flags in per_student_clashes.items()
+            if student_id not in short and any(solver.value(f) for f in flags)
+        ),
     )

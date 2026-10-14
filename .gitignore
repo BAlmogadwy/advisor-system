@@ -28,6 +28,8 @@ db_*.sqlite3
 *.sqlite3-journal
 *.sqlite3-shm
 *.sqlite3-wal
+# Local timetable replay databases; keep snapshot documentation/fixtures tracked.
+/snapshots/**/*.sqlite3
 
 # Runtime & temp
 outputs/

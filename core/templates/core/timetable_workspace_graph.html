@@ -22,8 +22,8 @@
       <p>Django remains the source of truth. Neo4j receives a rebuildable scenario twin for relationship analysis, drill-down, and future graph recommendations.</p>
     </div>
     <div class="tg-actions">
-      <a class="tg-btn" href="/timetable-workspace/">Workspace</a>
-      <a class="tg-btn" href="/timetable-workspace/mri/{% if initial_scenario %}?scenario={{ initial_scenario }}{% endif %}">MRI</a>
+      <a class="tg-btn" id="tgWorkspaceLink" href="/timetable-workspace/{% if initial_scenario %}?scenario={{ initial_scenario|urlencode }}{% endif %}">Workspace</a>
+      <a class="tg-btn" id="tgMriLink" href="/timetable-workspace/mri/{% if initial_scenario %}?scenario={{ initial_scenario|urlencode }}{% endif %}">MRI</a>
     </div>
   </header>
 
@@ -93,7 +93,7 @@
         <ol class="tg-path">
           <li>Preview the exact graph generated from the selected scenario.</li>
           <li>Sync to Neo4j only when the local server is configured.</li>
-          <li>Use Cypher/graph algorithms to find high-impact sections, shared-student communities, and safe move candidates.</li>
+          <li>Use Cypher/graph algorithms to find high-impact sections, communities with common course demand, and safe move candidates.</li>
           <li>Feed accepted recommendations back into Django draft scenarios with audit logs.</li>
         </ol>
       </article>
@@ -149,7 +149,7 @@
           </label>
           <label class="tg-plan-check">
             <input id="tgPlanStudents" type="checkbox">
-            <span>Show enrolled students</span>
+            <span>Show student links</span>
           </label>
           <button class="tg-btn tg-btn-secondary" id="tgPlanReset" type="button">Reset Tree</button>
           <span class="tg-tree-summary" id="tgTreeSummary">Program -> Term -> Group -> Course -> Section</span>
@@ -240,5 +240,5 @@
   };
 </script>
 <script src="{% static 'js/vendor/timetable-cytoscape.bundle.js' %}?v=3"></script>
-<script src="{% static 'js/page-timetable-graph.js' %}?v=6"></script>
+<script src="{% static 'js/page-timetable-graph.js' %}?v=8"></script>
 {% endblock %}

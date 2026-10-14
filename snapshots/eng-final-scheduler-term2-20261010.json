@@ -1,0 +1,220 @@
+{
+  "source_root": "C:\\Users\\user\\myUniproject",
+  "snapshot": "C:\\Users\\user\\myUniproject\\db.sqlite3",
+  "scratch_database": "C:\\Users\\user\\myUniproject\\snapshots\\eng-final-scheduler-term2-20261010.sqlite3",
+  "scenario": 662,
+  "action": "scheduler",
+  "budget": {
+    "seconds": 20.0,
+    "runs": 1,
+    "iterations": 10
+  },
+  "after": {
+    "input_fingerprint": "0c1876230196ca7ddef336ac2fb42ab1666b640cf25d353a05bc5de427f8d2fa",
+    "students": 404,
+    "sections": 72,
+    "instructors": {
+      "instructors": 0,
+      "working_days": 0,
+      "floor_days": 0,
+      "excess_days": 0,
+      "at_proven_floor": true,
+      "idle_minutes": 0,
+      "coverage": {
+        "sections_assigned": 0,
+        "sections_total": 72,
+        "sections_staffable": 0,
+        "percent": 0.0,
+        "percent_of_staffable": 0.0
+      },
+      "per_instructor": []
+    },
+    "rooming": {
+      "unroomed": 11,
+      "impossible": 0,
+      "saturated": 11,
+      "congestion": 0,
+      "recoverable": 0,
+      "findings": [
+        {
+          "reason": "SATURATED",
+          "course": "(lecture estate)",
+          "kind": "LECTURE",
+          "meetings": 11,
+          "room_periods": 25,
+          "meetings_needing_them": 36,
+          "detail": "the week holds 25 lecture room-periods for 36 meetings that need one \u2014 rescheduling cannot fix a shortfall of 11; 7 courses affected",
+          "courses_affected": [
+            "COE226",
+            "CS163",
+            "CYB215",
+            "ENGL104",
+            "ENGL214",
+            "IS362",
+            "MATH243"
+          ]
+        }
+      ]
+    },
+    "validation": {
+      "certification": "UNCERTIFIED",
+      "violations": 0,
+      "board": {
+        "placements": 166,
+        "sections_placed": 72,
+        "physical_meetings": 143,
+        "roomed": 132,
+        "unroomed": 11
+      },
+      "fingerprints": {
+        "snapshot": "0c1876230196ca7ddef336ac2fb42ab1666b640cf25d353a05bc5de427f8d2fa",
+        "rulebook": "2013472810914c4c13b9db3e7ed43f30c1ef93a31e41d89403d01e1d02283f7d"
+      },
+      "rules": [
+        {
+          "rule": "H1",
+          "title": "Meeting count & duration",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H_WEEKLY_PATTERN",
+          "title": "Complete institutional weekly pattern",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H2",
+          "title": "All-different-days",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H3",
+          "title": "Legal slot grid",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H7",
+          "title": "Instructor clash",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H8",
+          "title": "Instructor daily cap",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H9",
+          "title": "Room exclusivity",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H10",
+          "title": "Same-offering separation",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H11_H12_H14",
+          "title": "Room type / capacity / programme",
+          "enforcement": "check",
+          "severity": "hard",
+          "violations": [],
+          "note": ""
+        },
+        {
+          "rule": "H4",
+          "title": "Blocked slots",
+          "enforcement": "coverage_gap",
+          "severity": "hard",
+          "violations": [],
+          "note": "no blocked-slot input is carried on the snapshot yet"
+        },
+        {
+          "rule": "H6",
+          "title": "Locked placements",
+          "enforcement": "coverage_gap",
+          "severity": "hard",
+          "violations": [],
+          "note": "locks are not modelled until boards are persisted (S5)"
+        },
+        {
+          "rule": "H13",
+          "title": "Room gender",
+          "enforcement": "not_applicable",
+          "severity": "hard",
+          "violations": [],
+          "note": "a snapshot is single-gender (D1); the room pool is filtered at intake"
+        },
+        {
+          "rule": "H15",
+          "title": "Critical student overlap",
+          "enforcement": "evidence_gap",
+          "severity": "hard",
+          "violations": [],
+          "note": "requires a student sectioning snapshot (S4)"
+        },
+        {
+          "rule": "H16",
+          "title": "Section capacity / reserve",
+          "enforcement": "evidence_gap",
+          "severity": "hard",
+          "violations": [],
+          "note": "requires a student sectioning snapshot (S4)"
+        },
+        {
+          "rule": "H_ROOM_REQUIRED",
+          "title": "Physical meeting has a room",
+          "enforcement": "check",
+          "severity": "observed",
+          "violations": [],
+          "note": "11 of 143 physical meetings have no room assigned. Legal during building; blocks publication."
+        }
+      ]
+    },
+    "unplaced": [],
+    "expected_clashes": 143.23333333333335,
+    "seating": {
+      "students": 404,
+      "students_fully_seated": 404,
+      "clash_free_percent": null,
+      "students_with_a_clash": 36,
+      "total_clashes": 36,
+      "unseated_demands": 0,
+      "average_idle_minutes": 428.9,
+      "regular_students": 236,
+      "regular_idle_minutes_avg": 382.2,
+      "proven_optimal": false,
+      "status": "FEASIBLE",
+      "solution_found": true,
+      "seated_demands": 1832,
+      "notes": []
+    },
+    "notes": [
+      "926 conflicting section pairs modelled"
+    ],
+    "warnings": []
+  },
+  "elapsed_seconds": 31.691
+}

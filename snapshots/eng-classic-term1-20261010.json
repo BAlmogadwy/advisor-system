@@ -1,0 +1,4412 @@
+{
+  "source_root": "C:\\Users\\user\\myUniproject",
+  "snapshot": "C:\\Users\\user\\myUniproject\\db.sqlite3",
+  "scratch_database": "C:\\Users\\user\\myUniproject\\snapshots\\eng-classic-term1-20261010.sqlite3",
+  "scenario": 665,
+  "action": "full",
+  "budget": {
+    "seconds": 15.0,
+    "runs": 1,
+    "iterations": 8
+  },
+  "before": {
+    "instructors": {
+      "working_days": 0,
+      "idle_minutes": 0,
+      "days": {},
+      "idle_by_instructor": {}
+    },
+    "students": 258,
+    "unresolved_students": 258,
+    "student_score": {
+      "layout": "tiered",
+      "highrisk_unresolved": 67,
+      "actual_assigned_clashes": 0,
+      "t1_unresolved": 566,
+      "t2_unresolved_over_tol": 0,
+      "student_cost": 0,
+      "gap_minutes": 0,
+      "soft_unresolved": 0,
+      "reserve_used": 0,
+      "same_course_spread": 0,
+      "instructor_idle": 0,
+      "unresolved_tier_a": 67,
+      "unresolved_courses": 566
+    },
+    "sections": 0,
+    "meetings": 0,
+    "unassigned_room_rows": 0,
+    "physical_rooming": {
+      "unassigned": 0,
+      "incompatible": 0,
+      "shortages": 0
+    },
+    "safety": {
+      "boards": 5,
+      "placements": 0,
+      "unique_students": 258,
+      "board_student_links_total": 336,
+      "primary_student_links": 258,
+      "visitor_student_links": 78,
+      "room_assigned": 0,
+      "physical_unassigned_rooms": 0,
+      "online_without_room": 0,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 0,
+      "cross_board_affected_students": 0,
+      "cross_board_student_conflict_incidences": 0,
+      "high_cross_board_conflicts": 0,
+      "high_cross_board_affected_students": 0,
+      "max_cross_board_conflicts_per_student": 0,
+      "budget": {
+        "rows": 39,
+        "planned_sections": 44,
+        "used_sections": 0,
+        "remaining_sections": 44,
+        "missing_required_sections": [
+          {
+            "course_key": "CS111::FUNDAMENTALS_OF_PROGRAMMING",
+            "course_code": "CS111",
+            "course_name": "FUNDAMENTALS OF PROGRAMMING",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 1,
+            "planned_sections": 1,
+            "max_per_section": 35,
+            "total_demand": 4,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "MATH105::CALCULUS_I",
+            "course_code": "MATH105",
+            "course_name": "CALCULUS I",
+            "department": "MATH",
+            "credit_hours": 3,
+            "programme_term": 1,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 5,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "PHYS103::PHYSICS_I",
+            "course_code": "PHYS103",
+            "course_name": "PHYSICS I",
+            "department": "PHYS",
+            "credit_hours": 4,
+            "programme_term": 1,
+            "planned_sections": 2,
+            "max_per_section": 25,
+            "total_demand": 31,
+            "used_sections": 0,
+            "remaining_sections": 2,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE",
+            "course_code": "AI113",
+            "course_name": "FUNDAMENTALS OF ARTIFICIAL INTELLIGENCE",
+            "department": "AI",
+            "credit_hours": 3,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 30,
+            "total_demand": 3,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "CS113::PROGRAMMING_II",
+            "course_code": "CS113",
+            "course_name": "PROGRAMMING II",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 27,
+            "total_demand": 1,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS113::INTRODUCTION_TO_DATA_SCIENCE",
+            "course_code": "DS113",
+            "course_name": "INTRODUCTION TO DATA SCIENCE",
+            "department": "DS",
+            "credit_hours": 3,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 40,
+            "total_demand": 5,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "ENGL103::ENGLISH_COMPOSITION",
+            "course_code": "ENGL103",
+            "course_name": "ENGLISH COMPOSITION",
+            "department": "ENGL",
+            "credit_hours": 3,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 1,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "GS111::ARABIC_LANGUAGE_SKILLS_I",
+            "course_code": "GS111",
+            "course_name": "ARABIC LANGUAGE SKILLS I",
+            "department": "GS",
+            "credit_hours": 2,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 9,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "MATH106::CALCULUS_II",
+            "course_code": "MATH106",
+            "course_name": "CALCULUS II",
+            "department": "MATH",
+            "credit_hours": 3,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 7,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "MATH203::203_CALCULUS_I",
+            "course_code": "MATH203",
+            "course_name": ")\t203\t CALCULUS I",
+            "department": "MATH",
+            "credit_hours": 3,
+            "programme_term": 3,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 2,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING",
+            "course_code": "AI221",
+            "course_name": "ARTIFICIAL INTELLIGENCE PROGRAMMING",
+            "department": "AI",
+            "credit_hours": 4,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 10,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "COE215::DIGITAL_LOGIC_DESIGN",
+            "course_code": "COE215",
+            "course_name": "DIGITAL LOGIC DESIGN",
+            "department": "COE",
+            "credit_hours": 3,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 40,
+            "total_demand": 1,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "COE223::COMPUTER_ARCHITECTURE",
+            "course_code": "COE223",
+            "course_name": "COMPUTER ARCHITECTURE",
+            "department": "COE",
+            "credit_hours": 4,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 2,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "CS211::ALGORITHMS_AND_DATA_STRUCTURES",
+            "course_code": "CS211",
+            "course_name": "ALGORITHMS AND DATA STRUCTURES",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 29,
+            "total_demand": 6,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "CS285::SOFTWARE_ENGINEERING",
+            "course_code": "CS285",
+            "course_name": "SOFTWARE ENGINEERING",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 2,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS225::DATA_MINING_AND_ANALYTICS",
+            "course_code": "DS225",
+            "course_name": "DATA MINING AND ANALYTICS",
+            "department": "DS",
+            "credit_hours": 4,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 1,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "FE1::FREE_ELECTIVE_COURSE",
+            "course_code": "FE1",
+            "course_name": "FREE ELECTIVE COURSE",
+            "department": "FE",
+            "credit_hours": 2,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 60,
+            "total_demand": 25,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "GS102::ISLAMIC_STUDIES_FEATURES_OF_THE_PROPHETS_BIOGRAPHY",
+            "course_code": "GS102",
+            "course_name": "ISLAMIC STUDIES: FEATURES OF THE PROPHET\u2019S BIOGRAPHY",
+            "department": "GS",
+            "credit_hours": 2,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 8,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "IS251::DATABASE_MANAGEMENT_SYSTEMS_I",
+            "course_code": "IS251",
+            "course_name": "DATABASE MANAGEMENT SYSTEMS I",
+            "department": "IS",
+            "credit_hours": 4,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 2,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS",
+            "course_code": "STAT301",
+            "course_name": "PROBABILITY AND STATISTICS FOR ENGINEERS",
+            "department": "STAT",
+            "credit_hours": 3,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 4,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "STAT307::APPLIED_PROBABILITY__STATISTICS",
+            "course_code": "STAT307",
+            "course_name": "APPLIED PROBABILITY & STATISTICS",
+            "department": "STAT",
+            "credit_hours": 3,
+            "programme_term": 5,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 4,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "AI331::MACHINE_LEARNING",
+            "course_code": "AI331",
+            "course_name": "MACHINE LEARNING",
+            "department": "AI",
+            "credit_hours": 4,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 16,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "CS323::OPERATING_SYSTEMS",
+            "course_code": "CS323",
+            "course_name": "OPERATING SYSTEMS",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 24,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "CS372::DATABASE_SYSTEMS",
+            "course_code": "CS372",
+            "course_name": "DATABASE SYSTEMS",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 27,
+            "total_demand": 13,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS",
+            "course_code": "DS321",
+            "course_name": "BUSINESS INTELLIGENCE AND ANALYTICS",
+            "department": "DS",
+            "credit_hours": 4,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 11,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS332::DATA_MINING_AND_ANALYTICS_II",
+            "course_code": "DS332",
+            "course_name": "DATA MINING AND ANALYTICS II",
+            "department": "DS",
+            "credit_hours": 4,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 3,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP",
+            "course_code": "DS341",
+            "course_name": "DATA PRIVACY, GOVERNANCE & STEWARDSHIP",
+            "department": "DS",
+            "credit_hours": 3,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 45,
+            "total_demand": 1,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "FE2::FREE_ELECTIVE_COURSE_II",
+            "course_code": "FE2",
+            "course_name": "FREE ELECTIVE COURSE II",
+            "department": "FE",
+            "credit_hours": 2,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 60,
+            "total_demand": 56,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I",
+            "course_code": "GSE1",
+            "course_name": "UNIVERSITY ELECTIVE COURSE I",
+            "department": "GSE",
+            "credit_hours": 2,
+            "programme_term": 7,
+            "planned_sections": 3,
+            "max_per_section": 50,
+            "total_demand": 109,
+            "used_sections": 0,
+            "remaining_sections": 3,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING",
+            "course_code": "MATH471",
+            "course_name": "OPTIMIZATION & MODELING FOR COMPUTING",
+            "department": "MATH",
+            "credit_hours": 3,
+            "programme_term": 7,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 8,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING",
+            "course_code": "AI433",
+            "course_name": "NEURAL NETWORKS AND DEEP LEARNING",
+            "department": "AI",
+            "credit_hours": 3,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 42,
+            "total_demand": 16,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "AI463",
+            "course_code": "AI463",
+            "course_name": "\u0627\u0633\u062a\u0631\u062c\u0627\u0639 \u0627\u0644\u0645\u0639\u0644\u0648\u0645\u0627\u062a",
+            "department": "AI",
+            "credit_hours": 3,
+            "programme_term": 9,
+            "planned_sections": 2,
+            "max_per_section": 30,
+            "total_demand": 58,
+            "used_sections": 0,
+            "remaining_sections": 2,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "CS424::INTRO_TO_PARALLEL_COMPUTING",
+            "course_code": "CS424",
+            "course_name": "INTRO TO PARALLEL COMPUTING",
+            "department": "CS",
+            "credit_hours": 4,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 26,
+            "total_demand": 9,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS432::WEB_DEVELOPMENT_FOR_DATA_SCIENCE",
+            "course_code": "DS432",
+            "course_name": "WEB DEVELOPMENT FOR DATA SCIENCE",
+            "department": "DS",
+            "credit_hours": 3,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 40,
+            "total_demand": 6,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "DS433::BIG_DATA_ANALYTICS",
+            "course_code": "DS433",
+            "course_name": "BIG DATA ANALYTICS",
+            "department": "DS",
+            "credit_hours": 4,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 25,
+            "total_demand": 10,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 3,
+            "requires_full_section_pattern": true
+          },
+          {
+            "course_key": "DS487",
+            "course_code": "DS487",
+            "course_name": "\u0645\u0633\u062a\u0648\u062f\u0639 \u0627\u0644\u0628\u064a\u0627\u0646\u0627\u062a",
+            "department": "DS",
+            "credit_hours": 3,
+            "programme_term": 9,
+            "planned_sections": 2,
+            "max_per_section": 30,
+            "total_demand": 41,
+            "used_sections": 0,
+            "remaining_sections": 2,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "FE1::FREE_ELECTIVE_COURSE_I",
+            "course_code": "FE1",
+            "course_name": "FREE ELECTIVE COURSE I",
+            "department": "FE",
+            "credit_hours": 2,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 60,
+            "total_demand": 40,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS",
+            "course_code": "GS104",
+            "course_name": "ISLAMIC STUDIES: ISLAMIC VALUES AND ETHICS",
+            "department": "GS",
+            "credit_hours": 2,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 5,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          },
+          {
+            "course_key": "MGT405::LEADERSHIP_AND_ENTREPRENEURSHIP",
+            "course_code": "MGT405",
+            "course_name": "LEADERSHIP AND ENTREPRENEURSHIP",
+            "department": "MGT",
+            "credit_hours": 2,
+            "programme_term": 9,
+            "planned_sections": 1,
+            "max_per_section": 50,
+            "total_demand": 7,
+            "used_sections": 0,
+            "remaining_sections": 1,
+            "boards_using": [],
+            "required_meetings_per_section": 1,
+            "requires_full_section_pattern": false
+          }
+        ]
+      },
+      "incomplete_section_patterns": []
+    },
+    "signatures": {}
+  },
+  "result": {
+    "candidates_evaluated": 7,
+    "best_candidate_id": "adaptive_6",
+    "best_score": [
+      9,
+      0,
+      3,
+      0,
+      12390,
+      13,
+      6,
+      5240,
+      0
+    ],
+    "optimisation_policy": "instructor_first",
+    "baseline_instructor_schedule": {
+      "working_days": 22,
+      "idle_minutes": 1370,
+      "idle_minutes_by_instructor": {
+        "124": 605,
+        "134": 170,
+        "6": 415,
+        "7": 0,
+        "8": 180
+      },
+      "working_days_by_instructor": {
+        "124": 4,
+        "134": 5,
+        "6": 5,
+        "7": 3,
+        "8": 5
+      },
+      "affected_instructors": 5
+    },
+    "hotspot_courses": [
+      "GS111::ARABIC_LANGUAGE_SKILLS_I",
+      "CS424::INTRO_TO_PARALLEL_COMPUTING"
+    ],
+    "capacity_pressure_courses": [],
+    "reserve_heavy_sections": [
+      {
+        "section": "AI463_S1",
+        "ratio": 1.0
+      },
+      {
+        "section": "CS323::OPERATING_SYSTEMS_S1",
+        "ratio": 0.5
+      }
+    ],
+    "quality_score": {
+      "policy": "timetable-quality-v1",
+      "penalty": 1691,
+      "components": {
+        "weak_slot": 935,
+        "day_balance": 152,
+        "spare_capacity": 377,
+        "section_balance": 47,
+        "room_change": 0,
+        "student_day_overload": 180
+      },
+      "day_load": {
+        "SUN": 23,
+        "MON": 21,
+        "TUE": 23,
+        "WED": 15,
+        "THU": 18
+      },
+      "reasons": [
+        {
+          "component": "weak_slot",
+          "label": "Uses weaker teaching slots",
+          "penalty": 935
+        },
+        {
+          "component": "spare_capacity",
+          "label": "Consumes spare capacity",
+          "penalty": 377
+        },
+        {
+          "component": "student_day_overload",
+          "label": "Creates heavy student days",
+          "penalty": 180
+        },
+        {
+          "component": "day_balance",
+          "label": "Uneven day distribution",
+          "penalty": 152
+        },
+        {
+          "component": "section_balance",
+          "label": "Uneven same-course section load",
+          "penalty": 47
+        }
+      ],
+      "instructor_schedule": {
+        "working_days": 21,
+        "idle_minutes": 670,
+        "idle_minutes_by_instructor": {
+          "124": 365,
+          "134": 130,
+          "6": 130,
+          "7": 0,
+          "8": 45
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      }
+    },
+    "unresolved_students": 5,
+    "total_students": 258,
+    "local_search_applied": true,
+    "final_score": [
+      0,
+      0,
+      1,
+      0,
+      14615,
+      4,
+      7,
+      5285,
+      0
+    ],
+    "persist_result": {
+      "action": "persisted_secondary_recovery",
+      "updated": 71
+    },
+    "all_scores": [
+      {
+        "id": "adaptive_6",
+        "score": [
+          9,
+          0,
+          3,
+          0,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "selection_key": [
+          9,
+          0,
+          3,
+          0,
+          22,
+          1370,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 22,
+          "idle_minutes": 1370,
+          "idle_minutes_by_instructor": {
+            "124": 605,
+            "134": 170,
+            "6": 415,
+            "7": 0,
+            "8": 180
+          },
+          "working_days_by_instructor": {
+            "124": 4,
+            "134": 5,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 1430,
+        "quality_components": {
+          "weak_slot": 775,
+          "day_balance": 89,
+          "spare_capacity": 299,
+          "section_balance": 27,
+          "room_change": 0,
+          "student_day_overload": 240
+        }
+      },
+      {
+        "id": "balanced_2",
+        "score": [
+          9,
+          0,
+          3,
+          0,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "selection_key": [
+          9,
+          0,
+          3,
+          0,
+          22,
+          1370,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 22,
+          "idle_minutes": 1370,
+          "idle_minutes_by_instructor": {
+            "124": 605,
+            "134": 170,
+            "6": 415,
+            "7": 0,
+            "8": 180
+          },
+          "working_days_by_instructor": {
+            "124": 4,
+            "134": 5,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 1430,
+        "quality_components": {
+          "weak_slot": 775,
+          "day_balance": 89,
+          "spare_capacity": 299,
+          "section_balance": 27,
+          "room_change": 0,
+          "student_day_overload": 240
+        }
+      },
+      {
+        "id": "hybrid_5",
+        "score": [
+          9,
+          0,
+          3,
+          0,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "selection_key": [
+          9,
+          0,
+          3,
+          0,
+          22,
+          1370,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 22,
+          "idle_minutes": 1370,
+          "idle_minutes_by_instructor": {
+            "124": 605,
+            "134": 170,
+            "6": 415,
+            "7": 0,
+            "8": 180
+          },
+          "working_days_by_instructor": {
+            "124": 4,
+            "134": 5,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 1430,
+        "quality_components": {
+          "weak_slot": 775,
+          "day_balance": 89,
+          "spare_capacity": 299,
+          "section_balance": 27,
+          "room_change": 0,
+          "student_day_overload": 240
+        }
+      },
+      {
+        "id": "load_balanced_3",
+        "score": [
+          9,
+          0,
+          3,
+          0,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "selection_key": [
+          9,
+          0,
+          3,
+          0,
+          22,
+          1370,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 22,
+          "idle_minutes": 1370,
+          "idle_minutes_by_instructor": {
+            "124": 605,
+            "134": 170,
+            "6": 415,
+            "7": 0,
+            "8": 180
+          },
+          "working_days_by_instructor": {
+            "124": 4,
+            "134": 5,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 1430,
+        "quality_components": {
+          "weak_slot": 775,
+          "day_balance": 89,
+          "spare_capacity": 299,
+          "section_balance": 27,
+          "room_change": 0,
+          "student_day_overload": 240
+        }
+      },
+      {
+        "id": "optimal_4",
+        "score": [
+          9,
+          0,
+          3,
+          0,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "selection_key": [
+          9,
+          0,
+          3,
+          0,
+          22,
+          1370,
+          12390,
+          13,
+          6,
+          5240,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 22,
+          "idle_minutes": 1370,
+          "idle_minutes_by_instructor": {
+            "124": 605,
+            "134": 170,
+            "6": 415,
+            "7": 0,
+            "8": 180
+          },
+          "working_days_by_instructor": {
+            "124": 4,
+            "134": 5,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 1430,
+        "quality_components": {
+          "weak_slot": 775,
+          "day_balance": 89,
+          "spare_capacity": 299,
+          "section_balance": 27,
+          "room_change": 0,
+          "student_day_overload": 240
+        }
+      },
+      {
+        "id": "compact_0",
+        "score": [
+          10,
+          0,
+          4,
+          3,
+          10255,
+          15,
+          6,
+          5240,
+          0
+        ],
+        "selection_key": [
+          10,
+          0,
+          4,
+          3,
+          21,
+          1765,
+          10255,
+          15,
+          6,
+          5240,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 21,
+          "idle_minutes": 1765,
+          "idle_minutes_by_instructor": {
+            "124": 605,
+            "134": 400,
+            "6": 415,
+            "7": 0,
+            "8": 345
+          },
+          "working_days_by_instructor": {
+            "124": 4,
+            "134": 4,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 1371,
+        "quality_components": {
+          "weak_slot": 855,
+          "day_balance": 89,
+          "spare_capacity": 284,
+          "section_balance": 23,
+          "room_change": 0,
+          "student_day_overload": 120
+        }
+      },
+      {
+        "id": "morning_1",
+        "score": [
+          11,
+          2,
+          3,
+          4,
+          9470,
+          24,
+          6,
+          5285,
+          0
+        ],
+        "selection_key": [
+          11,
+          2,
+          3,
+          4,
+          23,
+          325,
+          9470,
+          24,
+          6,
+          5285,
+          0
+        ],
+        "instructor_schedule": {
+          "working_days": 23,
+          "idle_minutes": 325,
+          "idle_minutes_by_instructor": {
+            "124": 40,
+            "134": 225,
+            "6": 30,
+            "7": 0,
+            "8": 30
+          },
+          "working_days_by_instructor": {
+            "124": 5,
+            "134": 5,
+            "6": 5,
+            "7": 3,
+            "8": 5
+          },
+          "affected_instructors": 5
+        },
+        "quality_penalty": 569,
+        "quality_components": {
+          "weak_slot": 85,
+          "day_balance": 68,
+          "spare_capacity": 344,
+          "section_balance": 72,
+          "room_change": 0,
+          "student_day_overload": 0
+        }
+      }
+    ],
+    "decision_trace": {
+      "PHYS103::PHYSICS_I|S1": {
+        "section_code": "PHYS103::PHYSICS_I|S1",
+        "course_code": "PHYS103",
+        "chosen_day": "SUN",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "PHYS103::PHYSICS_I",
+              "shared_student_count": 31
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "PHYS103::PHYSICS_I",
+              "shared_student_count": 31
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "PHYS103::PHYSICS_I",
+              "shared_student_count": 31
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS111::FUNDAMENTALS_OF_PROGRAMMING|S1": {
+        "section_code": "CS111::FUNDAMENTALS_OF_PROGRAMMING|S1",
+        "course_code": "CS111",
+        "chosen_day": "MON",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS111::FUNDAMENTALS_OF_PROGRAMMING",
+              "shared_student_count": 4
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS111::FUNDAMENTALS_OF_PROGRAMMING",
+              "shared_student_count": 4
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS111::FUNDAMENTALS_OF_PROGRAMMING",
+              "shared_student_count": 4
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS225::DATA_MINING_AND_ANALYTICS|S1": {
+        "section_code": "DS225::DATA_MINING_AND_ANALYTICS|S1",
+        "course_code": "DS225",
+        "chosen_day": "SUN",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:15",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS225::DATA_MINING_AND_ANALYTICS",
+              "shared_student_count": 1
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS225::DATA_MINING_AND_ANALYTICS",
+              "shared_student_count": 1
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS225::DATA_MINING_AND_ANALYTICS",
+              "shared_student_count": 1
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "MATH105::CALCULUS_I|S1": {
+        "section_code": "MATH105::CALCULUS_I|S1",
+        "course_code": "MATH105",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH105::CALCULUS_I",
+              "shared_student_count": 5
+            }
+          },
+          {
+            "day": "WED",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS225::DATA_MINING_AND_ANALYTICS"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS225::DATA_MINING_AND_ANALYTICS"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "PHYS103::PHYSICS_I|S2": {
+        "section_code": "PHYS103::PHYSICS_I|S2",
+        "course_code": "PHYS103",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "PHYS103::PHYSICS_I",
+              "same_course": true,
+              "existing_day": "SUN",
+              "existing_start": "09:00",
+              "existing_end": "10:15"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "14:45",
+            "end_time": "16:00",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "PHYS103::PHYSICS_I",
+              "same_course": true,
+              "existing_day": "THU",
+              "existing_start": "09:00",
+              "existing_end": "10:40"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "16:00",
+            "end_time": "17:15",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "PHYS103::PHYSICS_I",
+              "same_course": true,
+              "existing_day": "THU",
+              "existing_start": "09:00",
+              "existing_end": "10:40"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS113::PROGRAMMING_II|S1": {
+        "section_code": "CS113::PROGRAMMING_II|S1",
+        "course_code": "CS113",
+        "chosen_day": "SUN",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS113::PROGRAMMING_II",
+              "shared_student_count": 1
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS113::PROGRAMMING_II",
+              "shared_student_count": 1
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS113::PROGRAMMING_II",
+              "shared_student_count": 1
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "MATH106::CALCULUS_II|S1": {
+        "section_code": "MATH106::CALCULUS_II|S1",
+        "course_code": "MATH106",
+        "chosen_day": "MON",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FA008",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH106::CALCULUS_II",
+              "shared_student_count": 7
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH106::CALCULUS_II",
+              "shared_student_count": 7
+            }
+          },
+          {
+            "day": "WED",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH106::CALCULUS_II",
+              "shared_student_count": 7
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1": {
+        "section_code": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+        "course_code": "DS113",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FA008",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE",
+              "shared_student_count": 5
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE",
+              "shared_student_count": 5
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE",
+              "shared_student_count": 5
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1": {
+        "section_code": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+        "course_code": "AI113",
+        "chosen_day": "MON",
+        "chosen_start_time": "10:50",
+        "chosen_end_time": "12:05",
+        "chosen_room": "M-DEMO-L01",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH106::CALCULUS_II"
+            }
+          },
+          {
+            "day": "WED",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH106::CALCULUS_II"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "MATH203::203_CALCULUS_I|S1": {
+        "section_code": "MATH203::203_CALCULUS_I|S1",
+        "course_code": "MATH203",
+        "chosen_day": "SUN",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:15",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH203::203_CALCULUS_I",
+              "shared_student_count": 2
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH203::203_CALCULUS_I",
+              "shared_student_count": 2
+            }
+          },
+          {
+            "day": "WED",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH203::203_CALCULUS_I",
+              "shared_student_count": 2
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "ENGL103::ENGLISH_COMPOSITION|S1": {
+        "section_code": "ENGL103::ENGLISH_COMPOSITION|S1",
+        "course_code": "ENGL103",
+        "chosen_day": "MON",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH203::203_CALCULUS_I"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH203::203_CALCULUS_I"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH203::203_CALCULUS_I"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "GS111::ARABIC_LANGUAGE_SKILLS_I|S1": {
+        "section_code": "GS111::ARABIC_LANGUAGE_SKILLS_I|S1",
+        "course_code": "GS111",
+        "chosen_day": "TUE",
+        "chosen_start_time": "16:30",
+        "chosen_end_time": "18:10",
+        "chosen_room": "",
+        "alternatives": [
+          {
+            "day": "THU",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH203::203_CALCULUS_I"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "MATH203::203_CALCULUS_I"
+            }
+          },
+          {
+            "day": "THU",
+            "start_time": "09:00",
+            "end_time": "10:40",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS113::PROGRAMMING_II",
+              "shared_student_count": 1
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING|S1": {
+        "section_code": "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING|S1",
+        "course_code": "AI221",
+        "chosen_day": "SUN",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "172FA008",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 124
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 124
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 124
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS211::ALGORITHMS_AND_DATA_STRUCTURES|S1": {
+        "section_code": "CS211::ALGORITHMS_AND_DATA_STRUCTURES|S1",
+        "course_code": "CS211",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "M-DEMO-L01",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES",
+              "shared_student_count": 6
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES",
+              "shared_student_count": 6
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES",
+              "shared_student_count": 6
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "COE223::COMPUTER_ARCHITECTURE|S1": {
+        "section_code": "COE223::COMPUTER_ARCHITECTURE|S1",
+        "course_code": "COE223",
+        "chosen_day": "TUE",
+        "chosen_start_time": "10:50",
+        "chosen_end_time": "12:05",
+        "chosen_room": "M-DEMO-L01",
+        "alternatives": [
+          {
+            "day": "TUE",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "COE223::COMPUTER_ARCHITECTURE",
+              "shared_student_count": 2
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS285::SOFTWARE_ENGINEERING|S1": {
+        "section_code": "CS285::SOFTWARE_ENGINEERING|S1",
+        "course_code": "CS285",
+        "chosen_day": "SUN",
+        "chosen_start_time": "14:30",
+        "chosen_end_time": "15:45",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS285::SOFTWARE_ENGINEERING",
+              "shared_student_count": 2
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS285::SOFTWARE_ENGINEERING",
+              "shared_student_count": 2
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS285::SOFTWARE_ENGINEERING",
+              "shared_student_count": 2
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "IS251::DATABASE_MANAGEMENT_SYSTEMS_I|S1": {
+        "section_code": "IS251::DATABASE_MANAGEMENT_SYSTEMS_I|S1",
+        "course_code": "IS251",
+        "chosen_day": "TUE",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FAA002",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "COE223::COMPUTER_ARCHITECTURE"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS|S1": {
+        "section_code": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS|S1",
+        "course_code": "STAT301",
+        "chosen_day": "TUE",
+        "chosen_start_time": "16:00",
+        "chosen_end_time": "17:15",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "TUE",
+            "start_time": "14:45",
+            "end_time": "16:00",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS225::DATA_MINING_AND_ANALYTICS"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "COE223::COMPUTER_ARCHITECTURE"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "STAT307::APPLIED_PROBABILITY__STATISTICS|S1": {
+        "section_code": "STAT307::APPLIED_PROBABILITY__STATISTICS|S1",
+        "course_code": "STAT307",
+        "chosen_day": "TUE",
+        "chosen_start_time": "14:45",
+        "chosen_end_time": "16:00",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "TUE",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS211::ALGORITHMS_AND_DATA_STRUCTURES"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "STAT307::APPLIED_PROBABILITY__STATISTICS",
+              "shared_student_count": 4
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "16:00",
+            "end_time": "17:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "COE215::DIGITAL_LOGIC_DESIGN|S1": {
+        "section_code": "COE215::DIGITAL_LOGIC_DESIGN|S1",
+        "course_code": "COE215",
+        "chosen_day": "TUE",
+        "chosen_start_time": "10:50",
+        "chosen_end_time": "12:05",
+        "chosen_room": "AIR1",
+        "alternatives": [
+          {
+            "day": "TUE",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "STAT307::APPLIED_PROBABILITY__STATISTICS"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "16:00",
+            "end_time": "17:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "16:00",
+            "end_time": "17:15",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP|S1": {
+        "section_code": "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP|S1",
+        "course_code": "DS341",
+        "chosen_day": "SUN",
+        "chosen_start_time": "14:45",
+        "chosen_end_time": "16:00",
+        "chosen_room": "172FA008",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING|S1",
+              "clashing_instructor_id": 124
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING|S1",
+              "clashing_instructor_id": 124
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 124
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "FE1::FREE_ELECTIVE_COURSE|S1": {
+        "section_code": "FE1::FREE_ELECTIVE_COURSE|S1",
+        "course_code": "FE1",
+        "chosen_day": "TUE",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:40",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "THU",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "COE223::COMPUTER_ARCHITECTURE"
+            }
+          },
+          {
+            "day": "WED",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "09:00",
+            "end_time": "10:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "IS251::DATABASE_MANAGEMENT_SYSTEMS_I"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "GS102::ISLAMIC_STUDIES_FEATURES_OF_THE_PROPHETS_BIOGRAPHY|S1": {
+        "section_code": "GS102::ISLAMIC_STUDIES_FEATURES_OF_THE_PROPHETS_BIOGRAPHY|S1",
+        "course_code": "GS102",
+        "chosen_day": "SUN",
+        "chosen_start_time": "16:30",
+        "chosen_end_time": "18:10",
+        "chosen_room": "",
+        "alternatives": [
+          {
+            "day": "WED",
+            "start_time": "16:30",
+            "end_time": "18:10",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS285::SOFTWARE_ENGINEERING"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS285::SOFTWARE_ENGINEERING"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS285::SOFTWARE_ENGINEERING"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS323::OPERATING_SYSTEMS|S1": {
+        "section_code": "CS323::OPERATING_SYSTEMS|S1",
+        "course_code": "CS323",
+        "chosen_day": "SUN",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "M-DEMO-L01",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS323::OPERATING_SYSTEMS",
+              "shared_student_count": 24
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS323::OPERATING_SYSTEMS",
+              "shared_student_count": 24
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS323::OPERATING_SYSTEMS",
+              "shared_student_count": 24
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "AI331::MACHINE_LEARNING|S1": {
+        "section_code": "AI331::MACHINE_LEARNING|S1",
+        "course_code": "AI331",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "172FAA002",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE|S1",
+              "clashing_instructor_id": 134
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS372::DATABASE_SYSTEMS|S1": {
+        "section_code": "CS372::DATABASE_SYSTEMS|S1",
+        "course_code": "CS372",
+        "chosen_day": "MON",
+        "chosen_start_time": "10:50",
+        "chosen_end_time": "12:05",
+        "chosen_room": "172FAA002",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS372::DATABASE_SYSTEMS",
+              "shared_student_count": 13
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS372::DATABASE_SYSTEMS",
+              "shared_student_count": 13
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS372::DATABASE_SYSTEMS",
+              "shared_student_count": 13
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS|S1": {
+        "section_code": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS|S1",
+        "course_code": "DS321",
+        "chosen_day": "SUN",
+        "chosen_start_time": "14:30",
+        "chosen_end_time": "15:45",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS",
+              "shared_student_count": 11
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS",
+              "shared_student_count": 11
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "14:30",
+            "end_time": "15:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS372::DATABASE_SYSTEMS"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS332::DATA_MINING_AND_ANALYTICS_II|S1": {
+        "section_code": "DS332::DATA_MINING_AND_ANALYTICS_II|S1",
+        "course_code": "DS332",
+        "chosen_day": "MON",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:15",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+              "clashing_instructor_id": 8
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+              "clashing_instructor_id": 8
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+              "clashing_instructor_id": 8
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING|S1": {
+        "section_code": "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING|S1",
+        "course_code": "MATH471",
+        "chosen_day": "MON",
+        "chosen_start_time": "16:00",
+        "chosen_end_time": "17:15",
+        "chosen_room": "172FB012",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS372::DATABASE_SYSTEMS"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS372::DATABASE_SYSTEMS"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "16:00",
+            "end_time": "17:15",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING",
+              "shared_student_count": 8
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I|S1": {
+        "section_code": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I|S1",
+        "course_code": "GSE1",
+        "chosen_day": "SUN",
+        "chosen_start_time": "16:30",
+        "chosen_end_time": "18:10",
+        "chosen_room": "",
+        "alternatives": [
+          {
+            "day": "THU",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS332::DATA_MINING_AND_ANALYTICS_II"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS332::DATA_MINING_AND_ANALYTICS_II"
+            }
+          },
+          {
+            "day": "WED",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS332::DATA_MINING_AND_ANALYTICS_II"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "FE2::FREE_ELECTIVE_COURSE_II|S1": {
+        "section_code": "FE2::FREE_ELECTIVE_COURSE_II|S1",
+        "course_code": "FE2",
+        "chosen_day": "SUN",
+        "chosen_start_time": "14:45",
+        "chosen_end_time": "16:25",
+        "chosen_room": "UNASSIGNED",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS332::DATA_MINING_AND_ANALYTICS_II"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I|S2": {
+        "section_code": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I|S2",
+        "course_code": "GSE1",
+        "chosen_day": "SUN",
+        "chosen_start_time": "14:45",
+        "chosen_end_time": "16:25",
+        "chosen_room": "",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "16:30",
+            "end_time": "18:10",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I",
+              "same_course": true,
+              "existing_day": "SUN",
+              "existing_start": "16:30",
+              "existing_end": "18:10"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS",
+              "shared_student_count": 5
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING",
+              "shared_student_count": 7
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I|S3": {
+        "section_code": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I|S3",
+        "course_code": "GSE1",
+        "chosen_day": "SUN",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:40",
+        "chosen_room": "",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I",
+              "same_course": true,
+              "existing_day": "SUN",
+              "existing_start": "14:45",
+              "existing_end": "16:25"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "16:30",
+            "end_time": "18:10",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "GSE1::UNIVERSITY_ELECTIVE_COURSE_I",
+              "same_course": true,
+              "existing_day": "SUN",
+              "existing_start": "16:30",
+              "existing_end": "18:10"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING",
+              "shared_student_count": 7
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS433::BIG_DATA_ANALYTICS|S1": {
+        "section_code": "DS433::BIG_DATA_ANALYTICS|S1",
+        "course_code": "DS433",
+        "chosen_day": "SUN",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "172FAA002",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS225::DATA_MINING_AND_ANALYTICS|S1",
+              "clashing_instructor_id": 6
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS225::DATA_MINING_AND_ANALYTICS|S1",
+              "clashing_instructor_id": 6
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS225::DATA_MINING_AND_ANALYTICS|S1",
+              "clashing_instructor_id": 6
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "CS424::INTRO_TO_PARALLEL_COMPUTING|S1": {
+        "section_code": "CS424::INTRO_TO_PARALLEL_COMPUTING|S1",
+        "course_code": "CS424",
+        "chosen_day": "SUN",
+        "chosen_start_time": "10:30",
+        "chosen_end_time": "11:45",
+        "chosen_room": "AIR1",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS424::INTRO_TO_PARALLEL_COMPUTING",
+              "shared_student_count": 9
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS433::BIG_DATA_ANALYTICS"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "STUDENT_CONFLICT",
+            "rejection_context": {
+              "clashing_section": "CS424::INTRO_TO_PARALLEL_COMPUTING",
+              "shared_student_count": 9
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "AI463|S1": {
+        "section_code": "AI463|S1",
+        "course_code": "AI463",
+        "chosen_day": "MON",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:15",
+        "chosen_room": "172FAA002",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS487|S1": {
+        "section_code": "DS487|S1",
+        "course_code": "DS487",
+        "chosen_day": "WED",
+        "chosen_start_time": "10:50",
+        "chosen_end_time": "12:05",
+        "chosen_room": "AIR1",
+        "alternatives": [
+          {
+            "day": "WED",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS424::INTRO_TO_PARALLEL_COMPUTING"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS424::INTRO_TO_PARALLEL_COMPUTING"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS424::INTRO_TO_PARALLEL_COMPUTING"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING|S1": {
+        "section_code": "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING|S1",
+        "course_code": "AI433",
+        "chosen_day": "MON",
+        "chosen_start_time": "14:30",
+        "chosen_end_time": "15:45",
+        "chosen_room": "172FA008",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+              "clashing_instructor_id": 8
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+              "clashing_instructor_id": 8
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS113::INTRODUCTION_TO_DATA_SCIENCE|S1",
+              "clashing_instructor_id": 8
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS432::WEB_DEVELOPMENT_FOR_DATA_SCIENCE|S1": {
+        "section_code": "DS432::WEB_DEVELOPMENT_FOR_DATA_SCIENCE|S1",
+        "course_code": "DS432",
+        "chosen_day": "WED",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:15",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI463|S1",
+              "clashing_instructor_id": 134
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "FE1::FREE_ELECTIVE_COURSE_I|S1": {
+        "section_code": "FE1::FREE_ELECTIVE_COURSE_I|S1",
+        "course_code": "FE1",
+        "chosen_day": "TUE",
+        "chosen_start_time": "10:45",
+        "chosen_end_time": "12:25",
+        "chosen_room": "172FAA001",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS424::INTRO_TO_PARALLEL_COMPUTING"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "AI463"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "13:00",
+            "end_time": "14:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "AI463"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "MGT405::LEADERSHIP_AND_ENTREPRENEURSHIP|S1": {
+        "section_code": "MGT405::LEADERSHIP_AND_ENTREPRENEURSHIP|S1",
+        "course_code": "MGT405",
+        "chosen_day": "WED",
+        "chosen_start_time": "09:00",
+        "chosen_end_time": "10:40",
+        "chosen_room": "172FA008",
+        "alternatives": [
+          {
+            "day": "TUE",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "FE1::FREE_ELECTIVE_COURSE_I"
+            }
+          },
+          {
+            "day": "MON",
+            "start_time": "09:00",
+            "end_time": "10:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS433::BIG_DATA_ANALYTICS"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "09:00",
+            "end_time": "10:40",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "DS433::BIG_DATA_ANALYTICS"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS|S1": {
+        "section_code": "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS|S1",
+        "course_code": "GS104",
+        "chosen_day": "SUN",
+        "chosen_start_time": "16:30",
+        "chosen_end_time": "18:10",
+        "chosen_room": "",
+        "alternatives": [
+          {
+            "day": "MON",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:45",
+            "end_time": "12:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "CS424::INTRO_TO_PARALLEL_COMPUTING"
+            }
+          },
+          {
+            "day": "TUE",
+            "start_time": "14:45",
+            "end_time": "16:25",
+            "room": "",
+            "rejection_code": "ROOM_OCCUPIED",
+            "rejection_context": {
+              "occupying_section": "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "AI463|S2": {
+        "section_code": "AI463|S2",
+        "course_code": "AI463",
+        "chosen_day": "MON",
+        "chosen_start_time": "14:30",
+        "chosen_end_time": "15:45",
+        "chosen_room": "172FAA002",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI331::MACHINE_LEARNING|S1",
+              "clashing_instructor_id": 134
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "13:00",
+            "end_time": "14:15",
+            "room": "",
+            "rejection_code": "INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "AI463|S1",
+              "clashing_instructor_id": 134
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      },
+      "DS487|S2": {
+        "section_code": "DS487|S2",
+        "course_code": "DS487",
+        "chosen_day": "WED",
+        "chosen_start_time": "13:00",
+        "chosen_end_time": "14:15",
+        "chosen_room": "172FB004",
+        "alternatives": [
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS487",
+              "same_course": true,
+              "existing_day": "WED",
+              "existing_start": "10:50",
+              "existing_end": "12:05"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:50",
+            "end_time": "12:05",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS487",
+              "same_course": true,
+              "existing_day": "WED",
+              "existing_start": "10:50",
+              "existing_end": "12:05"
+            }
+          },
+          {
+            "day": "SUN",
+            "start_time": "10:30",
+            "end_time": "11:45",
+            "room": "",
+            "rejection_code": "SAME_COURSE_INSTRUCTOR_CLASH",
+            "rejection_context": {
+              "clashing_section": "DS487",
+              "same_course": true,
+              "existing_day": "THU",
+              "existing_start": "10:50",
+              "existing_end": "12:05"
+            }
+          }
+        ],
+        "stage_origin": "greedy",
+        "stage_context": {}
+      }
+    },
+    "perturbation_metric": {
+      "changes_from_baseline_count": 0,
+      "unchanged_count": 0,
+      "newly_placed_count": 46,
+      "removed_count": 0,
+      "changes_by_stage": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 0,
+        "chain": 0,
+        "rooming_repair": 0
+      }
+    },
+    "stage_telemetry": {
+      "stage_ms": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 2274,
+        "chain": 17565,
+        "rooming_repair": 0
+      },
+      "stage_iterations": {
+        "greedy": 0,
+        "sa": 0,
+        "cpsat": 1,
+        "chain": 6,
+        "rooming_repair": 0
+      }
+    },
+    "score_before_local_search": [
+      9,
+      0,
+      3,
+      0,
+      12390,
+      13,
+      6,
+      5240,
+      0
+    ],
+    "chain_search_applied": true,
+    "score_before_chain": [
+      1,
+      0,
+      2,
+      0,
+      13680,
+      29,
+      5,
+      10405,
+      0
+    ],
+    "cpsat_polish_applied": false,
+    "meeting_sync": {
+      "sections": 44,
+      "written": 100
+    },
+    "safety_before_instructor_passes": {
+      "boards": 5,
+      "placements": 100,
+      "unique_students": 258,
+      "board_student_links_total": 336,
+      "primary_student_links": 258,
+      "visitor_student_links": 78,
+      "room_assigned": 90,
+      "physical_unassigned_rooms": 4,
+      "online_without_room": 6,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 29,
+      "cross_board_affected_students": 38,
+      "cross_board_student_conflict_incidences": 87,
+      "high_cross_board_conflicts": 0,
+      "high_cross_board_affected_students": 0,
+      "max_cross_board_conflicts_per_student": 6,
+      "budget": {
+        "rows": 39,
+        "planned_sections": 44,
+        "used_sections": 44,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "instructor_cap_repair": {
+      "enabled": true,
+      "detected": [],
+      "repaired": [],
+      "unplaced": [],
+      "locked_blocked": [],
+      "remaining_violations": 0,
+      "student_score_before": null,
+      "student_score_after": null
+    },
+    "instructor_clash_repair": {
+      "enabled": true,
+      "detected": [],
+      "repaired": [],
+      "unplaced": [],
+      "locked_blocked": [],
+      "remaining_clashes": 0,
+      "student_score_before": null,
+      "student_score_after": null,
+      "weekly_pattern_search": {
+        "evaluated": 0,
+        "accepted": 0
+      }
+    },
+    "instructor_compaction": {
+      "enabled": true,
+      "weekly_pattern_search": {
+        "evaluated": 0,
+        "accepted": 0
+      },
+      "neighbourhood_version": "relocation-v1",
+      "rolled_back": false,
+      "rollback_reason": null,
+      "room_safety": {
+        "physical_unassigned_before": 4,
+        "physical_unassigned_candidate": 4,
+        "physical_unassigned_after": 4,
+        "candidate_locked_assignments_preserved": true,
+        "locked_assignments_preserved": true
+      },
+      "candidate_instructor_impact": {
+        "working_days": 21,
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "total_idle": 670,
+        "largest_hole": 270
+      },
+      "candidate_student_total_gap": 10865,
+      "candidate_relocations": [
+        {
+          "section": "DS225::DATA_MINING_AND_ANALYTICS S1",
+          "from": "MON 10:50",
+          "to": "MON 14:30"
+        },
+        {
+          "section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE S1",
+          "from": "MON 10:50",
+          "to": "MON 16:00"
+        },
+        {
+          "section": "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING S1",
+          "from": "MON 09:00",
+          "to": "MON 13:00"
+        },
+        {
+          "section": "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP S1",
+          "from": "WED 14:30",
+          "to": "WED 13:00"
+        }
+      ],
+      "protected": {
+        "feasibility_before": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "feasibility_after": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "reserve_before": 5,
+        "reserve_after": 5
+      },
+      "student_impact": {
+        "total_gap_before": 11145,
+        "total_gap_after": 10865,
+        "total_gap_delta": -280,
+        "budget_ceiling": 11479,
+        "max_added_gap_any_student": 0,
+        "students_worsened": 0,
+        "students_improved": 2,
+        "tierA_gap_delta": -40,
+        "graduating_gap_delta": 0
+      },
+      "instructor_impact": {
+        "working_days_before": 21,
+        "working_days_after": 21,
+        "working_days_by_instructor_before": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "working_days_by_instructor_after": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "idle_minutes_by_instructor_before": {
+          "124": 605,
+          "134": 170,
+          "6": 170,
+          "7": 0,
+          "8": 45
+        },
+        "idle_minutes_by_instructor_after": {
+          "124": 365,
+          "134": 130,
+          "6": 130,
+          "7": 0,
+          "8": 45
+        },
+        "total_idle_before": 990,
+        "total_idle_after": 670,
+        "total_idle_saved": 320,
+        "largest_hole_before": 270,
+        "largest_hole_after": 270,
+        "over90_before": 3,
+        "over90_after": 1,
+        "worst_weekly_before": 605,
+        "worst_weekly_after": 365,
+        "instructors_improved": 3,
+        "instructors_worsened": 0
+      },
+      "search": {
+        "moves_evaluated": 1590,
+        "moves_accepted": 4,
+        "candidate_moves_accepted": 4,
+        "rounds_used": 5,
+        "residual_largest_hole": 270,
+        "timed_out": false,
+        "elapsed_seconds": 10.9
+      },
+      "relocations": [
+        {
+          "section": "DS225::DATA_MINING_AND_ANALYTICS S1",
+          "from": "MON 10:50",
+          "to": "MON 14:30"
+        },
+        {
+          "section": "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE S1",
+          "from": "MON 10:50",
+          "to": "MON 16:00"
+        },
+        {
+          "section": "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING S1",
+          "from": "MON 09:00",
+          "to": "MON 13:00"
+        },
+        {
+          "section": "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP S1",
+          "from": "WED 14:30",
+          "to": "WED 13:00"
+        }
+      ]
+    },
+    "score_before_instructor_passes": [
+      0,
+      0,
+      1,
+      0,
+      13665,
+      21,
+      5,
+      5285,
+      0
+    ],
+    "instructor_schedule_before_passes": {
+      "working_days": 21,
+      "idle_minutes": 990,
+      "idle_minutes_by_instructor": {
+        "124": 605,
+        "134": 170,
+        "6": 170,
+        "7": 0,
+        "8": 45
+      },
+      "working_days_by_instructor": {
+        "124": 4,
+        "134": 5,
+        "6": 5,
+        "7": 3,
+        "8": 4
+      },
+      "affected_instructors": 5
+    },
+    "secondary_recovery": {
+      "applied": true,
+      "accepted_moves": [
+        {
+          "section_id": "CS211::ALGORITHMS_AND_DATA_STRUCTURES_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 21,
+          "soft_after": 20,
+          "rooms_before": 5,
+          "rooms_after": 4,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "COE223::COMPUTER_ARCHITECTURE_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 20,
+          "soft_after": 20,
+          "rooms_before": 4,
+          "rooms_after": 3,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "PHYS103::PHYSICS_I_S2",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 20,
+          "soft_after": 20,
+          "rooms_before": 3,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "FE2::FREE_ELECTIVE_COURSE_II_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 20,
+          "soft_after": 13,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "FE2::FREE_ELECTIVE_COURSE_II_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 13,
+          "soft_after": 11,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "FE2::FREE_ELECTIVE_COURSE_II_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 11,
+          "soft_after": 7,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "CS211::ALGORITHMS_AND_DATA_STRUCTURES_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 7,
+          "soft_after": 6,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "CS372::DATABASE_SYSTEMS_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 6,
+          "soft_after": 5,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 5,
+          "soft_after": 4,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "recovery"
+        },
+        {
+          "section_id": "CS323::OPERATING_SYSTEMS_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 4,
+          "soft_after": 4,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        },
+        {
+          "section_id": "FE2::FREE_ELECTIVE_COURSE_II_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 4,
+          "soft_after": 4,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        },
+        {
+          "section_id": "CS323::OPERATING_SYSTEMS_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 4,
+          "soft_after": 4,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        },
+        {
+          "section_id": "CS323::OPERATING_SYSTEMS_S1",
+          "partner_section_id": null,
+          "move_type": "repattern",
+          "soft_before": 4,
+          "soft_after": 4,
+          "rooms_before": 2,
+          "rooms_after": 2,
+          "phase": "polish"
+        }
+      ],
+      "soft_unresolved_before": 21,
+      "soft_unresolved_after": 4,
+      "room_shortages_before": 5,
+      "room_shortages_after": 2,
+      "room_shortage_target": null,
+      "instructor_before": {
+        "working_days": 21,
+        "idle_minutes": 670,
+        "idle_minutes_by_instructor": {
+          "124": 365,
+          "134": 130,
+          "6": 130,
+          "7": 0,
+          "8": 45
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "instructor_after": {
+        "working_days": 21,
+        "idle_minutes": 670,
+        "idle_minutes_by_instructor": {
+          "124": 365,
+          "134": 130,
+          "6": 130,
+          "7": 0,
+          "8": 45
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "score_before": [
+        0,
+        0,
+        1,
+        0,
+        13385,
+        21,
+        5,
+        5285,
+        0
+      ],
+      "score_after": [
+        0,
+        0,
+        1,
+        0,
+        14615,
+        4,
+        7,
+        5285,
+        0
+      ],
+      "student_gap_minutes_before": 10865,
+      "student_gap_minutes_after": 14135,
+      "evaluations": 1897,
+      "room_evaluations": 17,
+      "unrelated_room_trials_skipped": 522,
+      "recovery_iterations": 10,
+      "polish_iterations": 4,
+      "structural_rejections": 209,
+      "instructor_rejections": 80,
+      "elapsed_seconds": 14.266,
+      "stop_reason": "polish_iteration_limit",
+      "room_shortages_before_search": 5,
+      "unassigned_room_rows_before": 4,
+      "incompatible_rooms_before": 1,
+      "placements_updated": 71,
+      "unassigned_room_rows_after": 2,
+      "incompatible_rooms_after": 0
+    },
+    "elapsed_seconds": 139.9,
+    "instructor_gap_metric": {
+      "idle_minutes_before": 0,
+      "idle_minutes_after": 0,
+      "idle_delta": 0,
+      "affected_instructors": 0
+    },
+    "tiered_soft_gap_budget": 120,
+    "instructor_schedule_metric": {
+      "before": {
+        "working_days": 0,
+        "idle_minutes": 0,
+        "idle_minutes_by_instructor": {},
+        "working_days_by_instructor": {},
+        "affected_instructors": 0
+      },
+      "after": {
+        "working_days": 21,
+        "idle_minutes": 670,
+        "idle_minutes_by_instructor": {
+          "124": 365,
+          "134": 130,
+          "6": 130,
+          "7": 0,
+          "8": 45
+        },
+        "working_days_by_instructor": {
+          "124": 4,
+          "134": 5,
+          "6": 5,
+          "7": 3,
+          "8": 4
+        },
+        "affected_instructors": 5
+      },
+      "working_days_saved": -21,
+      "idle_minutes_saved": -670,
+      "repair_exceptions": []
+    },
+    "safety_blocked": false,
+    "safety_regression": {
+      "blocked": false,
+      "regressions": []
+    },
+    "cross_board_before": 0,
+    "cross_board_after": 26,
+    "cross_board_delta": -26,
+    "cross_board_affected_students_before": 0,
+    "cross_board_affected_students_after": 36,
+    "cross_board_affected_students_delta": -36,
+    "cross_board_student_conflict_incidences_before": 0,
+    "cross_board_student_conflict_incidences_after": 77,
+    "cross_board_student_conflict_incidences_delta": -77
+  },
+  "after": {
+    "instructors": {
+      "working_days": 21,
+      "idle_minutes": 670,
+      "days": {
+        "6": 5,
+        "8": 4,
+        "124": 4,
+        "134": 5,
+        "7": 3
+      },
+      "idle_by_instructor": {
+        "6": 130,
+        "8": 45,
+        "124": 365,
+        "134": 130,
+        "7": 0
+      }
+    },
+    "students": 258,
+    "unresolved_students": 5,
+    "student_score": {
+      "layout": "tiered",
+      "highrisk_unresolved": 0,
+      "actual_assigned_clashes": 0,
+      "t1_unresolved": 1,
+      "t2_unresolved_over_tol": 0,
+      "student_cost": 14615,
+      "gap_minutes": 14135,
+      "soft_unresolved": 4,
+      "reserve_used": 7,
+      "same_course_spread": 5285,
+      "instructor_idle": 0,
+      "unresolved_tier_a": 0,
+      "unresolved_courses": 5
+    },
+    "sections": 44,
+    "meetings": 100,
+    "unassigned_room_rows": 8,
+    "physical_rooming": {
+      "unassigned": 2,
+      "incompatible": 0,
+      "shortages": 2
+    },
+    "safety": {
+      "boards": 5,
+      "placements": 100,
+      "unique_students": 258,
+      "board_student_links_total": 336,
+      "primary_student_links": 258,
+      "visitor_student_links": 78,
+      "room_assigned": 92,
+      "physical_unassigned_rooms": 2,
+      "online_without_room": 6,
+      "same_board_conflicts": {
+        "overlaps": 0,
+        "instructors": 0,
+        "rooms": 0
+      },
+      "instructor_clashes_scenario": 0,
+      "cross_board_conflicts": 26,
+      "cross_board_affected_students": 36,
+      "cross_board_student_conflict_incidences": 77,
+      "high_cross_board_conflicts": 0,
+      "high_cross_board_affected_students": 0,
+      "max_cross_board_conflicts_per_student": 4,
+      "budget": {
+        "rows": 39,
+        "planned_sections": 44,
+        "used_sections": 44,
+        "remaining_sections": 0,
+        "missing_required_sections": []
+      },
+      "incomplete_section_patterns": []
+    },
+    "signatures": {
+      "PHYS103::PHYSICS_I_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "CS111::FUNDAMENTALS_OF_PROGRAMMING_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "DS225::DATA_MINING_AND_ANALYTICS_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          780,
+          880
+        ],
+        [
+          4,
+          650,
+          725
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "MATH105::CALCULUS_I_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ]
+      ],
+      "PHYS103::PHYSICS_I_S2": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          885,
+          985
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "CS113::PROGRAMMING_II_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          640
+        ]
+      ],
+      "MATH106::CALCULUS_II_S1": [
+        [
+          1,
+          630,
+          705
+        ],
+        [
+          3,
+          630,
+          705
+        ]
+      ],
+      "DS113::INTRODUCTION_TO_DATA_SCIENCE_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          2,
+          960,
+          1035
+        ]
+      ],
+      "AI113::FUNDAMENTALS_OF_ARTIFICIAL_INTELLIGENCE_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          650,
+          725
+        ]
+      ],
+      "MATH203::203_CALCULUS_I_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          4,
+          780,
+          855
+        ]
+      ],
+      "ENGL103::ENGLISH_COMPOSITION_S1": [
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          3,
+          540,
+          615
+        ]
+      ],
+      "GS111::ARABIC_LANGUAGE_SKILLS_I_S1": [
+        [
+          2,
+          990,
+          1090
+        ]
+      ],
+      "AI221::ARTIFICIAL_INTELLIGENCE_PROGRAMMING_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          540,
+          640
+        ]
+      ],
+      "CS211::ALGORITHMS_AND_DATA_STRUCTURES_S1": [
+        [
+          1,
+          645,
+          745
+        ],
+        [
+          3,
+          630,
+          705
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "COE223::COMPUTER_ARCHITECTURE_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "CS285::SOFTWARE_ENGINEERING_S1": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          3,
+          990,
+          1090
+        ]
+      ],
+      "IS251::DATABASE_MANAGEMENT_SYSTEMS_I_S1": [
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          3,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "STAT301::PROBABILITY_AND_STATISTICS_FOR_ENGINEERS_S1": [
+        [
+          2,
+          960,
+          1035
+        ],
+        [
+          4,
+          960,
+          1035
+        ]
+      ],
+      "STAT307::APPLIED_PROBABILITY__STATISTICS_S1": [
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          4,
+          885,
+          960
+        ]
+      ],
+      "COE215::DIGITAL_LOGIC_DESIGN_S1": [
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          650,
+          725
+        ]
+      ],
+      "DS341::DATA_PRIVACY_GOVERNANCE__STEWARDSHIP_S1": [
+        [
+          0,
+          885,
+          960
+        ],
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          885,
+          960
+        ],
+        [
+          3,
+          780,
+          855
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_S1": [
+        [
+          2,
+          780,
+          880
+        ]
+      ],
+      "GS102::ISLAMIC_STUDIES_FEATURES_OF_THE_PROPHETS_BIOGRAPHY_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "CS323::OPERATING_SYSTEMS_S1": [
+        [
+          0,
+          540,
+          615
+        ],
+        [
+          1,
+          540,
+          615
+        ],
+        [
+          2,
+          540,
+          640
+        ]
+      ],
+      "AI331::MACHINE_LEARNING_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          645,
+          745
+        ],
+        [
+          4,
+          630,
+          705
+        ]
+      ],
+      "CS372::DATABASE_SYSTEMS_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ],
+        [
+          3,
+          885,
+          985
+        ]
+      ],
+      "DS321::BUSINESS_INTELLIGENCE_AND_ANALYTICS_S1": [
+        [
+          0,
+          630,
+          705
+        ],
+        [
+          2,
+          630,
+          705
+        ],
+        [
+          4,
+          645,
+          745
+        ]
+      ],
+      "DS332::DATA_MINING_AND_ANALYTICS_II_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          3,
+          780,
+          855
+        ],
+        [
+          4,
+          885,
+          985
+        ]
+      ],
+      "MATH471::OPTIMIZATION__MODELING_FOR_COMPUTING_S1": [
+        [
+          1,
+          960,
+          1035
+        ],
+        [
+          3,
+          960,
+          1035
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "FE2::FREE_ELECTIVE_COURSE_II_S1": [
+        [
+          1,
+          645,
+          745
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S2": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "GSE1::UNIVERSITY_ELECTIVE_COURSE_I_S3": [
+        [
+          0,
+          780,
+          880
+        ]
+      ],
+      "DS433::BIG_DATA_ANALYTICS_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "CS424::INTRO_TO_PARALLEL_COMPUTING_S1": [
+        [
+          0,
+          650,
+          725
+        ],
+        [
+          2,
+          650,
+          725
+        ],
+        [
+          4,
+          780,
+          880
+        ]
+      ],
+      "AI463_S1": [
+        [
+          1,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "DS487_S1": [
+        [
+          0,
+          780,
+          855
+        ],
+        [
+          2,
+          780,
+          855
+        ]
+      ],
+      "AI433::NEURAL_NETWORKS_AND_DEEP_LEARNING_S1": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "DS432::WEB_DEVELOPMENT_FOR_DATA_SCIENCE_S1": [
+        [
+          3,
+          540,
+          615
+        ],
+        [
+          4,
+          540,
+          615
+        ]
+      ],
+      "FE1::FREE_ELECTIVE_COURSE_I_S1": [
+        [
+          1,
+          540,
+          640
+        ]
+      ],
+      "MGT405::LEADERSHIP_AND_ENTREPRENEURSHIP_S1": [
+        [
+          0,
+          885,
+          985
+        ]
+      ],
+      "GS104::ISLAMIC_STUDIES_ISLAMIC_VALUES_AND_ETHICS_S1": [
+        [
+          0,
+          990,
+          1090
+        ]
+      ],
+      "AI463_S2": [
+        [
+          1,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ],
+      "DS487_S2": [
+        [
+          0,
+          870,
+          945
+        ],
+        [
+          2,
+          870,
+          945
+        ]
+      ]
+    }
+  },
+  "elapsed_seconds": 140.244
+}

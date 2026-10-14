@@ -29,12 +29,15 @@ that was never the part boards duplicated.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from time import perf_counter
 
 from django.db import transaction
 
+from scheduler.domain.calendar import parse_hhmm
 from scheduler.instructors import assign_instructors
-from scheduler.intake import build_snapshot
+from scheduler.intake import DEFAULT_LECTURE_STARTS, build_snapshot
 from scheduler.rooms import assign_rooms_exact, room_shortfall
+from scheduler.seating import seat_students
 from scheduler.solve import (
     expected_clashes,
     instructor_metrics,
@@ -60,7 +63,11 @@ LAB_DURATION_MINUTES = 80
 
 
 def grid_columns_for(
-    board, lecture_config: list | None, lab_config: list | None
+    board,
+    lecture_config: list | None,
+    lab_config: list | None,
+    *,
+    lecture_section_ids: frozenset[str] = frozenset(),
 ) -> tuple[list, list, int, int]:
     """Column definitions wide enough to hold every placement on this board.
 
@@ -74,9 +81,15 @@ def grid_columns_for(
     """
     short_windows: set[tuple[str, str]] = set()
     long_windows: set[tuple[str, str]] = set()
+    policy_windows: set[tuple[str, str]] = set()
     for placement in board.placements:
         pair = (_hhmm(placement.window.start), _hhmm(placement.window.end))
-        if placement.window.duration > LAB_DURATION_MINUTES:
+        if placement.section_id in lecture_section_ids:
+            policy_windows.add(pair)
+        if (
+            placement.window.duration > LAB_DURATION_MINUTES
+            and placement.section_id not in lecture_section_ids
+        ):
             long_windows.add(pair)
         else:
             short_windows.add(pair)
@@ -87,11 +100,28 @@ def grid_columns_for(
         if not missing:
             return list(existing or []), 0
         merged = list(existing or []) + [
-            {"label": f"{start}-{end}", "start": start, "end": end} for start, end in missing
+            {
+                "label": f"{start}-{end}",
+                "start": start,
+                "end": end,
+                **({"policy_only": True} if (start, end) in policy_windows else {}),
+            }
+            for start, end in missing
         ]
         merged.sort(key=lambda row: str(row.get("start")))
         return merged, len(missing)
 
+    if policy_windows and not lecture_config:
+        # An empty config uses the default lecture grid, also declared at
+        # scheduler intake. Retain it when adding only policy display columns.
+        lecture_config = [
+            {
+                "label": f"{start}-{_hhmm(parse_hhmm(start) + duration)}",
+                "start": start,
+                "end": _hhmm(parse_hhmm(start) + duration),
+            }
+            for start, duration in DEFAULT_LECTURE_STARTS.items()
+        ]
     lecture_columns, lecture_added = merge(lecture_config, short_windows)
     lab_columns, lab_added = merge(lab_config, long_windows)
     return lecture_columns, lab_columns, lecture_added, lab_added
@@ -166,6 +196,7 @@ def build_into_scenario(
     # does NOT do this -- measured at 120/300/600s it widened the spread rather
     # than improving the median.
     runs: int = 3,
+    confirmation_seconds: float = 20.0,
     clash_tolerance: float = 0.20,
     default_capacity: int = 25,
     #: Owner rule (D18): a course fewer than this many students want is withheld
@@ -181,6 +212,9 @@ def build_into_scenario(
     figure is reported beside the floor it should be read against, because "18
     working days" says nothing without "and 18 was the proven minimum".
     """
+    from core.services.board_ownership import assert_rebuild_ownership
+
+    assert_rebuild_ownership(scenario_id)
     from core.models import (
         BoardStudentLink,
         DeliveryBoard,
@@ -256,6 +290,7 @@ def build_into_scenario(
             snapshot,
             seeds=tuple(range(1, runs + 1)),
             time_limit_seconds=seconds,
+            confirmation_seconds=confirmation_seconds,
             clash_tolerance=clash_tolerance,
         )
     else:
@@ -300,7 +335,19 @@ def build_into_scenario(
 
     if progress:
         progress("rooming")
-    board = assign_rooms_exact(snapshot, result.board)
+    board = result.board if runs > 1 else assign_rooms_exact(snapshot, result.board)
+    if result.seating_confirmation is None and confirmation_seconds > 0:
+        if progress:
+            progress("seating")
+        started_confirmation = perf_counter()
+        result.seating_confirmation = seat_students(
+            snapshot,
+            board,
+            time_limit_seconds=confirmation_seconds,
+        ).summary()
+        result.wall_time_seconds += perf_counter() - started_confirmation
+        if not result.seating_confirmation["solution_found"]:
+            result.warnings.append("student seating could not be confirmed within the time budget")
 
     # ONE board per course. This is the rule the existing engine follows, and
     # departing from it was a real mistake.
@@ -384,10 +431,15 @@ def build_into_scenario(
     # stays correct if the grid ever changes: every placement gets a column by
     # construction. Existing columns are kept — this only ever adds.
     #
-    # The split is by DURATION, because that is how both the export and the grid
-    # decide which table a meeting belongs to (over 80 minutes reads as a lab).
+    # Retain ordinary duration-based column families, with explicit lecture
+    # columns for the institutional 180-minute English bundles.
     new_lecture, new_lab, added_lecture, added_lab = grid_columns_for(
-        board, scenario.slot_config, scenario.lab_slot_config
+        board,
+        scenario.slot_config,
+        scenario.lab_slot_config,
+        lecture_section_ids=frozenset(
+            s.id for s in snapshot.sections if offerings[s.offering_id].meeting_policy is not None
+        ),
     )
     if added_lecture or added_lab:
         scenario.slot_config = new_lecture
@@ -409,6 +461,7 @@ def build_into_scenario(
     with transaction.atomic():
         # Replace only what this engine put there before; the old engine's rows
         # and any hand-made edits are left untouched.
+        assert_rebuild_ownership(scenario_id)
         TermSection.objects.filter(scenario=scenario, source_tag=SOURCE_TAG).delete()
 
         for section_id, placements in sorted(by_section.items()):
@@ -487,6 +540,7 @@ def build_into_scenario(
         "violations": report.violation_count,
         "certification": report.certification.value,
         "expected_clashes": round(expected_clashes(snapshot, board), 1),
+        "student_seating": result.seating_confirmation,
         "instructor_days": instructors["working_days"],
         "instructor_days_floor": instructors["floor_days"],
         "instructor_idle_minutes": instructors["idle_minutes"],

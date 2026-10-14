@@ -15,7 +15,7 @@ PR7 is **not** a reliable distributed background-job system. Concretely:
 
 - Jobs are **process-local** — they live in the memory of the single Render web worker that accepted them.
 - Jobs are **not durable across deploys or restarts** — a deploy, OOM, or Render-initiated restart drops all `queued`/`running` jobs. The `PlannerJob` row survives as an audit, but its status will stay `running` forever (see commit-2 sweeper note) and must be manually reconciled.
-- Cancellation is **cooperative only** — the worker checks `cancel_requested` at stage boundaries. There is no preemption mid-stage.
+- Cancellation is **cooperative only** — checks run before execution, between major V2 phases (candidate generation/ranking, local search, chain search, CP-SAT, completed persistence/instructor passes), at scheduler progress callbacks, and after any pipeline returns. Classic auto-placement checks at call completion. There is no preemption inside a solver call or persistence transaction.
 - This is a **single-web-process async shim**, not a distributed job system. Scaling to multiple workers, queue sharding, or cross-process recovery is explicitly out of scope and requires a separate executor (Celery/RQ) in a later PR.
 
 That framing matters because on Render (single free-tier Starter worker, cold-starts, deploy restarts) the above are real operating conditions, not edge cases.
@@ -42,7 +42,7 @@ Fields:
 - `result_json` (JSONField, nullable — holds the full planner result once `succeeded`)
 - `error_message` (TextField, nullable — traceback + context string when `failed`)
 - `last_stage_seen` (CharField, nullable, values in `{greedy, sa, cpsat, chain, rooming_repair}`) — first-class field written by the runner as each stage boundary is crossed. Lets failure/cancel diagnostics answer "how far did it get" without inferring from PR6 telemetry after the fact. PR6 `stage_ms` is a timing signal; `last_stage_seen` is a progression signal.
-- `cancel_requested` (bool — cooperative cancellation flag read at stage boundaries)
+- `cancel_requested` (bool — cooperative cancellation flag read at the execution checkpoints above)
 - `request_signature` (short hash of scenario + mode + flag fingerprint — used for dedup hint, not enforcement)
 
 Indexes:
@@ -60,9 +60,11 @@ Responsibilities:
 
 - `submit_planner_job(scenario_id, mode, user)` → creates `PlannerJob` in `queued`, enqueues work, returns job id
 - `run_planner_job(job_id)` — worker entry; flips to `running`, invokes the existing `auto_place_scenario` / `optimise_scenario_timetable_v2`, writes `result_payload` + flips to `succeeded`, or captures exception + flips to `failed`
-- `cancel_planner_job(job_id, user)` — sets `cancel_requested=True`; worker checks at stage boundaries (reusing PR6 instrumentation points)
+- `cancel_planner_job(job_id, user)` — conditionally sets `cancel_requested=True` only for queued/running jobs. Acknowledged cancellation restores the scenario's pre-job sections, placements, meetings, student assignments, locks, grid and dependent metadata before committing `cancelled`. The cancel decision and terminal write share a row lock, so a late request cannot turn an already successful job into an acknowledged cancellation.
 - `get_planner_job(job_id)` — thin getter for the polling view
 - No planner logic moves here. This module only orchestrates job lifecycle around the existing V2 entry points.
+
+Cancellation latency depends on the current phase. Local search defaults to a 180-second budget and CP-SAT to a 60-second budget; chain search is iteration limited and its optional time deadline defaults to disabled. There is no fixed wall-clock cancellation guarantee. The UI remains busy until restoration completes. Live executing jobs are excluded from local stale reconciliation; jobs orphaned by restart remain eligible. A worker that has lost `running` ownership cannot restore or rewrite a terminal job.
 
 ### 3. Queue/executor choice
 

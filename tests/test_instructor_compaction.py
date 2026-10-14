@@ -33,6 +33,7 @@ def _gappy_board(*, lab=False):
         CourseInstructor,
         DeliveryBoard,
         Instructor,
+        Room,
         SectionPlacement,
         TermSection,
         TermSectionMeeting,
@@ -61,6 +62,15 @@ def _gappy_board(*, lab=False):
     )
     instr = Instructor.objects.create(
         full_name="Dr Gap", normalised_name=normalise_instructor("Dr Gap")
+    )
+    Room.objects.create(
+        room_code="R1",
+        department="AI",
+        capacity=50,
+        # Without a credit-hour budget, rooming treats the 100-minute family
+        # as long lectures as well as the ordinary 75-minute meetings.
+        room_type="lecture",
+        section="M",
     )
     placements = [("C1", "09:00", "10:15"), ("C2", "13:00", "14:15")]  # MON, 2h45 hole
     if lab:
@@ -196,6 +206,179 @@ def test_compaction_is_idempotent() -> None:
     second = compact_instructor_schedules(scenario.id)
     assert second["search"]["moves_accepted"] == 0  # already compact → no more moves
     assert _instructor_idle(scenario) == idle_after_first
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+@pytest.mark.parametrize("priority", [True, False], ids=["instructor-priority", "legacy"])
+def test_compaction_keeps_working_day_ceiling_and_legacy_switch(settings, priority):
+    """Zero idle on a new day loses to a 15-minute gap on the existing day."""
+    from core.models import SectionPlacement, TermSectionMeeting
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority
+    scenario = _gappy_board()
+    SectionPlacement.objects.filter(
+        board__scenario=scenario, term_section__course_code="C1"
+    ).update(is_locked=True)
+
+    report = compact_instructor_schedules(scenario.id)
+
+    anchor = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C1")
+    moved = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C2")
+    assert (anchor.day, anchor.start_time) == ("MON", "09:00")
+    if priority:
+        assert (moved.day, moved.start_time, moved.end_time) == ("MON", "10:30", "11:45")
+        assert _instructor_idle(scenario) == 15
+        assert report["instructor_impact"]["working_days_after"] == 1
+    else:
+        # Kill switch reproduces the prior worst-hole objective, which could
+        # achieve zero idle by adding a campus day.
+        assert (moved.day, moved.start_time, moved.end_time) == ("SUN", "09:00", "10:15")
+        assert _instructor_idle(scenario) == 0
+        assert report["instructor_impact"]["working_days_after"] == 2
+    assert report["instructor_impact"]["working_days_before"] == 1
+    meeting = TermSectionMeeting.objects.get(term_section=moved.term_section)
+    assert (meeting.day, meeting.start_time, meeting.end_time) == (
+        moved.day,
+        moved.start_time,
+        moved.end_time,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+@pytest.mark.parametrize("priority", [True, False], ids=["instructor-priority", "legacy"])
+def test_relocation_preserves_exact_contact_minutes(monkeypatch, settings, priority):
+    from core.models import SectionPlacement
+    from core.services import timetable_candidate_eval
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority
+    scenario = _gappy_board()
+    scenario.slot_config = _SLOTS + [
+        {"start": "10:15", "end": "10:45"},  # zero gap, but loses 45 teaching minutes
+        {"start": "11:45", "end": "13:15"},  # adds 15 teaching minutes
+    ]
+    scenario.save(update_fields=["slot_config"])
+    SectionPlacement.objects.filter(
+        board__scenario=scenario, term_section__course_code="C1"
+    ).update(is_locked=True)
+    evaluated_durations = set()
+    evaluate = timetable_candidate_eval.evaluate_generated_timetable_candidate
+
+    def inspect_candidate(candidate_id, sections, *args, **kwargs):
+        evaluated_durations.update(m.end_min - m.start_min for s in sections for m in s.meetings)
+        return evaluate(candidate_id, sections, *args, **kwargs)
+
+    monkeypatch.setattr(
+        timetable_candidate_eval, "evaluate_generated_timetable_candidate", inspect_candidate
+    )
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["search"]["moves_accepted"] > 0
+    assert evaluated_durations == {75}
+    for _sid, _day, start, end, _room in _placement_snapshot(scenario)[0]:
+        sh, sm = map(int, start.split(":"))
+        eh, em = map(int, end.split(":"))
+        assert (eh * 60 + em) - (sh * 60 + sm) == 75
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+def test_online_sections_are_never_offered_for_relocation(monkeypatch):
+    from core.models import CourseInstructor, SectionPlacement, TermSection
+    from core.services import timetable_candidate_eval, timetable_optimizer_v2
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    scenario = _gappy_board()
+    anchor = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C1")
+    extra = TermSection.objects.create(
+        scenario=scenario,
+        course_key="C3",
+        section="S1",
+        course_code="C3",
+        course_number="C3",
+        course_name="C3",
+        available_capacity=30,
+    )
+    SectionPlacement.objects.create(
+        board=anchor.board, term_section=extra, day="MON", start_time="10:30", end_time="11:45"
+    )
+    CourseInstructor.objects.create(
+        program="AI",
+        course_code="C3",
+        section="M",
+        instructor=CourseInstructor.objects.get(course_code="C1").instructor,
+        role="primary",
+    )
+    build = timetable_optimizer_v2.build_section_states_for_scenario
+
+    def online_states(sid):
+        states = build(sid)
+        next(s for s in states if s.section_id == "C1_S1").is_online = True
+        return states
+
+    monkeypatch.setattr(timetable_optimizer_v2, "build_section_states_for_scenario", online_states)
+    evaluate = timetable_candidate_eval.evaluate_generated_timetable_candidate
+
+    def inspect_candidate(candidate_id, sections, *args, **kwargs):
+        online = next(s for s in sections if s.section_id == "C1_S1")
+        assert [(m.day, m.start_min, m.end_min) for m in online.meetings] == [(1, 540, 615)]
+        return evaluate(candidate_id, sections, *args, **kwargs)
+
+    monkeypatch.setattr(
+        timetable_candidate_eval, "evaluate_generated_timetable_candidate", inspect_candidate
+    )
+    report = compact_instructor_schedules(scenario.id)
+    assert report["search"]["moves_evaluated"] > 0
+    anchor.refresh_from_db()
+    assert (anchor.day, anchor.start_time, anchor.end_time) == ("MON", "09:00", "10:15")
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+@pytest.mark.parametrize("locked_busy", [True, False], ids=["locked-busy", "stalled-busy"])
+def test_unmovable_priority_teachers_do_not_starve_next_instructor(locked_busy):
+    from core.models import CourseInstructor, Instructor, SectionPlacement, TermSection
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    scenario = _gappy_board()
+    anchor = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C1")
+    anchor.is_locked = True
+    anchor.save(update_fields=["is_locked"])
+    for index in range(3):
+        instructor = Instructor.objects.create(
+            full_name=f"Busy {index}", normalised_name=f"busy {index}"
+        )
+        for day in ("SUN", "TUE"):
+            code = f"BUSY{index}{day}"
+            section = TermSection.objects.create(
+                scenario=scenario,
+                course_key=code,
+                course_code=code,
+                course_number=code,
+                course_name=code,
+                section="S1",
+                available_capacity=30,
+            )
+            CourseInstructor.objects.create(
+                program="AI", course_code=code, section="M", instructor=instructor, role="primary"
+            )
+            SectionPlacement.objects.create(
+                board=anchor.board,
+                term_section=section,
+                day=day,
+                start_time="09:00",
+                end_time="10:15" if locked_busy else "10:00",
+                is_locked=locked_busy,
+            )
+    # These three two-day teachers outrank the original one-day instructor, but
+    # their sections are either locked or have no exact-duration slot domain.
+    report = compact_instructor_schedules(scenario.id)
+    assert report["search"]["moves_accepted"] > 0
+    moved = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C2")
+    assert (moved.day, moved.start_time, moved.end_time) == ("MON", "10:30", "11:45")
 
 
 @pytest.mark.django_db(transaction=True)
@@ -430,3 +613,200 @@ def test_compaction_replay_with_student_demand_preserves_assignments(
     assert build_section_instructor_map_for_scenario(scenario.id) == instructor_ids
     assert list(CourseInstructor.objects.order_by("pk").values()) == assignments_before
     assert [(r[0], r[4]) for r in _placement_snapshot(scenario)[1]] == meeting_instructors_before
+
+
+def _full_pass_snapshot(scenario):
+    """Include audit metadata so rollback must preserve more than class times."""
+    from core.models import CourseInstructor, SectionPlacement, TermSectionMeeting
+
+    return (
+        list(SectionPlacement.objects.filter(board__scenario=scenario).order_by("pk").values()),
+        list(
+            TermSectionMeeting.objects.filter(term_section__scenario=scenario)
+            .order_by("pk")
+            .values()
+        ),
+        list(CourseInstructor.objects.order_by("pk").values()),
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+@pytest.mark.parametrize("generated_online", [False, True], ids=["campus-only", "generated-online"])
+def test_room_regression_rolls_back_only_optional_compaction_with_honest_report(
+    settings, generated_online
+):
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        ProgrammeRequirement,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+    )
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    scenario = _gappy_board()
+    # The baseline is the already repaired board: the anchor and its metadata
+    # are fixed before the optional pass enters its own savepoint.
+    anchor = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C1")
+    anchor.is_locked = True
+    anchor.room = "R1"
+    anchor.save()
+    TermSectionMeeting.objects.filter(term_section=anchor.term_section).update(room="R1")
+    other_board = DeliveryBoard.objects.create(scenario=scenario, label="T3", program="AI")
+    other_teacher = Instructor.objects.create(full_name="Dr Other", normalised_name="dr other")
+    CourseInstructor.objects.create(
+        program="AI", course_code="BUSY", section="M", instructor=other_teacher, role="primary"
+    )
+    busy_section = TermSection.objects.create(
+        scenario=scenario,
+        course_key="BUSY",
+        course_code="BUSY",
+        course_number="BUSY",
+        course_name="Busy room",
+        section="S1",
+        available_capacity=30,
+    )
+    SectionPlacement.objects.create(
+        board=other_board,
+        term_section=busy_section,
+        day="MON",
+        start_time="10:30",
+        end_time="11:45",
+        room="R1",
+        is_locked=True,
+    )
+    TermSectionMeeting.objects.create(
+        term_section=busy_section,
+        day="MON",
+        start_time="10:30",
+        end_time="11:45",
+        room="R1",
+        instructor="Dr Other",
+    )
+    if generated_online:
+        # Generated rows split AI/221. The room allocator currently sees the
+        # raw "AI" and can fill this remote row while stranding C2. That remote
+        # change must never compensate for a lost physical room in this gate.
+        ProgrammeRequirement.objects.create(program="AI", course_code="AI221", is_online=True)
+        remote = TermSection.objects.create(
+            scenario=scenario,
+            course_key="AI221::REMOTE_COURSE",
+            course_code="AI",
+            course_number="221",
+            course_name="Remote course",
+            section="S1",
+            available_capacity=30,
+        )
+        SectionPlacement.objects.create(
+            board=anchor.board,
+            term_section=remote,
+            day="MON",
+            start_time="14:30",
+            end_time="15:45",
+            room="",
+        )
+        TermSectionMeeting.objects.create(
+            term_section=remote,
+            day="MON",
+            start_time="14:30",
+            end_time="15:45",
+            room="",
+        )
+    before = _full_pass_snapshot(scenario)
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["rolled_back"] is True
+    assert "without rooms increased from 0 to 1" in report["rollback_reason"]
+    assert report["search"]["candidate_moves_accepted"] > 0
+    assert report["search"]["moves_accepted"] == 0
+    assert report["candidate_relocations"]
+    assert report["relocations"] == []
+    assert report["candidate_instructor_impact"]["total_idle"] == 15
+    assert report["instructor_impact"]["total_idle_before"] == 165
+    assert report["instructor_impact"]["total_idle_after"] == 165
+    assert report["instructor_impact"]["total_idle_saved"] == 0
+    assert report["instructor_impact"]["instructors_improved"] == 0
+    assert report["room_safety"]["physical_unassigned_after"] == 0
+    assert _full_pass_snapshot(scenario) == before
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+def test_feasible_roomed_compaction_persists_and_preserves_locked_anchor(settings):
+    from core.models import SectionPlacement, TermSectionMeeting
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    scenario = _gappy_board()
+    anchor = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C1")
+    anchor.is_locked = True
+    anchor.save()
+    locked_before = list(SectionPlacement.objects.filter(pk=anchor.pk).values())
+    report = compact_instructor_schedules(scenario.id)
+
+    moved = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C2")
+    assert (moved.day, moved.start_time, moved.room) == ("MON", "10:30", "R1")
+    assert TermSectionMeeting.objects.get(term_section=moved.term_section).start_time == "10:30"
+    assert report["rolled_back"] is False
+    assert report["rollback_reason"] is None
+    assert report["search"]["moves_accepted"] > 0
+    assert report["room_safety"]["physical_unassigned_before"] == 0
+    assert report["room_safety"]["physical_unassigned_after"] == 0
+    assert report["instructor_impact"]["total_idle_after"] == 15
+    assert list(SectionPlacement.objects.filter(pk=anchor.pk).values()) == locked_before
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+def test_nonworsening_room_shortage_does_not_block_compaction():
+    from core.models import Room, SectionPlacement
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    scenario = _gappy_board()
+    SectionPlacement.objects.filter(board__scenario=scenario).update(room="")
+    Room.objects.all().delete()
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["rolled_back"] is False
+    assert report["search"]["moves_accepted"] > 0
+    assert report["room_safety"]["physical_unassigned_before"] == 2
+    assert report["room_safety"]["physical_unassigned_after"] == 2
+    assert _instructor_idle(scenario) < 165
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction_enabled")
+def test_locked_metadata_regression_rolls_back_even_when_room_shortage_is_unchanged(monkeypatch):
+    from core.models import SectionPlacement, TermSectionMeeting
+    from core.services import timetable_rooming
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    scenario = _gappy_board()
+    anchor = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C1")
+    anchor.is_locked = True
+    anchor.save()
+    before = _full_pass_snapshot(scenario)
+    rooming = timetable_rooming.assign_rooms_to_board
+
+    def corrupt_locked_assignment(*args, **kwargs):
+        result = rooming(*args, **kwargs)
+        TermSectionMeeting.objects.filter(term_section=anchor.term_section).update(
+            instructor="Changed"
+        )
+        return result
+
+    monkeypatch.setattr(timetable_rooming, "assign_rooms_to_board", corrupt_locked_assignment)
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["rolled_back"] is True
+    assert "locked placement or meeting assignment changed" in report["rollback_reason"]
+    assert report["room_safety"]["physical_unassigned_candidate"] == 0
+    assert report["room_safety"]["candidate_locked_assignments_preserved"] is False
+    assert report["room_safety"]["locked_assignments_preserved"] is True
+    assert report["search"]["moves_accepted"] == 0
+    assert report["instructor_impact"]["total_idle_after"] == 165
+    assert _full_pass_snapshot(scenario) == before

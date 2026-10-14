@@ -5,7 +5,11 @@ import itertools
 from collections.abc import Iterable
 
 from core.services.timetable_assignment_models import CanonicalPattern, SectionMeeting
-from core.services.timetable_autoplace import _generate_meeting_options
+from core.services.timetable_autoplace import (
+    _generate_meeting_options,
+    generate_course_meeting_options,
+)
+from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_workspace import _to_minutes
 
 DAY_TO_IDX = {"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4}
@@ -45,6 +49,43 @@ def build_canonical_pattern_catalog(
 ) -> dict[str, list[CanonicalPattern]]:
     catalog: dict[str, list[CanonicalPattern]] = {}
     for req in course_requirements:
+        policy = get_course_meeting_policy(req.get("course_code", ""), req.get("course_key", ""))
+        if policy:
+            if policy.policy_id in catalog:
+                continue
+            patterns = []
+            for option in generate_course_meeting_options(
+                req.get("course_code", ""),
+                req.get("credit_hours", 4),
+                slot_config,
+                lab_slot_config,
+                blocked_slots,
+                course_key=req.get("course_key", ""),
+            ):
+                meetings = [
+                    SectionMeeting(
+                        DAY_TO_IDX[m["day"]], _to_minutes(m["start"]), _to_minutes(m["end"])
+                    )
+                    for m in option
+                ]
+                permitted = policy.pattern_for(meetings)
+                if permitted is None:
+                    raise ValueError("English catalog options must use a complete weekly pattern")
+                patterns.append(
+                    CanonicalPattern(
+                        pattern_id=permitted.pattern_id,
+                        signature=generate_pattern_signature(meetings),
+                        meetings=meetings,
+                        pattern_family=policy.policy_id,
+                        duration_permutation="180_180_180_180",
+                        is_lab_mixed=False,
+                        meeting_count=4,
+                        days_used=frozenset(m.day for m in meetings),
+                        slot_fingerprint=permitted.pattern_id,
+                    )
+                )
+            catalog[policy.policy_id] = patterns
+            continue
         family_key = duration_family_key(
             req["durations"], req.get("has_lab", False), req.get("modality", "ONCAMPUS")
         )

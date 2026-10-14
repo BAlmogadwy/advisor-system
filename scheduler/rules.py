@@ -30,6 +30,7 @@ from enum import Enum
 
 from scheduler.domain import Snapshot
 from scheduler.domain.board import Board, Placement
+from scheduler.meeting_patterns import pattern_cells, policy_accepts
 
 
 class Severity(str, Enum):
@@ -112,16 +113,13 @@ class NoOverlapByKey(RuleSpec):
 
     key: str = ""  # "instructor" | "room" | "offering"
     scope: str = "scenario"
-    #: Offerings whose sections are REQUIRED to share hours are exempt from the
-    #: same-offering separation (D19: ENG101/ENG102, where the owner's rule is
-    #: that every section sits at the same time). Declared here rather than
-    #: buried in the checker, so the exemption is fingerprinted with the rule and
-    #: appears in the certification, instead of being a silent kindness the
-    #: grader extends to the solver that produced the board.
+    #: Complete institutional patterns permit parallel sibling sections.
+    #: Declare this exemption so the rulebook fingerprint and certification
+    #: explicitly distinguish it from ordinary offering separation.
     #:
     #: Applies to the "offering" key only. Instructor clash and room exclusivity
     #: are physical and are never exempted for anybody.
-    exempt_fixed_blocks: bool = True
+    exempt_weekly_patterns: bool = True
 
     def keys_of(self, p: Placement) -> tuple[str, ...]:
         if self.key == "instructor":
@@ -135,32 +133,29 @@ class NoOverlapByKey(RuleSpec):
     def declaration(self) -> dict:
         out = {**super().declaration(), "key": self.key, "scope": self.scope}
         if self.key == "offering":
-            out["exempt_fixed_blocks"] = self.exempt_fixed_blocks
+            out["exempt_weekly_patterns"] = self.exempt_weekly_patterns
         return out
 
 
 @dataclass(frozen=True)
 class DistinctDays(RuleSpec):
-    """All meetings of one group fall on different days.
-
-    A course whose hours are GIVEN rather than chosen (D19 — ENG101/ENG102 own
-    the whole morning) meets more than once a day by design. For those sections
-    the rule is not dropped, it is REFINED to the finer key it was always
-    standing in for: no two meetings in the same CELL. Dropping it outright
-    would let a section be booked twice at 09:00 on Sunday with nothing to say
-    so, and a checker that stops checking is how a checker starts lying.
-    """
+    """All meetings of one group fall on different days."""
 
     group: str = "section"
-    #: When True, sections of a fixed-block offering are graded on (day, start)
-    #: instead of on day alone.
-    refine_for_fixed_blocks: bool = True
+
+    def declaration(self) -> dict:
+        return {**super().declaration(), "group": self.group}
+
+
+@dataclass(frozen=True)
+class WeeklyPatternCompliance(RuleSpec):
+    """Every policy-governed section has one complete permitted weekly bundle."""
 
     def declaration(self) -> dict:
         return {
             **super().declaration(),
-            "group": self.group,
-            "refine_for_fixed_blocks": self.refine_for_fixed_blocks,
+            "source": "offering.meeting_policy",
+            "complete_bundle": True,
         }
 
 
@@ -228,6 +223,7 @@ class RoomCompatibility(RuleSpec):
 
 RULEBOOK: tuple[RuleSpec, ...] = (
     ExactMeetingMultiset("H1", "Meeting count & duration"),
+    WeeklyPatternCompliance("H_WEEKLY_PATTERN", "Complete institutional weekly pattern"),
     DistinctDays("H2", "All-different-days", group="section"),
     LegalWindow("H3", "Legal slot grid"),
     NoOverlapByKey("H7", "Instructor clash", key="instructor"),
@@ -309,14 +305,14 @@ def _pairs(items: Iterable[Placement]) -> Iterable[tuple[Placement, Placement]]:
 
 
 def _check_no_overlap(spec: NoOverlapByKey, snap: Snapshot, board: Board) -> tuple[Violation, ...]:
-    # D19: sections of a fixed-block course are REQUIRED to share their hours,
+    # Institutional patterns permit parallel sibling sections,
     # so grading them for overlapping each other reports the rule being obeyed
     # as a failure. Scoped to the offering key alone — an instructor cannot be
     # in two rooms at once no matter what the course is, and neither can a room.
     exempt: frozenset[str] = frozenset()
-    if spec.key == "offering" and spec.exempt_fixed_blocks:
+    if spec.key == "offering" and spec.exempt_weekly_patterns:
         exempt = frozenset(
-            offering.id for offering in snap.offerings if offering.occupies_fixed_block
+            offering.id for offering in snap.offerings if offering.meeting_policy is not None
         )
     grouped: dict[str, list[Placement]] = {}
     for p in board.placements:
@@ -339,49 +335,10 @@ def _check_no_overlap(spec: NoOverlapByKey, snap: Snapshot, board: Board) -> tup
     return tuple(out)
 
 
-def _fixed_block_sections(snap: Snapshot) -> frozenset[str]:
-    """Sections whose hours are given, not chosen (D19)."""
-    offerings = snap.offerings_by_id
-    return frozenset(
-        section.id
-        for section in snap.sections
-        if offerings[section.offering_id].occupies_fixed_block
-    )
-
-
 def _check_distinct_days(spec: DistinctDays, snap: Snapshot, board: Board) -> tuple[Violation, ...]:
     out: list[Violation] = []
-    refined = _fixed_block_sections(snap) if spec.refine_for_fixed_blocks else frozenset()
     for section_id, items in sorted(board.by_section.items()):
         ordered = sorted(items, key=lambda x: (x.day.index, x.window.start))
-        if section_id in refined:
-            # A fixed-block section is MEANT to meet more than once a day, so
-            # the graded property is the physical one: no two of its meetings
-            # overlap.
-            #
-            # Compared as INTERVALS, never as equal start times. Start equality
-            # was the first attempt and it was unsound: this grid declares 10:30
-            # and 10:50 for the same 75 minutes, so a section booked at both on
-            # one day has two different starts, overlaps for 55 minutes, and
-            # passed every rule in the book. H7 and H9 could not catch it either
-            # — a D19 section has no instructor and no room, so both return no
-            # key. This module's own docstring names that failure: the old
-            # engine had eight implementations of instructor clash, "one of
-            # which compared start times while the others compared intervals".
-            per_day: dict[str, list[Placement]] = {}
-            for p in ordered:
-                for earlier in per_day.get(p.day.value, ()):
-                    if p.window.overlaps(earlier.window):
-                        out.append(
-                            Violation(
-                                spec.rule_id,
-                                f"section {section_id} meets at {p.day.value} "
-                                f"{p.window}, overlapping {earlier.window}",
-                                (earlier.id, p.id),
-                            )
-                        )
-                per_day.setdefault(p.day.value, []).append(p)
-            continue
         seen: dict[object, Placement] = {}
         for p in ordered:
             if p.day.value in seen:
@@ -421,7 +378,22 @@ def _check_legal_window(spec: LegalWindow, snap: Snapshot, board: Board) -> tupl
     }
     days = set(snap.grid.days())
     out: list[Violation] = []
+    offerings = snap.offerings_by_id
     for p in sorted(board.placements, key=lambda x: x.id):
+        offering = offerings.get(p.offering_id)
+        if offering is not None and offering.meeting_policy is not None:
+            allowed = {
+                cell
+                for pattern in offering.meeting_policy.patterns
+                for cell in pattern_cells(pattern)
+            }
+            if (p.day, p.window) not in allowed:
+                out.append(
+                    Violation(
+                        spec.rule_id, f"{p.id}: outside its institutional weekly pattern", (p.id,)
+                    )
+                )
+            continue
         if p.day not in days:
             out.append(
                 Violation(spec.rule_id, f"{p.id}: {p.day.value} is not a teaching day", (p.id,))
@@ -435,6 +407,20 @@ def _check_legal_window(spec: LegalWindow, snap: Snapshot, board: Board) -> tupl
                 )
             )
     return tuple(out)
+
+
+def _check_weekly_pattern(spec: WeeklyPatternCompliance, snap: Snapshot, board: Board):
+    offerings = snap.offerings_by_id
+    return tuple(
+        Violation(
+            spec.rule_id,
+            f"{section.id}: must use one complete {offerings[section.offering_id].meeting_policy.policy_id} bundle",
+            (section.id,),
+        )
+        for section in sorted(snap.sections, key=lambda s: s.id)
+        if offerings[section.offering_id].meeting_policy is not None
+        and not policy_accepts(offerings[section.offering_id], board.by_section.get(section.id, ()))
+    )
 
 
 def _check_multiset(
@@ -534,6 +520,7 @@ _CHECKERS: dict[type, Checker] = {
     DailyCardinality: _check_daily_cap,
     LegalWindow: _check_legal_window,
     ExactMeetingMultiset: _check_multiset,
+    WeeklyPatternCompliance: _check_weekly_pattern,
     RoomCompatibility: _check_room_compat,
 }
 

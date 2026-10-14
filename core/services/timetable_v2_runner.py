@@ -13,11 +13,77 @@ from __future__ import annotations
 
 import logging
 import traceback
+from collections.abc import Callable
 
 from core.services.timetable_board_persistence import restore_scenario, snapshot_scenario
 from core.services.timetable_workspace import compute_scenario_safety_summary
 
 logger = logging.getLogger(__name__)
+
+
+def optimiser_instructor_day_regression(before: dict, after: dict, result: dict) -> dict:
+    """Protect each instructor's initial week, including post-search passes.
+
+    A mandatory cap/clash repair may need another day. Its measured intermediate
+    board supplies that instructor's explicit exception ceiling; optional later
+    compaction cannot increase it further.
+    """
+    from core.services.timetable_optimisation_policy import instructor_day_regressions
+
+    regressions = instructor_day_regressions(before, after)
+    repair_metrics = result.get("instructor_schedule_after_hard_repairs") or {}
+    repair_days = repair_metrics.get("working_days_by_instructor") or {}
+    pre_pass = result.get("instructor_schedule_before_passes") or before
+    pre_days = pre_pass.get("working_days_by_instructor") or {}
+    blocked, exceptions = [], []
+    for regression in regressions:
+        iid = regression["instructor_id"]
+        if int(pre_days.get(iid, regression["before"])) <= regression["before"] and regression[
+            "after"
+        ] <= int(repair_days.get(iid, regression["before"])):
+            exceptions.append({**regression, "reason": "mandatory_instructor_constraint_repair"})
+        else:
+            blocked.append(regression)
+    return {"blocked": bool(blocked), "regressions": blocked, "repair_exceptions": exceptions}
+
+
+def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict) -> dict:
+    """Only a measured mandatory hard repair may increase instructor idle.
+
+    Optional search/compaction regressions and missing evidence never qualify
+    as repair exceptions, even when the final aggregate idle improved.
+    """
+    from core.services.timetable_optimisation_policy import instructor_idle_regressions
+
+    pre_pass = result.get("instructor_schedule_before_passes") or before
+    repaired = result.get("instructor_schedule_after_hard_repairs") or {}
+
+    def measured(metrics, instructor_id):
+        value = (
+            (metrics.get("idle_minutes_by_instructor") or {}).get(instructor_id)
+            if instructor_id is not None
+            else metrics.get("idle_minutes")
+        )
+        return (
+            value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        )
+
+    blocked, exceptions = [], []
+    for regression in instructor_idle_regressions(before, after):
+        instructor_id = regression.get("instructor_id")
+        before_repair = measured(pre_pass, instructor_id)
+        after_repair = measured(repaired, instructor_id)
+        if (
+            not regression["metric"].endswith("_evidence")
+            and before_repair is not None
+            and after_repair is not None
+            and before_repair <= regression["before"]
+            and regression["after"] <= after_repair
+        ):
+            exceptions.append({**regression, "reason": "mandatory_instructor_constraint_repair"})
+        else:
+            blocked.append(regression)
+    return {"blocked": bool(blocked), "regressions": blocked, "repair_exceptions": exceptions}
 
 
 def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
@@ -163,6 +229,7 @@ def run_v2_optimisation_guarded(
     cpsat_limit: float = 60.0,
     strategies: list[str] | None = None,
     max_chain_iterations: int = 10,
+    checkpoint: Callable[[], None] | None = None,
 ) -> dict:
     """Run the V2 optimiser behind the snapshot → regression → rollback gate.
 
@@ -176,6 +243,23 @@ def run_v2_optimisation_guarded(
     """
     board_snapshot = snapshot_scenario(scenario_id)
     safety_before = compute_scenario_safety_summary(scenario_id)
+    from core.services.timetable_optimisation_policy import (
+        instructor_schedule_metrics,
+        is_instructor_priority_enabled,
+    )
+    from core.services.timetable_optimizer_v2 import (
+        build_section_instructor_map_for_scenario,
+        build_section_states_for_scenario,
+    )
+
+    instructor_map = (
+        build_section_instructor_map_for_scenario(scenario_id)
+        if is_instructor_priority_enabled()
+        else None
+    )
+    instructor_before = instructor_schedule_metrics(
+        build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
+    )
 
     try:
         if mode == "full":
@@ -189,6 +273,7 @@ def run_v2_optimisation_guarded(
                 run_chain_search=run_chain,
                 run_cpsat_polish=run_cpsat,
                 cpsat_time_limit=cpsat_limit,
+                checkpoint=checkpoint,
             )
         else:
             from core.services.timetable_optimizer_v2 import optimise_current_timetable
@@ -200,13 +285,23 @@ def run_v2_optimisation_guarded(
                 max_chain_iterations=max_chain_iterations,
                 run_cpsat_polish=run_cpsat,
                 cpsat_time_limit=cpsat_limit,
+                checkpoint=checkpoint,
             )
     except Exception:
+        # An async cooperative signal belongs to the job's complete baseline
+        # restore, rather than optimiser failure reporting. Re-checking also
+        # gives an accepted cancellation priority over a simultaneous failure.
+        if checkpoint:
+            checkpoint()
         restore_scenario(scenario_id, board_snapshot)
         logger.exception("V2 optimiser failed for scenario %d", scenario_id)
         return {"error": f"Optimiser error: {traceback.format_exc(limit=3)}"}
 
     if "error" in result:
+        # Full generation uses placement rows as temporary candidate storage.
+        # A returned failure is just as destructive as a raised failure unless
+        # the original board is restored before leaving this runner.
+        restore_scenario(scenario_id, board_snapshot)
         return result
 
     # Surface the soft-gap budget so the frontend can recover the pure student
@@ -222,6 +317,41 @@ def run_v2_optimisation_guarded(
     )
 
     safety_after = compute_scenario_safety_summary(scenario_id)
+    if mode == "full" and is_instructor_priority_enabled():
+        # A first Generate may create section identities absent before the run.
+        instructor_map = build_section_instructor_map_for_scenario(scenario_id)
+    instructor_after = instructor_schedule_metrics(
+        build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
+    )
+    instructor_regression = (
+        optimiser_instructor_day_regression(instructor_before, instructor_after, result)
+        if mode == "current"
+        else {"blocked": False, "regressions": [], "repair_exceptions": []}
+    )
+    if mode == "current":
+        idle_regression = optimiser_instructor_idle_regression(
+            instructor_before, instructor_after, result
+        )
+        instructor_regression["regressions"].extend(idle_regression["regressions"])
+        instructor_regression["repair_exceptions"].extend(idle_regression["repair_exceptions"])
+        if is_instructor_priority_enabled():
+            # Optimise Current promises to preserve the saved instructor week.
+            # A necessary repair is still a candidate, not permission to exceed
+            # that baseline. Keep the invalid original board visibly blocked if
+            # no repair satisfying these ceilings can be found.
+            instructor_regression["regressions"].extend(
+                {**regression, "reason": "instructor_baseline_must_be_preserved"}
+                for regression in instructor_regression["repair_exceptions"]
+            )
+            instructor_regression["repair_exceptions"] = []
+        instructor_regression["blocked"] = bool(instructor_regression["regressions"])
+    result["instructor_schedule_metric"] = {
+        "before": instructor_before,
+        "after": instructor_after,
+        "working_days_saved": instructor_before["working_days"] - instructor_after["working_days"],
+        "idle_minutes_saved": instructor_before["idle_minutes"] - instructor_after["idle_minutes"],
+        "repair_exceptions": instructor_regression["repair_exceptions"],
+    }
     student_regression = optimiser_student_outcome_regression(result)
     # LIKE-FOR-LIKE, mirroring the student gate above: judge the OPTIMISER's own
     # board, captured BEFORE the mandatory instructor cap/clash repairs mutated it.
@@ -235,8 +365,10 @@ def run_v2_optimisation_guarded(
     # safety_after, so flag-off behaviour is unchanged.
     safety_after_for_gate = result.get("safety_before_instructor_passes") or safety_after
     safety_regression = optimiser_safety_regression(safety_before, safety_after_for_gate)
-    blocking_regressions = list(student_regression["regressions"]) + list(
-        safety_regression["regressions"]
+    blocking_regressions = (
+        list(student_regression["regressions"])
+        + list(safety_regression["regressions"])
+        + list(instructor_regression["regressions"])
     )
     # A from-scratch build (the scenario had no placements before this run, e.g.
     # the deferred-generate path) cannot "regress" — there was nothing to
@@ -253,9 +385,75 @@ def run_v2_optimisation_guarded(
             "regressions": blocking_regressions,
         }
         result["candidate_final_score"] = candidate_final_score
+        result["candidate_instructor_schedule"] = instructor_after
+        for key, remaining_key in (
+            ("instructor_cap_repair", "remaining_violations"),
+            ("instructor_clash_repair", "remaining_clashes"),
+        ):
+            if isinstance(result.get(key), dict):
+                repair = result[key]
+                result[f"candidate_{key}"] = repair
+                if remaining_key == "remaining_clashes":
+                    remaining = int(safety_after.get("instructor_clashes_scenario") or 0)
+                else:
+                    from core.services.timetable_pr4_instructor import (
+                        count_instructor_daily_overloads,
+                        get_instructor_daily_cap,
+                    )
+
+                    remaining = count_instructor_daily_overloads(
+                        build_section_states_for_scenario(scenario_id),
+                        instructor_map or {},
+                        get_instructor_daily_cap(),
+                    )
+                result[key] = {
+                    "enabled": repair.get("enabled", False),
+                    "rolled_back": True,
+                    "rollback_reason": "whole_board_rollback",
+                    "detected": repair.get("detected", []),
+                    "repaired": [],
+                    "unplaced": [],
+                    "locked_blocked": [],
+                    remaining_key: remaining,
+                    "student_score_before": None,
+                    "student_score_after": None,
+                }
+        if isinstance(result.get("instructor_compaction"), dict):
+            compaction = result["instructor_compaction"]
+            result["candidate_instructor_compaction"] = compaction
+            result["instructor_compaction"] = {
+                "enabled": compaction.get("enabled", False),
+                "rolled_back": True,
+                "rollback_reason": "whole_board_rollback",
+                "relocations": [],
+                "instructor_impact": {},
+                "student_impact": {},
+                "search": {"moves_accepted": 0},
+            }
+        if isinstance(result.get("secondary_recovery"), dict):
+            recovery = result["secondary_recovery"]
+            result["candidate_secondary_recovery"] = recovery
+            # The whole-board rollback discards even a locally accepted pass.
+            # Its search diagnostics remain under candidate_* for inspection.
+            result["secondary_recovery"] = {
+                "applied": False,
+                "stop_reason": "whole_board_rollback",
+                "accepted_moves": [],
+            }
+        result["instructor_schedule_metric"].update(
+            after=instructor_before,
+            working_days_saved=0,
+            idle_minutes_saved=0,
+            repair_exceptions=[],
+        )
+        if isinstance(result.get("quality_score"), dict):
+            result["quality_score"]["instructor_schedule"] = instructor_before
         result["persist_result"] = {
             "action": "rolled_back_safety_regression",
-            "reason": "Optimiser candidate worsened the student outcome or hard operational constraints.",
+            "reason": (
+                "Optimiser candidate worsened student outcomes, instructor days/gaps "
+                "or hard operational constraints."
+            ),
             "regressions": blocking_regressions,
         }
         baseline_score = result.get("baseline_score")

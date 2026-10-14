@@ -12,6 +12,10 @@ from core.services.timetable_assignment_models import (
     TimetableEvaluationResult,
 )
 from core.services.timetable_flags import is_tiered_objective_enabled
+from core.services.timetable_optimisation_policy import (
+    evaluation_order_key,
+    instructor_schedule_metrics,
+)
 from core.services.timetable_pr4_instructor import (
     count_instructor_daily_overloads,
     get_instructor_daily_cap,
@@ -42,6 +46,9 @@ def evaluate_generated_timetable_candidate(
         states, student_profiles, sections_by_id, section_instructor_ids, course_tiers
     )
     quality_score = evaluate_timetable_quality(working_sections, states)
+    quality_score["instructor_schedule"] = instructor_schedule_metrics(
+        working_sections, section_instructor_ids
+    )
     # Side-band only — never part of ``score``. Reports how many instructor-day
     # sessions exceed the cap (0 when compliant / flag off / no instructor map),
     # so the structural cap can be observed without disturbing the tuple.
@@ -121,7 +128,7 @@ def rank_timetable_candidates(
         )
     results.sort(
         key=lambda r: (
-            r.lexicographic_score,
+            evaluation_order_key(r),
             int((r.quality_score or {}).get("penalty") or 0),
             r.candidate_id,
         )

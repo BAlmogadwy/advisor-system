@@ -47,7 +47,7 @@ def test_interval_busy_allows_adjacent_and_other_days() -> None:
 
 def _pl(course, board, day, start, end, iids=frozenset()):
     return SimpleNamespace(
-        term_section=SimpleNamespace(course_code=course),
+        term_section=SimpleNamespace(course_key=course, course_code=course, course_number=""),
         board_id=board,
         day=day,
         start_time=start,

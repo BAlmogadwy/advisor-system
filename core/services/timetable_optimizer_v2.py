@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 
 from core.models import (
@@ -26,9 +28,11 @@ from core.models import (
     SectionPlacement,
     StudentCourse,
     TermSection,
+    TermSectionMeeting,
     TimetableScenario,
 )
 from core.services.course_classifier import FAILING_LETTER_GRADES
+from core.services.course_identity import course_display_code
 from core.services.student_helpers import normalize_code
 from core.services.timetable_assignment_models import (
     RiskTier,
@@ -39,9 +43,15 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
 )
 from core.services.timetable_autoplace import WEEKDAYS
+from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
+)
+from core.services.timetable_course_policy import (
+    CourseMeetingPolicy,
+    WeeklyPattern,
+    get_course_meeting_policy,
 )
 from core.services.timetable_course_tier import (
     classify_course_tier,
@@ -53,6 +63,13 @@ from core.services.timetable_flags import (
     is_tiered_objective_enabled,
 )
 from core.services.timetable_online import OnlineCourseLookup
+from core.services.timetable_optimisation_policy import (
+    evaluation_is_better,
+    evaluation_order_key,
+    instructor_schedule_metrics,
+    is_instructor_priority_enabled,
+    schedule_metrics_of,
+)
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_compaction_enabled,
@@ -184,6 +201,25 @@ def _compute_pattern_id(meetings: list[SectionMeeting]) -> str:
     return generate_pattern_id(sig)
 
 
+def _validated_policy_placement_pattern(
+    policy: CourseMeetingPolicy,
+    placements: list[SectionPlacement],
+) -> WeeklyPattern:
+    """Certify every board copy before collapsing a shared section's meetings."""
+    copies: dict[int, list[SectionPlacement]] = defaultdict(list)
+    for placement in placements:
+        copies[placement.board_id].append(placement)
+    pattern = None
+    for rows in copies.values():
+        current = policy.pattern_for(rows)
+        if current is None or (pattern is not None and current != pattern):
+            raise ValueError("English board copies must each use the same complete weekly pattern")
+        pattern = current
+    if pattern is None:
+        raise ValueError("English section requires a complete weekly pattern")
+    return pattern
+
+
 def build_section_states_for_scenario(
     scenario_id: int,
 ) -> list[SectionState]:
@@ -223,21 +259,28 @@ def build_section_states_for_scenario(
     # today: scn 615/616/617/620, and 620 has 168 placements), because
     # ``codes_for_programmes([])`` returns an empty set. The lookup caches by
     # programme set, so the per-section calls are cheap.
-    online_lookup = OnlineCourseLookup() if is_online_gap_exclusion_enabled() else None
+    online_lookup = OnlineCourseLookup()
+    exclude_online_gaps = is_online_gap_exclusion_enabled()
 
     sections: list[SectionState] = []
     for ts_id, pls in grouped.items():
         ts = ts_lookup[ts_id]
         course_code = ts.course_key or ts.course_code
         budget = budgets.get(course_code)
+        policy = get_course_meeting_policy(ts.course_code, ts.course_key, ts.course_number)
+        permitted = _validated_policy_placement_pattern(policy, pls) if policy else None
         # Online-ness is a COURSE property keyed by the BARE code; course_code
         # above is the planner ``CODE::NAME`` identity, so pass ts.course_code.
-        is_online = online_lookup is not None and online_lookup.is_online_course_for_board(
-            pls[0].board, ts.course_code
+        delivery_is_online = online_lookup.is_online_course_for_board(
+            pls[0].board, course_display_code(ts.course_key, ts.course_code, ts.course_number)
         )
+        is_online = delivery_is_online and exclude_online_gaps
 
         meetings: list[SectionMeeting] = []
-        for pl in pls:
+        # A section shared across boards has one teaching schedule. Policy
+        # validation above checks all copies; use one complete copy for its state.
+        state_placements = [p for p in pls if p.board_id == pls[0].board_id] if policy else pls
+        for pl in state_placements:
             day_idx = _DAY_IDX.get(pl.day.upper(), -1)
             if day_idx < 0:
                 logger.warning("Unknown day %r for placement %d", pl.day, pl.pk)
@@ -273,13 +316,15 @@ def build_section_states_for_scenario(
         # 4-credit courses have mixed meetings (2×75min + 1×100min) —
         # majority are lectures so they get a lecture room. Pure lab
         # courses (all meetings >80min) get lab rooms.
-        has_lab = budget and budget.credit_hours == 4
+        has_lab = budget and budget.credit_hours == 4 and not policy
         lecture_meetings = sum(1 for m in meetings if (m.end_min - m.start_min) <= 80)
-        room_type = "lecture" if lecture_meetings >= len(meetings) / 2 else "lab"
+        room_type = "lecture" if policy or lecture_meetings >= len(meetings) / 2 else "lab"
 
         # Compute pattern family and ID for local search
-        pattern_family = _compute_pattern_family(meetings, bool(has_lab))
-        pattern_id = _compute_pattern_id(meetings)
+        pattern_family = (
+            policy.policy_id if policy else _compute_pattern_family(meetings, bool(has_lab))
+        )
+        pattern_id = permitted.pattern_id if permitted else _compute_pattern_id(meetings)
 
         section_id = f"{course_code}_{ts.section}"
         sections.append(
@@ -291,17 +336,19 @@ def build_section_states_for_scenario(
                 reserve_capacity=reserve,
                 room_type_required=room_type,
                 demand_capacity=per_section_demand,
-                assigned_room_id=pls[0].room if pls[0].room else None,
+                assigned_room_id=pls[0].room if pls[0].room and not policy else None,
                 pattern_family=pattern_family,
                 pattern_id=pattern_id,
                 is_online=is_online,
+                delivery_is_online=delivery_is_online,
+                uses_shared_room=policy.uses_shared_room if policy else True,
             )
         )
 
     # Make a silent no-op visible: if the exclusion is on but nothing resolved as
     # online, the gap chain is still counting every session as on-campus and the
     # cause is almost always missing programme metadata on the boards.
-    if online_lookup is not None and not any(s.is_online for s in sections):
+    if exclude_online_gaps and not any(s.is_online for s in sections):
         logger.info(
             "Online gap exclusion is ON but no section resolved as online for "
             "scenario %d — gap minutes still include any online sessions.",
@@ -351,10 +398,10 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
         by_course[(prog, (code or "").strip().upper())].add(instr_id)
 
     out: dict[str, frozenset[int]] = {}
-    for course_key, course_code, section in TermSection.objects.filter(
+    for course_key, course_code, course_number, section in TermSection.objects.filter(
         scenario_id=scenario_id
-    ).values_list("course_key", "course_code", "section"):
-        norm = (course_code or "").strip().upper()
+    ).values_list("course_key", "course_code", "course_number", "section"):
+        norm = course_display_code(course_key, course_code, course_number)
         ids: set[int] = set()
         for prog in programs:
             ids |= by_course.get((prog, norm), set())
@@ -448,12 +495,13 @@ def refresh_final_score_after_instructor_passes(
     )
     before = list(result.get("final_score") or [])
     after = list(post.lexicographic_score)
-    if before == after:
-        return
     # Preserved for the rollback gate, which must judge the optimiser's own
     # decision (pre-pass) rather than the mandatory repair cost. See
     # timetable_v2_runner.optimiser_student_outcome_regression.
     result["score_before_instructor_passes"] = before
+    result["instructor_schedule_before_passes"] = (
+        result.get("quality_score", {}).get("instructor_schedule") or {}
+    )
     logger.info("instructor passes changed the board: final_score %s -> %s", before, after)
     result["final_score"] = after
     # Update every board-derived field in lockstep, as all the other final_score
@@ -473,6 +521,20 @@ def _gap_pos6(score) -> int:
     penalty was off. Layout-aware: index 8 for the tiered 9-tuple, trailing
     index 6 for a legacy 7-tuple, 0 for the canonical 6-tuple."""
     return instructor_idle_of(score)
+
+
+def capture_instructor_schedule_after_hard_repairs(result, scenario_id, instructor_map):
+    """Record justified hard-repair day costs before optional compaction runs."""
+    if not is_instructor_priority_enabled():
+        return
+    if not any(
+        (result.get(key) or {}).get("repaired") or (result.get(key) or {}).get("unplaced")
+        for key in ("instructor_cap_repair", "instructor_clash_repair")
+    ):
+        return
+    result["instructor_schedule_after_hard_repairs"] = instructor_schedule_metrics(
+        build_section_states_for_scenario(scenario_id), instructor_map
+    )
 
 
 def instructor_gap_metric(
@@ -505,12 +567,37 @@ def build_locked_section_ids_for_scenario(scenario_id: int) -> set[str]:
     on whole section patterns. If any meeting for a section is locked, the
     safest behaviour is to freeze that whole section.
     """
+    from django.db.models import Q
+
+    frozen = external_shared_section_ids(scenario_id)
     rows = (
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .filter(Q(is_locked=True) | Q(term_section_id__in=frozen))
         .select_related("term_section")
-        .values_list("term_section__course_key", "term_section__section")
+        .values_list(
+            "term_section__course_key", "term_section__course_code", "term_section__section"
+        )
     )
-    return {f"{course_code}_{section}" for course_code, section in rows}
+    return {f"{course_key or course_code}_{section}" for course_key, course_code, section in rows}
+
+
+def _baseline_room_shortages(scenario_id: int) -> int | None:
+    """Retain the existing board's actual room target through teacher search."""
+    if not is_instructor_priority_enabled() or not getattr(
+        settings, "TIMETABLE_SECONDARY_RECOVERY_ENABLED", True
+    ):
+        return None
+    from core.services.timetable_exact_rooming import ExactRoomingError
+    from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+
+    try:
+        return int(
+            build_recovery_room_evaluator(scenario_id).original_room_report[
+                "original_room_shortages"
+            ]
+        )
+    except ExactRoomingError:
+        return None
 
 
 # ── Adapter C: Course Rigidity ───────────────────────────────────
@@ -599,11 +686,19 @@ def build_room_state_for_scenario(
             "end_time",
             "term_section_id",
             "term_section__course_key",
+            "term_section__course_code",
+            "term_section__course_number",
             "term_section__section",
         )
     )
 
     for pl in placements:
+        if get_course_meeting_policy(
+            pl["term_section__course_code"],
+            pl["term_section__course_key"],
+            pl["term_section__course_number"],
+        ):
+            continue
         room_code = pl["room"]
         if not room_code:
             continue
@@ -630,7 +725,11 @@ def build_room_state_for_scenario(
     )
     for b in budgets:
         key = b["course_key"] or b["course_code"]
-        course_room_requirements[key] = "lab" if b["credit_hours"] == 4 else "lecture"
+        course_room_requirements[key] = (
+            "lab"
+            if b["credit_hours"] == 4 and not get_course_meeting_policy(b["course_code"], key)
+            else "lecture"
+        )
 
     # Ensure ALL rooms have an occupancy entry (even if empty)
     # so room repair can assign sections to currently-empty rooms
@@ -650,6 +749,7 @@ def build_room_state_for_scenario(
 # ── Adapter E: Persist Back to DB ────────────────────────────────
 
 
+@transaction.atomic
 def persist_section_states_to_scenario(
     scenario_id: int,
     sections_by_id: dict[str, SectionState],
@@ -683,13 +783,48 @@ def persist_section_states_to_scenario(
     updated = 0
     skipped = 0
     to_update: list[SectionPlacement] = []
+    bundle_updates: list[SectionPlacement] = []
 
+    frozen = external_shared_section_ids(scenario_id)
     for _ts_id, pls in grouped.items():
+        if _ts_id in frozen:
+            skipped += len(pls)
+            continue
         ts = pls[0].term_section
         key = (ts.course_key or ts.course_code, ts.section)
         state = state_lookup.get(key)
         if not state:
             skipped += len(pls)
+            continue
+
+        policy = get_course_meeting_policy(ts.course_code, ts.course_key, ts.course_number)
+        if policy:
+            _validated_policy_placement_pattern(policy, pls)
+            if not policy.accepts(state.meetings):
+                raise ValueError(f"{key[0]} must use one complete English weekly pattern")
+            # A lock anywhere in a shared section protects its entire bundle.
+            if any(p.is_locked for p in pls):
+                skipped += len(pls)
+                continue
+            meetings_by_day = {WEEKDAYS[m.day]: m for m in state.meetings}
+            for pl in pls:
+                meeting = meetings_by_day.get(pl.day.upper())
+                if meeting is None:
+                    raise ValueError(f"{key[0]} contains an invalid English teaching day")
+                new_start = f"{meeting.start_min // 60:02d}:{meeting.start_min % 60:02d}"
+                new_end = f"{meeting.end_min // 60:02d}:{meeting.end_min % 60:02d}"
+                if pl.start_time != new_start or pl.end_time != new_end:
+                    TermSectionMeeting.objects.filter(
+                        term_section_id=pl.term_section_id,
+                        day=pl.day,
+                        start_time=pl.start_time,
+                        end_time=pl.end_time,
+                    ).update(start_time=new_start, end_time=new_end)
+                    pl.start_time, pl.end_time = new_start, new_end
+                    bundle_updates.append(pl)
+                    updated += 1
+                else:
+                    skipped += 1
             continue
 
         # Match placement count to meeting count
@@ -724,6 +859,9 @@ def persist_section_states_to_scenario(
                 updated += 1
             else:
                 skipped += 1
+
+    if bundle_updates:
+        SectionPlacement.objects.bulk_update(bundle_updates, ["start_time", "end_time"])
 
     if to_update:
         # Delete-and-recreate instead of bulk_update to avoid UNIQUE
@@ -841,13 +979,17 @@ def _build_pattern_catalog_for_scenario(scenario_id: int) -> dict[str, list]:
     scenario = TimetableScenario.objects.get(pk=scenario_id)
     course_requirements = []
     for b in budgets:
-        durations = get_meeting_pattern(b.credit_hours)
+        policy = get_course_meeting_policy(b.course_code, b.course_key)
+        durations = get_meeting_pattern(b.credit_hours, b.course_key or b.course_code)
         course_requirements.append(
             {
                 "durations": durations,
-                "has_lab": b.credit_hours == 4,
+                "course_code": b.course_code,
+                "course_key": b.course_key,
+                "credit_hours": b.credit_hours,
+                "has_lab": b.credit_hours == 4 and not policy,
                 "modality": "ONCAMPUS",
-                "allow_permutations": b.credit_hours == 4,
+                "allow_permutations": b.credit_hours == 4 and not policy,
             }
         )
     return build_canonical_pattern_catalog(
@@ -870,6 +1012,7 @@ def optimise_scenario_timetable_v2(
     cpsat_hotspot_only: bool = False,
     baseline_placements: dict | None = None,
     chain_time_limit_seconds: float | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> dict:
     """Full optimisation pipeline: generate → rank → improve → persist.
 
@@ -957,14 +1100,13 @@ def optimise_scenario_timetable_v2(
 
     locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
 
-    # Built once per run: None when the gap penalty is OFF (every stage scores a
-    # canonical 6-tuple → byte parity), the section→instructor map when ON (every
-    # stage scores a uniform 7-tuple). Threading the SAME value to every evaluator
-    # call below is what guarantees no mixed-length tuple comparison in a run.
+    # Priority uses current instructor links independently of the legacy idle
+    # score flag. The latter still controls public score shape/values.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
         if (
-            is_instructor_gap_penalty_enabled()
+            is_instructor_priority_enabled()
+            or is_instructor_gap_penalty_enabled()
             or is_instructor_daily_cap_enabled()
             or is_instructor_clash_enabled()
         )
@@ -983,6 +1125,8 @@ def optimise_scenario_timetable_v2(
     logger.info("Generated %d candidates in %.1fs", len(candidates), t2 - t1)
 
     # ── Step 3: Rank all candidates by student-assignability ──
+    if checkpoint:
+        checkpoint()
     ranked = rank_timetable_candidates(
         candidate_list=candidates,
         student_profiles=student_profiles,
@@ -1006,6 +1150,8 @@ def optimise_scenario_timetable_v2(
         "candidates_evaluated": len(ranked),
         "best_candidate_id": best.candidate_id,
         "best_score": list(best.lexicographic_score),
+        "optimisation_policy": "instructor_first" if is_instructor_priority_enabled() else "legacy",
+        "baseline_instructor_schedule": schedule_metrics_of(best),
         "hotspot_courses": best.hotspot_courses[:10],
         "capacity_pressure_courses": best.capacity_pressure_courses[:10],
         "reserve_heavy_sections": [
@@ -1021,6 +1167,8 @@ def optimise_scenario_timetable_v2(
             {
                 "id": r.candidate_id,
                 "score": list(r.lexicographic_score),
+                "selection_key": list(evaluation_order_key(r)),
+                "instructor_schedule": schedule_metrics_of(r),
                 "quality_penalty": int((r.quality_score or {}).get("penalty") or 0),
                 "quality_components": (r.quality_score or {}).get("components", {}),
             }
@@ -1063,6 +1211,8 @@ def optimise_scenario_timetable_v2(
     pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id) if best_sections else {}
 
     # ── Step 4: Local search on the best candidate ──
+    if checkpoint:
+        checkpoint()
     if run_local_search:
         from core.services import timetable_student_assignment as ssa
         from core.services.timetable_local_search_v2 import diagnostic_driven_local_search
@@ -1112,7 +1262,7 @@ def optimise_scenario_timetable_v2(
             ]
             result["unresolved_students"] = len(improved.unresolved_student_ids)
 
-            if score_after < score_before:
+            if evaluation_is_better(improved, best):
                 logger.info("Local search improved score: %s → %s", score_before, score_after)
             else:
                 logger.info("Local search found no improvement (score unchanged)")
@@ -1121,6 +1271,8 @@ def optimise_scenario_timetable_v2(
             logger.info("Local search completed in %.1fs", t4 - t3)
 
     # ── Step 4b: Chain-2 local search ──
+    if checkpoint:
+        checkpoint()
     # Single-move search can get stuck when improvement requires moving
     # TWO sections simultaneously (e.g. section A blocks section B's best
     # slot — moving A alone doesn't help, but moving A+B together does).
@@ -1178,7 +1330,7 @@ def optimise_scenario_timetable_v2(
                 ),
             )
 
-            if chain_result.lexicographic_score < current_eval_for_chain.lexicographic_score:
+            if evaluation_is_better(chain_result, current_eval_for_chain):
                 logger.info(
                     "Chain search improved: %s -> %s",
                     current_eval_for_chain.lexicographic_score,
@@ -1202,6 +1354,8 @@ def optimise_scenario_timetable_v2(
             logger.info("Chain search completed in %.1fs", t_chain_end - t_chain_start)
 
     # ── Step 4c: Global CP-SAT polisher ──
+    if checkpoint:
+        checkpoint()
     # After heuristic search exhausts, run a global constraint solver
     # across ALL boards. This can find improvements invisible to local
     # moves because it considers the entire search space at once.
@@ -1270,6 +1424,8 @@ def optimise_scenario_timetable_v2(
         cpsat_decision_trace = {}
 
     # ── Step 5: Persist to DB ──
+    if checkpoint:
+        checkpoint()
     # Re-place using the winning strategy first (because candidate
     # generation deletes all placements). Then overlay local search /
     # chain / CP-SAT improvements on top — these are stored as deltas
@@ -1371,7 +1527,7 @@ def optimise_scenario_timetable_v2(
                 board=board,
                 room="UNASSIGNED",
                 is_locked=False,
-            ).update(room="")
+            ).exclude(term_section_id__in=external_shared_section_ids(scenario_id)).update(room="")
             rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
@@ -1433,6 +1589,9 @@ def optimise_scenario_timetable_v2(
 
     # Instructor-day compaction — runs AFTER the cap + clash repairs (which it
     # treats as hard gates) to shrink each instructor's within-day idle gaps.
+    capture_instructor_schedule_after_hard_repairs(result, scenario_id, section_instructor_ids)
+    if checkpoint:
+        checkpoint()
     if is_instructor_compaction_enabled():
         from core.services.timetable_instructor_compaction import compact_instructor_schedules
 
@@ -1448,6 +1607,16 @@ def optimise_scenario_timetable_v2(
         course_rigidity,
         section_instructor_ids,
         course_tiers,
+    )
+
+    from core.services.timetable_secondary_recovery_runner import (
+        run_secondary_recovery_for_scenario,
+    )
+
+    if checkpoint:
+        checkpoint()
+    result["secondary_recovery"] = run_secondary_recovery_for_scenario(
+        scenario_id, result, student_profiles, course_rigidity, section_instructor_ids, course_tiers
     )
 
     elapsed = time.time() - t0
@@ -1482,6 +1651,7 @@ def optimise_current_timetable(
     cpsat_time_limit: float = 60.0,
     cpsat_hotspot_only: bool = False,
     chain_time_limit_seconds: float | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> dict:
     """Improve the CURRENT timetable without regenerating from scratch.
 
@@ -1540,13 +1710,13 @@ def optimise_current_timetable(
 
     locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
 
-    # Built once per run — see optimise_scenario_timetable_v2: None ⇒ uniform
-    # 6-tuples (byte parity), the map ⇒ uniform 7-tuples. Threaded to every
-    # evaluator/engine call below so no run mixes tuple lengths.
+    # Resolve current links for instructor priority even with the old gap-score
+    # flag off; every stage receives the same map and unchanged score layout.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
         if (
-            is_instructor_gap_penalty_enabled()
+            is_instructor_priority_enabled()
+            or is_instructor_gap_penalty_enabled()
             or is_instructor_daily_cap_enabled()
             or is_instructor_clash_enabled()
         )
@@ -1587,6 +1757,9 @@ def optimise_current_timetable(
         "candidates_evaluated": 1,
         "best_candidate_id": "current",
         "baseline_score": list(baseline.lexicographic_score),
+        "baseline_room_shortages": _baseline_room_shortages(scenario_id),
+        "optimisation_policy": "instructor_first" if is_instructor_priority_enabled() else "legacy",
+        "baseline_instructor_schedule": schedule_metrics_of(baseline),
         "best_score": list(baseline.lexicographic_score),
         "final_score": list(baseline.lexicographic_score),
         "hotspot_courses": baseline.hotspot_courses[:10],
@@ -1623,6 +1796,8 @@ def optimise_current_timetable(
     }
 
     # ── Step 3: Local search on current state ──
+    if checkpoint:
+        checkpoint()
     pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
 
     if run_local_search:
@@ -1661,7 +1836,7 @@ def optimise_current_timetable(
         result["unresolved_students"] = len(improved.unresolved_student_ids)
 
         t3 = time.time()
-        if score_after < score_before:
+        if evaluation_is_better(improved, baseline):
             logger.info(
                 "Local search improved: %s -> %s (%.1fs)", score_before, score_after, t3 - t2
             )
@@ -1671,6 +1846,8 @@ def optimise_current_timetable(
         improved = baseline
 
     # ── Step 4: Chain-2 search ──
+    if checkpoint:
+        checkpoint()
     current_eval = improved
     if run_chain_search:
         from core.services.timetable_local_search_chains import chain_local_search
@@ -1699,7 +1876,7 @@ def optimise_current_timetable(
                 else getattr(settings, "TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", 60.0)
             ),
         )
-        if chain_result.lexicographic_score < current_eval.lexicographic_score:
+        if evaluation_is_better(chain_result, current_eval):
             result["chain_search_applied"] = True
             result["final_score"] = list(chain_result.lexicographic_score)
             result["hotspot_courses"] = chain_result.hotspot_courses[:10]
@@ -1714,6 +1891,8 @@ def optimise_current_timetable(
         logger.info("Chain search completed in %.1fs", time.time() - t_chain)
 
     # ── Step 5: CP-SAT polish ──
+    if checkpoint:
+        checkpoint()
     if run_cpsat_polish:
         from core.services.timetable_cpsat_polisher import polish_scenario_with_cpsat
 
@@ -1734,6 +1913,7 @@ def optimise_current_timetable(
         )
         if cpsat_result is not None:
             cpsat_eval = cpsat_result["eval"]
+            current_eval = cpsat_eval
             result["cpsat_polish_applied"] = True
             result["final_score"] = list(cpsat_eval.lexicographic_score)
             result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
@@ -1750,10 +1930,11 @@ def optimise_current_timetable(
         logger.info("CP-SAT polisher completed in %.1fs", time.time() - t_cpsat)
 
     # ── Step 6: Persist improvements ──
+    if checkpoint:
+        checkpoint()
     # Only update placements that changed — no deletion, no re-generation.
     # Respects is_locked flag on placements.
-    final_score = tuple(result["final_score"])
-    if final_score < baseline.lexicographic_score:
+    if evaluation_is_better(current_eval, baseline):
         persist_result = persist_section_states_to_scenario(scenario_id, sections_by_id)
         result["persist_result"] = {
             "action": "updated_in_place",
@@ -1774,7 +1955,7 @@ def optimise_current_timetable(
                 board=board,
                 room="UNASSIGNED",
                 is_locked=False,
-            ).update(room="")
+            ).exclude(term_section_id__in=external_shared_section_ids(scenario_id)).update(room="")
             rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
@@ -1859,6 +2040,9 @@ def optimise_current_timetable(
 
         result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
 
+    capture_instructor_schedule_after_hard_repairs(result, scenario_id, section_instructor_ids)
+    if checkpoint:
+        checkpoint()
     if is_instructor_compaction_enabled():
         from core.services.timetable_instructor_compaction import compact_instructor_schedules
 
@@ -1874,6 +2058,16 @@ def optimise_current_timetable(
         course_rigidity,
         section_instructor_ids,
         course_tiers,
+    )
+
+    if checkpoint:
+        checkpoint()
+    from core.services.timetable_secondary_recovery_runner import (
+        run_secondary_recovery_for_scenario,
+    )
+
+    result["secondary_recovery"] = run_secondary_recovery_for_scenario(
+        scenario_id, result, student_profiles, course_rigidity, section_instructor_ids, course_tiers
     )
 
     elapsed = time.time() - t0

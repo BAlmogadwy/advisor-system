@@ -32,3 +32,29 @@ def display_course_label(course_code: object | None, course_name: object | None 
     if not name or normalize_course_name(name) == code:
         return code
     return f"{code} - {name}"
+
+
+def course_display_code(
+    course_key: object | None, course_code: object | None, course_number: object | None = None
+) -> str:
+    """Resolve registrar code from a planner identity or split TermSection fields.
+
+    Generated rows may store AI / 221 while imported rows store AI221 in both
+    fields. Decode the authoritative planner key first. This is for linking
+    institutional facts only; it must never replace the full offering identity.
+    """
+    key = normalize_code(course_key)
+    code, number = normalize_code(course_code), normalize_code(course_number)
+    if "::" in key:
+        return key.split("::", 1)[0]
+    # Legacy keys can be opaque section-like identifiers (e.g. C1S1). A
+    # complete explicit registrar code is safer than decoding those keys.
+    if any(char.isdigit() for char in code):
+        return code
+    if key:
+        return key
+    if not number:
+        return code
+    if number.startswith(code):
+        return number
+    return f"{code}{number}"

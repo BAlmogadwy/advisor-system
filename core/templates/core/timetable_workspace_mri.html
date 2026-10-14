@@ -7,7 +7,7 @@
 {% block main_padding %}p-0{% endblock %}
 
 {% block extra_css %}
-  <link href="{% static 'css/timetable-mri-full.css' %}?v=20" rel="stylesheet">
+  <link href="{% static 'css/timetable-mri-full.css' %}?v=21" rel="stylesheet">
 {% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}تصوير الجدول{% else %}Timetable MRI{% endif %}{% endblock %}
@@ -212,10 +212,10 @@
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
-  const defaultYear = "{{ default_year }}";
-  const defaultTerm = "{{ default_term }}";
+  const defaultYear = "{{ default_year|default:''|escapejs }}";
+  const defaultTerm = "{{ default_term|default:''|escapejs }}";
   const initialScenario = "{{ initial_scenario|escapejs }}";
   const initialBoard = "{{ initial_board|escapejs }}";
 </script>
-<script src="{% static 'js/page-timetable-mri.js' %}?v=20"></script>
+<script src="{% static 'js/page-timetable-mri.js' %}?v=21"></script>
 {% endblock %}

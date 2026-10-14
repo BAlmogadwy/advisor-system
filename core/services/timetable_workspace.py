@@ -62,6 +62,10 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.student_helpers import normalize_code
+from core.services.timetable_course_policy import (
+    get_course_meeting_policy,
+    meeting_options_for_policy,
+)
 from core.services.timetable_demand import (
     compute_course_students_index,
     load_scenario_course_demands,
@@ -77,6 +81,14 @@ from core.services.timetable_quality import (
     day_balance_penalty,
     meeting_weak_slot_penalty,
     quality_reason_rows,
+)
+from core.services.timetable_section_policy import (
+    SectionPolicyError,
+    assert_policy_rows,
+    create_policy_section_bundle,
+    policy_payload,
+    section_policy,
+    switch_policy_section_bundle,
 )
 
 # ── Bitmask constants (same as planner_builder) ─────────────────
@@ -97,7 +109,15 @@ _TOTAL_WEEK_SLOTS = 7 * _SLOTS_PER_DAY  # 2016 bits for the whole week
 
 def _same_course_code(code_a: object | None, code_b: object | None) -> bool:
     """Compare course codes using the same normalization as student maps."""
-    return normalize_code(code_a) == normalize_code(code_b)
+    return normalize_code(code_a) == normalize_code(code_b) and not _parallel_policy_sections(
+        code_a, code_b
+    )
+
+
+def _parallel_policy_sections(code_a: object | None, code_b: object | None) -> bool:
+    return normalize_code(code_a) == normalize_code(code_b) and bool(
+        get_course_meeting_policy(str(code_a or ""))
+    )
 
 
 def _room_key(room: object | None) -> str:
@@ -345,7 +365,7 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
                 day=p.day,
                 start_time=p.start_time,
                 end_time=p.end_time,
-                room=p.room,
+                room="" if section_policy(p.term_section) else p.room,
                 instructor=instructor,
                 is_online=normalise_course_code(p.term_section.course_code) in online_codes,
                 mask=_time_mask(p.day, p.start_time, p.end_time),
@@ -456,6 +476,8 @@ def detect_board_conflicts(board_id: int) -> dict:
                 if not same_course
                 else SAME_COURSE_SENTINEL
             )
+            if _parallel_policy_sections(a.course_key, b.course_key):
+                shared = 0
             if same_course or shared > 0:
                 is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
                 seen_pairs.add(pk)
@@ -582,6 +604,7 @@ def validate_placement(
     new_instructor = meeting.instructor if meeting else ""
 
     ts = TermSection.objects.filter(id=term_section_id).first()
+    new_requires_room = not bool(ts and section_policy(ts))
     online_lookup = OnlineCourseLookup()
     new_is_online = False
 
@@ -621,7 +644,10 @@ def validate_placement(
 
             ts_key = (ts.course_key or ts.course_code) if ts else ""
             same_course = bool(ts and _same_course_code(item.course_key, ts_key))
-            ignore_student_overlap = item.term_section_id in ignored_overlap_term_sections
+            ignore_student_overlap = (
+                item.term_section_id in ignored_overlap_term_sections
+                or _parallel_policy_sections(item.course_key, ts_key)
+            )
             if not ignore_student_overlap:
                 shared = (
                     _ssc_val(_overlap_mat, ts_key, item.course_key)
@@ -656,7 +682,7 @@ def validate_placement(
                 )
 
             # Room clash on the same board (exclude blank/UNASSIGNED).
-            room_key = "" if new_is_online else _room_key(room)
+            room_key = "" if new_is_online or not new_requires_room else _room_key(room)
             if room_key and not item.is_online and room_key == _room_key(item.room):
                 room_clashes.append(
                     {
@@ -667,7 +693,7 @@ def validate_placement(
                     }
                 )
 
-    room_key = "" if new_is_online else _room_key(room)
+    room_key = "" if new_is_online or not new_requires_room else _room_key(room)
     if board_obj and room_key:
         cross_board_placements = (
             SectionPlacement.objects.filter(board__scenario=board_obj.scenario)
@@ -680,6 +706,8 @@ def validate_placement(
             cross_board_placements = cross_board_placements.exclude(id=exclude_placement_id)
 
         for other in cross_board_placements:
+            if section_policy(other.term_section):
+                continue
             if online_lookup.is_online_course_for_board(
                 other.board, other.term_section.course_code
             ):
@@ -742,6 +770,34 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
         id=placement_id
     )
+    policy = section_policy(placement.term_section)
+    if policy:
+        result = preview_planned_section_slot_candidates(
+            placement.board_id,
+            course_code=placement.term_section.course_code,
+            course_key=placement.term_section.course_key,
+            section_label=placement.term_section.section,
+            exclude_term_section_id=placement.term_section_id,
+        )
+        for candidate in result["candidates"]:
+            target = next(
+                (row for row in candidate["meetings"] if row["day"] == placement.day),
+                candidate["meetings"][0],
+            )
+            candidate.update(day=target["day"], start=target["start"], end=target["end"])
+        rows = list(SectionPlacement.objects.filter(term_section=placement.term_section))
+        result.update(
+            placement={
+                "id": placement.id,
+                "course_code": placement.term_section.course_code,
+                "board_id": placement.board_id,
+                "day": placement.day,
+                "start": placement.start_time,
+                "end": placement.end_time,
+            },
+            section_policy=policy_payload(policy, rows),
+        )
+        return result
     scenario = placement.board.scenario
     course_key = placement.term_section.course_key or placement.term_section.course_code
     course_code = placement.term_section.course_code
@@ -902,6 +958,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
 
             if (
                 room_norm
+                and not section_policy(other.term_section)
                 and not online_lookup.is_online_course_for_board(
                     other.board, other.term_section.course_code
                 )
@@ -1057,6 +1114,7 @@ def preview_planned_section_slot_candidates(
     max_per_section: int | None = None,
     kind: str | None = None,
     limit: int = 80,
+    exclude_term_section_id: int | None = None,
 ) -> dict:
     """Return ranked target slots for creating a planned missing section.
 
@@ -1096,6 +1154,7 @@ def preview_planned_section_slot_candidates(
         key,
         fallback_credit_hours=effective_credit_hours,
     )
+    policy = get_course_meeting_policy(code, key)
     requested_kind = normalise_course_code(kind or "")
     include_lab = requested_kind in {"LAB", "LABS"}
     include_lecture = requested_kind not in {"LAB", "LABS"}
@@ -1106,16 +1165,25 @@ def preview_planned_section_slot_candidates(
         slot_sets.append(("lab", placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)))
 
     existing_section = (
-        TermSection.objects.filter(scenario=scenario, course_key=key, section=section)
-        .prefetch_related("meetings")
-        .first()
+        TermSection.objects.filter(pk=exclude_term_section_id).prefetch_related("meetings").first()
+        if exclude_term_section_id is not None
+        else (
+            TermSection.objects.filter(scenario=scenario, course_key=key, section=section)
+            .prefetch_related("meetings")
+            .first()
+        )
     )
     existing_meetings = list(existing_section.meetings.all()) if existing_section else []
     new_instructor = (existing_meetings[0].instructor if existing_meetings else "").strip().upper()
 
-    board_items = _load_board_placements(board.id)
+    board_items = [
+        row
+        for row in _load_board_placements(board.id)
+        if row.term_section_id != exclude_term_section_id
+    ]
     scenario_placements = list(
         SectionPlacement.objects.filter(board__scenario=scenario)
+        .exclude(term_section_id=exclude_term_section_id)
         .select_related("board", "term_section")
         .prefetch_related("term_section__meetings")
     )
@@ -1182,6 +1250,7 @@ def preview_planned_section_slot_candidates(
         overlap_critical = 0
         overlap_warning = 0
         instructor_critical = 0
+        instructor_sessions: set[tuple[int, str, str, str]] = set()
         cross_critical = 0
         cross_warning = 0
 
@@ -1223,6 +1292,9 @@ def preview_planned_section_slot_candidates(
                 and new_instructor == item.instructor.strip().upper()
             ):
                 instructor_critical += 1
+                instructor_sessions.add(
+                    (item.term_section_id, item.day, item.start_time, item.end_time)
+                )
                 candidate_evidence.append(
                     evidence(
                         "instructor",
@@ -1238,6 +1310,24 @@ def preview_planned_section_slot_candidates(
             other_mask = _time_mask(other.day, other.start_time, other.end_time)
             if not (candidate_mask & other_mask):
                 continue
+            other_meetings = list(other.term_section.meetings.all())
+            other_instructor = other_meetings[0].instructor if other_meetings else ""
+            identity = (other.term_section_id, other.day, other.start_time, other.end_time)
+            if (
+                new_instructor
+                and new_instructor == other_instructor.strip().upper()
+                and identity not in instructor_sessions
+            ):
+                instructor_sessions.add(identity)
+                instructor_critical += 1
+                candidate_evidence.append(
+                    evidence(
+                        "instructor",
+                        "critical",
+                        f"Instructor clash: {other_instructor}",
+                        f"{other.board.label}: {other.term_section.course_code}-{other.term_section.section} is at {other.day} {other.start_time}-{other.end_time}",
+                    )
+                )
             shared = shared_students(
                 other.term_section.course_key or other.term_section.course_code
             )
@@ -1293,6 +1383,8 @@ def preview_planned_section_slot_candidates(
         }
 
     def meeting_kind(start: str, end: str) -> str:
+        if policy:
+            return "lect"
         return "lab" if (_to_minutes(end) - _to_minutes(start)) > 75 else "lect"
 
     def meeting_pattern_for_request() -> list[int]:
@@ -1433,12 +1525,26 @@ def preview_planned_section_slot_candidates(
 
     if required_meetings > 1:
         pattern = meeting_pattern_for_request()
-        options = generate_meeting_options(
-            pattern,
-            placeable_slots(scenario.slot_config or DEFAULT_SLOTS),
-            placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS),
+        options = (
+            meeting_options_for_policy(
+                policy,
+                blocked_slots=scenario.blocked_slots or [],
+                slots=[
+                    *placeable_slots(scenario.slot_config or DEFAULT_SLOTS),
+                    *placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS),
+                ],
+            )
+            if policy
+            else generate_meeting_options(
+                pattern,
+                placeable_slots(scenario.slot_config or DEFAULT_SLOTS),
+                placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS),
+            )
         )
         candidates = [score_pattern(option, idx) for idx, option in enumerate(options, start=1)]
+        if policy:
+            for candidate in candidates:
+                candidate["pattern_id"] = policy.pattern_for(candidate["meetings"]).pattern_id
         candidates.sort(
             key=lambda c: (
                 c["score"],
@@ -1463,6 +1569,7 @@ def preview_planned_section_slot_candidates(
 
         limited = candidates[: max(1, int(limit or 80))]
         return {
+            "section_policy": policy_payload(policy) if policy else None,
             "board": {
                 "id": board.id,
                 "label": board.label,
@@ -1607,6 +1714,9 @@ def create_planned_section_placements(
         fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
     )
     meeting_rows = _normalise_planned_meeting_rows(meetings)
+    policy = get_course_meeting_policy(code, key)
+    if policy:
+        assert_policy_rows(policy, meeting_rows)
     if required_meetings > 1 and len(meeting_rows) != required_meetings:
         raise ValueError(f"{code} needs a complete {required_meetings}-meeting section pattern.")
     if required_meetings <= 1 and len(meeting_rows) != 1:
@@ -1636,7 +1746,21 @@ def create_planned_section_placements(
         )
         placements: list[SectionPlacement] = []
         validations = []
-        for row in meeting_rows:
+        if policy:
+            placements = create_policy_section_bundle(board, term_section, meetings=meeting_rows)
+            validations = [
+                validate_placement(
+                    board_id=board.id,
+                    day=row.day,
+                    start_time=row.start_time,
+                    end_time=row.end_time,
+                    room=row.room,
+                    term_section_id=term_section.id,
+                    exclude_placement_id=row.id,
+                )
+                for row in placements
+            ]
+        for row in [] if policy else meeting_rows:
             TermSectionMeeting.objects.get_or_create(
                 term_section=term_section,
                 day=row["day"],
@@ -1725,6 +1849,42 @@ def preview_placement_room_candidates(
     target_end = str(end_time or placement.end_time).strip()
     term_section = placement.term_section
     board = placement.board
+    policy = section_policy(term_section)
+    if policy and not policy.uses_shared_room:
+        return {
+            "placement": {
+                "id": placement.id,
+                "course_code": term_section.course_code,
+                "section": term_section.section,
+                "board_id": board.id,
+                "board_label": board.label,
+                "current_room": placement.room,
+                "is_online": False,
+            },
+            "target": {
+                "day": target_day,
+                "start": target_start,
+                "end": target_end,
+                "required_capacity": 0,
+                "required_type": "lecture",
+                "required_gender": "",
+                "is_online": False,
+                "uses_shared_room": False,
+                "room_required": False,
+                "no_room_required": True,
+            },
+            "candidates": [],
+            "summary": {
+                "total": 0,
+                "available": 0,
+                "clean": 0,
+                "blocked": 0,
+                "is_online": False,
+                "uses_shared_room": False,
+                "room_required": False,
+                "no_room_required": True,
+            },
+        }
     online_lookup = OnlineCourseLookup()
     is_online = online_lookup.is_online_course_for_board(board, term_section.course_code)
     if is_online:
@@ -1776,6 +1936,8 @@ def preview_placement_room_candidates(
         .select_related("board", "term_section")
     )
     for other in occupiers:
+        if section_policy(other.term_section):
+            continue
         if online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
             continue
         other_mask = _time_mask(other.day, other.start_time, other.end_time)
@@ -1982,6 +2144,8 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
     max_items = max(1, min(100, int(limit or 20)))
 
     for placement in placements:
+        if section_policy(placement.term_section):
+            continue
         current_room = _room_key(placement.room)
         if current_room and current_room != "UNASSIGNED":
             continue
@@ -2347,13 +2511,15 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
             board=board,
             room="UNASSIGNED",
         ).select_related("term_section")
-        unroomed = list(
-            exclude_online_courses_for_board(
+        unroomed = [
+            row
+            for row in exclude_online_courses_for_board(
                 unroomed_qs,
                 board,
                 lookup=online_lookup,
-            ).order_by("day", "start_time")[:5]
-        )
+            ).order_by("day", "start_time")
+            if not section_policy(row.term_section)
+        ][:5]
         for placement in unroomed:
             add(
                 "unassigned_room",
@@ -2625,6 +2791,29 @@ def apply_bulk_safe_time_moves(
 
             old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
             old_room = placement.room or ""
+            if section_policy(placement.term_section):
+                try:
+                    result = switch_policy_section_bundle(
+                        placement,
+                        day=item["new_day"],
+                        start_time=item["new_start"],
+                        end_time=item["new_end"],
+                    )
+                except SectionPolicyError as exc:
+                    skipped.append({**item, "reason": str(exc)})
+                    continue
+                applied.append(
+                    {
+                        **item,
+                        "old_day": old_day,
+                        "old_start": old_start,
+                        "old_end": old_end,
+                        "old_room": old_room,
+                        "before_placements": result["before_placements"],
+                        "placement_ids": [row.id for row in result["placements"]],
+                    }
+                )
+                continue
             placement.day = str(item["new_day"])
             placement.start_time = str(item["new_start"])
             placement.end_time = str(item["new_end"])
@@ -2941,12 +3130,23 @@ def _section_meeting_counts(scenario_id: int) -> dict[str, dict[str, int]]:
     """Return placement counts keyed by course_key then section label."""
 
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    policy_seen = set()
     placements = SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
         "term_section"
     )
     for placement in placements:
         key = placement.term_section.course_key or placement.term_section.course_code
         section = placement.term_section.section
+        if section_policy(placement.term_section):
+            identity = (
+                placement.term_section_id,
+                placement.day,
+                placement.start_time,
+                placement.end_time,
+            )
+            if identity in policy_seen:
+                continue
+            policy_seen.add(identity)
         counts[key][section] += 1
     return {key: dict(value) for key, value in counts.items()}
 
@@ -2961,6 +3161,9 @@ def infer_required_meeting_count(
     """Infer how many placement rows make a complete section for a course."""
 
     key = str(course_key or "").strip()
+    policy = get_course_meeting_policy(key, key)
+    if policy:
+        return len(policy.durations)
     if key:
         section_counts_by_course = section_counts_by_course or _section_meeting_counts(scenario_id)
         counts = [count for count in section_counts_by_course.get(key, {}).values() if count]
@@ -3181,7 +3384,10 @@ def compute_scenario_safety_summary(
         if is_online:
             if not room:
                 online_without_room += 1
-        elif not room or room.upper() == "UNASSIGNED":
+        elif (
+            not section_policy(placement.term_section)
+            or section_policy(placement.term_section).uses_shared_room
+        ) and (not room or room.upper() == "UNASSIGNED"):
             physical_unassigned += 1
 
     links = BoardStudentLink.objects.filter(board__scenario_id=scenario_id)
@@ -3443,7 +3649,12 @@ def check_publish_readiness(scenario_id: int) -> dict:
             blockers.append(f"Board '{board.label}': {room_clashes} room conflicts")
 
         # Unassigned rooms when rooms are expected
-        unassigned_rooms = offline_placements.filter(room="UNASSIGNED").count()
+        unassigned_rooms = sum(
+            1
+            for row in offline_placements.filter(room="UNASSIGNED").select_related("term_section")
+            if not section_policy(row.term_section)
+            or section_policy(row.term_section).uses_shared_room
+        )
         if unassigned_rooms > 0:
             blockers.append(f"Board '{board.label}': {unassigned_rooms} sections without rooms")
 
@@ -3478,6 +3689,41 @@ def check_publish_readiness(scenario_id: int) -> dict:
             f"{issue['course_code']}-{issue['section']} has "
             f"{issue['placed_meetings']}/{issue['expected_meetings']} meetings"
         )
+
+    from core.services.timetable_section_policy import (
+        assert_pattern_available,
+        assert_policy_placement_rows,
+    )
+
+    policy_sections = {}
+    policy_rows = defaultdict(list)
+    for placement in SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
+        "term_section"
+    ):
+        policy = section_policy(placement.term_section)
+        if policy:
+            policy_sections[placement.term_section_id] = (placement.term_section, policy)
+            policy_rows[placement.term_section_id].append(placement)
+    for section_id, (section, policy) in policy_sections.items():
+        try:
+            assert_policy_placement_rows(policy, policy_rows[section_id])
+            assert_pattern_available(
+                policy,
+                [
+                    row
+                    for row in policy_rows[section_id]
+                    if row.board_id == policy_rows[section_id][0].board_id
+                ],
+                _scenario,
+            )
+            if section.scenario_id == scenario_id:
+                assert_policy_rows(
+                    policy, list(TermSectionMeeting.objects.filter(term_section=section))
+                )
+        except (SectionPolicyError, ValueError, TypeError) as exc:
+            blockers.append(
+                f"Invalid English section pattern {section.course_code}-{section.section}: {exc}"
+            )
 
     return {
         "ready": len(blockers) == 0,

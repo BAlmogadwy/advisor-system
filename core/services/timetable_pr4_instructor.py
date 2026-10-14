@@ -35,6 +35,7 @@ from __future__ import annotations
 from django.conf import settings
 
 from core.services import timetable_constraints as _constraints
+from core.services.course_identity import course_display_code
 
 INSTRUCTOR_CLASH_FLAG_SETTING = "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED"
 
@@ -119,10 +120,10 @@ INSTRUCTOR_COMPACTION_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED"
 
 
 def is_instructor_compaction_enabled() -> bool:
-    """Reads ``TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED``. Default ``False``.
+    """Read ``TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED`` (configured default on).
 
     Gates the post-build instructor-day compaction pass (shrinks within-day idle
-    gaps by relocating an instructor's sessions in time). Default OFF → no-op.
+    gaps by relocating an instructor's sessions in time). Explicit false → no-op.
     """
     return bool(getattr(settings, INSTRUCTOR_COMPACTION_FLAG_SETTING, False))
 
@@ -208,10 +209,10 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     ).values_list("program", "course_code", "instructor_id"):
         by_course.setdefault((prog, (code or "").strip().upper()), set()).add(instructor_id)
 
-    for course_key, course_code, section in TermSection.objects.filter(
+    for course_key, course_code, course_number, section in TermSection.objects.filter(
         scenario=scenario
-    ).values_list("course_key", "course_code", "section"):
-        norm = (course_code or "").strip().upper()
+    ).values_list("course_key", "course_code", "course_number", "section"):
+        norm = course_display_code(course_key, course_code, course_number)
         ids: set[int] = set()
         for prog in programs:
             ids |= by_course.get((prog, norm), set())

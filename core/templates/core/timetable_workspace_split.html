@@ -8,6 +8,7 @@
 
 {% block extra_css %}
 <link href="{% static 'css/timetable-workspace-split.css' %}?v=3" rel="stylesheet">
+<link href="{% static 'css/timetable-meeting-policy.css' %}?v=2" rel="stylesheet">
 {% endblock %}
 
 {% block page_heading %}{% endblock %}
@@ -28,7 +29,7 @@
           <span class="metric" title="{% if LANGUAGE_CODE == 'ar' %}طلاب فريدون{% else %}Unique students{% endif %}">{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Unique{% endif %} <b id="twsStStudents">—</b></span>
           <span class="metric" title="{% if LANGUAGE_CODE == 'ar' %}روابط الطلاب باللوحات{% else %}Board-student links, including visitors{% endif %}">{% if LANGUAGE_CODE == 'ar' %}روابط{% else %}Links{% endif %} <b id="twsStLinks">—</b></span>
           <span class="metric">{% if LANGUAGE_CODE == 'ar' %}موضوع{% else %}Placed{% endif %} <b id="twsStPlaced">—</b></span>
-          <span class="metric" title="{% if LANGUAGE_CODE == 'ar' %}الطلاب المتأثرون فعلياً بتعارضات عبر اللوحات{% else %}Actual students affected by cross-board clashes{% endif %}">{% if LANGUAGE_CODE == 'ar' %}عبر اللوحات{% else %}Cross{% endif %} <b id="twsStCross" class="warn">—</b></span>
+          <span class="metric" title="{% if LANGUAGE_CODE == 'ar' %}طلاب لديهم طلب مقررات قد يتداخل عبر اللوحات؛ تعيين الشعب غير مؤكد{% else %}Potential course-demand overlaps across boards; section assignments are not confirmed{% endif %}">{% if LANGUAGE_CODE == 'ar' %}عبر اللوحات{% else %}Cross{% endif %} <b id="twsStCross" class="warn">—</b></span>
           <span class="metric">{% if LANGUAGE_CODE == 'ar' %}لوحات{% else %}Boards{% endif %} <b id="twsStBoards">—</b></span>
         </div>
         <div class="tws-command-group">
@@ -382,8 +383,9 @@
   const djCsrfToken = "{{ csrf_token }}";
   const INITIAL_SCENARIO = "{{ initial_scenario }}";
   const INITIAL_BOARD = "{{ initial_board }}";
-  const DEFAULT_YEAR = {{ default_year|default:'null' }};
-  const DEFAULT_TERM = {{ default_term|default:'null' }};
+  const DEFAULT_YEAR = "{{ default_year|default:''|escapejs }}";
+  const DEFAULT_TERM = "{{ default_term|default:''|escapejs }}";
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=114"></script>
+<script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=120"></script>
 {% endblock %}

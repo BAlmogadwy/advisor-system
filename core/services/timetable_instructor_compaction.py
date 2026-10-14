@@ -12,7 +12,11 @@ compact the students who take those classes too.
 Design (agreed with the user + an external review):
 - **Worst-day-first** hill-climb. Each round targets the instructor-days with the
   largest within-day hole and tries to shrink them.
-- **Instructor objective** (lexicographic, lower=better):
+- **Instructor priority** protects each instructor's campus-day ceiling and
+  strictly improves (total campus working days, total true idle). The shared
+  selection policy compares feasible alternatives with the current iteration's
+  hard ceilings frozen. With instructor priority disabled, the legacy objective
+  remains (lexicographic, lower=better):
   (largest_within_day_hole, #instr-days_with_hole>90min, worst_weekly_idle,
    total_idle, added_student_gap). Attacks the visible "one bad day" first.
 - **Layered student guards** (hard, vs the pre-pass baseline): feasibility
@@ -38,7 +42,17 @@ from collections import defaultdict
 
 from django.db import transaction
 
+from core.services.course_identity import course_display_code
 from core.services.timetable_assignment_models import RiskTier, SectionMeeting
+from core.services.timetable_board_persistence import external_shared_section_ids
+from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_optimisation_policy import (
+    evaluation_is_better,
+    instructor_schedule_metrics,
+    instructor_schedule_regressions,
+    is_instructor_priority_enabled,
+    schedule_metrics_of,
+)
 from core.services.timetable_pr4_instructor import (
     get_instructor_compaction_config,
     get_instructor_daily_cap,
@@ -79,11 +93,16 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         return report
     report["enabled"] = True
 
+    from core.services.timetable_fixed_pattern_search import improve_fixed_course_patterns
+
+    report["weekly_pattern_search"] = improve_fixed_course_patterns(scenario_id)
+
     from core.models import SectionPlacement, TermSectionMeeting, TimetableScenario
     from core.services.course_instructor_assignment import apply_primary_instructor
     from core.services.timetable_autoplace import placeable_slots
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_online import OnlineCourseLookup
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
         build_course_tier_map_for_scenario,
@@ -102,12 +121,17 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     cfg = get_instructor_compaction_config()
     cap = get_instructor_daily_cap()
+    instructor_priority = is_instructor_priority_enabled()
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
     states = build_section_states_for_scenario(scenario_id)
     if not states:
         report["note"] = "no placements"
         return report
+    # Ordinary shared sections have a placement copy on each board. Search
+    # physical meetings once; duplicate copies are not extra teaching sessions.
+    for state in states:
+        state.meetings = list({(m.day, m.start_min, m.end_min): m for m in state.meetings}.values())
     sbi = {s.section_id: s for s in states}
     # Empty profiles are fine: the student gates simply become vacuous and the
     # pass optimises instructor idle freely (still respecting the daily cap).
@@ -121,6 +145,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         report["note"] = "no instructor assignments (links off?)"
         return report
     locked = build_locked_section_ids_for_scenario(scenario_id)
+    # Classic relocation has no modality-aware domains. Keep remote teaching
+    # fixed until it can preserve online delivery explicitly.
+    locked.update(s.section_id for s in states if s.delivery_is_online or s.is_online)
     tier = {sid: p.risk_tier for sid, p in profiles.items()}
     code_of = {sid: s.course_code for sid, s in sbi.items()}
 
@@ -141,15 +168,61 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         ts = p.term_section
         return f"{ts.course_key or ts.course_code}_{ts.section}"
 
-    placement_of: dict[tuple[str, int, int], object] = {}
+    placement_of: dict[tuple[str, int, int, int], list] = defaultdict(list)
+    board_signatures: dict[str, dict[int, set]] = defaultdict(lambda: defaultdict(set))
     sid2board: dict[str, object] = {}
     sid2ts: dict[str, object] = {}
     for p in placements:
         sid = _sid(p)
         di = WEEKDAYS.index(p.day.upper()) if p.day.upper() in WEEKDAYS else -1
-        placement_of[(sid, di, _to_min(p.start_time))] = p
+        signature = (di, _to_min(p.start_time), _to_min(p.end_time))
+        placement_of[(sid, *signature)].append(p)
+        board_signatures[sid][p.board_id].add(signature)
         sid2board.setdefault(sid, p.board)
         sid2ts.setdefault(sid, p.term_section)
+    external_ids = external_shared_section_ids(scenario_id)
+    report["externally_owned_sections_frozen"] = sorted(external_ids)
+    locked.update(_sid(p) for p in placements if p.term_section_id in external_ids)
+    # Existing divergent copies cannot be mapped to one physical schedule.
+    # Leave the entire section fixed until an explicit shared-section repair.
+    locked.update(
+        sid
+        for sid, copies in board_signatures.items()
+        if len({frozenset(signature) for signature in copies.values()}) > 1
+    )
+
+    # Capture the board at this optional pass's entry, AFTER mandatory repairs.
+    # Its persistence savepoint must never roll those repairs back with it.
+    online_lookup = OnlineCourseLookup()
+
+    def physical_unassigned(rows):
+        return sum(
+            1
+            for p in rows
+            if (not (p.room or "").strip() or p.room.strip().upper() == "UNASSIGNED")
+            and not get_course_meeting_policy(
+                p.term_section.course_code, p.term_section.course_key, p.term_section.course_number
+            )
+            and not online_lookup.is_online_course_for_board(
+                p.board,
+                course_display_code(
+                    p.term_section.course_key,
+                    p.term_section.course_code,
+                    p.term_section.course_number,
+                ),
+            )
+        )
+
+    rooms_before = physical_unassigned(placements)
+    locked_before = list(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
+        .order_by("pk")
+        .values()
+    )
+    locked_ts_ids = {p["term_section_id"] for p in locked_before}
+    locked_meetings_before = list(
+        TermSectionMeeting.objects.filter(term_section_id__in=locked_ts_ids).order_by("pk").values()
+    )
 
     # ── Metrics ──
     def evaluate():
@@ -174,7 +247,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         byday: dict = defaultdict(list)
         for sid, instrs in cap_map.items():
             s = sbi.get(sid)
-            if not s:
+            if not s or (instructor_priority and (s.delivery_is_online or s.is_online)):
                 continue
             for iid in instrs:
                 for m in s.meetings:
@@ -184,7 +257,17 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         holes: dict = {}
         for key, sess in byday.items():
             sess = sorted(set(sess))
-            gaps = [g for g in (sess[i + 1][0] - sess[i][1] for i in range(len(sess) - 1)) if g > 0]
+            if instructor_priority:
+                gaps = []
+                end = 0
+                for start, finish in sess:
+                    if end and start > end:
+                        gaps.append(start - end)
+                    end = max(end, finish)
+            else:
+                gaps = [
+                    g for g in (sess[i + 1][0] - sess[i][1] for i in range(len(sess) - 1)) if g > 0
+                ]
             di = sum(gaps)
             hole = max(gaps) if gaps else 0
             total += di
@@ -218,6 +301,8 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         session, honouring all-diff-days, blocked slots, instructor clash,
         same-course separation and the daily cap. (Swap/chain go here later.)"""
         meeting = sbi[sid].meetings[midx]
+        if get_course_meeting_policy(sbi[sid].course_code):
+            return  # Already searched as a complete section, never as one day.
         dur = meeting.end_min - meeting.start_min
         slots = lab if dur > 75 else lec
         others = section_days[sid] - {meeting.day}
@@ -231,6 +316,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             ):
                 continue
             for s2, e2 in slots:
+                # Relocation changes time, never the weekly contact minutes.
+                if e2 - s2 != dur:
+                    continue
                 if same_day and s2 == meeting.start_min:
                     continue
                 if (WEEKDAYS[day2], s2) in blocked:
@@ -270,6 +358,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     base_score = tuple(base_eval.lexicographic_score)
     base_per, base_total_gap, base_by_tier = student_metrics(base_eval)
     base_instr = instr_metrics()
+    base_schedule = instructor_schedule_metrics(states, cap_map)
     orig_pos = {
         sid: [(m.day, m.start_min, m.end_min) for m in s.meetings] for sid, s in sbi.items()
     }
@@ -317,9 +406,11 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         for mi in range(len(sbi[sid].meetings))
         if cap_map.get(sid) and sid not in locked
     ]
+    movable_instructors = {iid for sid, _mi in movable for iid in cap_map.get(sid, ())}
 
     cur_instr = base_instr
     cur_eval = base_eval
+    cur_schedule = base_schedule
     visited: set = set()
     moves_evaluated = moves_accepted = 0
     max_moves = max(20, len(movable) * 4)
@@ -344,15 +435,46 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             break
         worst_days = sorted(cur_instr["holes"].items(), key=lambda kv: -kv[1][0])
         target_iids = list(dict.fromkeys(iid for (iid, _d), (h, _di) in worst_days if h > 0))[:3]
+        if instructor_priority:
+            days_by_instructor = cur_schedule["working_days_by_instructor"]
+            target_iids = sorted(
+                movable_instructors,
+                key=lambda iid: (
+                    -days_by_instructor.get(str(iid), 0),
+                    -cur_instr["weekly"].get(iid, 0),
+                    iid,
+                ),
+            )
+            target_iids = [
+                iid
+                for iid in target_iids
+                if days_by_instructor.get(str(iid), 0) > 1 or cur_instr["weekly"].get(iid, 0) > 0
+            ]
         if not target_iids:
             break
         _, cur_gap, _ = student_metrics(cur_eval)
         cur_tuple = ituple(cur_instr, cur_gap - base_total_gap)
         best = None
-        for sid, midx in movable:
+        # Try three priority instructors first. If that group has no feasible
+        # gain, broaden to the next group instead of falsely declaring a local
+        # optimum because the busiest teachers cannot move.
+        target_groups = {iid: index // 3 for index, iid in enumerate(target_iids)}
+
+        def move_group(move, groups=target_groups):
+            return min(
+                (groups[iid] for iid in cap_map.get(move[0], ()) if iid in groups),
+                default=len(groups),
+            )
+
+        active_group = 0
+        for sid, midx in sorted(movable, key=move_group):
             iids = cap_map.get(sid, frozenset())
             if not (set(iids) & set(target_iids)):
                 continue
+            group = move_group((sid, midx))
+            if instructor_priority and group != active_group and best is not None:
+                break
+            active_group = group
             for gen in _NEIGHBOURHOODS:
                 for day2, s2, e2 in gen(sid, midx, iids):
                     old = _apply(sid, midx, day2, s2, e2, iids)
@@ -366,7 +488,30 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                         gap_added = tg - cur_gap
                         if gates_ok(res, idle_saved, gap_added):
                             it = ituple(im, tg - base_total_gap)
-                            if it < cur_tuple and (best is None or it < best[0]):
+                            if instructor_priority:
+                                trial_schedule = schedule_metrics_of(res)
+                                improves = evaluation_is_better(
+                                    res,
+                                    best[6] if best is not None else cur_eval,
+                                    day_ceilings=cur_schedule,
+                                    feasibility_ceilings=cur_eval,
+                                )
+                                improves = (
+                                    improves
+                                    and (
+                                        not instructor_schedule_regressions(
+                                            cur_schedule, trial_schedule
+                                        )
+                                    )
+                                    and (
+                                        trial_schedule["working_days"],
+                                        trial_schedule["idle_minutes"],
+                                    )
+                                    < (cur_schedule["working_days"], cur_schedule["idle_minutes"])
+                                )
+                            else:
+                                improves = it < cur_tuple and (best is None or it < best[0])
+                            if improves:
                                 best = (it, sid, midx, day2, s2, e2, res, im, sig)
                     _revert(sid, midx, old, day2, s2, e2, iids)
                     if _over_budget():
@@ -382,27 +527,46 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         _apply(sid, midx, day2, s2, e2, cap_map.get(sid, frozenset()))
         visited.add(sig)
         cur_instr, cur_eval = im, res
+        cur_schedule = instructor_schedule_metrics(states, cap_map)
         moves_accepted += 1
 
     # ── Persist accepted relocations ──
     touched_boards: set = set()
     relocations: list = []
+    rollback_reason = None
+    candidate_rooms = rooms_before
+    candidate_moves_accepted = moves_accepted
+    candidate_instructor_impact = {
+        "working_days": cur_schedule["working_days"],
+        "working_days_by_instructor": cur_schedule["working_days_by_instructor"],
+        "total_idle": cur_instr["total"],
+        "largest_hole": cur_instr["largest"],
+    }
+    candidate_total_gap = student_metrics(cur_eval)[1]
+    candidate_locked_preserved = True
+    moved_shared_group = False
+    shared_room_error = None
     with transaction.atomic():
         for sid, s in sbi.items():
             for i, m in enumerate(s.meetings):
                 od, os_, oe = orig_pos[sid][i]
                 if (m.day, m.start_min, m.end_min) == (od, os_, oe):
                     continue
-                p = placement_of.get((sid, od, os_))
-                if p is None:
+                copies = placement_of.get((sid, od, os_, oe))
+                if not copies:
                     continue
+                moved_shared_group |= len(copies) > 1
                 new_day, new_start, new_end = WEEKDAYS[m.day], _hhmm(m.start_min), _hhmm(m.end_min)
                 TermSectionMeeting.objects.filter(
-                    term_section=p.term_section, day=p.day, start_time=p.start_time
+                    term_section=copies[0].term_section,
+                    day=WEEKDAYS[od],
+                    start_time=_hhmm(os_),
+                    end_time=_hhmm(oe),
                 ).update(day=new_day, start_time=new_start, end_time=new_end)
-                p.day, p.start_time, p.end_time, p.room = new_day, new_start, new_end, ""
-                p.save(update_fields=["day", "start_time", "end_time", "room"])
-                touched_boards.add(p.board_id)
+                for p in copies:
+                    p.day, p.start_time, p.end_time, p.room = new_day, new_start, new_end, ""
+                    p.save(update_fields=["day", "start_time", "end_time", "room"])
+                    touched_boards.add(p.board_id)
                 relocations.append(
                     {
                         "section": f"{code_of[sid]} {sid.split('_')[-1]}",
@@ -413,10 +577,86 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         for sid in {s for s, _i in movable}:
             if sid2board.get(sid) and sid2board[sid].id in touched_boards:
                 apply_primary_instructor(
-                    sid2ts[sid], scenario, sid2board[sid], sid2ts[sid].course_code
+                    sid2ts[sid],
+                    scenario,
+                    sid2board[sid],
+                    course_display_code(
+                        sid2ts[sid].course_key, sid2ts[sid].course_code, sid2ts[sid].course_number
+                    ),
                 )
         for board_id in touched_boards:
             assign_rooms_to_board(board_id, respect_locked=True)
+
+        if moved_shared_group:
+            # Per-board rooming sees another copy as competing occupancy.
+            # Resolve the physical scenario once, then fan that exact room
+            # assignment to all copies and canonical meetings in this savepoint.
+            from core.services.timetable_exact_rooming import ExactRoomingError
+            from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+            from core.services.timetable_secondary_recovery_runner import (
+                _persist_exact_room_result,
+                _sync_recovered_meetings,
+            )
+
+            try:
+                room_evaluator = build_recovery_room_evaluator(scenario_id)
+                room_result = room_evaluator(states)
+                physical_rows = list(
+                    SectionPlacement.objects.filter(board__scenario_id=scenario_id).values()
+                )
+                physical_meetings = list(
+                    TermSectionMeeting.objects.filter(
+                        term_section__scenario_id=scenario_id
+                    ).values()
+                )
+                _persist_exact_room_result(scenario_id, room_result, physical_rows)
+                _sync_recovered_meetings(
+                    physical_rows, physical_meetings, room_result, scenario_id=scenario_id
+                )
+            except ExactRoomingError as exc:
+                shared_room_error = str(exc)
+
+        if touched_boards:
+            candidate_rows = list(
+                SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+                .exclude(day="")
+                .select_related("board", "term_section")
+            )
+            candidate_rooms = physical_unassigned(candidate_rows)
+            locked_after = list(
+                SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
+                .order_by("pk")
+                .values()
+            )
+            locked_meetings_after = list(
+                TermSectionMeeting.objects.filter(term_section_id__in=locked_ts_ids)
+                .order_by("pk")
+                .values()
+            )
+            candidate_locked_preserved = (
+                locked_after == locked_before and locked_meetings_after == locked_meetings_before
+            )
+            reasons = []
+            if shared_room_error:
+                reasons.append(f"shared physical room assignment unavailable: {shared_room_error}")
+            if candidate_rooms > rooms_before:
+                reasons.append(
+                    f"physical meetings without rooms increased from {rooms_before} to {candidate_rooms}"
+                )
+            if not candidate_locked_preserved:
+                reasons.append("a locked placement or meeting assignment changed")
+            if reasons:
+                rollback_reason = "; ".join(reasons)
+                # Roll back ONLY compaction's writes, including rooming,
+                # instructor metadata and audit timestamps, preserving the
+                # repaired input board exactly.
+                transaction.set_rollback(True)
+
+    candidate_relocations = list(relocations)
+    if rollback_reason:
+        moves_accepted = 0
+        relocations = []
+        cur_eval, cur_instr, cur_schedule = base_eval, base_instr, base_schedule
 
     # ── Audit report ──
     fin_per, fin_total_gap, fin_by_tier = student_metrics(cur_eval)
@@ -431,6 +671,18 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     report.update(
         {
             "neighbourhood_version": "relocation-v1",
+            "rolled_back": bool(rollback_reason),
+            "rollback_reason": rollback_reason,
+            "room_safety": {
+                "physical_unassigned_before": rooms_before,
+                "physical_unassigned_candidate": candidate_rooms,
+                "physical_unassigned_after": rooms_before if rollback_reason else candidate_rooms,
+                "candidate_locked_assignments_preserved": candidate_locked_preserved,
+                "locked_assignments_preserved": True,
+            },
+            "candidate_instructor_impact": candidate_instructor_impact,
+            "candidate_student_total_gap": candidate_total_gap,
+            "candidate_relocations": candidate_relocations,
             "protected": {
                 "feasibility_before": list(base_score[0:4]),
                 "feasibility_after": list(tuple(cur_eval.lexicographic_score)[0:4]),
@@ -450,6 +702,12 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 - base_by_tier.get(RiskTier.B, 0),
             },
             "instructor_impact": {
+                "working_days_before": base_schedule["working_days"],
+                "working_days_after": cur_schedule["working_days"],
+                "working_days_by_instructor_before": base_schedule["working_days_by_instructor"],
+                "working_days_by_instructor_after": cur_schedule["working_days_by_instructor"],
+                "idle_minutes_by_instructor_before": base_schedule["idle_minutes_by_instructor"],
+                "idle_minutes_by_instructor_after": cur_schedule["idle_minutes_by_instructor"],
                 "total_idle_before": base_instr["total"],
                 "total_idle_after": cur_instr["total"],
                 "total_idle_saved": base_instr["total"] - cur_instr["total"],
@@ -465,6 +723,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             "search": {
                 "moves_evaluated": moves_evaluated,
                 "moves_accepted": moves_accepted,
+                "candidate_moves_accepted": candidate_moves_accepted,
                 "rounds_used": _round + 1,
                 "residual_largest_hole": cur_instr["largest"],
                 "timed_out": timed_out,
