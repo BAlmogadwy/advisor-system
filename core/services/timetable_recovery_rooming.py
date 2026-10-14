@@ -7,6 +7,7 @@ locked rooms, and returns the exact assignment that persistence must apply.
 
 from __future__ import annotations
 
+import gc
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
@@ -231,6 +232,10 @@ class RecoveryRoomEvaluator:
             strict_budget=True,
             count_only=self.count_only,
         )
+        # Each solve leaves a dead CP-SAT model in reference cycles. Recovery runs
+        # one per candidate, and until the cyclic collector gets to them they piled
+        # up ~120 MB on the 512 MB host; a young-generation pass (~3 ms) holds it ~20.
+        gc.collect(1)
         assignments = {**solve.assignment, **frozen_assignment}
         missing = set(solve.unroomed) | set(invalid)
         failures: list[dict[str, Any]] = []

@@ -303,3 +303,15 @@ def test_factory_snapshots_metadata_buffer_shared_boards_and_remote_exclusion(
     assert (
         SectionPlacement.objects.filter(id__in=[p.id for p in physical_rows], room="").count() == 2
     )
+
+
+def test_each_room_solve_releases_its_dead_model(monkeypatch):
+    # A solve leaves its CP-SAT model in reference cycles; recovery runs one per
+    # candidate, so each evaluation must collect them before the next one builds.
+    import core.services.timetable_recovery_rooming as recovery_rooming
+
+    collected = []
+    monkeypatch.setattr(recovery_rooming.gc, "collect", lambda gen=2: collected.append(gen) or 0)
+    check = evaluator([demand(1), demand(2, rooms=("R1",))])
+    check(None)
+    assert collected == [1]
