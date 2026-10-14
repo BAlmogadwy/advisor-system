@@ -16,6 +16,8 @@ Model:
 
 from __future__ import annotations
 
+import functools
+import logging
 from collections import defaultdict
 
 from django.db import transaction
@@ -28,6 +30,7 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
@@ -48,6 +51,35 @@ from core.services.timetable_same_course import (
     is_back_to_back_gap,
     same_day_gap_penalty,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _within_model_budget(**extra):
+    """Answer a model that outgrew ``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS`` the way
+    a solve that ran out of time is answered: no placements, so nothing is
+    persisted and every caller keeps or falls back to its greedy placement.
+    ``limit`` says which budget it was. See ``core.services.cpsat_resources``."""
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(board_id, *args, **kwargs):
+            try:
+                return fn(board_id, *args, **kwargs)
+            except ModelTooLarge as exc:
+                logger.warning("CP-SAT not run for board %s: %s", board_id, exc)
+                return {
+                    "status": "timeout",
+                    "placed": 0,
+                    "placements": [],
+                    "objective": 0,
+                    "limit": "model_size",
+                    **extra,
+                }
+
+        return inner
+
+    return wrap
 
 
 def _to_min(t: str) -> int:
@@ -288,6 +320,7 @@ def _add_locked_reservations(
                             penalties.append(assign[i][m_a][oa] * (shared * 5))
 
 
+@_within_model_budget()
 def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     """Find optimal placement using CP-SAT solver."""
     try:
@@ -384,7 +417,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     # ── Build CP-SAT model ───────────────────────────────────────
 
-    model = cp_model.CpModel()
+    model = BudgetedCpModel()
 
     # Boolean vars: assign[sec_idx][meeting_idx][option_idx] = 1 if assigned
     assign = []
@@ -658,7 +691,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     # ── Solve ────────────────────────────────────────────────────
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
-    solver.parameters.num_workers = 8
+    solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = 42
 
     status = solver.solve(model)
@@ -864,6 +897,7 @@ def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> 
     return result
 
 
+@_within_model_budget(improved=False)
 def solve_board_with_hints(
     board_id: int,
     greedy_placements: list[dict],
@@ -974,7 +1008,7 @@ def solve_board_with_hints(
         }
 
     num_slots = len(slot_config)
-    model = cp_model.CpModel()
+    model = BudgetedCpModel()
 
     assign = []
     sec_options = []
@@ -1212,7 +1246,7 @@ def solve_board_with_hints(
     # ── Solve ───────────────────────────────────────────────────
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
-    solver.parameters.num_workers = 8
+    solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = 42
 
     status = solver.solve(model)

@@ -188,6 +188,21 @@ def _get_elective_mapped_courses(
     return dict(result)
 
 
+def elective_courses_by_placeholder(
+    program: str,
+    *,
+    academic_year: str,
+    term: str | int,
+) -> dict[str, set[str]]:
+    """``{placeholder code: {elective course codes}}`` for one programme and term.
+
+    The department's ElectiveTermMapping rows, read the way the resolver reads
+    them: a second-cohort programme (AI2, CS2, DS2) also uses the mappings
+    filed under its base programme code.
+    """
+    return _get_elective_mapped_courses(program, academic_year=academic_year, term=str(term))
+
+
 def _reconcile_unmapped_studying_placeholders(
     student_id: int,
     program: str,

@@ -15,6 +15,7 @@ confirmed by the student-assignment evaluator.
 
 from __future__ import annotations
 
+import functools
 import logging
 import time
 from collections import defaultdict
@@ -22,6 +23,7 @@ from collections import defaultdict
 from ortools.sat.python import cp_model
 
 from core.models import DeliveryBoard
+from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
 from core.services.timetable_assignment_models import (
     SectionMeeting,
     SectionState,
@@ -93,6 +95,25 @@ def _shared_count(overlap: dict[tuple[str, str], int], a: str, b: str) -> int:
     return overlap.get(key, 0)
 
 
+def _not_run_when_model_too_large(fn):
+    """A cross-board model past ``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS`` is not
+    solved: the polisher answers "no improvement" and the board stays as the
+    searches left it. On 2026-10-12 a 47-section polish model (119,540 penalty
+    terms) peaked at 2.6 GB in its 60 s solve, five times the production host,
+    and found nothing better. See ``core.services.cpsat_resources``."""
+
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ModelTooLarge as exc:
+            logger.warning("CP-SAT polisher not run: %s", exc)
+            return None
+
+    return inner
+
+
+@_not_run_when_model_too_large
 def polish_scenario_with_cpsat(
     scenario_id: int,
     current_sections: list[SectionState],
@@ -222,7 +243,7 @@ def polish_scenario_with_cpsat(
         return [opt for opt in slots if opt[7] - opt[6] == duration]
 
     # ── Build CP-SAT model ───────────────────────────────────────
-    model = cp_model.CpModel()
+    model = BudgetedCpModel()
 
     # Compute meeting durations for each section
     sec_durations: list[list[int]] = []
@@ -520,7 +541,7 @@ def polish_scenario_with_cpsat(
     # ── Solve ────────────────────────────────────────────────────
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
-    solver.parameters.num_workers = 8
+    solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = 42
 
     # PR6 commit 5 — stage-boundary timing. Guardrail: iterations==1 means
