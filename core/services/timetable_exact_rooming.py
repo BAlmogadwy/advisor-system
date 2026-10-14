@@ -56,6 +56,7 @@ Design decisions forced by the code (see the recon in the session notes):
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -63,6 +64,7 @@ from django.conf import settings
 
 from core.models import DeliveryBoard, Room, ScenarioSectionBudget, SectionPlacement
 from core.services.course_identity import course_display_code
+from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_rooming import (
@@ -73,6 +75,11 @@ from core.services.timetable_rooming import (
     get_capacity_buffer,
     room_type_for_placement,
 )
+
+logger = logging.getLogger(__name__)
+
+#: ``_solve_relaxed`` pins each solved objective phase with one constraint.
+_MAX_PHASE_PINS = 4
 
 
 class ExactRoomingError(Exception):
@@ -474,34 +481,46 @@ def _solve_relaxed(
             wall_time_seconds=total_wall if strict_budget else 0.0,
         )
 
-    model = cp_model.CpModel()
-    assign: dict[tuple[str, str], object] = {}
-    roomed: dict[str, object] = {}
-    for d in demands:
-        options = []
-        for room in d.compatible_rooms:
-            var = model.new_bool_var(f"x_{d.demand_id}_{room}")
-            assign[(d.demand_id, room)] = var
-            options.append(var)
-        flag = model.new_bool_var(f"roomed_{d.demand_id}")
-        roomed[d.demand_id] = flag
-        model.add(sum(options) == flag)  # at most one room; flag records whether roomed
-        # Seed the greedy warm start as a hint on every assignment literal.
-        hinted = greedy.get(d.demand_id)
-        for room in d.compatible_rooms:
-            model.add_hint(assign[(d.demand_id, room)], 1 if room == hinted else 0)
-        model.add_hint(flag, 1 if hinted else 0)
+    # H9 exclusivity is pairwise over overlapping meetings, so this model grows
+    # quadratically. Past the host's budget it is turned away before the memory
+    # is spent and answered like a solve that ran out of time: the greedy rooms.
+    total_wall = 0.0
+    try:
+        model = BudgetedCpModel()
+        assign: dict[tuple[str, str], object] = {}
+        roomed: dict[str, object] = {}
+        for d in demands:
+            options = []
+            for room in d.compatible_rooms:
+                var = model.new_bool_var(f"x_{d.demand_id}_{room}")
+                assign[(d.demand_id, room)] = var
+                options.append(var)
+            flag = model.new_bool_var(f"roomed_{d.demand_id}")
+            roomed[d.demand_id] = flag
+            model.add(sum(options) == flag)  # at most one room; flag records whether roomed
+            # Seed the greedy warm start as a hint on every assignment literal.
+            hinted = greedy.get(d.demand_id)
+            for room in d.compatible_rooms:
+                model.add_hint(assign[(d.demand_id, room)], 1 if room == hinted else 0)
+            model.add_hint(flag, 1 if hinted else 0)
 
-    # Room exclusivity (H9) across every pair of overlapping meetings.
-    for i, left in enumerate(demands):
-        left_rooms = set(left.compatible_rooms)
-        for right in demands[i + 1 :]:
-            if left.day != right.day:
-                continue
-            if not (left.start_min < right.end_min and right.start_min < left.end_min):
-                continue
-            for room in left_rooms.intersection(right.compatible_rooms):
-                model.add(assign[(left.demand_id, room)] + assign[(right.demand_id, room)] <= 1)
+        # Room exclusivity (H9) across every pair of overlapping meetings.
+        for i, left in enumerate(demands):
+            left_rooms = set(left.compatible_rooms)
+            for right in demands[i + 1 :]:
+                if left.day != right.day:
+                    continue
+                if not (left.start_min < right.end_min and right.start_min < left.end_min):
+                    continue
+                for room in left_rooms.intersection(right.compatible_rooms):
+                    model.add(assign[(left.demand_id, room)] + assign[(right.demand_id, room)] <= 1)
+        # Each phase below pins its objective with one more constraint. Admit the
+        # model only if those pins fit too, so no budget check fires mid-solve.
+        if 0 < model.budget < model.elements + _MAX_PHASE_PINS:
+            raise ModelTooLarge(model.budget)
+    except ModelTooLarge as exc:
+        logger.warning("Exact rooming not solved: %s", exc)
+        return greedy_result("UNKNOWN")
 
     unroomed_expr = sum(1 - roomed[d.demand_id] for d in demands)
     shortfall_expr = sum(

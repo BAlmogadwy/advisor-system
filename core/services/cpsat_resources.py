@@ -78,6 +78,11 @@ class BudgetedCpModel(cp_model.CpModel):
         super().__init__()
 
     @property
+    def budget(self) -> int:
+        """The element limit this model enforces; 0 or less is no limit."""
+        return self._budget
+
+    @property
     def elements(self) -> int:
         return self._elements
 
