@@ -58,6 +58,7 @@ from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
     get_instructor_day_trade_config,
     is_instructor_compaction_enabled,
+    is_instructor_day_trade_active,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,9 +127,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     # Bounded student-gap-for-instructor-day trade. Only meaningful under the
     # instructor-first policy (days are a ranked quantity there); default OFF.
     trade = get_instructor_day_trade_config()
-    trade_on = bool(trade["enabled"] and instructor_priority)
+    trade_on = is_instructor_day_trade_active()
     room_stats = {"rejected": 0}
-    report["trade_rule"] = {"enabled": trade_on, **trade}
+    report["trade_rule"] = {**trade, "enabled": trade_on, "room_gate_unavailable": None}
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
     states = build_section_states_for_scenario(scenario_id)
@@ -442,7 +443,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     movable_instructors = {iid for sid, _mi in movable for iid in cap_map.get(sid, ())}
     movable_set = set(movable)
 
-    # Exact room evaluator for day-saving trades (read-only; see _assess).
+    # Exact room evaluator for day-saving trades (read-only; see _assess). It fails
+    # CLOSED: without it no trade is accepted (ordinary compaction is unaffected),
+    # and the reason is reported under ``trade_rule.room_gate_unavailable``.
     room_gate = None
     if trade_on:
         from core.services.timetable_exact_rooming import ExactRoomingError
@@ -452,10 +455,14 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             _room_eval = build_recovery_room_evaluator(scenario_id)
             room_gate = {
                 "evaluate": _room_eval,
-                "base": _room_eval(states)["unassigned_count"],
+                # A PROVEN lower bound on the baseline's unroomed meetings. The
+                # evaluator's count for a candidate is only an upper bound unless
+                # proven, so "candidate count <= this floor" is the one comparison
+                # that is safe whatever was proven: it can never excuse a worse board.
+                "baseline_floor": int(_room_eval(states)["shortage_lower_bound"]),
             }
-        except ExactRoomingError:
-            room_gate = None
+        except ExactRoomingError as exc:
+            report["trade_rule"]["room_gate_unavailable"] = str(exc) or type(exc).__name__
 
     cur_instr = base_instr
     cur_eval = base_eval
@@ -521,13 +528,18 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             }
         if not gates_ok(res, idle_saved, gap_added, day_saved > 0):
             return None
-        if trade_on and day_saved > 0 and room_gate is not None:
-            # A traded move relocates whole sessions; only keep it if the
-            # exact room evaluator can still seat every physical meeting the
-            # baseline could. The persist step rolls the WHOLE pass back on a
-            # room regression, so catching it here keeps the other gains.
+        if trade_on and day_saved > 0:
+            # A traded move relocates whole sessions; keep it only if the exact
+            # room evaluator PROVES no more meetings go unroomed than the baseline
+            # had (see ``baseline_floor``). The persist step rolls the WHOLE pass
+            # back on a room regression, so catching it here keeps the other gains.
+            if room_gate is None:
+                room_stats["rejected"] += 1
+                return None
             try:
-                rooms_fit = room_gate["evaluate"](states)["unassigned_count"] <= room_gate["base"]
+                rooms_fit = (
+                    room_gate["evaluate"](states)["unassigned_count"] <= room_gate["baseline_floor"]
+                )
             except ExactRoomingError:
                 rooms_fit = False
             if not rooms_fit:
@@ -722,6 +734,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                     break
             by_cost.sort(key=lambda row: (row[0], row[1], row[2]))
             for _added, _tot, leaf in by_cost:
+                if timed_out or _over_budget():
+                    timed_out = True
+                    break
                 applied = []
                 iid_sets = []
                 for sid, mi, day2, s2, e2 in leaf:

@@ -19,8 +19,13 @@ _SLOTS = [
 ]
 
 
-def _board(placements):
-    """One instructor teaching ``[(code, day, start, end), ...]`` (no students)."""
+def _board(placements, *, locked=(), others=(), blocked=()):
+    """One instructor teaching ``[(code, day, start, end), ...]`` (no students).
+
+    ``locked`` lists course codes whose placement is locked, ``others`` adds
+    sections nobody in the plan teaches (they only occupy the single room R1), and
+    ``blocked`` is the scenario's ``[{day, start}]`` protected slots.
+    """
     from core.models import (
         CourseInstructor,
         DeliveryBoard,
@@ -42,6 +47,7 @@ def _board(placements):
         programs=["AI"],
         slot_config=_SLOTS,
         lab_slot_config=[],
+        blocked_slots=list(blocked),
     )
     board = DeliveryBoard.objects.create(
         scenario=scenario, label="T1", nominal_term=1, program="AI"
@@ -76,9 +82,26 @@ def _board(placements):
             start_time=start,
             end_time=end,
             room="R1",
-            is_locked=False,
+            is_locked=code in locked,
         )
         apply_primary_instructor(ts, scenario, board, ts.course_code)
+    for code, day, start, end in others:
+        ts = TermSection.objects.create(
+            scenario=scenario,
+            course_key=code,
+            section="S1",
+            course_code=code,
+            course_number=code,
+            course_name=code,
+            available_capacity=30,
+            source_tag="day_trade_test",
+        )
+        TermSectionMeeting.objects.create(
+            term_section=ts, day=day, start_time=start, end_time=end, room="R1", instructor=""
+        )
+        SectionPlacement.objects.create(
+            board=board, term_section=ts, day=day, start_time=start, end_time=end, room="R1"
+        )
     return scenario
 
 
@@ -616,3 +639,321 @@ _RULE_OFF_GOLDEN = {
         "gap": [1440, 1390],
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# The vacate move honours every constraint a single relocation honours.
+# ---------------------------------------------------------------------------
+
+_THREE_DAYS = [
+    ("A1", "MON", "09:00", "10:15"),
+    ("A2", "MON", "10:30", "11:45"),
+    ("B1", "TUE", "09:00", "10:15"),
+    ("B2", "TUE", "10:30", "11:45"),
+    ("C1", "WED", "09:00", "10:15"),
+    ("C2", "WED", "10:30", "11:45"),
+]
+
+
+def _trade_on(settings, *, allowance=150):
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE = allowance
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS = True
+
+
+def _slot_of(scenario, code):
+    from core.models import SectionPlacement
+
+    p = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code=code)
+    return (p.day, p.start_time)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_vacate_baseline_empties_a_two_session_day(settings):
+    """Control for the constraint tests below: this very board DOES lose a day."""
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _trade_on(settings)
+    scenario = _board(_THREE_DAYS)
+    report = compact_instructor_schedules(scenario.id)
+    assert report["instructor_impact"]["working_days_after"] == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_vacate_never_moves_a_locked_session(settings):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _trade_on(settings)
+    # MON cannot be emptied (A1 is locked) and every other day is locked too.
+    scenario = _board(_THREE_DAYS, locked={"A1", "B1", "B2", "C1", "C2"})
+    before = {c: _slot_of(scenario, c) for c in ("A1", "A2", "B1", "B2", "C1", "C2")}
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["trade_rule"]["room_gate_rejected"] == 0  # no candidate touching a lock was built
+    assert {c: _slot_of(scenario, c) for c in before} == before
+    assert report["rolled_back"] is False  # a vacate that touched A1 would be rolled back
+    assert report["instructor_impact"]["working_days_after"] == 3
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_vacate_leaves_online_sessions_alone_and_ignores_them_for_the_day(settings, monkeypatch):
+    from core.services import timetable_optimizer_v2
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _trade_on(settings)
+    scenario = _board(
+        [
+            ("O1", "MON", "09:00", "10:15"),  # online: neither a working day nor movable
+            ("A2", "MON", "10:30", "11:45"),
+            ("A3", "MON", "13:00", "14:15"),
+            ("B1", "TUE", "09:00", "10:15"),
+            ("B2", "TUE", "10:30", "11:45"),
+            ("C1", "WED", "09:00", "10:15"),
+            ("C2", "WED", "10:30", "11:45"),
+        ],
+        locked={"B1", "B2", "C1", "C2"},  # only MON's two campus sessions can go
+    )
+    build = timetable_optimizer_v2.build_section_states_for_scenario
+
+    def with_online(sid):
+        states = build(sid)
+        next(s for s in states if s.section_id == "O1_S1").is_online = True
+        return states
+
+    monkeypatch.setattr(timetable_optimizer_v2, "build_section_states_for_scenario", with_online)
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert _slot_of(scenario, "O1") == ("MON", "09:00")
+    assert _slot_of(scenario, "A2")[0] != "MON"
+    assert _slot_of(scenario, "A3")[0] != "MON"
+    assert report["instructor_impact"]["working_days_after"] == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_vacate_never_lands_on_a_blocked_slot(settings):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _trade_on(settings)
+    # The only free slots are the two afternoon ones; block them on every day.
+    blocked = [{"day": d, "start": s} for d in ("MON", "TUE", "WED") for s in ("13:00", "14:30")]
+    scenario = _board(_THREE_DAYS, blocked=blocked)
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["instructor_impact"]["working_days_after"] == 3
+    assert {_slot_of(scenario, c) for c, *_ in _THREE_DAYS} == {
+        ("MON", "09:00"),
+        ("MON", "10:30"),
+        ("TUE", "09:00"),
+        ("TUE", "10:30"),
+        ("WED", "09:00"),
+        ("WED", "10:30"),
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_vacate_never_exceeds_the_daily_cap(settings):
+    from collections import Counter
+
+    from core.models import SectionPlacement
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _trade_on(settings, allowance=600)
+    settings.TIMETABLE_INSTRUCTOR_DAILY_CAP = 2
+    # MON and TUE are full at the cap, WED holds one: nothing can join a full day.
+    scenario = _board([*_THREE_DAYS[:4], ("C1", "WED", "09:00", "10:15")])
+
+    report = compact_instructor_schedules(scenario.id)
+
+    per_day = Counter(
+        SectionPlacement.objects.filter(board__scenario=scenario).values_list("day", flat=True)
+    )
+    assert max(per_day.values()) <= 2
+    assert report["instructor_impact"]["working_days_after"] == 3
+
+
+# ---------------------------------------------------------------------------
+# The room gate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_a_trade_that_would_leave_a_meeting_unroomed_is_rejected(settings):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+    from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+
+    _trade_on(settings)
+    # The only affordable merge puts a session at 10:30, where the single room R1 is
+    # already taken by a section nobody is trading with.
+    scenario = _board(
+        [("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")],
+        others=[("X1", "MON", "10:30", "11:45"), ("X2", "TUE", "10:30", "11:45")],
+    )
+    baseline = build_recovery_room_evaluator(scenario.id)(
+        build_section_states_for_scenario(scenario.id)
+    )
+    assert baseline["unassigned_count"] == 0
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["instructor_impact"]["working_days_after"] == 2
+    assert report["trade_rule"]["room_gate_rejected"] >= 1
+    assert report["rolled_back"] is False  # caught per candidate, not by the wholesale rollback
+    assert _days_used(scenario) == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_trades_fail_closed_without_a_room_gate_but_ordinary_compaction_runs(settings, monkeypatch):
+    from core.services import timetable_recovery_rooming
+    from core.services.timetable_exact_rooming import ExactRoomingError
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    def offline(*args, **kwargs):
+        raise ExactRoomingError("evaluator offline")
+
+    monkeypatch.setattr(timetable_recovery_rooming, "build_recovery_room_evaluator", offline)
+    _trade_on(settings)
+    scenario = _board(
+        [
+            ("C1", "MON", "09:00", "10:15"),
+            ("C2", "MON", "13:00", "14:15"),  # a 165-minute hole an ordinary move closes
+            ("C3", "TUE", "09:00", "10:15"),  # a trade could merge this day away
+        ]
+    )
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["trade_rule"]["room_gate_unavailable"] == "evaluator offline"
+    assert report["instructor_impact"]["total_idle_after"] == 15  # ordinary compaction ran
+    assert _days_used(scenario) == 2  # ...but no day was traded away
+    assert report["trade_rule"]["room_gate_rejected"] >= 1
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+@pytest.mark.parametrize(
+    ("baseline_count", "baseline_floor", "candidate_count", "accepted"),
+    [
+        (0, 0, 0, True),  # proven equal
+        (1, 1, 1, True),  # proven, one meeting unroomed before and after
+        (1, 0, 1, False),  # baseline count unproven (floor 0): 1 is not provably no worse
+        (1, 0, 0, True),  # candidate beats even the floor
+        (0, 0, 1, False),  # candidate strictly worse
+    ],
+)
+def test_room_gate_accepts_only_a_provably_no_worse_candidate(
+    settings, monkeypatch, baseline_count, baseline_floor, candidate_count, accepted
+):
+    from core.services import timetable_recovery_rooming
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    def build(scenario_id, *args, **kwargs):
+        def evaluate(states):
+            if _days(states) == 1:
+                return {"unassigned_count": candidate_count, "shortage_lower_bound": 0}
+            return {"unassigned_count": baseline_count, "shortage_lower_bound": baseline_floor}
+
+        return evaluate
+
+    monkeypatch.setattr(timetable_recovery_rooming, "build_recovery_room_evaluator", build)
+    _trade_on(settings)
+    scenario = _board([("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")])
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["trade_rule"]["room_gate_unavailable"] is None
+    assert report["instructor_impact"]["working_days_after"] == (1 if accepted else 2)
+
+
+# ---------------------------------------------------------------------------
+# One enable condition, and the time budget.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("priority", [True, False])
+def test_compaction_and_runner_share_one_enable_condition(settings, priority):
+    from core.services.timetable_pr4_instructor import is_instructor_day_trade_active
+    from core.services.timetable_v2_runner import _day_trade_idle_allowance
+
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE = 150
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority
+    before = {"working_days_by_instructor": {"1": 3}}
+    after = {"working_days_by_instructor": {"1": 2}}
+
+    allowance = _day_trade_idle_allowance(before, after)
+
+    assert is_instructor_day_trade_active() is priority
+    assert allowance == (({"1": 150}, 150) if priority else ({}, 0))
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_compaction_reports_the_trade_off_when_the_policy_is_legacy(settings):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _trade_on(settings)
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    scenario = _board([("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")])
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["trade_rule"]["enabled"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction")
+def test_vacate_evaluates_nothing_once_the_time_budget_is_spent(settings, monkeypatch):
+    """A budget that runs out while ranking vacate candidates ends the pass there."""
+    from types import SimpleNamespace
+
+    from django.db import transaction
+
+    from core.services import timetable_instructor_compaction as compaction
+    from core.services.timetable_assignment_models import RiskTier
+
+    _trade_on(settings)
+    settings.TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = 100
+    settings.TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS = 1
+    clock = {"calls": 0, "flip_at": None}
+    evaluations: list[int] = []  # monotonic() calls so far, at each student evaluation
+
+    def monotonic():
+        clock["calls"] += 1
+        return 1000.0 if clock["flip_at"] and clock["calls"] >= clock["flip_at"] else 0.0
+
+    def gap_of(sid, states):
+        evaluations.append(clock["calls"])
+        return 1000
+
+    _install_students(monkeypatch, tiers={"S1": RiskTier.C}, gap_of=gap_of)
+    monkeypatch.setattr(compaction, "time", SimpleNamespace(monotonic=monotonic))
+    scenario = _board(_THREE_DAYS)
+
+    def run(*, vacate, flip_at=None):
+        settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS = vacate
+        clock.update(calls=0, flip_at=flip_at)
+        evaluations.clear()
+        with transaction.atomic():
+            compaction.compact_instructor_schedules(scenario.id)
+            transaction.set_rollback(True)
+        return list(evaluations)
+
+    single_only = run(vacate=False)
+    with_vacate = run(vacate=True)
+    assert len(with_vacate) > len(single_only)  # the probe really reaches the vacate phase
+    # Spend the budget on the very last clock read before the first vacate evaluation,
+    # i.e. while the vacate candidates were being ranked.
+    first_vacate_evaluation = with_vacate[len(single_only)]
+    spent = run(vacate=True, flip_at=first_vacate_evaluation)
+    assert len(spent) == len(single_only)

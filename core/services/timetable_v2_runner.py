@@ -54,10 +54,13 @@ def _day_trade_idle_allowance(before: dict, after: dict) -> tuple[dict[str, int]
     the strict per-instructor idle ceiling. Returns ``({instructor_id: minutes},
     total_minutes)``.
     """
-    from core.services.timetable_pr4_instructor import get_instructor_day_trade_config
+    from core.services.timetable_pr4_instructor import (
+        get_instructor_day_trade_config,
+        is_instructor_day_trade_active,
+    )
 
     cfg = get_instructor_day_trade_config()
-    if not cfg["enabled"] or cfg["idle_allowance"] <= 0:
+    if not is_instructor_day_trade_active() or cfg["idle_allowance"] <= 0:
         return {}, 0
     before_days = before.get("working_days_by_instructor") or {}
     after_days = after.get("working_days_by_instructor") or {}

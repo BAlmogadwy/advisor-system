@@ -143,6 +143,22 @@ def get_instructor_compaction_config() -> dict:
     }
 
 
+def is_instructor_day_trade_active() -> bool:
+    """True when the bounded instructor-day trade is switched on AND can act.
+
+    The trade ranks campus working days, which only the instructor-first policy
+    does, so ``TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED`` alone is not enough. The
+    compaction pass and the run-level idle gate must share this one condition,
+    or the gate could excuse idle the pass never traded for.
+    """
+    from core.services.timetable_optimisation_policy import is_instructor_priority_enabled
+
+    return bool(
+        getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED", False)
+        and is_instructor_priority_enabled()
+    )
+
+
 def get_instructor_day_trade_config() -> dict:
     """Bounded student-gap-for-instructor-day trade (default OFF).
 
