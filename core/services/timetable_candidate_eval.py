@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from copy import deepcopy
+from copy import copy
 from typing import Any
 
 from core.services import timetable_student_assignment as ssa
@@ -24,6 +24,24 @@ from core.services.timetable_pr4_instructor import (
 from core.services.timetable_quality import evaluate_timetable_quality
 
 
+def _working_copy(sections: list[SectionState]) -> list[SectionState]:
+    """An independent copy of ``sections`` that seating can mutate freely.
+
+    Seating only ever changes a section's ``current_enrollment`` and
+    ``enrolled_student_ids``; everything else is an immutable scalar or a frozen
+    ``SectionMeeting``. So copy those two (plus the meetings *list*, so even an
+    in-place list edit stays isolated) and share the immutable meetings, instead
+    of paying ``deepcopy`` to rebuild every meeting on every evaluation.
+    """
+    clones: list[SectionState] = []
+    for section in sections:
+        clone = copy(section)
+        clone.meetings = list(section.meetings)
+        clone.enrolled_student_ids = set(section.enrolled_student_ids)
+        clones.append(clone)
+    return clones
+
+
 def evaluate_generated_timetable_candidate(
     candidate_id: str,
     generated_sections: list[SectionState],
@@ -32,7 +50,7 @@ def evaluate_generated_timetable_candidate(
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
     course_tiers: dict[str, str] | None = None,
 ) -> TimetableEvaluationResult:
-    working_sections = deepcopy(generated_sections)
+    working_sections = _working_copy(generated_sections)
     sections_by_id = ssa.build_sections_by_id(working_sections)
     sections_by_course = ssa.build_sections_by_course(sections_by_id)
     states, unresolved_ids = ssa.assign_students_to_sections(

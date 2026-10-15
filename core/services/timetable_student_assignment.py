@@ -58,6 +58,7 @@ flag-off output is identical to pre-feature.
 from __future__ import annotations
 
 from collections import defaultdict
+from operator import itemgetter
 
 from core.services.timetable_assignment_models import (
     RiskTier,
@@ -125,6 +126,519 @@ def _tier_rank(course_tiers: dict[str, str] | None, course_code: str) -> int:
     return COURSE_TIER_RANK.get(course_tiers.get(course_code, "T1"), 0)
 
 
+# ── Seating engine ───────────────────────────────────────────────────────
+#
+# Everything in this block is a pure speed-up of the original per-student
+# seating loop and MUST stay bit-identical to it (assignments, unresolved
+# reasons, gap totals, dict/set insertion order).
+# ``tests/_reference_student_assignment.py`` is the frozen original and
+# ``tests/test_student_assignment_parity.py`` asserts the two agree. The ideas,
+# all exact:
+#
+# 1. Per-section facts (``(day, mask)`` pairs, campus meetings grouped by day)
+#    are derived ONCE per evaluation instead of re-filtered per student/call.
+# 2. Each student's campus day-chains are kept incrementally (``_Seat``): seating
+#    or unseating a section touches only its own days, instead of re-deriving the
+#    whole week for every candidate and every seat.
+# 3. Ranking only prices what can still win: an option that uses the reserve
+#    loses to any regular-seat option (position 1 of the score), and a lone
+#    option needs no pricing at all.
+
+_START = itemgetter(0)
+
+
+def _sorted_gap(chain: list[tuple[int, int]]) -> int:
+    """Idle minutes in a start-sorted ``[(start, end), ...]`` day chain.
+
+    Same arithmetic as ``_compute_day_gap``: each meeting's gap is measured from
+    the END of the meeting immediately before it in start order (not a running
+    maximum), floored at zero.
+    """
+    if len(chain) < 2:
+        return 0
+    it = iter(chain)
+    prev_end = next(it)[1]
+    gap = 0
+    for start, end in it:
+        if start > prev_end:
+            gap += start - prev_end
+        prev_end = end
+    return gap
+
+
+class _SecInfo:
+    """Per-section facts the seating loop needs, derived once per evaluation."""
+
+    __slots__ = ("section", "dm", "campus")
+
+    def __init__(self, section: SectionState) -> None:
+        self.section = section
+        # (day, mask) for EVERY meeting, online included: the clash/occupancy
+        # model is deliberately online-blind, exactly like ``has_clash``.
+        self.dm: tuple[tuple[int, int], ...] = tuple((m.day, m.mask) for m in section.meetings)
+        by_day: dict[int, list[tuple[int, int]]] = {}
+        for m in _campus_meetings(section):
+            by_day.setdefault(m.day, []).append((m.start_min, m.end_min))
+        # (day, meetings in section order, the same stable-sorted by start, gap of
+        # those meetings alone). The "alone" gap is what the section adds on a day
+        # the student has nothing else on campus, and the sorted copy is the
+        # student's whole chain for that day when it is the first thing seated.
+        campus = []
+        for day, ms in by_day.items():
+            ordered = sorted(ms, key=_START)
+            campus.append((day, ms, ordered, _sorted_gap(ordered)))
+        self.campus: tuple[tuple[int, list[tuple[int, int]], list[tuple[int, int]], int], ...] = (
+            tuple(campus)
+        )
+
+
+class _InfoMap(dict):
+    """``section_id -> _SecInfo`` for one evaluation, built lazily from the board."""
+
+    __slots__ = ("sections_by_id",)
+
+    def __init__(self, sections_by_id: dict[str, SectionState]) -> None:
+        super().__init__()
+        self.sections_by_id = sections_by_id
+
+    def of(self, section: SectionState) -> _SecInfo:
+        info = self.get(section.section_id)
+        if info is None or info.section is not section:
+            info = _SecInfo(section)
+            self[section.section_id] = info
+        return info
+
+    def seated(self, section_id: str) -> _SecInfo:
+        return self.of(self.sections_by_id[section_id])
+
+
+class _Seat:
+    """A student's campus day-chains, kept in step with ``section_ids``.
+
+    ``by_day[d]`` holds the (start, end) of every seated ON-CAMPUS meeting on day
+    ``d`` in stable start order — the list ``_compute_day_gap`` sorts.
+    ``gap_by_day[d]`` is that chain's idle minutes and ``total`` their sum, i.e.
+    exactly ``_compute_total_state_gap``.
+    """
+
+    __slots__ = ("by_day", "gap_by_day", "total")
+
+    def __init__(self) -> None:
+        self.by_day: dict[int, list[tuple[int, int]]] = {}
+        self.gap_by_day: dict[int, int] = {}
+        self.total = 0
+
+    @classmethod
+    def from_state(cls, state: StudentAssignmentState, infos: _InfoMap) -> _Seat:
+        seat = cls()
+        for sec_id in state.section_ids:
+            for day, ms, _ordered, _alone in infos.seated(sec_id).campus:
+                seat.by_day.setdefault(day, []).extend(ms)
+        for day, chain in seat.by_day.items():
+            chain.sort(key=_START)
+            gap = _sorted_gap(chain)
+            seat.gap_by_day[day] = gap
+            seat.total += gap
+        return seat
+
+    def add(self, info: _SecInfo) -> None:
+        by_day = self.by_day
+        for day, ms, ordered, alone in info.campus:
+            chain = by_day.get(day)
+            if not chain:
+                # First thing on campus that day: the chain is just this section's.
+                by_day[day] = ordered.copy()
+                self.total += alone - self.gap_by_day.get(day, 0)
+                self.gap_by_day[day] = alone
+                continue
+            chain.extend(ms)
+            chain.sort(key=_START)
+            gap = _sorted_gap(chain)
+            self.total += gap - self.gap_by_day[day]
+            self.gap_by_day[day] = gap
+
+    def drop(self, info: _SecInfo) -> None:
+        for day, ms, _ordered, _alone in info.campus:
+            chain = self.by_day[day]
+            for meeting in ms:
+                chain.remove(meeting)
+            gap = _sorted_gap(chain)
+            self.total += gap - self.gap_by_day[day]
+            self.gap_by_day[day] = gap
+
+    def added_gap(self, info: _SecInfo) -> int:
+        """Gap minutes the section would add (``calculate_added_gap``)."""
+        added = 0
+        by_day = self.by_day
+        for day, ms, _ordered, alone in info.campus:
+            chain = by_day.get(day)
+            if chain:
+                added += _sorted_gap(sorted(chain + ms, key=_START)) - self.gap_by_day[day]
+            else:
+                added += alone
+        return added
+
+
+class _Seats(dict):
+    """``student_id -> _Seat``, built lazily from each student's current state."""
+
+    __slots__ = ("states", "infos")
+
+    def __init__(self, states: dict[str, StudentAssignmentState], infos: _InfoMap) -> None:
+        super().__init__()
+        self.states = states
+        self.infos = infos
+
+    def __missing__(self, student_id: str) -> _Seat:
+        seat = self[student_id] = _Seat.from_state(self.states[student_id], self.infos)
+        return seat
+
+
+class _CoursePairs(dict):
+    """``course_code -> [(section, _SecInfo), ...]`` in ``sections_by_course`` order."""
+
+    __slots__ = ("sections_by_course", "infos")
+
+    def __init__(self, sections_by_course: dict[str, list[SectionState]], infos: _InfoMap) -> None:
+        super().__init__()
+        self.sections_by_course = sections_by_course
+        self.infos = infos
+
+    def __missing__(self, course_code: str) -> list[tuple[SectionState, _SecInfo]]:
+        infos = self.infos
+        pairs = self[course_code] = [
+            (s, infos.of(s)) for s in self.sections_by_course.get(course_code, ())
+        ]
+        return pairs
+
+
+def _clashes(occ: dict[int, int], info: _SecInfo) -> bool:
+    for day, mask in info.dm:
+        if occ[day] & mask:
+            return True
+    return False
+
+
+def _seatable(
+    pairs: list[tuple[SectionState, _SecInfo]], allow_reserve: bool
+) -> list[tuple[SectionState, _SecInfo, bool]]:
+    """The sections with a seat this student may take: ``can_enroll(allow_reserve)``.
+
+    Each comes with ``uses_reserve`` (the seat is past the regular limit). Seat
+    availability of a course's sections cannot change while one student is being
+    seated (only that course's own pick touches them), so the result is reusable
+    from the scarcity count through to the pick.
+    """
+    out = []
+    for section, info in pairs:
+        cur = section.current_enrollment
+        cap = section.max_capacity
+        if cur >= cap:
+            continue
+        uses_reserve = cur >= cap - section.reserve_capacity
+        if uses_reserve and not allow_reserve:
+            continue
+        out.append((section, info, uses_reserve))
+    return out
+
+
+def _pick_among(
+    seatable: list[tuple[SectionState, _SecInfo, bool]],
+    occ: dict[int, int],
+    seat: _Seat,
+) -> tuple[SectionState, _SecInfo] | None:
+    """The section ``rank_and_select_best_section`` would choose, or None.
+
+    The original ranks every clash-free option by
+    ``(0, uses_reserve, added_gap, fill_ratio_bp, section_id)`` and takes the
+    minimum; ``section_id`` is unique so the order is total. Because
+    ``uses_reserve`` leads, only the regular-seat options (or, failing that, the
+    reserve ones) can win, and a single survivor needs no pricing.
+    """
+    regular: list[tuple[SectionState, _SecInfo, bool]] = []
+    reserve: list[tuple[SectionState, _SecInfo, bool]] = []
+    for option in seatable:
+        for day, mask in option[1].dm:
+            if occ[day] & mask:
+                break
+        else:
+            (reserve if option[2] else regular).append(option)
+    options = regular or reserve
+    if not options:
+        return None
+    if len(options) == 1:
+        return options[0][0], options[0][1]
+    best_key = None
+    best = options[0]
+    for option in options:
+        section = option[0]
+        cap = max(1, section.max_capacity)
+        key = (
+            seat.added_gap(option[1]),
+            int(((section.current_enrollment + 1) / cap) * 10000),
+            section.section_id,
+        )
+        if best_key is None or key < best_key:
+            best_key = key
+            best = option
+    return best[0], best[1]
+
+
+def _apply(
+    state: StudentAssignmentState,
+    seat: _Seat,
+    section: SectionState,
+    info: _SecInfo,
+) -> None:
+    state.assigned_sections[section.course_code] = section.section_id
+    state.section_ids.add(section.section_id)
+    state.unresolved_courses.pop(section.course_code, None)
+    occ = state.occupied_mask_by_day
+    for day, mask in info.dm:
+        occ[day] |= mask
+    section.current_enrollment += 1
+    section.enrolled_student_ids.add(state.student_id)
+    seat.add(info)
+    state.total_gap_minutes = seat.total
+
+
+def _remove(
+    state: StudentAssignmentState,
+    seat: _Seat,
+    section: SectionState,
+    infos: _InfoMap,
+) -> None:
+    if state.assigned_sections.get(section.course_code) != section.section_id:
+        return
+    del state.assigned_sections[section.course_code]
+    state.section_ids.discard(section.section_id)
+    occ = {i: 0 for i in range(7)}
+    state.occupied_mask_by_day = occ
+    for rem_sec_id in state.section_ids:
+        for day, mask in infos.seated(rem_sec_id).dm:
+            occ[day] |= mask
+    section.current_enrollment -= 1
+    section.enrolled_student_ids.discard(state.student_id)
+    seat.drop(infos.of(section))
+    state.total_gap_minutes = seat.total
+
+
+def _diagnose(
+    pairs: list[tuple[SectionState, _SecInfo]],
+    occ: dict[int, int],
+    allow_reserve: bool,
+) -> str:
+    """``diagnose_unresolved`` with the clash test read off the cached masks."""
+    if not pairs:
+        return "no_sections"
+    clash_only = 0
+    full_only = 0
+    reserve_only = 0
+    feasible = 0
+    for c, info in pairs:
+        clash = _clashes(occ, info)
+        cur = c.current_enrollment
+        cap = c.max_capacity
+        can_reserve = cur < cap  # can_enroll(allow_reserve=True)
+        can_regular = can_reserve and cur < cap - c.reserve_capacity  # ...(False)
+        can_with_policy = can_reserve if allow_reserve else can_regular
+        if (not clash) and can_with_policy:
+            feasible += 1
+            continue
+        if clash and (not can_with_policy):
+            continue
+        if clash:
+            clash_only += 1
+        elif not can_with_policy:
+            if can_regular:
+                full_only += 1
+            else:
+                if not allow_reserve and can_reserve:
+                    reserve_only += 1
+                else:
+                    full_only += 1
+    if feasible > 0:
+        return "unknown"
+    n = len(pairs)
+    if clash_only == n:
+        return "all_clash"
+    if full_only == n:
+        return "full"
+    if reserve_only == n:
+        return "reserve_only"
+    return "mixed_blockers"
+
+
+def _assign_courses(
+    student: StudentProfile,
+    state: StudentAssignmentState,
+    seat: _Seat,
+    pairs_by_course: _CoursePairs,
+    course_rigidity: dict[str, float],
+    reserves_released: bool,
+    course_tiers: dict[str, str] | None,
+) -> None:
+    allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released)
+    assigned = state.assigned_sections
+    unresolved = state.unresolved_courses
+
+    if unresolved:
+        for course_code in student.recommended_courses:
+            if course_code not in assigned:
+                unresolved.pop(course_code, None)
+
+    unassigned = set(student.recommended_courses).difference(assigned)
+
+    occ = state.occupied_mask_by_day
+    occupied = any(occ.values())
+    seatable_by_course = {}
+    keys: dict[str, tuple[int, int, float, str]] = {}
+    for course_code in unassigned:
+        seatable = seatable_by_course[course_code] = _seatable(
+            pairs_by_course[course_code], allow_reserve
+        )
+        if occupied:
+            feasible_count = sum(1 for _s, info, _r in seatable if not _clashes(occ, info))
+        else:
+            feasible_count = len(seatable)
+        # Tier rank leads the key so a student's Tier-1 (core) courses are seated
+        # BEFORE Tier-2/Tier-3 — otherwise the scarcity heuristic can hand a
+        # scarce foundation/gen-ed course a slot that a core course needed, and
+        # the core seat is lost. Without a tier map every course ranks 0, so the
+        # ordering collapses to the original (feasible_count, -rigidity, code).
+        keys[course_code] = (
+            _tier_rank(course_tiers, course_code),
+            feasible_count,
+            -course_rigidity.get(course_code, 0.0),
+            course_code,
+        )
+
+    for course_code in sorted(unassigned, key=keys.__getitem__):
+        best = _pick_among(seatable_by_course[course_code], state.occupied_mask_by_day, seat)
+        if best is not None:
+            _apply(state, seat, best[0], best[1])
+        else:
+            reason_str = _diagnose(
+                pairs_by_course[course_code], state.occupied_mask_by_day, allow_reserve
+            )
+            unresolved[course_code] = UnresolvedReason(course_code, reason_str)
+
+
+def _blocking_courses(
+    state: StudentAssignmentState, candidate_info: _SecInfo, infos: _InfoMap
+) -> list[str]:
+    """``find_blocking_assigned_courses`` over the cached ``(day, mask)`` pairs."""
+    cand_dm = candidate_info.dm
+    blockers: list[str] = []
+    for assigned_sec_id in state.section_ids:
+        assigned = infos.seated(assigned_sec_id)
+        if any(da == db and ma & mb for da, ma in cand_dm for db, mb in assigned.dm):
+            blockers.append(assigned.section.course_code)
+    return blockers
+
+
+def _repair(
+    states: dict[str, StudentAssignmentState],
+    profiles: dict[str, StudentProfile],
+    pairs_by_course: _CoursePairs,
+    seats: dict[str, _Seat],
+    course_tiers: dict[str, str] | None,
+) -> None:
+    infos = pairs_by_course.infos
+    sections_by_id = infos.sections_by_id
+    ordered_students = sorted(
+        states.keys(),
+        key=lambda sid: (profiles[sid].risk_tier, profiles[sid].intra_tier_score, sid),
+        reverse=True,
+    )
+
+    for student_id in ordered_students:
+        state = states[student_id]
+        if not state.unresolved_courses:
+            continue
+        seat = seats[student_id]
+        student = profiles[student_id]
+        allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released=True)
+        unresolved_list = list(state.unresolved_courses.keys())
+        if course_tiers:
+            # Repair core first: a Tier-1 course gets first claim on the limited
+            # swap budget, so it is not spent rescuing a gen-ed course instead.
+            # Key on the tier ALONE — Python's sort is stable, so the existing
+            # order (unresolved_courses is insertion-ordered by the scarcity key
+            # from assign_courses_for_student) is preserved *within* each tier.
+            # Adding a course-code tiebreak here would silently replace that
+            # deliberate hardest-first ordering with alphabetical.
+            unresolved_list.sort(key=lambda c: _tier_rank(course_tiers, c))
+
+        for unres_course in unresolved_list:
+            if unres_course in state.assigned_sections:
+                state.unresolved_courses.pop(unres_course, None)
+                continue
+            candidate_pairs = pairs_by_course[unres_course]
+            direct = _pick_among(
+                _seatable(candidate_pairs, allow_reserve), state.occupied_mask_by_day, seat
+            )
+            if direct is not None:
+                _apply(state, seat, direct[0], direct[1])
+                continue
+
+            repaired = False
+            for candidate, candidate_info in candidate_pairs:
+                if not candidate.can_enroll(allow_reserve):
+                    continue
+                blocking_courses = sorted(set(_blocking_courses(state, candidate_info, infos)))
+                if len(blocking_courses) != 1:
+                    continue
+                blocking_course = blocking_courses[0]
+                # NOTE: deliberately NO tier guard on eviction. The swap below
+                # only commits if the displaced course finds an alternative
+                # section (else it rolls back), so a higher-tier course never
+                # loses its seat — it merely moves. Blocking the swap would
+                # forfeit an unresolved seat to protect a section choice.
+                #
+                # That trade is clearly right when the course being repaired is
+                # T1 (objective position 2) or T2-over-tolerance (position 3),
+                # since both outrank the gap-minutes (position 4) the relocation
+                # costs. For a SOFT repair (T3 / T2-within-tolerance) the seat
+                # lives at position 5, *below* gap — so it is only worth it while
+                # the added gap stays under the soft-gap budget. Measured on scn
+                # 642 the swaps came in at ~116 gap-min per soft seat against a
+                # 120 budget, i.e. roughly break-even, so it is left ungated;
+                # a budget-aware gate here is a possible future refinement.
+                # Guarding it outright pushed Tier-2 over-tolerance 53 -> 73 and
+                # soft 59 -> 93 for zero core gain.
+                blocking_section_id = state.assigned_sections.get(blocking_course)
+                if not blocking_section_id:
+                    continue
+                blocking_section = sections_by_id[blocking_section_id]
+                blocking_info = infos.of(blocking_section)
+                _remove(state, seat, blocking_section, infos)
+                if _clashes(state.occupied_mask_by_day, candidate_info) or (
+                    not candidate.can_enroll(allow_reserve)
+                ):
+                    _apply(state, seat, blocking_section, blocking_info)
+                    continue
+                _apply(state, seat, candidate, candidate_info)
+                alt_pairs = [
+                    pair
+                    for pair in pairs_by_course[blocking_course]
+                    if pair[0].section_id != blocking_section.section_id
+                ]
+                alt = _pick_among(
+                    _seatable(alt_pairs, allow_reserve), state.occupied_mask_by_day, seat
+                )
+                if alt is not None:
+                    _apply(state, seat, alt[0], alt[1])
+                    state.unresolved_courses.pop(unres_course, None)
+                    repaired = True
+                    break
+                _remove(state, seat, candidate, infos)
+                _apply(state, seat, blocking_section, blocking_info)
+            if not repaired and unres_course not in state.assigned_sections:
+                reason = _diagnose(candidate_pairs, state.occupied_mask_by_day, allow_reserve)
+                state.unresolved_courses[unres_course] = UnresolvedReason(unres_course, reason)
+
+
 def assign_students_to_sections(
     profiles: dict[str, StudentProfile],
     sections_by_id: dict[str, SectionState],
@@ -133,6 +647,9 @@ def assign_students_to_sections(
     course_tiers: dict[str, str] | None = None,
 ) -> tuple[dict[str, StudentAssignmentState], list[str]]:
     states = {sid: StudentAssignmentState(student_id=sid) for sid in profiles}
+    pairs_by_course = _CoursePairs(sections_by_course, _InfoMap(sections_by_id))
+    # Fresh states hold no sections, so every student starts with an empty chain.
+    seats = {sid: _Seat() for sid in profiles}
 
     sorted_students = sorted(
         profiles.values(),
@@ -144,30 +661,28 @@ def assign_students_to_sections(
     tier_c = [p for p in sorted_students if p.risk_tier == RiskTier.C]
 
     for student in tier_ab:
-        assign_courses_for_student(
+        _assign_courses(
             student,
             states[student.student_id],
-            sections_by_course,
-            sections_by_id,
+            seats[student.student_id],
+            pairs_by_course,
             course_rigidity,
-            reserves_released=False,
-            course_tiers=course_tiers,
+            False,
+            course_tiers,
         )
 
     for student in tier_c:
-        assign_courses_for_student(
+        _assign_courses(
             student,
             states[student.student_id],
-            sections_by_course,
-            sections_by_id,
+            seats[student.student_id],
+            pairs_by_course,
             course_rigidity,
-            reserves_released=True,
-            course_tiers=course_tiers,
+            True,
+            course_tiers,
         )
 
-    repair_unresolved_assignments_shallow(
-        states, profiles, sections_by_course, sections_by_id, course_tiers=course_tiers
-    )
+    _repair(states, profiles, pairs_by_course, seats, course_tiers)
 
     unresolved_ids = [sid for sid, st in states.items() if st.unresolved_courses]
     return states, unresolved_ids
@@ -182,40 +697,16 @@ def assign_courses_for_student(
     reserves_released: bool,
     course_tiers: dict[str, str] | None = None,
 ) -> None:
-    allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released)
-
-    for course_code in student.recommended_courses:
-        if course_code not in state.assigned_sections:
-            state.unresolved_courses.pop(course_code, None)
-
-    unassigned = set(student.recommended_courses) - set(state.assigned_sections.keys())
-
-    def scarcity_key(course_code: str) -> tuple[int, int, float, str]:
-        candidates = sections_by_course.get(course_code, [])
-        feasible_count = sum(
-            1 for s in candidates if s.can_enroll(allow_reserve) and not state.has_clash(s.meetings)
-        )
-        # Tier rank leads the key so a student's Tier-1 (core) courses are seated
-        # BEFORE Tier-2/Tier-3 — otherwise the scarcity heuristic can hand a
-        # scarce foundation/gen-ed course a slot that a core course needed, and
-        # the core seat is lost. Without a tier map every course ranks 0, so the
-        # ordering collapses to the original (feasible_count, -rigidity, code).
-        rank = _tier_rank(course_tiers, course_code)
-        return (rank, feasible_count, -course_rigidity.get(course_code, 0.0), course_code)
-
-    sorted_courses = sorted(list(unassigned), key=scarcity_key)
-
-    for course_code in sorted_courses:
-        candidate_sections = sections_by_course.get(course_code, [])
-        best_section_tuple = rank_and_select_best_section(
-            candidate_sections, state, allow_reserve, sections_by_id
-        )
-        if best_section_tuple:
-            best_section, _ = best_section_tuple
-            apply_assignment(state, best_section, sections_by_id)
-        else:
-            reason_str = diagnose_unresolved(candidate_sections, state, allow_reserve)
-            state.unresolved_courses[course_code] = UnresolvedReason(course_code, reason_str)
+    infos = _InfoMap(sections_by_id)
+    _assign_courses(
+        student,
+        state,
+        _Seat.from_state(state, infos),
+        _CoursePairs(sections_by_course, infos),
+        course_rigidity,
+        reserves_released,
+        course_tiers,
+    )
 
 
 def rank_and_select_best_section(
@@ -224,23 +715,18 @@ def rank_and_select_best_section(
     allow_reserve: bool,
     sections_by_id: dict[str, SectionState],
 ) -> tuple[SectionState, tuple] | None:
-    valid_options: list[tuple[tuple, SectionState]] = []
-    for section in candidates:
-        if not section.can_enroll(allow_reserve):
-            continue
-        if state.has_clash(section.meetings):
-            continue
-        uses_reserve = 1 if section.current_enrollment >= section.regular_limit() else 0
-        added_gap = calculate_added_gap(state, section, sections_by_id)
-        cap = max(1, section.max_capacity)
-        fill_ratio_bp = int(((section.current_enrollment + 1) / cap) * 10000)
-        score_tuple = (0, uses_reserve, added_gap, fill_ratio_bp, section.section_id)
-        valid_options.append((score_tuple, section))
-    if not valid_options:
+    infos = _InfoMap(sections_by_id)
+    seat = _Seat.from_state(state, infos)
+    pairs = [(s, infos.of(s)) for s in candidates]
+    picked = _pick_among(_seatable(pairs, allow_reserve), state.occupied_mask_by_day, seat)
+    if picked is None:
         return None
-    valid_options.sort(key=lambda x: x[0])
-    best_score, best_section = valid_options[0]
-    return best_section, best_score
+    best, best_info = picked
+    uses_reserve = 1 if best.current_enrollment >= best.regular_limit() else 0
+    cap = max(1, best.max_capacity)
+    fill_ratio_bp = int(((best.current_enrollment + 1) / cap) * 10000)
+    score_tuple = (0, uses_reserve, seat.added_gap(best_info), fill_ratio_bp, best.section_id)
+    return best, score_tuple
 
 
 def apply_assignment(
@@ -248,14 +734,9 @@ def apply_assignment(
     section: SectionState,
     sections_by_id: dict[str, SectionState],
 ) -> None:
-    state.assigned_sections[section.course_code] = section.section_id
-    state.section_ids.add(section.section_id)
-    state.unresolved_courses.pop(section.course_code, None)
-    for meeting in section.meetings:
-        state.occupied_mask_by_day[meeting.day] |= meeting.mask
-    section.current_enrollment += 1
-    section.enrolled_student_ids.add(state.student_id)
-    state.total_gap_minutes = _compute_total_state_gap(state, sections_by_id)
+    infos = _InfoMap(sections_by_id)
+    seat = _Seat.from_state(state, infos)
+    _apply(state, seat, section, infos.of(section))
 
 
 def remove_assignment(
@@ -263,18 +744,8 @@ def remove_assignment(
     section: SectionState,
     sections_by_id: dict[str, SectionState],
 ) -> None:
-    if state.assigned_sections.get(section.course_code) != section.section_id:
-        return
-    del state.assigned_sections[section.course_code]
-    state.section_ids.discard(section.section_id)
-    state.occupied_mask_by_day = {i: 0 for i in range(7)}
-    for rem_sec_id in state.section_ids:
-        rem_sec = sections_by_id[rem_sec_id]
-        for meeting in rem_sec.meetings:
-            state.occupied_mask_by_day[meeting.day] |= meeting.mask
-    section.current_enrollment -= 1
-    section.enrolled_student_ids.discard(state.student_id)
-    state.total_gap_minutes = _compute_total_state_gap(state, sections_by_id)
+    infos = _InfoMap(sections_by_id)
+    _remove(state, _Seat.from_state(state, infos), section, infos)
 
 
 def meetings_clash(meetings_a: list[SectionMeeting], meetings_b: list[SectionMeeting]) -> bool:
@@ -305,100 +776,9 @@ def repair_unresolved_assignments_shallow(
     sections_by_id: dict[str, SectionState],
     course_tiers: dict[str, str] | None = None,
 ) -> None:
-    ordered_students = sorted(
-        states.keys(),
-        key=lambda sid: (profiles[sid].risk_tier, profiles[sid].intra_tier_score, sid),
-        reverse=True,
-    )
-
-    for student_id in ordered_students:
-        state = states[student_id]
-        if not state.unresolved_courses:
-            continue
-        student = profiles[student_id]
-        allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released=True)
-        unresolved_list = list(state.unresolved_courses.keys())
-        if course_tiers:
-            # Repair core first: a Tier-1 course gets first claim on the limited
-            # swap budget, so it is not spent rescuing a gen-ed course instead.
-            # Key on the tier ALONE — Python's sort is stable, so the existing
-            # order (unresolved_courses is insertion-ordered by the scarcity key
-            # from assign_courses_for_student) is preserved *within* each tier.
-            # Adding a course-code tiebreak here would silently replace that
-            # deliberate hardest-first ordering with alphabetical.
-            unresolved_list.sort(key=lambda c: _tier_rank(course_tiers, c))
-
-        for unres_course in unresolved_list:
-            if unres_course in state.assigned_sections:
-                state.unresolved_courses.pop(unres_course, None)
-                continue
-            direct_tuple = rank_and_select_best_section(
-                sections_by_course.get(unres_course, []),
-                state,
-                allow_reserve,
-                sections_by_id,
-            )
-            if direct_tuple:
-                apply_assignment(state, direct_tuple[0], sections_by_id)
-                continue
-
-            candidate_sections = sections_by_course.get(unres_course, [])
-            repaired = False
-            for candidate in candidate_sections:
-                if not candidate.can_enroll(allow_reserve):
-                    continue
-                blocking_courses = sorted(
-                    set(find_blocking_assigned_courses(state, candidate, sections_by_id))
-                )
-                if len(blocking_courses) != 1:
-                    continue
-                blocking_course = blocking_courses[0]
-                # NOTE: deliberately NO tier guard on eviction. The swap below
-                # only commits if the displaced course finds an alternative
-                # section (else it rolls back), so a higher-tier course never
-                # loses its seat — it merely moves. Blocking the swap would
-                # forfeit an unresolved seat to protect a section choice.
-                #
-                # That trade is clearly right when the course being repaired is
-                # T1 (objective position 2) or T2-over-tolerance (position 3),
-                # since both outrank the gap-minutes (position 4) the relocation
-                # costs. For a SOFT repair (T3 / T2-within-tolerance) the seat
-                # lives at position 5, *below* gap — so it is only worth it while
-                # the added gap stays under the soft-gap budget. Measured on scn
-                # 642 the swaps came in at ~116 gap-min per soft seat against a
-                # 120 budget, i.e. roughly break-even, so it is left ungated;
-                # a budget-aware gate here is a possible future refinement.
-                # Guarding it outright pushed Tier-2 over-tolerance 53 -> 73 and
-                # soft 59 -> 93 for zero core gain.
-                blocking_section_id = state.assigned_sections.get(blocking_course)
-                if not blocking_section_id:
-                    continue
-                blocking_section = sections_by_id[blocking_section_id]
-                remove_assignment(state, blocking_section, sections_by_id)
-                if state.has_clash(candidate.meetings) or not candidate.can_enroll(allow_reserve):
-                    apply_assignment(state, blocking_section, sections_by_id)
-                    continue
-                apply_assignment(state, candidate, sections_by_id)
-                alt_candidates = [
-                    s
-                    for s in sections_by_course.get(blocking_course, [])
-                    if s.section_id != blocking_section.section_id
-                ]
-                alt_tuple = rank_and_select_best_section(
-                    alt_candidates, state, allow_reserve, sections_by_id
-                )
-                if alt_tuple:
-                    apply_assignment(state, alt_tuple[0], sections_by_id)
-                    state.unresolved_courses.pop(unres_course, None)
-                    repaired = True
-                    break
-                remove_assignment(state, candidate, sections_by_id)
-                apply_assignment(state, blocking_section, sections_by_id)
-            if not repaired and unres_course not in state.assigned_sections:
-                reason = diagnose_unresolved(
-                    sections_by_course.get(unres_course, []), state, allow_reserve
-                )
-                state.unresolved_courses[unres_course] = UnresolvedReason(unres_course, reason)
+    infos = _InfoMap(sections_by_id)
+    pairs_by_course = _CoursePairs(sections_by_course, infos)
+    _repair(states, profiles, pairs_by_course, _Seats(states, infos), course_tiers)
 
 
 def _campus_meetings(section: SectionState) -> list[SectionMeeting]:
@@ -423,24 +803,9 @@ def calculate_added_gap(
     sections_by_id: dict[str, SectionState],
 ) -> int:
     # An online candidate adds no campus gap at all, and online sections already
-    # seated must not anchor the chain either.
-    candidate_meetings = _campus_meetings(candidate)
-    if not candidate_meetings:
-        return 0
-    added_gap = 0
-    candidate_days = {m.day for m in candidate_meetings}
-    for day in candidate_days:
-        existing_meetings: list[SectionMeeting] = []
-        for sec_id in state.section_ids:
-            existing_meetings.extend(
-                [m for m in _campus_meetings(sections_by_id[sec_id]) if m.day == day]
-            )
-        old_day_gap = _compute_day_gap(existing_meetings)
-        new_day_gap = _compute_day_gap(
-            existing_meetings + [m for m in candidate_meetings if m.day == day]
-        )
-        added_gap += new_day_gap - old_day_gap
-    return added_gap
+    # seated must not anchor the chain either (both handled by ``_SecInfo``).
+    infos = _InfoMap(sections_by_id)
+    return _Seat.from_state(state, infos).added_gap(infos.of(candidate))
 
 
 def _compute_day_gap(meetings: list[SectionMeeting]) -> int:
@@ -746,13 +1111,21 @@ def evaluate_assignability_lexicographic(
                     hr_unresolved += 1
         real_gap_minutes += state.total_gap_minutes
 
-        meetings: list[SectionMeeting] = []
+        # Pairs of this student's meetings that share a day and overlap in time.
+        masks_by_day: dict[int, list[int]] = {}
         for sec_id in state.section_ids:
-            meetings.extend(sections_by_id[sec_id].meetings)
-        for i in range(len(meetings)):
-            for j in range(i + 1, len(meetings)):
-                if meetings[i].day == meetings[j].day and (meetings[i].mask & meetings[j].mask):
-                    total_clashes += 1
+            for m in sections_by_id[sec_id].meetings:
+                day_masks = masks_by_day.get(m.day)
+                if day_masks is None:
+                    masks_by_day[m.day] = [m.mask]
+                else:
+                    day_masks.append(m.mask)
+        for day_masks in masks_by_day.values():
+            for i in range(len(day_masks) - 1):
+                mask_i = day_masks[i]
+                for mask_j in day_masks[i + 1 :]:
+                    if mask_i & mask_j:
+                        total_clashes += 1
 
     for section in sections_by_id.values():
         total_reserve_used += section.reserve_used()
