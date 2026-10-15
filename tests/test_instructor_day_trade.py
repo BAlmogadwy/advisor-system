@@ -136,11 +136,11 @@ def test_trade_is_off_by_default():
     # single ENABLED flag is all that has to be switched on.
     assert cfg["enabled"] is False
     assert cfg["vacate_days"] is True
-    assert cfg["idle_allowance"] == 150
+    assert cfg["idle_allowance"] == 255
     assert cfg["per_student"] == 500
     assert cfg["high_risk_per_student"] == 500
     assert cfg["total_gap"] == 300
-    assert cfg["reserve_allowance"] == 0
+    assert cfg["reserve_allowance"] == 10
 
 
 @pytest.mark.django_db

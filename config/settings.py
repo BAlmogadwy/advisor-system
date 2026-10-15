@@ -845,13 +845,14 @@ TIMETABLE_INSTRUCTOR_DAY_TRADE_PER_STUDENT = int(
 TIMETABLE_INSTRUCTOR_DAY_TRADE_HIGH_RISK_PER_STUDENT = int(
     os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_HIGH_RISK_PER_STUDENT", "500")
 )
-# Idle minutes an instructor may gain per working day saved (about what a merge costs).
+# Idle minutes an instructor may gain per working day saved; 255 is the trial value that
+# saved 3 of 21 days locally (150 saved none).
 TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE = int(
-    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE", "150")
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE", "255")
 )
-# Extra reserve-capacity seats a day-saving move may use; 0 = reserve may not rise.
+# Extra reserve-capacity seats a day-saving move may use (trial value; 0 = may not rise).
 TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE = int(
-    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE", "0")
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE", "10")
 )
 # Also try emptying a whole instructor day by moving its sessions together onto the
 # instructor's other days (a single move cannot empty a two-session day).
