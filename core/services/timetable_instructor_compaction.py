@@ -48,14 +48,15 @@ from core.services.timetable_board_persistence import external_shared_section_id
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_optimisation_policy import (
     evaluation_is_better,
+    evaluation_order_key,
     instructor_schedule_metrics,
     instructor_schedule_regressions,
     is_instructor_priority_enabled,
-    schedule_metrics_of,
 )
 from core.services.timetable_pr4_instructor import (
     get_instructor_compaction_config,
     get_instructor_daily_cap,
+    get_instructor_day_trade_config,
     is_instructor_compaction_enabled,
 )
 
@@ -122,6 +123,12 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     cfg = get_instructor_compaction_config()
     cap = get_instructor_daily_cap()
     instructor_priority = is_instructor_priority_enabled()
+    # Bounded student-gap-for-instructor-day trade. Only meaningful under the
+    # instructor-first policy (days are a ranked quantity there); default OFF.
+    trade = get_instructor_day_trade_config()
+    trade_on = bool(trade["enabled"] and instructor_priority)
+    room_stats = {"rejected": 0}
+    report["trade_rule"] = {"enabled": trade_on, **trade}
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
     states = build_section_states_for_scenario(scenario_id)
@@ -365,7 +372,13 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     gap_ceiling = base_total_gap * (1.0 + cfg["gap_budget"])
 
-    def gates_ok(res, idle_saved, gap_added):
+    # The accepted board so far, refreshed every round: student gates are measured
+    # against the PRE-PASS baseline, but a day-saving trade may have lifted a
+    # student above that baseline, and an ordinary later move must not be blamed
+    # for it — it is only barred from making the student WORSE than they now are.
+    cur_ctx: dict = {"per": base_per, "total": base_total_gap, "by_tier": base_by_tier}
+
+    def gates_ok(res, idle_saved, gap_added, day_saving=False):
         sc = tuple(res.lexicographic_score)
         # Positions 0-3 are the hard feasibility block in BOTH layouts (legacy:
         # tier_a/unres/unassigned/clash; tiered: high-risk/clash/T1/T2-over), so
@@ -378,19 +391,39 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         # that the legacy [5] slot used to protect via reserve.
         if any(sc[i] > base_score[i] for i in range(4)):
             return False
-        if reserve_used_of(sc) > reserve_used_of(base_score):
+        reserve_slack = trade["reserve_allowance"] if (trade_on and day_saving) else 0
+        if reserve_used_of(sc) > reserve_used_of(base_score) + reserve_slack:
             return False
         if is_tiered_score(sc) and sc[TI_SOFT] > base_score[TI_SOFT]:
             return False
         per, total, by_tier = student_metrics(res)
-        if total > gap_ceiling:
+        if trade_on and day_saving:
+            # Bounded trade: this move saves an instructor campus day, so it may
+            # cost students up to the configured totals. High-risk (A) and
+            # graduating (B) students get their own, normally tighter, ceiling.
+            if total - base_total_gap > trade["total_gap"]:
+                return False
+            for s, g in per.items():
+                limit = (
+                    trade["high_risk_per_student"]
+                    if tier.get(s) in (RiskTier.A, RiskTier.B)
+                    else trade["per_student"]
+                )
+                if g - base_per.get(s, 0) > limit and g > cur_ctx["per"].get(s, 0):
+                    return False
+            return True
+        if total > max(gap_ceiling, cur_ctx["total"]):
             return False
-        if by_tier.get(RiskTier.A, 0) > base_by_tier.get(RiskTier.A, 0):
+        if by_tier.get(RiskTier.A, 0) > max(
+            base_by_tier.get(RiskTier.A, 0), cur_ctx["by_tier"].get(RiskTier.A, 0)
+        ):
             return False
-        if by_tier.get(RiskTier.B, 0) > base_by_tier.get(RiskTier.B, 0):
+        if by_tier.get(RiskTier.B, 0) > max(
+            base_by_tier.get(RiskTier.B, 0), cur_ctx["by_tier"].get(RiskTier.B, 0)
+        ):
             return False
         for s, g in per.items():
-            if g - base_per.get(s, 0) > cfg["per_student_cap"]:
+            if g - base_per.get(s, 0) > cfg["per_student_cap"] and g > cur_ctx["per"].get(s, 0):
                 return False
         # Trade alert: if this move costs student spread, require enough payoff.
         if gap_added > 0 and idle_saved < cfg["trade_ratio"] * gap_added:
@@ -407,6 +440,22 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         if cap_map.get(sid) and sid not in locked
     ]
     movable_instructors = {iid for sid, _mi in movable for iid in cap_map.get(sid, ())}
+    movable_set = set(movable)
+
+    # Exact room evaluator for day-saving trades (read-only; see _assess).
+    room_gate = None
+    if trade_on:
+        from core.services.timetable_exact_rooming import ExactRoomingError
+        from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+
+        try:
+            _room_eval = build_recovery_room_evaluator(scenario_id)
+            room_gate = {
+                "evaluate": _room_eval,
+                "base": _room_eval(states)["unassigned_count"],
+            }
+        except ExactRoomingError:
+            room_gate = None
 
     cur_instr = base_instr
     cur_eval = base_eval
@@ -427,6 +476,149 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     def _over_budget() -> bool:
         return budget > 0 and (time.monotonic() - t0) > budget
+
+    def _assess(best):
+        """Evaluate the board AS CURRENTLY APPLIED; return ``(it, res, im, sig, rank)``
+        when it is an acceptable improvement over the round's ``best`` candidate
+        (or the accepted board), else None. A move that saves an instructor campus day may, when
+        the bounded trade is on, spend students/idle within its configured
+        limits; every other move keeps the original gates unchanged."""
+        nonlocal moves_evaluated
+        sig = _signature()
+        if sig in visited:
+            return None
+        res = evaluate()
+        moves_evaluated += 1
+        im = instr_metrics()
+        per_after, tg, _ = student_metrics(res)
+        idle_saved = cur_instr["total"] - im["total"]
+        gap_added = tg - cur_gap
+        # Legacy (priority off) never reads the schedule metrics; tolerate an
+        # evaluation that carries none (the gates below reject it first).
+        trial_schedule = (
+            (getattr(res, "quality_score", None) or {}).get("instructor_schedule") or {}
+            if instructor_priority
+            else {}
+        )
+        day_saved = cur_schedule["working_days"] - int(
+            trial_schedule.get("working_days", cur_schedule["working_days"])
+        )
+        schedule_ceiling = cur_schedule
+        if trade_on and day_saved > 0 and trade["idle_allowance"] > 0:
+            # The merged day may cost a little idle; allow it only for the
+            # instructors whose day count actually fell.
+            allowed = dict(cur_schedule["idle_minutes_by_instructor"])
+            for iid, old_days in cur_schedule["working_days_by_instructor"].items():
+                new_days = trial_schedule["working_days_by_instructor"].get(iid, old_days)
+                if new_days < old_days:
+                    allowed[iid] = (
+                        allowed.get(iid, 0) + (old_days - new_days) * trade["idle_allowance"]
+                    )
+            schedule_ceiling = {
+                **cur_schedule,
+                "idle_minutes_by_instructor": allowed,
+                "idle_minutes": sum(allowed.values()),
+            }
+        if not gates_ok(res, idle_saved, gap_added, day_saved > 0):
+            return None
+        if trade_on and day_saved > 0 and room_gate is not None:
+            # A traded move relocates whole sessions; only keep it if the
+            # exact room evaluator can still seat every physical meeting the
+            # baseline could. The persist step rolls the WHOLE pass back on a
+            # room regression, so catching it here keeps the other gains.
+            try:
+                rooms_fit = room_gate["evaluate"](states)["unassigned_count"] <= room_gate["base"]
+            except ExactRoomingError:
+                rooms_fit = False
+            if not rooms_fit:
+                room_stats["rejected"] += 1
+                return None
+        it = ituple(im, tg - base_total_gap)
+        rank = None
+        if instructor_priority and trade_on:
+            # Accept only a strict improvement on the board in hand, then rank the
+            # acceptable candidates: fewest working days, least instructor idle,
+            # and WITHIN equal idle the least student cost - lower total added gap,
+            # then lower worst per-student added gap - so the student tail is as
+            # short as the trade allows. Ties fall through to the policy key.
+            improves = (
+                evaluation_is_better(
+                    res,
+                    cur_eval,
+                    day_ceilings=schedule_ceiling,
+                    feasibility_ceilings=cur_eval,
+                )
+                and (not instructor_schedule_regressions(schedule_ceiling, trial_schedule))
+                and (trial_schedule["working_days"], trial_schedule["idle_minutes"])
+                < (cur_schedule["working_days"], cur_schedule["idle_minutes"])
+            )
+            if improves:
+                max_added = max(
+                    (g - cur_ctx["per"].get(sid_, 0) for sid_, g in per_after.items()), default=0
+                )
+                policy_key = evaluation_order_key(res)
+                rank = (*policy_key[:6], gap_added, max_added, *policy_key[6:])
+                improves = best is None or rank < best[5]
+        elif instructor_priority:
+            improves = evaluation_is_better(
+                res,
+                best[2] if best is not None else cur_eval,
+                day_ceilings=schedule_ceiling,
+                feasibility_ceilings=cur_eval,
+            )
+            improves = (
+                improves
+                and (not instructor_schedule_regressions(schedule_ceiling, trial_schedule))
+                and (trial_schedule["working_days"], trial_schedule["idle_minutes"])
+                < (cur_schedule["working_days"], cur_schedule["idle_minutes"])
+            )
+        else:
+            improves = it < cur_tuple and (best is None or it < best[0])
+        return (it, res, im, sig, rank) if improves else None
+
+    def _vacate_leaves(iid, day):
+        """Joint relocations that EMPTY ``day`` for instructor ``iid`` by moving
+        each of that day's sessions onto days the instructor already works.
+        One session at a time cannot do this when the day holds two or more
+        (the first move leaves the day open and gains nothing), so the sessions
+        are moved together. Yields lists of ``(sid, midx, day2, s2, e2)``."""
+        on_day = [
+            (sid, mi)
+            for sid, st in sbi.items()
+            if iid in cap_map.get(sid, ()) and not (st.delivery_is_online or st.is_online)
+            for mi, m in enumerate(st.meetings)
+            if m.day == day
+        ]
+        if not on_day or len(on_day) > trade["vacate_max_sessions"]:
+            return
+        if any((sid, mi) not in movable_set for sid, mi in on_day):
+            return  # a locked / fixed-pattern / online session pins the day
+        other_days = {
+            m.day
+            for sid, st in sbi.items()
+            if iid in cap_map.get(sid, ()) and not (st.delivery_is_online or st.is_online)
+            for m in st.meetings
+            if m.day != day
+        }
+
+        def walk(index, chosen):
+            if index == len(on_day):
+                yield list(chosen)
+                return
+            sid, mi = on_day[index]
+            iids = cap_map.get(sid, frozenset())
+            for day2, s2, e2 in list(_relocation_moves(sid, mi, iids)):
+                if day2 not in other_days:
+                    continue
+                old = _apply(sid, mi, day2, s2, e2, iids)
+                chosen.append((sid, mi, day2, s2, e2))
+                try:
+                    yield from walk(index + 1, chosen)
+                finally:
+                    chosen.pop()
+                    _revert(sid, mi, old, day2, s2, e2, iids)
+
+        yield from walk(0, [])
 
     timed_out = False
     _round = 0
@@ -452,7 +644,8 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             ]
         if not target_iids:
             break
-        _, cur_gap, _ = student_metrics(cur_eval)
+        cur_per, cur_gap, cur_by_tier = student_metrics(cur_eval)
+        cur_ctx.update(per=cur_per, total=cur_gap, by_tier=cur_by_tier)
         cur_tuple = ituple(cur_instr, cur_gap - base_total_gap)
         best = None
         # Try three priority instructors first. If that group has no feasible
@@ -478,41 +671,16 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             for gen in _NEIGHBOURHOODS:
                 for day2, s2, e2 in gen(sid, midx, iids):
                     old = _apply(sid, midx, day2, s2, e2, iids)
-                    sig = _signature()
-                    if sig not in visited:
-                        res = evaluate()
-                        moves_evaluated += 1
-                        im = instr_metrics()
-                        _, tg, _ = student_metrics(res)
-                        idle_saved = cur_instr["total"] - im["total"]
-                        gap_added = tg - cur_gap
-                        if gates_ok(res, idle_saved, gap_added):
-                            it = ituple(im, tg - base_total_gap)
-                            if instructor_priority:
-                                trial_schedule = schedule_metrics_of(res)
-                                improves = evaluation_is_better(
-                                    res,
-                                    best[6] if best is not None else cur_eval,
-                                    day_ceilings=cur_schedule,
-                                    feasibility_ceilings=cur_eval,
-                                )
-                                improves = (
-                                    improves
-                                    and (
-                                        not instructor_schedule_regressions(
-                                            cur_schedule, trial_schedule
-                                        )
-                                    )
-                                    and (
-                                        trial_schedule["working_days"],
-                                        trial_schedule["idle_minutes"],
-                                    )
-                                    < (cur_schedule["working_days"], cur_schedule["idle_minutes"])
-                                )
-                            else:
-                                improves = it < cur_tuple and (best is None or it < best[0])
-                            if improves:
-                                best = (it, sid, midx, day2, s2, e2, res, im, sig)
+                    found = _assess(best)
+                    if found is not None:
+                        best = (
+                            found[0],
+                            [(sid, midx, day2, s2, e2)],
+                            found[1],
+                            found[2],
+                            found[3],
+                            found[4],
+                        )
                     _revert(sid, midx, old, day2, s2, e2, iids)
                     if _over_budget():
                         timed_out = True
@@ -521,14 +689,66 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                     break
             if timed_out:
                 break
+
+        # Day-vacating joint moves. Single relocations cannot save a day when the
+        # instructor teaches two sessions on it, so when nothing better turned up
+        # try emptying such a day outright. Candidates are ranked by the cheap
+        # instructor-only cost first; only the best few reach the (expensive)
+        # student evaluation.
+        if best is None and trade_on and trade["vacate_days"] and not timed_out:
+            by_cost: list = []
+            before_weekly = dict(cur_instr["weekly"])
+            before_days_of: dict = defaultdict(int)
+            for i_, _d in cur_instr["holes"]:
+                before_days_of[i_] += 1
+            for iid in target_iids:
+                for day in sorted({d for (i_, d) in cur_instr["holes"] if i_ == iid}):
+                    leaves = []
+                    for leaf in _vacate_leaves(iid, day):
+                        # _vacate_leaves leaves the moves APPLIED while yielding,
+                        # so the cheap instructor-only metrics read the trial board.
+                        im2 = instr_metrics()
+                        if sum(1 for (i_, _d) in im2["holes"] if i_ == iid) < before_days_of[iid]:
+                            added = im2["weekly"].get(iid, 0) - before_weekly.get(iid, 0)
+                            leaves.append((added, im2["total"] - cur_instr["total"], leaf))
+                        if _over_budget():
+                            timed_out = True
+                            break
+                    leaves.sort(key=lambda row: (row[0], row[1], row[2]))
+                    by_cost.extend(leaves[: trade["vacate_top_n"]])
+                    if timed_out:
+                        break
+                if timed_out:
+                    break
+            by_cost.sort(key=lambda row: (row[0], row[1], row[2]))
+            for _added, _tot, leaf in by_cost:
+                applied = []
+                iid_sets = []
+                for sid, mi, day2, s2, e2 in leaf:
+                    iset = cap_map.get(sid, frozenset())
+                    applied.append((sid, mi, day2, s2, e2, _apply(sid, mi, day2, s2, e2, iset)))
+                    iid_sets.append(iset)
+                found = _assess(best)
+                if found is not None:
+                    best = (found[0], list(leaf), found[1], found[2], found[3], found[4])
+                for (sid, mi, day2, s2, e2, old), iset in zip(
+                    reversed(applied), reversed(iid_sets), strict=True
+                ):
+                    _revert(sid, mi, old, day2, s2, e2, iset)
+                if _over_budget():
+                    timed_out = True
+                    break
         if best is None:
             break
-        _, sid, midx, day2, s2, e2, res, im, sig = best
-        _apply(sid, midx, day2, s2, e2, cap_map.get(sid, frozenset()))
+        _, chosen_moves, res, im, sig, _rank = best
+        for sid, midx, day2, s2, e2 in chosen_moves:
+            _apply(sid, midx, day2, s2, e2, cap_map.get(sid, frozenset()))
         visited.add(sig)
         cur_instr, cur_eval = im, res
         cur_schedule = instructor_schedule_metrics(states, cap_map)
         moves_accepted += 1
+
+    report["trade_rule"]["room_gate_rejected"] = room_stats["rejected"]
 
     # ── Persist accepted relocations ──
     touched_boards: set = set()

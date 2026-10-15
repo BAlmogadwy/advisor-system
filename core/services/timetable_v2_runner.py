@@ -47,6 +47,27 @@ def optimiser_instructor_day_regression(before: dict, after: dict, result: dict)
     return {"blocked": bool(blocked), "regressions": blocked, "repair_exceptions": exceptions}
 
 
+def _day_trade_idle_allowance(before: dict, after: dict) -> tuple[dict[str, int], int]:
+    """Idle minutes each instructor may gain for the campus days they SAVED.
+
+    Empty unless the bounded instructor-day trade is on, so default behaviour is
+    the strict per-instructor idle ceiling. Returns ``({instructor_id: minutes},
+    total_minutes)``.
+    """
+    from core.services.timetable_pr4_instructor import get_instructor_day_trade_config
+
+    cfg = get_instructor_day_trade_config()
+    if not cfg["enabled"] or cfg["idle_allowance"] <= 0:
+        return {}, 0
+    before_days = before.get("working_days_by_instructor") or {}
+    after_days = after.get("working_days_by_instructor") or {}
+    per = {
+        str(i): cfg["idle_allowance"] * max(0, int(d) - int(after_days.get(str(i), d)))
+        for i, d in before_days.items()
+    }
+    return per, sum(per.values())
+
+
 def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict) -> dict:
     """Only a measured mandatory hard repair may increase instructor idle.
 
@@ -68,11 +89,24 @@ def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict
             value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
         )
 
-    blocked, exceptions = [], []
+    trade_allowance, trade_total = _day_trade_idle_allowance(before, after)
+    blocked, exceptions, traded = [], [], []
     for regression in instructor_idle_regressions(before, after):
         instructor_id = regression.get("instructor_id")
         before_repair = measured(pre_pass, instructor_id)
         after_repair = measured(repaired, instructor_id)
+        delta = regression.get("delta")
+        if isinstance(delta, int) and not regression["metric"].endswith("_evidence"):
+            allowed = (
+                trade_allowance.get(str(instructor_id), 0)
+                if instructor_id is not None
+                else trade_total
+            )
+            if 0 < delta <= allowed:
+                # A saved campus day was paid for in idle minutes, inside the
+                # configured allowance (bounded instructor-day trade).
+                traded.append({**regression, "reason": "instructor_day_saved_for_idle"})
+                continue
         if (
             not regression["metric"].endswith("_evidence")
             and before_repair is not None
@@ -83,7 +117,12 @@ def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict
             exceptions.append({**regression, "reason": "mandatory_instructor_constraint_repair"})
         else:
             blocked.append(regression)
-    return {"blocked": bool(blocked), "regressions": blocked, "repair_exceptions": exceptions}
+    return {
+        "blocked": bool(blocked),
+        "regressions": blocked,
+        "repair_exceptions": exceptions,
+        "trade_exceptions": traded,
+    }
 
 
 def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
@@ -334,6 +373,7 @@ def run_v2_optimisation_guarded(
         )
         instructor_regression["regressions"].extend(idle_regression["regressions"])
         instructor_regression["repair_exceptions"].extend(idle_regression["repair_exceptions"])
+        instructor_regression["trade_exceptions"] = idle_regression["trade_exceptions"]
         if is_instructor_priority_enabled():
             # Optimise Current promises to preserve the saved instructor week.
             # A necessary repair is still a candidate, not permission to exceed
@@ -351,6 +391,7 @@ def run_v2_optimisation_guarded(
         "working_days_saved": instructor_before["working_days"] - instructor_after["working_days"],
         "idle_minutes_saved": instructor_before["idle_minutes"] - instructor_after["idle_minutes"],
         "repair_exceptions": instructor_regression["repair_exceptions"],
+        "trade_exceptions": instructor_regression.get("trade_exceptions", []),
     }
     student_regression = optimiser_student_outcome_regression(result)
     # LIKE-FOR-LIKE, mirroring the student gate above: judge the OPTIMISER's own
