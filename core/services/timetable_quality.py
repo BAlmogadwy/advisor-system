@@ -141,13 +141,13 @@ def student_day_overload_penalty(
 ) -> int:
     penalty = 0
     for state in assignment_states.values():
-        day_counts: Counter[int] = Counter()
+        day_counts: dict[int, int] = {}
         for section_id in state.section_ids:
             section = sections_by_id.get(section_id)
             if not section:
                 continue
             for meeting in section.meetings:
-                day_counts[meeting.day] += 1
+                day_counts[meeting.day] = day_counts.get(meeting.day, 0) + 1
         for count in day_counts.values():
             if count > meeting_limit_per_day:
                 penalty += (count - meeting_limit_per_day) * 30
