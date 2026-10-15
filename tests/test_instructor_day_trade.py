@@ -19,10 +19,13 @@ _SLOTS = [
 ]
 
 
-def _board(placements, *, locked=(), others=(), blocked=()):
+def _board(placements, *, locked=(), others=(), blocked=(), shared=()):
     """One instructor teaching ``[(code, day, start, end), ...]`` (no students).
 
-    ``locked`` lists course codes whose placement is locked, ``others`` adds
+    ``shared`` lists course codes that also have a placement copy on a second
+    board (an ordinary shared section, which sends the pass through the exact
+    shared-room persist step), ``locked`` lists course codes whose placement is
+    locked, ``others`` adds
     sections nobody in the plan teaches (they only occupy the single room R1), and
     ``blocked`` is the scenario's ``[{day, start}]`` protected slots.
     """
@@ -84,6 +87,18 @@ def _board(placements, *, locked=(), others=(), blocked=()):
             room="R1",
             is_locked=code in locked,
         )
+        if code in shared:
+            copy_board, _ = DeliveryBoard.objects.get_or_create(
+                scenario=scenario, label="T1 copy", defaults={"nominal_term": 1, "program": "AI"}
+            )
+            SectionPlacement.objects.create(
+                board=copy_board,
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="R1",
+            )
         apply_primary_instructor(ts, scenario, board, ts.course_code)
     for code, day, start, end in others:
         ts = TermSection.objects.create(
@@ -154,7 +169,7 @@ def test_saving_a_day_costs_idle_so_default_compaction_never_does_it():
 
     assert report["instructor_impact"]["working_days_after"] == 2
     assert _days_used(scenario) == 2
-    assert report["trade_rule"]["enabled"] is False
+    assert "trade_rule" not in report  # report-only keys appear with the rule ON only
 
 
 @pytest.mark.django_db
@@ -839,33 +854,65 @@ def test_trades_fail_closed_without_a_room_gate_but_ordinary_compaction_runs(set
     assert report["trade_rule"]["room_gate_rejected"] >= 1
 
 
-@pytest.mark.django_db
-@pytest.mark.usefixtures("_compaction")
-@pytest.mark.parametrize(
-    ("baseline_count", "baseline_floor", "candidate_count", "accepted"),
-    [
-        (0, 0, 0, True),  # proven equal
-        (1, 1, 1, True),  # proven, one meeting unroomed before and after
-        (1, 0, 1, False),  # baseline count unproven (floor 0): 1 is not provably no worse
-        (1, 0, 0, True),  # candidate beats even the floor
-        (0, 0, 1, False),  # candidate strictly worse
-    ],
-)
-def test_room_gate_accepts_only_a_provably_no_worse_candidate(
-    settings, monkeypatch, baseline_count, baseline_floor, candidate_count, accepted
-):
-    from core.services import timetable_recovery_rooming
-    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+@pytest.fixture
+def _room_budgets(settings):
+    """Distinct, recognisable budgets so a fake evaluator can tell the two apart."""
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_BASELINE_SECONDS = 7.0
+    settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_CANDIDATE_SECONDS = 0.25
 
-    def build(scenario_id, *args, **kwargs):
+
+def _fake_room_evaluators(monkeypatch, *, long_count, long_proven, short_baseline, candidate):
+    """Install a room evaluator whose answer depends on its budget and the board.
+
+    The long-budget evaluator (7 s) answers the baseline board; the candidate
+    evaluator (0.25 s) answers the baseline board with ``short_baseline`` and a
+    one-day board with ``candidate``. Every call is logged as (budget, days).
+    """
+    from core.services import timetable_recovery_rooming
+
+    calls: list[tuple[float, int]] = []
+
+    def build(scenario_id, *args, time_limit_seconds=0.15, **kwargs):
         def evaluate(states):
-            if _days(states) == 1:
-                return {"unassigned_count": candidate_count, "shortage_lower_bound": 0}
-            return {"unassigned_count": baseline_count, "shortage_lower_bound": baseline_floor}
+            days = _days(states)
+            calls.append((time_limit_seconds, days))
+            if time_limit_seconds == 7.0:
+                return {"unassigned_count": long_count, "count_proven_optimal": long_proven}
+            count = candidate if days == 1 else short_baseline
+            return {"unassigned_count": count, "count_proven_optimal": False}
 
         return evaluate
 
     monkeypatch.setattr(timetable_recovery_rooming, "build_recovery_room_evaluator", build)
+    return calls
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+@pytest.mark.parametrize(
+    ("long_count", "long_proven", "short_baseline", "candidate", "accepted"),
+    [
+        (0, True, 0, 0, True),  # proven baseline, candidate equal
+        (17, True, 99, 17, True),  # proven 17 unroomed before and after: not worse
+        (17, True, 17, 18, False),  # one more unroomed meeting than the PROVEN baseline
+        (0, True, 0, 1, False),  # any new unroomed meeting against a clean baseline
+        (17, False, 17, 17, True),  # THE PRODUCTION FAILURE: unproven baseline, equal candidate
+        (17, False, 19, 19, True),  # unproven: held to the same method as the baseline, not 17
+        (17, False, 17, 18, False),  # unproven baseline, candidate genuinely worse
+    ],
+)
+def test_room_gate_compares_with_the_proven_baseline_or_the_same_method(
+    settings, monkeypatch, long_count, long_proven, short_baseline, candidate, accepted
+):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _fake_room_evaluators(
+        monkeypatch,
+        long_count=long_count,
+        long_proven=long_proven,
+        short_baseline=short_baseline,
+        candidate=candidate,
+    )
     _trade_on(settings)
     scenario = _board([("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")])
 
@@ -873,6 +920,63 @@ def test_room_gate_accepts_only_a_provably_no_worse_candidate(
 
     assert report["trade_rule"]["room_gate_unavailable"] is None
     assert report["instructor_impact"]["working_days_after"] == (1 if accepted else 2)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+def test_the_floor_is_one_long_budget_baseline_solve_and_the_pass_reports_it(settings, monkeypatch):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    calls = _fake_room_evaluators(
+        monkeypatch, long_count=3, long_proven=True, short_baseline=50, candidate=5
+    )
+    _trade_on(settings)
+    scenario = _board([("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")])
+
+    report = compact_instructor_schedules(scenario.id)
+
+    # The long budget solves the baseline board exactly once and nothing else.
+    assert [c for c in calls if c[0] == 7.0] == [(7.0, 2)]
+    assert report["trade_rule"]["room_baseline"] == {
+        "unassigned": 3,
+        "proven": True,
+        "floor": 3,  # the proven long-budget count, not the short-budget 50
+        "floor_source": "proven_long_budget",
+    }
+    # Every one-day candidate has 5 unroomed meetings: 2 over the floor of 3.
+    assert report["trade_rule"]["room_gate_rejected"] >= 1
+    assert set(report["trade_rule"]["room_gate_rejected_over_floor"]) == {"2"}
+    assert report["instructor_impact"]["working_days_after"] == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+def test_an_unproven_baseline_is_reported_with_its_candidate_method_floor(settings, monkeypatch):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    _fake_room_evaluators(
+        monkeypatch, long_count=17, long_proven=False, short_baseline=19, candidate=19
+    )
+    _trade_on(settings)
+    scenario = _board([("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")])
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["trade_rule"]["room_baseline"] == {
+        "unassigned": 17,
+        "proven": False,
+        "floor": 19,
+        "floor_source": "candidate_method",
+    }
+    assert report["instructor_impact"]["working_days_after"] == 1
+
+
+def test_room_budget_defaults():
+    from core.services.timetable_pr4_instructor import get_instructor_day_trade_config
+
+    cfg = get_instructor_day_trade_config()
+    assert cfg["room_baseline_seconds"] == 5.0
+    assert cfg["room_candidate_seconds"] == 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -908,7 +1012,7 @@ def test_compaction_reports_the_trade_off_when_the_policy_is_legacy(settings):
 
     report = compact_instructor_schedules(scenario.id)
 
-    assert report["trade_rule"]["enabled"] is False
+    assert "trade_rule" not in report  # report-only keys appear with the rule ON only
 
 
 @pytest.mark.django_db
@@ -957,3 +1061,59 @@ def test_vacate_evaluates_nothing_once_the_time_budget_is_spent(settings, monkey
     first_vacate_evaluation = with_vacate[len(single_only)]
     spent = run(vacate=True, flip_at=first_vacate_evaluation)
     assert len(spent) == len(single_only)
+
+
+# ---------------------------------------------------------------------------
+# The persist-time re-rooming solve.
+# ---------------------------------------------------------------------------
+
+
+def _spy_on_room_evaluator_budgets(monkeypatch):
+    """Record the ``time_limit_seconds`` each evaluator is built with ('default' if unset)."""
+    from core.services import timetable_recovery_rooming
+
+    real = timetable_recovery_rooming.build_recovery_room_evaluator
+    budgets: list = []
+
+    def spy(scenario_id, *args, **kwargs):
+        budgets.append(kwargs.get("time_limit_seconds", "default"))
+        return real(scenario_id, *args, **kwargs)
+
+    monkeypatch.setattr(timetable_recovery_rooming, "build_recovery_room_evaluator", spy)
+    return budgets
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+def test_with_the_rule_on_the_persist_re_rooming_gets_the_long_budget(settings, monkeypatch):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    budgets = _spy_on_room_evaluator_budgets(monkeypatch)
+    _trade_on(settings)
+    scenario = _board(
+        [("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")], shared={"C1", "C2"}
+    )
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["instructor_impact"]["working_days_after"] == 1  # a shared section moved
+    # baseline gate (long), candidate gate (short), then the persist solve (long).
+    assert budgets == [7.0, 0.25, 7.0]
+    assert report["rolled_back"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+def test_with_the_rule_off_the_persist_re_rooming_keeps_the_default_budget(monkeypatch):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    budgets = _spy_on_room_evaluator_budgets(monkeypatch)
+    scenario = _board(
+        [("C1", "MON", "09:00", "10:15"), ("C2", "MON", "13:00", "14:15")], shared={"C1", "C2"}
+    )
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["search"]["moves_accepted"] >= 1  # a shared section moved
+    assert budgets == ["default"]  # exactly the call master makes
+    assert "trade_rule" not in report

@@ -180,6 +180,12 @@ def get_instructor_day_trade_config() -> dict:
         "reserve_allowance": int(
             getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE", 0)
         ),
+        "room_baseline_seconds": float(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_BASELINE_SECONDS", 5.0)
+        ),
+        "room_candidate_seconds": float(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_CANDIDATE_SECONDS", 0.5)
+        ),
         "vacate_days": bool(getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS", True)),
         "vacate_max_sessions": int(
             getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS", 2)
