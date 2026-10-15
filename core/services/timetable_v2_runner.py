@@ -261,6 +261,29 @@ def attach_optimiser_safety_metrics(
     result["cross_board_student_conflict_incidences_delta"] = before_incidences - after_incidences
 
 
+def attach_student_gap_fields(result: dict) -> None:
+    """Surface the regular/visitor gap split at the top level of an optimise result.
+
+    Present only under ``TIMETABLE_GAP_REGULAR_STUDENTS_ONLY`` (the evaluator then
+    puts ``student_gap`` in ``quality_score``); absent otherwise, so every existing
+    field and the OFF payload are unchanged.
+    """
+    student_gap = (result.get("quality_score") or {}).get("student_gap")
+    if isinstance(student_gap, dict):
+        result["gap_regular_students_only"] = True
+        result["gap_minutes_regular"] = student_gap["gap_minutes_regular"]
+        result["gap_minutes_visitors"] = student_gap["gap_minutes_visitors"]
+        result["gap_minutes_all"] = student_gap["gap_minutes_all"]
+
+
+def restore_baseline_student_gap(result: dict) -> None:
+    """After a whole-board rollback the reported gap split is the baseline board's."""
+    if isinstance(result.get("quality_score"), dict) and isinstance(
+        result.get("baseline_student_gap"), dict
+    ):
+        result["quality_score"]["student_gap"] = dict(result["baseline_student_gap"])
+
+
 def run_v2_optimisation_guarded(
     scenario_id: int,
     *,
@@ -492,6 +515,7 @@ def run_v2_optimisation_guarded(
         )
         if isinstance(result.get("quality_score"), dict):
             result["quality_score"]["instructor_schedule"] = instructor_before
+        restore_baseline_student_gap(result)
         result["persist_result"] = {
             "action": "rolled_back_safety_regression",
             "reason": (
@@ -521,6 +545,11 @@ def run_v2_optimisation_guarded(
     else:
         result["safety_blocked"] = False
         result["safety_regression"] = {"blocked": False, "regressions": []}
+
+    # Regular-only gap option (absent when off): surface both numbers at the top
+    # level of the result so the owner can see the visitors' gap the objective
+    # no longer counts. Existing fields keep their meaning.
+    attach_student_gap_fields(result)
 
     attach_optimiser_safety_metrics(result, safety_before, safety_after)
     return result

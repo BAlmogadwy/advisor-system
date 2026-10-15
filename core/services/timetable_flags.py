@@ -22,6 +22,7 @@ TIERED_OBJECTIVE_SETTING = "TIMETABLE_TIERED_OBJECTIVE_ENABLED"
 ONLINE_GAP_EXCLUSION_SETTING = "TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED"
 TIERED_T2_TOLERANCE_SETTING = "TIMETABLE_TIERED_T2_TOLERANCE"
 TIERED_SOFT_GAP_BUDGET_SETTING = "TIMETABLE_TIERED_SOFT_GAP_BUDGET"
+GAP_REGULAR_STUDENTS_ONLY_SETTING = "TIMETABLE_GAP_REGULAR_STUDENTS_ONLY"
 
 
 def is_stage_telemetry_enabled() -> bool:
@@ -75,6 +76,16 @@ def get_tiered_soft_gap_budget() -> int:
     return max(0, int(getattr(settings, TIERED_SOFT_GAP_BUDGET_SETTING, 120)))
 
 
+def is_gap_regular_students_only_enabled() -> bool:
+    """Gate counting only REGULAR (non-visitor) students' gap-minutes (default OFF).
+
+    A visitor is a cross-term student (``StudentProfile.is_visitor``, from the
+    persisted ``ScenarioStudentCourseRequest.is_cross_term``). With the flag off
+    every student's gap counts and all output is byte-identical to before.
+    """
+    return bool(getattr(settings, GAP_REGULAR_STUDENTS_ONLY_SETTING, False))
+
+
 def is_async_planner_enabled() -> bool:
     return bool(getattr(settings, ASYNC_PLANNER_SETTING, False))
 
@@ -94,6 +105,7 @@ def is_async_job_ui_effective() -> bool:
 
 __all__ = [
     "ASYNC_JOB_UI_SETTING",
+    "GAP_REGULAR_STUDENTS_ONLY_SETTING",
     "ASYNC_PLANNER_SETTING",
     "STAGE_TELEMETRY_SETTING",
     "TIERED_OBJECTIVE_SETTING",
@@ -104,6 +116,7 @@ __all__ = [
     "is_async_job_ui_effective",
     "is_async_job_ui_enabled",
     "is_async_planner_enabled",
+    "is_gap_regular_students_only_enabled",
     "is_stage_telemetry_enabled",
     "is_tiered_objective_enabled",
 ]
