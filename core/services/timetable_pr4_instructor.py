@@ -143,6 +143,51 @@ def get_instructor_compaction_config() -> dict:
     }
 
 
+def is_instructor_day_trade_active() -> bool:
+    """True when the bounded instructor-day trade is switched on AND can act.
+
+    The trade ranks campus working days, which only the instructor-first policy
+    does, so ``TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED`` alone is not enough. The
+    compaction pass and the run-level idle gate must share this one condition,
+    or the gate could excuse idle the pass never traded for.
+    """
+    from core.services.timetable_optimisation_policy import is_instructor_priority_enabled
+
+    return bool(
+        getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED", False)
+        and is_instructor_priority_enabled()
+    )
+
+
+def get_instructor_day_trade_config() -> dict:
+    """Bounded student-gap-for-instructor-day trade (default OFF).
+
+    ``total_gap`` is the cumulative net student gap-minutes (vs the pre-pass
+    board) that day-saving moves may add; ``per_student`` / ``high_risk_per_student``
+    cap what any one student / any tier-A or tier-B student may gain;
+    ``idle_allowance`` is the idle minutes the merged day may cost per day saved.
+    """
+    return {
+        "enabled": bool(getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED", False)),
+        "total_gap": int(getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_TOTAL_GAP", 300)),
+        "per_student": int(getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_PER_STUDENT", 500)),
+        "high_risk_per_student": int(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_HIGH_RISK_PER_STUDENT", 500)
+        ),
+        "idle_allowance": int(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE", 150)
+        ),
+        "reserve_allowance": int(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE", 0)
+        ),
+        "vacate_days": bool(getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS", True)),
+        "vacate_max_sessions": int(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS", 2)
+        ),
+        "vacate_top_n": int(getattr(settings, "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_TOP_N", 12)),
+    }
+
+
 def exceeds_instructor_daily_cap(sections_by_id, section_instructor_ids, cap: int) -> bool:
     """True if any (instructor, day) would hold more than ``cap`` sessions.
 

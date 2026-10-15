@@ -823,6 +823,51 @@ TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = float(
     os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS", "20")
 )
 
+# Bounded instructor-day trade (default OFF: the single ENABLED flag turns on the
+# recommended behaviour below). Normally compaction refuses any move that costs
+# students or instructor idle, so it can never save a campus day (every merge
+# leaves a gap). With this on, a move that SAVES at least one instructor working
+# day may spend the bounded student gap / idle below. The hard coverage block
+# (the first four score elements), the soft tier and daily cap never worsen, and
+# a traded move must still fit every room the baseline fitted.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+# Net student gap-minutes (vs the pre-pass board) that day-saving trades may add in total.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_TOTAL_GAP = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_TOTAL_GAP", "300")
+)
+# Most gap-minutes any single student may gain vs the pre-pass board.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_PER_STUDENT = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_PER_STUDENT", "500")
+)
+# Same cap for high-risk (tier A) and graduating (tier B) students; 0 protects them fully.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_HIGH_RISK_PER_STUDENT = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_HIGH_RISK_PER_STUDENT", "500")
+)
+# Idle minutes an instructor may gain per working day saved; 255 is the trial value that
+# saved 3 of 21 days locally (150 saved none).
+TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_IDLE_ALLOWANCE", "255")
+)
+# Extra reserve-capacity seats a day-saving move may use (trial value; 0 = may not rise).
+TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE", "10")
+)
+# Also try emptying a whole instructor day by moving its sessions together onto the
+# instructor's other days (a single move cannot empty a two-session day).
+TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS = os.getenv(
+    "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS", "true"
+).lower() in ("1", "true", "yes", "on")
+# Only a day holding at most this many sessions is emptied (the search grows with each).
+TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS", "2")
+)
+# Cheapest candidates (by instructor idle) per instructor-day that get a full student evaluation.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_TOP_N = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_TOP_N", "12")
+)
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised
