@@ -859,6 +859,15 @@ TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE = int(
 TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS = os.getenv(
     "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS", "true"
 ).lower() in ("1", "true", "yes", "on")
+# Wall-clock seconds for the ONE baseline room solve of a pass. It should normally
+# prove the baseline's unroomed count, which is the floor a trade is compared with.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_BASELINE_SECONDS = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_BASELINE_SECONDS", "5.0")
+)
+# Wall-clock seconds for each candidate's room solve (cached per distinct board).
+TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_CANDIDATE_SECONDS = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_CANDIDATE_SECONDS", "0.5")
+)
 # Only a day holding at most this many sessions is emptied (the search grows with each).
 TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS = int(
     os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS", "2")
