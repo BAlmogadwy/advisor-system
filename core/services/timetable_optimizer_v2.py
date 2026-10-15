@@ -59,6 +59,7 @@ from core.services.timetable_course_tier import (
 )
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_flags import (
+    is_gap_regular_students_only_enabled,
     is_online_gap_exclusion_enabled,
     is_tiered_objective_enabled,
 )
@@ -107,8 +108,14 @@ def build_student_profiles_for_scenario(
         return {}
 
     rec_courses_by_sid: dict[int, list[str]] = defaultdict(list)
+    visitor_sids: set[int] = set()
     for demand in demand_rows:
         rec_courses_by_sid[demand.student_id].append(demand.course_key)
+        if demand.is_cross_term:
+            visitor_sids.add(demand.student_id)
+    # Read once per run; with the flag off nobody is marked, so profiles stay
+    # exactly as before.
+    mark_visitors = is_gap_regular_students_only_enabled()
     student_ids = list(rec_courses_by_sid)
 
     # Bulk-fetch student metadata
@@ -159,6 +166,7 @@ def build_student_profiles_for_scenario(
             recommended_courses=rec_courses if rec_courses else [],
             risk_tier=tier,
             intra_tier_score=round(intra_score, 3),
+            is_visitor=mark_visitors and sid in visitor_sids,
         )
 
     logger.info(
@@ -1774,6 +1782,13 @@ def optimise_current_timetable(
         # no total-unresolved-students term). unresolved_students above gets
         # overwritten by later stages; this stays pinned to the baseline board.
         "baseline_unresolved_students": len(baseline.unresolved_student_ids),
+        # Regular-only gap option: the baseline's gap split, pinned so a safety
+        # rollback can restore it. Absent when the option is off.
+        **(
+            {"baseline_student_gap": dict(baseline.quality_score["student_gap"])}
+            if "student_gap" in (baseline.quality_score or {})
+            else {}
+        ),
         "total_students": len(student_profiles),
         "local_search_applied": False,
         "persist_result": None,

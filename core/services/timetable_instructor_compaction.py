@@ -103,7 +103,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     from core.services.course_instructor_assignment import apply_primary_instructor
     from core.services.timetable_autoplace import placeable_slots
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
-    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_flags import (
+        is_gap_regular_students_only_enabled,
+        is_tiered_objective_enabled,
+    )
     from core.services.timetable_online import OnlineCourseLookup
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
@@ -243,9 +246,18 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             course_tiers=course_tiers,
         )
 
+    # TIMETABLE_GAP_REGULAR_STUDENTS_ONLY: visitors (cross-term students) leave
+    # the AGGREGATE gap total only - the global budget ceiling, the day-trade total
+    # and the gap_added trade ratio. Per-student caps and the tier A/B totals still
+    # cover every student, so a visitor keeps the same protection.
+    regular_gap_only = is_gap_regular_students_only_enabled()
+    visitor_ids = (
+        {sid for sid, p in profiles.items() if p.is_visitor} if regular_gap_only else set()
+    )
+
     def student_metrics(res):
         per = {sid: st.total_gap_minutes for sid, st in res.assignment_states.items()}
-        total = sum(per.values())
+        total = sum(g for sid, g in per.items() if sid not in visitor_ids)
         by_tier: dict = defaultdict(int)
         for s, g in per.items():
             by_tier[tier.get(s)] += g
@@ -928,6 +940,15 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 "total_gap_before": base_total_gap,
                 "total_gap_after": fin_total_gap,
                 "total_gap_delta": fin_total_gap - base_total_gap,
+                **(
+                    {
+                        "gap_regular_students_only": True,
+                        "total_gap_all_before": sum(base_per.values()),
+                        "total_gap_all_after": sum(fin_per.values()),
+                    }
+                    if regular_gap_only
+                    else {}
+                ),
                 "budget_ceiling": int(gap_ceiling),
                 "max_added_gap_any_student": max_add,
                 "students_worsened": len(worsened),

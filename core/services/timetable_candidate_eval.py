@@ -11,7 +11,10 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     TimetableEvaluationResult,
 )
-from core.services.timetable_flags import is_tiered_objective_enabled
+from core.services.timetable_flags import (
+    is_gap_regular_students_only_enabled,
+    is_tiered_objective_enabled,
+)
 from core.services.timetable_optimisation_policy import (
     evaluation_order_key,
     instructor_schedule_metrics,
@@ -64,6 +67,13 @@ def evaluate_generated_timetable_candidate(
         states, student_profiles, sections_by_id, section_instructor_ids, course_tiers
     )
     quality_score = evaluate_timetable_quality(working_sections, states)
+    if is_gap_regular_students_only_enabled():
+        # Side-band, ON only: both numbers, so visitors' gap stays visible even
+        # though the objective no longer counts it. Absent when the flag is off.
+        quality_score["student_gap"] = {
+            "regular_only": True,
+            **ssa.student_gap_split(states, student_profiles),
+        }
     quality_score["instructor_schedule"] = instructor_schedule_metrics(
         working_sections, section_instructor_ids
     )
