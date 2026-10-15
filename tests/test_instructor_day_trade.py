@@ -19,10 +19,13 @@ _SLOTS = [
 ]
 
 
-def _board(placements, *, locked=(), others=(), blocked=()):
+def _board(placements, *, locked=(), others=(), blocked=(), shared=()):
     """One instructor teaching ``[(code, day, start, end), ...]`` (no students).
 
-    ``locked`` lists course codes whose placement is locked, ``others`` adds
+    ``shared`` lists course codes that also have a placement copy on a second
+    board (an ordinary shared section, which sends the pass through the exact
+    shared-room persist step), ``locked`` lists course codes whose placement is
+    locked, ``others`` adds
     sections nobody in the plan teaches (they only occupy the single room R1), and
     ``blocked`` is the scenario's ``[{day, start}]`` protected slots.
     """
@@ -84,6 +87,18 @@ def _board(placements, *, locked=(), others=(), blocked=()):
             room="R1",
             is_locked=code in locked,
         )
+        if code in shared:
+            copy_board, _ = DeliveryBoard.objects.get_or_create(
+                scenario=scenario, label="T1 copy", defaults={"nominal_term": 1, "program": "AI"}
+            )
+            SectionPlacement.objects.create(
+                board=copy_board,
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="R1",
+            )
         apply_primary_instructor(ts, scenario, board, ts.course_code)
     for code, day, start, end in others:
         ts = TermSection.objects.create(
@@ -154,7 +169,7 @@ def test_saving_a_day_costs_idle_so_default_compaction_never_does_it():
 
     assert report["instructor_impact"]["working_days_after"] == 2
     assert _days_used(scenario) == 2
-    assert report["trade_rule"]["enabled"] is False
+    assert "trade_rule" not in report  # report-only keys appear with the rule ON only
 
 
 @pytest.mark.django_db
@@ -997,7 +1012,7 @@ def test_compaction_reports_the_trade_off_when_the_policy_is_legacy(settings):
 
     report = compact_instructor_schedules(scenario.id)
 
-    assert report["trade_rule"]["enabled"] is False
+    assert "trade_rule" not in report  # report-only keys appear with the rule ON only
 
 
 @pytest.mark.django_db
@@ -1046,3 +1061,59 @@ def test_vacate_evaluates_nothing_once_the_time_budget_is_spent(settings, monkey
     first_vacate_evaluation = with_vacate[len(single_only)]
     spent = run(vacate=True, flip_at=first_vacate_evaluation)
     assert len(spent) == len(single_only)
+
+
+# ---------------------------------------------------------------------------
+# The persist-time re-rooming solve.
+# ---------------------------------------------------------------------------
+
+
+def _spy_on_room_evaluator_budgets(monkeypatch):
+    """Record the ``time_limit_seconds`` each evaluator is built with ('default' if unset)."""
+    from core.services import timetable_recovery_rooming
+
+    real = timetable_recovery_rooming.build_recovery_room_evaluator
+    budgets: list = []
+
+    def spy(scenario_id, *args, **kwargs):
+        budgets.append(kwargs.get("time_limit_seconds", "default"))
+        return real(scenario_id, *args, **kwargs)
+
+    monkeypatch.setattr(timetable_recovery_rooming, "build_recovery_room_evaluator", spy)
+    return budgets
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+def test_with_the_rule_on_the_persist_re_rooming_gets_the_long_budget(settings, monkeypatch):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    budgets = _spy_on_room_evaluator_budgets(monkeypatch)
+    _trade_on(settings)
+    scenario = _board(
+        [("C1", "MON", "09:00", "10:15"), ("C2", "TUE", "09:00", "10:15")], shared={"C1", "C2"}
+    )
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["instructor_impact"]["working_days_after"] == 1  # a shared section moved
+    # baseline gate (long), candidate gate (short), then the persist solve (long).
+    assert budgets == [7.0, 0.25, 7.0]
+    assert report["rolled_back"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("_compaction", "_room_budgets")
+def test_with_the_rule_off_the_persist_re_rooming_keeps_the_default_budget(monkeypatch):
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    budgets = _spy_on_room_evaluator_budgets(monkeypatch)
+    scenario = _board(
+        [("C1", "MON", "09:00", "10:15"), ("C2", "MON", "13:00", "14:15")], shared={"C1", "C2"}
+    )
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["search"]["moves_accepted"] >= 1  # a shared section moved
+    assert budgets == ["default"]  # exactly the call master makes
+    assert "trade_rule" not in report

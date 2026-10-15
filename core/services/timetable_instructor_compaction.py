@@ -129,7 +129,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     trade = get_instructor_day_trade_config()
     trade_on = is_instructor_day_trade_active()
     room_stats: dict = {"rejected": 0, "over_floor": {}}
-    report["trade_rule"] = {**trade, "enabled": trade_on, "room_gate_unavailable": None}
+    if trade_on:
+        # Report-only; absent while the rule is off so the report matches master.
+        report["trade_rule"] = {**trade, "enabled": True, "room_gate_unavailable": None}
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
     states = build_section_states_for_scenario(scenario_id)
@@ -785,9 +787,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         cur_schedule = instructor_schedule_metrics(states, cap_map)
         moves_accepted += 1
 
-    report["trade_rule"]["room_gate_rejected"] = room_stats["rejected"]
-    # How far over the floor the rejected candidates were: {"1": n, "2": m, ...}.
-    report["trade_rule"]["room_gate_rejected_over_floor"] = room_stats["over_floor"]
+    if trade_on:
+        report["trade_rule"]["room_gate_rejected"] = room_stats["rejected"]
+        # How far over the floor the rejected candidates were: {"1": n, "2": m, ...}.
+        report["trade_rule"]["room_gate_rejected_over_floor"] = room_stats["over_floor"]
 
     # ── Persist accepted relocations ──
     touched_boards: set = set()
@@ -858,7 +861,14 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             )
 
             try:
-                room_evaluator = build_recovery_room_evaluator(scenario_id)
+                # With the trade ON, re-room with the same long budget the baseline got,
+                # so a trade the gate judged equal is not undone by a weaker persist solve
+                # that leaves more meetings unroomed (and rolls the whole pass back). With
+                # it OFF the solve keeps its default budget, exactly as before.
+                room_evaluator = build_recovery_room_evaluator(
+                    scenario_id,
+                    **({"time_limit_seconds": trade["room_baseline_seconds"]} if trade_on else {}),
+                )
                 room_result = room_evaluator(states)
                 physical_rows = list(
                     SectionPlacement.objects.filter(board__scenario_id=scenario_id).values()
