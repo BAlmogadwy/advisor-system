@@ -103,7 +103,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     from core.services.course_instructor_assignment import apply_primary_instructor
     from core.services.timetable_autoplace import placeable_slots
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
-    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_flags import (
+        is_gap_regular_students_only_enabled,
+        is_tiered_objective_enabled,
+    )
     from core.services.timetable_online import OnlineCourseLookup
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
@@ -128,8 +131,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     # instructor-first policy (days are a ranked quantity there); default OFF.
     trade = get_instructor_day_trade_config()
     trade_on = is_instructor_day_trade_active()
-    room_stats = {"rejected": 0}
-    report["trade_rule"] = {**trade, "enabled": trade_on, "room_gate_unavailable": None}
+    room_stats: dict = {"rejected": 0, "over_floor": {}}
+    if trade_on:
+        # Report-only; absent while the rule is off so the report matches master.
+        report["trade_rule"] = {**trade, "enabled": True, "room_gate_unavailable": None}
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
     states = build_section_states_for_scenario(scenario_id)
@@ -243,9 +248,18 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             course_tiers=course_tiers,
         )
 
+    # TIMETABLE_GAP_REGULAR_STUDENTS_ONLY: visitors (cross-term students) leave
+    # the AGGREGATE gap total only - the global budget ceiling, the day-trade total
+    # and the gap_added trade ratio. Per-student caps and the tier A/B totals still
+    # cover every student, so a visitor keeps the same protection.
+    regular_gap_only = is_gap_regular_students_only_enabled()
+    visitor_ids = (
+        {sid for sid, p in profiles.items() if p.is_visitor} if regular_gap_only else set()
+    )
+
     def student_metrics(res):
         per = {sid: st.total_gap_minutes for sid, st in res.assignment_states.items()}
-        total = sum(per.values())
+        total = sum(g for sid, g in per.items() if sid not in visitor_ids)
         by_tier: dict = defaultdict(int)
         for s, g in per.items():
             by_tier[tier.get(s)] += g
@@ -452,14 +466,30 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
 
         try:
-            _room_eval = build_recovery_room_evaluator(scenario_id)
-            room_gate = {
-                "evaluate": _room_eval,
-                # A PROVEN lower bound on the baseline's unroomed meetings. The
-                # evaluator's count for a candidate is only an upper bound unless
-                # proven, so "candidate count <= this floor" is the one comparison
-                # that is safe whatever was proven: it can never excuse a worse board.
-                "baseline_floor": int(_room_eval(states)["shortage_lower_bound"]),
+            # The baseline is solved ONCE, with a long budget, so its unroomed count
+            # is normally PROVEN optimal; that proven count is the floor. If even
+            # the long budget cannot prove it, the floor is the baseline's count
+            # under the SAME short-budget method the candidates use, so a candidate
+            # is never held to a stricter standard than the board it replaces.
+            _baseline_eval = build_recovery_room_evaluator(
+                scenario_id, time_limit_seconds=trade["room_baseline_seconds"]
+            )
+            _room_eval = build_recovery_room_evaluator(
+                scenario_id, time_limit_seconds=trade["room_candidate_seconds"]
+            )
+            _baseline = _baseline_eval(states)
+            _proven = bool(_baseline.get("count_proven_optimal"))
+            _floor = (
+                int(_baseline["unassigned_count"])
+                if _proven
+                else int(_room_eval(states)["unassigned_count"])
+            )
+            room_gate = {"evaluate": _room_eval, "baseline_floor": _floor}
+            report["trade_rule"]["room_baseline"] = {
+                "unassigned": int(_baseline["unassigned_count"]),
+                "proven": _proven,
+                "floor": _floor,
+                "floor_source": "proven_long_budget" if _proven else "candidate_method",
             }
         except ExactRoomingError as exc:
             report["trade_rule"]["room_gate_unavailable"] = str(exc) or type(exc).__name__
@@ -529,21 +559,27 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         if not gates_ok(res, idle_saved, gap_added, day_saved > 0):
             return None
         if trade_on and day_saved > 0:
-            # A traded move relocates whole sessions; keep it only if the exact
-            # room evaluator PROVES no more meetings go unroomed than the baseline
-            # had (see ``baseline_floor``). The persist step rolls the WHOLE pass
-            # back on a room regression, so catching it here keeps the other gains.
+            # A traded move relocates whole sessions; keep it only if the room
+            # evaluator leaves no more meetings unroomed than the baseline floor
+            # (see ``room_gate``). This is a pre-filter, not the safety net: the
+            # persist step re-counts the placements that really have no room after
+            # real rooming and rolls the WHOLE pass back on any increase over
+            # ``rooms_before`` (``candidate_rooms > rooms_before`` below), so an
+            # optimistic evaluator costs the pass, never a worse persisted board.
             if room_gate is None:
                 room_stats["rejected"] += 1
                 return None
             try:
-                rooms_fit = (
-                    room_gate["evaluate"](states)["unassigned_count"] <= room_gate["baseline_floor"]
+                over_floor = (
+                    room_gate["evaluate"](states)["unassigned_count"] - room_gate["baseline_floor"]
                 )
             except ExactRoomingError:
-                rooms_fit = False
-            if not rooms_fit:
+                over_floor = None
+            if over_floor is None or over_floor > 0:
                 room_stats["rejected"] += 1
+                if over_floor is not None:
+                    key = str(over_floor)
+                    room_stats["over_floor"][key] = room_stats["over_floor"].get(key, 0) + 1
                 return None
         it = ituple(im, tg - base_total_gap)
         rank = None
@@ -763,7 +799,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         cur_schedule = instructor_schedule_metrics(states, cap_map)
         moves_accepted += 1
 
-    report["trade_rule"]["room_gate_rejected"] = room_stats["rejected"]
+    if trade_on:
+        report["trade_rule"]["room_gate_rejected"] = room_stats["rejected"]
+        # How far over the floor the rejected candidates were: {"1": n, "2": m, ...}.
+        report["trade_rule"]["room_gate_rejected_over_floor"] = room_stats["over_floor"]
 
     # ── Persist accepted relocations ──
     touched_boards: set = set()
@@ -834,7 +873,14 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             )
 
             try:
-                room_evaluator = build_recovery_room_evaluator(scenario_id)
+                # With the trade ON, re-room with the same long budget the baseline got,
+                # so a trade the gate judged equal is not undone by a weaker persist solve
+                # that leaves more meetings unroomed (and rolls the whole pass back). With
+                # it OFF the solve keeps its default budget, exactly as before.
+                room_evaluator = build_recovery_room_evaluator(
+                    scenario_id,
+                    **({"time_limit_seconds": trade["room_baseline_seconds"]} if trade_on else {}),
+                )
                 room_result = room_evaluator(states)
                 physical_rows = list(
                     SectionPlacement.objects.filter(board__scenario_id=scenario_id).values()
@@ -928,6 +974,15 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 "total_gap_before": base_total_gap,
                 "total_gap_after": fin_total_gap,
                 "total_gap_delta": fin_total_gap - base_total_gap,
+                **(
+                    {
+                        "gap_regular_students_only": True,
+                        "total_gap_all_before": sum(base_per.values()),
+                        "total_gap_all_after": sum(fin_per.values()),
+                    }
+                    if regular_gap_only
+                    else {}
+                ),
                 "budget_ceiling": int(gap_ceiling),
                 "max_added_gap_any_student": max_add,
                 "students_worsened": len(worsened),

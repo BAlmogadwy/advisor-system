@@ -859,6 +859,15 @@ TIMETABLE_INSTRUCTOR_DAY_TRADE_RESERVE_ALLOWANCE = int(
 TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS = os.getenv(
     "TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_DAYS", "true"
 ).lower() in ("1", "true", "yes", "on")
+# Wall-clock seconds for the ONE baseline room solve of a pass. It should normally
+# prove the baseline's unroomed count, which is the floor a trade is compared with.
+TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_BASELINE_SECONDS = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_BASELINE_SECONDS", "5.0")
+)
+# Wall-clock seconds for each candidate's room solve (cached per distinct board).
+TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_CANDIDATE_SECONDS = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_ROOM_CANDIDATE_SECONDS", "0.5")
+)
 # Only a day holding at most this many sessions is emptied (the search grows with each).
 TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS = int(
     os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_MAX_SESSIONS", "2")
@@ -906,6 +915,19 @@ TIMETABLE_TIERED_SOFT_GAP_BUDGET = int(os.getenv("TIMETABLE_TIERED_SOFT_GAP_BUDG
 # because with the flag off no SectionState is ever marked online.
 TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED = os.getenv(
     "TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
+
+# TIMETABLE_GAP_REGULAR_STUDENTS_ONLY: optimise student gap-minutes for REGULAR
+# students only (default OFF = every student counts, byte-identical). A "visitor"
+# is a cross-term student: one whose requested courses span more than one
+# programme term (ScenarioStudentCourseRequest.is_cross_term, set in
+# timetable_generate and the source of the "visitor" BoardStudentLinks); a regular
+# student's courses all sit on their one home board. When ON, visitors' gaps leave
+# the objective's gap term and the instructor-compaction / day-trade aggregate gap
+# budget; seating, clashes, T1/T2, high-risk, reserve, spread and every per-student
+# cap still cover everyone. Results then report gap_minutes_regular / _all.
+TIMETABLE_GAP_REGULAR_STUDENTS_ONLY = os.getenv(
+    "TIMETABLE_GAP_REGULAR_STUDENTS_ONLY", "false"
 ).lower() in ("1", "true", "yes", "on")
 
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (

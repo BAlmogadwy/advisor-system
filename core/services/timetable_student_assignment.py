@@ -71,6 +71,7 @@ from core.services.timetable_assignment_models import (
 from core.services.timetable_flags import (
     get_tiered_soft_gap_budget,
     get_tiered_t2_tolerance,
+    is_gap_regular_students_only_enabled,
     is_tiered_objective_enabled,
 )
 from core.services.timetable_pr4_instructor import is_instructor_gap_penalty_enabled
@@ -1059,6 +1060,32 @@ def decode_score(score: tuple[int, ...]) -> dict[str, int | str]:
     }
 
 
+def student_gap_split(
+    states: dict[str, StudentAssignmentState],
+    profiles: dict[str, StudentProfile],
+) -> dict[str, int]:
+    """Real student gap-minutes split into regular vs visitor (spread excluded).
+
+    ``gap_minutes_regular`` is what the objective's gap term counts when
+    ``TIMETABLE_GAP_REGULAR_STUDENTS_ONLY`` is on; ``gap_minutes_all`` is every
+    student. Reporting only: it never feeds the score.
+    """
+    regular = visitors = n_visitors = 0
+    for sid, state in states.items():
+        if profiles[sid].is_visitor:
+            visitors += state.total_gap_minutes
+            n_visitors += 1
+        else:
+            regular += state.total_gap_minutes
+    return {
+        "gap_minutes_regular": regular,
+        "gap_minutes_visitors": visitors,
+        "gap_minutes_all": regular + visitors,
+        "visitor_students": n_visitors,
+        "regular_students": len(states) - n_visitors,
+    }
+
+
 def evaluate_assignability_lexicographic(
     states: dict[str, StudentAssignmentState],
     profiles: dict[str, StudentProfile],
@@ -1072,6 +1099,9 @@ def evaluate_assignability_lexicographic(
     tiered = course_tiers is not None and is_tiered_objective_enabled()
     tolerance = get_tiered_t2_tolerance() if tiered else 0
     soft_gap_budget = get_tiered_soft_gap_budget() if tiered else 0
+    # Optional: visitors (cross-term students) leave the gap term only. Every
+    # other position (seating, clashes, T1/T2, high-risk, reserve) is untouched.
+    regular_gap_only = is_gap_regular_students_only_enabled()
 
     # Legacy accumulators (unchanged names/values; drive the OFF path).
     unresolved_tier_a = 0
@@ -1109,7 +1139,8 @@ def evaluate_assignability_lexicographic(
                         hr_hit = True
                 if hr_hit:
                     hr_unresolved += 1
-        real_gap_minutes += state.total_gap_minutes
+        if not (regular_gap_only and profile.is_visitor):
+            real_gap_minutes += state.total_gap_minutes
 
         # Pairs of this student's meetings that share a day and overlap in time.
         masks_by_day: dict[int, list[int]] = {}

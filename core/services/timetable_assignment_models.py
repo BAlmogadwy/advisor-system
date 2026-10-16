@@ -18,6 +18,10 @@ class StudentProfile:
     recommended_courses: list[str]
     risk_tier: RiskTier
     intra_tier_score: float
+    # Cross-term ("visitor") student: courses span more than one programme term.
+    # Populated only under TIMETABLE_GAP_REGULAR_STUDENTS_ONLY (else always False),
+    # and read only by the gap aggregation; it never influences seating.
+    is_visitor: bool = False
 
 
 @dataclass(frozen=True)

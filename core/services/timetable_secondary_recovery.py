@@ -29,6 +29,7 @@ from core.services.timetable_constraints import (
     move_introduces_same_course_overlap,
 )
 from core.services.timetable_exact_rooming import ExactRoomingError
+from core.services.timetable_flags import is_gap_regular_students_only_enabled
 from core.services.timetable_local_search_v2 import (
     generate_all_repattern_moves,
     generate_swap_moves,
@@ -153,6 +154,7 @@ def recover_secondary_quality(
     reached; it never relaxes teacher, seating or room nonregression guards.
     """
     started = time.monotonic()
+    regular_gap_only = is_gap_regular_students_only_enabled()
     deadline = started + max(0.0, time_limit_seconds)
     sections = deepcopy(sections_by_id)
     current = current_eval
@@ -187,8 +189,12 @@ def recover_secondary_quality(
         teacher_ceiling = instructor_schedule_metrics(sections.values(), section_instructor_ids)
         targets, pressure = _target_sections(current, sections, room_current, course_tiers)
         if phase == "polish":
-            for state in current.assignment_states.values():
-                if state.total_gap_minutes > 0:
+            for sid, state in current.assignment_states.items():
+                # Visitors' gaps are outside the objective when the regular-only
+                # option is on, so they must not steer the polish search.
+                if state.total_gap_minutes > 0 and not (
+                    regular_gap_only and student_profiles[sid].is_visitor
+                ):
                     targets.update(state.section_ids)
                     pressure.update(
                         {
