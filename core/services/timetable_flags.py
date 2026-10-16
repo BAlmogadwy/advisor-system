@@ -23,6 +23,7 @@ ONLINE_GAP_EXCLUSION_SETTING = "TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED"
 TIERED_T2_TOLERANCE_SETTING = "TIMETABLE_TIERED_T2_TOLERANCE"
 TIERED_SOFT_GAP_BUDGET_SETTING = "TIMETABLE_TIERED_SOFT_GAP_BUDGET"
 GAP_REGULAR_STUDENTS_ONLY_SETTING = "TIMETABLE_GAP_REGULAR_STUDENTS_ONLY"
+REQUIRED_SECTION_GUARANTEE_SETTING = "TIMETABLE_REQUIRED_SECTION_GUARANTEE_ENABLED"
 
 
 def is_stage_telemetry_enabled() -> bool:
@@ -86,6 +87,18 @@ def is_gap_regular_students_only_enabled() -> bool:
     return bool(getattr(settings, GAP_REGULAR_STUDENTS_ONLY_SETTING, False))
 
 
+def is_required_section_guarantee_enabled() -> bool:
+    """Gate the active retry that reinstates a required section the V2
+    pipeline dropped (see ``core.services.timetable_required_sections``).
+
+    Default True: placing every section the section-planning budget calls
+    for is a hard rule, not a stakeholder trade-off. Detection/reporting
+    (``find_missing_required_sections``) always runs regardless of this flag;
+    only the retry call and the rollback-gate entry are gated.
+    """
+    return bool(getattr(settings, REQUIRED_SECTION_GUARANTEE_SETTING, True))
+
+
 def is_async_planner_enabled() -> bool:
     return bool(getattr(settings, ASYNC_PLANNER_SETTING, False))
 
@@ -105,8 +118,9 @@ def is_async_job_ui_effective() -> bool:
 
 __all__ = [
     "ASYNC_JOB_UI_SETTING",
-    "GAP_REGULAR_STUDENTS_ONLY_SETTING",
     "ASYNC_PLANNER_SETTING",
+    "GAP_REGULAR_STUDENTS_ONLY_SETTING",
+    "REQUIRED_SECTION_GUARANTEE_SETTING",
     "STAGE_TELEMETRY_SETTING",
     "TIERED_OBJECTIVE_SETTING",
     "TIERED_SOFT_GAP_BUDGET_SETTING",
@@ -117,6 +131,7 @@ __all__ = [
     "is_async_job_ui_enabled",
     "is_async_planner_enabled",
     "is_gap_regular_students_only_enabled",
+    "is_required_section_guarantee_enabled",
     "is_stage_telemetry_enabled",
     "is_tiered_objective_enabled",
 ]

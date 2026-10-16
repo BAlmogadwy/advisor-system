@@ -306,6 +306,45 @@ def run_v2_optimisation_guarded(
     thread or async worker — so a worker SIGKILL can no longer leave the DB in a
     half-optimised state without a rollback path.
     """
+    # Required-section guarantee — pre-step. ``optimise_current_timetable``
+    # reads the board "as is" and never calls the placer (by design: it must
+    # not regenerate a manually-adjusted board), so a section already missing
+    # before this run started would otherwise never be retried. Patch it up
+    # BEFORE the snapshot, so the reinstated board becomes the baseline this
+    # run's rollback protects and ``optimise_current_timetable`` optimises
+    # on top of a complete board. Full mode does its own reinstatement
+    # internally, at the very end of its own pipeline (it already overwrites
+    # the whole board, so there is nothing useful to pre-repair here).
+    from core.services.timetable_flags import is_required_section_guarantee_enabled
+    from core.services.timetable_required_sections import (
+        find_missing_required_sections,
+        reinstate_missing_required_sections,
+    )
+
+    guarantee_on = is_required_section_guarantee_enabled()
+    pre_repair: dict | None = None
+    missing_before: set[str] = set()
+    if guarantee_on:
+        # A scenario with NO placements at all is "nothing built yet", not
+        # "something was dropped" — every budgeted course looks "missing"
+        # before the first build, and pre-repairing here would silently turn
+        # a current-mode call into a full build, overriding
+        # ``optimise_current_timetable``'s own intentional
+        # "No placements found — nothing to optimise" response. Mirrors the
+        # ``board_snapshot.is_empty`` guard further down for the same reason.
+        from core.models import SectionPlacement
+
+        has_existing_board = SectionPlacement.objects.filter(
+            board__scenario_id=scenario_id
+        ).exists()
+        if mode == "current" and has_existing_board:
+            pre_repair = reinstate_missing_required_sections(scenario_id)
+            missing_before = {row["course_code"] for row in pre_repair["after_missing"]}
+        elif mode != "current":
+            missing_before = {
+                row["course_code"] for row in find_missing_required_sections(scenario_id)
+            }
+
     board_snapshot = snapshot_scenario(scenario_id)
     safety_before = compute_scenario_safety_summary(scenario_id)
     from core.services.timetable_optimisation_policy import (
@@ -437,6 +476,28 @@ def run_v2_optimisation_guarded(
         + list(safety_regression["regressions"])
         + list(instructor_regression["regressions"])
     )
+    # Required-section guarantee — the rollback gate. This run's own work
+    # (full mode's re-placement, current mode's cap/clash repair unplacing a
+    # meeting, etc.) must never leave a required section with FEWER placed
+    # sections than it had right before this run started (after the pre-step
+    # above). Compared as a set of course codes, not a count, so dropping one
+    # course while placing an unrelated one can't cancel out and hide the
+    # loss. A course that was already missing before this run (and could not
+    # be repaired) is reported, not blocked — see
+    # core.services.timetable_required_sections module docstring.
+    if guarantee_on:
+        missing_after = {row["course_code"] for row in find_missing_required_sections(scenario_id)}
+        newly_missing = sorted(missing_after - missing_before)
+        if newly_missing:
+            blocking_regressions.append(
+                {
+                    "metric": "required_sections_missing",
+                    "label": "Required sections dropped",
+                    "before": sorted(missing_before),
+                    "after": sorted(missing_after),
+                    "sections": newly_missing,
+                }
+            )
     # A from-scratch build (the scenario had no placements before this run, e.g.
     # the deferred-generate path) cannot "regress" — there was nothing to
     # protect, and any board is strictly better than an empty one. Only the
@@ -552,4 +613,24 @@ def run_v2_optimisation_guarded(
     attach_student_gap_fields(result)
 
     attach_optimiser_safety_metrics(result, safety_before, safety_after)
+
+    # Required-section guarantee — final reporting. Computed on the FINAL
+    # persisted state (after a rollback restored the board, if one fired
+    # above), and always attached regardless of the flag, so a drop stays
+    # visible in the job's own result even with active repair turned off.
+    from core.services.timetable_required_sections import summarise_required_sections
+
+    final_report = summarise_required_sections(scenario_id)
+    result["required_sections"] = {
+        **final_report,
+        "guarantee_enabled": guarantee_on,
+        "pre_repair": pre_repair,
+    }
+    if final_report["status"] == "incomplete":
+        logger.error(
+            "Required sections still missing after scenario %d run: %s",
+            scenario_id,
+            [row["course_code"] for row in final_report["missing"]],
+        )
+
     return result
