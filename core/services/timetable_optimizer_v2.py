@@ -516,6 +516,52 @@ def refresh_final_score_after_instructor_passes(
     ]
 
 
+def refresh_final_score_after_required_section_repair(
+    result: dict,
+    scenario_id: int,
+    student_profiles: dict,
+    course_rigidity: dict,
+    section_instructor_ids: dict | None,
+    course_tiers: dict | None,
+) -> None:
+    """Re-score the persisted board after a required-section reinstatement.
+
+    Same shape as :func:`refresh_final_score_after_instructor_passes`, run as
+    its own step because the reinstatement happens later in the pipeline
+    (after secondary recovery, so a newly-placed section can still receive
+    student seats) — a separate call, not a second entry in that function's
+    change-detection list, keeps this addition isolated from the existing
+    instructor-pass re-score. No-ops when nothing was actually placed.
+    """
+    report = result.get("required_section_reinstatement")
+    if not isinstance(report, dict) or not report.get("newly_placed"):
+        return
+    if not student_profiles:
+        return
+    sections = build_section_states_for_scenario(scenario_id)
+    if not sections:
+        return
+    post = evaluate_generated_timetable_candidate(
+        candidate_id="post_required_section_repair",
+        generated_sections=sections,
+        student_profiles=student_profiles,
+        course_rigidity=course_rigidity,
+        section_instructor_ids=section_instructor_ids,
+        course_tiers=course_tiers,
+    )
+    before = list(result.get("final_score") or [])
+    after = list(post.lexicographic_score)
+    logger.info("required-section repair changed the board: final_score %s -> %s", before, after)
+    result["final_score"] = after
+    result["unresolved_students"] = len(post.unresolved_student_ids)
+    result["quality_score"] = post.quality_score
+    result["hotspot_courses"] = post.hotspot_courses[:10]
+    result["capacity_pressure_courses"] = post.capacity_pressure_courses[:10]
+    result["reserve_heavy_sections"] = [
+        {"section": s, "ratio": round(r, 2)} for s, r in post.reserve_heavy_sections[:10]
+    ]
+
+
 def _gap_pos6(score) -> int:
     """Instructor idle-minutes element of a score tuple, or 0 when the gap
     penalty was off. Layout-aware: index 8 for the tiered 9-tuple, trailing
@@ -1618,6 +1664,28 @@ def optimise_scenario_timetable_v2(
     result["secondary_recovery"] = run_secondary_recovery_for_scenario(
         scenario_id, result, student_profiles, course_rigidity, section_instructor_ids, course_tiers
     )
+
+    # Required-section guarantee: runs LAST, after every pass that can drop or
+    # move a section (re-placement, local/chain/CP-SAT persist, instructor
+    # cap/clash repair, compaction, secondary recovery), so it sees the true
+    # final board. See core.services.timetable_required_sections for why.
+    from core.services.timetable_required_sections import (
+        maybe_reinstate_missing_required_sections,
+    )
+
+    if checkpoint:
+        checkpoint()
+    reinstatement = maybe_reinstate_missing_required_sections(scenario_id)
+    if reinstatement is not None:
+        result["required_section_reinstatement"] = reinstatement
+        refresh_final_score_after_required_section_repair(
+            result,
+            scenario_id,
+            student_profiles,
+            course_rigidity,
+            section_instructor_ids,
+            course_tiers,
+        )
 
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)

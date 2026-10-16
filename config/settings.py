@@ -1066,6 +1066,18 @@ TIMETABLE_SECONDARY_RECOVERY_ITERATIONS = int(
     os.getenv("TIMETABLE_SECONDARY_RECOVERY_ITERATIONS", "12")
 )
 
+# ── Required-section guarantee ──────────────────────────────────
+# A required course section (one the section-planning budget calls for) can be
+# dropped entirely by the V2 pipeline — zero meetings, zero room, zero board —
+# with nothing downstream ever retrying it. Unlike the day-trade /
+# gap-regular-students knobs above, this is not a stakeholder trade-off: the
+# owner's instruction is that a required section must never silently vanish.
+# Defaults ON, matching the project's other hard-rule flags (clash, daily cap,
+# compaction), with a kill switch in case the retry ever misbehaves.
+TIMETABLE_REQUIRED_SECTION_GUARANTEE_ENABLED = (
+    os.getenv("TIMETABLE_REQUIRED_SECTION_GUARANTEE_ENABLED", "true").lower() == "true"
+)
+
 # ── Exam rooming wall budget ────────────────────────────────────
 # The exam room allocator is bounded twice: a per-phase *deterministic* CP-SAT
 # limit fixes which allocation is produced (so Build, Check, Save and export
