@@ -44,6 +44,7 @@ from core.services.timetable_room_repair import (
     rollback_move,
     try_repair_rooms_locally,
 )
+from core.services.timetable_run_seed import random_for
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,25 @@ def _pattern_preserves_contact_time(
         and sorted(meeting.end_min - meeting.start_min for meeting in pattern.meetings)
         == sorted(meeting.end_min - meeting.start_min for meeting in section.meetings)
     )
+
+
+def _move_seed_key(move: TimetableMove) -> tuple[str, ...]:
+    return (
+        move.move_type,
+        move.section_id_a,
+        move.to_pattern_id_a or "",
+        move.section_id_b or "",
+        move.to_pattern_id_b or "",
+    )
+
+
+def _seeded_move_order(moves: list[TimetableMove], scope: str) -> list[TimetableMove]:
+    rng = random_for(scope)
+    if rng is None:
+        return moves
+    ordered = sorted(moves, key=_move_seed_key)
+    rng.shuffle(ordered)
+    return ordered
 
 
 def generate_all_repattern_moves(
@@ -99,7 +119,7 @@ def generate_all_repattern_moves(
                         to_pattern_id_a=alt.pattern_id,
                     )
                 )
-    return moves
+    return _seeded_move_order(moves, "classic:current:repattern")
 
 
 def generate_swap_moves(
@@ -170,7 +190,7 @@ def generate_swap_moves(
                         to_pattern_id_b=sec_a.pattern_id,
                     )
                 )
-    return moves
+    return _seeded_move_order(moves, "classic:current:swap")
 
 
 def _rollback(

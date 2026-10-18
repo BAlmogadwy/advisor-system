@@ -36,6 +36,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    _board_seed_scope,
     _time_mask,
     placeable_slots,
 )
@@ -63,6 +64,7 @@ from core.services.timetable_optimisation_policy import (
     is_instructor_priority_enabled,
 )
 from core.services.timetable_pr4_instructor import build_section_instructor_ids
+from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -306,7 +308,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     external_ids = external_shared_section_ids(board.scenario_id)
     locked_idx.update(i for i, sec in enumerate(sections) if sec["term_section_id"] in external_ids)
 
-    rng = random.Random(seed)
+    rng = random.Random(seed_for(f"classic:load-balance:{_board_seed_scope(board)}", fallback=seed))
     score_before = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
     best_score = score_before
     teacher_before = _instructor_quality(schedule, sections)

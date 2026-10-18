@@ -28,6 +28,7 @@ that was never the part boards duplicated.
 
 from __future__ import annotations
 
+import random
 from collections import Counter, defaultdict
 from time import perf_counter
 
@@ -49,6 +50,22 @@ from scheduler.solve import (
 from scheduler.validate import validate
 
 SOURCE_TAG = "tw_scheduler"
+
+
+def _search_seeds(seed: int | None, runs: int) -> tuple[int, ...]:
+    """Explicit bridge input keeps run randomness out of the isolated engine.
+
+    Legacy direct callers retain the original portfolio. A supplied root seed
+    selects a repeatable portfolio of distinct CP-SAT seeds; it cannot guarantee
+    identical time-limited parallel solve results.
+    """
+    if seed is None:
+        return tuple(range(1, runs + 1)) if runs > 1 else (0,)
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < (1 << 31):
+        raise ValueError("seed must be an integer between 0 and 2147483647")
+    if runs == 1:
+        return (seed,)
+    return tuple(random.Random(seed).sample(range(1 << 31), runs))
 
 
 def _hhmm(minutes: int) -> str:
@@ -205,6 +222,7 @@ def build_into_scenario(
     #: itself defaults to 1 (rule off) so no test silently inherits a filter.
     min_demand: int = 5,
     progress=None,
+    seed: int | None = None,
 ) -> dict:
     """Plan this scenario with the new engine and persist the result.
 
@@ -212,6 +230,7 @@ def build_into_scenario(
     figure is reported beside the floor it should be read against, because "18
     working days" says nothing without "and 18 was the proven minimum".
     """
+    search_seeds = _search_seeds(seed, runs)
     from core.services.board_ownership import assert_rebuild_ownership
 
     assert_rebuild_ownership(scenario_id)
@@ -288,13 +307,18 @@ def build_into_scenario(
     if runs > 1:
         result = plan_portfolio(
             snapshot,
-            seeds=tuple(range(1, runs + 1)),
+            seeds=search_seeds,
             time_limit_seconds=seconds,
             confirmation_seconds=confirmation_seconds,
             clash_tolerance=clash_tolerance,
         )
     else:
-        result = plan(snapshot, time_limit_seconds=seconds, clash_tolerance=clash_tolerance)
+        result = plan(
+            snapshot,
+            time_limit_seconds=seconds,
+            clash_tolerance=clash_tolerance,
+            **({"seed": search_seeds[0]} if seed is not None else {}),
+        )
 
     if snapshot.low_demand_dropped:
         # Said in the WARNINGS channel, not only in the summary dict, because
@@ -530,6 +554,7 @@ def build_into_scenario(
 
     return {
         "engine": "scheduler",
+        **({"seed": seed, "portfolio_seeds": list(search_seeds)} if seed is not None else {}),
         "scenario_id": scenario.id,
         "sections": len(snapshot.sections),
         "meetings_written": written,

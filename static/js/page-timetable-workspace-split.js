@@ -217,7 +217,11 @@ async function api(url, opts = {}, onError = null) {
     const r = await fetch(url, o);
     if (!r.ok) {
       let msg = `${r.status}`;
-      try { const d = await r.json(); msg = d.error?.message || d.error || d.message || msg; } catch {}
+      try {
+        const d = await r.json(); msg = d.error?.message || d.error || d.message || msg;
+        const seedLabel = runSeedText(d.error?.details || d);
+        if (seedLabel) msg += ` · ${seedLabel}`;
+      } catch {}
       console.error('api error', url, msg);
       if (onError) onError(msg);
       return null;
@@ -283,6 +287,17 @@ async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 180000
 }
 
 /* Timetable outcome helpers — pure renderers, also used by the split workspace. */
+function runSeedText(result) {
+  const seed = result?.seed;
+  return Number.isInteger(seed) && seed >= 0 && seed <= 2147483647
+    ? `${IS_AR ? 'بذرة التشغيل' : 'Run seed'}: ${seed}` : '';
+}
+
+function renderRunSeed(result) {
+  const label = runSeedText(result);
+  return label ? `<div class="tw-run-seed" style="margin-bottom:12px"><b>${label}</b><div style="font-size:11px;color:var(--t3)">${IS_AR ? 'احتفظ بهذه البذرة لإعادة استخدام نقطة بدء البحث. قد تختلف النتائج بسبب حدود الوقت.' : 'Keep this seed to reuse the search starting point. Time limits may still change the outcome.'}</div></div>` : '';
+}
+
 function instructorScheduleOf(result) {
   return result.instructor_schedule_metric || result.instructor_schedule || {};
 }
@@ -351,6 +366,7 @@ function schedulerSeatingText(result) {
 
 function schedulerOutcomeText(result) {
   const bits = [];
+  if (runSeedText(result)) bits.push(runSeedText(result));
   if (result.instructor_days != null) bits.push((IS_AR ? 'مجموع أيام المدرسين: ' : 'Total instructor working days: ') + result.instructor_days);
   if (result.instructor_idle_minutes != null) bits.push((IS_AR ? 'دقائق الانتظار: ' : 'Instructor idle minutes: ') + result.instructor_idle_minutes);
   if (result.unroomed != null) bits.push((IS_AR ? 'بلا قاعة: ' : 'Unroomed: ') + result.unroomed
@@ -7229,12 +7245,18 @@ async function openGenerateModal() {
         const submitBtn = document.getElementById('twsGenSubmit');
         submitBtn.disabled = true;
         statusEl.textContent = IS_AR ? 'جاري التوليد…' : 'Generating…';
+        let generateError = null;
         const data = await api('/ops/tw/generate-workspace/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ year, semester, program, section, strategy, engine, defer_build: true }),
-        });
-        if (!data) { submitBtn.disabled = false; statusEl.textContent = IS_AR ? 'فشل' : 'Failed'; return false; }
+        }, message => { generateError = message; });
+        if (!data) {
+          submitBtn.disabled = false;
+          statusEl.textContent = generateError || (IS_AR ? 'فشل' : 'Failed');
+          if (generateError) notify.error(generateError);
+          return false;
+        }
         let buildResult = null;
         if (data.build_job_id) {
           const building = IS_AR ? 'جاري بناء الجدول ومقارنة المرشحين…' : 'Building timetable and comparing candidates…';
@@ -7243,7 +7265,7 @@ async function openGenerateModal() {
           });
           submitBtn.disabled = false;
           if (job.status !== 'succeeded') {
-            statusEl.textContent = job.error_message || job.status;
+            statusEl.textContent = [job.error_message || job.status, runSeedText({ seed: job.seed ?? data.seed })].filter(Boolean).join(' · ');
             notify.error(statusEl.textContent);
             return false;
           }
@@ -8329,7 +8351,7 @@ async function doOptimise(mode = 'current') {
       // because optimise_current_timetable persists INSIDE the run, the kill
       // lands after the board is written but before run_v2_optimisation_guarded
       // can apply its regression gate — leaving a persisted, ungated board.
-      const sub = await api(url, postOpts({ ...payload, async_run: true }));
+      const sub = await api(url, postOpts({ ...payload, async_run: true }), message => { failMsg = message; });
       if (sub && sub.job_id) {
         const job = await pollPlannerJob(sub.job_id, (j, elapsedMs) => {
           // last_stage_seen is only set once the job finishes, so during the
@@ -8343,9 +8365,9 @@ async function doOptimise(mode = 'current') {
           const res = await api(`/planner-jobs/${sub.job_id}/result/`);
           optimisation = res && res.result;
         } else if (job.status === 'cancelled') {
-          failMsg = IS_AR ? 'أُلغي التحسين' : 'Optimisation cancelled';
+          failMsg = [IS_AR ? 'أُلغي التحسين' : 'Optimisation cancelled', runSeedText({ seed: job.seed ?? sub.seed })].filter(Boolean).join(' · ');
         } else {
-          failMsg = (IS_AR ? 'فشل التحسين: ' : 'Optimisation failed: ') + (job.error_message || '');
+          failMsg = (IS_AR ? 'فشل التحسين: ' : 'Optimisation failed: ') + [job.error_message || '', runSeedText({ seed: job.seed ?? sub.seed })].filter(Boolean).join(' · ');
         }
       } else if (sub && sub.optimisation) {
         // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran
@@ -8571,7 +8593,7 @@ function showOptimiseResults(o, mode) {
     ).join('')}</div>
   ` : '';
   const body = `
-    ${renderInstructorOutcome(o)}${renderSecondaryRecoveryOutcome(o)}
+    ${renderRunSeed(o)}${renderInstructorOutcome(o)}${renderSecondaryRecoveryOutcome(o)}
     <div style="display:grid;grid-template-columns:repeat(${hasCrossMetric ? 4 : 3},1fr);gap:8px;margin-bottom:14px">
       <div style="padding:12px;border-radius:8px;background:rgba(10,142,110,0.08);text-align:center">
         <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>

@@ -61,6 +61,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from itertools import combinations
 
 from core.models import (
@@ -116,6 +117,12 @@ from core.services.timetable_room_oracle import (
     check_type_feasibility,
     is_room_oracle_enabled,
     room_failure_breakdown,
+)
+from core.services.timetable_run_seed import (
+    current_run_seed,
+    random_for,
+    seed_for,
+    seeded_timetable_run,
 )
 from core.services.timetable_same_course import (
     first_overlapping_same_course_window,
@@ -1016,6 +1023,12 @@ def _build_pr3_alternatives(
     return alternatives
 
 
+def _board_seed_scope(board: DeliveryBoard) -> str:
+    """Logical cohort identity; regenerated database primary keys do not enter RNGs."""
+    programmes = ",".join(sorted(p.strip() for p in (board.program or "").split(",") if p.strip()))
+    return f"term={board.nominal_term}:programmes={programmes}:type={board.board_type}"
+
+
 def auto_place_board(
     board_id: int,
     strategy: str = DEFAULT_STRATEGY,
@@ -1634,6 +1647,10 @@ def auto_place_board(
 
             best_score = (float("inf"),) * 6
             best_option = None
+            tie_rng = random_for(
+                f"classic:greedy:{_board_seed_scope(board)}:{strategy}:{code}:{sec_label}"
+            )
+            tied_best = 0
 
             # PR3 commit 3 — per-section trace accumulators. Only populated
             # when the flag is on (cheap early-out keeps the hot scoring
@@ -1899,6 +1916,13 @@ def auto_place_board(
                 if score < best_score:
                     best_score = score
                     best_option = option
+                    tied_best = 1
+                elif tie_rng is not None and score == best_score:
+                    # Reservoir sampling changes only exact score ties. All hard
+                    # filters and the complete quality tuple still lead selection.
+                    tied_best += 1
+                    if tie_rng.randrange(tied_best) == 0:
+                        best_option = option
 
             # PR3 commit 5 — warm-start retention (flag-gated).
             # Priority: PR1 locks (handled by the preload skip above) →
@@ -2596,6 +2620,29 @@ def _sum_board_perturbation_metrics(boards_result: dict) -> dict:
 
 
 def auto_place_scenario(
+    scenario_id: int,
+    strategy: str = DEFAULT_STRATEGY,
+    baseline_placements: dict | None = None,
+    candidate_gen_budget: float | None = None,
+) -> dict:
+    """Place each board in a replayable strategy stream when a run seed is bound."""
+    # Candidate evaluation and winner re-placement must enter the same logical
+    # strategy stream, independently of which portfolio stages ran before them.
+    context = (
+        seeded_timetable_run(seed_for(f"classic:strategy:{strategy}"))
+        if current_run_seed() is not None
+        else nullcontext()
+    )
+    with context:
+        return _auto_place_scenario(
+            scenario_id,
+            strategy=strategy,
+            baseline_placements=baseline_placements,
+            candidate_gen_budget=candidate_gen_budget,
+        )
+
+
+def _auto_place_scenario(
     scenario_id: int,
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,

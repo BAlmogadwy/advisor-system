@@ -47,6 +47,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    _board_seed_scope,
     _time_mask,
     placeable_slots,
 )
@@ -67,6 +68,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
+from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -834,7 +836,7 @@ def optimize_board(
 
     # ── Simulated Annealing ──────────────────────────────────────
 
-    rng = random.Random(seed)
+    rng = random.Random(seed_for(f"classic:sa:{_board_seed_scope(board)}", fallback=seed))
     cost_before = _compute_cost(schedule, sections, online_codes, overlap_matrix)
     best_cost = cost_before
     instructor_before = _instructor_quality(schedule, sections)

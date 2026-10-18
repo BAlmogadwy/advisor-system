@@ -254,7 +254,8 @@ def test_sync_optimisation_owns_scenario_and_preserves_api_shape(
     monkeypatch.setattr("core.services.timetable_v2_runner.run_v2_optimisation_guarded", pipeline)
     response = post(http, f"/ops/tw/scenarios/{owner.id}/optimise-v2/", {})
     assert response.status_code == 200, response.content
-    assert response.json() == {"ok": True, "optimisation": summary}
+    job = PlannerJob.objects.get(scenario=owner)
+    assert response.json() == {"ok": True, "optimisation": {**summary, "seed": job.params["seed"]}}
     assert PlannerJob.objects.get(scenario=owner).status == PlannerJob.STATUS_SUCCEEDED
     assert (
         post(
@@ -438,7 +439,7 @@ def test_sync_generation_owns_scenario_for_both_engines(
         else PlannerJob.MODE_OPTIMISE_V2_FULL
     )
     if outcome == "success":
-        assert response.json()["build_summary"] == summary
+        assert response.json()["build_summary"] == {**summary, "seed": job.params["seed"]}
         assert "build_job_id" not in response.json()
     else:
         assert response.json()["error"]["code"] == "GENERATE_FAILED"

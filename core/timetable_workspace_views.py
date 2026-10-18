@@ -123,6 +123,7 @@ from core.services.timetable_repair_jobs import (
     submit_repair_analysis_job,
     submit_repair_simulation_job,
 )
+from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed
 from core.services.timetable_section_policy import (
     SectionPolicyError,
     create_policy_section_bundle,
@@ -444,6 +445,10 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     payload, err = _safe_json(request)
     if err:
         return err
+    try:
+        seed = parse_run_seed(payload.get("seed"))
+    except ValueError as exc:
+        return _err(str(exc), code="VALIDATION_SEED", status=400)
 
     year = payload.get("year")
     semester = payload.get("semester")
@@ -539,6 +544,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
 
     use_async_build = bool(payload.get("defer_build")) and is_async_planner_enabled()
 
+    seed = resolve_run_seed(seed)
     try:
         result = generate_workspace_scenario(
             year=year_int,
@@ -556,7 +562,14 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         )
     except Exception as exc:
         logger.exception("Generate workspace failed")
-        return _err(str(exc), code="GENERATE_FAILED", status=500)
+        return _err(str(exc), code="GENERATE_FAILED", details={"seed": seed}, status=500)
+
+    result["seed"] = seed
+    if engine == "scheduler":
+        assert scheduler_params is not None
+        build_params = {**scheduler_params, "seed": seed}
+    else:
+        build_params = {"cpsat_time_limit": 60, "seed": seed}
 
     if use_async_build:
         from core.models import PlannerJob
@@ -565,15 +578,13 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         try:
             if engine == "scheduler":
                 job_mode = PlannerJob.MODE_SCHEDULER_BUILD
-                job_params = scheduler_params
             else:
                 job_mode = PlannerJob.MODE_OPTIMISE_V2_FULL
-                job_params = {"cpsat_time_limit": 60}
             build_job_id = submit_planner_job(
                 scenario_id=result["scenario"]["id"],
                 mode=job_mode,
                 user=request.user,
-                params=job_params,
+                params=build_params,
             )
             dispatch_planner_job(build_job_id)
             result["build_job_id"] = str(build_job_id)
@@ -587,8 +598,6 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         # The same engine/policy runs when background execution is disabled.
         # Choosing scheduler must never silently build a classic timetable.
         try:
-            if engine == "scheduler":
-                assert scheduler_params is not None
             from core.models import PlannerJob
             from core.services.planner_job_runner import run_planner_job_synchronously
 
@@ -598,16 +607,21 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
                 if engine == "scheduler"
                 else PlannerJob.MODE_OPTIMISE_V2_FULL,
                 user=request.user,
-                params=scheduler_params if engine == "scheduler" else {"cpsat_time_limit": 60},
+                params=build_params,
             )
             if "error" in build_summary:
-                return _err(str(build_summary["error"]), code="GENERATE_FAILED", status=500)
+                return _err(
+                    str(build_summary["error"]),
+                    code="GENERATE_FAILED",
+                    details={"seed": seed},
+                    status=500,
+                )
             result["engine"] = engine
             result["build_summary"] = build_summary
             result["section_budget"] = compute_scenario_budget(result["scenario"]["id"])
         except Exception as exc:
             logger.exception("Synchronous build failed for scenario %s", result["scenario"]["id"])
-            return _err(str(exc), code="GENERATE_FAILED", status=500)
+            return _err(str(exc), code="GENERATE_FAILED", details={"seed": seed}, status=500)
 
     log_audit_event(
         request,
@@ -2932,8 +2946,13 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     payload, err = _safe_json(request)
     if err:
         return err
+    try:
+        seed = parse_run_seed(payload.get("seed"))
+    except ValueError as exc:
+        return _err(str(exc), code="VALIDATION_SEED", status=400)
 
     mode = payload.get("mode", "current")
+    seed = resolve_run_seed(seed)
 
     # WS-E — opt-in async dispatch. When ``async_run`` is set, the slow V2
     # pipeline is queued on the planner job runner (off the request thread, so
@@ -2961,6 +2980,7 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         # Carry the per-request tuning so the async job reproduces the same
         # rebuild the sync path would have (the runner replays these).
         job_params = {
+            "seed": seed,
             "strategies": payload.get("strategies") or None,
             "max_iterations": payload.get("max_iterations", 50),
             "run_chain_search": payload.get("run_chain_search", True),
@@ -2977,7 +2997,7 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         except ScenarioPublished:
             return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
         dispatch_planner_job(job_id)
-        return _ok({"job_id": str(job_id), "mode": mode, "async": True}, status=202)
+        return _ok({"job_id": str(job_id), "mode": mode, "async": True, "seed": seed}, status=202)
 
     # Synchronous clients still receive the existing result envelope, while
     # using the same durable ownership as background jobs. The async feature
@@ -2993,6 +3013,7 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
             else PlannerJob.MODE_OPTIMISE_V2_CURRENT,
             user=request.user,
             params={
+                "seed": seed,
                 "strategies": payload.get("strategies") or None,
                 "max_iterations": payload.get("max_iterations", 50),
                 "run_chain_search": payload.get("run_chain_search", True),
@@ -3012,6 +3033,7 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         is_internal = str(result["error"]).startswith("Optimiser error")
         return _err(
             result["error"],
+            details={"seed": result.get("seed", seed)},
             code="OPTIMISER_ERROR" if is_internal else "OPTIMISER_NO_DATA",
             status=500 if is_internal else 400,
         )

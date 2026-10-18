@@ -35,6 +35,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    _board_seed_scope,
     _time_mask,
     get_meeting_pattern,
     placeable_slots,
@@ -45,6 +46,7 @@ from core.services.timetable_course_policy import (
     meeting_options_for_policy,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     SAME_COURSE_DIFFERENT_DAY_PENALTY,
     SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY,
@@ -693,7 +695,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
-    solver.parameters.random_seed = 42
+    solver.parameters.random_seed = seed_for(f"classic:cpsat-board:{_board_seed_scope(board)}")
 
     status = solver.solve(model)
 
@@ -1246,7 +1248,7 @@ def solve_board_with_hints(
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
-    solver.parameters.random_seed = 42
+    solver.parameters.random_seed = seed_for(f"classic:cpsat-hinted:{_board_seed_scope(board)}")
 
     status = solver.solve(model)
     status_map = {

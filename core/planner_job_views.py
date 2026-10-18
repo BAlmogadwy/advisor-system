@@ -37,6 +37,7 @@ from core.services.timetable_mutation_guard import (
     reject_active_planner_job,
     scenario_busy_response,
 )
+from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed
 
 
 def _flag_off_404() -> HttpResponse:
@@ -70,6 +71,12 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
         payload = json.loads(request.body or b"{}")
     except json.JSONDecodeError:
         return JsonResponse({"detail": "invalid JSON"}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"detail": "JSON object required"}, status=400)
+    try:
+        seed = parse_run_seed(payload.get("seed"))
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
     scenario_id = payload.get("scenario_id")
     mode = payload.get("mode")
     if not isinstance(scenario_id, int) or mode not in {"optimise_current", "full_rebuild"}:
@@ -84,14 +91,17 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
     busy = reject_active_planner_job(scenario_id)
     if busy is not None:
         return busy
+    seed = resolve_run_seed(seed)
     try:
-        job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=request.user)
+        job_id = submit_planner_job(
+            scenario_id=scenario_id, mode=mode, user=request.user, params={"seed": seed}
+        )
     except ScenarioPlannerBusy as exc:
         return scenario_busy_response(exc.job)
     except ScenarioPublished:
         return JsonResponse({"detail": "Cannot modify published scenario"}, status=400)
     dispatch_planner_job(job_id)
-    return JsonResponse({"job_id": str(job_id), "status": "queued"}, status=201)
+    return JsonResponse({"job_id": str(job_id), "status": "queued", "seed": seed}, status=201)
 
 
 @require_http_methods(["GET"])
@@ -118,9 +128,12 @@ def planner_job_result(request: HttpRequest, job_id: str) -> HttpResponse:
     if deny is not None:
         return deny
     job = get_planner_job(job_id)
-    if job is None or job.status != "succeeded":
+    if job is None:
         return JsonResponse({"detail": "result not ready"}, status=404)
-    return JsonResponse({"job_id": str(job.id), "result": job.result_json})
+    seed = (job.params or {}).get("seed")
+    if job.status != "succeeded":
+        return JsonResponse({"detail": "result not ready", "seed": seed}, status=404)
+    return JsonResponse({"job_id": str(job.id), "result": job.result_json, "seed": seed})
 
 
 @require_http_methods(["POST"])

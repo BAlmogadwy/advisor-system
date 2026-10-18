@@ -178,11 +178,10 @@ The workspace actions have distinct scopes:
 | Optimise Current | Loaded scenario, starting from its existing timetable | Protected sections retain their time patterns |
 | Full Rebuild | Loaded scenario, rebuilding the other sections | Protected sections retain their time patterns and all meetings |
 
-Generate intentionally tries the same strategy portfolio and fixed seeds.
-Repeated results are expected, although time limits and parallel solver workers
-prevent a guarantee of identical output. Current optimisation searches for
-admissible improvements to the saved timetable; an unchanged result does not
-establish global optimality. This correction does not alter seeds or scoring.
+At this checkpoint Generate still used fixed search seeds. The subsequent
+per-run seed change below replaces that behavior without changing the scoring
+or lock contract. Current optimisation searches for admissible improvements to
+the saved timetable; an unchanged result does not establish global optimality.
 
 Verification on a fresh SQLite copy of the real 258-student scenario used all
 seven Full Rebuild strategies. Two individual placement locks protected the
@@ -216,3 +215,69 @@ regressions cover slow/fast replies, repeated keys, shared panes, failed replies
 failed refreshes and genuine later unlocks; three fail against the original
 script. The user database's original 100 scenario placements were compared
 read-only with the pre-audit snapshot and remained identical.
+
+## Per-run search seeds — 2026-10-18
+
+Each accepted Generate, Full Rebuild, or Optimise Current request now receives
+a fresh nonnegative 31-bit seed. The server stores it in the planner job before
+dispatch and includes it in polling and result data. Both workspace result
+dialogs display the seed, including zero. Generate still creates a new scenario;
+both optimisation options retain the loaded scenario's protected time patterns.
+
+API callers may supply `seed` as an integer from 0 through 2147483647 to reuse
+the starting choices. Omission or null requests a fresh seed. Invalid values,
+including booleans and numeric strings, are rejected before scenario creation
+or stale-job reconciliation. Retries of an existing worker use its stored seed.
+
+The classic strategy portfolio derives independent streams from that root.
+Greedy placement varies only options tied on the complete placement score;
+candidate evaluation and final placement use the same strategy stream. Current
+optimisation varies eligible move order while retaining strict improvement
+acceptance, instructor priorities, safety checks and locks. CP-SAT and annealing
+receive derived seeds. The alternative scheduler receives the root explicitly
+and derives its portfolio seeds at its existing isolation boundary. No
+process-global random state is changed, and context cleanup covers failures
+and cancellation. Direct legacy service calls without a seeded run retain
+their previous defaults.
+
+A fresh seed explores different choices; it does not require a different final
+timetable. Constrained data may admit one acceptable result, and Current may
+find no safe improvement. Reusing a seed helps reproduce starting choices;
+parallel workers and time budgets can still affect the final result. No
+placement or acceptance constraint is relaxed to force visible variety.
+
+Permanent tests exercise actual greedy layout variety, same-seed replay across
+new database IDs, different acceptable Current improvements, equal-quality
+Current rejection, complete locked patterns under all seven strategies,
+English bundles, concurrent context isolation, API validation and seed-zero
+handling. The two variety regressions fail against the preceding checkpoint.
+Bounded real-data replay evidence is stored locally under the ignored
+`.tmp/run-seed-audit/` directory; all replay databases are fresh read-only-source
+SQLite backups.
+
+The bounded real 258-student Generate replays with seeds 73011 and 73012 each
+built 100 placements and produced different time layouts. Current replays with
+seeds 101 and 202 also produced different layouts, preserved the five original
+meetings in two partly locked sections, kept each instructor's days and idle
+within the saved ceilings, and reduced total idle from 780 to 755 minutes with
+18 instructor-days in both runs. A 405-student Term 2 Generate replay with
+explicit seed zero built 187 placements; all four English sections retained
+their complete allowed pattern and empty room assignments. These short replay
+budgets demonstrate seed routing and invariants, not production quality maxima.
+
+A seeded Full Rebuild retained all 100 placements and all five protected
+meeting identities/times/flags. Its saved-week instructor comparison was worse
+(18 to 22 days; 780 to 1320 idle minutes). Full's existing gate compares its
+generated candidates and subsequent passes, rather than imposing Current's
+saved-week instructor ceilings. Independent review confirmed that the runner,
+ranking and policy modules are unchanged by this seed feature. The initial
+probe's unconditional saved-week assertion failed for Full and was corrected
+to apply to Current only; the original evidence remains available. This seed
+change does not change Full Rebuild's acceptance contract.
+
+Final local checks passed 1,587 related Python tests (one PostgreSQL-only skip),
+101 frontend tests, Ruff lint/format, JavaScript parsing, Django system checks,
+control-character/whitespace checks, scoped Bandit, and mypy on the new pure
+seed helper. Independent Codex review found no actionable issues. Full-import
+mypy still has existing project annotation errors; named Gemini release review
+has not been completed. No production release is represented by these checks.
