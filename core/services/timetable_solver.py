@@ -39,6 +39,7 @@ from core.services.timetable_autoplace import (
     get_meeting_pattern,
     placeable_slots,
 )
+from core.services.timetable_board_persistence import locked_physical_section_ids
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -270,9 +271,9 @@ def _board_fixed_locked_meetings(board) -> list[dict]:
     if not is_lock_enforcement_enabled():
         return []
     fixed: list[dict] = []
-    rows = SectionPlacement.objects.filter(board=board, is_locked=True).select_related(
-        "term_section"
-    )
+    rows = SectionPlacement.objects.filter(
+        board=board, term_section_id__in=locked_physical_section_ids(board.scenario_id)
+    ).select_related("term_section")
     for lp in rows:
         try:
             day_idx = WEEKDAYS.index((lp.day or "").upper())
@@ -798,9 +799,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         board=board, term_section__source_tag="tw_auto"
     )
     if is_lock_enforcement_enabled():
-        locked_sections = SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
-            "term_section_id", flat=True
-        )
+        locked_sections = locked_physical_section_ids(board.scenario_id)
         auto_placements = auto_placements.exclude(term_section_id__in=locked_sections)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()

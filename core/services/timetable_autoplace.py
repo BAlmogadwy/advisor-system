@@ -73,6 +73,7 @@ from core.models import (
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
+from core.services.timetable_board_persistence import locked_physical_section_ids
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -1107,8 +1108,8 @@ def auto_place_board(
     # parallel "locked cells" path is checked in isolation.
     #
     # Telemetry honesty: in PR1 ``pr1_lock_rejections`` records
-    # lock-respect events from preloaded locked placements (one entry
-    # per locked row). It does NOT record per-candidate lock collisions
+    # lock-respect events from preloaded protected placements (one entry
+    # per frozen physical meeting). It does NOT record per-candidate lock collisions
     # during round-robin placement — the structural skip makes those
     # collisions unreachable, so there is nothing to count there.
     lock_rule_on = is_lock_enforcement_enabled()
@@ -1424,8 +1425,8 @@ def auto_place_board(
             section_instructors.setdefault(section_full, set()).update(ids)
 
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
-    # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
-    # for this board are seeded into the same occupancy structures the
+    # When TIMETABLE_ENFORCE_LOCKS is on, every meeting of a section
+    # anchored by a lock is seeded into the same occupancy structures the
     # planner consults below:
     #   - placed_masks + all_placed_masks → same-course / cross-course
     #     student-overlap conflict detection
@@ -1439,22 +1440,11 @@ def auto_place_board(
     # ~820 already counts locked rows, so ``to_place = planned_sections
     # - already`` excludes them and the sec_round loop never retries
     # that section index. One LOCK_RESPECT telemetry row is emitted per
-    # locked cell so the payload records which locks were respected.
+    # protected cell without changing its original is_locked flag.
     if lock_rule_on:
-        protected_sections = {
-            p.term_section_id
-            for p in SectionPlacement.objects.filter(
-                board__scenario=scenario, is_locked=True
-            ).select_related("term_section")
-            if get_course_meeting_policy(
-                p.term_section.course_code, p.term_section.course_key, p.term_section.course_number
-            )
-        }
-        from django.db.models import Q
-
+        protected_sections = locked_physical_section_ids(scenario.pk)
         locked_placements = (
-            SectionPlacement.objects.filter(board=board)
-            .filter(Q(is_locked=True) | Q(term_section_id__in=protected_sections))
+            SectionPlacement.objects.filter(board=board, term_section_id__in=protected_sections)
             .select_related("term_section")
             .order_by("day", "start_time")
         )

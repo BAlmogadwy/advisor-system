@@ -144,3 +144,75 @@ project convention), `manage.py check` clean.
 
 Pure additive module + four call-site redirects. Revert = `git revert` the
 merge; no migration, no schema change, no data backfill.
+
+## Lock contract correction — 2026-10-18
+
+The earlier per-placement reset behavior could silently truncate an ordinary
+section. A real-data Full Rebuild with one locked meeting each for MATH105 and
+PHYS103 kept those rows but removed three unlocked companion meetings: their
+weekly contact time fell from 150/250 minutes to 75/75 minutes. Counting the
+surviving section as already placed prevented the generator from restoring the
+missing meetings, and course-presence checks did not detect that loss.
+
+For a lock-preserving rebuild, any locked meeting therefore protects the
+complete physical section's existing time pattern, including copies on other
+boards in the same scenario. Reset preserves all companion placements and
+canonical meetings; generation occupancy and later solver/persistence stages
+must honor that same section boundary. This does not set additional database
+lock flags. Sections without locks remain available for rebuilding. An explicit
+`keep_locked=False` reset remains a hard wipe.
+
+Canonical cleanup still removes orphan meeting rows that have no retained
+placement. Protecting a complete section preserves its valid meeting identities
+and metadata without reintroducing phantom instructor occupancy.
+
+This protects meeting days, start/end times and complete weekly contact hours.
+The user accepts room reassignment; this correction adds no room immobility
+rule. ENG101/ENG102 retain their indivisible four-day policy.
+
+The workspace actions have distinct scopes:
+
+| Action | Scenario affected | Saved locks |
+| --- | --- | --- |
+| Generate | Creates a new scenario from the generation inputs | Existing scenario stays intact; its locks are not copied |
+| Optimise Current | Loaded scenario, starting from its existing timetable | Protected sections retain their time patterns |
+| Full Rebuild | Loaded scenario, rebuilding the other sections | Protected sections retain their time patterns and all meetings |
+
+Generate intentionally tries the same strategy portfolio and fixed seeds.
+Repeated results are expected, although time limits and parallel solver workers
+prevent a guarantee of identical output. Current optimisation searches for
+admissible improvements to the saved timetable; an unchanged result does not
+establish global optimality. This correction does not alter seeds or scoring.
+
+Verification on a fresh SQLite copy of the real 258-student scenario used all
+seven Full Rebuild strategies. Two individual placement locks protected the
+complete five-meeting MATH105/PHYS103 patterns: their original IDs, days,
+start/end times and flags matched exactly after the run, retaining 150 and 250
+weekly contact minutes. The corrected run retained 100 placements, whereas the
+same pre-fix probe retained 97. The guarded run succeeded without rollback.
+This was a bounded replay (zero local iterations, chain/global CP-SAT polish
+off, candidate budget 0.1 seconds per board, short compaction/recovery budgets),
+not a measurement of production search quality. Separate real solver and
+repair regressions cover protected companion occupancy, shared board copies,
+cap/clash repairs, flag-off behavior and canonical orphan cleanup.
+
+A Generate scaffold on that private copy created a new scenario with five
+boards and no inherited placements or locks; the original scenario's placement
+and canonical meeting rows matched their pre-call snapshots. No saved user
+database was modified. Local replay evidence remains under the ignored
+`.tmp/lock-audit-20261018/` directory.
+
+Final local validation passed 1,469 related Python tests (one PostgreSQL-only
+skip) and 87 timetable frontend tests. Ruff lint/format, JavaScript parsing,
+Django system checks, whitespace/control-character checks, scoped Bandit on the
+six changed services, and scoped mypy on board persistence passed. Independent
+Codex review approved the frozen changes. This is local correctness validation,
+not the specifically required Gemini or full-project type release gate.
+
+The split-view lock control also passed browser verification against the copied
+real timetable: a native double-click produced one save, a later Unlock still
+worked, and the meeting retained its time. Twelve permanent full-script DOM
+regressions cover slow/fast replies, repeated keys, shared panes, failed replies,
+failed refreshes and genuine later unlocks; three fail against the original
+script. The user database's original 100 scenario placements were compared
+read-only with the pre-audit snapshot and remained identical.

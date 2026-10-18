@@ -2597,15 +2597,15 @@ function paneEl(idx) { return document.querySelector(`.tws-pane[data-idx="${idx}
 async function loadAndRenderPane(idx) {
   const p = S.panes[idx];
   const el = paneEl(idx);
-  if (!el) return;
-  if (!p.boardId || !S.scenarioId) { renderPaneEmpty(idx); return; }
+  if (!el) return false;
+  if (!p.boardId || !S.scenarioId) { renderPaneEmpty(idx); return true; }
   // Board detail carries slot config + placements; the conflicts list is a
   // separate endpoint so we fetch both in parallel.
   const [bdata, cdata] = await Promise.all([
     api(`/ops/tw/boards/${p.boardId}/`),
     api(`/ops/tw/boards/${p.boardId}/conflicts/`),
   ]);
-  if (!bdata) return;
+  if (!bdata) return false;
   p.boardData = bdata;
   // conflicts endpoint spreads its fields at the response root.
   p.boardData.conflicts = cdata
@@ -2616,6 +2616,7 @@ async function loadAndRenderPane(idx) {
   renderPane(idx);
   if (S.createAssist.active) paintCreateSectionTargets();
   if (activeSplitSearch()) refreshSplitSearch();
+  return !!cdata;
 }
 
 function renderPaneEmpty(idx) {
@@ -3486,6 +3487,7 @@ async function refreshBoardsSummary() {
   RP.builder.studentCache = {};
   if (RP.open) renderRpanel();
   if (BP.open) renderBpanel();
+  return !!(bdata && bdata.boards);
 }
 
 /* ── Cross-pane sync-hover (direct DOM) ── */
@@ -6936,7 +6938,7 @@ function renderRpanelSelection(body) {
     <div class="tws-protect-panel">
       <div class="tws-protect-title">${IS_AR ? 'حماية التحريك التلقائي' : 'Move protection'}</div>
       <div class="tws-protect-grid">
-        <button class="tws-protect-btn${p.is_locked ? ' on' : ''}" data-protect="section">${p.is_locked ? (IS_AR ? 'فتح الشعبة' : 'Unlock section') : (IS_AR ? 'قفل الشعبة' : 'Lock section')}</button>
+        <button class="tws-protect-btn${p.is_locked ? ' on' : ''}" data-protect="section" data-lock-placement-id="${p.id}" ${pendingLockPlacements.has(String(p.id)) ? 'disabled aria-busy="true"' : ''}>${p.is_locked ? (IS_AR ? 'فتح الشعبة' : 'Unlock section') : (IS_AR ? 'قفل الشعبة' : 'Lock section')}</button>
         <button class="tws-protect-btn${instructorProtected ? ' on' : ''}" data-protect="instructor" ${instructorKey ? '' : 'disabled'}>${IS_AR ? 'حماية المدرس' : 'Protect instructor'}</button>
         <button class="tws-protect-btn${roomProtected ? ' on' : ''}" data-protect="room" ${roomKey && roomKey !== 'UNASSIGNED' ? '' : 'disabled'}>${IS_AR ? 'حماية القاعة' : 'Protect room'}</button>
         <button class="tws-protect-btn${timeProtected ? ' on' : ''}" data-protect="time">${IS_AR ? 'حماية الوقت' : 'Protect time'}</button>
@@ -6971,10 +6973,10 @@ function renderRpanelSelection(body) {
   const guidedBtn = body.querySelector('#twsApplyGuidedFix');
   if (guidedBtn) guidedBtn.addEventListener('click', applyGuidedResolver);
   body.querySelectorAll('.tws-protect-btn[data-protect]').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async event => {
       const kind = btn.dataset.protect;
       if (kind === 'section') {
-        await doToggleLock(p.id, located.paneIdx);
+        await doToggleLock(p.id, located.paneIdx, event);
         return;
       }
       if (kind === 'instructor') toggleProtection('instructors', instructor);
@@ -7784,6 +7786,8 @@ function openDrawer(paneIdx, placementId) {
 
   // Lock-button label mirrors current state (only update the label span)
   const lockBtn = $('twsDrawerLock');
+  lockBtn.dataset.lockPlacementId = String(p.id);
+  syncPlacementLockControls(p.id);
   const lockLbl = lockBtn.querySelector('.lbl');
   if (lockLbl) {
     lockLbl.textContent = p.is_locked
@@ -7876,22 +7880,71 @@ async function drawerRemoveInstructor(p, instructorId) {
 }
 
 /* ── Lock / unlock ── */
-async function doToggleLock(placementId, paneIdx) {
+const pendingLockPlacements = new Set();
+
+function syncPlacementLockControls(placementId) {
+  const key = String(placementId);
+  const pending = pendingLockPlacements.has(key);
+  const placement = findPlacement(placementId)?.placement;
+  document.querySelectorAll('[data-lock-placement-id]').forEach(button => {
+    if (button.dataset.lockPlacementId !== key) return;
+    button.disabled = pending;
+    button.setAttribute('aria-busy', String(pending));
+    if (!placement) return;
+    if (button.dataset.protect === 'section') {
+      button.classList.toggle('on', !!placement.is_locked);
+      button.textContent = placement.is_locked
+        ? (IS_AR ? 'فتح الشعبة' : 'Unlock section') : (IS_AR ? 'قفل الشعبة' : 'Lock section');
+    } else {
+      const label = button.querySelector('.lbl');
+      if (label) label.textContent = placement.is_locked
+        ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock');
+    }
+  });
+}
+
+async function doToggleLock(placementId, paneIdx, activation) {
+  // One mouse double-click/held key expresses one toggle, even when the first
+  // response is fast enough to finish before the repeated activation arrives.
+  if (activation?.detail > 1 || activation?.repeat) return;
+  const key = String(placementId);
+  if (pendingLockPlacements.has(key)) return;
   const located = findPlacement(placementId);
   if (!located) { notify.error(IS_AR ? 'غير موجود' : 'Placement not found'); return; }
-  const wasLocked = !!located.placement.is_locked;
-  const data = await api(`/ops/tw/placements/${placementId}/lock/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-  });
-  if (!data) return;
-  notify.success(wasLocked
-    ? (IS_AR ? 'تم فتح القفل' : 'Unlocked')
-    : (IS_AR ? 'تم القفل' : 'Locked'));
-  // Reload every pane — placement could be visible in more than one
-  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
-  await refreshBoardsSummary();
-  // If drawer open on this placement, reopen to refresh the body
-  if (DRAWER.placementId === placementId) openDrawer(paneIdx, placementId);
+  pendingLockPlacements.add(key);
+  syncPlacementLockControls(placementId);
+  let saved = false;
+  try {
+    const data = await api(`/ops/tw/placements/${placementId}/lock/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    }, message => notify.error(message));
+    if (!data) return;
+    if (typeof data.is_locked !== 'boolean') {
+      notify.error(IS_AR ? 'تعذّر تأكيد حالة القفل. أعد تحميل اللوحة.' : 'Lock status was not confirmed. Reload the board.');
+      return;
+    }
+    saved = true;
+    // The server owns the toggle. Update every visible copy before reloading,
+    // so a failed refresh still retains its acknowledged state and action label.
+    S.panes.forEach(pane => (pane.boardData?.placements || []).forEach(row => {
+      if (String(row.id) === key) row.is_locked = data.is_locked;
+    }));
+    syncPlacementLockControls(placementId);
+    notify.success(data.is_locked ? (IS_AR ? 'تم القفل' : 'Locked') : (IS_AR ? 'تم فتح القفل' : 'Unlocked'));
+    let refreshFailed = false;
+    for (let i = 0; i < paneCount(); i++) {
+      if (await loadAndRenderPane(i) === false) refreshFailed = true;
+    }
+    if (await refreshBoardsSummary() === false) refreshFailed = true;
+    if (String(DRAWER.placementId) === key) openDrawer(DRAWER.paneIdx ?? paneIdx, placementId);
+    if (refreshFailed) notify.warning(IS_AR ? 'حُفظ القفل، لكن تعذّر تحديث بعض البيانات. أعد تحميل اللوحة.' : 'Lock saved, but some views could not refresh. Reload the board.');
+  } catch (error) {
+    if (saved) notify.warning(IS_AR ? 'حُفظ القفل، لكن تعذّر تحديث بعض البيانات. أعد تحميل اللوحة.' : 'Lock saved, but some views could not refresh. Reload the board.');
+    else notify.error(error.message || String(error));
+  } finally {
+    pendingLockPlacements.delete(key);
+    syncPlacementLockControls(placementId);
+  }
 }
 
 /* ── Block-slots mode ── */
@@ -8675,8 +8728,8 @@ function initDismissibleDetailsMenus() {
   // Drawer events
   $('twsDrawerClose').addEventListener('click', closeDrawer);
   $('twsDrawerBackdrop').addEventListener('click', closeDrawer);
-  $('twsDrawerLock').addEventListener('click', () => {
-    if (DRAWER.placementId != null) doToggleLock(DRAWER.placementId, DRAWER.paneIdx);
+  $('twsDrawerLock').addEventListener('click', event => {
+    if (DRAWER.placementId != null) doToggleLock(DRAWER.placementId, DRAWER.paneIdx, event);
   });
   $('twsDrawerRemove').addEventListener('click', () => {
     if (DRAWER.placementId != null) doRemove(DRAWER.placementId, DRAWER.paneIdx);
@@ -8798,7 +8851,7 @@ function initDismissibleDetailsMenus() {
     if (e.key === 'l' && pid != null) {
       // Lowercase L toggles lock on the targeted placement
       e.preventDefault();
-      doToggleLock(pid, pidx);
+      doToggleLock(pid, pidx, e);
       return;
     }
 

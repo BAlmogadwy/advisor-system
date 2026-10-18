@@ -105,10 +105,12 @@ def test_reset_keep_locked_preserves_locked_placement_and_meeting() -> None:
 
 
 @pytest.mark.django_db
-def test_reset_keeps_only_locked_meetings_of_a_partially_locked_section() -> None:
-    """A section can have a mix of locked and unlocked placements (locking is
-    per-placement). Reset must keep only the meeting that backs the surviving
-    locked placement — not both — or the preserved section itself drifts."""
+def test_reset_preserves_complete_pattern_of_a_partially_locked_section() -> None:
+    """Keep the complete physical pattern, original identities and row flags.
+
+    A lone retained meeting would count as a whole section, preventing the
+    generator from replacing its dropped companion and losing contact time.
+    """
     scenario, board = _scenario_with_board("reset-mixed-lock")
     ts = TermSection.objects.create(
         scenario=scenario,
@@ -137,16 +139,19 @@ def test_reset_keeps_only_locked_meetings_of_a_partially_locked_section() -> Non
             term_section=ts, day=day, start_time=start, end_time=end, room="R1"
         )
 
+    placement_before = list(
+        SectionPlacement.objects.filter(term_section=ts).order_by("pk").values()
+    )
+    meetings_before = list(
+        TermSectionMeeting.objects.filter(term_section=ts).order_by("pk").values()
+    )
     reset_scenario(scenario.id, keep_locked=True)
 
     placements = SectionPlacement.objects.filter(term_section=ts)
     meetings = TermSectionMeeting.objects.filter(term_section=ts)
-    # Exactly the locked Monday survives in BOTH tables — no stranded Wednesday
-    # meeting (which would be placement != meeting drift on a preserved section).
-    assert placements.count() == 1
-    assert meetings.count() == 1
-    assert placements.first().day == "MON"
-    assert meetings.first().day == "MON"
+    assert list(placements.order_by("pk").values()) == placement_before
+    assert list(meetings.order_by("pk").values()) == meetings_before
+    assert list(placements.order_by("pk").values_list("is_locked", flat=True)) == [True, False]
 
 
 @pytest.mark.django_db
@@ -349,3 +354,51 @@ def test_sync_leaves_global_section_untouched() -> None:
     # Global section's meeting is unchanged (not scenario-owned).
     gm = TermSectionMeeting.objects.get(term_section=global_ts)
     assert (gm.day, gm.start_time) == ("THU", "08:00")
+
+
+@pytest.mark.django_db
+def test_reset_preserves_locked_companions_but_prunes_unplaced_canonical_orphans():
+    scenario, board = _scenario_with_board("protected-with-orphan")
+    section = _make_section(
+        scenario,
+        board,
+        "AI101",
+        "S1",
+        "SUN",
+        "09:00",
+        "10:15",
+        locked=True,
+        instructor="Dr Original",
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=section,
+        day="WED",
+        start_time="13:00",
+        end_time="14:15",
+        room="R1",
+    )
+    TermSectionMeeting.objects.create(
+        term_section=section,
+        day="WED",
+        start_time="13:00",
+        end_time="14:15",
+        room="R1",
+        instructor="Free text",
+        building="Original building",
+        floor_wing="F1",
+    )
+    original = list(TermSectionMeeting.objects.filter(term_section=section).order_by("pk").values())
+    orphan = TermSectionMeeting.objects.create(
+        term_section=section, day="THU", start_time="16:00", end_time="17:15", instructor="Phantom"
+    )
+
+    result = reset_scenario(scenario.pk, keep_locked=True)
+
+    assert (
+        list(TermSectionMeeting.objects.filter(term_section=section).order_by("pk").values())
+        == original
+    )
+    assert not TermSectionMeeting.objects.filter(pk=orphan.pk).exists()
+    assert SectionPlacement.objects.filter(term_section=section).count() == 2
+    assert result.meetings_deleted == 1

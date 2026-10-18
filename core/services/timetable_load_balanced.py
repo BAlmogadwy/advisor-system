@@ -39,7 +39,10 @@ from core.services.timetable_autoplace import (
     _time_mask,
     placeable_slots,
 )
-from core.services.timetable_board_persistence import external_shared_section_ids
+from core.services.timetable_board_persistence import (
+    external_shared_section_ids,
+    locked_physical_section_ids,
+)
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_local_search import (
     _apply_move,
@@ -119,6 +122,7 @@ def _build_schedule_from_db(
     schedule: dict[int, list[dict]] = {}
     sec_map: dict[tuple[str, str], int] = {}
 
+    protected_sections = locked_physical_section_ids(board.scenario_id)
     for p in placements:
         key = (p.term_section.course_key or p.term_section.course_code, p.term_section.section)
         if key not in sec_map:
@@ -151,7 +155,7 @@ def _build_schedule_from_db(
             schedule[idx] = []
 
         idx = sec_map[key]
-        if p.is_locked:
+        if p.is_locked or p.term_section_id in protected_sections:
             sections[idx]["is_locked"] = True
         # Find slot_idx: check lecture slots, then lab slots
         slot_idx = 0
@@ -466,11 +470,7 @@ def rebalance_and_persist_board(
     locks_on = is_lock_enforcement_enabled()
     locked_ts_ids: set[int] = external_shared_section_ids(board.scenario_id)
     if locks_on:
-        locked_ts_ids |= set(
-            SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
-                "term_section_id", flat=True
-            )
-        )
+        locked_ts_ids |= locked_physical_section_ids(board.scenario_id)
 
     auto = SectionPlacement.objects.filter(board=board, term_section__source_tag="tw_auto")
     if locked_ts_ids:
