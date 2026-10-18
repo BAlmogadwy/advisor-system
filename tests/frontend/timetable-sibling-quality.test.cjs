@@ -124,6 +124,7 @@ function splitScenarioHarness(initial = '665', scenarios = {}) {
   const calls = [], opened = [], warnings = [];
   const defaultScenario = { id: 662, name: 'Term 1 default', status: 'draft', academic_year: '1448', term: '1' };
   const context = vm.createContext({ DEFAULT_YEAR: 1448, DEFAULT_TERM: 1, INITIAL_SCENARIO: initial, IS_AR: false, URLSearchParams,
+    window: { history: { state: null } },
     S: { scenarioId: null, scenarios: [] }, T: { selectScenario: 'Select scenario' }, document: dom.window.document,
     $: id => dom.window.document.getElementById(id), notify: { warning: message => warnings.push(message) },
     onScenarioChange: async () => opened.push(dom.window.document.getElementById('twsScenario').value),
@@ -136,6 +137,7 @@ function splitScenarioHarness(initial = '665', scenarios = {}) {
       return { scenarios: Object.values(scenarios).filter(row => row.academic_year === scope.get('year') && row.term === scope.get('term')) };
     },
   });
+  vm.runInContext(slice(split, 'const COPY_ACTIVITY =', 'async function api('), context);
   vm.runInContext(slice(split, 'async function loadScenarios(', 'async function onScenarioChange('), context);
   return { context, calls, opened, warnings, dom };
 }

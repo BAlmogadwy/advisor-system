@@ -22,6 +22,7 @@ Page
 Scenarios
     GET  tw_scenarios_list_view          -- list scenarios for year/term
     POST tw_scenario_create_view         -- create a new scenario
+    POST tw_scenario_copy_view           -- copy the workspace into a new draft
     GET  tw_scenario_detail_view         -- get scenario detail
     POST tw_scenario_slots_update_view   -- edit scenario slot config
     POST tw_scenario_publish_view        -- publish (lock) a scenario
@@ -124,6 +125,7 @@ from core.services.timetable_repair_jobs import (
     submit_repair_simulation_job,
 )
 from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed
+from core.services.timetable_scenario_copy import ScenarioCopyError, copy_timetable_scenario
 from core.services.timetable_section_policy import (
     SectionPolicyError,
     create_policy_section_bundle,
@@ -756,6 +758,47 @@ def tw_scenario_create_view(request: HttpRequest) -> JsonResponse:
         details={"scenario_id": scenario.id, "name": name, "year": year, "term": term},
     )
     return _ok({"scenario": _scenario_to_dict(scenario)}, status=201)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_scenario_copy_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Create a separate draft without changing or publishing the source."""
+    deny = _require_general_advisor(request)
+    if deny is not None:
+        return deny
+    payload, error = _safe_json(request)
+    if error is not None:
+        return error
+    try:
+        result = copy_timetable_scenario(
+            scenario_id, name=payload.get("name"), created_by=request.user.get_username()
+        )
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    except ScenarioPlannerBusy as exc:
+        return scenario_busy_response(exc.job)
+    except ScenarioCopyError as exc:
+        return _err(str(exc), code=exc.code, status=exc.status)
+    log_audit_event(
+        request,
+        action="tw.scenario.copy",
+        status="success",
+        details={
+            "source_scenario_id": scenario_id,
+            "scenario_id": result.scenario.pk,
+            **result.counts,
+        },
+    )
+    return _ok(
+        {
+            "scenario": _scenario_to_dict(result.scenario),
+            "boards": [_board_to_dict(board) for board in result.boards],
+            "copied_from_scenario_id": scenario_id,
+            "copy_summary": result.counts,
+        },
+        status=201,
+    )
 
 
 @login_required(login_url="login")

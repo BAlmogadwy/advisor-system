@@ -79,6 +79,7 @@
     <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select Scenario{% endif %}</option>
   </select>
   <button class="tw-btn" id="twNewScenario" type="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}إنشاء سيناريو{% else %}Create scenario{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}إنشاء سيناريو{% else %}Create scenario{% endif %}">+</button>
+  <button class="tw-btn" id="twCopyScenario" type="button" disabled>{% if LANGUAGE_CODE == 'ar' %}نسخ السيناريو{% else %}Copy scenario{% endif %}</button>
 
   <div class="tw-cmd-sep"></div>
 
@@ -224,6 +225,6 @@
   const defaultTerm = "{{ default_term|default:''|escapejs }}";
 </script>
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=35"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=37"></script>
 <script src="{% static 'js/timetable-workspace-accessibility.js' %}?v=1"></script>
 {% endblock %}

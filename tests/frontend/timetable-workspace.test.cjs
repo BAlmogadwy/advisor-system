@@ -211,10 +211,11 @@ test('manual sections beyond the initial page remain reachable and searchable', 
 });
 
 test('MRI, Graph and Split return URLs restore the selected saved scenario and board', async t => {
-  const h = await harness(t);
-  h.w.history.replaceState({}, '', '?scenario=1&board=2');
+  const h = await harness(t, url => url.startsWith('/ops/tw/boards/?') ? { boards: [board, { ...board, id: 3, label: 'Second board' }] } : undefined);
+  h.w.history.replaceState({}, '', '?scenario=1&board=3');
   await h.w.restoreWorkspaceContext();
-  assert.equal(h.w.TW.scenarioId, 1); assert.equal(h.w.TW.boardId, 2);
+  assert.equal(h.w.TW.scenarioId, 1); assert.equal(h.w.TW.boardId, 3);
+  assert.equal(new URL(h.w.location.href).searchParams.get('board'), '3');
   assert.equal(h.d.getElementById('twScenario').value, '1');
   assert.equal(h.d.getElementById('twGraphPage').getAttribute('href'), '/timetable-workspace/graph/?scenario=1');
 });

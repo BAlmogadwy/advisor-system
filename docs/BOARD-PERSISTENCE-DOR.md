@@ -281,3 +281,57 @@ control-character/whitespace checks, scoped Bandit, and mypy on the new pure
 seed helper. Independent Codex review found no actionable issues. Full-import
 mypy still has existing project annotation errors; named Gemini release review
 has not been completed. No production release is represented by these checks.
+
+## Independent scenario copies — 2026-10-18
+
+Both workspace views provide Copy scenario beside the scenario selector. The
+optional name defaults to a unique copy name within the source year and term.
+A published or draft source produces an editable draft; copying does not run
+Generate or Optimise. General Advisors and Super Admins use the authenticated
+POST `/ops/tw/scenarios/<id>/copy/` endpoint. Existing edit and planner controls
+retain their permissions and behaviour.
+
+The copy transaction creates new boards and physical sections, including
+unplaced sections and sections referenced only through visibility. Shared
+sections within the source remain shared within the copy, but their identifiers
+are private to it. Placements, canonical meetings, rooms, locks, instructor and
+programme allocations, board visibility, student demand, board membership,
+section budgets and scenario settings are remapped to the new parents.
+ENG101/ENG102 retain their exact four-day, roomless meeting bundles.
+
+Student, instructor and room catalogues remain shared. StudentTermSection
+registration evidence is deliberately excluded: unscoped availability readers
+could treat duplicated registration rows as additional commitments. Planner
+jobs, repair/approval records and client undo history are also excluded. Student
+requests and membership are copied so that normal draft evaluation can rebuild
+derived assignment results.
+
+Related scenario and section locks protect the snapshot, and a queued or
+running planner on a related resource returns the existing busy response.
+Visibility is rechecked after acquiring the locks. Any late write failure rolls
+back the entire copy. Explicit name collisions and ambiguous physical-section
+or instructor identities return a conflict rather than silently overwriting,
+merging or renaming records. No database migration is required.
+
+Tests cover the complete private graph, source immutability, real HTTP editing,
+deleting either side, late rollback, shared-resource jobs, role checks, name
+validation and identity conflicts. An isolated runtime fault that dropped the
+copied lock flags made the permanent graph regression fail on the changed lock;
+the production source was never modified for that probe. Private backups of the
+real 258-student and 405-student scenarios copied 100 and 187 placements across
+five boards each; their timetable fingerprints and safety summaries matched exactly. The latter
+included all four valid roomless English sections. Both browser views also
+copied the published real scenario with its two locks intact. Native browser
+checks confirmed unique repeat names, refresh of a non-first board, and Split
+Close returning to the current copy after refresh. The original user
+database was checked read-only and remained unchanged. Replay databases and
+screenshots stay in the ignored `.tmp/scenario-copy-audit/` directory.
+
+Final local validation passed 1,618 related Python tests (one PostgreSQL-only
+skip), all 132 frontend regressions and a repeated 31-case copy backend suite.
+The permanent browser-script tests cover stale list responses, repeated
+submission, Unicode-safe names, saved-but-unloaded copies, read-only retries,
+refresh selection and Split Close navigation. Ruff lint/format, scoped mypy and
+Bandit, JavaScript parsing, Django system checks and whitespace/control-character
+checks passed. Independent Codex review approved the frozen changes. These are
+local feature checks; this entry does not represent deployment of the copy UI.

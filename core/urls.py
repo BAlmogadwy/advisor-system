@@ -245,6 +245,7 @@ from .timetable_workspace_views import (
     tw_scenario_builder_actions_view,
     tw_scenario_clean_room_assignments_apply_view,
     tw_scenario_clean_room_assignments_view,
+    tw_scenario_copy_view,
     tw_scenario_create_view,
     tw_scenario_detail_view,
     tw_scenario_export_per_plan_view,
@@ -878,6 +879,11 @@ urlpatterns = [
     ),
     path("ops/tw/scenarios/", tw_scenarios_list_view, name="tw_scenarios_list"),
     path("ops/tw/scenarios/create/", tw_scenario_create_view, name="tw_scenario_create"),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/copy/",
+        tw_scenario_copy_view,
+        name="tw_scenario_copy",
+    ),
     path("ops/tw/scenarios/<int:scenario_id>/", tw_scenario_detail_view, name="tw_scenario_detail"),
     path(
         "ops/tw/scenarios/<int:scenario_id>/quality/",
