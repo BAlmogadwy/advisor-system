@@ -29,6 +29,7 @@ from django.utils import timezone
 
 from core.models import PlannerJob
 from core.services.job_runtime import HOLDER_PLANNER, SolverBusy, shutting_down, solver_slot
+from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed, seeded_timetable_run
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,8 @@ def submit_planner_job(
     iteration caps) so an async V2 job replays the same configuration the
     synchronous path would have used.
     """
+    # Validate before even orphan reconciliation, which can itself write rows.
+    supplied_seed = parse_run_seed((params or {}).get("seed"))
     # Self-heal: sweep any jobs stranded RUNNING by a prior server death before
     # queueing a new one, so the table never accumulates ghost "running" rows.
     reconcile_stale_planner_jobs()
@@ -193,6 +196,7 @@ def submit_planner_job(
             request_signature=_compute_request_signature(scenario_id, mode),
             params={
                 **(params or {}),
+                "seed": resolve_run_seed(supplied_seed),
                 "owned_scenario_ids": sorted(owned_scenario_ids),
                 "owned_term_section_ids": sorted(owned_section_ids),
             },
@@ -211,6 +215,7 @@ def serialize_planner_job(job: PlannerJob) -> dict[str, Any]:
         "scenario_id": job.scenario_id,
         "status": job.status,
         "mode": job.mode,
+        "seed": (job.params or {}).get("seed"),
         "last_stage_seen": job.last_stage_seen,
         "submitted_at": job.submitted_at.isoformat() if job.submitted_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
@@ -229,7 +234,10 @@ def run_planner_job_synchronously(
     job = get_planner_job(job_id)
     if job is not None and isinstance(job.result_json, dict):
         return job.result_json
-    return {"error": f"Optimiser error: {job.error_message if job else 'planner result missing'}"}
+    return {
+        "error": f"Optimiser error: {job.error_message if job else 'planner result missing'}",
+        "seed": (job.params or {}).get("seed") if job else None,
+    }
 
 
 def cancel_planner_job(
@@ -306,7 +314,11 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
     with _EXECUTING_JOBS_LOCK:
         _EXECUTING_JOBS[key] += 1
     try:
-        _run_planner_job(job_id)
+        job = get_planner_job(job_id)
+        # Never draw here: retries and legacy persisted jobs must not acquire a
+        # different starting point merely by entering this worker again.
+        with seeded_timetable_run((job.params or {}).get("seed") if job else None):
+            _run_planner_job(job_id)
     finally:
         with _EXECUTING_JOBS_LOCK:
             _EXECUTING_JOBS[key] -= 1
@@ -391,6 +403,7 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
                 default_capacity=int(p.get("default_capacity", 25)),
                 min_demand=int(p.get("min_demand", 5)),
                 confirmation_seconds=float(p.get("confirmation_seconds", 20)),
+                seed=p.get("seed"),
                 progress=_stage,
             )
         elif job.mode == PlannerJob.MODE_FULL_REBUILD:
@@ -426,7 +439,11 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
                 terminal.result_json = None
                 terminal.error_message = None
             else:
-                terminal.result_json = result
+                terminal.result_json = (
+                    {**result, "seed": (terminal.params or {}).get("seed")}
+                    if isinstance(result, dict)
+                    else result
+                )
                 error = result.get("error") if isinstance(result, dict) else None
                 if failure or error:
                     terminal.status = PlannerJob.STATUS_FAILED

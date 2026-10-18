@@ -35,15 +35,18 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    _board_seed_scope,
     _time_mask,
     get_meeting_pattern,
     placeable_slots,
 )
+from core.services.timetable_board_persistence import locked_physical_section_ids
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     SAME_COURSE_DIFFERENT_DAY_PENALTY,
     SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY,
@@ -270,9 +273,9 @@ def _board_fixed_locked_meetings(board) -> list[dict]:
     if not is_lock_enforcement_enabled():
         return []
     fixed: list[dict] = []
-    rows = SectionPlacement.objects.filter(board=board, is_locked=True).select_related(
-        "term_section"
-    )
+    rows = SectionPlacement.objects.filter(
+        board=board, term_section_id__in=locked_physical_section_ids(board.scenario_id)
+    ).select_related("term_section")
     for lp in rows:
         try:
             day_idx = WEEKDAYS.index((lp.day or "").upper())
@@ -692,7 +695,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
-    solver.parameters.random_seed = 42
+    solver.parameters.random_seed = seed_for(f"classic:cpsat-board:{_board_seed_scope(board)}")
 
     status = solver.solve(model)
 
@@ -798,9 +801,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         board=board, term_section__source_tag="tw_auto"
     )
     if is_lock_enforcement_enabled():
-        locked_sections = SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
-            "term_section_id", flat=True
-        )
+        locked_sections = locked_physical_section_ids(board.scenario_id)
         auto_placements = auto_placements.exclude(term_section_id__in=locked_sections)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()
@@ -1247,7 +1248,7 @@ def solve_board_with_hints(
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
-    solver.parameters.random_seed = 42
+    solver.parameters.random_seed = seed_for(f"classic:cpsat-hinted:{_board_seed_scope(board)}")
 
     status = solver.solve(model)
     status_map = {

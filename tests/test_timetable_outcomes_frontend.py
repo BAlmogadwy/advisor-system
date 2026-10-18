@@ -20,6 +20,7 @@ def test_timetable_outcome_frontend_regressions() -> None:
             "tests/frontend/timetable-workspace.test.cjs",
             "tests/frontend/timetable-workspace-integration.test.cjs",
             "tests/frontend/timetable-accessibility.test.cjs",
+            "tests/frontend/timetable-split-lock.test.cjs",
         ],
         cwd=root,
         capture_output=True,

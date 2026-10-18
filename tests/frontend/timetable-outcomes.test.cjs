@@ -56,6 +56,28 @@ function result(worseStudentGap = false) {
 }
 
 for (const name of Object.keys(sources)) {
+  for (const arabic of [false, true]) for (const mode of ['current', 'full']) {
+    test(`${name} ${arabic ? 'ar' : 'en'} ${mode} result displays replay seed zero and the timing caveat`, async () => {
+      const h = harness(name, arabic), outcome = { ...result(), mode, seed: 0 };
+      if (name.endsWith('-split.js')) h.context.showOptimiseResults(outcome, mode);
+      else {
+        h.context.runOptimiseRequest = async () => ({ ok: true, optimisation: outcome });
+        await h.context.runOptimiseV2(mode);
+      }
+      assert.match(h.dialogs[0].body, arabic ? /بذرة التشغيل: 0/ : /Run seed: 0/);
+      assert.match(h.dialogs[0].body, arabic ? /حدود الوقت/ : /Time limits may still change/);
+      assert.match(h.dialogs[0].body, arabic ? /نقطة بدء البحث/ : /reuse the search starting point/);
+    });
+  }
+  test(`${name} seed presentation preserves legacy unknown state and never renders arbitrary seed strings`, () => {
+    const h = harness(name);
+    for (const seed of [null, undefined, false, '0', '<img src=x onerror=alert(1)>', -1, 2147483648]) {
+      assert.equal(h.context.renderRunSeed({ seed }), '');
+    }
+    assert.match(h.context.renderRunSeed({ seed: 2147483647 }), /Run seed: 2147483647/);
+    assert.match(h.context.schedulerOutcomeText({ seed: 0 }), /Run seed: 0/);
+    assert.doesNotMatch(h.context.schedulerOutcomeText({}), /Run seed/);
+  });
   test(`${name} room-only recovery is applied and includes undersized rooms`, async () => {
     const h = harness(name), outcome = result();
     outcome.instructor_schedule_metric.after = { ...outcome.instructor_schedule_metric.before };
@@ -182,7 +204,8 @@ for (const name of Object.keys(sources)) {
       const summary = engine === 'classic' ? result(true) : { instructor_days: 2, instructor_idle_minutes: 15,
         student_seating: { solution_found: true, proven_optimal: true, students: 2, students_fully_seated: 2,
           unseated_demands: 0, total_clashes: 0 } };
-      const response = { scenario: { id: 4, name: 'Generated' }, boards: [], build_job_id: null, build_summary: summary };
+      summary.seed = 0;
+      const response = { scenario: { id: 4, name: 'Generated' }, boards: [], build_job_id: null, build_summary: summary, seed: 0 };
       h.context.api = h.context.twFetch = async url => {
         assert.equal(url, '/ops/tw/generate-workspace/');
         return response;
@@ -201,6 +224,7 @@ for (const name of Object.keys(sources)) {
         body = h.$('twGenStatus').innerHTML || h.$('twGenStatus').textContent;
       }
       assert.match(body, engine === 'classic' ? /3 → 2/ : /optimum proven.*missing seats 0; clashes 0/);
+      assert.match(body, /Run seed: 0/);
       assert.deepEqual(h.notices.error, []);
       assert.deepEqual(h.notices.warning, []);
       assert.ok(h.notices.success.some(message => message.includes('Generated + built')));
@@ -221,4 +245,29 @@ for (const name of Object.keys(sources)) {
     assert.deepEqual(h.notices.success, []);
     assert.match(h.notices.warning[0], /build did not start.*Full rebuild/);
   });
+}
+
+for (const name of Object.keys(sources)) {
+  for (const status of ['failed', 'unknown']) {
+    test(`${name} Generate ${status} status retains seed zero from the accepted response`, async () => {
+      const h = harness(name);
+      h.context.api = h.context.twFetch = async url => {
+        assert.equal(url, '/ops/tw/generate-workspace/');
+        return { scenario: { id: 4 }, boards: [], build_job_id: 'seeded-job', seed: 0 };
+      };
+      h.context.pollPlannerJob = async () => ({ status, error_message: 'solver unavailable' });
+      if (name.endsWith('-split.js')) {
+        await h.context.openGenerateModal();
+        for (const [id, value] of Object.entries({ twsGenYear: '1448', twsGenSem: '1', twsGenProgram: 'AI',
+          twsGenSection: 'M', twsGenStrategy: 'compact', twsGenEngine: 'classic' })) h.$(id).value = value;
+        await h.dialogs[0].buttons[1].onClick({});
+        assert.match(h.$('twsGenStatus').textContent, /Run seed: 0/);
+      } else {
+        for (const [id, value] of Object.entries({ twYear: '1448', twTerm: '1', twProgram: 'AI', twSection: 'M', twStrategy: 'compact' })) h.$(id).value = value;
+        await h.context.runGenerate('classic');
+        assert.match(h.$('twGenStatus').textContent, /Run seed: 0/);
+      }
+      assert.deepEqual(h.notices.success, []);
+    });
+  }
 }

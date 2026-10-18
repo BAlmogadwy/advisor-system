@@ -47,10 +47,14 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    _board_seed_scope,
     _time_mask,
     placeable_slots,
 )
-from core.services.timetable_board_persistence import external_shared_section_ids
+from core.services.timetable_board_persistence import (
+    external_shared_section_ids,
+    locked_physical_section_ids,
+)
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -64,6 +68,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
+from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -671,6 +676,7 @@ def optimize_board(
     schedule: dict[int, list[dict]] = {}
     sec_map: dict[tuple[str, str], int] = {}  # (code, section) -> index
 
+    protected_sections = locked_physical_section_ids(board.scenario_id)
     for p in placements:
         key = (p.term_section.course_key or p.term_section.course_code, p.term_section.section)
         if key not in sec_map:
@@ -704,7 +710,7 @@ def optimize_board(
             schedule[idx] = []
 
         idx = sec_map[key]
-        if p.is_locked:
+        if p.is_locked or p.term_section_id in protected_sections:
             sections[idx]["is_locked"] = True
         # Find slot_idx for this placement (check lecture slots, then lab slots)
         slot_idx = 0
@@ -830,7 +836,7 @@ def optimize_board(
 
     # ── Simulated Annealing ──────────────────────────────────────
 
-    rng = random.Random(seed)
+    rng = random.Random(seed_for(f"classic:sa:{_board_seed_scope(board)}", fallback=seed))
     cost_before = _compute_cost(schedule, sections, online_codes, overlap_matrix)
     best_cost = cost_before
     instructor_before = _instructor_quality(schedule, sections)
@@ -1111,11 +1117,7 @@ def optimize_and_persist_board(
     locks_on = is_lock_enforcement_enabled()
     locked_ts_ids: set[int] = external_shared_section_ids(board.scenario_id)
     if locks_on:
-        locked_ts_ids |= set(
-            SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
-                "term_section_id", flat=True
-            )
-        )
+        locked_ts_ids |= locked_physical_section_ids(board.scenario_id)
 
     auto_placements = SectionPlacement.objects.filter(
         board=board, term_section__source_tag="tw_auto"

@@ -29,7 +29,6 @@ from django.db import transaction
 
 from core.models import SectionPlacement, TermSectionMeeting
 from core.services.board_ownership import assert_rebuild_ownership, external_shared_section_ids
-from core.services.timetable_course_policy import get_course_meeting_policy
 
 # Placement fields captured for restore. ``id`` is kept so identity is preserved
 # across a snapshot/restore. ``created_at``/``updated_at`` are deliberately
@@ -115,6 +114,20 @@ def external_shared_snapshot(scenario_id: int) -> tuple[list[dict], list[dict]]:
     )
 
 
+def locked_physical_section_ids(scenario_id: int) -> set[int]:
+    """Physical sections whose complete time pattern is anchored by any lock.
+
+    The caller chooses whether lock enforcement applies. Reset's explicit
+    ``keep_locked`` contract is independent of optional solver feature flags.
+    Companion rows retain their original flags, including on other owned boards.
+    """
+    return set(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True).values_list(
+            "term_section_id", flat=True
+        )
+    )
+
+
 def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult:
     """Clear a scenario's board(s) so a placement run starts from a clean slate.
 
@@ -123,63 +136,40 @@ def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult
     (the ``len(placements) != len(meetings)`` drift that made
     ``persist_section_states_to_scenario`` skip sections).
 
-    When ``keep_locked`` (the default), locked placements are the user's hard
-    constraints: each surviving locked placement keeps the meeting that backs it.
-    Locking is per-placement (the UI toggles ``is_locked`` on a single placement),
-    so a section may have a mix of locked and unlocked placements — meetings are
-    preserved per ``(section, day, start)`` to match the *surviving placements*.
-    Fixed weekly policies such as ENG101/ENG102 protect the entire section when
-    any constituent meeting is locked, because its meetings form one indivisible
-    pattern. Passing ``keep_locked=False`` performs a hard wipe of the whole
-    scenario board.
+    When ``keep_locked`` (the default), any locked meeting anchors its complete
+    physical section time pattern, including unlocked companion meetings and
+    copies on other boards owned by this scenario. Keep their canonical meetings
+    and original row flags too. A partially retained section would be counted as
+    already placed and its missing contact minutes would never be regenerated.
+    Unrelated sections remain rebuildable. ``keep_locked=False`` clears both
+    representations, including locked sections.
 
     Runs in a single transaction. Returns the row counts removed.
     """
     with transaction.atomic():
         assert_rebuild_ownership(scenario_id)
-        # (section, day, start) of each locked placement that will survive.
-        # Ordinary meetings follow individual locks. Fixed policy sections add
-        # every companion slot before either table is cleared.
-        locked_slot_keys: set[tuple[int, str, str]] = set()
-        locked_ts_ids: set[int] = set()
-        bundle_ts_ids: set[int] = set()
-        if keep_locked:
-            for ts_id, day, start in SectionPlacement.objects.filter(
-                board__scenario_id=scenario_id, is_locked=True
-            ).values_list("term_section_id", "day", "start_time"):
-                locked_slot_keys.add((ts_id, day, start))
-                locked_ts_ids.add(ts_id)
-            for placement in SectionPlacement.objects.filter(
+        locked_ts_ids = locked_physical_section_ids(scenario_id) if keep_locked else set()
+        placements_deleted, _ = (
+            SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+            .exclude(term_section_id__in=locked_ts_ids)
+            .delete()
+        )
+        # Retain only canonical rows backed by a protected physical meeting.
+        # A stale orphan must not become fixed instructor occupancy merely
+        # because another meeting in its section is locked.
+        retained_slots = set(
+            SectionPlacement.objects.filter(
                 board__scenario_id=scenario_id, term_section_id__in=locked_ts_ids
-            ).select_related("term_section"):
-                section = placement.term_section
-                if get_course_meeting_policy(
-                    section.course_code, section.course_key, section.course_number
-                ):
-                    bundle_ts_ids.add(section.id)
-                    locked_slot_keys.add((section.id, placement.day, placement.start_time))
-
-        placements_qs = SectionPlacement.objects.filter(board__scenario_id=scenario_id)
-        if keep_locked:
-            placements_qs = placements_qs.filter(is_locked=False).exclude(
-                term_section_id__in=bundle_ts_ids
-            )
-        placements_deleted, _ = placements_qs.delete()
-
-        meetings_qs = TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id)
-        if keep_locked:
-            stale_meeting_ids = [
-                mid
-                for mid, ts_id, day, start in meetings_qs.values_list(
-                    "id", "term_section_id", "day", "start_time"
-                )
-                if (ts_id, day, start) not in locked_slot_keys
-            ]
-            meetings_deleted, _ = TermSectionMeeting.objects.filter(
-                id__in=stale_meeting_ids
-            ).delete()
-        else:
-            meetings_deleted, _ = meetings_qs.delete()
+            ).values_list("term_section_id", "day", "start_time")
+        )
+        stale_meeting_ids = [
+            pk
+            for pk, section_id, day, start in TermSectionMeeting.objects.filter(
+                term_section__scenario_id=scenario_id
+            ).values_list("pk", "term_section_id", "day", "start_time")
+            if (section_id, day, start) not in retained_slots
+        ]
+        meetings_deleted, _ = TermSectionMeeting.objects.filter(pk__in=stale_meeting_ids).delete()
 
     return ResetResult(
         placements_deleted=placements_deleted,
@@ -354,6 +344,7 @@ __all__ = [
     "MeetingSyncResult",
     "ResetResult",
     "ScenarioSnapshot",
+    "locked_physical_section_ids",
     "reset_scenario",
     "restore_scenario",
     "snapshot_scenario",

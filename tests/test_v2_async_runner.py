@@ -41,7 +41,7 @@ def test_planner_job_v2_current_dispatches_to_guarded_runner() -> None:
 
     job = PlannerJob.objects.get(id=job_id)
     assert job.status == PlannerJob.STATUS_SUCCEEDED
-    assert job.result_json == {"safety_blocked": False}
+    assert job.result_json == {"safety_blocked": False, "seed": job.params["seed"]}
 
 
 @pytest.mark.django_db

@@ -49,6 +49,7 @@ from core.services.timetable_room_repair import (
     apply_move_to_grid,
     rollback_move,
 )
+from core.services.timetable_run_seed import random_for
 from core.services.timetable_solver_codes import CHAIN_ROTATED, is_stage_trace_enabled
 from core.services.timetable_stage_telemetry import (
     is_stage_telemetry_enabled,
@@ -417,6 +418,18 @@ def chain_local_search(
         if not chains:
             logger.info("Chain search: no chain moves available at iteration %d", iteration)
             break
+
+        rng = random_for(f"classic:current:chains:{iteration}")
+        if rng is not None:
+            chains.sort(
+                key=lambda chain: (
+                    chain.move_a.section_id_a,
+                    chain.move_a.to_pattern_id_a,
+                    chain.move_b.section_id_a,
+                    chain.move_b.to_pattern_id_a,
+                )
+            )
+            rng.shuffle(chains)
 
         # Best-improvement: try all chains
         best_chain_result: TimetableEvaluationResult | None = None

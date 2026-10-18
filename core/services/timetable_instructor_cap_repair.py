@@ -49,7 +49,10 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     placeable_slots,
 )
-from core.services.timetable_board_persistence import external_shared_section_ids
+from core.services.timetable_board_persistence import (
+    external_shared_section_ids,
+    locked_physical_section_ids,
+)
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_pr4_instructor import (
@@ -58,6 +61,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_daily_cap_enabled,
 )
 from core.services.timetable_rooming import assign_rooms_to_board
+from core.services.timetable_validation import is_lock_enforcement_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +262,9 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     external_ids = external_shared_section_ids(scenario_id)
     report["externally_owned_sections_frozen"] = sorted(external_ids)
     divergent_sections = _divergent_shared_sections(copies_by_id) | external_ids
+    if is_lock_enforcement_enabled():
+        # A lock anchors the whole physical week, including unflagged companions.
+        divergent_sections |= locked_physical_section_ids(scenario_id)
 
     def _sid(p) -> str:
         ts = p.term_section
@@ -553,6 +560,9 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     external_ids = external_shared_section_ids(scenario_id)
     report["externally_owned_sections_frozen"] = sorted(external_ids)
     divergent_sections = _divergent_shared_sections(copies_by_id) | external_ids
+    if is_lock_enforcement_enabled():
+        # A lock anchors the whole physical week, including unflagged companions.
+        divergent_sections |= locked_physical_section_ids(scenario_id)
 
     def _sid(p):
         ts = p.term_section

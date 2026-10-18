@@ -61,6 +61,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from itertools import combinations
 
 from core.models import (
@@ -73,6 +74,7 @@ from core.models import (
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
+from core.services.timetable_board_persistence import locked_physical_section_ids
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -115,6 +117,12 @@ from core.services.timetable_room_oracle import (
     check_type_feasibility,
     is_room_oracle_enabled,
     room_failure_breakdown,
+)
+from core.services.timetable_run_seed import (
+    current_run_seed,
+    random_for,
+    seed_for,
+    seeded_timetable_run,
 )
 from core.services.timetable_same_course import (
     first_overlapping_same_course_window,
@@ -1015,6 +1023,12 @@ def _build_pr3_alternatives(
     return alternatives
 
 
+def _board_seed_scope(board: DeliveryBoard) -> str:
+    """Logical cohort identity; regenerated database primary keys do not enter RNGs."""
+    programmes = ",".join(sorted(p.strip() for p in (board.program or "").split(",") if p.strip()))
+    return f"term={board.nominal_term}:programmes={programmes}:type={board.board_type}"
+
+
 def auto_place_board(
     board_id: int,
     strategy: str = DEFAULT_STRATEGY,
@@ -1107,8 +1121,8 @@ def auto_place_board(
     # parallel "locked cells" path is checked in isolation.
     #
     # Telemetry honesty: in PR1 ``pr1_lock_rejections`` records
-    # lock-respect events from preloaded locked placements (one entry
-    # per locked row). It does NOT record per-candidate lock collisions
+    # lock-respect events from preloaded protected placements (one entry
+    # per frozen physical meeting). It does NOT record per-candidate lock collisions
     # during round-robin placement — the structural skip makes those
     # collisions unreachable, so there is nothing to count there.
     lock_rule_on = is_lock_enforcement_enabled()
@@ -1424,8 +1438,8 @@ def auto_place_board(
             section_instructors.setdefault(section_full, set()).update(ids)
 
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
-    # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
-    # for this board are seeded into the same occupancy structures the
+    # When TIMETABLE_ENFORCE_LOCKS is on, every meeting of a section
+    # anchored by a lock is seeded into the same occupancy structures the
     # planner consults below:
     #   - placed_masks + all_placed_masks → same-course / cross-course
     #     student-overlap conflict detection
@@ -1439,22 +1453,11 @@ def auto_place_board(
     # ~820 already counts locked rows, so ``to_place = planned_sections
     # - already`` excludes them and the sec_round loop never retries
     # that section index. One LOCK_RESPECT telemetry row is emitted per
-    # locked cell so the payload records which locks were respected.
+    # protected cell without changing its original is_locked flag.
     if lock_rule_on:
-        protected_sections = {
-            p.term_section_id
-            for p in SectionPlacement.objects.filter(
-                board__scenario=scenario, is_locked=True
-            ).select_related("term_section")
-            if get_course_meeting_policy(
-                p.term_section.course_code, p.term_section.course_key, p.term_section.course_number
-            )
-        }
-        from django.db.models import Q
-
+        protected_sections = locked_physical_section_ids(scenario.pk)
         locked_placements = (
-            SectionPlacement.objects.filter(board=board)
-            .filter(Q(is_locked=True) | Q(term_section_id__in=protected_sections))
+            SectionPlacement.objects.filter(board=board, term_section_id__in=protected_sections)
             .select_related("term_section")
             .order_by("day", "start_time")
         )
@@ -1644,6 +1647,10 @@ def auto_place_board(
 
             best_score = (float("inf"),) * 6
             best_option = None
+            tie_rng = random_for(
+                f"classic:greedy:{_board_seed_scope(board)}:{strategy}:{code}:{sec_label}"
+            )
+            tied_best = 0
 
             # PR3 commit 3 — per-section trace accumulators. Only populated
             # when the flag is on (cheap early-out keeps the hot scoring
@@ -1909,6 +1916,13 @@ def auto_place_board(
                 if score < best_score:
                     best_score = score
                     best_option = option
+                    tied_best = 1
+                elif tie_rng is not None and score == best_score:
+                    # Reservoir sampling changes only exact score ties. All hard
+                    # filters and the complete quality tuple still lead selection.
+                    tied_best += 1
+                    if tie_rng.randrange(tied_best) == 0:
+                        best_option = option
 
             # PR3 commit 5 — warm-start retention (flag-gated).
             # Priority: PR1 locks (handled by the preload skip above) →
@@ -2606,6 +2620,29 @@ def _sum_board_perturbation_metrics(boards_result: dict) -> dict:
 
 
 def auto_place_scenario(
+    scenario_id: int,
+    strategy: str = DEFAULT_STRATEGY,
+    baseline_placements: dict | None = None,
+    candidate_gen_budget: float | None = None,
+) -> dict:
+    """Place each board in a replayable strategy stream when a run seed is bound."""
+    # Candidate evaluation and winner re-placement must enter the same logical
+    # strategy stream, independently of which portfolio stages ran before them.
+    context = (
+        seeded_timetable_run(seed_for(f"classic:strategy:{strategy}"))
+        if current_run_seed() is not None
+        else nullcontext()
+    )
+    with context:
+        return _auto_place_scenario(
+            scenario_id,
+            strategy=strategy,
+            baseline_placements=baseline_placements,
+            candidate_gen_budget=candidate_gen_budget,
+        )
+
+
+def _auto_place_scenario(
     scenario_id: int,
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,

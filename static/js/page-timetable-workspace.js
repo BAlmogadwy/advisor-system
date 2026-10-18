@@ -169,6 +169,8 @@ async function twFetch(url, opts = {}) {
           announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
         }
         msg = (e && typeof e === 'object') ? (e.message || e.code || JSON.stringify(e)) : (e || d.message || msg);
+        const seedLabel = runSeedText(e?.details || d);
+        if (seedLabel) msg += ` · ${seedLabel}`;
       } catch {}
       notify.error(msg);
       return null;
@@ -266,8 +268,9 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel, token) {
         : { ok: false, error: { code: 'NO_RESULT', message: 'job finished but result was missing' } };
     }
     const code = job.status === 'cancelled' ? 'CANCELLED' : 'FAILED';
-    if (job.status === 'unknown') return { ok: false, error: { code: 'STATUS_UNCONFIRMED', message: job.error_message } };
-    return { ok: false, error: { code, message: job.error_message || job.status } };
+    const message = [job.error_message || job.status, runSeedText({ seed: job.seed ?? sub.seed })].filter(Boolean).join(' · ');
+    if (job.status === 'unknown') return { ok: false, error: { code: 'STATUS_UNCONFIRMED', message } };
+    return { ok: false, error: { code, message, details: { seed: job.seed } } };
   }
   // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran the
   // pipeline synchronously in THIS request — `sub` already is the completed
@@ -280,6 +283,17 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel, token) {
 }
 
 /* Timetable outcome helpers — pure renderers, also used by the split workspace. */
+function runSeedText(result) {
+  const seed = result?.seed;
+  return Number.isInteger(seed) && seed >= 0 && seed <= 2147483647
+    ? `${IS_AR ? 'بذرة التشغيل' : 'Run seed'}: ${seed}` : '';
+}
+
+function renderRunSeed(result) {
+  const label = runSeedText(result);
+  return label ? `<div class="tw-run-seed" style="margin-bottom:12px"><b>${label}</b><div style="font-size:11px;color:var(--t3)">${IS_AR ? 'احتفظ بهذه البذرة لإعادة استخدام نقطة بدء البحث. قد تختلف النتائج بسبب حدود الوقت.' : 'Keep this seed to reuse the search starting point. Time limits may still change the outcome.'}</div></div>` : '';
+}
+
 function instructorScheduleOf(result) {
   return result.instructor_schedule_metric || result.instructor_schedule || {};
 }
@@ -348,6 +362,7 @@ function schedulerSeatingText(result) {
 
 function schedulerOutcomeText(result) {
   const bits = [];
+  if (runSeedText(result)) bits.push(runSeedText(result));
   if (result.instructor_days != null) bits.push((IS_AR ? 'مجموع أيام المدرسين: ' : 'Total instructor working days: ') + result.instructor_days);
   if (result.instructor_idle_minutes != null) bits.push((IS_AR ? 'دقائق الانتظار: ' : 'Instructor idle minutes: ') + result.instructor_idle_minutes);
   if (result.unroomed != null) bits.push((IS_AR ? 'بلا قاعة: ' : 'Unroomed: ') + result.unroomed
@@ -622,14 +637,14 @@ async function runGenerate(engine = 'classic') {
         else {
           const report = await twFetch(`/planner-jobs/${data.build_job_id}/result/`);
           if (report?.result) {
-            $('twGenStatus').innerHTML = renderInstructorOutcome(report.result);
+            $('twGenStatus').innerHTML = renderRunSeed(report.result) + renderInstructorOutcome(report.result);
           }
         }
       } else {
         const uncertain = job.status === 'unknown';
         $('twGenStatus').textContent = uncertain
-          ? (IS_AR ? 'تعذر تأكيد حالة البناء؛ تستمر متابعة المخطط.' : 'Build status unconfirmed; the planner card continues monitoring.')
-          : (IS_AR ? 'لم يكتمل البناء: ' : 'Build did not complete: ') + (job.error_message || job.status);
+          ? [IS_AR ? 'تعذر تأكيد حالة البناء؛ تستمر متابعة المخطط.' : 'Build status unconfirmed; the planner card continues monitoring.', runSeedText({ seed: job.seed ?? data.seed })].filter(Boolean).join(' · ')
+          : (IS_AR ? 'لم يكتمل البناء: ' : 'Build did not complete: ') + [job.error_message || job.status, runSeedText({ seed: job.seed ?? data.seed })].filter(Boolean).join(' · ');
         if (uncertain) notify.warning($('twGenStatus').textContent);
         else { notify.error($('twGenStatus').textContent); await onScenarioChange(); }
       }
@@ -641,7 +656,7 @@ async function runGenerate(engine = 'classic') {
         $('twGenStatus').textContent = schedulerOutcomeText(data.build_summary);
         (data.build_summary.warnings || []).forEach(warning => notify.warning(warning));
       } else {
-        $('twGenStatus').innerHTML = renderInstructorOutcome(data.build_summary);
+        $('twGenStatus').innerHTML = renderRunSeed(data.build_summary) + renderInstructorOutcome(data.build_summary);
       }
       notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
     } else {
@@ -2803,7 +2818,7 @@ async function runOptimiseV2(mode = 'current') {
 
     // Build results dialog
     let body = `<div style="font-size:.82rem;line-height:1.6">`;
-    body += renderInstructorOutcome(o) + renderSecondaryRecoveryOutcome(o);
+    body += renderRunSeed(o) + renderInstructorOutcome(o) + renderSecondaryRecoveryOutcome(o);
     if (o.safety_blocked) {
       body += `<div style="padding:10px;margin-bottom:10px;color:var(--danger)">${IS_AR ? 'لم تُطبق النتيجة: أعيد الجدول لحماية التسجيل والقيود وأيام المدرسين.' : 'Result not applied: the board was restored to protect enrolment, hard constraints and instructor days.'}</div>`;
     }

@@ -49,6 +49,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
+from core.services.timetable_run_seed import seed_for
 from core.services.timetable_solver_codes import CPSAT_IMPROVED, is_stage_trace_enabled
 from core.services.timetable_stage_telemetry import (
     is_stage_telemetry_enabled,
@@ -542,7 +543,7 @@ def polish_scenario_with_cpsat(
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
-    solver.parameters.random_seed = 42
+    solver.parameters.random_seed = seed_for("classic:cpsat-polish")
 
     # PR6 commit 5 — stage-boundary timing. Guardrail: iterations==1 means
     # the polisher was actually invoked (solver.solve() reached), not
