@@ -208,8 +208,28 @@ const SB = {
 };
 
 /* ── API helpers ── */
+// Copy needs a stable, loaded source. These counters only control Copy;
+// ordinary read requests and planner polling do not take ownership of it.
+const COPY_ACTIVITY = { pending: null, writes: 0, loading: 0, optimising: false,
+  copiedScenarioId: window.history.state?.timetableCopiedScenario || null };
+function splitCanCopyScenario() {
+  return Boolean(S.scenarioId && S.scenarioMeta && String($('twsScenario')?.value) === String(S.scenarioId)
+    && !COPY_ACTIVITY.pending && !COPY_ACTIVITY.writes && !COPY_ACTIVITY.loading && !COPY_ACTIVITY.optimising
+    && !pendingLockPlacements.size && !$('twsGenSubmit')?.disabled);
+}
+function syncCopyScenarioControl() {
+  if ($('twsCopyScenario')) $('twsCopyScenario').disabled = !splitCanCopyScenario();
+}
 async function api(url, opts = {}, onError = null) {
-  const o = Object.assign({ credentials: 'same-origin', headers: {} }, opts);
+  const { _copyToken, ...requestOptions } = opts;
+  const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
+  if (writes && COPY_ACTIVITY.pending && _copyToken !== COPY_ACTIVITY.pending) {
+    const message = IS_AR ? 'انتظر انتهاء نسخ السيناريو.' : 'Wait for the scenario copy to finish.';
+    if (onError) onError(message); else notify.warning(message);
+    return null;
+  }
+  if (writes) { COPY_ACTIVITY.writes++; syncCopyScenarioControl(); }
+  const o = Object.assign({ credentials: 'same-origin', headers: {} }, requestOptions);
   if (opts.method && opts.method !== 'GET') {
     o.headers['X-CSRFToken'] = CSRF;
   }
@@ -231,6 +251,8 @@ async function api(url, opts = {}, onError = null) {
     console.error(e);
     if (onError) onError(e.message || String(e));
     return null;
+  } finally {
+    if (writes) { COPY_ACTIVITY.writes--; syncCopyScenarioControl(); }
   }
 }
 
@@ -2382,7 +2404,25 @@ function groupPlacements(placements) {
 }
 
 /* ── Scenario loading ── */
+function persistWorkspaceScenario(scenarioId, boardId = null) {
+  const url = new URL(window.location.href);
+  if (scenarioId) url.searchParams.set('scenario', String(scenarioId));
+  else url.searchParams.delete('scenario');
+  if (scenarioId && boardId) url.searchParams.set('board', String(boardId));
+  else url.searchParams.delete('board');
+  const state = { ...window.history.state };
+  if (COPY_ACTIVITY.copiedScenarioId) state.timetableCopiedScenario = COPY_ACTIVITY.copiedScenarioId;
+  window.history.replaceState(state, '', url.pathname + url.search + url.hash);
+}
 async function loadScenarios(preferredScenarioId = null) {
+  if (COPY_ACTIVITY.pending) return;
+  COPY_ACTIVITY.loading++;
+  syncCopyScenarioControl();
+  try { await loadSplitScenarios(preferredScenarioId); }
+  finally { COPY_ACTIVITY.loading--; syncCopyScenarioControl(); }
+}
+
+async function loadSplitScenarios(preferredScenarioId = null) {
   const requested = preferredScenarioId || S.scenarioId || INITIAL_SCENARIO || '';
   const qs = (DEFAULT_YEAR && DEFAULT_TERM)
     ? `?year=${DEFAULT_YEAR}&term=${DEFAULT_TERM}`
@@ -2422,7 +2462,22 @@ async function loadScenarios(preferredScenarioId = null) {
   }
 }
 
-async function onScenarioChange() {
+async function onScenarioChange(copyToken = null) {
+  if (COPY_ACTIVITY.pending && copyToken !== COPY_ACTIVITY.pending) {
+    $('twsScenario').value = String(S.scenarioId || '');
+    return;
+  }
+  COPY_ACTIVITY.loading++;
+  syncCopyScenarioControl();
+  try {
+    const loaded = await loadSplitScenario();
+    if (loaded) persistWorkspaceScenario(S.scenarioId, S.panes[0].boardId);
+    return loaded;
+  }
+  finally { COPY_ACTIVITY.loading--; syncCopyScenarioControl(); }
+}
+
+async function loadSplitScenario() {
   // Undo/redo stacks are scoped to a scenario's placements; carrying them
   // across scenarios would let an undo mutate a different scenario's data.
   S.undoStack = [];
@@ -2464,7 +2519,9 @@ async function onScenarioChange() {
 
   const sid = $('twsScenario').value;
   if (!sid) {
+    persistWorkspaceScenario(null);
     S.scenarioId = null;
+    S.scenarioMeta = null;
     S.scenarioSummary = null;
     resetProtections();
     S.boards = [];
@@ -2517,9 +2574,11 @@ async function onScenarioChange() {
 
   updateAggregateMetrics();
   renderSlotBar();
-  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
+  let fullyLoaded = Boolean(bdata);
+  for (let i = 0; i < paneCount(); i++) if (await loadAndRenderPane(i) === false) fullyLoaded = false;
   if (RP.open) renderRpanel();
   if (SB.open) loadSidebarBudget();
+  return fullyLoaded;
 }
 
 function updateAggregateMetrics() {
@@ -2611,6 +2670,13 @@ async function togglePaneOff(idx) {
 function paneEl(idx) { return document.querySelector(`.tws-pane[data-idx="${idx}"]`); }
 
 async function loadAndRenderPane(idx) {
+  COPY_ACTIVITY.loading++;
+  syncCopyScenarioControl();
+  try { return await loadSplitPane(idx); }
+  finally { COPY_ACTIVITY.loading--; syncCopyScenarioControl(); }
+}
+
+async function loadSplitPane(idx) {
   const p = S.panes[idx];
   const el = paneEl(idx);
   if (!el) return false;
@@ -7177,9 +7243,19 @@ function closeModal() {
   if (focusTarget && document.contains(focusTarget)) {
     setTimeout(() => focusTarget.focus?.(), 0);
   }
+  syncCopyScenarioControl();
 }
 
+function splitCopyReturnUrl() {
+  if (!COPY_ACTIVITY.copiedScenarioId || String(COPY_ACTIVITY.copiedScenarioId) !== String(S.scenarioId)) return null;
+  const params = new URLSearchParams({ scenario: String(S.scenarioId) });
+  const boardId = S.panes[0]?.boardId;
+  if (boardId && S.boards.some(board => String(board.id) === String(boardId))) params.set('board', String(boardId));
+  return `/timetable-workspace/?${params}`;
+}
 function leaveSplitWorkspace() {
+  const copyReturnUrl = splitCopyReturnUrl();
+  if (copyReturnUrl) { window.location.href = copyReturnUrl; return; }
   if (window.history.length > 1) window.history.back();
   else window.location.href = '/timetable-workspace/';
 }
@@ -7303,6 +7379,103 @@ async function openGenerateModal() {
       } },
     ],
   });
+}
+
+/* ── Copy the loaded scenario, without generation ── */
+function copyScenarioSuggestedName(name) {
+  let suggestion = '';
+  for (const character of `${name} ${IS_AR ? '(نسخة)' : '(copy)'}`) {
+    // Keep whole code points within the input's UTF-16 maxlength.
+    if (suggestion.length + character.length > 200) break;
+    suggestion += character;
+  }
+  return suggestion;
+}
+function clearCopySplitBoards() {
+  S.boards = []; S.scenarioSummary = null;
+  S.selectedPaneIdx = null; S.selectedPlacementId = null;
+  RP.capacity = {};
+  S.panes.forEach(pane => { pane.boardId = null; pane.boardData = null; pane.group = 0; });
+  closeDrawer(); renderSlotBar();
+  for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
+  if (RP.open) renderRpanel();
+}
+function openCopyScenarioModal() {
+  if (!splitCanCopyScenario() || _modalOpen) return;
+  const sourceId = S.scenarioId;
+  const sourceBoardIds = new Set(S.boards.map(board => String(board.id)));
+  const defaultName = copyScenarioSuggestedName(S.scenarioMeta.name);
+  const modal = $('twsModal');
+  const onKey = event => {
+    if (event.key === 'Enter' && event.target.id === 'twsCopyName') {
+      event.preventDefault(); $('twsCopySubmit')?.click();
+    } else if (event.key === 'Tab') {
+      const controls = Array.from(modal.querySelectorAll('button:not([disabled]), input:not([disabled])'));
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+  };
+  openModal({
+    title: IS_AR ? 'نسخ السيناريو' : 'Copy scenario',
+    body: `<p>${IS_AR ? 'إنشاء مسودة مستقلة تحفظ الجدول والقاعات والأقفال والطلاب والإعدادات. يبقى السيناريو الأصلي كما هو.' : 'Create an independent draft with the timetable, rooms, locks, students and settings. The original scenario stays unchanged.'}</p>
+      <label for="twsCopyName">${IS_AR ? 'اسم النسخة (اختياري)' : 'Copy name (optional)'}</label>
+      <input id="twsCopyName" type="text" maxlength="200" value="${esc(defaultName)}" autocomplete="off">
+      <div id="twsCopyStatus" role="status" aria-live="polite"></div>`,
+    buttons: [
+      { label: IS_AR ? 'إلغاء' : 'Cancel' },
+      { label: IS_AR ? 'إنشاء نسخة' : 'Create copy', variant: 'primary', id: 'twsCopySubmit', onClick: async () => {
+        if (!splitCanCopyScenario() || S.scenarioId !== sourceId) return false;
+        const token = {};
+        COPY_ACTIVITY.pending = token;
+        const submit = $('twsCopySubmit');
+        const input = $('twsCopyName');
+        const status = $('twsCopyStatus');
+        const selector = $('twsScenario');
+        submit.disabled = true; input.disabled = true; selector.disabled = true;
+        syncCopyScenarioControl();
+        status.textContent = IS_AR ? 'جاري النسخ…' : 'Copying…';
+        let copied = null;
+        try {
+          const name = input.value.trim();
+          const data = await api(`/ops/tw/scenarios/${sourceId}/copy/`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(name && name !== defaultName ? { name } : {}), _copyToken: token,
+          }, message => { status.textContent = message; notify.error(message); });
+          if (!data?.scenario) return false;
+          copied = data.scenario;
+          COPY_ACTIVITY.copiedScenarioId = copied.id;
+          clearCopySplitBoards();
+          const option = document.createElement('option');
+          option.value = copied.id; option.textContent = `${copied.name} (${copied.status})`;
+          selector.appendChild(option);
+          S.scenarios.push(copied);
+          selector.value = String(copied.id);
+          const loaded = await onScenarioChange(token);
+          const expectedIds = Array.isArray(data.boards) ? data.boards.map(board => String(board.id)).sort() : null;
+          const actualIds = S.boards.map(board => String(board.id)).sort();
+          if (!loaded || String(S.scenarioId) !== String(copied.id) || !expectedIds
+              || expectedIds.some(id => sourceBoardIds.has(id)) || JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) throw new Error('Copy load failed');
+          notify.success(IS_AR ? 'تم إنشاء النسخة وفتحها' : 'Copy created and opened');
+        } catch (error) {
+          if (copied) {
+            S.scenarioId = null; S.scenarioMeta = null;
+            selector.value = '';
+            persistWorkspaceScenario(null);
+            clearCopySplitBoards();
+            notify.warning(IS_AR ? `حُفظت النسخة «${copied.name}» (رقم ${copied.id}). تعذر فتحها؛ اخترها من قائمة السيناريوهات.` : `Copy “${copied.name}” (ID ${copied.id}) was saved but could not be opened. Select it from the scenario list.`);
+          }
+          else { status.textContent = error.message; notify.error(error.message); return false; }
+        } finally {
+          COPY_ACTIVITY.pending = null;
+          submit.disabled = false; input.disabled = false; selector.disabled = false;
+          syncCopyScenarioControl();
+        }
+      } },
+    ],
+    onClose: () => modal.removeEventListener('keydown', onKey),
+  });
+  modal.addEventListener('keydown', onKey);
 }
 
 /* ── New empty scenario + New board ──────────────────────────────── */
@@ -7905,6 +8078,7 @@ async function drawerRemoveInstructor(p, instructorId) {
 const pendingLockPlacements = new Set();
 
 function syncPlacementLockControls(placementId) {
+  syncCopyScenarioControl();
   const key = String(placementId);
   const pending = pendingLockPlacements.has(key);
   const placement = findPlacement(placementId)?.placement;
@@ -8312,6 +8486,7 @@ async function doRedo() {
 
 /* ── Top-bar actions ── */
 async function doOptimise(mode = 'current') {
+  if (COPY_ACTIVITY.pending) return;
   if (!S.scenarioId) return;
   const isFull = mode === 'full';
   const confirmMsg = isFull
@@ -8323,6 +8498,7 @@ async function doOptimise(mode = 'current') {
   const origText = btn.textContent;
   const scenarioAtStart = S.scenarioId;
   btn.disabled = true; menuBtn && (menuBtn.disabled = true);
+  COPY_ACTIVITY.optimising = true; syncCopyScenarioControl();
   const busyText = isFull
     ? (IS_AR ? 'جاري إعادة البناء…' : 'Rebuilding…')
     : (IS_AR ? 'جاري التحسين…' : 'Optimising…');
@@ -8400,6 +8576,7 @@ async function doOptimise(mode = 'current') {
     // async change here, but "current" now runs for minutes, which makes a
     // second click on a half-loaded grid far more likely than it was.
     btn.disabled = false; menuBtn && (menuBtn.disabled = false);
+    COPY_ACTIVITY.optimising = false; syncCopyScenarioControl();
   }
 
   if (!optimisation) {
@@ -8760,6 +8937,7 @@ function initDismissibleDetailsMenus() {
   // Generate / New scenario / New board
   $('twsGenerate')?.addEventListener('click', openGenerateModal);
   $('twsNewScenario')?.addEventListener('click', openNewScenarioModal);
+  $('twsCopyScenario')?.addEventListener('click', openCopyScenarioModal);
   $('twsNewBoard')?.addEventListener('click', openNewBoardModal);
   $('twsSlots')?.addEventListener('click', openSlotEditorModal);
   $('twsElectives')?.addEventListener('click', openElectivesModal);

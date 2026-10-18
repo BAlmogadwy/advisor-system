@@ -76,6 +76,7 @@ window.TW = TW;
  * derived afresh when controls are rendered, so a newly rendered Lock button
  * cannot escape the same guard and published scenarios never become editable. */
 const TW_ACTIVITY = { owner: null, writes: 0, adapterPending: false, refresh: false, loading: 0, boardLoading: 0 };
+let scenarioListRevision = 0;
 const ACTIVE_PLANNER_STATUSES = new Set(['queued', 'running', 'unknown']);
 function workspaceBusy() {
   return Boolean(TW_ACTIVITY.owner || TW_ACTIVITY.writes || TW_ACTIVITY.adapterPending
@@ -88,6 +89,7 @@ function syncWorkspaceControls() {
   const busy = workspaceBusy();
   TW.busy = busy;
   const editable = workspaceCanEdit();
+  if ($('twCopyScenario')) $('twCopyScenario').disabled = !TW.scenarioId || !TW.scenario || busy;
   ['twGenerate', 'twGenerateMenu', 'twMapElectives', 'twNewScenario', 'twScenario',
     'twYear', 'twTerm', 'twProgram', 'twSection', 'twStrategy'].forEach(id => {
     if ($(id)) $(id).disabled = busy;
@@ -436,6 +438,7 @@ const TW_ENGINE = 'classic';
   // Events — Workspace command bar
   $('twScenario').addEventListener('change', onScenarioChange);
   $('twNewScenario').addEventListener('click', createScenarioPrompt);
+  $('twCopyScenario')?.addEventListener('click', copyScenarioPrompt);
   $('twNewBoard').addEventListener('click', createBoardPrompt);
   $('twSlotEdit').addEventListener('click', openSlotEditor);
   // Export: main button follows the active Plan Lens/search filter.
@@ -674,14 +677,23 @@ async function runGenerate(engine = 'classic') {
 /* debounce() now in shared-utils.js */
 
 /* ── Scenarios ── */
+function persistWorkspaceScenario(scenarioId, boardId = null) {
+  const url = new URL(window.location.href);
+  if (scenarioId) url.searchParams.set('scenario', String(scenarioId));
+  else url.searchParams.delete('scenario');
+  if (scenarioId && boardId) url.searchParams.set('board', String(boardId));
+  else url.searchParams.delete('board');
+  window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+}
 async function loadScenarios() {
   if (workspaceBusy()) return;
+  const revision = ++scenarioListRevision;
   const year = $('twYear').value.trim();
   const term = $('twTerm').value;
   if (!year || !term) return;
 
   const data = await twFetch(`/ops/tw/scenarios/?year=${year}&term=${term}`);
-  if (!data || year !== $('twYear').value.trim() || term !== $('twTerm').value || workspaceBusy()) return;
+  if (!data || revision !== scenarioListRevision || year !== $('twYear').value.trim() || term !== $('twTerm').value || workspaceBusy()) return;
 
   const sel = $('twScenario');
   sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
@@ -702,12 +714,14 @@ async function loadScenarios() {
 
 let scenarioLoadRevision = 0;
 async function onScenarioChange() {
+  scenarioListRevision++;
   const sid = $('twScenario').value;
   const revision = ++scenarioLoadRevision;
   TW_ACTIVITY.loading = revision;
   syncWorkspaceControls();
   try {
     if (!sid) {
+      persistWorkspaceScenario(null);
       TW.scenarioId = null; TW.scenario = null; TW.boardId = null; TW.plannerJob = null; resetWorkspace();
       window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: null, job: null } }));
       return;
@@ -755,11 +769,86 @@ async function onScenarioChange() {
 
     await loadPlanLens();
     if (revision !== scenarioLoadRevision) return;
-    await loadBoards(preferredBoard);
+    const boardsLoaded = await loadBoards(preferredBoard);
+    if (revision === scenarioLoadRevision) persistWorkspaceScenario(TW.scenarioId, TW.loadedBoardId);
     syncWorkspaceControls();
+    return boardsLoaded;
   } finally {
     if (TW_ACTIVITY.loading === revision) TW_ACTIVITY.loading = 0;
     syncWorkspaceControls();
+  }
+}
+
+let copyScenarioPromptOpen = false;
+function copyScenarioSuggestedName(name) {
+  let suggestion = '';
+  for (const character of `${name} ${IS_AR ? '(نسخة)' : '(copy)'}`) {
+    // Keep whole code points within the input's UTF-16 maxlength.
+    if (suggestion.length + character.length > 200) break;
+    suggestion += character;
+  }
+  return suggestion;
+}
+function clearCopyWorkspaceBoards() {
+  TW.boardId = null; TW.loadedBoardId = null;
+  resetWorkspace();
+  $('twGrid').innerHTML = '';
+  $('twRightBody').innerHTML = '';
+  $('twDrawer')?.remove();
+}
+async function copyScenarioPrompt() {
+  if (!TW.scenarioId || !TW.scenario || workspaceBusy() || copyScenarioPromptOpen) return;
+  const sourceId = TW.scenarioId;
+  const defaultName = copyScenarioSuggestedName(TW.scenario.name);
+  const sourceBoardIds = new Set(TW.boards.map(board => String(board.id)));
+  copyScenarioPromptOpen = true;
+  let token = null;
+  let copied = null;
+  try {
+    const name = await dlg.confirm({
+      title: IS_AR ? 'نسخ السيناريو' : 'Copy scenario',
+      body: IS_AR ? 'إنشاء مسودة مستقلة تحفظ الجدول والقاعات والأقفال والطلاب والإعدادات. يبقى السيناريو الأصلي كما هو.' : 'Create an independent draft with the timetable, rooms, locks, students and settings. The original scenario stays unchanged.',
+      inputLabel: IS_AR ? 'اسم النسخة (اختياري)' : 'Copy name (optional)',
+      defaultValue: defaultName,
+      maxLength: 200,
+      confirmText: IS_AR ? 'إنشاء نسخة' : 'Create copy',
+      cancelText: IS_AR ? 'إلغاء' : 'Cancel',
+    });
+    if (name === false || name == null || TW.scenarioId !== sourceId) return;
+    token = beginWorkspaceOperation('copy-scenario');
+    if (!token) return;
+    scenarioListRevision++;
+    const data = await twFetch(`/ops/tw/scenarios/${sourceId}/copy/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(typeof name === 'string' && name.trim() && name.trim() !== defaultName ? { name: name.trim() } : {}),
+      _workspaceToken: token,
+    });
+    if (!data?.scenario) return;
+    copied = data.scenario;
+    clearCopyWorkspaceBoards();
+    const option = document.createElement('option');
+    option.value = copied.id; option.textContent = `${copied.name} (${copied.status})`;
+    $('twScenario').appendChild(option);
+    $('twScenario').value = String(copied.id);
+    const loaded = await onScenarioChange();
+    const expectedIds = Array.isArray(data.boards) ? data.boards.map(board => String(board.id)).sort() : null;
+    const actualIds = TW.boards.map(board => String(board.id)).sort();
+    if (!loaded || String(TW.scenarioId) !== String(copied.id) || !expectedIds
+        || expectedIds.some(id => sourceBoardIds.has(id)) || JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) throw new Error('Copy load failed');
+    notify.success(IS_AR ? 'تم إنشاء النسخة وفتحها' : 'Copy created and opened');
+  } catch (error) {
+    if (copied) {
+      TW.scenarioId = null; TW.scenario = null; TW.plannerJob = null;
+      $('twScenario').value = '';
+      persistWorkspaceScenario(null);
+      clearCopyWorkspaceBoards();
+      window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: null, job: null } }));
+      notify.warning(IS_AR ? `حُفظت النسخة «${copied.name}» (رقم ${copied.id}). تعذر فتحها؛ اخترها من قائمة السيناريوهات.` : `Copy “${copied.name}” (ID ${copied.id}) was saved but could not be opened. Select it from the scenario list.`);
+    }
+    else notify.error(error.message || (IS_AR ? 'تعذر نسخ السيناريو' : 'Could not copy scenario'));
+  } finally {
+    copyScenarioPromptOpen = false;
+    if (token) finishWorkspaceOperation(token);
   }
 }
 
@@ -791,10 +880,10 @@ async function createScenarioPrompt() {
 
 /* ── Boards ── */
 async function loadBoards(preferredBoard = TW.boardId) {
-  if (!TW.scenarioId) return;
+  if (!TW.scenarioId) return false;
   const scenarioId = TW.scenarioId;
   const data = await twFetch(`/ops/tw/boards/?scenario_id=${scenarioId}`);
-  if (!data || TW.scenarioId !== scenarioId) return;
+  if (!data || TW.scenarioId !== scenarioId) return false;
 
   TW.boards = data.boards || [];
   renderBoardsNav();
@@ -803,7 +892,9 @@ async function loadBoards(preferredBoard = TW.boardId) {
   if (TW.boards.length > 0) {
     const target = TW.boards.find(board => String(board.id) === String(preferredBoard));
     await selectBoard(target ? target.id : TW.boards[0].id);
+    return TW.scenarioId === scenarioId && TW.loadedBoardId === (target ? target.id : TW.boards[0].id);
   }
+  return true;
 }
 
 let boardLoadRevision = 0;
@@ -824,6 +915,7 @@ async function selectBoard(boardId) {
     }
     if (TW.loadedBoardId !== boardId) TW.selectedPlacementId = null;
     TW.loadedBoardId = boardId;
+    persistWorkspaceScenario(TW.scenarioId, boardId);
 
     TW.placements = data.placements || [];
     TW.scenario = { ...TW.scenario, slot_config: data.slot_config };
