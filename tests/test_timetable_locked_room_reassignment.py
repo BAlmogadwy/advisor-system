@@ -656,3 +656,26 @@ def test_greedy_fallback_keeps_a_locked_incumbent_room():
     assert _greedy_room_assignment(
         [locked, unlocked], {"R1": 40}, keep_roomed={locked.demand_id}
     ) == {locked.demand_id: "R1"}
+
+
+def test_solver_fallback_never_trades_the_count_for_a_lock(settings):
+    # Seating the lock first would strand both unlocked meetings (2 unroomed);
+    # the plain greedy seats them back to back (1 unroomed), so it is kept.
+    from core.services.timetable_exact_rooming import _solve_relaxed
+
+    settings.TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = 1
+    locked = _timed(_demand(1, "R1", 30, ("R1",)), 540, 640)
+    first = _timed(_demand(2, "", 40, ("R1",)), 540, 615)
+    second = _timed(_demand(3, "", 40, ("R1",)), 630, 705)
+
+    result = _solve_relaxed(
+        [locked, first, second],
+        {"R1": 40},
+        time_limit_seconds=1,
+        strict_budget=True,
+        count_only=True,
+        keep_roomed={locked.demand_id},
+    )
+
+    assert result.status == "UNKNOWN"
+    assert result.assignment == {first.demand_id: "R1", second.demand_id: "R1"}

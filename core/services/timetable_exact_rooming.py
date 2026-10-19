@@ -80,7 +80,8 @@ from core.services.timetable_rooming import (
 
 logger = logging.getLogger(__name__)
 
-#: ``_solve_relaxed`` pins each solved objective phase with one constraint.
+#: ``_solve_relaxed`` pins each solved objective phase with one constraint
+#: (plus one for the optional ``keep_roomed`` tie-break phase).
 _MAX_PHASE_PINS = 4
 
 
@@ -462,10 +463,11 @@ def _solve_relaxed(
     ``unroomed_proven_optimal`` reports its count proof, while
     ``proven_optimal`` remains false for the complete four-part objective.
 
-    ``keep_roomed`` meetings win ties in the first objective: it still minimises
-    the number of unroomed meetings exactly, then how many of these meetings end
-    unroomed (any compatible room keeps one). The greedy warm start seats them
-    in their incumbent rooms first.
+    ``keep_roomed`` meetings win ties: the unroomed count is solved, proven and
+    pinned first, then a further phase minimises how many of these meetings end
+    unroomed (any compatible room keeps one), so it never trades the count. The
+    warm start seats them in their incumbent rooms first unless that leaves more
+    meetings unroomed.
     """
     from time import monotonic
 
@@ -479,7 +481,14 @@ def _solve_relaxed(
         raise ExactRoomingError("Duplicate demand_id: meeting identity is not unique.")
 
     keep = frozenset(keep_roomed)
-    greedy = _greedy_room_assignment(demands, capacity_by_code, keep)
+    kept_ids = [d.demand_id for d in demands if d.demand_id in keep]
+    greedy = _greedy_room_assignment(demands, capacity_by_code)
+    if kept_ids:
+        # The warm start is also the fallback: seat kept meetings first only
+        # when that leaves no more meetings unroomed than the plain greedy.
+        kept_first = _greedy_room_assignment(demands, capacity_by_code, keep)
+        if len(kept_first) >= len(greedy):
+            greedy = kept_first
 
     def greedy_result(status: str) -> RelaxedRoomResult:
         roomed = [d for d in demands if d.demand_id in greedy]
@@ -538,21 +547,17 @@ def _solve_relaxed(
                     model.add(assign[(left.demand_id, room)] + assign[(right.demand_id, room)] <= 1)
         # Each phase below pins its objective with one more constraint. Admit the
         # model only if those pins fit too, so no budget check fires mid-solve.
-        if 0 < model.budget < model.elements + _MAX_PHASE_PINS:
+        if 0 < model.budget < model.elements + _MAX_PHASE_PINS + bool(kept_ids):
             raise ModelTooLarge(model.budget)
     except ModelTooLarge as exc:
         logger.warning("Exact rooming not solved: %s", exc)
         return greedy_result("UNKNOWN")
 
     unroomed_expr = sum(1 - roomed[d.demand_id] for d in demands)
-    kept = [d.demand_id for d in demands if d.demand_id in keep]
-    if kept:
-        # One phase, two levels: the weight exceeds every possible tie-break
-        # total, so the unroomed count (and its proof) is exactly the same.
-        flags = cast("dict[str, Any]", roomed)
-        count_expr = (len(kept) + 1) * unroomed_expr + sum(1 - flags[k] for k in kept)
-    else:
-        count_expr = unroomed_expr
+    flags = cast("dict[str, Any]", roomed)
+    # Tie-break phase, solved only after the unroomed count is pinned: it can
+    # never trade the count, and the count proof comes from phase one alone.
+    kept_phase = (sum(1 - flags[k] for k in kept_ids),) if kept_ids else ()
     shortfall_expr = sum(
         assign[(d.demand_id, room)] * max(0, d.required_capacity - capacity_by_code[room])
         for d in demands
@@ -573,7 +578,9 @@ def _solve_relaxed(
     # lower-priority refinement is unnecessary in its repeated candidate loop.
     # Existing preview/apply callers retain the full lexicographic solve.
     phases = (
-        (count_expr,) if count_only else (count_expr, shortfall_expr, changes_expr, excess_expr)
+        (unroomed_expr, *kept_phase)
+        if count_only
+        else (unroomed_expr, *kept_phase, shortfall_expr, changes_expr, excess_expr)
     )
     phase_limit = max(1.0, time_limit_seconds / len(phases))
     proofs: list[bool] = []
