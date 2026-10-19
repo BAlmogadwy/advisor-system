@@ -318,6 +318,21 @@ class ToolbarMenusBrowserTests(StaticLiveServerTestCase):
             found = page.evaluate(STILL_PAST_GENERATE)
             if found:
                 problems[f"Generate {language} open, status line grown"] = found
+            # Something above the buttons inside the bar moves them without
+            # resizing their group: the bar is watched too, so the sheet
+            # follows them, and re-placing it still leaves the page alone.
+            page.evaluate(
+                "document.getElementById('twGenBar').firstElementChild.style.marginTop = '48px'"
+            )
+            page.evaluate(SETTLED)
+            found = page.evaluate(STILL_PAST_GENERATE)
+            page.evaluate("document.getElementById('main-content').scrollTop = 0")
+            page.evaluate(SETTLED)
+            found += page.evaluate(
+                SEEN, ["twGenerateMenu", "twGenerateDropdown", "twGenerateGroup"]
+            )
+            if found:
+                problems[f"Generate {language} open, buttons moved down"] = found
             page.keyboard.press("Escape")
             if sent or errors:
                 problems[f"page {language} turned"] = [*sent, *errors]
