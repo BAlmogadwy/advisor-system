@@ -287,7 +287,33 @@ def set_course_instructors(
     return serialize_course_instructors(program, code, section)
 
 
-def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
+def _one_teacher_name(assignment, ts, names: dict | None = None) -> tuple[bool, str]:
+    """``(write, name)`` for ``ts`` under one teacher per section.
+
+    Engine and pinned sections show their own teacher; a section still to be
+    decided shows no name; frozen, unknown-frozen and no-links sections are not
+    written (their names belong to their owner, or to the registrar's text).
+    """
+    from core.services.section_teacher_assignment import (
+        STATUS_ENGINE,
+        STATUS_PINNED,
+        STATUS_TBD,
+    )
+
+    key = f"{ts.course_key or ts.course_code}_{ts.section}"
+    status = assignment.status.get(key)
+    if status in (STATUS_ENGINE, STATUS_PINNED):
+        teacher = assignment.teacher.get(key)
+        if names is not None:
+            return True, names.get(teacher, "")
+        instructor = Instructor.objects.filter(pk=teacher).first() if teacher else None
+        return True, instructor.full_name if instructor else ""
+    if status == STATUS_TBD:
+        return True, ""
+    return False, ""
+
+
+def apply_primary_instructor(ts, scenario, board, display_code: str, *, assignment=None) -> bool:
     """Fan the primary ``CourseInstructor`` name into a section's meeting rows.
 
     The single source of the meeting-level instructor write-through. Resolves
@@ -306,8 +332,22 @@ def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
     without this re-fan the name is lost — which silently suppresses the
     Instructors export sheet (it no-ops when no meeting carries a name) after
     a full rebuild, CP-SAT polish, or rebalance.
+
+    With one teacher per section the name is the section's OWN teacher, from
+    ``assignment`` or else the map in force (pinned for a run, memoised for a
+    request) — so 309 appears on the sections 309 teaches — and a section still
+    to be decided is blanked. See :func:`_one_teacher_name`.
     """
     from core.models import TermSectionMeeting
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import load_assignment
+
+        write, name = _one_teacher_name(assignment or load_assignment(scenario.id), ts)
+        if write:
+            TermSectionMeeting.objects.filter(term_section=ts).update(instructor=name)
+        return bool(write and name)
 
     gender = getattr(scenario, "gender", "")
     if not gender:
@@ -343,15 +383,36 @@ def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
     return False
 
 
-def reconcile_scenario_instructors(scenario, *, excluded_section_ids=()) -> int:
+def reconcile_scenario_instructors(scenario, *, excluded_section_ids=(), assignment=None) -> int:
     """Re-fan the current primary ``CourseInstructor`` names into an existing
     scenario's ``TermSectionMeeting.instructor`` rows (the display/clash cache).
 
     Lets a registrar's course-assignment edits reach an already-generated
     scenario without a full rebuild. Returns the number of sections updated.
-    Same course-identity rule as :func:`apply_primary_instructor`.
+    Same course-identity rule as :func:`apply_primary_instructor`; with one
+    teacher per section each section gets its own teacher's name (or none,
+    while it is to be decided), from ``assignment`` or the map in force.
     """
     from core.models import TermSection, TermSectionMeeting
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import load_assignment
+
+        current = assignment or load_assignment(scenario.id)
+        names = dict(
+            Instructor.objects.filter(
+                pk__in={t for t in current.teacher.values() if t is not None}
+            ).values_list("pk", "full_name")
+        )
+        updated = 0
+        for ts in TermSection.objects.filter(scenario=scenario).exclude(
+            id__in=excluded_section_ids
+        ):
+            write, name = _one_teacher_name(current, ts, names)
+            if write and TermSectionMeeting.objects.filter(term_section=ts).update(instructor=name):
+                updated += 1
+        return updated
 
     if not scenario.gender:
         return 0

@@ -612,6 +612,16 @@ def _add_section_nodes_and_rels(
     meetings_by_section: dict[int, list[TermSectionMeeting]] = {}
     for meeting in TermSectionMeeting.objects.filter(term_section_id__in=section_ids):
         meetings_by_section.setdefault(meeting.term_section_id, []).append(meeting)
+    # One teacher per section: a section's teacher is the map's, whatever its
+    # meeting rows still say; a section to be decided names nobody, and one the
+    # map leaves out (no links, unknown frozen teacher) keeps its meeting name.
+    teachers: dict[int, tuple] = {}
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import status_by_term_section_id
+
+        teachers = status_by_term_section_id(scenario_id)
 
     for placement in placements:
         ts = placement.term_section
@@ -624,6 +634,9 @@ def _add_section_nodes_and_rels(
                 if str(m.instructor).strip()
             }
         )
+        known = teachers.get(ts.id)
+        if known is not None and known[2] in ("engine", "pinned", "frozen", "tbd"):
+            instructors = [known[1]] if known[1] else []
         nodes.append(
             _node(
                 "TTSection",

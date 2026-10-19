@@ -127,12 +127,18 @@ def _link_weekly_bundles(model, sections, assign):
 
 
 def _instructor_ids_for_sections(board, sections):
+    from core.services.timetable_flags import is_one_teacher_active
     from core.services.timetable_pr4_instructor import (
         build_section_instructor_ids,
         section_instructor_resolver,
     )
 
     resolved = build_section_instructor_ids(board.scenario)
+    if is_one_teacher_active():
+        # The one-teacher map already covers every budget label, placed or not
+        # (its stored or closure teacher); a section absent from it has no
+        # teacher to charge. Never fall back to the course's whole link set.
+        return [set(resolved.get(f"{s['code']}|{s['label']}", ())) for s in sections]
     # Sections not generated yet (a fresh "optimal"/adaptive build) have no
     # TermSection, so they resolve here — through the same course identity, not
     # the display code alone, or PROGRAMMING II borrows PROGRAMMING I's lecturers.

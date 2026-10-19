@@ -64,6 +64,8 @@ from collections import defaultdict
 from contextlib import nullcontext
 from itertools import combinations
 
+from django.db.models import Q
+
 from core.models import (
     DeliveryBoard,
     ScenarioSectionBudget,
@@ -92,6 +94,7 @@ from core.services.timetable_demand import (
     compute_course_students_index,
     load_scenario_course_demands,
 )
+from core.services.timetable_flags import is_one_teacher_active
 from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
@@ -1411,9 +1414,15 @@ def auto_place_board(
         for _link_section, _link_ids in link_map.items():
             if _link_ids:
                 section_instructors.setdefault(_link_section, set()).update(_link_ids)
-        meeting_rows = TermSectionMeeting.objects.filter(
-            term_section__scenario_id=scenario.id
-        ).values_list(
+        _meeting_scope = Q(term_section__scenario_id=scenario.id)
+        if is_one_teacher_active():
+            # One teacher per section: a section this scenario does not own
+            # (another scenario's, or a global one placed only here) keeps its
+            # teacher, so its meetings are that teacher's occupancy too.
+            from core.services.board_ownership import teacher_frozen_section_ids
+
+            _meeting_scope |= Q(term_section_id__in=teacher_frozen_section_ids(scenario.id))
+        meeting_rows = TermSectionMeeting.objects.filter(_meeting_scope).values_list(
             "term_section__course_key",
             "term_section__section",
             "day",

@@ -389,7 +389,18 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
     lecturers). Sections with no assignment are simply absent
     from the map (they then contribute nothing to the idle-gap metric). Returns
     ``{}`` when the scenario has no gender — the assignment model is gender-scoped.
+
+    With one teacher per section (``is_one_teacher_active``) every charged
+    section maps to the singleton of its one teacher, pinned and frozen ones
+    included; a section still to be decided charges nobody and is absent.
     """
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import load_assignment
+
+        return load_assignment(scenario_id).v2_map()
+
     scenario = TimetableScenario.objects.filter(id=scenario_id).first()
     if scenario is None:
         return {}
