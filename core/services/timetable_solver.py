@@ -45,7 +45,11 @@ from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
 )
-from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_online import (
+    OnlineCourseLookup,
+    normalise_course_code,
+    programmes_for_board,
+)
 from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     SAME_COURSE_DIFFERENT_DAY_PENALTY,
@@ -123,22 +127,21 @@ def _link_weekly_bundles(model, sections, assign):
 
 
 def _instructor_ids_for_sections(board, sections):
-    from core.models import CourseInstructor
-    from core.services.timetable_pr4_instructor import build_section_instructor_ids
+    from core.services.timetable_pr4_instructor import (
+        build_section_instructor_ids,
+        section_instructor_resolver,
+    )
 
     resolved = build_section_instructor_ids(board.scenario)
-    by_course = defaultdict(set)
-    programs = set(board.scenario.programs or []) | set((board.program or "").split(","))
-    for code, instructor in CourseInstructor.objects.filter(
-        program__in=programs,
-        section=board.scenario.gender,
-        instructor__is_active=True,
-    ).values_list("course_code", "instructor_id"):
-        by_course[normalise_course_code(code)].add(instructor)
+    # Sections not generated yet (a fresh "optimal"/adaptive build) have no
+    # TermSection, so they resolve here — through the same course identity, not
+    # the display code alone, or PROGRAMMING II borrows PROGRAMMING I's lecturers.
+    fallback = section_instructor_resolver(
+        [*(board.scenario.programs or []), *programmes_for_board(board)],
+        board.scenario.gender,
+    )
     return [
-        resolved.get(
-            f"{s['code']}|{s['label']}", by_course[normalise_course_code(s["display_code"])]
-        )
+        resolved.get(f"{s['code']}|{s['label']}") or fallback(s["code"], s["display_code"])
         for s in sections
     ]
 

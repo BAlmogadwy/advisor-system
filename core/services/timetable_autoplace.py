@@ -1029,6 +1029,11 @@ def _board_seed_scope(board: DeliveryBoard) -> str:
     return f"term={board.nominal_term}:programmes={programmes}:type={board.board_type}"
 
 
+def _count_filter_rejection(rejections: dict[str, list], code: str, context: dict) -> None:
+    """Tally one option a hard filter removed; the first context is kept as the example."""
+    rejections.setdefault(code, [0, context])[0] += 1
+
+
 def auto_place_board(
     board_id: int,
     strategy: str = DEFAULT_STRATEGY,
@@ -1437,101 +1442,108 @@ def auto_place_board(
                 )
             section_instructors.setdefault(section_full, set()).update(ids)
 
-    # ── 2b. PR1 lock preload ─────────────────────────────────────────
-    # When TIMETABLE_ENFORCE_LOCKS is on, every meeting of a section
-    # anchored by a lock is seeded into the same occupancy structures the
-    # planner consults below:
+    # ── 2b. Existing-placement preload (PR1 locks included) ──────────
+    # Every meeting already placed on THIS board is seeded into the same
+    # occupancy structures the planner consults below:
     #   - placed_masks + all_placed_masks → same-course / cross-course
     #     student-overlap conflict detection
     #   - placed_schedule → idle-gap scoring and S2+ instructor-adjacency
     #     scoring for the same course
-    #   - room_tracker.usage → room assignment avoids locked rooms at
-    #     the locked (day, start) without any special-case branch
+    #   - room_tracker.usage → room assignment avoids occupied rooms at
+    #     the occupied (day, start) without any special-case branch
     #   - slot_density → tie-breaking pushes later placements toward
-    #     less-populated slots, acknowledging the locked cell's pressure
-    # The round-robin skip is automatic: ``already = count()`` on line
-    # ~820 already counts locked rows, so ``to_place = planned_sections
+    #     less-populated slots, acknowledging the existing cell's pressure
+    # A full rebuild resets the unlocked rows first, so there this is the PR1
+    # lock preload alone. Any other call places only what is still missing
+    # and keeps everything else on the board — the required-section
+    # guarantee's retry is exactly that — so its sections must be visible
+    # too: with only the locks seeded, the retry booked a reinstated section
+    # into a room this board already used at that time, on top of its
+    # students' other classes here (scenario 667: CS112 PROGRAMMING II in
+    # AI124 S2's and CS114 S1's rooms).
+    # The round-robin skip is automatic: ``already = count()`` below
+    # already counts these rows, so ``to_place = planned_sections
     # - already`` excludes them and the sec_round loop never retries
     # that section index. One LOCK_RESPECT telemetry row is emitted per
-    # protected cell without changing its original is_locked flag.
-    if lock_rule_on:
-        protected_sections = locked_physical_section_ids(scenario.pk)
-        locked_placements = (
-            SectionPlacement.objects.filter(board=board, term_section_id__in=protected_sections)
-            .select_related("term_section")
-            .order_by("day", "start_time")
-        )
-        for lp in locked_placements:
-            cc = lp.term_section.course_key or lp.term_section.course_code
-            mask = _time_mask(lp.day, lp.start_time, lp.end_time)
-            placed_masks.append((cc, mask))
-            placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
-            if gap_penalty_on:
-                _lp_s = _hhmm_to_min(lp.start_time)
-                _lp_e = _hhmm_to_min(lp.end_time)
-                if _lp_s >= 0 and _lp_e >= 0:
-                    for _iid in section_instructors.get(f"{cc}|{lp.term_section.section}", ()):
-                        instr_placed.setdefault(_iid, []).append((lp.day, _lp_s, _lp_e))
-            all_placed_masks.append((cc, mask))
-            slot_density[lp.start_time] += 1
-            day_density[lp.day] += 1
-            if (
-                room_tracker
-                and lp.room
-                and lp.room != "UNASSIGNED"
-                and normalise_course_code(lp.term_section.course_code) not in online_codes
-                and not get_course_meeting_policy(
-                    lp.term_section.course_code,
-                    lp.term_section.course_key,
-                    lp.term_section.course_number,
-                )
-            ):
-                room_tracker.mark_used(
-                    lp.day, str(lp.start_time)[:5], str(lp.end_time)[:5], lp.room
-                )
-            pr1_lock_rejections.append(
-                RejectionReason(
-                    code=LOCK_RESPECT,
-                    day=lp.day,
-                    start_time=lp.start_time,
-                    end_time=lp.end_time,
-                    course_code=cc,
-                    context={"locked_room": lp.room},
-                ).to_dict()
+    # protected cell (TIMETABLE_ENFORCE_LOCKS on) without changing its
+    # original is_locked flag.
+    protected_sections = locked_physical_section_ids(scenario.pk) if lock_rule_on else set()
+    existing_placements = (
+        SectionPlacement.objects.filter(board=board)
+        .select_related("term_section")
+        .order_by("day", "start_time")
+    )
+    for lp in existing_placements:
+        cc = lp.term_section.course_key or lp.term_section.course_code
+        mask = _time_mask(lp.day, lp.start_time, lp.end_time)
+        placed_masks.append((cc, mask))
+        placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
+        if gap_penalty_on:
+            _lp_s = _hhmm_to_min(lp.start_time)
+            _lp_e = _hhmm_to_min(lp.end_time)
+            if _lp_s >= 0 and _lp_e >= 0:
+                for _iid in section_instructors.get(f"{cc}|{lp.term_section.section}", ()):
+                    instr_placed.setdefault(_iid, []).append((lp.day, _lp_s, _lp_e))
+        all_placed_masks.append((cc, mask))
+        slot_density[lp.start_time] += 1
+        day_density[lp.day] += 1
+        if (
+            room_tracker
+            and lp.room
+            and lp.room != "UNASSIGNED"
+            and normalise_course_code(lp.term_section.course_code) not in online_codes
+            and not get_course_meeting_policy(
+                lp.term_section.course_code,
+                lp.term_section.course_key,
+                lp.term_section.course_number,
             )
-            # PR3 commit 5 — when warm-start is on and the caller
-            # provided a baseline for a locked section at a DIFFERENT
-            # slot, emit a DecisionTrace row showing the lock as chosen
-            # and the baseline as the rejected alternative (with
-            # rejection_code=LOCK_RESPECT). This is the only way the
-            # registrar learns "your previous slot was overridden by a
-            # lock" — the round-robin loop skips locked sections so
-            # they never reach the per-section trace path below.
-            # Priority order locked in: PR1 locks → PR3 warm-start →
-            # cold-start (see fixture #5 notes).
-            if trace_enabled and warm_start_on and normalised_baseline is not None:
-                section_code_full = f"{cc}|{lp.term_section.section}"
-                baseline_entry = normalised_baseline.get(section_code_full)
-                if baseline_entry is not None and (
-                    baseline_entry.day != lp.day or baseline_entry.start_time != lp.start_time
-                ):
-                    decision_trace_lock_alt = Alternative(
-                        day=baseline_entry.day,
-                        start_time=baseline_entry.start_time,
-                        end_time=baseline_entry.end_time,
-                        room="",
-                        rejection_code=LOCK_RESPECT,
-                        rejection_context={"locked_section": section_code_full},
-                    )
-                    decision_trace[section_code_full] = DecisionTrace(
-                        section_code=section_code_full,
-                        course_code=cc,
-                        chosen_day=lp.day,
-                        chosen_start_time=lp.start_time,
-                        chosen_end_time=lp.end_time,
-                        chosen_room=lp.room or "",
-                        alternatives=(decision_trace_lock_alt,),
-                    ).to_dict()
+        ):
+            room_tracker.mark_used(lp.day, str(lp.start_time)[:5], str(lp.end_time)[:5], lp.room)
+        if lp.term_section_id not in protected_sections:
+            continue
+        pr1_lock_rejections.append(
+            RejectionReason(
+                code=LOCK_RESPECT,
+                day=lp.day,
+                start_time=lp.start_time,
+                end_time=lp.end_time,
+                course_code=cc,
+                context={"locked_room": lp.room},
+            ).to_dict()
+        )
+        # PR3 commit 5 — when warm-start is on and the caller
+        # provided a baseline for a locked section at a DIFFERENT
+        # slot, emit a DecisionTrace row showing the lock as chosen
+        # and the baseline as the rejected alternative (with
+        # rejection_code=LOCK_RESPECT). This is the only way the
+        # registrar learns "your previous slot was overridden by a
+        # lock" — the round-robin loop skips locked sections so
+        # they never reach the per-section trace path below.
+        # Priority order locked in: PR1 locks → PR3 warm-start →
+        # cold-start (see fixture #5 notes).
+        if trace_enabled and warm_start_on and normalised_baseline is not None:
+            section_code_full = f"{cc}|{lp.term_section.section}"
+            baseline_entry = normalised_baseline.get(section_code_full)
+            if baseline_entry is not None and (
+                baseline_entry.day != lp.day or baseline_entry.start_time != lp.start_time
+            ):
+                decision_trace_lock_alt = Alternative(
+                    day=baseline_entry.day,
+                    start_time=baseline_entry.start_time,
+                    end_time=baseline_entry.end_time,
+                    room="",
+                    rejection_code=LOCK_RESPECT,
+                    rejection_context={"locked_section": section_code_full},
+                )
+                decision_trace[section_code_full] = DecisionTrace(
+                    section_code=section_code_full,
+                    course_code=cc,
+                    chosen_day=lp.day,
+                    chosen_start_time=lp.start_time,
+                    chosen_end_time=lp.end_time,
+                    chosen_room=lp.room or "",
+                    alternatives=(decision_trace_lock_alt,),
+                ).to_dict()
 
     # ── 4. Pre-compute per-course data ────────────────────────────────
     # For each budgeted course, determine how many sections still need
@@ -1662,6 +1674,10 @@ def auto_place_board(
             # when dormant). Consumed by ``_build_pr3_alternatives`` so
             # the decision-trace alphabet can now include INSTRUCTOR_CLASH.
             pr4_instructor_rejected: list[tuple[tuple[dict, ...], str, dict]] = []
+            # The same hard-filter rejections, counted whatever the trace flag:
+            # when no option survives they are why the section stays unplaced.
+            # code -> [options rejected, first rejection's context]
+            filter_rejections: dict[str, list] = {}
 
             is_online = cd.get("is_online", False)
 
@@ -1723,6 +1739,7 @@ def auto_place_board(
                             if clash_ctx is not None:
                                 break
                         if clash_ctx is not None:
+                            _count_filter_rejection(filter_rejections, INSTRUCTOR_CLASH, clash_ctx)
                             if trace_enabled:
                                 pr4_instructor_rejected.append(
                                     (option, INSTRUCTOR_CLASH, clash_ctx)
@@ -1768,6 +1785,9 @@ def auto_place_board(
                             if cap_ctx is not None:
                                 break
                         if cap_ctx is not None:
+                            _count_filter_rejection(
+                                filter_rejections, INSTRUCTOR_DAILY_CAP, cap_ctx
+                            )
                             if trace_enabled:
                                 pr4_instructor_rejected.append(
                                     (option, INSTRUCTOR_DAILY_CAP, cap_ctx)
@@ -1790,6 +1810,9 @@ def auto_place_board(
                     else _same_course_overlap_context(option, placed_schedule, code)
                 )
                 if same_course_ctx is not None:
+                    _count_filter_rejection(
+                        filter_rejections, SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx
+                    )
                     if trace_enabled:
                         pr4_instructor_rejected.append(
                             (option, SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx)
@@ -1951,6 +1974,33 @@ def auto_place_board(
 
             if best_option is None:
                 total_skipped += 1
+                # Room fit is only ever a penalty, so an option that reaches
+                # scoring always wins something: no best option means the hard
+                # filters (instructor clash, daily cap, same-course overlap)
+                # removed every one. Report the filter that removed most, under
+                # the course identity — scenario 667's CS112 PROGRAMMING II,
+                # blocked by instructor clashes, used to read as a room shortage
+                # of a bare "CS112".
+                if filter_rejections:
+                    reason, (_count, context) = max(
+                        filter_rejections.items(), key=lambda item: item[1][0]
+                    )
+                    room_failures.append(
+                        RoomFailureReason(
+                            code=reason,
+                            day="",
+                            start_time="",
+                            end_time="",
+                            course_code=code,
+                            section_code=sec_label,
+                            context={
+                                **context,
+                                "options": len(all_options),
+                                "rejected_by": {k: v[0] for k, v in filter_rejections.items()},
+                            },
+                        ).to_dict()
+                    )
+                    continue
                 # PR2 commit 4 — Site 1: scoring loop found no feasible option.
                 # No option survived scoring, so there's no specific (day,
                 # start_time, end_time) to report — slot fields stay empty

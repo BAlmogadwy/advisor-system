@@ -317,13 +317,15 @@ def run_v2_optimisation_guarded(
     # the whole board, so there is nothing useful to pre-repair here).
     from core.services.timetable_flags import is_required_section_guarantee_enabled
     from core.services.timetable_required_sections import (
+        describe_short_courses,
         find_missing_required_sections,
         reinstate_missing_required_sections,
+        sections_short_by_course,
     )
 
     guarantee_on = is_required_section_guarantee_enabled()
     pre_repair: dict | None = None
-    missing_before: set[str] = set()
+    missing_before: dict[str, int] = {}
     if guarantee_on:
         # A scenario with NO placements at all is "nothing built yet", not
         # "something was dropped" — every budgeted course looks "missing"
@@ -339,11 +341,9 @@ def run_v2_optimisation_guarded(
         ).exists()
         if mode == "current" and has_existing_board:
             pre_repair = reinstate_missing_required_sections(scenario_id)
-            missing_before = {row["course_code"] for row in pre_repair["after_missing"]}
+            missing_before = sections_short_by_course(pre_repair["after_missing"])
         elif mode != "current":
-            missing_before = {
-                row["course_code"] for row in find_missing_required_sections(scenario_id)
-            }
+            missing_before = sections_short_by_course(find_missing_required_sections(scenario_id))
 
     board_snapshot = snapshot_scenario(scenario_id)
     safety_before = compute_scenario_safety_summary(scenario_id)
@@ -480,21 +480,26 @@ def run_v2_optimisation_guarded(
     # (full mode's re-placement, current mode's cap/clash repair unplacing a
     # meeting, etc.) must never leave a required section with FEWER placed
     # sections than it had right before this run started (after the pre-step
-    # above). Compared as a set of course codes, not a count, so dropping one
-    # course while placing an unrelated one can't cancel out and hide the
-    # loss. A course that was already missing before this run (and could not
-    # be repaired) is reported, not blocked — see
+    # above). Compared per course IDENTITY (course_key), not as one total, so
+    # dropping one course while placing an unrelated one can't cancel out and
+    # hide the loss — and not per display code, or CS112 PROGRAMMING II could be
+    # dropped unseen while CS112 PROGRAMMING I was already short. A course that
+    # was already short before this run (and could not be repaired) is
+    # reported, not blocked, unless the run made it shorter still — see
     # core.services.timetable_required_sections module docstring.
     if guarantee_on:
-        missing_after = {row["course_code"] for row in find_missing_required_sections(scenario_id)}
-        newly_missing = sorted(missing_after - missing_before)
+        missing_after = sections_short_by_course(find_missing_required_sections(scenario_id))
+        newly_missing = sorted(
+            key for key, short in missing_after.items() if short > missing_before.get(key, 0)
+        )
         if newly_missing:
             blocking_regressions.append(
                 {
                     "metric": "required_sections_missing",
                     "label": "Required sections dropped",
-                    "before": sorted(missing_before),
-                    "after": sorted(missing_after),
+                    # {course_key: sections short}, so "one short -> two short" shows.
+                    "before": dict(sorted(missing_before.items())),
+                    "after": dict(sorted(missing_after.items())),
                     "sections": newly_missing,
                 }
             )
@@ -635,7 +640,7 @@ def run_v2_optimisation_guarded(
         logger.error(
             "Required sections still missing after scenario %d run: %s",
             scenario_id,
-            [row["course_code"] for row in final_report["missing"]],
+            describe_short_courses(final_report["missing"]),
         )
 
     return result

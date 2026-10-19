@@ -27,10 +27,34 @@ from __future__ import annotations
 
 import logging
 
+from core.services.course_identity import display_course_label
 from core.services.timetable_flags import is_required_section_guarantee_enabled
 from core.services.timetable_workspace import compute_scenario_budget
 
 logger = logging.getLogger(__name__)
+
+
+def sections_short_by_course(rows: list[dict]) -> dict[str, int]:
+    """``{course_key: sections still missing}`` for audit rows.
+
+    Keyed by the planner identity, never the display code: CS112 PROGRAMMING I
+    and CS112 PROGRAMMING II are two courses, and keying on ``course_code``
+    let one of them hide the other's drop or repair. A count, not a set, so
+    "short by one" turning into "short by two" is visible too.
+    """
+    return {
+        str(row.get("course_key") or row["course_code"]): int(row.get("remaining_sections") or 0)
+        for row in rows
+    }
+
+
+def describe_short_courses(rows: list[dict]) -> list[str]:
+    """Human-facing ``"CS112 - PROGRAMMING II (1 of 1)"`` labels for log lines."""
+    return [
+        f"{display_course_label(row['course_code'], row.get('course_name'))} "
+        f"({row.get('remaining_sections')} of {row.get('planned_sections')})"
+        for row in rows
+    ]
 
 
 def find_missing_required_sections(scenario_id: int) -> list[dict]:
@@ -80,13 +104,12 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
             "newly_placed": [],
         }
 
-    before_codes = [row["course_code"] for row in before]
     logger.warning(
         "Required-section guarantee: %d course(s) short a section in scenario %d, "
         "attempting reinstatement: %s",
         len(before),
         scenario_id,
-        before_codes,
+        describe_short_courses(before),
     )
 
     # Both the placement attempt AND the post-check share one try/except.
@@ -108,8 +131,12 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
         )
         after = before
 
-    after_codes = {row["course_code"] for row in after}
-    newly_placed = [code for code in before_codes if code not in after_codes]
+    # A course "newly placed" any section it was missing — partial progress
+    # (3 of 5 -> 4 of 5) changed the board too, and the full-mode re-score keys
+    # off this list.
+    short_before = sections_short_by_course(before)
+    short_after = sections_short_by_course(after)
+    newly_placed = [key for key, n in short_before.items() if short_after.get(key, 0) < n]
 
     if after:
         logger.error(
@@ -117,7 +144,7 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
             "%d after reinstatement: %s",
             len(after),
             scenario_id,
-            sorted(after_codes),
+            describe_short_courses(after),
         )
 
     return {

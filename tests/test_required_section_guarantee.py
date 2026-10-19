@@ -341,6 +341,156 @@ def test_current_mode_on_an_empty_board_is_not_turned_into_a_full_build(monkeypa
     assert rs.find_missing_required_sections(scenario.id)[0]["course_code"] == "DS331"
 
 
+# ── Same display code, two courses (CS112 PROGRAMMING I / II) ─────────────
+
+PI, PII = "CS112::PROGRAMMING_I", "CS112::PROGRAMMING_II"
+
+
+def _two_cs112_courses(
+    name: str, *, planned_i: int, placed_i: int, planned_ii: int, placed_ii: int
+):
+    """CS112 PROGRAMMING I and CS112 PROGRAMMING II: one display code, two
+    budgets, two identities — the lab scenario 667 shape."""
+    scenario = TimetableScenario.objects.create(academic_year="1448", term="2", name=name)
+    board = DeliveryBoard.objects.create(scenario=scenario, label="Term 2", nominal_term=2)
+    sections: dict[str, list[TermSection]] = {}
+    for key, planned, placed in ((PI, planned_i, placed_i), (PII, planned_ii, placed_ii)):
+        ScenarioSectionBudget.objects.create(
+            scenario=scenario,
+            course_code="CS112",
+            course_key=key,
+            course_name=key.split("::", 1)[1].replace("_", " "),
+            department="CS",
+            credit_hours=3,
+            planned_sections=planned,
+            max_per_section=30,
+            total_demand=20 * planned,
+            programme_term=2,
+        )
+        sections[key] = [_place(scenario, board, key, f"S{i}") for i in range(1, placed + 1)]
+    return scenario, board, sections
+
+
+def _place(scenario, board, key: str, label: str) -> TermSection:
+    section = TermSection.objects.create(
+        scenario=scenario,
+        course_code="CS112",
+        course_number="CS112",
+        course_key=key,
+        course_name=key,
+        section=label,
+        source_tag="tw_auto",
+    )
+    SectionPlacement.objects.create(
+        board=board, term_section=section, day="SUN", start_time="09:00", end_time="10:15"
+    )
+    TermSectionMeeting.objects.create(
+        term_section=section, day="SUN", start_time="09:00", end_time="10:15"
+    )
+    return section
+
+
+def _drop(section: TermSection) -> None:
+    SectionPlacement.objects.filter(term_section=section).delete()
+    TermSectionMeeting.objects.filter(term_section=section).delete()
+
+
+@pytest.mark.django_db
+def test_reinstating_one_cs112_is_reported_while_the_other_stays_short(monkeypatch):
+    """Keyed on the display code, "CS112" stayed "missing" because PROGRAMMING I
+    was still short, so PROGRAMMING II's reinstatement never showed — and full
+    mode then skipped the re-score of the board it changed."""
+    scenario, board, _ = _two_cs112_courses(
+        "PII reinstated", planned_i=2, placed_i=1, planned_ii=1, placed_ii=0
+    )
+
+    def fake_place(_scenario_id):
+        _place(scenario, board, PII, "S1")
+
+    monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", fake_place)
+
+    report = rs.reinstate_missing_required_sections(scenario.id)
+
+    assert report["newly_placed"] == [PII]
+    assert [row["course_key"] for row in report["after_missing"]] == [PI]
+
+
+@pytest.mark.django_db
+def test_partial_reinstatement_counts_as_newly_placed(monkeypatch):
+    """3 of 5 -> 4 of 5 changed the board as much as 0 of 1 -> 1 of 1."""
+    scenario, board, _ = _two_cs112_courses(
+        "PI partly reinstated", planned_i=3, placed_i=1, planned_ii=1, placed_ii=1
+    )
+    monkeypatch.setattr(
+        "core.services.timetable_autoplace.auto_place_scenario",
+        lambda _scenario_id: _place(scenario, board, PI, "S2"),
+    )
+
+    report = rs.reinstate_missing_required_sections(scenario.id)
+
+    assert report["newly_placed"] == [PI]
+
+
+@pytest.mark.django_db
+def test_dropping_one_cs112_is_rolled_back_while_the_other_is_already_short(monkeypatch, settings):
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    scenario, _board, sections = _two_cs112_courses(
+        "PII dropped", planned_i=2, placed_i=1, planned_ii=1, placed_ii=1
+    )
+    original = snapshot_scenario(scenario.id)
+    monkeypatch.setattr(
+        "core.services.timetable_autoplace.auto_place_scenario", lambda _scenario_id: None
+    )
+
+    def drop_programming_ii(**kwargs):
+        _drop(sections[PII][0])
+        return {"final_score": [0, 0, 0, 0, 0, 0], "baseline_score": [0, 0, 0, 0, 0, 0]}
+
+    monkeypatch.setattr(optimiser, "optimise_current_timetable", drop_programming_ii)
+
+    result = run_v2_optimisation_guarded(scenario.id, mode="current")
+
+    assert result["safety_blocked"] is True
+    regression = next(
+        r
+        for r in result["safety_regression"]["regressions"]
+        if r.get("metric") == "required_sections_missing"
+    )
+    assert regression["sections"] == [PII]
+    assert snapshot_scenario(scenario.id).placements == original.placements
+
+
+@pytest.mark.django_db
+def test_an_already_short_course_losing_another_section_is_rolled_back(monkeypatch, settings):
+    """Short by one before the run, short by two after it: the run dropped a
+    section, even though the course was "missing" both times."""
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    scenario, _board, sections = _two_cs112_courses(
+        "PI shorter", planned_i=3, placed_i=2, planned_ii=1, placed_ii=1
+    )
+    monkeypatch.setattr(
+        "core.services.timetable_autoplace.auto_place_scenario", lambda _scenario_id: None
+    )
+
+    def drop_one_more(**kwargs):
+        _drop(sections[PI][1])
+        return {"final_score": [0, 0, 0, 0, 0, 0], "baseline_score": [0, 0, 0, 0, 0, 0]}
+
+    monkeypatch.setattr(optimiser, "optimise_current_timetable", drop_one_more)
+
+    result = run_v2_optimisation_guarded(scenario.id, mode="current")
+
+    assert result["safety_blocked"] is True
+    regression = next(
+        r
+        for r in result["safety_regression"]["regressions"]
+        if r.get("metric") == "required_sections_missing"
+    )
+    assert regression["sections"] == [PI]
+    assert regression["before"] == {PI: 1}
+    assert regression["after"] == {PI: 2}
+
+
 @pytest.mark.django_db
 def test_flag_off_disables_repair_and_the_gate_but_not_reporting(monkeypatch, settings):
     settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False

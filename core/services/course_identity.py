@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from collections.abc import Callable, Iterable
 
 from core.services.student_helpers import normalize_code
 
@@ -58,3 +60,39 @@ def course_display_code(
     if number.startswith(code):
         return number
     return f"{code}{number}"
+
+
+def programmes_serving_course(programs: Iterable[str]) -> Callable[[object], list[str]]:
+    """Return ``serving(course_key)``: which of ``programs`` teach that course.
+
+    Facts keyed by ``(programme, course_code)`` — ``CourseInstructor`` above all —
+    are sound per programme, because a code is unique within one plan
+    (``uq_programme_requirements_program_code``). They are NOT sound across
+    programmes: CS112 is PROGRAMMING I in AI2/DS2 and PROGRAMMING II in AI/DS, so
+    pooling every programme's CS112 row gives PROGRAMMING II the PROGRAMMING I
+    lecturers. A programme serves ``course_key`` when its own plan names a course
+    whose ``planner_course_key`` is that key.
+
+    Two cases keep the old every-programme answer, because there is nothing to
+    tell apart: a bare key (no name part), and a key no plan names — a resolved
+    catalogue elective such as AI463 lives in ``ElectiveCourse``, not in any
+    plan, and dropping its staffing would be a regression, not a fix. The
+    result keeps the order of ``programs`` (callers pick a primary by it).
+    """
+    from core.models import ProgrammeRequirement
+
+    ordered = list(dict.fromkeys(p for p in programs if p))
+    owners: dict[str, set[str]] = defaultdict(set)
+    for program, code, name in ProgrammeRequirement.objects.filter(program__in=ordered).values_list(
+        "program", "course_code", "course_name"
+    ):
+        owners[planner_course_key(code, name)].add(program)
+
+    def serving(course_key: object) -> list[str]:
+        key = str(course_key or "").strip().upper()
+        if "::" not in key:
+            return list(ordered)
+        own = owners.get(key, set())
+        return [p for p in ordered if p in own] or list(ordered)
+
+    return serving
