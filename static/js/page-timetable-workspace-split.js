@@ -6879,17 +6879,27 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
   const oldDay = p.day;
   const oldStart = p.start_time;
   const oldEnd = p.end_time;
-  if (globalThis.TimetableMeetingPolicy?.isEnglish(p) && (oldDay !== slot.day || oldStart !== slot.start || oldEnd !== slot.end)) {
+  const timeChanged = oldDay !== slot.day || oldStart !== slot.start || oldEnd !== slot.end;
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p) && timeChanged) {
     const pattern = TimetableMeetingPolicy.patterns.find(row => row.start === slot.start && row.end === slot.end);
     return switchEnglishSplitPattern(placementId, pattern?.pattern_id, null, { room: room.room_code, refresh, notifyResult, recordUndo });
+  }
+  // A lock freezes the section's days and times, not its room: a room change
+  // at the current slot needs no unlock, a previewed new slot does.
+  if (p.is_locked && timeChanged) {
+    if (notifyResult) notify.warning(IS_AR
+      ? 'الشعبة مقفلة: يمكن تغيير قاعتها في وقتها الحالي فقط. افتح القفل لتغيير الوقت.'
+      : 'Locked section: its room can change only at its current time. Unlock it to change the time.');
+    return null;
   }
   if (oldRoom === room.room_code && oldDay === slot.day && oldStart === slot.start) {
     if (notifyResult) notify.success('Room already assigned');
     return { already_assigned: true };
   }
-  const data = await doMove(placementId, slot.day, slot.start, slot.end, room.room_code);
+  let failure = '';
+  const data = await doMove(placementId, slot.day, slot.start, slot.end, room.room_code, true, message => { failure = message; });
   if (!data) {
-    if (notifyResult) notify.error('Room assignment failed');
+    if (notifyResult) notify.error(failure ? `Room assignment failed: ${failure}` : 'Room assignment failed');
     return null;
   }
   if (recordUndo) {
@@ -6909,10 +6919,11 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
     updateUndoRedoButtons();
   }
   clearSlotAssist();
-  const boardId = S.panes[located.paneIdx]?.boardId;
+  // A shared section's room changes on every board copy at that slot.
+  const boardIds = new Set([S.panes[located.paneIdx]?.boardId, ...(data.placements || []).map(row => row.board_id)]);
   if (refresh) {
     for (let i = 0; i < paneCount(); i++) {
-      if (S.panes[i].boardId === boardId) await loadAndRenderPane(i);
+      if (boardIds.has(S.panes[i].boardId)) await loadAndRenderPane(i);
     }
     await refreshBoardsSummary();
     S.selectedPlacementId = placementId;
@@ -7020,7 +7031,7 @@ function renderRpanelSelection(body) {
     <div class="tws-protect-panel">
       <div class="tws-protect-title">${IS_AR ? 'حماية التحريك التلقائي' : 'Move protection'}</div>
       <div class="tws-protect-grid">
-        <button class="tws-protect-btn${p.is_locked ? ' on' : ''}" data-protect="section" data-lock-placement-id="${p.id}" ${pendingLockPlacements.has(String(p.id)) ? 'disabled aria-busy="true"' : ''}>${p.is_locked ? (IS_AR ? 'فتح الشعبة' : 'Unlock section') : (IS_AR ? 'قفل الشعبة' : 'Lock section')}</button>
+        <button class="tws-protect-btn${p.is_locked ? ' on' : ''}" data-protect="section" data-lock-placement-id="${p.id}" title="${esc(LOCK_HELP)}" ${pendingLockPlacements.has(String(p.id)) ? 'disabled aria-busy="true"' : ''}>${p.is_locked ? (IS_AR ? 'فتح الشعبة' : 'Unlock section') : (IS_AR ? 'قفل الشعبة' : 'Lock section')}</button>
         <button class="tws-protect-btn${instructorProtected ? ' on' : ''}" data-protect="instructor" ${instructorKey ? '' : 'disabled'}>${IS_AR ? 'حماية المدرس' : 'Protect instructor'}</button>
         <button class="tws-protect-btn${roomProtected ? ' on' : ''}" data-protect="room" ${roomKey && roomKey !== 'UNASSIGNED' ? '' : 'disabled'}>${IS_AR ? 'حماية القاعة' : 'Protect room'}</button>
         <button class="tws-protect-btn${timeProtected ? ' on' : ''}" data-protect="time">${IS_AR ? 'حماية الوقت' : 'Protect time'}</button>
@@ -8076,6 +8087,8 @@ async function drawerRemoveInstructor(p, instructorId) {
 
 /* ── Lock / unlock ── */
 const pendingLockPlacements = new Set();
+// A lock keeps the section's days, times and contact pattern; its room may change.
+const LOCK_HELP = IS_AR ? 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.' : "Keeps this section's days and times; its room can still change.";
 
 function syncPlacementLockControls(placementId) {
   syncCopyScenarioControl();
@@ -8298,14 +8311,14 @@ function updateUndoRedoButtons() {
 // and it is a first-time registrar action with no prior warning. Surfacing here
 // covers every caller at once. reportBackstop=false is for restore legs, which
 // put a section back where it was and already report their own failure.
-async function doMove(placementId, day, start, end, room, reportBackstop = true) {
+async function doMove(placementId, day, start, end, room, reportBackstop = true, onError = null) {
   const payload = { day, start_time: start, end_time: end };
   if (room !== undefined) payload.room = room;
   const data = await api(`/ops/tw/placements/${placementId}/move/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }, onError);
   if (reportBackstop) notifyInstructorClashBackstop(data);
   return data;
 }

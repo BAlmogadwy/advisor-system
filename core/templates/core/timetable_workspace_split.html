@@ -333,7 +333,7 @@
   </div>
   <div class="body" id="twsDrawerBody"></div>
   <div class="footer">
-    <button type="button" id="twsDrawerLock"><span class="ico">🔒</span><span class="lbl">{% if LANGUAGE_CODE == 'ar' %}قفل{% else %}Lock{% endif %}</span><span class="kbd">L</span></button>
+    <button type="button" id="twsDrawerLock" title="{% if LANGUAGE_CODE == 'ar' %}يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.{% else %}Keeps this section's days and times; its room can still change.{% endif %}"><span class="ico">🔒</span><span class="lbl">{% if LANGUAGE_CODE == 'ar' %}قفل{% else %}Lock{% endif %}</span><span class="kbd">L</span></button>
     <button type="button" class="danger" id="twsDrawerRemove"><span class="ico">🗑</span><span class="lbl">{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}</span><span class="kbd">DEL</span></button>
   </div>
 </aside>
@@ -388,5 +388,5 @@
   const DEFAULT_TERM = "{{ default_term|default:''|escapejs }}";
 </script>
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=124"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=125"></script>
 {% endblock %}

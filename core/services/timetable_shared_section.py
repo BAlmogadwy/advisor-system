@@ -58,6 +58,10 @@ from dataclasses import dataclass, field
 from django.db import transaction
 
 from core.models import DeliveryBoard, SectionPlacement, TimetableScenario
+from core.services.board_ownership import external_shared_section_ids
+
+#: Room values that mean "no room": a locked meeting never trades a room for one.
+_UNROOMED = frozenset({"", "UNASSIGNED"})
 
 
 def _hhmm(value: object) -> str:
@@ -164,6 +168,35 @@ def _full_key_set(slots: list[MeetingSlot]) -> frozenset:
     return frozenset(s.full_key for s in slots)
 
 
+def _slot_of(p: SectionPlacement) -> MeetingSlot:
+    """A placement's meeting, normalised exactly as the divergence check sees it."""
+    return MeetingSlot(
+        day=str(p.day).strip().upper(),
+        start=_hhmm(p.start_time),
+        end=_hhmm(p.end_time),
+        room=str(p.room or "").strip().upper(),
+    )
+
+
+def _locked_room_targets(
+    rows: list[SectionPlacement], canonical: list[MeetingSlot]
+) -> dict[tuple[str, str, str], str] | None:
+    """The canonical room for each meeting of a locked copy that differs only in room.
+
+    ``None`` when any day/start/end differs (the lock owns the times, so a human
+    resolves that) or when the canonical meeting is unroomed where the locked
+    copy holds a room: unrooming it would cost the locked meeting its room for
+    nothing.
+    """
+    slots = [_slot_of(p) for p in rows]
+    if _time_key_set(slots) != _time_key_set(canonical):
+        return None
+    rooms = {s.time_key: s.room for s in canonical}
+    if any(s.room not in _UNROOMED and rooms[s.time_key] in _UNROOMED for s in slots):
+        return None
+    return rooms
+
+
 def _load_shared_sections(scenario_id: int) -> list[SharedSection]:
     """Build the shared-section list for a scenario (read-only)."""
     board_order: dict[int, tuple[int, int]] = {
@@ -186,14 +219,7 @@ def _load_shared_sections(scenario_id: int) -> list[SharedSection]:
             continue
         schedule_by_board: dict[int, list[MeetingSlot]] = defaultdict(list)
         for p in rows:
-            schedule_by_board[p.board_id].append(
-                MeetingSlot(
-                    day=str(p.day).strip().upper(),
-                    start=_hhmm(p.start_time),
-                    end=_hhmm(p.end_time),
-                    room=str(p.room or "").strip().upper(),
-                )
-            )
+            schedule_by_board[p.board_id].append(_slot_of(p))
         time_keys = {bid: _time_key_set(s) for bid, s in schedule_by_board.items()}
         full_keys = {bid: _full_key_set(s) for bid, s in schedule_by_board.items()}
         schedule_divergent = len(set(time_keys.values())) > 1
@@ -282,9 +308,13 @@ def canonicalise_shared_sections(
     placement`` are ``SET_NULL`` foreign keys that would be silently detached by a
     delete/recreate. Surplus rows are deleted and shortfalls created only as needed.
 
-    A board holding any **locked** placement for the section is skipped whole and
-    reported — a lock is an explicit human decision, so a locked divergence is
-    surfaced for a human to resolve rather than overridden.
+    A board holding any **locked** placement for the section keeps its days, times
+    and contact pattern: a lock is an explicit human decision about *when* the
+    class meets, and it does not freeze the room. A locked board that already
+    meets at exactly the canonical times takes the canonical room in place; a
+    locked board whose times differ, or whose canonical meeting has no room, is
+    skipped whole and reported for a human to resolve. A section another
+    scenario also places is externally owned and skipped whole, time and room.
 
     Coherence only: exposing a real clash the divergence had hidden is the correct
     outcome; run the optimiser afterwards to restore quality on the honest board.
@@ -309,10 +339,17 @@ def canonicalise_shared_sections(
         )
         return report
 
+    external_ids = external_shared_section_ids(scenario_id)
     rewritten = 0
     canonicalised = 0
     skipped_locked = 0
     for shared in divergent:
+        if shared.term_section_id in external_ids:
+            report.notes.append(
+                f"Skipped {shared.course_code}|{shared.section}: another scenario also places "
+                "this section, so its days, times and room stay frozen here."
+            )
+            continue
         canonical = shared.canonical_schedule
         canonical_keys = _full_key_set(canonical)
         section_touched = False
@@ -330,11 +367,27 @@ def canonicalise_shared_sections(
                 ).order_by("id")
             )
             if any(p.is_locked for p in existing):
+                # A lock freezes days, times and the contact pattern, not the room:
+                # a locked copy already at the canonical times takes its room.
+                rooms = _locked_room_targets(existing, canonical)
+                if rooms is None:
+                    report.notes.append(
+                        f"Skipped locked placement(s) for {shared.course_code}|{shared.section} "
+                        f"on board {board_id}; resolve the lock manually."
+                    )
+                    section_skipped = True
+                    continue
+                for row in existing:
+                    slot = _slot_of(row)
+                    if slot.room != rooms[slot.time_key]:
+                        row.room = rooms[slot.time_key]
+                        row.save(update_fields=["room", "updated_at"])
+                        rewritten += 1
                 report.notes.append(
-                    f"Skipped locked placement(s) for {shared.course_code}|{shared.section} "
-                    f"on board {board_id}; resolve the lock manually."
+                    f"Moved locked placement(s) for {shared.course_code}|{shared.section} "
+                    f"on board {board_id} to the canonical room; their days and times are kept."
                 )
-                section_skipped = True
+                section_touched = True
                 continue
             # Update in place (preserves ids and the FKs pointing at them), then
             # delete surplus / create shortfall.

@@ -61,6 +61,7 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
+from core.services.board_ownership import external_shared_section_ids
 from core.services.student_helpers import normalize_code
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
@@ -2142,6 +2143,9 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
     skipped: list[dict] = []
     total_unassigned = 0
     max_items = max(1, min(100, int(limit or 20)))
+    # A lock freezes days and times, not the room, so locked rows are roomed in
+    # place. A section another scenario also places stays fully frozen here.
+    external_ids = external_shared_section_ids(scenario.id)
 
     for placement in placements:
         if section_policy(placement.term_section):
@@ -2150,11 +2154,11 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
         if current_room and current_room != "UNASSIGNED":
             continue
         total_unassigned += 1
-        if placement.is_locked:
+        if placement.term_section_id in external_ids:
             skipped.append(
                 {
                     "placement_id": placement.id,
-                    "reason": "locked",
+                    "reason": "externally_owned",
                     "label": f"{placement.term_section.course_code}-{placement.term_section.section}",
                 }
             )
@@ -2249,6 +2253,7 @@ def apply_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> d
             .filter(id__in=placement_ids, board__scenario=scenario)
             .select_related("board", "term_section")
         }
+        external_ids = external_shared_section_ids(scenario.id)
         applied: list[dict] = []
         skipped: list[dict] = list(preview.get("skipped") or [])
         for item in preview["assignments"]:
@@ -2256,8 +2261,8 @@ def apply_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> d
             if not placement:
                 skipped.append({**item, "reason": "missing_after_preview"})
                 continue
-            if placement.is_locked:
-                skipped.append({**item, "reason": "locked_after_preview"})
+            if placement.term_section_id in external_ids:
+                skipped.append({**item, "reason": "externally_owned_after_preview"})
                 continue
 
             current_room = _room_key(placement.room)
@@ -2296,6 +2301,67 @@ def apply_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> d
         "applied": applied,
         "skipped": skipped[:60],
     }
+
+
+def assign_physical_meeting_room(placement: SectionPlacement, room: str) -> list[SectionPlacement]:
+    """Give one physical meeting a new room on every agreeing copy in its scenario.
+
+    A section shared across boards at the same day/start/end is one class in one
+    room (``timetable_exact_rooming``), so the same-scenario copies at that slot
+    that are in this copy's room move with it, as do a scenario-owned section's
+    canonical meetings in that room (merging any row the new room makes a
+    duplicate). A copy already in another room is left for the canonicaliser,
+    so moving back restores every row exactly. Global sections' meetings stay
+    untouched, matching ``sync_meetings_from_placements``. Days, times and lock
+    flags never change, so this is the room-only edit a lock admits. Callers
+    reject externally owned sections first.
+    """
+    scenario_id = placement.board.scenario_id
+    slot = {
+        "day": placement.day,
+        "start_time": placement.start_time,
+        "end_time": placement.end_time,
+    }
+    with transaction.atomic():
+        copies = list(
+            SectionPlacement.objects.select_for_update()
+            .filter(
+                term_section_id=placement.term_section_id, board__scenario_id=scenario_id, **slot
+            )
+            .select_related("term_section", "board")
+            .order_by("board_id", "id")
+        )
+        anchor = next(row for row in copies if row.pk == placement.pk)
+        old_key, new_key = _room_key(anchor.room), _room_key(room)
+        rows = [row for row in copies if _room_key(row.room) == old_key]
+        for row in rows:
+            row.room = room
+            row.save(update_fields=["room", "updated_at"])
+        if placement.term_section.scenario_id == scenario_id:
+            meetings = list(
+                TermSectionMeeting.objects.select_for_update()
+                .filter(term_section_id=placement.term_section_id, **slot)
+                .order_by("pk")
+            )
+            # The new room may already hold this meeting for an instructor; the
+            # unique key then merges the moving row into it.
+            taken = {
+                m.instructor
+                for m in meetings
+                if _room_key(m.room) == new_key and _room_key(m.room) != old_key
+            }
+            for meeting in meetings:
+                if _room_key(meeting.room) != old_key:
+                    continue
+                if meeting.instructor in taken:
+                    meeting.delete()
+                    continue
+                taken.add(meeting.instructor)
+                if meeting.room != room:
+                    meeting.room = room
+                    meeting.save(update_fields=["room"])
+    placement.room = room
+    return rows
 
 
 def _student_rows(student_ids: set[int], primary_terms: dict[int, int], limit: int) -> list[dict]:
