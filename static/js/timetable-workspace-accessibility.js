@@ -1,14 +1,16 @@
-/* Keyboard and accessibility behaviour layered over the workspace's existing
- * click actions. The main workspace script remains the owner of application
- * state, requests, menu toggles and panel rendering. */
+/* Keyboard, accessibility and placement behaviour layered over the
+ * workspace's existing click actions. The main workspace script remains the
+ * owner of application state, requests, menu toggles and panel rendering. */
 (() => {
   'use strict';
   const byId = id => document.getElementById(id);
+  // `align`: the edge of its button group a menu prefers on wide screens. The
+  // Optimise and Export groups sit at the end of the command bar.
   const menus = [
-    ['twGenerateMenu', 'twGenerateDropdown', 'twGenerateGroup'],
-    ['twOptimiseMenu', 'twOptimiseDropdown', 'twOptimiseGroup'],
-    ['twExportMenu', 'twExportDropdown', 'twExportGroup'],
-  ].map(([trigger, menu, group]) => ({ trigger: byId(trigger), menu: byId(menu), group: byId(group) }))
+    ['twGenerateMenu', 'twGenerateDropdown', 'twGenerateGroup', 'start'],
+    ['twOptimiseMenu', 'twOptimiseDropdown', 'twOptimiseGroup', 'end'],
+    ['twExportMenu', 'twExportDropdown', 'twExportGroup', 'end'],
+  ].map(([trigger, menu, group, align]) => ({ trigger: byId(trigger), menu: byId(menu), group: byId(group), align }))
     .filter(({ trigger, menu, group }) => trigger && menu && group);
 
   const isOpen = entry => entry.menu.style.display !== 'none';
@@ -20,11 +22,58 @@
     const status = byId('twGenStatus');
     if (status) { status.tabIndex = -1; status.focus(); }
   };
+
+  // Placement. Where a group lands depends on how its bar wraps, so a fixed
+  // alignment cuts a menu off at some widths. On a phone the stylesheet makes
+  // the bar the containing block and the menu a full-width sheet; it is moved
+  // up to sit just under its own buttons. Elsewhere the menu takes its
+  // preferred edge of its group, the other edge when that one would leave the
+  // visible content, and is clamped inside it when neither fits.
+  const phone = window.matchMedia?.('(max-width: 640px)');
+  const GAP = 8;
+  const visibleSpan = element => {
+    let left = 0;
+    let right = window.innerWidth;
+    for (let a = element.parentElement; a; a = a.parentElement) {
+      if (getComputedStyle(a).overflowX === 'visible') continue;
+      const box = a.getBoundingClientRect();
+      left = Math.max(left, box.left);
+      right = Math.min(right, box.right);
+    }
+    return { left, right };
+  };
+  const placeMenu = entry => {
+    const { menu, group } = entry;
+    const set = (property, value) => menu.style.setProperty(property, value, 'important');
+    const buttons = group.getBoundingClientRect();
+    if (phone?.matches) {
+      const bar = menu.offsetParent;
+      if (bar && bar !== group) set('top', `${buttons.bottom - bar.getBoundingClientRect().top - bar.clientTop}px`);
+    } else {
+      set('top', '100%');
+      const width = menu.getBoundingClientRect().width;
+      const span = visibleSpan(group);
+      const rtl = getComputedStyle(group).direction === 'rtl';
+      const atStart = rtl ? buttons.right - width : buttons.left;
+      const atEnd = rtl ? buttons.left : buttons.right - width;
+      const order = entry.align === 'end' ? [atEnd, atStart] : [atStart, atEnd];
+      const fits = left => left >= span.left + GAP - 0.5 && left + width <= span.right - GAP + 0.5;
+      const left = order.find(fits) ?? Math.max(span.left + GAP, Math.min(order[0], span.right - GAP - width));
+      set('left', `${left - buttons.left - group.clientLeft}px`);
+      set('right', 'auto');
+    }
+    // A short screen can open a menu below the fold.
+    menu.scrollIntoView?.({ block: 'nearest' });
+  };
+
   const syncMenu = entry => {
     const open = isOpen(entry);
     entry.trigger.setAttribute('aria-expanded', String(open));
     entry.menu.setAttribute('aria-hidden', String(!open));
     if (!open && entry.menu.contains(document.activeElement)) restoreMenuFocus(entry);
+    // Place once per opening; placing writes the style the observer watches.
+    if (open && !entry.placed) placeMenu(entry);
+    entry.placed = open;
   };
   const closeMenu = (entry, restoreFocus = false) => {
     entry.menu.style.display = 'none';
@@ -84,6 +133,7 @@
   document.addEventListener('click', event => {
     menus.forEach(entry => { if (!entry.group.contains(event.target)) closeMenu(entry); });
   });
+  window.addEventListener('resize', () => menus.filter(isOpen).forEach(placeMenu));
 
   document.querySelectorAll('.tw-panel-tabs[role="tablist"]').forEach(list => {
     const tabs = [...list.querySelectorAll('[role="tab"]')];

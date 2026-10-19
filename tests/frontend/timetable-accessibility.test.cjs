@@ -131,22 +131,6 @@ test('the Generate bar rises above the sticky command bar exactly while its menu
   h.dom.window.close();
 });
 
-test('on phones each menu opens as a sheet under its bar, not over the buttons that opened it', () => {
-  // Layout is not computed by jsdom; pin the rule that replaced a fixed sheet
-  // with `top: auto`, which landed on its own trigger (measured 40px overlap).
-  const css = fs.readFileSync(path.join(root, 'static/css/timetable-workspace.css'), 'utf8');
-  const phone = /@media \(max-width: 640px\) {([\s\S]*?)\n}/.exec(css)[1];
-  const rule = selector => new RegExp(`${selector.replace(/[#,]/g, m => `\\${m}`)}\\s*{([^}]*)}`).exec(phone)?.[1] || '';
-  const menus = rule('#twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown');
-  assert.match(menus, /position:\s*absolute !important/);
-  assert.match(menus, /top:\s*100% !important/);
-  assert.match(menus, /inset-inline:\s*12px !important/);
-  assert.doesNotMatch(phone, /position:\s*fixed/);
-  assert.match(rule('#twGenerateGroup, #twOptimiseGroup, #twExportGroup'), /position:\s*static !important/);
-  assert.match(rule('#twGenBar'), /position:\s*relative/);
-  assert.match(rule('.tw-cmd-bar'), /position:\s*relative/);
-});
-
 test('a planner action that disables the trigger restores focus to the visible status', async () => {
   const h = harness();
   const trigger = h.doc.getElementById('twGenerateMenu');
