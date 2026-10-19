@@ -698,6 +698,24 @@ def test_u16_a_raising_solver_or_a_failing_import_uses_the_greedy(flags, monkeyp
     assert a.report["fallback_reason"] == "solver_unavailable"
 
 
+def test_u16_a_stale_current_map_only_breaks_the_fallbacks_ties(flags) -> None:
+    """Every shared course is Dr 1's in the current map, as the union era's
+    meeting names say. Seeded first, that map fills Dr 1's week to the ceiling
+    and leaves the course only Dr 1 can teach without a teacher; the greedy
+    gives it to Dr 1 first and spreads the rest."""
+    flags.TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = 5
+    slots = course("ONLY1", [{}], eligible=(1,)) + [
+        slot for n in range(5) for slot in course(f"SHARED{n}", [{"current": 1}], eligible=(1, 2))
+    ]
+
+    a = sta.solve_layout_aware(slots)
+
+    assert a.report["fallback_reason"] == "model_too_large"
+    _assert_greedy_fallback(a, slots)
+    assert tbd(a) == []
+    assert a.teacher["ONLY1_S1"] == 1
+
+
 # ── U17: storage — read-back, layout edits, pins, forced FEASIBLE ─────────
 
 

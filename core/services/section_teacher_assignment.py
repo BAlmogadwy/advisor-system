@@ -1159,17 +1159,12 @@ def solve_layout_aware(
     kept_map = {k: cur[k] for k in kept if k in cur}
     ledger = _fixed_ledger(slots, kept_map)
     choice = [s for s in slots if s.is_choice and s.key not in kept_map]
-    # The hint: the closure of the current map when there is one (a feasible
-    # point that keeps every teacher), else the plain greedy.
-    hint_ledger = _fixed_ledger(slots, kept_map)
-    seeded = {}
-    for slot in choice:
-        teacher = cur.get(slot.key)
-        if teacher is not None and hint_ledger.blocker(slot, teacher, bounds) is None:
-            hint_ledger.add(slot, teacher)
-            seeded[slot.key] = teacher
-    hint = dict(seeded)
-    hint.update(_greedy_fill(hint_ledger, [s for s in choice if s.key not in seeded], cur, bounds))
+    # The hint, and a failed component's answer: the greedy (2.9), where the
+    # current teacher only breaks ties. Seeding the current teachers first
+    # replays a stale map instead: on lab scenario 667 the union era's meeting
+    # names filled instructor 298's week to the ceiling, and a section only 298
+    # can teach was left without a teacher.
+    hint = _greedy_fill(_fixed_ledger(slots, kept_map), choice, cur, bounds)
     report: dict[str, Any] = {
         "engine": "cpsat",
         "components": 0,
