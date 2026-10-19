@@ -404,7 +404,11 @@ def repair_unassigned_after_greedy(
 
     ``unassigned_records`` is a list of dicts, one per UNASSIGNED meeting,
     each carrying ``{ts_id, day, start, end, demand, room_type, gender,
-    course_code, section_code}``.
+    course_key, section_code, budget_map, failure}``. ``failure`` is the
+    very ``room_failures`` entry the meeting raised; a rescue removes that
+    object, never an equal-looking record of another course that shares the
+    display code. ``budget_map`` is a ``_build_rooming_budget_maps`` result
+    used to size a swapped-out occupant by its planner identity.
 
     ``meeting_result_refs`` maps ``(ts_id, day, start) -> meeting_dict``
     so the caller's ``placements`` payload can be updated in place.
@@ -477,8 +481,11 @@ def repair_unassigned_after_greedy(
                 occ_ts = occupant.term_section
                 # Source demand from the budget map when available so a
                 # NULL available_capacity doesn't collapse the capacity
-                # filter to "any smallest room fits".
-                occ_budget = (rec.get("budget_map") or {}).get(occ_ts.course_code)
+                # filter to "any smallest room fits". Looked up by the
+                # occupant's planner identity, not its display code.
+                occ_budget = _budget_value_for_placement(
+                    occupant, rec.get("budget_map") or {}, "raw", 0
+                )
                 if occ_budget:
                     occ_demand = int(occ_budget)
                 else:
@@ -534,16 +541,10 @@ def repair_unassigned_after_greedy(
             key = (rec["ts_id"], day, start)
             if key in meeting_result_refs:
                 meeting_result_refs[key]["room"] = room_code
-            room_failures[:] = [
-                f
-                for f in room_failures
-                if not (
-                    f.get("day") == day
-                    and f.get("start_time") == start
-                    and f.get("course_code") == rec["course_code"]
-                    and f.get("section_code") == rec["section_code"]
-                )
-            ]
+            # By identity: two courses sharing a display code and section
+            # label can raise equal-looking records at the same time.
+            failure = rec.get("failure")
+            room_failures[:] = [f for f in room_failures if f is not failure]
             repaired += 1
         else:
             still_unassigned.append(rec)

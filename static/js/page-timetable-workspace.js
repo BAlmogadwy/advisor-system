@@ -27,6 +27,7 @@ const T = {
   publishConfirm: IS_AR ? 'هل تريد نشر هذا السيناريو؟' : 'Publish this scenario?',
   published_ok: IS_AR ? 'تم النشر' : 'Published successfully',
   overlap: IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash',
+  overlapWarning: IS_AR ? 'تداخل زمني داخل اللوحة لا يمنع النشر' : 'Same-board overlap (non-blocking)',
   instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
   roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
   crossBoardClash: IS_AR ? 'تداخل محتمل في الطلب عبر اللوحات' : 'Potential cross-board demand overlap',
@@ -1237,7 +1238,9 @@ function renderBoardStrip() {
   strip.style.display = 'flex';
   const placed = TW.placements.length;
   const s = TW.conflicts.summary || {};
-  const overlaps = (TW.conflicts.overlaps || []).length;
+  const overlapRows = TW.conflicts.overlaps || [];
+  const warningOverlaps = overlapRows.filter(isWarningOverlap).length;
+  const criticalOverlaps = overlapRows.length - warningOverlaps;
   const instrC = (TW.conflicts.instructor_clashes || []).length;
   const roomC = (TW.conflicts.room_clashes || []).length;
   const si = TW.conflicts.student_impact || {};
@@ -1250,7 +1253,8 @@ function renderBoardStrip() {
   strip.innerHTML = `
     <div class="tw-metric"><div class="num">${primary}${visitor > 0 ? '<span class="fs-xs text-t4">+' + visitor + '</span>' : ''}</div><div class="lbl">${IS_AR ? 'طلاب' : 'Students'}</div></div>
     <div class="tw-metric"><div class="num">${placed}</div><div class="lbl">${T.placed}</div></div>
-    <div class="tw-metric"><div class="num${overlaps > 0 ? ' danger' : ''}">${overlaps}</div><div class="lbl">${T.overlap}</div></div>
+    <div class="tw-metric"><div class="num${criticalOverlaps > 0 ? ' danger' : ''}">${criticalOverlaps}</div><div class="lbl">${T.overlap}</div></div>
+    <div class="tw-metric"><div class="num${warningOverlaps > 0 ? ' text-warning' : ''}">${warningOverlaps}</div><div class="lbl">${T.overlapWarning}</div></div>
     <div class="tw-metric"><div class="num${instrC > 0 ? ' danger' : ''}">${instrC}</div><div class="lbl">${T.instrClash}</div></div>
     <div class="tw-metric"><div class="num${roomC > 0 ? ' danger' : ''}">${roomC}</div><div class="lbl">${T.roomClash}</div></div>
     <div class="tw-metric"><div class="num${crossBoard > 0 ? ' danger' : ''}">${crossBoard}</div><div class="lbl">${T.crossBoardClash}</div></div>
@@ -1614,11 +1618,14 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
         const card = createPlacementCard(p);
         cell.appendChild(card);
       } else if (cellPlacements.length > 1) {
-        // Conflict: multiple in same cell
+        // Conflict: multiple in same cell -- unless the server judged every
+        // stacked pair a non-blocking overlap; then the card keeps its warning.
         cellPlacements.forEach(p => {
         const card = createPlacementCard(p);
-        card.classList.add('critical');
-        card.classList.remove('info');
+        if (!stackedPairsAllWarnings(p, cellPlacements)) {
+          card.classList.add('critical');
+          card.classList.remove('info');
+        }
         cell.appendChild(card);
       });
       }
@@ -1651,16 +1658,19 @@ function createPlacementCard(p) {
     const ids = row.ids || [row.placement_a_id, row.placement_b_id].filter(Boolean);
     return ids.map(String).includes(placementId);
   };
-  const hasStudentClash = overlaps.some(includesPlacement);
+  const placementOverlaps = overlaps.filter(includesPlacement);
+  const hasStudentClash = placementOverlaps.some(o => !isWarningOverlap(o));
+  const hasOverlapWarning = placementOverlaps.some(isWarningOverlap);
   const hasInstructorClash = instrClashes.some(includesPlacement);
   const hasRoomIssue = roomClashes.some(includesPlacement);
   const hasCrossBoardClash = crossBoardClashes.some(includesCrossPlacement);
   if (hasStudentClash) issueLabels.push(T.overlap);
+  if (hasOverlapWarning) issueLabels.push(T.overlapWarning);
   if (hasInstructorClash) issueLabels.push(T.instrClash);
   if (hasRoomIssue) issueLabels.push(T.roomClash);
   if (hasCrossBoardClash) issueLabels.push(T.crossBoardClash);
   const hasCritical = hasStudentClash || hasInstructorClash;
-  const hasWarning = hasRoomIssue;
+  const hasWarning = hasOverlapWarning || hasRoomIssue;
   if (hasCritical) card.classList.add('critical');
   else if (hasWarning) card.classList.add('warning');
   else if (hasCrossBoardClash) card.classList.add('info');
@@ -2027,15 +2037,15 @@ function renderRightPanel(tab) {
           html += `<button type="button" class="tw-issue-row tw-btn" data-ids='${JSON.stringify(room.placement_ids || [])}'><span class="tw-issue-dot warning"></span><span>${esc(room.course_code || room.course_key || '')} · ${esc(room.rooms?.join(', ') || 'UNASSIGNED')}<small class="d-block text-t4">${esc((room.reasons || []).join(', '))} · ${IS_AR ? 'السعة المطلوبة' : 'Required capacity'}: ${esc(room.required_capacity ?? '—')}</small></span></button>`;
       });
     }
-    if (overlaps.length) {
-      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.overlap} (${overlaps.length})</div>`;
-      overlaps.forEach(o => {
-        const secs = (o.sections || []).join(' / ');
-        html += `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
-          <span class="tw-issue-dot critical"></span>
-          <div><div class="fw-semibold">${esc(secs)}</div><div class="fs-xs text-t4">${esc(o.detail || '')}</div></div>
+    const overlapRow = (o, dot) => `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
+          <span class="tw-issue-dot ${dot}"></span>
+          <div><div class="fw-semibold">${esc((o.sections || []).join(' / '))}</div><div class="fs-xs text-t4">${esc(o.detail || '')}</div></div>
         </div>`;
-      });
+    const criticalOverlaps = overlaps.filter(o => !isWarningOverlap(o));
+    const warningOverlaps = overlaps.filter(isWarningOverlap);
+    if (criticalOverlaps.length) {
+      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.overlap} (${criticalOverlaps.length})</div>`;
+      criticalOverlaps.forEach(o => { html += overlapRow(o, 'critical'); });
     }
     if (iClashes.length) {
       html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.instrClash} (${iClashes.length})</div>`;
@@ -2046,6 +2056,10 @@ function renderRightPanel(tab) {
           <div><div class="fw-semibold">${esc(c.instructor || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
         </div>`;
       });
+    }
+    if (warningOverlaps.length) {
+      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--amber); margin:8px 0 4px; letter-spacing:.04em">${T.overlapWarning} (${warningOverlaps.length})</div>`;
+      warningOverlaps.forEach(o => { html += overlapRow(o, 'warning'); });
     }
     if (rClashes.length) {
       html += `<div class="fs-xs fw-bold text-caps" style="color:var(--amber); margin:8px 0 4px; letter-spacing:.04em">${T.roomClash} (${rClashes.length})</div>`;
@@ -2165,12 +2179,17 @@ function renderMriPanel(body) {
     ? Math.round(boardStudents.reduce((sum, n) => sum + n, 0) / boardStudents.length)
     : 0;
   const studentDelta = Math.abs(students - avgBoardStudents);
-  const critical = overlaps.length + iClashes.length;
-  const warnings = rClashes.length + crossBoard.length + deficitCourses.length + roomShortages.length;
+  const criticalOverlaps = overlaps.filter(o => !isWarningOverlap(o));
+  const warningOverlaps = overlaps.filter(isWarningOverlap);
+  const critical = criticalOverlaps.length + iClashes.length;
+  const warnings = warningOverlaps.length + rClashes.length + crossBoard.length + deficitCourses.length + roomShortages.length;
   const affected = impact.affected_count || 0;
   const blocked = impact.blocked_count || 0;
+  // A non-blocking overlap is common course demand students can route round,
+  // so it weighs what a potential cross-board demand overlap weighs.
   const pressure = Math.min(100, Math.round(
-    overlaps.length * 28 +
+    criticalOverlaps.length * 28 +
+    warningOverlaps.length * 4 +
     iClashes.length * 20 +
     rClashes.length * 12 +
     roomShortages.length * 12 +
@@ -2195,8 +2214,8 @@ function renderMriPanel(body) {
       label: 'Same-board clash',
       value: overlaps.length,
       max: Math.max(1, TW.placements.length),
-      tone: overlaps.length ? 'critical' : 'stable',
-      detail: `${overlaps.length} same-board time clashes`,
+      tone: criticalOverlaps.length ? 'critical' : warningOverlaps.length ? 'watch' : 'stable',
+      detail: `${criticalOverlaps.length} same-board time clashes, ${warningOverlaps.length} non-blocking overlaps`,
     },
     {
       key: 'cross-board-clash',
@@ -2236,9 +2255,9 @@ function renderMriPanel(body) {
     ...roomShortages.map(room => ({ kind: 'Room suitability', tone: 'watch', ids: room.placement_ids,
       title: room.course_code || room.course_key || room.room || 'UNASSIGNED',
       detail: `${(room.reasons || []).join(', ')}; required capacity ${room.required_capacity ?? '—'}` })),
-    ...overlaps.map(o => ({
-      kind: 'Same-board time clash',
-      tone: 'critical',
+    ...[...criticalOverlaps, ...warningOverlaps].map(o => ({
+      kind: isWarningOverlap(o) ? 'Same-board overlap (non-blocking)' : 'Same-board time clash',
+      tone: isWarningOverlap(o) ? 'watch' : 'critical',
       ids: o.ids || [],
       title: (o.sections || []).join(' / '),
       detail: o.detail || '',
@@ -2324,6 +2343,29 @@ function renderMriPanel(body) {
 function mriPct(value, max) {
   if (!max || max <= 0) return 0;
   return Math.max(3, Math.min(100, Math.round((value / max) * 100)));
+}
+
+// The server decides an overlap's severity once (H15): critical when it is
+// same-course or leaves students with no clash-free pair of sections, a
+// warning when they can route round it. A row without one stays critical.
+function isWarningOverlap(overlap) {
+  return overlap?.severity === 'warning';
+}
+
+// Sections stacked in one grid cell read as a clash unless the server reported
+// every stacked pair as a non-blocking overlap.
+function stackedPairsAllWarnings(placement, cellPlacements) {
+  const overlaps = TW.conflicts.overlaps || [];
+  const id = String(placement.id);
+  return cellPlacements.every(other => {
+    if (other === placement) return true;
+    const pair = [id, String(other.id)];
+    const row = overlaps.find(o => {
+      const ids = (o.ids || []).map(String);
+      return pair.every(value => ids.includes(value));
+    });
+    return isWarningOverlap(row);
+  });
 }
 
 function activeBoardCrossBoardClashes() {
