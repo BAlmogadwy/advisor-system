@@ -818,6 +818,93 @@ def test_u17_stored_rows_over_the_weekly_ceiling_drop_by_rank_whatever_the_layou
         assert a.report["stale_rows_ignored"] == 1
 
 
+def _three_stored_for_one_teacher(flags):
+    """Dr A stores S1-S3 of a three-section course (no D10 yet); Dr B is then
+    linked too. S3 is placed and still carries Dr A's name."""
+    key = requirement("AI", "AI201", "ML")
+    sc, board = scenario()
+    first = instructor("Dr A")
+    link("AI", "AI201", first)
+    row = budget(sc, key, 3)
+    s3 = section(sc, key, "S3")
+    place(board, s3, [("SUN", "08:00", "09:15")], instructor_name="Dr A")
+    sta.persist_assignment(sc.id, sta.load_assignment(sc.id))
+    assert engine_rows(sc) == {(key, f"S{n}"): "Dr A" for n in (1, 2, 3)}
+    second = instructor("Dr B")
+    link("AI", "AI201", second, role="co")  # one primary link per programme
+    return sc, key, row, first, second, s3
+
+
+@pytest.mark.django_db
+def test_u17_stored_rows_over_d10_drop_by_rank_once_the_budget_grows(flags) -> None:
+    sc, key, row, first, second, _s3 = _three_stored_for_one_teacher(flags)
+    row.planned_sections = 5  # a section-plan edit: the course now runs > 3
+    row.save()
+
+    a = sta.load_assignment(sc.id)
+
+    mine = [f"{key}_S{n}" for n in range(1, 6) if a.teacher[f"{key}_S{n}"] == first.id]
+    assert mine == [f"{key}_S1", f"{key}_S2"]  # the lowest ranks stay
+    assert a.report["ignored_row_keys"] == [[key.upper(), "S3"]]
+    assert a.report["stale_rows_ignored"] == sta.coverage_of(a)["stale_rows_ignored"] == 1
+    assert a.teacher[f"{key}_S3"] == second.id  # re-derived, never Dr A's third
+    assert a.teacher[f"{key}_S4"] == second.id
+    assert tbd(a) == [f"{key}_S5"] and a.tbd_reason[f"{key}_S5"] == "d10"
+    # Stored rows stay as they are until a persist: the read path never writes.
+    assert engine_rows(sc) == {(key, f"S{n}"): "Dr A" for n in (1, 2, 3)}
+
+
+@pytest.mark.django_db
+def test_u17_a_department_pin_counts_toward_d10_against_stored_rows(flags) -> None:
+    key = requirement("AI", "AI201", "ML")
+    sc, _board = scenario()
+    first, second = instructor("Dr A"), instructor("Dr B")
+    link("AI", "AI201", first)
+    link("AI", "AI201", second, role="co")
+    budget(sc, key, 4)
+    for label, person in (("S1", first), ("S2", first), ("S3", second)):
+        SectionInstructor.objects.create(
+            scenario=sc, course_key=key, section=label, instructor=person, source="engine"
+        )
+    # The department later pins Dr A to S4: with it Dr A's rows hold 3 of 4.
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=key, section="S4", instructor=first, source="department"
+    )
+
+    a = sta.load_assignment(sc.id)
+
+    assert a.status[f"{key}_S4"] == sta.STATUS_PINNED
+    assert [a.teacher[f"{key}_S{n}"] for n in (1, 2, 3, 4)] == [
+        first.id,
+        second.id,  # Dr A's higher-ranked row gives way to the pin
+        second.id,
+        first.id,
+    ]
+    assert a.report["ignored_row_keys"] == [[key.upper(), "S2"]]
+    assert sta.coverage_of(a)["d10_violated_by_pins"] == []
+
+
+@pytest.mark.django_db
+def test_u17_ensure_replaces_the_rows_the_read_path_ignored(flags) -> None:
+    sc, key, row, _first, _second, s3 = _three_stored_for_one_teacher(flags)
+    row.planned_sections = 5
+    row.save()
+
+    written = sta.prepare_section_teachers(sc.id, phase="ensure")["persist"]
+
+    assert engine_rows(sc) == {
+        (key, "S1"): "Dr A",
+        (key, "S2"): "Dr A",
+        (key, "S3"): "Dr B",  # the ignored row went, the closure's teacher is stored
+        (key, "S4"): "Dr B",
+    }
+    assert (written["deleted"], written["written"]) == (1, 2)
+    assert set(s3.meetings.values_list("instructor", flat=True)) == {"Dr B"}
+    back = sta.load_assignment(sc.id)
+    assert back.report["stale_rows_ignored"] == 0
+    assert back.report["closure_keys"] == []
+
+
 @pytest.mark.django_db
 def test_u17_a_solve_cut_short_is_closure_completed_before_it_is_stored(flags) -> None:
     sc, _board, alg, _ml, _sections = _two_course_board(flags)
