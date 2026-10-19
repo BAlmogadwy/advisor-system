@@ -466,6 +466,9 @@ def export_scenario_per_plan(
         raise RuntimeError("The export filter did not match any scenario program")
 
     plan_lens = build_scenario_plan_lens(scenario_id)
+    from core.services.timetable_export import section_teacher_texts
+
+    teachers = section_teacher_texts(scenario_id)  # one read for every program
     safe_name = _slugify(scenario.name)
     filter_suffix = (
         f"__filtered_{_slugify(export_filter.original)}" if export_filter.original else ""
@@ -493,6 +496,7 @@ def export_scenario_per_plan(
             export_filter=export_filter,
             elective_fills=elective_fills,
             elective_terms=elective_terms,
+            teachers=teachers,
         )
         filename = f"{_slugify(prog)}.xlsx"
         workbook_paths.append((filename, wb_path))
@@ -532,6 +536,7 @@ def _build_program_workbook(
     export_filter: ExportFilter,
     elective_fills: dict[str, list[str]] | None = None,
     elective_terms: dict[str, set[int]] | None = None,
+    teachers: dict[int, str] | None = None,
 ) -> Path:
     """Produce one XLSX file for a single program's plan view.
 
@@ -539,6 +544,9 @@ def _build_program_workbook(
     it this term and ``elective_terms`` the slot terms each of those courses may
     sit on (see :func:`get_plan_elective_terms`). A slot row is judged against
     its own term; a course is in place on any of its slots' terms.
+    ``teachers`` (``timetable_export.section_teacher_texts``, one teacher per
+    section only) names each section's teacher in the grid and the Instructors
+    sheet.
     """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -802,6 +810,7 @@ def _build_program_workbook(
             ),
             course_fill=_course_fill,
             apply_outer_border=_apply_outer_border,
+            teachers=teachers,
         )
 
     _render_plan_rooms_sheet(
@@ -816,7 +825,7 @@ def _build_program_workbook(
     # mirroring the Rooms sheet. Reuses the single-workbook renderer.
     from core.services.timetable_export import _render_instructors_sheet
 
-    _render_instructors_sheet(wb, scenario, _course_fill)
+    _render_instructors_sheet(wb, scenario, _course_fill, teachers=teachers)
 
     # Save
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -986,11 +995,14 @@ def _render_plan_term_sheet(
     styles: dict,
     course_fill,
     apply_outer_border,
+    teachers: dict[int, str] | None = None,
 ) -> None:
     """Render the day×slot grid + course info sidebar for one plan term."""
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.cell.text import InlineFont
     from openpyxl.styles import Alignment, Font
+
+    from core.services.timetable_export import TEACHER_TBD
 
     hdr_fill = styles["hdr_fill"]
     hdr_font = styles["hdr_font"]
@@ -1203,6 +1215,8 @@ def _render_plan_term_sheet(
                     is_misplaced = course_status.get(code) == "misplaced"
                     meeting = TermSectionMeeting.objects.filter(term_section=ts, day=day).first()
                     instructor = meeting.instructor if meeting else ""
+                    if teachers is not None and ts.id in teachers:
+                        instructor = teachers[ts.id] or TEACHER_TBD
                     room = pp.room or (meeting.room if meeting else "")
                     text = _section_cell_label(ts, duplicate_course_codes)
                     if is_misplaced:

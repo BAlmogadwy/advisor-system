@@ -55,6 +55,7 @@ Slot Templates
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
@@ -275,11 +276,41 @@ def _board_to_dict(b: DeliveryBoard) -> dict[str, object]:
     }
 
 
-def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
+def _section_teachers(scenario_id: int) -> dict[int, dict] | None:
+    """One teacher per section: each placed section's teacher, read once per
+    request from the map the engine charges (``section_teacher_display``);
+    None with the rule off, so no placement gets a ``teacher`` key."""
+    if not is_one_teacher_active():
+        return None
+    from core.services.section_teacher_assignment import section_teacher_display
+
+    return section_teacher_display(scenario_id)
+
+
+def _one_teacher_request(view):
+    """One teacher per section: every map read in the request (validation,
+    backstop, display) shares one read of the stored rows. Off: the view as is."""
+
+    @functools.wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not is_one_teacher_active():
+            return view(request, *args, **kwargs)
+        from core.services.section_teacher_assignment import request_scope
+
+        with request_scope():
+            return view(request, *args, **kwargs)
+
+    return wrapped
+
+
+def _placement_to_dict(p: SectionPlacement, teachers: dict | None = None) -> dict[str, object]:
     """Serialise a ``SectionPlacement`` with its meetings to a JSON-safe dict.
 
     Includes the related ``TermSection`` fields (course code, capacity, etc.)
-    and all ``TermSectionMeeting`` records for that section.
+    and all ``TermSectionMeeting`` records for that section. ``teachers``
+    (``_section_teachers``, one teacher per section only) adds the section's
+    ``teacher``: ``{"id", "name", "status", "source", "reason"}``, or None for
+    a section the map leaves out.
     """
     ts = p.term_section
     meetings = list(
@@ -287,7 +318,7 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
             "day", "start_time", "end_time", "building", "room", "instructor"
         )
     )
-    return {
+    out: dict[str, object] = {
         "id": p.id,
         "board_id": p.board_id,
         "term_section_id": ts.id,
@@ -308,6 +339,9 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
         if section_policy(ts)
         else None,
     }
+    if teachers is not None:
+        out["teacher"] = teachers.get(ts.id)
+    return out
 
 
 # ── Page View ────────────────────────────────────────────────────
@@ -1181,6 +1215,7 @@ def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResp
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_scenario_export_view(request: HttpRequest, scenario_id: int) -> HttpResponse:
     """Export scenario timetable as XLSX."""
     deny = _require_general_advisor(request)
@@ -1375,12 +1410,13 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
 
     primary_count = BoardStudentLink.objects.filter(board=board, link_type="primary").count()
     visitor_count = BoardStudentLink.objects.filter(board=board, link_type="visitor").count()
+    teachers = _section_teachers(board.scenario_id)
     return _ok(
         {
             "board": _board_to_dict(board),
             "slot_config": board.scenario.slot_config,
             "lab_slot_config": board.scenario.lab_slot_config,
-            "placements": [_placement_to_dict(p) for p in placements],
+            "placements": [_placement_to_dict(p, teachers) for p in placements],
             "primary_student_count": primary_count,
             "visitor_student_count": visitor_count,
         }
@@ -1591,6 +1627,7 @@ def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -
 @login_required(login_url="login")
 @require_POST
 @guard_manual_scenario_write
+@_one_teacher_request
 def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     """Create one planned section, including full multi-meeting patterns."""
     deny = _require_general_advisor(request)
@@ -1682,10 +1719,11 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
             "meeting_count": len(placements),
         },
     )
+    teachers = _section_teachers(result["board"].scenario_id)
     return _ok(
         {
-            "placement": _placement_to_dict(placement),
-            "placements": [_placement_to_dict(item) for item in placements],
+            "placement": _placement_to_dict(placement, teachers),
+            "placements": [_placement_to_dict(item, teachers) for item in placements],
             "validation": validation,
             "validations": validations,
             # Forwarded from the service, which already populated
@@ -1702,6 +1740,7 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_POST
 @guard_manual_scenario_write
+@_one_teacher_request
 def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     """Place an existing ``TermSection`` onto a board at a given day/time.
 
@@ -1791,10 +1830,11 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
                 "term_section_id": ts.id,
             },
         )
+        teachers = _section_teachers(board.scenario_id)
         return _ok(
             {
-                "placement": _placement_to_dict(placement),
-                "placements": [_placement_to_dict(row) for row in placements],
+                "placement": _placement_to_dict(placement, teachers),
+                "placements": [_placement_to_dict(row, teachers) for row in placements],
                 "section_policy": policy_payload(section_policy(ts), placements),
                 **_policy_bundle_feedback(placements),
             },
@@ -1863,7 +1903,7 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(ts))
     return _ok(
         {
-            "placement": _placement_to_dict(placement),
+            "placement": _placement_to_dict(placement, _section_teachers(board.scenario_id)),
             "validation": validation,
             "instructor_clash_backstop": backstop,
         },
@@ -2612,6 +2652,7 @@ def _switch_policy_response(
             status=409,
         )
     rows = result["placements"]
+    teachers = _section_teachers(placement.board.scenario_id)
     log_audit_event(
         request,
         action="tw.placement.switch_pattern",
@@ -2626,8 +2667,8 @@ def _switch_policy_response(
     return _ok(
         {
             **result,
-            "placement": _placement_to_dict(result["placement"]),
-            "placements": [_placement_to_dict(row) for row in rows],
+            "placement": _placement_to_dict(result["placement"], teachers),
+            "placements": [_placement_to_dict(row, teachers) for row in rows],
             **_policy_bundle_feedback(rows),
         }
     )
@@ -2636,6 +2677,7 @@ def _switch_policy_response(
 @login_required(login_url="login")
 @require_POST
 @guard_manual_scenario_write
+@_one_teacher_request
 def tw_placement_pattern_switch_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     deny = _require_general_advisor(request)
     if deny:
@@ -2665,6 +2707,7 @@ def tw_placement_pattern_switch_view(request: HttpRequest, placement_id: int) ->
 @login_required(login_url="login")
 @require_POST
 @guard_manual_scenario_write
+@_one_teacher_request
 def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Move an existing placement to a new day/time/room.
 
@@ -2788,10 +2831,11 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     backstop["involving_this_section"] = clashes_involving(
         backstop, section_id_for(placement.term_section)
     )
+    teachers = _section_teachers(scenario_id)
     return _ok(
         {
-            "placement": _placement_to_dict(placement),
-            "placements": [_placement_to_dict(row) for row in rows],
+            "placement": _placement_to_dict(placement, teachers),
+            "placements": [_placement_to_dict(row, teachers) for row in rows],
             "validation": validation,
             "instructor_clash_backstop": backstop,
         }

@@ -354,18 +354,36 @@ function renderSecondaryRecoveryOutcome(result) {
   </div>`;
 }
 
+/* One teacher per section: who teaches what, beside the days and idle — a
+ * section left without a teacher must never make those numbers look better
+ * unseen. Present only with the rule on. */
+function teacherCoverageOf(result) {
+  return instructorScheduleOf(result).coverage?.after || result.section_teachers?.coverage || null;
+}
+
+function teacherCoverageText(coverage) {
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  const assigned = number(coverage.assigned);
+  const needing = number((coverage.assigned || 0) + (coverage.tbd || 0));
+  return IS_AR
+    ? `شعب لها مدرس: ${assigned} / ${needing} · لم يُحدَّد بعد: ${number(coverage.tbd)} (D10: ${number(coverage.tbd_d10_floor)})`
+    : `Sections with a teacher: ${assigned} / ${needing} · to be decided: ${number(coverage.tbd)} (D10: ${number(coverage.tbd_d10_floor)})`;
+}
+
 function renderInstructorOutcome(result) {
   const metric = instructorScheduleOf(result);
   const after = metric.after || result.quality_score?.instructor_schedule;
   const before = metric.before || result.baseline_instructor_schedule;
   const priority = result.optimisation_policy === 'instructor_first';
-  if (!after && !priority) return '';
+  const coverage = teacherCoverageOf(result);
+  if (!after && !priority && !coverage) return '';
   const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
   const row = (label, key) => `<div>${label}: <b>${before ? `${number(before[key])} → ` : ''}${number(after?.[key])}</b></div>`;
   return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
     <div style="font-weight:700;color:var(--teal)">${IS_AR ? 'جدول المدرسين' : 'Instructor schedule'}</div>
     ${row(IS_AR ? 'مجموع أيام العمل' : 'Total working days', 'working_days')}
     ${row(IS_AR ? 'دقائق الانتظار' : 'Idle minutes', 'idle_minutes')}
+    ${coverage ? `<div>${esc(teacherCoverageText(coverage))}</div>` : ''}
     ${priority ? `<div style="font-size:11px;color:var(--t3);margin-top:5px">${IS_AR ? 'الأولوية لتقليل أيام المدرسين ثم الانتظار، مع حماية التسجيل والقيود الأساسية. قد تتغير فراغات الطلاب.' : 'Priority: fewer instructor days, then less idle time, with hard enrolment and operational constraints protected. Student gaps may change.'}</div>` : ''}
   </div>`;
 }
@@ -7967,7 +7985,7 @@ function openDrawer(paneIdx, placementId) {
     <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'المدرسون' : 'Instructors'}</span><span class="value" id="twsDrawerInstrChips"></span></div>
-    ${(S.scenarioMeta && S.scenarioMeta.status === 'published') ? '' : `
+    ${(S.scenarioMeta && S.scenarioMeta.status === 'published') || hasSectionTeacher(p) ? '' : `
     <div class="tws-drawer-instr-edit">
       <input id="twsDrawerInstrInput" list="twsDrawerInstrList" autocomplete="off" placeholder="${IS_AR ? 'أضف مدرساً بالاسم…' : 'Add instructor by name…'}">
       <datalist id="twsDrawerInstrList"></datalist>
@@ -7985,7 +8003,7 @@ function openDrawer(paneIdx, placementId) {
   $('twsDrawerEnglishPattern')?.addEventListener('click', () => switchEnglishSplitPattern(p.id));
   // primary name through to the meeting rows so clash badges recompute on reload.
   drawerRenderInstructorChips(p);
-  if (!(S.scenarioMeta && S.scenarioMeta.status === 'published')) {
+  if (!(S.scenarioMeta && S.scenarioMeta.status === 'published') && !hasSectionTeacher(p)) {
     drawerLoadInstructorOptions();
     const instrAdd = $('twsDrawerInstrAdd');
     const instrInput = $('twsDrawerInstrInput');
@@ -8028,9 +8046,43 @@ function drawerInstrName(i) {
   return (IS_AR && i.full_name_ar) ? i.full_name_ar : i.full_name;
 }
 
+/* One teacher per section: the server adds `teacher` to a placement only with
+ * the rule on — the section's own teacher from the map the engine charges.
+ * The link editor below never had data to edit and stays hidden then. */
+function hasSectionTeacher(p) {
+  return Boolean(p) && Object.prototype.hasOwnProperty.call(p, 'teacher');
+}
+
+const TEACHER_TBD_REASONS = {
+  d10: ['Every eligible teacher already has the most sections of this course they may teach.', 'كل المدرسين المؤهلين لديهم أقصى عدد مسموح به من شعب هذا المقرر.'],
+  weekly_ceiling: ['Every eligible teacher is at the weekly limit.', 'كل المدرسين المؤهلين بلغوا الحد الأسبوعي.'],
+  clash: ['Every eligible teacher is teaching at this time.', 'كل المدرسين المؤهلين لديهم محاضرة في هذا الوقت.'],
+  daily_cap: ['Every eligible teacher is at the daily limit on this day.', 'كل المدرسين المؤهلين بلغوا الحد اليومي في هذا اليوم.'],
+  bound: ['Any eligible teacher would get a longer week.', 'إسنادها لأي مدرس مؤهل يطيل أسبوعه.'],
+};
+
+function sectionTeacherHtml(p) {
+  const t = p.teacher;
+  if (t && t.status === 'tbd') {
+    const hint = (TEACHER_TBD_REASONS[t.reason] || [])[IS_AR ? 1 : 0];
+    return `<span class="tws-instr-tbd">${IS_AR ? 'يُحدَّد المدرس لاحقاً' : 'Teacher to be decided'}</span>`
+      + (hint ? `<span class="tws-instr-hint">${esc(hint)}</span>` : '');
+  }
+  // A section the map leaves out (no linked teacher, or another scenario's
+  // section with no known teacher) keeps the name on its meetings.
+  const meetingName = (p.meetings || []).map(m => String(m.instructor || '').trim()).find(Boolean) || '';
+  const name = (t && t.name) || (!t || t.status === 'no_links' || t.status === 'frozen_unknown' ? meetingName : '');
+  if (name) return `<span class="tws-instr-chip primary">${esc(name)}</span>`;
+  return `<span class="tws-instr-none">${IS_AR ? 'لا يوجد' : 'None'}</span>`;
+}
+
 function drawerRenderInstructorChips(p) {
   const host = $('twsDrawerInstrChips');
   if (!host) return;
+  if (hasSectionTeacher(p)) {
+    host.innerHTML = sectionTeacherHtml(p);
+    return;
+  }
   const list = p.instructors || [];
   const published = S.scenarioMeta && S.scenarioMeta.status === 'published';
   if (!list.length) {

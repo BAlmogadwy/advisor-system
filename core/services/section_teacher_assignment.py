@@ -145,6 +145,9 @@ class Slot:
     what the weekly ceiling counts. ``eligible`` is sorted, with teachers who
     hold a co/lab row on this section removed. ``course_sections`` is the D10
     count N_c and ``course_cap`` the resulting per-teacher limit (None: none).
+    ``source`` says where a fixed or stored teacher comes from: a pin's row
+    source, ``owner`` (the owner scenario's row) or ``meeting`` (the meeting
+    name) for a frozen section, ``engine`` for a stored engine row.
     """
 
     course_key: str
@@ -166,6 +169,7 @@ class Slot:
     stored: int | None = None
     frozen_name: str = ""
     display_code: str = ""
+    source: str = ""
 
     @property
     def key(self) -> str:
@@ -266,7 +270,7 @@ def assignment_scope(scenario_id: int) -> Iterator[None]:
     earlier in the same request (a drag, a manual create) is seen.
     """
     scopes = _SCOPES.get()
-    if scopes is not None and scenario_id in scopes:
+    if scopes is not None and (scenario_id in scopes or _EVERY_SCENARIO in scopes):
         yield
         return
     new = dict(scopes or {})
@@ -278,8 +282,35 @@ def assignment_scope(scenario_id: int) -> Iterator[None]:
         _SCOPES.reset(token)
 
 
+_EVERY_SCENARIO = 0  # never a primary key
+
+
+@contextmanager
+def request_scope() -> Iterator[None]:
+    """``assignment_scope`` for every scenario one request touches — for a view
+    that learns its scenario only after reading its arguments (a drag, a
+    create, the board detail): one read of the stored rows per request."""
+    scopes = _SCOPES.get()
+    if scopes is not None and _EVERY_SCENARIO in scopes:
+        yield
+        return
+    new = dict(scopes or {})
+    new[_EVERY_SCENARIO] = {}
+    token = _SCOPES.set(new)
+    try:
+        yield
+    finally:
+        _SCOPES.reset(token)
+
+
 def _scope_cache(scenario_id: int) -> dict[str, Any] | None:
-    return (_SCOPES.get() or {}).get(scenario_id)
+    scopes = _SCOPES.get()
+    if not scopes:
+        return None
+    cache = scopes.get(scenario_id)
+    if cache is None and _EVERY_SCENARIO in scopes:
+        cache = scopes[scenario_id] = {}
+    return cache
 
 
 def invalidate_scope(scenario_id: int) -> None:
@@ -589,14 +620,17 @@ def _collect(
             fixed_kind = None
             stored = None
             frozen_name = ""
+            origin = ""
             if ts_id is not None and ts_id in frozen_ids:
                 owner = ts[1]
                 fixed = owner_primary.get((owner, *row_key))
+                origin = "owner"
                 if fixed is None:
-                    fixed = name_teacher(ts_id)
+                    fixed, origin = name_teacher(ts_id), "meeting"
                 if fixed is None:
                     fixed_kind = STATUS_FROZEN_UNKNOWN
                     frozen_name = next(iter(meeting_names.get(ts_id, ())), "")
+                    origin = "meeting" if frozen_name else ""
                     info["frozen_unknown"].append(
                         {"course_key": course_key, "label": label, "name": frozen_name}
                     )
@@ -604,6 +638,7 @@ def _collect(
                     fixed_kind = STATUS_FROZEN
             elif row_key in own_primary:
                 teacher, source = own_primary[row_key]
+                origin = source or "pin"
                 if source != SOURCE_ENGINE:
                     fixed, fixed_kind = teacher, "pin"
                 else:
@@ -637,6 +672,7 @@ def _collect(
                     stored=stored,
                     frozen_name=frozen_name,
                     display_code=display,
+                    source=origin,
                 )
             )
     for row_key, (_teacher, source) in sorted(own_primary.items()):
@@ -1934,6 +1970,28 @@ def status_by_term_section_id(
     """``{term_section_id: (teacher_id, teacher_name, status, tbd_reason)}``,
     from the one map in force — what the drawer, the export and the name
     writers show, so they agree with the engine before any reconcile."""
+    return {
+        ts_id: (
+            row["id"],
+            row["name"] if row["id"] is not None else None,
+            row["status"],
+            row["reason"],
+        )
+        for ts_id, row in section_teacher_display(scenario_id).items()
+    }
+
+
+def section_teacher_display(scenario_id: int) -> dict[int, dict[str, Any]]:
+    """``{term_section_id: {"id", "name", "status", "source", "reason"}}`` — the
+    drawer's and the export's teacher per placed section, from the one map in
+    force (``status_by_term_section_id`` is the same map as tuples).
+
+    ``source`` says where the teacher comes from: the stored row's source for
+    ``engine`` and ``pinned`` (``derived`` for a teacher the read path chose
+    that no row stores yet), ``owner`` or ``meeting`` for ``frozen``; for
+    ``frozen_unknown`` the name is the meeting's free text. ``reason`` is the
+    TBD reason.
+    """
     from core.models import Instructor
 
     assignment = load_assignment(scenario_id)
@@ -1942,17 +2000,27 @@ def status_by_term_section_id(
             pk__in={t for t in assignment.teacher.values() if t is not None}
         ).values_list("pk", "full_name")
     )
-    out: dict[int, tuple[int | None, str | None, str, str | None]] = {}
+    out: dict[int, dict[str, Any]] = {}
     for slot in assignment.slots:
         if slot.term_section_id is None:
             continue
         teacher = assignment.teacher.get(slot.key)
-        out[slot.term_section_id] = (
-            teacher,
-            names.get(teacher) if teacher is not None else None,
-            assignment.status.get(slot.key, STATUS_NO_LINKS),
-            assignment.tbd_reason.get(slot.key),
-        )
+        status = assignment.status.get(slot.key, STATUS_NO_LINKS)
+        name = names.get(teacher) if teacher is not None else None
+        source: str | None = None
+        if status == STATUS_ENGINE:
+            source = SOURCE_ENGINE if slot.stored == teacher else "derived"
+        elif status in (STATUS_PINNED, STATUS_FROZEN):
+            source = slot.source or status
+        elif status == STATUS_FROZEN_UNKNOWN and slot.frozen_name:
+            name, source = slot.frozen_name, "meeting"
+        out[slot.term_section_id] = {
+            "id": teacher,
+            "name": name,
+            "status": status,
+            "source": source,
+            "reason": assignment.tbd_reason.get(slot.key),
+        }
     return out
 
 

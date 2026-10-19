@@ -140,6 +140,7 @@
     <div><dt>{% if LANGUAGE_CODE == 'ar' %}اجتماعات تحتاج قاعة مناسبة{% else %}Meetings needing a suitable room{% endif %}</dt><dd id="twQualityRooms">—</dd></div>
     <div><dt>{% if LANGUAGE_CODE == 'ar' %}أيام المدرسين{% else %}Instructor days{% endif %}</dt><dd id="twQualityInstructorDays">—</dd></div>
     <div><dt>{% if LANGUAGE_CODE == 'ar' %}انتظار المدرسين (دقيقة){% else %}Instructor idle (min){% endif %}</dt><dd id="twQualityInstructorIdle">—</dd></div>
+    <div id="twQualityTeacherCoverageRow" hidden><dt>{% if LANGUAGE_CODE == 'ar' %}شعب لها مدرس{% else %}Sections with a teacher{% endif %}</dt><dd id="twQualityTeacherCoverage">—</dd></div>
   </dl>
 </section>
 
@@ -225,6 +226,6 @@
   const defaultTerm = "{{ default_term|default:''|escapejs }}";
 </script>
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=38"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=39"></script>
 <script src="{% static 'js/timetable-workspace-accessibility.js' %}?v=1"></script>
 {% endblock %}
