@@ -489,6 +489,127 @@ def test_i18_a_tbd_section_with_a_stale_meeting_name_is_not_charged(flags) -> No
     assert DeliveryBoard.objects.filter(scenario=sc).count() == 1
 
 
+def _tbd_with_stale_names_board():
+    """X (Dr A only, five sections: D10 lets Dr A hold two) has S1 on Sunday,
+    S2 on Monday, and S3 and S4 overlapping on Tuesday 08:00-09:45; S5 is not
+    placed. Dr A takes S1 and S2, so S3, S4 and S5 are to be decided. Y (Dr
+    A's) sits on Tuesday 08:00 too. Every meeting row still says "Dr A", as it
+    did under the union — the state after a link edit, a deactivation, or
+    switching the rule on before anyone presses Reconcile."""
+    x = requirement("AI", "AI301", "X COURSE")
+    y = requirement("AI", "AI302", "Y COURSE")
+    sc, board = scenario()
+    sc.slot_config = [{"start": "08:00", "end": "09:15"}, {"start": "09:30", "end": "10:45"}]
+    sc.save()
+    a = instructor("Dr A")
+    link("AI", "AI301", a)
+    link("AI", "AI302", a)
+    budget(sc, x, 5)
+    budget(sc, y, 1)
+    sections = {}
+    for label, day, start, end, room in (
+        ("S1", "SUN", "08:00", "09:15", "R1"),
+        ("S2", "MON", "08:00", "09:15", "R1"),
+        ("S3", "TUE", "08:00", "09:15", "R1"),
+        ("S4", "TUE", "08:30", "09:45", "R2"),
+    ):
+        sections[label] = section(sc, x, label)
+        place(board, sections[label], [(day, start, end)], instructor_name="Dr A", room=room)
+    sections["Y"] = section(sc, y, "S1")
+    place(board, sections["Y"], [("TUE", "08:00", "09:15")], instructor_name="Dr A", room="R3")
+    one = sta.load_assignment(sc.id)
+    assert [one.status[f"{x}_S{n}"] for n in range(1, 6)] == ["engine"] * 2 + ["tbd"] * 3
+    assert one.teacher[f"{y}_S1"] == a.id
+    return sc, board, x, y, sections
+
+
+@pytest.mark.django_db
+def test_i18_the_repair_report_neither_names_nor_charges_a_tbd_section(flags) -> None:
+    from core.services.timetable_repair_eligibility import _section_instructor_policy
+
+    sc, _board, _x, _y, sections = _tbd_with_stale_names_board()
+    s3, s4, ys = sections["S3"], sections["S4"], sections["Y"]
+
+    names, conflicts = _section_instructor_policy(
+        scenario_id=sc.id, target_section_ids={s3.id, s4.id, ys.id}
+    )
+
+    # Two overlapping sections to be decided are not Dr A's double-booking, and
+    # neither is a section to be decided next to Dr A's own Y.
+    assert conflicts == {}
+    assert s3.id not in names and s4.id not in names
+    assert names[ys.id] == {"Dr A"}
+
+
+@pytest.mark.django_db
+def test_i18_manual_checks_never_clash_on_a_tbd_section(flags) -> None:
+    from core.services.timetable_workspace import (
+        preview_placement_slot_candidates,
+        preview_planned_section_slot_candidates,
+        validate_placement,
+    )
+
+    sc, board, x, _y, sections = _tbd_with_stale_names_board()
+    s4 = SectionPlacement.objects.get(term_section=sections["S4"])
+    y_placement = SectionPlacement.objects.get(term_section=sections["Y"])
+
+    # S4 (to be decided) moved onto S3 (to be decided) and Y (Dr A's).
+    onto_s3 = validate_placement(
+        board.id, "TUE", "08:00", "09:15", "R9", sections["S4"].id, exclude_placement_id=s4.id
+    )
+    assert onto_s3["instructor_clashes"] == []
+    # Y (Dr A's) moved onto S3 and S4, whose rows still say Dr A.
+    y_onto = validate_placement(
+        board.id,
+        "TUE",
+        "08:00",
+        "09:15",
+        "R9",
+        sections["Y"].id,
+        exclude_placement_id=y_placement.id,
+    )
+    assert y_onto["instructor_clashes"] == []
+
+    def instructor_evidence(preview, blamed=("",)) -> list:
+        return [
+            e
+            for c in preview["candidates"]
+            for e in c.get("evidence", [])
+            if e["kind"] == "instructor" and any(b in e["detail"] for b in blamed)
+        ]
+
+    moves = preview_placement_slot_candidates(s4.id)
+    assert any((c["day"], c["start"]) == ("TUE", "08:00") for c in moves["candidates"])
+    assert instructor_evidence(moves) == []
+    # Y may clash with Dr A's S1 and S2 elsewhere, never with S3 or S4.
+    y_moves = preview_placement_slot_candidates(y_placement.id)
+    assert instructor_evidence(y_moves, blamed=("AI301-S1",))  # the control
+    assert instructor_evidence(y_moves, blamed=("AI301-S3", "AI301-S4")) == []
+    # S5, to be decided and not placed yet, may go anywhere teacher-wise.
+    planned = preview_planned_section_slot_candidates(
+        board.id, course_code="AI301", course_key=x, section_label="S5"
+    )
+    assert any((c["day"], c["start"]) == ("TUE", "08:00") for c in planned["candidates"])
+    assert instructor_evidence(planned) == []
+
+
+@pytest.mark.django_db
+def test_i18_the_graph_twin_names_nobody_on_a_tbd_section(flags) -> None:
+    from core.services.timetable_graph_twin import build_scenario_graph_payload
+
+    sc, _board, _x, _y, sections = _tbd_with_stale_names_board()
+
+    graph = build_scenario_graph_payload(sc.id)
+
+    shown = {
+        n["props"]["term_section_id"]: n["props"]["instructors"]
+        for n in graph["nodes"]
+        if n["label"] == "TTSection"
+    }
+    assert shown[sections["S1"].id] == "Dr A"
+    assert shown[sections["S3"].id] == "" and shown[sections["S4"].id] == ""
+
+
 @pytest.mark.django_db
 def test_i3_the_planned_preview_reads_teachers_across_boards(flags) -> None:
     from core.services.timetable_workspace import preview_planned_section_slot_candidates
