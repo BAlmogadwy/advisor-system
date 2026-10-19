@@ -524,18 +524,18 @@ def run_v2_optimisation_guarded(
                 if remaining_key == "remaining_clashes":
                     remaining = int(safety_after.get("instructor_clashes_scenario") or 0)
                 else:
+                    from core.services.timetable_instructor_cap_repair import _physical_states
                     from core.services.timetable_pr4_instructor import (
                         count_instructor_daily_overloads,
                         get_instructor_daily_cap,
                     )
 
-                    # The counter looks sections up by id; a bare list crashed
-                    # this rollback path whenever instructors were linked.
+                    # The counter looks sections up by id (a bare list crashed
+                    # this path whenever instructors were linked), and counts a
+                    # shared section's board copies once, as the repair does.
+                    states = _physical_states(build_section_states_for_scenario(scenario_id))
                     remaining = count_instructor_daily_overloads(
-                        {
-                            state.section_id: state
-                            for state in build_section_states_for_scenario(scenario_id)
-                        },
+                        {state.section_id: state for state in states},
                         instructor_map or {},
                         get_instructor_daily_cap(),
                     )

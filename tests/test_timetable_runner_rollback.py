@@ -200,18 +200,34 @@ def test_current_rejects_mandatory_repairs_that_exceed_saved_instructor_week(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("shared", "cap", "expected"),
+    [(False, 0, 1), (True, 0, 1), (True, 1, 0)],
+)
 def test_rollback_counts_remaining_overloads_on_a_scenario_with_instructor_links(
-    monkeypatch, settings
+    monkeypatch, settings, shared, cap, expected
 ) -> None:
     """A whole-board rollback must report remaining overloads, not crash.
 
     The rollback path re-counts daily overloads from the restored board. With
     instructor links present (every real scenario), the counter must receive a
     section_id -> state mapping; a bare list raised AttributeError and failed the
-    whole job instead of reporting the rejected run.
+    whole job instead of reporting the rejected run. A section shared by two
+    boards at one time is one physical session, counted once like the repair.
     """
     settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
-    scenario, _, _ = _persisted_board("Linked rollback")
+    settings.TIMETABLE_INSTRUCTOR_DAILY_CAP = cap
+    scenario, board, section = _persisted_board("Linked rollback")
+    if shared:
+        other = DeliveryBoard.objects.create(scenario=scenario, label="Term 2", nominal_term=2)
+        SectionPlacement.objects.create(
+            board=other,
+            term_section=section,
+            day="MON",
+            start_time="09:00",
+            end_time="10:15",
+            room="R1",
+        )
     scenario.gender = "M"
     scenario.programs = ["AI"]
     scenario.save(update_fields=["gender", "programs"])
@@ -235,6 +251,6 @@ def test_rollback_counts_remaining_overloads_on_a_scenario_with_instructor_links
 
     assert result["safety_blocked"] is True
     assert snapshot_scenario(scenario.id) == original
-    assert result["instructor_cap_repair"]["remaining_violations"] == 0
+    assert result["instructor_cap_repair"]["remaining_violations"] == expected
     assert result["instructor_cap_repair"]["rollback_reason"] == "whole_board_rollback"
     assert result["candidate_instructor_cap_repair"]["enabled"] is True
