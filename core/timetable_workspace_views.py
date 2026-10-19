@@ -86,6 +86,7 @@ from core.services.section_programmes import (
     section_is_available_to_delivery_board,
 )
 from core.services.timetable_demand import compute_board_capacity
+from core.services.timetable_flags import is_one_teacher_active
 from core.services.timetable_generate import generate_workspace_scenario
 from core.services.timetable_graph_twin import (
     TimetableGraphError,
@@ -1774,6 +1775,10 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             return _err(
                 "Duplicate English section placement", code="PLACEMENT_DUPLICATE", status=409
             )
+        if is_one_teacher_active():
+            from core.services.section_teacher_assignment import name_new_section
+
+            name_new_section(board.scenario_id, ts, board)
         placement = placements[0]
         log_audit_event(
             request,
@@ -1848,6 +1853,12 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             "start_time": start_time,
         },
     )
+    if is_one_teacher_active():
+        # One teacher per section: the new section gets a teacher it does not
+        # clash with, when there is one, and shows that teacher's name.
+        from core.services.section_teacher_assignment import name_new_section
+
+        name_new_section(board.scenario_id, ts, board)
     backstop = verify_persisted_scenario(board.scenario_id, context="manual_placement_create")
     backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(ts))
     return _ok(

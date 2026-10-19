@@ -782,8 +782,17 @@ def generate_workspace_scenario(
     # first-draft timetable that advisors can fine-tune manually.
 
     from core.services.timetable_autoplace import auto_place_scenario, get_meeting_pattern
+    from core.services.timetable_flags import is_one_teacher_active
 
-    if run_autoplace:
+    if run_autoplace and is_one_teacher_active():
+        # One teacher per section: a time-blind map while placing, then the
+        # teachers re-picked on the board that was placed.
+        from core.services.section_teacher_assignment import run_placer
+
+        auto_result = run_placer(
+            scenario.id, lambda: auto_place_scenario(scenario.id, strategy=strategy), rebuild=True
+        )
+    elif run_autoplace:
         auto_result = auto_place_scenario(scenario.id, strategy=strategy)
     else:
         # Deferred build — the scenario scaffold (boards, students, budget) is

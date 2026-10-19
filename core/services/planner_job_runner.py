@@ -29,6 +29,7 @@ from django.utils import timezone
 
 from core.models import PlannerJob
 from core.services.job_runtime import HOLDER_PLANNER, SolverBusy, shutting_down, solver_slot
+from core.services.timetable_flags import is_one_teacher_active
 from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed, seeded_timetable_run
 
 logger = logging.getLogger(__name__)
@@ -408,7 +409,24 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
             )
         elif job.mode == PlannerJob.MODE_FULL_REBUILD:
             _clear_scenario_placements(job.scenario_id)
-            result = auto_place_scenario(job.scenario_id, strategy="adaptive")
+            if is_one_teacher_active():
+                from core.services.section_teacher_assignment import run_placer
+
+                result = run_placer(
+                    job.scenario_id,
+                    lambda: auto_place_scenario(job.scenario_id, strategy="adaptive"),
+                    rebuild=True,
+                )
+            else:
+                result = auto_place_scenario(job.scenario_id, strategy="adaptive")
+        elif is_one_teacher_active():
+            # Places only what is missing and keeps the board, so the teachers
+            # already there stay; only new sections get one.
+            from core.services.section_teacher_assignment import run_placer
+
+            result = run_placer(
+                job.scenario_id, lambda: auto_place_scenario(job.scenario_id), rebuild=False
+            )
         else:
             result = auto_place_scenario(job.scenario_id)
     except _PlannerCancelled:

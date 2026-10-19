@@ -1058,6 +1058,166 @@ def _build_pattern_catalog_for_scenario(scenario_id: int) -> dict[str, list]:
     )
 
 
+def refresh_final_score_after_teacher_recompute(
+    result: dict,
+    scenario_id: int,
+    student_profiles: dict,
+    course_rigidity: dict,
+    section_instructor_ids: dict | None,
+    course_tiers: dict | None,
+    *,
+    changed: bool,
+) -> None:
+    """Re-score the persisted board after the final teacher recompute.
+
+    Twin of :func:`refresh_final_score_after_required_section_repair`: the
+    one-teacher map can change at the end of a run without a placement moving,
+    and every instructor-dependent field must describe the map that was kept.
+    No-op when the map did not change.
+    """
+    if not changed or not student_profiles:
+        return
+    sections = build_section_states_for_scenario(scenario_id)
+    if not sections:
+        return
+    post = evaluate_generated_timetable_candidate(
+        candidate_id="post_teacher_recompute",
+        generated_sections=sections,
+        student_profiles=student_profiles,
+        course_rigidity=course_rigidity,
+        section_instructor_ids=section_instructor_ids,
+        course_tiers=course_tiers,
+    )
+    result["final_score"] = list(post.lexicographic_score)
+    result["unresolved_students"] = len(post.unresolved_student_ids)
+    result["quality_score"] = post.quality_score
+    result["hotspot_courses"] = post.hotspot_courses[:10]
+    result["capacity_pressure_courses"] = post.capacity_pressure_courses[:10]
+    result["reserve_heavy_sections"] = [
+        {"section": s, "ratio": round(r, 2)} for s, r in post.reserve_heavy_sections[:10]
+    ]
+
+
+def _teacher_stage(assignment, **extra) -> dict:
+    from core.services.section_teacher_assignment import stage_report
+
+    return stage_report(assignment, **extra)
+
+
+class _FullRunTeachers:
+    """One teacher per section through a V2 Full run (Phase 1 spec 3.1, G1-G5).
+
+    Every map is pinned on ``stack`` as it comes into force, so every consumer
+    of the run — handed the map or reading it — charges the same teachers.
+    """
+
+    def __init__(self, scenario_id: int, stack) -> None:
+        self.scenario_id = scenario_id
+        self.stack = stack
+        self.build = self.previous = self.win = None
+        self.report: dict = {"enabled": True}
+
+    def _pin(self, assignment) -> None:
+        from core.services.section_teacher_assignment import pinned_assignment
+
+        self.stack.enter_context(pinned_assignment(self.scenario_id, assignment))
+
+    def rebuild(self) -> None:
+        """G1: the time-blind pre-build map the candidates are built and ranked under."""
+        from core.services.section_teacher_assignment import prepare_section_teachers
+
+        prepared = prepare_section_teachers(self.scenario_id, phase="rebuild")
+        self.build, self.previous = prepared["assignment"], prepared["previous"]
+        self.report["pre_build"] = _teacher_stage(self.build)
+        self._pin(self.build)
+
+    def choose_winner(self, best_sections) -> dict:
+        """G2: the exact map on the winning candidate's layout, stable against
+        the map the scenario had before this run; it keeps nothing."""
+        from core.services.section_teacher_assignment import propose_layout_assignment
+
+        self.win = propose_layout_assignment(
+            self.scenario_id, sections=best_sections, current=self.previous
+        )
+        self.report["winner"] = _teacher_stage(self.win)
+        self._pin(self.win)
+        return self.win.v2_map()
+
+    def building(self):
+        """G3: the winner's skeleton is re-placed exactly as it was generated."""
+        from core.services.section_teacher_assignment import pinned_assignment
+
+        return pinned_assignment(self.scenario_id, self.build)
+
+    def persist_winner(self) -> None:
+        """G4: store the winner map with the winning board and pin what is stored."""
+        from core.services.section_teacher_assignment import persist_and_read
+
+        self.win, persisted = persist_and_read(self.scenario_id, self.win)
+        self.report["winner"]["persist"] = persisted
+        self._pin(self.win)
+
+    def write_names(self) -> None:
+        from core.services.section_teacher_assignment import write_names
+
+        write_names(self.scenario_id, self.win)
+
+    def final(self) -> tuple[dict, bool]:
+        """G5: re-pick on the final board; adopt it only if it is no worse."""
+        chosen, changed, final = _final_teacher_recompute(self.scenario_id, self.win)
+        self.report["final"] = final
+        self.report["coverage"] = final["coverage"]
+        self.win = chosen
+        self._pin(chosen)
+        return chosen.v2_map(), changed
+
+
+def _final_teacher_recompute(scenario_id: int, in_force, *, bounds=None, gate=None):
+    """K = the map in force closed on the final board; M_end = the exact re-pick,
+    stable against it and keeping its violations. M_end is adopted iff its
+    (TBD, TBD position, over-12, days, idle) key is no worse than K's, it adds
+    no clash or over-cap session K does not have, and ``gate(M_end)`` (if any)
+    passes. The chosen map is persisted and its names written."""
+    from core.services.section_teacher_assignment import (
+        adds_violations,
+        assignment_key,
+        assignment_scope,
+        close_on_layout,
+        persist_and_read,
+        propose_layout_assignment,
+        write_names,
+    )
+
+    with assignment_scope(scenario_id):  # one read of the stored rows
+        closed = close_on_layout(scenario_id, in_force, bounds=bounds)
+        proposed = propose_layout_assignment(
+            scenario_id, current=in_force, keep_violations_of=in_force, bounds=bounds
+        )
+        reason = "adopted"
+        if assignment_key(proposed) > assignment_key(closed):
+            reason = "worse_than_kept_map"
+        elif adds_violations(proposed, closed):
+            reason = "adds_violations"
+        elif gate is not None and not gate(proposed):
+            reason = "instructor_week_regression"
+        chosen = proposed if reason == "adopted" else closed
+        stored, persisted = persist_and_read(scenario_id, chosen)
+    write_names(scenario_id, stored)
+    changed = stored.v2_map() != in_force.v2_map()
+    final = _teacher_stage(
+        stored,
+        adopted=reason == "adopted",
+        reason=reason,
+        persist=persisted,
+        changed_sections=sorted(
+            key
+            for key in set(stored.teacher) | set(in_force.teacher)
+            if stored.teacher.get(key) != in_force.teacher.get(key)
+        ),
+    )
+    return stored, changed, final
+
+
 def optimise_scenario_timetable_v2(
     scenario_id: int,
     strategies: list[str] | None = None,
@@ -1071,6 +1231,52 @@ def optimise_scenario_timetable_v2(
     baseline_placements: dict | None = None,
     chain_time_limit_seconds: float | None = None,
     checkpoint: Callable[[], None] | None = None,
+) -> dict:
+    """Full optimisation pipeline: generate → rank → improve → persist.
+
+    See :func:`_optimise_scenario_timetable_v2`. With one teacher per section
+    (``is_one_teacher_active``) the run also chooses each section's teacher
+    (``_FullRunTeachers``) and pins every map it uses until it returns.
+    """
+    from contextlib import ExitStack
+
+    from core.services.timetable_flags import is_one_teacher_active
+
+    kwargs = {
+        "strategies": strategies,
+        "run_local_search": run_local_search,
+        "max_search_iterations": max_search_iterations,
+        "run_chain_search": run_chain_search,
+        "max_chain_iterations": max_chain_iterations,
+        "run_cpsat_polish": run_cpsat_polish,
+        "cpsat_time_limit": cpsat_time_limit,
+        "cpsat_hotspot_only": cpsat_hotspot_only,
+        "baseline_placements": baseline_placements,
+        "chain_time_limit_seconds": chain_time_limit_seconds,
+        "checkpoint": checkpoint,
+    }
+    if not is_one_teacher_active():
+        return _optimise_scenario_timetable_v2(scenario_id, **kwargs)
+    with ExitStack() as stack:
+        return _optimise_scenario_timetable_v2(
+            scenario_id, teachers=_FullRunTeachers(scenario_id, stack), **kwargs
+        )
+
+
+def _optimise_scenario_timetable_v2(
+    scenario_id: int,
+    strategies: list[str] | None = None,
+    run_local_search: bool = True,
+    max_search_iterations: int = 50,
+    run_chain_search: bool = True,
+    max_chain_iterations: int = 10,
+    run_cpsat_polish: bool = True,
+    cpsat_time_limit: float = 60.0,
+    cpsat_hotspot_only: bool = False,
+    baseline_placements: dict | None = None,
+    chain_time_limit_seconds: float | None = None,
+    checkpoint: Callable[[], None] | None = None,
+    teachers: _FullRunTeachers | None = None,
 ) -> dict:
     """Full optimisation pipeline: generate → rank → improve → persist.
 
@@ -1139,6 +1345,10 @@ def optimise_scenario_timetable_v2(
     logger.info("Profiles built in %.1fs (%d students)", t1 - t0, len(student_profiles))
 
     # ── Step 2: Generate candidates with multiple strategies ──
+    if teachers is not None:
+        # One teacher per section: after the ownership check, a time-blind map
+        # every candidate is built and ranked under (G1).
+        teachers.rebuild()
     candidates = _generate_candidates_for_scenario(scenario_id, strategies)
     if not candidates:
         return {
@@ -1193,6 +1403,22 @@ def optimise_scenario_timetable_v2(
         course_tiers=course_tiers,
     )
     best = ranked[0]
+    if teachers is not None:
+        # G2: choose the teachers for the winning layout, then judge the winner
+        # under them — every later stage and every reported field uses this map
+        # (``all_scores`` stays as ranked, under the pre-build map).
+        best_sections = next(c["sections"] for c in candidates if c["id"] == best.candidate_id)
+        winner_map = teachers.choose_winner(best_sections)
+        if section_instructor_ids is not None:
+            section_instructor_ids = winner_map
+        best = evaluate_generated_timetable_candidate(
+            candidate_id=best.candidate_id,
+            generated_sections=best_sections,
+            student_profiles=student_profiles,
+            course_rigidity=course_rigidity,
+            section_instructor_ids=section_instructor_ids,
+            course_tiers=course_tiers,
+        )
     _gap_idle_before = _gap_pos6(best.lexicographic_score)
 
     t3 = time.time()
@@ -1495,13 +1721,18 @@ def optimise_scenario_timetable_v2(
     # sections instead of saving the evaluated winner's improvements.
     winning_strategy = best.candidate_id.rsplit("_", 1)[0]
     _reset_unlocked_placements(scenario_id)
+    from contextlib import nullcontext
+
     from core.services.timetable_autoplace import auto_place_scenario
 
-    scenario_place_result = auto_place_scenario(
-        scenario_id,
-        strategy=winning_strategy,
-        baseline_placements=baseline_placements,
-    )
+    # One teacher per section: the skeleton is rebuilt under the map it was
+    # generated with, so it is the same skeleton (G3).
+    with teachers.building() if teachers is not None else nullcontext():
+        scenario_place_result = auto_place_scenario(
+            scenario_id,
+            strategy=winning_strategy,
+            baseline_placements=baseline_placements,
+        )
     # PR3 commit 4: capture the scenario-level greedy trace. Per commit-4
     # ruling J3 we preserve this cold-start trace through the remaining V2
     # pipeline unchanged; LS / chain / CP-SAT do not mutate it.
@@ -1560,6 +1791,8 @@ def optimise_scenario_timetable_v2(
     if sections_by_id:
         with transaction.atomic():
             persist_result = persist_section_states_to_scenario(scenario_id, sections_by_id)
+            if teachers is not None:
+                teachers.persist_winner()  # G4: with the board it was chosen for
         ls_persisted = True
         logger.info(
             "Persisted evaluated winner: %d placements updated, %d unchanged",
@@ -1609,6 +1842,10 @@ def optimise_scenario_timetable_v2(
             "sections": _sync.sections_synced,
             "written": _sync.meetings_written,
         }
+    if teachers is not None:
+        if not ls_persisted:
+            teachers.persist_winner()
+        teachers.write_names()  # each section's own teacher, under the winner map
 
     # Snapshot the safety state the OPTIMISER produced, BEFORE the mandatory
     # instructor repairs run. The runner's safety gate compares against this
@@ -1698,6 +1935,22 @@ def optimise_scenario_timetable_v2(
             section_instructor_ids,
             course_tiers,
         )
+
+    if teachers is not None:
+        # G5, whether or not anything was reinstated: re-pick on the final board.
+        final_map, changed = teachers.final()
+        if section_instructor_ids is not None:
+            section_instructor_ids = final_map
+        refresh_final_score_after_teacher_recompute(
+            result,
+            scenario_id,
+            student_profiles,
+            course_rigidity,
+            section_instructor_ids,
+            course_tiers,
+            changed=changed,
+        )
+        result["section_teachers"] = teachers.report
 
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)

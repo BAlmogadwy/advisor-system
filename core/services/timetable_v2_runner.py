@@ -284,6 +284,148 @@ def restore_baseline_student_gap(result: dict) -> None:
         result["quality_score"]["student_gap"] = dict(result["baseline_student_gap"])
 
 
+class _RunTeachers:
+    """One teacher per section through the guarded runner (Phase 1 spec 3.3).
+
+    Optimise Current: the map in force is read before anything is written
+    (C0), the names are brought in line with it before the snapshot (C2), the
+    run starts from a bounded re-pick that can never cost a teacher a day or
+    idle the rules forbid (C5), and ends with a re-pick that is adopted only if
+    it is no worse than the map it replaces (C7). Every phase runs pinned.
+    """
+
+    def __init__(self, scenario_id: int) -> None:
+        self.scenario_id = scenario_id
+        self.saved = self.start = self.final = None
+        self.report: dict = {"enabled": True}
+
+    def pin(self, assignment):
+        from core.services.section_teacher_assignment import pinned_assignment
+
+        return pinned_assignment(self.scenario_id, assignment)
+
+    def pre_step(self):
+        """C0: the map the required-section retry charges. Pure."""
+        from core.services.section_teacher_assignment import load_assignment
+
+        return self.pin(load_assignment(self.scenario_id))
+
+    def save(self, *, rename: bool) -> None:
+        """C2: the saved map; its names are written before the snapshot takes them."""
+        from django.db import transaction
+
+        from core.services.section_teacher_assignment import (
+            load_assignment,
+            stage_report,
+            write_names,
+        )
+
+        self.saved = load_assignment(self.scenario_id)
+        if rename:
+            with transaction.atomic():
+                write_names(self.scenario_id, self.saved)
+        self.report["saved"] = stage_report(self.saved)
+
+    def start_run(self, bounds):
+        """C5: the bounded run-start re-pick, persisted and pinned for the run."""
+        from core.services.section_teacher_assignment import (
+            assignment_scope,
+            persist_and_read,
+            propose_layout_assignment,
+            stage_report,
+            write_names,
+        )
+
+        with assignment_scope(self.scenario_id):  # one read of the stored rows
+            proposed = propose_layout_assignment(
+                self.scenario_id,
+                current=self.saved,
+                keep_violations_of=self.saved,
+                bounds=bounds,
+            )
+            self.start, persisted = persist_and_read(self.scenario_id, proposed)
+        write_names(self.scenario_id, self.start)
+        self.report["run_start"] = stage_report(
+            self.start,
+            persist=persisted,
+            changed_sections=sorted(
+                key
+                for key, teacher in self.start.teacher.items()
+                if teacher != self.saved.teacher.get(key)
+            ),
+        )
+        return self.pin(self.start)
+
+    def finish(self, *, bounds, gate) -> bool:
+        """C7: the final re-pick on the optimised board."""
+        from core.services.timetable_optimizer_v2 import _final_teacher_recompute
+
+        self.final, changed, final = _final_teacher_recompute(
+            self.scenario_id, self.start, bounds=bounds, gate=gate
+        )
+        self.report["final"] = final
+        return changed
+
+    def read_final(self) -> None:
+        """G6: Generate chose (and reported) its own maps; read the one it
+        persisted, once."""
+        from core.services.section_teacher_assignment import load_assignment
+
+        self.final = load_assignment(self.scenario_id)
+
+    def universe(self) -> frozenset:
+        return frozenset(self.saved.universe) | frozenset(self.final.universe)
+
+
+def _week_gate(scenario_id: int, instructor_before: dict, result: dict, teachers: _RunTeachers):
+    """C7 with priority on: a final re-pick is adopted only if, measured on the
+    final board with padded metrics, no teacher's days or idle regress against
+    the run start — not even as a mandatory-repair exception."""
+    from core.services.section_teacher_assignment import pad_schedule_metrics
+    from core.services.timetable_optimisation_policy import instructor_schedule_metrics
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    states = build_section_states_for_scenario(scenario_id)
+
+    def passes(candidate) -> bool:
+        universe = frozenset(teachers.saved.universe) | frozenset(candidate.universe)
+        before = pad_schedule_metrics(instructor_before, universe)
+        after = pad_schedule_metrics(
+            instructor_schedule_metrics(states, candidate.v2_map()), universe
+        )
+        days = optimiser_instructor_day_regression(before, after, result)
+        idle = optimiser_instructor_idle_regression(before, after, result)
+        return not (
+            days["regressions"]
+            or days["repair_exceptions"]
+            or idle["regressions"]
+            or idle["repair_exceptions"]
+        )
+
+    return passes
+
+
+def _refresh_after_teacher_recompute(result: dict, scenario_id: int, final) -> None:
+    """Re-score the persisted board under the map C7 kept (it changed)."""
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
+        build_student_profiles_for_scenario,
+        refresh_final_score_after_teacher_recompute,
+    )
+
+    refresh_final_score_after_teacher_recompute(
+        result,
+        scenario_id,
+        build_student_profiles_for_scenario(scenario_id),
+        build_course_rigidity_for_scenario(scenario_id),
+        final.v2_map(),
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None,
+        changed=True,
+    )
+
+
 def run_v2_optimisation_guarded(
     scenario_id: int,
     *,
@@ -315,7 +457,12 @@ def run_v2_optimisation_guarded(
     # on top of a complete board. Full mode does its own reinstatement
     # internally, at the very end of its own pipeline (it already overwrites
     # the whole board, so there is nothing useful to pre-repair here).
-    from core.services.timetable_flags import is_required_section_guarantee_enabled
+    from contextlib import nullcontext
+
+    from core.services.timetable_flags import (
+        is_one_teacher_active,
+        is_required_section_guarantee_enabled,
+    )
     from core.services.timetable_required_sections import (
         course_labels_by_key,
         describe_short_courses,
@@ -324,9 +471,12 @@ def run_v2_optimisation_guarded(
         sections_short_by_course,
     )
 
+    # One teacher per section: every phase below charges one pinned map.
+    teachers = _RunTeachers(scenario_id) if is_one_teacher_active() else None
     guarantee_on = is_required_section_guarantee_enabled()
     pre_repair: dict | None = None
     missing_before: dict[str, int] = {}
+    has_existing_board = None
     if guarantee_on:
         # A scenario with NO placements at all is "nothing built yet", not
         # "something was dropped" — every budgeted course looks "missing"
@@ -341,13 +491,28 @@ def run_v2_optimisation_guarded(
             board__scenario_id=scenario_id
         ).exists()
         if mode == "current" and has_existing_board:
-            pre_repair = reinstate_missing_required_sections(scenario_id)
+            pre_context = nullcontext()
+            if teachers is not None:
+                try:  # C0: read before anything is written
+                    pre_context = teachers.pre_step()
+                except Exception:
+                    logger.exception("Teacher map unreadable for scenario %d", scenario_id)
+                    return {"error": f"Teacher map error: {traceback.format_exc(limit=3)}"}
+            with pre_context:
+                pre_repair = reinstate_missing_required_sections(scenario_id)
             missing_before = sections_short_by_course(pre_repair["after_missing"])
         elif mode != "current":
             missing_before = sections_short_by_course(find_missing_required_sections(scenario_id))
+    if teachers is not None:
+        if has_existing_board is None:
+            from core.models import SectionPlacement
+
+            has_existing_board = SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id
+            ).exists()
+        teachers.save(rename=mode == "current" and has_existing_board)  # C2
 
     board_snapshot = snapshot_scenario(scenario_id)
-    safety_before = compute_scenario_safety_summary(scenario_id)
     from core.services.timetable_optimisation_policy import (
         instructor_schedule_metrics,
         is_instructor_priority_enabled,
@@ -357,14 +522,22 @@ def run_v2_optimisation_guarded(
         build_section_states_for_scenario,
     )
 
-    instructor_map = (
-        build_section_instructor_map_for_scenario(scenario_id)
-        if is_instructor_priority_enabled()
-        else None
-    )
-    instructor_before = instructor_schedule_metrics(
-        build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
-    )
+    # C4: the baseline is measured under the saved map.
+    with teachers.pin(teachers.saved) if teachers is not None else nullcontext():
+        safety_before = compute_scenario_safety_summary(scenario_id)
+        instructor_map = (
+            build_section_instructor_map_for_scenario(scenario_id)
+            if is_instructor_priority_enabled()
+            else None
+        )
+        instructor_before = instructor_schedule_metrics(
+            build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
+        )
+    teacher_bounds = None
+    if teachers is not None and is_instructor_priority_enabled():
+        from core.services.section_teacher_assignment import teacher_bounds as _bounds
+
+        teacher_bounds = _bounds(instructor_before)
 
     try:
         if mode == "full":
@@ -383,15 +556,25 @@ def run_v2_optimisation_guarded(
         else:
             from core.services.timetable_optimizer_v2 import optimise_current_timetable
 
-            result = optimise_current_timetable(
-                scenario_id=scenario_id,
-                max_search_iterations=max_iterations,
-                run_chain_search=run_chain,
-                max_chain_iterations=max_chain_iterations,
-                run_cpsat_polish=run_cpsat,
-                cpsat_time_limit=cpsat_limit,
-                checkpoint=checkpoint,
-            )
+            run_context = nullcontext()
+            if teachers is not None:
+                # C5, after the snapshot so rollback and cancel return the saved
+                # map: a re-pick no teacher's week can lose by, pinned for the run.
+                run_context = (
+                    teachers.start_run(teacher_bounds)
+                    if has_existing_board
+                    else teachers.pin(teachers.saved)
+                )
+            with run_context:
+                result = optimise_current_timetable(
+                    scenario_id=scenario_id,
+                    max_search_iterations=max_iterations,
+                    run_chain_search=run_chain,
+                    max_chain_iterations=max_chain_iterations,
+                    run_cpsat_polish=run_cpsat,
+                    cpsat_time_limit=cpsat_limit,
+                    checkpoint=checkpoint,
+                )
     except Exception:
         # An async cooperative signal belongs to the job's complete baseline
         # restore, rather than optimiser failure reporting. Re-checking also
@@ -409,6 +592,27 @@ def run_v2_optimisation_guarded(
         restore_scenario(scenario_id, board_snapshot)
         return result
 
+    if teachers is not None and mode == "current" and teachers.start is not None:
+        # C7: the final re-pick on the optimised board, in its own guard — a
+        # failure here restores the snapshot like any optimiser failure.
+        try:
+            changed = teachers.finish(
+                bounds=teacher_bounds,
+                gate=_week_gate(scenario_id, instructor_before, result, teachers)
+                if is_instructor_priority_enabled()
+                else None,
+            )
+            if changed:
+                _refresh_after_teacher_recompute(result, scenario_id, teachers.final)
+        except Exception:
+            if checkpoint:
+                checkpoint()
+            restore_scenario(scenario_id, board_snapshot)
+            logger.exception("Final teacher recompute failed for scenario %d", scenario_id)
+            return {"error": f"Teacher recompute error: {traceback.format_exc(limit=3)}"}
+    elif teachers is not None:
+        teachers.read_final()
+
     # Surface the soft-gap budget so the frontend can recover the pure student
     # gap from the blended tiered student-cost term (score[4] = real_gap +
     # budget * soft). 0 when the tiered objective is off (score[4] is pure gap).
@@ -421,13 +625,24 @@ def run_v2_optimisation_guarded(
         get_tiered_soft_gap_budget() if is_tiered_objective_enabled() else 0
     )
 
-    safety_after = compute_scenario_safety_summary(scenario_id)
-    if mode == "full" and is_instructor_priority_enabled():
-        # A first Generate may create section identities absent before the run.
-        instructor_map = build_section_instructor_map_for_scenario(scenario_id)
-    instructor_after = instructor_schedule_metrics(
-        build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
-    )
+    # C8: the after side is measured under the final map; both sides cover the
+    # union of the teachers either map knows, so a teacher who lost every
+    # section reads 0 rather than as missing evidence.
+    with teachers.pin(teachers.final) if teachers is not None else nullcontext():
+        safety_after = compute_scenario_safety_summary(scenario_id)
+        if mode == "full" and is_instructor_priority_enabled():
+            # A first Generate may create section identities absent before the run.
+            instructor_map = build_section_instructor_map_for_scenario(scenario_id)
+        if teachers is not None and instructor_map is not None:
+            instructor_map = teachers.final.v2_map()
+        instructor_after = instructor_schedule_metrics(
+            build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
+        )
+    if teachers is not None and is_instructor_priority_enabled():
+        from core.services.section_teacher_assignment import pad_schedule_metrics
+
+        instructor_before = pad_schedule_metrics(instructor_before, teachers.universe())
+        instructor_after = pad_schedule_metrics(instructor_after, teachers.universe())
     instructor_regression = (
         optimiser_instructor_day_regression(instructor_before, instructor_after, result)
         if mode == "current"
@@ -477,6 +692,32 @@ def run_v2_optimisation_guarded(
         + list(safety_regression["regressions"])
         + list(instructor_regression["regressions"])
     )
+    if teachers is not None:
+        # Days and idle count only the sections that have a teacher, so the
+        # sections left without one sit next to them — and in Optimise Current a
+        # rise beyond what D10 forces is blocking (the re-picks cannot raise it;
+        # this is the net that proves it).
+        from core.services.section_teacher_assignment import coverage_of
+
+        coverage_before = coverage_of(teachers.saved)
+        coverage_after = coverage_of(teachers.final)
+        result["instructor_schedule_metric"]["coverage"] = {
+            "before": coverage_before,
+            "after": coverage_after,
+        }
+        if (
+            mode == "current"
+            and coverage_after["tbd_beyond_d10"] > coverage_before["tbd_beyond_d10"]
+        ):
+            blocking_regressions.append(
+                {
+                    "metric": "teacher_coverage",
+                    "label": "Sections left without a teacher",
+                    "before": coverage_before["tbd_beyond_d10"],
+                    "after": coverage_after["tbd_beyond_d10"],
+                    "delta": coverage_after["tbd_beyond_d10"] - coverage_before["tbd_beyond_d10"],
+                }
+            )
     # Required-section guarantee — the rollback gate. This run's own work
     # (full mode's re-placement, current mode's cap/clash repair unplacing a
     # meeting, etc.) must never leave a required section with FEWER placed
@@ -520,7 +761,16 @@ def run_v2_optimisation_guarded(
     if blocking_regressions and not board_snapshot.is_empty:
         candidate_final_score = result.get("final_score")
         restore_scenario(scenario_id, board_snapshot)
-        safety_after = compute_scenario_safety_summary(scenario_id)
+        if teachers is not None:
+            # C9: the restore brought back the saved rows and names, so the
+            # saved map is in force again; the remaining counts read it.
+            teachers.final = teachers.saved
+            instructor_map = teachers.saved.v2_map()
+            result["instructor_schedule_metric"]["coverage"]["after"] = result[
+                "instructor_schedule_metric"
+            ]["coverage"]["before"]
+        with teachers.pin(teachers.saved) if teachers is not None else nullcontext():
+            safety_after = compute_scenario_safety_summary(scenario_id)
         result["safety_blocked"] = True
         result["safety_regression"] = {
             "blocked": True,
@@ -625,6 +875,14 @@ def run_v2_optimisation_guarded(
     else:
         result["safety_blocked"] = False
         result["safety_regression"] = {"blocked": False, "regressions": []}
+    if teachers is not None:
+        from core.services.section_teacher_assignment import coverage_of
+
+        result["section_teachers"] = {
+            **(result.get("section_teachers") or {}),
+            **teachers.report,
+            "coverage": coverage_of(teachers.final),
+        }
 
     # Regular-only gap option (absent when off): surface both numbers at the top
     # level of the result so the owner can see the visitors' gap the objective

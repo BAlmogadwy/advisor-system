@@ -1921,6 +1921,13 @@ def create_planned_section_placements(
                 )
             )
 
+    if is_one_teacher_active():
+        # One teacher per section: the planned section gets a teacher it does
+        # not clash with, when there is one, and shows that teacher's name.
+        from core.services.section_teacher_assignment import name_new_section
+
+        name_new_section(board.scenario_id, term_section, board)
+
     # Populate involving_this_section HERE rather than at the view, so every
     # caller gets the actionable field without re-deriving the section_id
     # convention (the two drag-drop views each do it themselves; this is the

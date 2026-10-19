@@ -1460,6 +1460,13 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
     }
 
 
+def stage_report(assignment: TeacherAssignment, **extra: Any) -> dict:
+    """One run stage's record in ``result["section_teachers"]``: how the map was
+    chosen (solver report) and what it covers."""
+    report = {k: v for k, v in (assignment.report or {}).items() if k != "tbd_blockers"}
+    return {"report": report, "coverage": coverage_of(assignment), **extra}
+
+
 def pad_schedule_metrics(metrics: Mapping, universe: Iterable) -> dict:
     """``instructor_schedule_metrics`` with a 0 for every teacher in
     ``universe`` it does not mention, so a teacher who lost every section reads
@@ -1687,6 +1694,22 @@ def persist_assignment(
     ``only_missing`` deletes only the rows the read path ignored and inserts
     only what the closure filled. Pins and frozen sections are never written.
     """
+    return _persist(scenario_id, assignment, only_missing=only_missing)[1]
+
+
+def persist_and_read(
+    scenario_id: int, assignment: TeacherAssignment
+) -> tuple[TeacherAssignment, dict[str, Any]]:
+    """Full persist, returning the stored map as the read path will see it on
+    this layout (the closure-complete map that was written) without reading
+    ``section_instructors`` again."""
+    stored, report = _persist(scenario_id, assignment, only_missing=False)
+    return stored, report
+
+
+def _persist(
+    scenario_id: int, assignment: TeacherAssignment, *, only_missing: bool
+) -> tuple[TeacherAssignment, dict[str, Any]]:
     from core.models import SectionInstructor
 
     with transaction.atomic():
@@ -1745,7 +1768,22 @@ def persist_assignment(
     invalidate_scope(scenario_id)
     if skipped:
         logger.warning("One-teacher persist skipped pinned sections %s", skipped[:10])
-    return {"written": len(new_rows), "deleted": deleted, "skipped_pinned": skipped}
+    stored = TeacherAssignment(
+        teacher=final.teacher,
+        status=final.status,
+        tbd_reason=final.tbd_reason,
+        kept=frozenset(
+            k for k in assignment.kept if final.teacher.get(k) == assignment.teacher.get(k)
+        ),
+        universe=final.universe,
+        report={
+            **final.report,
+            "engine": "stored",
+            "programmes_source": info.get("programmes_source", ""),
+        },
+        slots=final.slots,
+    )
+    return stored, {"written": len(new_rows), "deleted": deleted, "skipped_pinned": skipped}
 
 
 def _scenario_rows(scenario_id: int) -> list[tuple]:
@@ -1790,11 +1828,11 @@ def prepare_section_teachers(scenario_id: int, *, phase: str, sections=None) -> 
         assert_rebuild_ownership(scenario_id)
         previous = load_assignment(scenario_id)
         delete_engine_rows(scenario_id)
-        slots = collect_slots(
+        slots, info = _collect(
             scenario_id, sections=sections, placed_filter=locked_physical_section_ids(scenario_id)
         )
         seed = greedy_assign(slots, current=previous)
-        seed.report["engine"] = "pre_build"
+        seed.report.update(engine="pre_build", programmes_source=info["programmes_source"])
         written = persist_assignment(scenario_id, seed)
         return {"assignment": seed, "previous": previous, "persist": written}
     if phase == "layout":
@@ -1811,6 +1849,50 @@ def prepare_section_teachers(scenario_id: int, *, phase: str, sections=None) -> 
         write_names(scenario_id, current, only_keys=keys)
         return {"assignment": current, "persist": written}
     raise ValueError(f"unknown phase {phase!r}")
+
+
+def run_placer(scenario_id: int, place, *, rebuild: bool):
+    """A greedy build with one teacher per section (spec 3.2).
+
+    ``rebuild`` (the board was just cleared): the time-blind pre-build map is
+    pinned while ``place()`` runs, then the teachers are re-picked on the board
+    it produced, stable against that map. Otherwise (place what is missing and
+    keep the rest): the closure is stored before and after ``place()``, which
+    runs under the map in force — existing teachers stay.
+    """
+    if rebuild:
+        prepared = prepare_section_teachers(scenario_id, phase="rebuild")
+        with pinned_assignment(scenario_id, prepared["assignment"]):
+            result = place()
+        final = prepare_section_teachers(scenario_id, phase="layout")["assignment"]
+    else:
+        prepare_section_teachers(scenario_id, phase="ensure")
+        with pinned_assignment(scenario_id, load_assignment(scenario_id)):
+            result = place()
+        final = prepare_section_teachers(scenario_id, phase="ensure")["assignment"]
+    if isinstance(result, dict):
+        result["section_teachers"] = {"enabled": True, "final": stage_report(final)}
+    return result
+
+
+def name_new_section(scenario_id: int, term_section, board) -> dict:
+    """After a manual create (3.4): store the closure for the sections that have
+    no teacher yet — the layout-aware closure picks a teacher with no clash or
+    over-cap day when there is one — and name the new section."""
+    from core.services.course_identity import course_display_code
+    from core.services.course_instructor_assignment import apply_primary_instructor
+
+    prepared = prepare_section_teachers(scenario_id, phase="ensure")
+    apply_primary_instructor(
+        term_section,
+        board.scenario,
+        board,
+        course_display_code(
+            term_section.course_key, term_section.course_code, term_section.course_number
+        ),
+        assignment=prepared["assignment"],
+    )
+    return prepared["persist"]
 
 
 def write_names(scenario_id: int, assignment: TeacherAssignment, *, only_keys=None) -> int:
