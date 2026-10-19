@@ -21,10 +21,7 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 
 from core.models import TimetableScenario
-from core.services.timetable_shared_section import (
-    analyze_shared_sections,
-    canonicalise_shared_sections,
-)
+from core.services.timetable_shared_section import canonicalise_shared_sections
 
 
 class Command(BaseCommand):
@@ -46,11 +43,9 @@ class Command(BaseCommand):
         except TimetableScenario.DoesNotExist as exc:
             raise CommandError(f"Scenario {scenario_id} not found") from exc
 
-        report = (
-            canonicalise_shared_sections(scenario_id, apply=True)
-            if options["apply"]
-            else analyze_shared_sections(scenario_id)
-        )
+        # The read-only report is the dry run, so it shows what --apply would
+        # really rewrite (lock and external-ownership rules included).
+        report = canonicalise_shared_sections(scenario_id, apply=bool(options["apply"]))
         data = report.as_dict()
 
         if options["format"] == "json":

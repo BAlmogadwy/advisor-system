@@ -1,6 +1,7 @@
 import re
 import shutil
 import subprocess
+from html.parser import HTMLParser
 
 import pytest
 from django.contrib.auth.models import Group, User
@@ -109,3 +110,42 @@ def test_requested_scope_values_do_not_break_the_rendered_javascript(path, year,
         check=False,
     )
     assert parsed.returncode == 0, parsed.stderr
+
+
+# A lock keeps a section's days and times; its room can still change.
+LOCK_HELP = {
+    "en": "Keeps this section's days and times; its room can still change.",
+    "ar": "يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.",
+}
+
+
+class _Buttons(HTMLParser):
+    """Collects the attributes of every ``<button id=...>`` in a page."""
+
+    def __init__(self, html: str) -> None:
+        super().__init__()
+        self.by_id: dict[str, dict[str, str | None]] = {}
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "button" and attributes.get("id"):
+            self.by_id[attributes["id"]] = attributes
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_split_drawer_lock_button_says_a_lock_keeps_days_and_times_not_the_room(http, language):
+    # The jsdom harnesses strip {% %} tags, which would join both titles into one
+    # string, so the drawer's server-rendered title is checked here.
+    response = http.get("/timetable-workspace/split/", HTTP_ACCEPT_LANGUAGE=language)
+    assert response.status_code == 200
+    html = response.content.decode()
+    # The page really rendered in the requested language (the site defaults to en).
+    assert f'<html lang="{language}" dir="{"rtl" if language == "ar" else "ltr"}"' in html
+    buttons = _Buttons(html).by_id
+    lock = buttons["twsDrawerLock"]
+    assert lock["title"] == LOCK_HELP[language]
+    assert "dir" not in lock
+    # Only the Lock control carries it, and only in the page's own language.
+    assert buttons["twsDrawerRemove"].get("title") != LOCK_HELP[language]
+    assert LOCK_HELP["ar" if language == "en" else "en"] not in html

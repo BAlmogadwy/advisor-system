@@ -78,6 +78,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.audit import log_audit_event
+from core.services.board_ownership import external_shared_section_ids
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.section_move_optimisation import section_move_optimisation_engine
 from core.services.section_programmes import (
@@ -138,6 +139,7 @@ from core.services.timetable_student_blockers import build_scenario_student_bloc
 from core.services.timetable_workspace import (
     apply_bulk_clean_room_assignments,
     apply_bulk_safe_time_moves,
+    assign_physical_meeting_room,
     build_scenario_builder_actions,
     check_publish_readiness,
     compute_affected_students,
@@ -2638,6 +2640,14 @@ def tw_placement_pattern_switch_view(request: HttpRequest, placement_id: int) ->
         return _err("Placement not found", code="NOT_FOUND", status=404)
     if not payload.get("pattern_id"):
         return _err("pattern_id is required", code=SectionPolicyError.code, status=400)
+    # A pattern switch changes times; a section another scenario also places is
+    # owned there, exactly as on the move endpoint.
+    if placement.term_section_id in external_shared_section_ids(placement.board.scenario_id):
+        return _err(
+            "This section is also placed by another scenario, which owns its time and room.",
+            code="PLACEMENT_EXTERNALLY_OWNED",
+            status=409,
+        )
     return _switch_policy_response(request, placement, payload)
 
 
@@ -2647,7 +2657,14 @@ def tw_placement_pattern_switch_view(request: HttpRequest, placement_id: int) ->
 def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Move an existing placement to a new day/time/room.
 
-    Locked placements require ``override: true`` in the payload.
+    A lock freezes days, start/end times and the contact pattern, not the room:
+    changing day/start/end (or ``pattern_id``) on a locked placement requires
+    ``override: true``, while a room-only change (same day/start/end) keeps the
+    lock and needs none. A room-only change writes the same-scenario copies of
+    that physical meeting that share its room, and their canonical meetings
+    (``assign_physical_meeting_room``). Sections that
+    another scenario also places are fully frozen (409
+    ``PLACEMENT_EXTERNALLY_OWNED``), override or not.
     Returns updated placement data plus the new validation result.
     """
     deny = _require_general_advisor(request)
@@ -2667,13 +2684,6 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     if placement.board.scenario.status == "published":
         return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
 
-    if placement.is_locked and not payload.get("override"):
-        return _err(
-            "Placement is locked. Pass override: true to force.",
-            code="PLACEMENT_LOCKED",
-            status=400,
-        )
-
     new_day = str(payload.get("day", placement.day)).strip().upper()
     new_start = str(payload.get("start_time", placement.start_time)).strip()
     new_end = str(payload.get("end_time", placement.end_time)).strip()
@@ -2683,14 +2693,38 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     ):
         new_room = ""
 
-    if section_policy(placement.term_section) and (
-        payload.get("pattern_id")
-        or (new_day, new_start, new_end)
-        != (placement.day, placement.start_time, placement.end_time)
-    ):
-        return _switch_policy_response(request, placement, payload)
-
     old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
+    old_room = str(placement.room or "").strip()
+    time_changed = bool(payload.get("pattern_id")) or (new_day, new_start, new_end) != (
+        str(old_day).strip().upper(),
+        str(old_start).strip(),
+        str(old_end).strip(),
+    )
+    room_only = not time_changed and new_room != old_room
+    scenario_id = placement.board.scenario_id
+
+    # Another scenario also places this physical section and owns its time and
+    # room; neither an override nor a room-only edit may change it from here.
+    if placement.term_section_id in external_shared_section_ids(scenario_id) and (
+        time_changed or room_only
+    ):
+        return _err(
+            "This section is also placed by another scenario, which owns its time and room.",
+            code="PLACEMENT_EXTERNALLY_OWNED",
+            status=409,
+        )
+
+    # A lock freezes days, times and the contact pattern; the room stays assignable.
+    if placement.is_locked and time_changed and not payload.get("override"):
+        return _err(
+            "Placement is locked: its days and times cannot change (its room can). "
+            "Pass override: true to force.",
+            code="PLACEMENT_LOCKED",
+            status=400,
+        )
+
+    if section_policy(placement.term_section) and time_changed:
+        return _switch_policy_response(request, placement, payload)
 
     # Validate before persisting. Board-scoped and free-text-instructor keyed —
     # see the note in tw_placement_create_view; the backstop covers what it misses.
@@ -2710,17 +2744,20 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         verify_persisted_scenario,
     )
 
-    scenario_id = placement.board.scenario_id
-
-    placement.day = new_day
-    placement.start_time = new_start
-    placement.end_time = new_end
-    placement.room = new_room
-
-    try:
-        placement.save(update_fields=["day", "start_time", "end_time", "room", "updated_at"])
-    except IntegrityError:
-        return _err("Duplicate placement at new position", code="PLACEMENT_DUPLICATE", status=409)
+    if room_only:
+        rows = assign_physical_meeting_room(placement, new_room)
+    else:
+        placement.day = new_day
+        placement.start_time = new_start
+        placement.end_time = new_end
+        placement.room = new_room
+        try:
+            placement.save(update_fields=["day", "start_time", "end_time", "room", "updated_at"])
+        except IntegrityError:
+            return _err(
+                "Duplicate placement at new position", code="PLACEMENT_DUPLICATE", status=409
+            )
+        rows = [placement]
 
     log_audit_event(
         request,
@@ -2728,8 +2765,12 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         status="success",
         details={
             "placement_id": placement_id,
+            "placement_ids": [row.id for row in rows],
             "from": f"{old_day} {old_start}-{old_end}",
             "to": f"{new_day} {new_start}-{new_end}",
+            "room_from": old_room,
+            "room_to": new_room,
+            "is_locked": placement.is_locked,
         },
     )
     backstop = verify_persisted_scenario(scenario_id, context="manual_placement_move")
@@ -2739,6 +2780,7 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     return _ok(
         {
             "placement": _placement_to_dict(placement),
+            "placements": [_placement_to_dict(row) for row in rows],
             "validation": validation,
             "instructor_clash_backstop": backstop,
         }
@@ -2804,7 +2846,10 @@ def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonRes
 @require_POST
 @guard_manual_scenario_write
 def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonResponse:
-    """Toggle the lock flag on a placement (locked placements resist move/remove)."""
+    """Toggle the lock flag on a placement.
+
+    Locked placements resist time moves and removal; their room can still change.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny

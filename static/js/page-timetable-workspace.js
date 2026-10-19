@@ -30,6 +30,7 @@ const T = {
   instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
   roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
   crossBoardClash: IS_AR ? 'تداخل محتمل في الطلب عبر اللوحات' : 'Potential cross-board demand overlap',
+  lockHelp: IS_AR ? 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.' : "Keeps this section's days and times; its room can still change.",
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 'djCsrfToken';
@@ -2107,7 +2108,7 @@ function renderRightPanel(tab) {
       <div class="tw-sel-field"><span class="label">Capacity</span><span class="value">${p.available_capacity || '-'}</span></div>
       <div class="tw-sel-field"><span class="label">Locked</span><span class="value">${p.is_locked ? 'Yes' : 'No'}</span></div>
       <div class="d-flex" style="margin-top:12px; gap:6px">
-        <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
+        <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
         <button class="tw-btn text-danger" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
       </div>
     `;
@@ -2596,7 +2597,7 @@ function openSectionDrawer(placementId) {
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
     <div style="margin-top:12px"><strong class="fs-md text-t3">${IS_AR ? 'جميع اللقاءات' : 'All Meetings'}</strong>${meetingsHtml || '<div class="fs-12 text-t4">-</div>'}</div>
     <div class="d-flex" style="margin-top:16px; gap:8px">
-      <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
+      <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
       <button class="tw-btn text-danger" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
     </div>
   `;
