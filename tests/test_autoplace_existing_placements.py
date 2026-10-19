@@ -4,9 +4,9 @@
 a re-run against a populated board — the required-section guarantee's retry —
 must respect the sections already there. It used to seed only LOCKED rows, so
 the retry booked a reinstated section into a room this board already used at
-that time and on top of the course's own other sections (lab scenario 667:
-CS112 PROGRAMMING II in AI124 S2's and CS114 S1's rooms; a from-scratch build
-put DS331 into IS124 S2's room).
+that time, on top of the course's own other sections and on top of its
+students' other classes (lab scenario 667: CS112 PROGRAMMING II in AI124 S2's
+and CS114 S1's rooms; a from-scratch build put DS331 into IS124 S2's room).
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from core.models import (
     DeliveryBoard,
     Room,
     ScenarioSectionBudget,
+    ScenarioStudentCourseRequest,
     SectionPlacement,
     TermSection,
     TimetableScenario,
@@ -24,14 +25,16 @@ from core.models import (
 from core.services.timetable_autoplace import auto_place_board
 
 DAYS = ("SUN", "MON", "TUE", "WED", "THU")
+NINE = {"start": "09:00", "end": "10:15"}
+TEN_THIRTY = {"start": "10:30", "end": "11:45"}
 
 
-def _board(name: str) -> DeliveryBoard:
+def _board(name: str, slots: tuple[dict, ...] = (NINE,)) -> DeliveryBoard:
     scenario = TimetableScenario.objects.create(
         academic_year="1448",
         term="2",
         name=name,
-        slot_config=[{"start": "09:00", "end": "10:15"}],  # one slot a day: no way round
+        slot_config=list(slots),  # default one slot a day: no way round
         lab_slot_config=[],
     )
     return DeliveryBoard.objects.create(scenario=scenario, label="T4", nominal_term=4, program="AI")
@@ -52,8 +55,10 @@ def _budget(board: DeliveryBoard, code: str, planned: int) -> None:
     )
 
 
-def _existing(board: DeliveryBoard, code: str, label: str, room: str) -> TermSection:
-    """An unlocked section already on the board at 09:00 every day."""
+def _existing(
+    board: DeliveryBoard, code: str, label: str, room: str, slot: dict = NINE
+) -> TermSection:
+    """An unlocked section already on the board in ``slot`` every day."""
     ts = TermSection.objects.create(
         scenario=board.scenario,
         course_key=code,
@@ -68,8 +73,8 @@ def _existing(board: DeliveryBoard, code: str, label: str, room: str) -> TermSec
             board=board,
             term_section=ts,
             day=day,
-            start_time="09:00",
-            end_time="10:15",
+            start_time=slot["start"],
+            end_time=slot["end"],
             room=room,
             is_locked=False,
         )
@@ -93,6 +98,36 @@ def test_a_rerun_does_not_book_a_room_the_board_already_uses() -> None:
         )
     )
     assert rooms == {"BIG"}
+
+
+@pytest.mark.django_db
+def test_a_rerun_keeps_a_new_section_off_its_students_existing_classes() -> None:
+    board = _board("rerun students", slots=(NINE, TEN_THIRTY))
+    for code in ("RX", "RZ1", "RZ2", "FREE"):  # a free room in both slots
+        Room.objects.create(room_code=code, capacity=100, room_type="lecture", department="AI")
+    _budget(board, "AI113", planned=1)
+    _existing(board, "AI113", "S1", "RX")  # every 09:00
+    for student_id in (1, 2, 3):  # AI113's students also need AI201
+        for code in ("AI113", "AI201"):
+            ScenarioStudentCourseRequest.objects.create(
+                scenario=board.scenario, student_id=student_id, course_key=code, course_code=code
+            )
+    # Two unrelated courses fill every 10:30, so everything but the shared
+    # students — slot density, the early-slot preference, the idle gap after
+    # AI113 — favours 09:00. Only the student overlap can push AI201 to 10:30.
+    _existing(board, "AI150", "S1", "RZ1", slot=TEN_THIRTY)
+    _existing(board, "AI160", "S1", "RZ2", slot=TEN_THIRTY)
+    _budget(board, "AI201", planned=1)
+
+    result = auto_place_board(board.id)
+
+    assert result["placed"] == 1
+    starts = set(
+        SectionPlacement.objects.filter(board=board, term_section__course_key="AI201").values_list(
+            "start_time", flat=True
+        )
+    )
+    assert starts == {"10:30"}
 
 
 @pytest.mark.django_db
