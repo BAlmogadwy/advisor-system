@@ -108,6 +108,9 @@ jobs:
     # lifecycle, the five real threaded planner concurrency tests, the timetable-delta
     # lock regression, and the three elective publication lock regressions. Widening it to the
     # full suite on PostgreSQL is a separate decision with its own cost.
+    # The one-teacher-per-section storage tests run here too: they rest on the
+    # section_instructors unique constraints (one primary per section, one row
+    # per teacher) and on a snapshot restore that must not raise IntegrityError.
     name: planner (PostgreSQL 16)
     runs-on: ubuntu-latest
     services:
@@ -164,6 +167,8 @@ jobs:
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             tests/test_exam_jobs_postgres.py \
+            tests/test_one_teacher_ownership.py \
+            tests/test_section_teacher_assignment.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
         # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all twelve
