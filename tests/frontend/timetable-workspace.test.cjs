@@ -250,3 +250,51 @@ for (const arabic of [false, true]) test(`inspector and drawer Lock buttons say 
   assert.equal(h.d.body.innerHTML.includes(LOCK_HELP[arabic ? 'en' : 'ar']), false);
   assert.deepEqual(h.errors, []);
 });
+
+// H15 severity is decided once on the server: a same-course overlap or one
+// that leaves students with no clash-free pair is critical; one they can route
+// round through sibling sections is a warning, and must not read as red here.
+const OVERLAP_LABELS = {
+  en: { critical: 'Same-board time clash', warning: 'Same-board overlap (non-blocking)' },
+  ar: { critical: 'تعارض زمني داخل اللوحة', warning: 'تداخل زمني داخل اللوحة لا يمنع النشر' },
+};
+for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning in the board strip, cards, Issues and MRI (${arabic ? 'ar' : 'en'})`, async t => {
+  const at = (id, day) => ({ ...placement, id, term_section_id: id + 100, course_code: `AI${id}`, day, room: '' });
+  const overlap = (ids, severity) => ({ ids, sections: ids.map(id => `AI${id}-S1`), detail: `${ids[0]} vs ${ids[1]}`,
+    severity, same_course: false, shared_students: 30, blocked_students: severity === 'critical' ? 30 : 0 });
+  const conflicts = { summary: { critical: 1, warning: 1 }, overlaps: [overlap([10, 11], 'critical'), overlap([12, 13], 'warning')],
+    instructor_clashes: [], room_clashes: [], cross_board_conflicts: [] };
+  const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements: [at(10, 'SUN'), at(11, 'SUN'), at(12, 'MON'), at(13, 'MON')], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? conflicts : undefined, {}, arabic);
+  await h.select();
+  const label = OVERLAP_LABELS[arabic ? 'ar' : 'en'];
+  const metric = text => [...h.d.querySelectorAll('#twBoardStrip .tw-metric')].find(node => node.querySelector('.lbl').textContent === text).querySelector('.num');
+  assert.deepEqual([metric(label.critical).className, metric(label.critical).textContent], ['num danger', '1']);
+  assert.deepEqual([metric(label.warning).className, metric(label.warning).textContent], ['num text-warning', '1']);
+  const card = id => h.d.querySelector(`.tw-card[data-placement-id="${id}"]`);
+  assert.ok(card(10).classList.contains('critical'));
+  assert.ok(card(12).classList.contains('warning'));
+  assert.equal(card(12).classList.contains('critical'), false);
+  assert.ok(card(12).title.startsWith(label.warning));
+  h.w.renderRightPanel('issues');
+  const issue = text => {
+    const head = [...h.d.querySelectorAll('#twRightBody div')].find(node => node.textContent === text);
+    assert.ok(head, text);
+    return [head.classList.contains('text-danger'), head.nextElementSibling.querySelector('.tw-issue-dot').className, head.nextElementSibling.querySelector('.fw-semibold').textContent];
+  };
+  assert.deepEqual(issue(`${label.critical} (1)`), [true, 'tw-issue-dot critical', 'AI10-S1 / AI11-S1']);
+  assert.deepEqual(issue(`${label.warning} (1)`), [false, 'tw-issue-dot warning', 'AI12-S1 / AI13-S1']);
+  // With only the warning left, the MRI panel counts no critical and paints it amber.
+  h.w.TW.conflicts = { ...conflicts, summary: { critical: 0, warning: 1 }, overlaps: [conflicts.overlaps[1]] };
+  h.w.renderRightPanel('mri');
+  const mri = h.d.getElementById('twRightBody');
+  // Warnings: the overlap and the quality fixture's one meeting without a suitable room.
+  const [criticalCount, warningCount] = [...mri.querySelectorAll('.tw-mri-metrics > div > span')].map(node => node.textContent);
+  assert.deepEqual([criticalCount, warningCount], ['0', '2']);
+  assert.ok(mri.querySelector('[data-mri-layer="time-layer"]').classList.contains('watch'));
+  const hotspot = [...mri.querySelectorAll('.tw-mri-hotspot')].find(node => node.querySelector('strong').textContent === 'AI12-S1 / AI13-S1');
+  assert.deepEqual([hotspot.classList.contains('watch'), hotspot.querySelector('span').textContent], [true, 'Same-board overlap (non-blocking)']);
+  // Pressure: 4 for the non-blocking overlap (a critical one weighs 28) + 12 for that room.
+  assert.equal(mri.querySelector('.tw-mri-score span').textContent, '16');
+  assert.deepEqual(h.errors, []);
+});

@@ -245,3 +245,36 @@ for (const arabic of [false, true]) test(`the inspector lock control says a lock
   h.w.renderRpanel();
   assert.equal(h.inspector().getAttribute('title'), help);
 });
+
+// H15 severity is decided once on the server: a same-course overlap or one
+// that leaves students with no clash-free pair is critical; one they can route
+// round through sibling sections is a warning. The Issues tab must not paint
+// the warning as a red critical clash.
+const OVERLAP_HEADS = {
+  en: { critical: 'Same-board time clash', warning: 'Same-board overlap (non-blocking)' },
+  ar: { critical: 'تعارض زمني داخل اللوحة', warning: 'تداخل زمني داخل اللوحة لا يمنع النشر' },
+};
+for (const arabic of [false, true]) test(`Issues lists a critical overlap under a danger heading and a non-blocking one under a warn heading (${arabic ? 'ar' : 'en'})`, async t => {
+  const h = await harness(t, undefined, { arabic });
+  const overlap = (ids, sections, severity, blocked) => ({
+    ids, sections, course_keys: sections.map(label => label.split('-')[0]), detail: 'SUN 09:00-10:15 vs SUN 09:00-10:15',
+    severity, same_course: false, shared_students: 30, blocked_students: blocked,
+  });
+  const conflicts = {
+    overlaps: [overlap([10, 11], ['AI10-S1', 'AI11-S1'], 'critical', 30), overlap([10, 12], ['AI10-S1', 'AI12-S1'], 'warning', 0)],
+    instructor_clashes: [], room_clashes: [], cross_board: [],
+  };
+  for (const pane of h.state.panes.slice(0, 2)) pane.boardData.conflicts = conflicts;
+  h.panel.tab = 'issues'; h.w.renderRpanel();
+  await settle();
+  const heads = OVERLAP_HEADS[arabic ? 'ar' : 'en'];
+  const section = label => {
+    const head = [...h.d.querySelectorAll('#twsRpanelBody .section-head')].find(node => node.firstChild.textContent === label);
+    assert.ok(head, label);
+    const row = head.nextElementSibling;
+    return { tone: head.className, count: head.querySelector('.n').textContent, title: row.querySelector('.title').firstChild.textContent, dot: row.querySelector('.dot').className };
+  };
+  assert.deepEqual(section(heads.critical), { tone: 'section-head danger', count: '1', title: 'AI10-S1 / AI11-S1', dot: 'dot critical' });
+  assert.deepEqual(section(heads.warning), { tone: 'section-head warn', count: '1', title: 'AI10-S1 / AI12-S1', dot: 'dot warn' });
+  assert.equal(h.d.getElementById('twsRpCountIssues').textContent, '2');
+});

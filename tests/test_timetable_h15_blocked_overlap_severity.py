@@ -58,8 +58,8 @@ def _place(board, key, section, day, start="08:00", end="09:15"):
     )
 
 
-def _need_both(board, students: int) -> None:
-    for key in (NETS, ALGEBRA):
+def _need(board, keys: tuple[str, ...], students: int) -> None:
+    for key in keys:
         for sid in range(1, students + 1):
             ScenarioStudentCourseRequest.objects.create(
                 scenario=board.scenario,
@@ -68,6 +68,10 @@ def _need_both(board, students: int) -> None:
                 course_code=key.split("::", 1)[0],
                 primary_term=4,
             )
+
+
+def _need_both(board, students: int) -> None:
+    _need(board, (NETS, ALGEBRA), students)
 
 
 def _clash_actions(board) -> list[str]:
@@ -136,3 +140,31 @@ def test_blocked_overlap_below_the_threshold_stays_a_warning() -> None:
     [overlap] = detect_board_conflicts(board.id)["overlaps"]
 
     assert (overlap["blocked_students"], overlap["severity"]) == (5, "warning")
+
+
+def test_same_course_overlap_stays_critical_and_blocks_publish() -> None:
+    # Two sections of one course at one time double-book the course whatever
+    # the demand. Students need only this course here: no pair needs both, so
+    # nothing but the same-course rule can make the overlap critical.
+    board = _board()
+    _need(board, (NETS,), 25)
+    _place(board, NETS, "S1", "SUN")
+    _place(board, NETS, "S2", "SUN")
+
+    conflicts = detect_board_conflicts(board.id)
+
+    [overlap] = conflicts["overlaps"]
+    assert (overlap["severity"], overlap["same_course"], overlap["blocked_students"]) == (
+        "critical",
+        True,
+        None,
+    )
+    assert conflicts["summary"]["critical"] == 1
+    readiness = check_publish_readiness(board.scenario_id)
+    assert readiness["ready"] is False
+    assert "Board 'Term 4': 1 critical conflicts" in readiness["blockers"]
+    assert _clash_actions(board) == ["block"]
+    # A student takes one section of a course, so the pair affects no one.
+    impact = compute_affected_students(board.id)
+    assert (impact["affected_count"], impact["blocked_count"]) == (0, 0)
+    assert impact["overlap_details"] == []

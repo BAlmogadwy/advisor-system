@@ -96,9 +96,27 @@
     return (board.primary_count || 0) + (board.visitor_count || 0);
   }
 
+  // The server decides an overlap's severity once (H15): critical when it is
+  // same-course or leaves students with no clash-free pair of sections, a
+  // warning when they can route round it. A row without one stays critical.
+  function isCriticalOverlap(overlap) {
+    return overlap?.severity !== 'warning';
+  }
+
+  function overlapTone(overlap) {
+    return isCriticalOverlap(overlap) ? 'critical' : 'watch';
+  }
+
+  function overlapKind(overlap) {
+    return isCriticalOverlap(overlap) ? 'Time overlap' : 'Non-blocking time overlap';
+  }
+
+  // A non-blocking overlap is common course demand students can route round,
+  // so it weighs what a potential cross-board demand overlap weighs.
   function pressureFor(scan) {
     return Math.min(100, Math.round(
-      scan.overlaps * 26 +
+      scan.criticalOverlaps * 26 +
+      scan.warningOverlaps * 4 +
       scan.instructors * 18 +
       scan.rooms * 10 +
       scan.crossBoard * 4 +
@@ -123,11 +141,15 @@
     const deficitCourses = capCourses.filter(c => (c.deficit || 0) > 0);
     const impact = conflicts.student_impact || {};
     const audit = boardRoomAudit(state.quality, (state.boardDetails.get(board.id) || {}).placements);
+    const overlapRows = conflicts.overlaps || [];
+    const criticalOverlaps = overlapRows.filter(isCriticalOverlap).length;
     const scan = {
       board,
       students: boardStudents(board),
       placements: board.placement_count || 0,
-      overlaps: (conflicts.overlaps || []).length,
+      overlaps: overlapRows.length,
+      criticalOverlaps,
+      warningOverlaps: overlapRows.length - criticalOverlaps,
       instructors: (conflicts.instructor_clashes || []).length,
       rooms: audit.assessed ? audit.shortages : (conflicts.room_clashes || []).length,
       roomsAssessed: audit.assessed,
@@ -159,6 +181,8 @@
       acc.students += s.students;
       acc.placements += s.placements;
       acc.overlaps += s.overlaps;
+      acc.criticalOverlaps += s.criticalOverlaps;
+      acc.warningOverlaps += s.warningOverlaps;
       acc.instructors += s.instructors;
       acc.rooms += s.rooms;
       acc.roomClashes += s.roomClashes;
@@ -175,6 +199,8 @@
       students: 0,
       placements: 0,
       overlaps: 0,
+      criticalOverlaps: 0,
+      warningOverlaps: 0,
       instructors: 0,
       rooms: 0,
       roomsAssessed: Boolean(state.quality?.rooms?.assessed),
@@ -346,7 +372,7 @@
     const metrics = [
       ['Students', scan.students],
       ['Placed', scan.placements],
-      ['Critical', scan.overlaps + scan.instructors],
+      ['Critical', scan.criticalOverlaps + scan.instructors],
       ['Cross-board', scan.crossBoard],
       ['Affected', scan.affected],
       ['Seat gap', scan.deficit],
@@ -364,8 +390,8 @@
     const rows = [
       {
         label: 'Time collisions',
-        score: scan.overlaps * 26,
-        detail: `${plural(scan.overlaps, 'overlap')} detected`,
+        score: scan.criticalOverlaps * 26 + scan.warningOverlaps * 4,
+        detail: `${plural(scan.criticalOverlaps, 'critical overlap')} | ${plural(scan.warningOverlaps, 'non-blocking overlap')}`,
       },
       {
         label: 'Instructor pressure',
@@ -627,7 +653,7 @@
     const capacityDx = capacityDiagnosis(scans);
     const layers = [
       ['Student flow', scan.affected, Math.max(1, scan.students), `${scan.affected} affected, ${scan.blocked} blocked`, scan.blocked ? 'critical' : scan.affected ? 'watch' : 'stable'],
-      ['Time layer', scan.overlaps, Math.max(1, scan.placements), `${scan.overlaps} time overlaps`, scan.overlaps ? 'critical' : 'stable'],
+      ['Time layer', scan.overlaps, Math.max(1, scan.placements), `${scan.criticalOverlaps} critical, ${scan.warningOverlaps} non-blocking time overlaps`, scan.criticalOverlaps ? 'critical' : scan.warningOverlaps ? 'watch' : 'stable'],
       ['Cross-board network', scan.crossBoard, Math.max(1, state.boards.length * 8), `${scan.crossBoard} potential course-demand overlaps`, scan.crossBoard ? 'watch' : 'stable'],
       ['Capacity layer', scan.deficit, Math.max(1, scan.demand), `${scan.deficitCourses} courses under capacity | ${capacityDx.label}`, scan.deficit ? capacityDx.tone : 'stable'],
       ['Room/instructor layer', scan.rooms + scan.instructors, Math.max(1, scan.placements), `${scan.instructors} instructor clashes, ${scan.roomsAssessed ? scan.rooms + " meetings needing suitable rooms" : scan.roomClashes + " room clashes; suitability not assessed"}`, scan.instructors ? 'critical' : scan.rooms ? 'watch' : 'stable'],
@@ -671,11 +697,11 @@
       const board = scan.board;
       (scan.conflicts.overlaps || []).forEach(o => add({
         key: `time:${board.id}:${(o.ids || []).slice().sort().join(',') || (o.sections || []).join('|')}`,
-        tone: 'critical',
-        kind: 'Time overlap',
+        tone: overlapTone(o),
+        kind: overlapKind(o),
         title: (o.sections || []).join(' / '),
         detail: `${board.label} | ${o.detail || 'same time collision'}`,
-        score: 120,
+        score: isCriticalOverlap(o) ? 120 : 40 + (o.shared_students || 0),
         boards: [String(board.id)],
         placementIds: (o.ids || []).map(String),
       }));
@@ -798,8 +824,8 @@
     (scan.conflicts.overlaps || []).forEach(item => {
       if (!(item.ids || []).some(other => String(other) === id)) return;
       rows.push({
-        tone: 'critical',
-        title: 'Time overlap',
+        tone: overlapTone(item),
+        title: overlapKind(item),
         detail: `${(item.sections || []).join(' / ') || placementLabel(placement)} | ${item.detail || 'same time collision'}`,
       });
     });
@@ -966,7 +992,11 @@
         bySection.get(key).push(p);
       });
       const overlapIds = new Set();
-      (scan.conflicts.overlaps || []).forEach(o => (o.ids || []).forEach(id => overlapIds.add(id)));
+      const criticalOverlapIds = new Set();
+      (scan.conflicts.overlaps || []).forEach(o => (o.ids || []).forEach(id => {
+        overlapIds.add(id);
+        if (isCriticalOverlap(o)) criticalOverlapIds.add(id);
+      }));
       const crossSections = new Set();
       (scan.conflicts.cross_board_conflicts || []).forEach(c => {
         crossSections.add(c.section_a);
@@ -979,13 +1009,15 @@
       Array.from(bySection.entries()).sort(([a], [b]) => String(a).localeCompare(String(b))).forEach(([section, groupPlacements], idx) => {
         const courses = Array.from(new Set(groupPlacements.map(p => p.course_code))).sort();
         const localConflicts = groupPlacements.filter(p => overlapIds.has(p.id)).length;
+        const localCritical = groupPlacements.filter(p => criticalOverlapIds.has(p.id)).length;
         const networkHits = groupPlacements.filter(p => crossSections.has(`${p.course_code}-${p.section}`)).length;
         const affected = courses.reduce((sum, code) => sum + (affectedByCourse.get(code) || 0), 0);
         const seatGap = courses.reduce((sum, code) => {
           const course = capCourses.find(c => c.course_code === code);
           return sum + Math.max(0, (course || {}).deficit || 0);
         }, 0);
-        const pressure = Math.min(100, Math.round(localConflicts * 24 + networkHits * 10 + Math.min(35, Math.ceil(affected / 3))));
+        // A section only in non-blocking overlaps weighs what a network hit weighs.
+        const pressure = Math.min(100, Math.round(localCritical * 24 + (localConflicts - localCritical) * 10 + networkHits * 10 + Math.min(35, Math.ceil(affected / 3))));
         out.push({
           board: scan.board,
           label: `Group ${idx + 1}`,
@@ -1021,8 +1053,8 @@
       const ids = item.ids || [];
       if (!ids.some(id => placementIds.has(id))) return;
       rows.push({
-        tone: 'critical',
-        label: 'Time overlap',
+        tone: overlapTone(item),
+        label: overlapKind(item),
         title: (item.sections || []).join(' / ') || group.label,
         detail: item.detail || 'Two or more sections collide in the same time window.',
       });
@@ -1189,8 +1221,8 @@
       (scan.conflicts.overlaps || []).forEach(o => addAction(
         `overlap:${scan.board.id}:${(o.ids || []).slice().sort().join(',') || (o.sections || []).join('|')}`,
         {
-        priority: 1,
-        tone: 'critical',
+        priority: isCriticalOverlap(o) ? 1 : 3,
+        tone: overlapTone(o),
         title: `Separate ${(o.sections || []).join(' / ')}`,
         detail: `${scan.board.label}: ${o.detail || 'direct overlap'} | first move should protect affected students`,
         }
@@ -1260,7 +1292,7 @@
         const after = Math.max(0, baseAffected - Math.max(8, Math.ceil(baseAffected * 0.62)));
         moves.push({
           id: buildSuggestionId('reslot', group.board.id, group.section),
-          tone: 'critical',
+          tone: direct ? 'critical' : 'watch',
           title: `Reslot ${group.board.label} / ${group.label}`,
           detail: `Move the overlapping section pair to a green slot before changing capacity. This attacks direct student harm first.`,
           before: `${baseAffected} affected`,
@@ -1309,7 +1341,7 @@
       if (scan.overlaps || scan.crossBoard) {
         moves.push({
           id: buildSuggestionId('board-balance', scan.board.id, 'balance'),
-          tone: scan.overlaps ? 'critical' : 'watch',
+          tone: scan.criticalOverlaps ? 'critical' : 'watch',
           title: `Balance ${scan.board.label} before adding new sections`,
           detail: `Freeze low-risk groups and rebuild only the hot groups. This preserves most of the timetable while reducing blast radius.`,
           before: `${scan.overlaps + scan.crossBoard} pressure links`,
@@ -1637,10 +1669,13 @@
     const ids = new Set(placements.map(p => String(p.id)));
     const hasId = item => (item.ids || []).some(id => ids.has(String(id)));
     const networkWarnings = placements.reduce((sum, item) => sum + crossBoardCounterparts(item).length, 0);
+    const overlapRows = (conflicts.overlaps || []).filter(hasId);
+    const criticalOverlaps = overlapRows.filter(isCriticalOverlap).length;
     return {
-      critical: (conflicts.overlaps || []).filter(hasId).length +
+      critical: criticalOverlaps +
         (conflicts.instructor_clashes || []).filter(hasId).length,
-      warning: (conflicts.room_clashes || []).filter(hasId).length + networkWarnings,
+      warning: (overlapRows.length - criticalOverlaps) +
+        (conflicts.room_clashes || []).filter(hasId).length + networkWarnings,
     };
   }
 

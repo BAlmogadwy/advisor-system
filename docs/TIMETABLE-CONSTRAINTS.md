@@ -53,7 +53,11 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 > `warning = warning overlaps + len(room_clashes)`. Critical blocks publication.
 > Board badges, the conflict panel, next actions (block vs warn), exports, the
 > graph twin and the publish gate all read the one severity `detect_board_conflicts`
-> sets.
+> sets. So do the workspace screens: the split Issues tab and the older
+> workspace's issues list put a warning overlap under its own amber
+> "non-blocking" heading, and the older workspace's cards and board strip and
+> both MRI views (critical count, tones, pressure) count it as a warning, never
+> as a red clash.
 >
 > **H15 counts course demand, keyed by planner identity.** "Share" means students
 > who *need both courses* (`CS112::PROGRAMMING_II`, never the bare display code,
