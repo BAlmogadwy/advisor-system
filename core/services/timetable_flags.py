@@ -99,6 +99,23 @@ def is_required_section_guarantee_enabled() -> bool:
     return bool(getattr(settings, REQUIRED_SECTION_GUARANTEE_SETTING, True))
 
 
+ONE_TEACHER_PER_SECTION_SETTING = "TIMETABLE_ONE_TEACHER_PER_SECTION"
+
+
+def is_one_teacher_active() -> bool:
+    """Charge each section to exactly one teacher (or to nobody) — default OFF.
+
+    A ``CourseInstructor`` link says who MAY teach a course. With this off every
+    linked teacher is charged with every section of it at once, as before. On,
+    ``core.services.section_teacher_assignment`` picks one teacher per section
+    and every instructor rule reads that map. It needs the links flag too: the
+    eligible teachers come from the links, and with links off there are none.
+    """
+    return bool(getattr(settings, ONE_TEACHER_PER_SECTION_SETTING, False)) and bool(
+        getattr(settings, "TIMETABLE_INSTRUCTOR_LINKS_ENABLED", False)
+    )
+
+
 def is_async_planner_enabled() -> bool:
     return bool(getattr(settings, ASYNC_PLANNER_SETTING, False))
 
@@ -120,6 +137,7 @@ __all__ = [
     "ASYNC_JOB_UI_SETTING",
     "ASYNC_PLANNER_SETTING",
     "GAP_REGULAR_STUDENTS_ONLY_SETTING",
+    "ONE_TEACHER_PER_SECTION_SETTING",
     "REQUIRED_SECTION_GUARANTEE_SETTING",
     "STAGE_TELEMETRY_SETTING",
     "TIERED_OBJECTIVE_SETTING",
@@ -131,6 +149,7 @@ __all__ = [
     "is_async_job_ui_enabled",
     "is_async_planner_enabled",
     "is_gap_regular_students_only_enabled",
+    "is_one_teacher_active",
     "is_required_section_guarantee_enabled",
     "is_stage_telemetry_enabled",
     "is_tiered_objective_enabled",
