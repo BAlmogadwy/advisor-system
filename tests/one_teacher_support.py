@@ -52,7 +52,8 @@ def course(
     cap: object = "d10",
 ) -> list[Slot]:
     """One course's slots. Each section dict may set label, meetings
-    [(day, start, end)], placed, fixed, kind, current, nominal, eligible, campus."""
+    [(day, start, end)], placed, fixed, kind, current, nominal, eligible, campus,
+    and options (a section not placed yet: the placer's weekly options)."""
     rows = list(sections)
     n_c = len(rows)
     n_course = planned if planned is not None else n_c
@@ -80,6 +81,7 @@ def course(
                 current=row.get("current"),
                 course_sections=n_course,
                 course_cap=course_cap,
+                options=tuple(tuple(option) for option in row.get("options", ())),
             )
         )
     return out

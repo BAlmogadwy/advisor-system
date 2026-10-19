@@ -20,10 +20,15 @@ module and nothing reads ``section_instructors``.
 overlap of distinct physical meetings, sibling sections included) and the daily
 cap, each only while the board enforces it; at most ``weekly_ceiling()``
 sessions a week; and D10 — a course running more than 3 sections gives one
-teacher at most 2 of them, fewer for a meeting-policy course. Soft: the
-day-off target of 12 sessions a week, then campus working days, then campus
-idle, then keeping the current teacher, then the lowest id. A section nobody
-can take is TBD with the reason that stopped each teacher.
+teacher at most 2 of them, fewer for a meeting-policy course. A section not
+placed yet is charged only to a teacher who keeps one of its placer options
+free of clash and of the daily cap, so the required-section retry can still
+place it: on lab scenario 667 the days-first optimum otherwise gave instructor
+298 all three AI124 sections, and DS331 S1, which only 298 teaches, had none
+of its 190 options left. Soft: the day-off target of 12 sessions a week, then
+campus working days, then campus idle, then keeping the current teacher, then
+the lowest id. A section nobody can take is TBD with the reason that stopped
+each teacher.
 
 **Fixed inputs.** A primary ``SectionInstructor`` row in the scenario whose
 ``source`` is not ``"engine"`` is a pin (department or registrar decision); the
@@ -148,6 +153,9 @@ class Slot:
     ``source`` says where a fixed or stored teacher comes from: a pin's row
     source, ``owner`` (the owner scenario's row) or ``meeting`` (the meeting
     name) for a frozen section, ``engine`` for a stored engine row.
+    ``options`` (a section not placed yet) are the placer's own weekly options
+    for it, each as distinct ``(day, start_min, end_min)`` meetings: its
+    teacher must keep one of them free (``_Ledger.free_option``).
     """
 
     course_key: str
@@ -170,6 +178,7 @@ class Slot:
     frozen_name: str = ""
     display_code: str = ""
     source: str = ""
+    options: tuple[tuple[tuple[int, int, int], ...], ...] = ()
 
     @property
     def key(self) -> str:
@@ -359,13 +368,56 @@ class _Static:
     active: set[int]
     names: dict[int, str]
     by_normalised: dict[str, int]
+    grids: tuple[list, list, list] = ([], [], [])
     resolved: dict[tuple[str, str], tuple[int, ...]] = field(default_factory=dict)
+    placer_options: dict[str, tuple] = field(default_factory=dict)
 
     def eligible(self, course_key: str, display_code: str) -> tuple[int, ...]:
         cache_key = (course_key, display_code)
         if cache_key not in self.resolved:
             self.resolved[cache_key] = tuple(sorted(self.resolve(course_key, display_code)))
         return self.resolved[cache_key]
+
+    def options(self, course_key: str, budget) -> tuple:
+        """The weekly options ``auto_place_board`` tries for a missing section
+        of ``course_key`` — the same generator, display code, credit hours and
+        the scenario's own grids — as distinct ``(day, start, end)`` meetings."""
+        if course_key not in self.placer_options:
+            from core.services.timetable_autoplace import (
+                DEFAULT_LAB_SLOTS,
+                DEFAULT_SLOTS,
+                WEEKDAYS,
+                generate_course_meeting_options,
+            )
+
+            slot_config, lab_slot_config, blocked = self.grids
+            found: set[tuple[tuple[int, int, int], ...]] = set()
+            for option in generate_course_meeting_options(
+                budget.course_code,
+                budget.credit_hours or 3,
+                slot_config or DEFAULT_SLOTS,
+                lab_slot_config or DEFAULT_LAB_SLOTS,
+                blocked or [],
+                course_key=course_key,
+            ):
+                cells = set()
+                for meeting in option:
+                    day = str(meeting.get("day", "")).upper()
+                    if day not in WEEKDAYS:
+                        break
+                    cells.add(
+                        (WEEKDAYS.index(day), _minutes(meeting["start"]), _minutes(meeting["end"]))
+                    )
+                else:
+                    if cells:
+                        found.add(tuple(sorted(cells)))
+            self.placer_options[course_key] = tuple(sorted(found))
+        return self.placer_options[course_key]
+
+
+def _minutes(value: object) -> int:
+    hours, minutes = str(value)[:5].split(":")
+    return int(hours) * 60 + int(minutes)
 
 
 def _load_static(scenario_id: int) -> _Static | None:
@@ -402,6 +454,11 @@ def _load_static(scenario_id: int) -> _Static | None:
         active=active,
         names=names,
         by_normalised=by_normalised,
+        grids=(
+            list(scenario.slot_config or []),
+            list(scenario.lab_slot_config or []),
+            list(scenario.blocked_slots or []),
+        ),
     )
 
 
@@ -576,6 +633,7 @@ def _collect(
 
     slots: list[Slot] = []
     seen_row_keys: set[tuple[str, str]] = set()
+    reserve = _clash_on() or _cap_on()
     for course_key, keys in sorted(by_course.items()):
         budget = static.budgets.get(course_key)
         policy = None
@@ -603,6 +661,11 @@ def _collect(
                 meetings = tuple(sorted({(m.day, m.start_min, m.end_min) for m in state.meetings}))
                 campus = not (state.delivery_is_online or state.is_online)
             nominal = nominal_budget if nominal_budget is not None else max(1, len(meetings))
+            # A missing section keeps its placer options, so its teacher keeps
+            # one free (only while the board enforces clash or the daily cap).
+            options = ()
+            if not placed and reserve and budget is not None:
+                options = static.options(course_key, budget)
             cap_c: int | None = D10_MAX_SECTIONS if n_course > D10_APPLIES_ABOVE else None
             if policy is not None:
                 cap_c = (
@@ -673,6 +736,7 @@ def _collect(
                     frozen_name=frozen_name,
                     display_code=display,
                     source=origin,
+                    options=options,
                 )
             )
     for row_key, (_teacher, source) in sorted(own_primary.items()):
@@ -714,7 +778,8 @@ def _merged_idle(intervals: Iterable[tuple[int, int]]) -> int:
 
 
 class _Ledger:
-    """Committed load per teacher: sessions, sections per course, meetings."""
+    """Committed load per teacher: sessions, sections per course, meetings, and
+    the sections not placed yet whose options each teacher must keep free."""
 
     def __init__(self) -> None:
         self.load: Counter = Counter()
@@ -723,6 +788,7 @@ class _Ledger:
         self.campus: dict[int, dict[int, list[tuple[int, int]]]] = defaultdict(
             lambda: defaultdict(list)
         )
+        self.pending: dict[int, list[Slot]] = defaultdict(list)
         self.clash_on = _clash_on()
         self.cap_on = _cap_on()
         self.cap = daily_cap()
@@ -730,6 +796,8 @@ class _Ledger:
         self.soft = soft_weekly()
 
     def add(self, slot: Slot, teacher: int) -> None:
+        """Charge ``slot`` to ``teacher``. A section not placed yet that has
+        options is held as pending, so no later pick takes its last option."""
         self.load[teacher] += slot.nominal_sessions
         self.per_course[(teacher, slot.course_key)] += 1
         if slot.placed:
@@ -737,6 +805,44 @@ class _Ledger:
                 self.cells[teacher].append((day, start, end, slot.key))
                 if slot.campus:
                     self.campus[teacher][day].append((start, end))
+        elif slot.options:
+            self.pending[teacher].append(slot)
+
+    def free_option(
+        self, slot: Slot, teacher: int, extra: Iterable[tuple[int, int, int]] = ()
+    ) -> str | None:
+        """None when ``teacher`` still has an option of ``slot`` (not placed yet)
+        free of clash and of the daily cap — with ``extra`` meetings added —
+        as the placer's two teacher filters test it; else the rule that took the
+        last one: ``"clash"`` when no option is clash-free, ``"daily_cap"``."""
+        if not (self.clash_on or self.cap_on):
+            return None
+        mine = [(d, s, e) for d, s, e, _key in self.cells.get(teacher, ())] + list(extra)
+        per_day = Counter(d for d, _s, _e in mine)
+        clash_free = False
+        for option in slot.options:
+            if self.clash_on and _overlaps(option, mine):
+                continue
+            clash_free = True
+            if self.cap_on and any(
+                per_day[day] + count > self.cap
+                for day, count in Counter(d for d, _s, _e in option).items()
+            ):
+                continue
+            return None
+        return "daily_cap" if clash_free else "clash"
+
+    def boxes(self, slot: Slot, teacher: int) -> str | None:
+        """Taking placed ``slot`` would leave one of ``teacher``'s pending
+        sections without a free option. One already without (a kept section,
+        or a stored row after a layout edit) stays as it is: nothing is moved
+        to win it back."""
+        for other in self.pending.get(teacher, ()):
+            if self.free_option(other, teacher) is None:
+                reason = self.free_option(other, teacher, extra=slot.meetings)
+                if reason is not None:
+                    return reason
+        return None
 
     def days(self, teacher: int) -> int:
         return sum(1 for day in self.campus.get(teacher, {}).values() if day)
@@ -777,6 +883,13 @@ class _Ledger:
                 for day, count in Counter(d for d, _s, _e in slot.meetings).items():
                     if per_day[day] + count > self.cap:
                         return "daily_cap"
+            reason = self.boxes(slot, teacher)
+            if reason is not None:
+                return reason
+        elif not slot.placed and slot.options:
+            reason = self.free_option(slot, teacher)
+            if reason is not None:
+                return reason
         if bounds is not None and not self.within_bounds(slot, teacher, bounds):
             return "bound"
         return None
@@ -924,6 +1037,7 @@ def _solve_component(
     hint: Mapping[str, int | None],
     deadline: float,
     stages_out: list,
+    exempt: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, int | None], dict[str, Any]]:
     from ortools.sat.python import cp_model
 
@@ -934,7 +1048,21 @@ def _solve_component(
     teachers = sorted({t for s in comp for t in s.eligible})
     fixed_cells = {t: [(d, s, e) for d, s, e, _k in ledger.cells.get(t, ())] for t in teachers}
     fixed_days = {t: Counter(d for d, _s, _e in fixed_cells[t]) for t in teachers}
+
+    def fixed_free(option, teacher: int) -> bool:
+        """``option`` (of a section not placed yet) clears ``teacher``'s fixed load."""
+        if ledger.clash_on and _overlaps(option, fixed_cells[teacher]):
+            return False
+        return not (
+            ledger.cap_on
+            and any(
+                fixed_days[teacher][day] + count > ledger.cap
+                for day, count in Counter(d for d, _s, _e in option).items()
+            )
+        )
+
     cand: dict[str, list[int]] = {}
+    live: dict[tuple[str, int], list] = {}
     for slot in comp:
         allowed = []
         for teacher in slot.eligible:
@@ -951,6 +1079,10 @@ def _solve_component(
                     fixed_days[teacher][day] + count > ledger.cap
                     for day, count in Counter(d for d, _s, _e in slot.meetings).items()
                 ):
+                    continue
+            elif not slot.placed and slot.options and (ledger.clash_on or ledger.cap_on):
+                live[(slot.key, teacher)] = [o for o in slot.options if fixed_free(o, teacher)]
+                if not live[(slot.key, teacher)]:
                     continue
             allowed.append(teacher)
         cand[slot.key] = allowed
@@ -993,6 +1125,61 @@ def _solve_component(
                 limit = ledger.cap - fixed_days[teacher][day]
                 if sum(c for c, _s in terms) > limit:
                     model.add(sum(c * x[(s.key, teacher)] for c, s in terms) <= limit)
+
+    def keep_one_free(teacher: int, options, enforce) -> None:
+        """At least one of ``options`` (already clear of ``teacher``'s fixed load)
+        stays clear of the placed sections ``teacher`` is given, under clash and
+        the daily cap — whenever ``enforce`` holds (None: always). Options that
+        ask the same of the choices share one literal."""
+        placed = [s for s in mine[teacher] if s.placed and s.meetings]
+        needs: set[tuple[tuple[str, ...], tuple[tuple[int, int], ...]]] = set()
+        for option in options:
+            hits = tuple(
+                sorted(s.key for s in placed if ledger.clash_on and _overlaps(option, s.meetings))
+            )
+            caps = []
+            if ledger.cap_on:
+                for day, count in sorted(Counter(d for d, _s, _e in option).items()):
+                    limit = ledger.cap - fixed_days[teacher][day] - count
+                    on_day = sum(sum(1 for d, _s, _e in s.meetings if d == day) for s in placed)
+                    if on_day > limit:
+                        caps.append((day, limit))
+            if not hits and not caps:
+                return  # this option stays free whoever teaches what
+            needs.add((hits, tuple(caps)))
+        free_literals = []
+        for hits, caps in sorted(needs):
+            free = model.new_bool_var("")
+            for key in hits:
+                model.add(x[(key, teacher)] == 0).only_enforce_if(free)
+            for day, limit in caps:
+                model.add(
+                    sum(
+                        sum(1 for d, _s, _e in s.meetings if d == day) * x[(s.key, teacher)]
+                        for s in placed
+                        if any(d == day for d, _s, _e in s.meetings)
+                    )
+                    <= limit
+                ).only_enforce_if(free)
+            free_literals.append(free)
+        constraint = model.add_bool_or(free_literals)
+        if enforce is not None:
+            constraint.only_enforce_if(enforce)
+
+    # A section not placed yet keeps an option free for its teacher, so the
+    # required-section retry can place it: a choice section whenever it is
+    # given to that teacher, a pinned one always (unless the kept rule exempts
+    # it: the map in force had already left it none).
+    for (key, teacher), options in sorted(live.items()):
+        if teacher in cand[key]:
+            keep_one_free(teacher, options, x[(key, teacher)])
+    for teacher in teachers:
+        for pending in ledger.pending.get(teacher, ()):
+            if pending.key in exempt:
+                continue
+            options = [o for o in pending.options if fixed_free(o, teacher)]
+            if options:
+                keep_one_free(teacher, options, None)
 
     weights = {s.key: big * int(s.placed) + (s.n_c + 1 - s.rank) for s in comp}
     l1 = [t[s.key] for s in comp]
@@ -1147,16 +1334,19 @@ def solve_layout_aware(
     highest rank of its course), L3 sessions over the day-off target, L4
     campus working days, L5 campus idle, L6 changes from ``current``, L7 the
     lowest instructor id. Clash, the daily cap, the weekly ceiling and D10 are
-    constraints; ``kept`` sections (charged under ``current`` and already in a
-    clash or an over-cap day) are fixed to their current teacher. ``bounds``
-    (``teacher_bounds``) caps each teacher's days and idle. All-TBD satisfies
-    every constraint, so a solve is always feasible; anything that fails falls
-    back to the greedy, which is hard-feasible too.
+    constraints, and so is a free option for each section not placed yet (see
+    ``Slot.options``); ``kept`` sections (charged under ``current`` and already
+    in a clash, an over-cap day, or left no option) are fixed to their current
+    teacher, and a kept pinned section is exempt from the free-option rule.
+    ``bounds`` (``teacher_bounds``) caps each teacher's days and idle. All-TBD
+    satisfies every constraint, so a solve is always feasible; anything that
+    fails falls back to the greedy, which is hard-feasible too.
     """
     started = time.monotonic()
     slots = list(slots)
     cur = _current_map(slots, current)
-    kept_map = {k: cur[k] for k in kept if k in cur}
+    exempt = frozenset(kept)
+    kept_map = {k: cur[k] for k in exempt if k in cur}
     ledger = _fixed_ledger(slots, kept_map)
     choice = [s for s in slots if s.is_choice and s.key not in kept_map]
     # The hint, and a failed component's answer: the greedy (2.9), where the
@@ -1188,7 +1378,7 @@ def solve_layout_aware(
         stages: list = []
         try:
             solution, meta = _solve_component(
-                comp, ledger, cur, bounds, big, hint, deadline, stages
+                comp, ledger, cur, bounds, big, hint, deadline, stages, exempt=exempt
             )
             report["elements_max"] = max(report["elements_max"], meta["elements"])
             report["proven"] = report["proven"] and meta["proven"]
@@ -1320,7 +1510,35 @@ def violations(a: TeacherAssignment) -> dict[str, Any]:
 
 def _violating_keys(slots: list[Slot], current: Mapping[str, int]) -> set[str]:
     """Choice sections charged under ``current`` that sit in a clash pair or an
-    over-cap day of their teacher on this layout (the kept rule)."""
+    over-cap day of their teacher on this layout (the kept rule), plus the
+    sections not placed yet — choice or pinned — whose teacher under
+    ``current`` has none of their options left (``_unplaceable_keys``)."""
+    keep = _clash_or_cap_keys(slots, current)
+    keep |= _unplaceable_keys(slots, current)
+    return keep
+
+
+def _unplaceable_keys(slots: Iterable[Slot], current: Mapping[str, int]) -> set[str]:
+    """Sections not placed yet, charged (fixed, or under ``current``) to a
+    teacher whose placed sections leave no option of theirs free."""
+    slots = list(slots)
+    ledger = _Ledger()
+    for slot in slots:
+        teacher = slot.fixed if slot.fixed is not None else current.get(slot.key)
+        if teacher is not None:
+            ledger.add(slot, teacher)
+    out: set[str] = set()
+    for slot in slots:
+        teacher = slot.fixed if slot.fixed is not None else current.get(slot.key)
+        if teacher is not None and not slot.placed and slot.options:
+            if ledger.free_option(slot, teacher) is not None:
+                out.add(slot.key)
+    return out
+
+
+def _clash_or_cap_keys(slots: list[Slot], current: Mapping[str, int]) -> set[str]:
+    """Choice sections charged under ``current`` in a clash pair or an over-cap
+    day of their teacher on this layout."""
     windows: dict[int, list[tuple[int, int, int, str, bool]]] = defaultdict(list)
     for slot in slots:
         teacher = slot.fixed if slot.fixed is not None else current.get(slot.key)
@@ -1467,6 +1685,18 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
             1
             for s in a.slots
             if s.placed and a.status.get(s.key) in (STATUS_TBD, STATUS_FROZEN_UNKNOWN)
+        ),
+        # Sections not placed yet whose teacher has no option of theirs left:
+        # the required-section retry cannot place them while this map holds.
+        "unplaced_teacher_busy": sorted(
+            _unplaceable_keys(
+                a.slots,
+                {
+                    k: t
+                    for k, t in a.teacher.items()
+                    if t is not None and a.status.get(k) in CHARGED
+                },
+            )
         ),
         "teachers": len(loads),
         "max_weekly_sessions": max(loads.values(), default=0),

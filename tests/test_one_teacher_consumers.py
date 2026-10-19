@@ -297,10 +297,10 @@ def test_i5_an_unknown_frozen_teacher_keeps_the_free_text_clash(flags) -> None:
     assert len(detect_board_conflicts(board.id)["instructor_clashes"]) == 1
 
 
-@pytest.mark.django_db
-def test_i5_the_placer_treats_a_global_sections_teacher_as_busy(flags) -> None:
-    from core.services.timetable_autoplace import auto_place_board
-
+def _held_by_the_registrar():
+    """AI201 S1 is not placed, and its one time is Sunday + Tuesday 08:00; the
+    registrar's own section of another course, placed on this board, holds Dr
+    Reg (AI201's one teacher) every Sunday 08:00."""
     key = requirement("AI", "AI201", "ML")
     sc, board = _sunday_tuesday_scenario()
     sc.slot_config = [{"start": "08:00", "end": "09:15"}]  # one time a day
@@ -308,12 +308,22 @@ def test_i5_the_placer_treats_a_global_sections_teacher_as_busy(flags) -> None:
     reg = instructor("Dr Reg")
     link("AI", "AI201", reg)
     budget(sc, key, 1)
-    # The registrar's own section of another course holds Dr Reg every Sunday
-    # 08:00 — the only time left for AI201 S1 is Sunday + Tuesday 08:00.
     held = section(None, "AI999", "R1")
     place(board, held, [("SUN", "08:00", "09:15")], room="R0")
     SectionInstructor.objects.create(
         scenario=None, course_key="AI999", section="R1", instructor=reg, source="registrar"
+    )
+    return sc, board, key, reg
+
+
+@pytest.mark.django_db
+def test_i5_the_placer_treats_a_global_sections_teacher_as_busy(flags) -> None:
+    from core.services.timetable_autoplace import auto_place_board
+
+    sc, board, key, reg = _held_by_the_registrar()
+    # The department has fixed Dr Reg on AI201 S1, so the section is his.
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=key, section="S1", instructor=reg, source="department"
     )
 
     result = auto_place_board(board.id)
@@ -323,6 +333,26 @@ def test_i5_the_placer_treats_a_global_sections_teacher_as_busy(flags) -> None:
     assert not TermSectionMeeting.objects.filter(
         term_section__course_key=key, day="SUN", start_time="08:00"
     ).exists()
+
+
+@pytest.mark.django_db
+def test_i5_a_section_its_one_teacher_cannot_fit_is_placed_to_be_decided(flags) -> None:
+    """Unpinned, AI201 S1 is to be decided (Dr Reg has no time left for it): the
+    retry places it for the students, charges nobody — Dr Reg is not booked on
+    top of the registrar's section — and the coverage reports why."""
+    from core.services.timetable_autoplace import auto_place_board
+
+    sc, board, key, _reg = _held_by_the_registrar()
+    before = sta.load_assignment(sc.id)
+    assert before.status[f"{key}_S1"] == sta.STATUS_TBD
+    assert before.tbd_reason[f"{key}_S1"] == "clash"
+
+    assert auto_place_board(board.id)["placed"] == 1
+
+    after = sta.load_assignment(sc.id)
+    assert after.status[f"{key}_S1"] == sta.STATUS_TBD
+    assert sta.violations(after) == {"clash_pairs": 0, "over_cap_sessions": 0}
+    assert sta.coverage_of(after)["tbd_reasons"]["clash"] == 1
 
 
 # ── I7: the required-section retry ────────────────────────────────────────
@@ -398,6 +428,61 @@ def test_i7_one_teacher_charging_lets_the_retry_place_what_the_union_cannot(flag
     after = sta.load_assignment(sc.id)
     assert after.teacher[f"{alg}_S4"] == s4_teacher  # charged, and kept
     assert after.status[f"{alg}_S5"] == sta.STATUS_TBD
+    assert sta.violations(after) == {"clash_pairs": 0, "over_cap_sessions": 0}
+
+
+def _only_teacher_board():
+    """U (AI601) has no section placed and only Dr A teaches it; the placer
+    would put it on Sunday + Tuesday at 08:00, 09:30 or 11:00 — exactly where
+    V (AI602, Dr A or Dr B) has its three sections. Dr A already works Sunday
+    and Tuesday (a department pin at 14:00), Dr B only Monday. The fewest days
+    give Dr A all three V sections, and then U can go nowhere."""
+    sc, board = _sunday_tuesday_scenario()
+    sc.slot_config = [{"start": s, "end": e} for s, e in SLOTS[:3]]
+    sc.save()
+    a, b = instructor("Dr A"), instructor("Dr B")
+    only = requirement("AI", "AI601", "ONLY DR A")
+    shared = requirement("AI", "AI602", "EITHER")
+    link("AI", "AI601", a)
+    link("AI", "AI602", a)
+    link("AI", "AI602", b, role="co")
+    budget(sc, only, 1)
+    budget(sc, shared, 3)
+    for n, (start, end) in enumerate(SLOTS[:3], start=1):
+        place(board, section(sc, shared, f"S{n}"), [("SUN", start, end), ("TUE", start, end)])
+    for code, person, meetings in (
+        ("AI603", a, [("SUN", "14:00", "15:15"), ("TUE", "14:00", "15:15")]),
+        ("AI604", b, [("MON", "08:00", "09:15")]),
+    ):
+        key = requirement("AI", code, f"PINNED {code}")
+        budget(sc, key, 1)
+        place(board, section(sc, key, "S1"), meetings, room="R3")
+        SectionInstructor.objects.create(
+            scenario=sc, course_key=key, section="S1", instructor=person, source="department"
+        )
+    return sc, only, shared, {"A": a, "B": b}
+
+
+@pytest.mark.django_db
+def test_i7_a_missing_sections_only_teacher_keeps_a_time_free_for_the_retry(flags) -> None:
+    """Spec 8.3 on lab board P_G222: the days-first map gave instructor 298 all
+    three AI124 sections, and DS331 S1 — only 298 teaches it — had none of its
+    190 options left, so the retry could not place it."""
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    flags.TIMETABLE_INSTRUCTOR_DAILY_CAP = 4  # Dr A's pin and three V sections fit a day
+    sc, only, shared, people = _only_teacher_board()
+    sta.prepare_section_teachers(sc.id, phase="layout")
+    before = sta.load_assignment(sc.id)
+    assert before.teacher[f"{only}_S1"] == people["A"].id
+    assert sum(before.teacher[f"{shared}_S{n}"] == people["A"].id for n in (1, 2, 3)) < 3
+    assert sta.coverage_of(before)["unplaced_teacher_busy"] == []
+
+    result = reinstate_missing_required_sections(sc.id)
+
+    assert not [r for r in result["after_missing"] if r["course_key"] == only]
+    after = sta.load_assignment(sc.id)
+    assert after.teacher[f"{only}_S1"] == people["A"].id
     assert sta.violations(after) == {"clash_pairs": 0, "over_cap_sessions": 0}
 
 

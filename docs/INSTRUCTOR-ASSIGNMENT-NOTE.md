@@ -120,9 +120,14 @@ planner charges clashes and the daily cap to that teacher only.
 - **Who picks it.** `core/services/section_teacher_assignment.py`, a staged CP-SAT solve
   (fewest sections without a teacher, then the soft 12-session load, then fewer campus days,
   then less idle, then stability). Hard: no clash, the daily cap, at most 15 sessions a week, and
-  D10 (a course with more than 3 sections gives one teacher at most 2 of them). Builds re-pick
-  with the board; Optimise Current starts from a re-pick bounded per teacher and keeps its end
-  re-pick only when it is no worse. Manual moves and repairs never re-pick.
+  D10 (a course with more than 3 sections gives one teacher at most 2 of them). A section not
+  placed yet goes only to a teacher who keeps one of its placer options free of clash and the
+  cap, so the required-section retry can still place it; a section no teacher can keep a time
+  for is "to be decided" (reason clash or cap) and the retry places it without a teacher. A map
+  in force that already left a missing section no time keeps it (the kept rule), and the run
+  results list it under `unplaced_teacher_busy`. Builds re-pick with the board; Optimise Current
+  starts from a re-pick bounded per teacher and keeps its end re-pick only when it is no worse.
+  Manual moves and repairs never re-pick.
 - **Link edits.** Adding, removing or deactivating a link writes nothing: a stored row that no
   longer holds is ignored when the map is read, and the section gets a teacher it can have.
 - **Display.** The drawer shows the section's teacher (or "to be decided" with the reason); the

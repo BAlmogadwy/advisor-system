@@ -10,6 +10,7 @@ go through ``collect_slots`` / ``load_assignment`` / ``persist_assignment``.
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import random
 from collections import Counter
@@ -1006,3 +1007,98 @@ def test_u25_each_tbd_reason_is_attributed(flags) -> None:
         ]
     )
     assert mixed.tbd_reason == {"X_S1": "clash"}
+
+
+# ── U26: a section not placed yet keeps an option free for its teacher ────
+
+SUN_TUE = (m(0, "08:00", "09:15"), m(2, "08:00", "09:15"))
+MON_WED = (m(1, "08:00", "09:15"), m(3, "08:00", "09:15"))
+
+
+def _boxing_board(options=(SUN_TUE, MON_WED)):
+    """U is not placed and only Dr 1 teaches it; the placer would put it on
+    Sunday + Tuesday or Monday + Wednesday at 08:00. A1 (Sunday 08:00) and A2
+    (Monday 08:00) are for Dr 1 or Dr 2. Dr 1 already works Sunday and Monday,
+    Dr 2 only Tuesday, so the fewest days give both A sections to Dr 1 — and
+    then U has no option left."""
+    return [
+        pinned_load(1, 3, meetings=(m(0, "10:00", "11:15"), m(1, "10:00", "11:15"))),
+        pinned_load(2, 3, meetings=(m(2, "10:00", "11:15"),)),
+        *course("U", [{"placed": False, "options": options}], eligible=(1,)),
+        *course(
+            "A",
+            [{"meetings": [m(0, "08:00", "09:15")]}, {"meetings": [m(1, "08:00", "09:15")]}],
+            eligible=(1, 2),
+        ),
+    ]
+
+
+def test_u26_the_exact_solve_leaves_a_missing_section_an_option(flags) -> None:
+    control = sta.solve_layout_aware(_boxing_board(options=()))
+    assert (control.teacher["A_S1"], control.teacher["A_S2"]) == (1, 1)  # fewest days
+
+    a = sta.solve_layout_aware(_boxing_board())
+
+    assert a.teacher["U_S1"] == 1
+    assert sorted((a.teacher["A_S1"], a.teacher["A_S2"])) == [1, 2]
+    assert sta.coverage_of(a)["unplaced_teacher_busy"] == []
+    assert sta.violations(a) == {"clash_pairs": 0, "over_cap_sessions": 0}
+
+
+def test_u26_a_pinned_missing_section_keeps_an_option_too(flags) -> None:
+    slots = [
+        s if s.key != "U_S1" else dataclasses.replace(s, fixed=1, fixed_kind="pin")
+        for s in _boxing_board()
+    ]
+
+    for a in (sta.solve_layout_aware(slots), sta.greedy_assign(slots)):
+        assert a.status["U_S1"] == sta.STATUS_PINNED
+        assert sorted((a.teacher["A_S1"], a.teacher["A_S2"])) == [1, 2]
+        assert sta.coverage_of(a)["unplaced_teacher_busy"] == []
+
+
+def test_u26_the_greedy_never_takes_a_missing_sections_last_option(flags) -> None:
+    g = sta.greedy_assign(_boxing_board())
+
+    # U first (one teacher); A1 to Dr 1 (no new day, Monday + Wednesday left);
+    # A2 would take U's last option, so it goes to Dr 2.
+    assert (g.teacher["U_S1"], g.teacher["A_S1"], g.teacher["A_S2"]) == (1, 1, 2)
+    assert sta.coverage_of(g)["unplaced_teacher_busy"] == []
+
+
+def test_u26_a_section_the_map_in_force_left_no_option_is_kept_not_rescued(flags) -> None:
+    """The kept rule: the map in force had already used U's last option, so U
+    keeps its teacher and nobody is moved (and no bound broken) to free one;
+    the coverage reports it."""
+    slots = _boxing_board()
+    current = {"U_S1": 1, "A_S1": 1, "A_S2": 1}
+    kept = sta._violating_keys(slots, current)
+    assert kept == {"U_S1"}
+
+    a = sta.solve_layout_aware(slots, current=current, kept=kept)
+
+    assert {k: a.teacher[k] for k in current} == current
+    coverage = sta.coverage_of(a)
+    assert coverage["kept_in_violation"] == ["U_S1"]
+    assert coverage["unplaced_teacher_busy"] == ["U_S1"]
+
+
+def test_u26_a_missing_section_no_teacher_can_still_place_is_tbd_with_its_reason(flags) -> None:
+    cases = {
+        "clash": [
+            pinned_load(1, 3, meetings=SUN_TUE),
+            *course("U", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1,)),
+        ],
+        "daily_cap": [
+            pinned_load(
+                1,
+                3,
+                meetings=(m(0, "10:00", "11:00"), m(0, "12:00", "13:00"), m(0, "14:00", "15:00")),
+            ),
+            *course("U", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1,)),
+        ],
+    }
+    for reason, slots in cases.items():
+        for a in (sta.solve_layout_aware(slots), sta.greedy_assign(slots)):
+            assert a.status["U_S1"] == sta.STATUS_TBD, reason
+            assert a.tbd_reason["U_S1"] == reason
