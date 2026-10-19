@@ -12,6 +12,7 @@ from core.models import (
     SectionPlacement,
     Student,
     TermSection,
+    TermSectionMeeting,
     TimetableScenario,
 )
 from core.services import timetable_workspace as tws
@@ -667,6 +668,165 @@ def test_bulk_clean_room_apply_rejects_published_scenario() -> None:
 
     with pytest.raises(ValueError, match="published"):
         apply_bulk_clean_room_assignments(scenario.id)
+
+
+def _lecture_room(code: str) -> Room:
+    return Room.objects.create(
+        room_code=code, capacity=35, room_type="lecture", section="", department="AI"
+    )
+
+
+def _unroomed(
+    board: DeliveryBoard, term_section: TermSection, *, day: str = "MON", locked: bool = False
+) -> SectionPlacement:
+    return SectionPlacement.objects.create(
+        board=board,
+        term_section=term_section,
+        day=day,
+        start_time="09:00",
+        end_time="10:15",
+        room="UNASSIGNED",
+        is_locked=locked,
+    )
+
+
+def _place_in_another_scenario(placement: SectionPlacement) -> SectionPlacement:
+    """Make ``placement``'s section externally owned: another scenario places it too."""
+    other = TimetableScenario.objects.create(academic_year="1448", term="1", name="Owner")
+    board = DeliveryBoard.objects.create(
+        scenario=other, label="Term 1", nominal_term=1, program="AI", display_order=1
+    )
+    return SectionPlacement.objects.create(
+        board=board,
+        term_section=placement.term_section,
+        day=placement.day,
+        start_time=placement.start_time,
+        end_time=placement.end_time,
+        room=placement.room,
+        is_locked=placement.is_locked,
+    )
+
+
+def _section_snapshot(term_section_id: int) -> tuple[list[dict], list[dict]]:
+    placements = SectionPlacement.objects.filter(term_section_id=term_section_id).order_by("pk")
+    meetings = TermSectionMeeting.objects.filter(term_section_id=term_section_id).order_by("pk")
+    return (
+        list(placements.values("id", "day", "start_time", "end_time", "room", "is_locked")),
+        list(meetings.values()),
+    )
+
+
+def test_bulk_clean_room_assigns_a_locked_placement_without_moving_or_unlocking_it() -> None:
+    # A lock freezes days and times, not the room: bulk clean rooms rooms it in place.
+    scenario, target_board, _other_board = _workspace()
+    _lecture_room("R100")
+    placement = _unroomed(target_board, _term_section(scenario, "AI101", "S1"), locked=True)
+
+    preview = preview_bulk_clean_room_assignments(scenario.id)
+
+    assert preview["ready_count"] == 1
+    assert preview["skipped"] == []
+    assert preview["assignments"][0]["placement_id"] == placement.id
+    assert preview["assignments"][0]["new_room"] == "R100"
+
+    result = apply_bulk_clean_room_assignments(scenario.id)
+
+    placement.refresh_from_db()
+    assert result["applied_count"] == 1
+    assert placement.room == "R100"
+    assert (placement.day, placement.start_time, placement.end_time) == ("MON", "09:00", "10:15")
+    assert placement.is_locked is True
+    applied = result["applied"][0]
+    assert (applied["old_day"], applied["old_start"], applied["old_end"]) == (
+        applied["new_day"],
+        applied["new_start"],
+        applied["new_end"],
+    )
+    assert applied["old_room"] == "UNASSIGNED"
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_bulk_clean_room_skips_externally_owned_section(locked: bool) -> None:
+    # Another scenario also places this section and owns its time and room.
+    scenario, target_board, _other_board = _workspace()
+    _lecture_room("R100")
+    term_section = _term_section(scenario, "AI101", "S1")
+    placement = _unroomed(target_board, term_section, locked=locked)
+    _place_in_another_scenario(placement)
+    TermSectionMeeting.objects.create(
+        term_section=term_section,
+        day="MON",
+        start_time="09:00",
+        end_time="10:15",
+        room="UNASSIGNED",
+        instructor="T",
+    )
+    before = _section_snapshot(term_section.id)
+
+    preview = preview_bulk_clean_room_assignments(scenario.id)
+
+    assert preview["ready_count"] == 0
+    assert preview["total_unassigned"] == 1
+    assert [row["reason"] for row in preview["skipped"]] == ["externally_owned"]
+    assert [row["placement_id"] for row in preview["skipped"]] == [placement.id]
+
+    result = apply_bulk_clean_room_assignments(scenario.id)
+
+    assert result["applied_count"] == 0
+    assert _section_snapshot(term_section.id) == before
+
+
+def test_bulk_clean_room_apply_rechecks_external_ownership(monkeypatch) -> None:
+    # Ownership that changes after the preview is caught under the row lock.
+    scenario, target_board, _other_board = _workspace()
+    _lecture_room("R100")
+    placement = _unroomed(target_board, _term_section(scenario, "AI101", "S1"), locked=True)
+    stale = preview_bulk_clean_room_assignments(scenario.id)
+    assert stale["ready_count"] == 1
+    _place_in_another_scenario(placement)
+    before = _section_snapshot(placement.term_section_id)
+    monkeypatch.setattr(
+        tws, "preview_bulk_clean_room_assignments", lambda scenario_id, *, limit=20: stale
+    )
+
+    result = apply_bulk_clean_room_assignments(scenario.id)
+
+    assert result["applied_count"] == 0
+    assert [row["reason"] for row in result["skipped"]] == ["externally_owned_after_preview"]
+    assert _section_snapshot(placement.term_section_id) == before
+
+
+def test_bulk_clean_room_preview_and_apply_agree_on_mixed_batch() -> None:
+    scenario, target_board, _other_board = _workspace()
+    _lecture_room("R100")
+    _lecture_room("R200")
+    locked = _unroomed(target_board, _term_section(scenario, "AI101", "S1"), locked=True)
+    unlocked = _unroomed(target_board, _term_section(scenario, "AI102", "S1"), day="TUE")
+    external = _unroomed(target_board, _term_section(scenario, "AI103", "S1"), day="WED")
+    _place_in_another_scenario(external)
+
+    preview = preview_bulk_clean_room_assignments(scenario.id)
+    result = apply_bulk_clean_room_assignments(scenario.id)
+
+    previewed = {row["placement_id"] for row in preview["assignments"]}
+    applied = {row["placement_id"] for row in result["applied"]}
+    assert previewed == applied == {locked.id, unlocked.id}
+    for batch in (preview["skipped"], result["skipped"]):
+        assert [(row["placement_id"], row["reason"]) for row in batch] == [
+            (external.id, "externally_owned")
+        ]
+    locked.refresh_from_db()
+    unlocked.refresh_from_db()
+    external.refresh_from_db()
+    assert (locked.day, locked.start_time, locked.end_time, locked.is_locked) == (
+        "MON",
+        "09:00",
+        "10:15",
+        True,
+    )
+    assert locked.room in {"R100", "R200"}
+    assert unlocked.room in {"R100", "R200"}
+    assert external.room == "UNASSIGNED"
 
 
 def test_bulk_safe_time_preview_and_apply_use_server_revalidation(monkeypatch) -> None:

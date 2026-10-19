@@ -2332,7 +2332,7 @@ def assign_physical_meeting_room(placement: SectionPlacement, room: str) -> list
             .order_by("board_id", "id")
         )
         anchor = next(row for row in copies if row.pk == placement.pk)
-        old_key, new_key = _room_key(anchor.room), _room_key(room)
+        old_key = _room_key(anchor.room)
         rows = [row for row in copies if _room_key(row.room) == old_key]
         for row in rows:
             row.room = room
@@ -2343,23 +2343,19 @@ def assign_physical_meeting_room(placement: SectionPlacement, room: str) -> list
                 .filter(term_section_id=placement.term_section_id, **slot)
                 .order_by("pk")
             )
-            # The new room may already hold this meeting for an instructor; the
-            # unique key then merges the moving row into it.
-            taken = {
-                m.instructor
-                for m in meetings
-                if _room_key(m.room) == new_key and _room_key(m.room) != old_key
-            }
+            # A row already holding exactly the new room string owns that unique
+            # key (term section, slot, room, instructor); a moving row for the
+            # same instructor merges into it, whatever spelling it started from.
+            taken = {m.instructor for m in meetings if m.room == room}
             for meeting in meetings:
-                if _room_key(meeting.room) != old_key:
+                if _room_key(meeting.room) != old_key or meeting.room == room:
                     continue
                 if meeting.instructor in taken:
                     meeting.delete()
                     continue
                 taken.add(meeting.instructor)
-                if meeting.room != room:
-                    meeting.room = room
-                    meeting.save(update_fields=["room"])
+                meeting.room = room
+                meeting.save(update_fields=["room"])
     placement.room = room
     return rows
 

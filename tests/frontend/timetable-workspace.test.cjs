@@ -13,13 +13,14 @@ const scenario = { id: 1, name: 'Real scenario copy', status: 'draft', slot_conf
 const placement = { id: 10, course_code: 'CS323', section: 'S1', term_section_id: 5, day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'LAB25', meetings: [], available_capacity: 24 };
 const board = { id: 2, label: 'Term 7', nominal_term: 7, primary_count: 1 };
 const quality = { ok: true, scenario_id: 1, instructor: { assessed: true, working_days: 18, idle_minutes: 780 }, soft_seats: { assessed: true, unresolved: 18 }, rooms: { assessed: true, shortages: 3, details: [{ course_code: 'CS323', placement_ids: [10], rooms: ['LAB25'], reasons: ['undersized'], required_capacity: 26 }] }, assigned_student_clashes: { assessed: true, count: 0 } };
-async function harness(t, intercept = () => undefined, extra = {}) {
+async function harness(t, intercept = () => undefined, extra = {}, arabic = false) {
   const html = template.replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/timetable-workspace/' });
   t.after(() => dom.window.close());
   const w = dom.window, d = w.document, requests = [], notices = [], errors = [];
   w.addEventListener('error', e => errors.push(e.error));
-  w.eval("const LANGUAGE_CODE = 'en';");
+  // A const in an indirect eval stays local to that eval; the page reads a global.
+  w.LANGUAGE_CODE = arabic ? 'ar' : 'en';
   w._injectCsrf = x => x;
   w.esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   w.debounce = fn => fn;
@@ -218,4 +219,34 @@ test('MRI, Graph and Split return URLs restore the selected saved scenario and b
   assert.equal(new URL(h.w.location.href).searchParams.get('board'), '3');
   assert.equal(h.d.getElementById('twScenario').value, '1');
   assert.equal(h.d.getElementById('twGraphPage').getAttribute('href'), '/timetable-workspace/graph/?scenario=1');
+});
+
+const LOCK_HELP = {
+  en: "Keeps this section's days and times; its room can still change.",
+  ar: 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.',
+};
+for (const arabic of [false, true]) test(`inspector and drawer Lock buttons say a lock keeps days and times, not the room (${arabic ? 'ar' : 'en'})`, async t => {
+  const h = await harness(t, undefined, {}, arabic); await h.select();
+  const help = LOCK_HELP[arabic ? 'ar' : 'en'];
+  h.w.TW.selectedPlacementId = 10; h.w.renderRightPanel('selection');
+  const inspectorButtons = [...h.d.querySelectorAll('#twRightBody button')];
+  const inspectorLock = inspectorButtons.find(el => /toggleLock\(10\)/.test(el.getAttribute('onclick') || ''));
+  assert.ok(inspectorLock);
+  assert.equal(inspectorLock.textContent, arabic ? 'قفل' : 'Lock');
+  assert.equal(inspectorLock.getAttribute('title'), help);
+  assert.equal(inspectorLock.hasAttribute('dir'), false);
+  const inspectorRemove = inspectorButtons.find(el => /removePlacement\(10\)/.test(el.getAttribute('onclick') || ''));
+  assert.ok(inspectorRemove);
+  assert.equal(inspectorRemove.hasAttribute('title'), false);
+  h.w.openSectionDrawer(10);
+  const drawerButtons = [...h.d.querySelectorAll('#twDrawer button')];
+  const drawerLock = drawerButtons.find(el => /toggleLock\(10\)/.test(el.getAttribute('onclick') || ''));
+  assert.ok(drawerLock);
+  assert.equal(drawerLock.getAttribute('title'), help);
+  assert.equal(drawerLock.hasAttribute('dir'), false);
+  const drawerRemove = drawerButtons.find(el => /removePlacement\(10\)/.test(el.getAttribute('onclick') || ''));
+  assert.ok(drawerRemove);
+  assert.equal(drawerRemove.hasAttribute('title'), false);
+  assert.equal(h.d.body.innerHTML.includes(LOCK_HELP[arabic ? 'en' : 'ar']), false);
+  assert.deepEqual(h.errors, []);
 });

@@ -14,7 +14,7 @@ const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resol
 const wait = async condition => { for (let i = 0; i < 100; i++) { if (condition()) return; await settle(); } assert.fail('Split UI did not settle'); };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function harness(t, intercept = () => undefined) {
+async function harness(t, intercept = () => undefined, { arabic = false } = {}) {
   const html = read('core/templates/core/timetable_workspace_split.html')
     .replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://split.test/', pretendToBeVisual: true });
@@ -25,7 +25,7 @@ async function harness(t, intercept = () => undefined) {
   const boardData = () => ({ board, placements: [placement(10), placement(11)], slot_config: [{ start: '09:00', end: '10:15' }] });
   w.addEventListener('error', event => errors.push(event.error));
   t.after(() => { w.close(); assert.deepEqual(errors, []); });
-  Object.assign(w, { LANGUAGE_CODE: 'en', djCsrfToken: 'audit', INITIAL_SCENARIO: '', INITIAL_BOARD: '', DEFAULT_YEAR: '1448', DEFAULT_TERM: '1' });
+  Object.assign(w, { LANGUAGE_CODE: arabic ? 'ar' : 'en', djCsrfToken: 'audit', INITIAL_SCENARIO: '', INITIAL_BOARD: '', DEFAULT_YEAR: '1448', DEFAULT_TERM: '1' });
   w.esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   w.notify = Object.fromEntries(['success', 'warning', 'error'].map(kind => [kind, message => notices.push({ kind, message })]));
   w.console.error = () => {};
@@ -192,4 +192,56 @@ test('a malformed success response never invents a lock state or leaves controls
   await wait(() => h.notices.some(row => row.kind === 'error') && !h.d.getElementById('twsDrawerLock').disabled);
   assert.equal(h.getLocked(), false);
   assert.equal(h.notices.filter(row => row.kind === 'success').length, 0);
+});
+
+// A lock freezes days and times, not the room: bulk clean rooms may room a
+// locked section, and its undo must stay a room-only move with no override.
+test('bulk clean rooms on a locked placement undoes with a room-only move', async t => {
+  const slot = { day: 'SUN', start: '09:00', end: '10:15' };
+  const assignment = { placement_id: 10, board_id: 2, board_label: 'Board', label: 'AI10-S1', ...slot, slot, old_room: 'UNASSIGNED', room: { room_code: 'R100' }, new_room: 'R100' };
+  const h = await harness(t, url => {
+    if (url.startsWith('/ops/tw/scenarios/1/clean-room-assignments/?limit=')) return { assignments: [assignment], total_unassigned: 1, ready_count: 1, skipped: [] };
+    if (url === '/ops/tw/scenarios/1/clean-room-assignments/apply/') return { applied_count: 1, applied: [{ ...assignment, old_day: 'SUN', old_start: '09:00', old_end: '10:15', new_day: 'SUN', new_start: '09:00', new_end: '10:15' }], skipped: [] };
+    if (url.endsWith('/move/')) return { ok: true, placement: { id: 10, board_id: 2 }, placements: [{ id: 10, board_id: 2 }] };
+  });
+  h.click(h.inspector());
+  await wait(() => h.getLocked() && !h.inspector().disabled);
+  assert.equal(h.state.panes[0].boardData.placements.find(row => row.id === 10).is_locked, true);
+  const run = h.w.bulkAssignCleanRooms();
+  await wait(() => h.d.querySelector('#twsModalFooter button.primary'));
+  h.d.querySelector('#twsModalFooter button.primary').click();
+  await run;
+  assert.equal(h.requests.filter(row => row.url.endsWith('/clean-room-assignments/apply/') && row.options.method === 'POST').length, 1);
+  const action = h.state.undoStack.at(-1);
+  assert.equal(action.label, 'bulk_clean_rooms');
+  const moves = () => h.requests.filter(row => row.url.endsWith('/move/'));
+  assert.equal(moves().length, 0);
+  await h.w.doUndo();
+  assert.equal(moves().length, 1);
+  assert.equal(moves()[0].url, '/ops/tw/placements/10/move/');
+  const body = JSON.parse(moves()[0].options.body);
+  assert.deepEqual(body, { day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'UNASSIGNED' });
+  assert.equal('override' in body, false);
+  assert.equal(h.state.undoStack.includes(action), false);
+  assert.equal(h.state.redoStack.at(-1), action);
+});
+
+const LOCK_HELP = {
+  en: "Keeps this section's days and times; its room can still change.",
+  ar: 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.',
+};
+for (const arabic of [false, true]) test(`the inspector lock control says a lock keeps days and times, not the room (${arabic ? 'ar' : 'en'})`, async t => {
+  const h = await harness(t, undefined, { arabic });
+  const help = LOCK_HELP[arabic ? 'ar' : 'en'];
+  assert.equal(h.inspector().getAttribute('title'), help);
+  assert.equal(h.inspector().hasAttribute('dir'), false);
+  assert.equal(h.inspector().textContent, arabic ? 'قفل الشعبة' : 'Lock section');
+  // Only the lock control carries it: instructor/room/time protection are other rules.
+  for (const kind of ['instructor', 'room', 'time']) assert.notEqual(h.d.querySelector(`[data-protect="${kind}"]`).getAttribute('title'), help, kind);
+  h.click(h.inspector());
+  await wait(() => h.getLocked() && !h.inspector().disabled);
+  assert.equal(h.inspector().textContent, arabic ? 'فتح الشعبة' : 'Unlock section');
+  assert.equal(h.inspector().getAttribute('title'), help);
+  h.w.renderRpanel();
+  assert.equal(h.inspector().getAttribute('title'), help);
 });

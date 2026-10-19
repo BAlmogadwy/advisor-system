@@ -8,12 +8,14 @@ from django.test import Client
 
 from core.models import (
     DeliveryBoard,
+    Room,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
     TimetableScenario,
 )
 from core.services.rbac import ROLE_SUPER_ADMIN
+from core.services.timetable_workspace import apply_bulk_clean_room_assignments
 
 pytestmark = pytest.mark.django_db
 SLOT = {"day": "SUN", "start_time": "09:00", "end_time": "10:15"}
@@ -164,12 +166,95 @@ def test_room_only_change_reaches_every_board_copy_and_canonical_meeting(
     assert TermSectionMeeting.objects.get(day="SUN").room == "R1"
 
 
-def test_room_only_change_collapses_room_divergent_meetings(http, board, section):
+def test_room_only_change_merges_into_an_existing_meeting_row(http, board, section):
+    # The new room already holds this meeting for the same instructor: the moving
+    # row merges into it instead of tripping the meetings' unique key.
     row = place(board, section, locked=True)
-    for room in ("R1", "R2"):
+    for room in ("R1", "R3"):
         TermSectionMeeting.objects.create(term_section=section, room=room, instructor="T", **SLOT)
-    assert move(http, row, {**SLOT, "room": "R3"}).status_code == 200
+    response = move(http, row, {**SLOT, "room": "R3"})
+    assert response.status_code == 200, response.content
+    assert state(row) == [("SUN", "09:00", "10:15", "R3", True)]
     assert list(TermSectionMeeting.objects.values_list("room", "instructor")) == [("R3", "T")]
+
+
+def test_room_only_change_leaves_a_disagreeing_copy_and_undo_is_exact(
+    http, scenario, board, section
+):
+    second = DeliveryBoard.objects.create(scenario=scenario, label="T7")
+    anchor = place(board, section, locked=True)
+    sibling = place(second, section, room="R7")
+    for room in ("R1", "R7"):
+        TermSectionMeeting.objects.create(term_section=section, room=room, instructor="T", **SLOT)
+
+    def meeting_rooms():
+        return sorted(TermSectionMeeting.objects.values_list("room", flat=True))
+
+    response = move(http, anchor, {**SLOT, "room": "R2"})
+    assert response.status_code == 200, response.content
+    assert [row["id"] for row in response.json()["placements"]] == [anchor.id]
+    assert state(anchor, sibling) == [
+        ("SUN", "09:00", "10:15", "R2", True),
+        ("SUN", "09:00", "10:15", "R7", False),
+    ]
+    assert meeting_rooms() == ["R2", "R7"]
+
+    response = move(http, anchor, {**SLOT, "room": "R1"})
+    assert response.status_code == 200, response.content
+    assert [row["id"] for row in response.json()["placements"]] == [anchor.id]
+    assert state(anchor, sibling) == [
+        ("SUN", "09:00", "10:15", "R1", True),
+        ("SUN", "09:00", "10:15", "R7", False),
+    ]
+    assert meeting_rooms() == ["R1", "R7"]
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_undoing_a_bulk_clean_room_never_unrooms_a_sibling_copy(http, scenario, section, locked):
+    # Bulk clean rooms writes one copy; its client undo replays a room-only move
+    # back to the old room, which must not drag a sibling copy's valid room along.
+    first = DeliveryBoard.objects.create(scenario=scenario, label="T5", program="AI")
+    second = DeliveryBoard.objects.create(scenario=scenario, label="T7", program="AI")
+    Room.objects.create(room_code="R100", capacity=60, room_type="lecture", department="AI")
+    anchor = place(first, section, room="UNASSIGNED", locked=locked)
+    sibling = place(second, section, room="R5")
+    TermSectionMeeting.objects.create(term_section=section, room="R5", instructor="T", **SLOT)
+
+    result = apply_bulk_clean_room_assignments(scenario.id)
+    assert [(row["placement_id"], row["new_room"]) for row in result["applied"]] == [
+        (anchor.id, "R100")
+    ]
+    assert state(anchor, sibling) == [
+        ("SUN", "09:00", "10:15", "R100", locked),
+        ("SUN", "09:00", "10:15", "R5", False),
+    ]
+
+    applied = result["applied"][0]
+    undo = {
+        "day": applied["old_day"],
+        "start_time": applied["old_start"],
+        "end_time": applied["old_end"],
+        "room": applied["old_room"],
+    }
+    response = move(http, anchor, undo)
+    assert response.status_code == 200, response.content
+    assert state(anchor, sibling) == [
+        ("SUN", "09:00", "10:15", "UNASSIGNED", locked),
+        ("SUN", "09:00", "10:15", "R5", False),
+    ]
+    assert list(TermSectionMeeting.objects.values_list("room", flat=True)) == ["R5"]
+
+
+def test_room_only_change_between_spellings_of_no_room_merges_meeting_rows(http, board, section):
+    # 'UNASSIGNED' and '' are both "no room": the meeting rows in either spelling
+    # merge into the requested one instead of colliding on the unique key.
+    row = place(board, section, room="UNASSIGNED", locked=True)
+    for room in ("UNASSIGNED", ""):
+        TermSectionMeeting.objects.create(term_section=section, room=room, instructor="T", **SLOT)
+    response = move(http, row, {**SLOT, "room": ""})
+    assert response.status_code == 200, response.content
+    assert state(row) == [("SUN", "09:00", "10:15", "", True)]
+    assert list(TermSectionMeeting.objects.values_list("room", "instructor")) == [("", "T")]
 
 
 def test_room_only_change_on_global_section_leaves_its_meetings(http, board):

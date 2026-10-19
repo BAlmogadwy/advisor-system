@@ -325,30 +325,39 @@ def canonicalise_shared_sections(
         report.notes.append("Nothing to canonicalise.")
         return report
 
+    external_ids = external_shared_section_ids(scenario_id)
     if not apply:
+        owned = [s for s in divergent if s.term_section_id not in external_ids]
         would = sum(
             1
-            for s in divergent
+            for s in owned
             for bid in s.board_ids
             if bid != s.canonical_board_id
             and _full_key_set(s.schedule_by_board[bid]) != _full_key_set(s.canonical_schedule)
         )
         report.notes.append(
-            f"DRY RUN — would rewrite {would} boards across {len(divergent)} incoherent "
-            "sections. Pass apply=True to write."
+            f"DRY RUN — would rewrite {would} boards across {len(owned)} incoherent "
+            "sections"
+            + (
+                f" ({len(divergent) - len(owned)} more are externally owned and stay frozen)"
+                if len(owned) != len(divergent)
+                else ""
+            )
+            + ". Pass apply=True to write."
         )
         return report
 
-    external_ids = external_shared_section_ids(scenario_id)
     rewritten = 0
     canonicalised = 0
     skipped_locked = 0
+    skipped_external = 0
     for shared in divergent:
         if shared.term_section_id in external_ids:
             report.notes.append(
                 f"Skipped {shared.course_code}|{shared.section}: another scenario also places "
                 "this section, so its days, times and room stay frozen here."
             )
+            skipped_external += 1
             continue
         canonical = shared.canonical_schedule
         canonical_keys = _full_key_set(canonical)
@@ -436,7 +445,8 @@ def canonicalise_shared_sections(
     report.remaining_divergent_count = len(remaining)
     report.notes.append(
         f"Canonicalised {canonicalised} sections ({rewritten} placements rewritten"
-        f"{', ' + str(skipped_locked) + ' skipped for locks' if skipped_locked else ''})"
+        f"{', ' + str(skipped_locked) + ' skipped for locks' if skipped_locked else ''}"
+        f"{', ' + str(skipped_external) + ' externally owned' if skipped_external else ''})"
         f"; {len(remaining)} still incoherent. "
         + (
             "TermSectionMeeting rebuilt in the same transaction. "
