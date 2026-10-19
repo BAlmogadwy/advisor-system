@@ -14,14 +14,23 @@ opens each menu with the mouse, and checks what the user sees: every item
 whole and on top at its corners and centre, the menu inside the visible
 content (the viewport cut by every clipping ancestor) and fully on screen,
 just under its own buttons (never over them, never detached from them), and
-level with them. Escape then closes it, returns focus to its button and, on a
-wide screen, puts the generate bar back in its layer. The Generate menu is
-also opened from the keyboard. Widths: a wide desktop, the tablet widths where
-a fixed alignment failed (Export at 870px in English, Optimise at 800px in
-Arabic), the phone breakpoint, a phone and a short phone; English and Arabic;
-a wide font, as a CI machine without the design's fonts renders the page.
-Opening a menu sends nothing that could change data, and nothing leaves the
-machine (tests/browser_isolation.py).
+level with them; on a phone, a sheet 12px inside each edge of its bar; and
+the page never scrolled sideways. Escape then closes it, returns focus to its
+button and, on a wide screen, puts the generate bar back in its layer. The
+Generate menu is also opened from the keyboard. Widths: a wide desktop, the
+tablet widths where a fixed alignment failed (Export at 870px in English,
+Optimise at 800px in Arabic), the phone breakpoint, a phone and a short
+phone; English and Arabic; a wide font, as a CI machine without the design's
+fonts renders the page.
+
+A phone turned from landscape to portrait crosses the phone breakpoint, and a
+wide-screen placement once outlived it (the Arabic Generate sheet hung 146px
+off the page and dragged it sideways). So each menu is also opened on the
+landscape layout and reopened after the turn, and kept open across the turn
+and back. Scrolled past an open menu, the page stays put while the address
+bar shows or the menu's bar grows: only opening a menu scrolls to it. Opening
+a menu sends nothing that could change data, and nothing leaves the machine
+(tests/browser_isolation.py).
 """
 
 from __future__ import annotations
@@ -55,6 +64,9 @@ VIEWPORTS = (
     (320, 640),
 )
 PHONE_MAX_WIDTH = 640
+# A phone on its side and upright, either side of the phone breakpoint.
+LANDSCAPE = (844, 390)
+PORTRAIT = (390, 844)
 
 MENUS = (
     ("Generate", "twGenerateMenu", "twGenerateDropdown", "twGenerateGroup"),
@@ -81,6 +93,15 @@ SEEN = r"""([trigger, menuId, groupId]) => {
   if (r.top < buttons.bottom - 0.5) bad.push(`over its buttons: top ${px(r.top)}, buttons end ${px(buttons.bottom)}`);
   else if (r.top - buttons.bottom > 12) bad.push(`detached ${px(r.top - buttons.bottom)}px below its buttons`);
   if (r.right < buttons.left || r.left > buttons.right) bad.push('not level with its buttons');
+  if (matchMedia('(max-width: 640px)').matches) {
+    const bar = menu.closest('#twGenBar, .tw-cmd-bar').getBoundingClientRect();
+    if (Math.abs(r.left - bar.left - 12) > 1 || Math.abs(bar.right - r.right - 12) > 1) {
+      bad.push(`not a sheet across its bar: ${px(r.left)}-${px(r.right)}, bar ${px(bar.left)}-${px(bar.right)}`);
+    }
+  }
+  // The page clips sideways overflow; a scroll into view can still shift it.
+  const sideways = $('main-content').scrollLeft;
+  if (sideways) bad.push(`page scrolled sideways ${sideways}px`);
   for (const item of menu.querySelectorAll('[role="menuitem"]')) {
     const box = item.getBoundingClientRect();
     for (const [x, y] of [[0.04, 0.12], [0.96, 0.12], [0.5, 0.5], [0.04, 0.88], [0.96, 0.88]]) {
@@ -92,6 +113,36 @@ SEEN = r"""([trigger, menuId, groupId]) => {
     }
   }
   return bad;
+}"""
+
+# Resolves once the bars, their button groups and the menus have held still
+# for ten frames: after a resize a bar goes on rewrapping for several frames.
+SETTLED = r"""async () => {
+  const boxes = () => JSON.stringify([...document.querySelectorAll(
+    '#twGenBar, #twCmdBar, #twGenerateGroup, #twOptimiseGroup, #twExportGroup, [role="menu"]'
+  )].map(e => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }));
+  let last = boxes(), still = 0;
+  for (let frame = 0; frame < 300 && still < 10; frame++) {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const now = boxes();
+    still = now === last ? still + 1 : 0;
+    last = now;
+  }
+}"""
+
+# Scrolls the page until the open Generate menu is above the fold; false when
+# the page is too short for that.
+SCROLL_PAST_GENERATE = r"""() => {
+  const main = document.getElementById('main-content');
+  const menu = document.getElementById('twGenerateDropdown');
+  main.scrollTop += menu.getBoundingClientRect().bottom - main.getBoundingClientRect().top + 20;
+  return menu.getBoundingClientRect().bottom < main.getBoundingClientRect().top;
+}"""
+# Whether the page still shows what the user scrolled to, past the menu.
+STILL_PAST_GENERATE = r"""() => {
+  const menu = document.getElementById('twGenerateDropdown').getBoundingClientRect();
+  const view = document.getElementById('main-content').getBoundingClientRect();
+  return menu.bottom < view.top ? [] : [`page pulled back to the menu (${Math.round(menu.top)}-${Math.round(menu.bottom)})`];
 }"""
 
 AFTER_ESCAPE = r"""(trigger) => ({
@@ -216,4 +267,59 @@ class ToolbarMenusBrowserTests(StaticLiveServerTestCase):
                 if sent or errors:
                     problems[f"page {language} {width}x{height}"] = [*sent, *errors]
                 page.context.close()
+        self.assertEqual(problems, {})
+
+    @staticmethod
+    def _turn(page, width: int, height: int) -> None:
+        page.set_viewport_size({"width": width, "height": height})
+        page.evaluate(SETTLED)
+
+    def test_each_toolbar_menu_follows_a_phone_turned_upright(self) -> None:
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            page, sent, errors = self._load(language, *LANDSCAPE)
+            # Placed on the landscape layout, then reopened upright.
+            for _name, trigger, _menu, _group in MENUS:
+                page.click(f"#{trigger}")
+                page.keyboard.press("Escape")
+            self._turn(page, *PORTRAIT)
+            for name, trigger, menu, group in MENUS:
+                page.click(f"#{trigger}")
+                found = page.evaluate(SEEN, [trigger, menu, group])
+                page.keyboard.press("Escape")
+                if found:
+                    problems[f"{name} {language} reopened upright"] = found
+            # Left open while the phone turns upright and back.
+            self._turn(page, *LANDSCAPE)
+            for name, trigger, menu, group in MENUS:
+                page.click(f"#{trigger}")
+                for turned, viewport in (("upright", PORTRAIT), ("back", LANDSCAPE)):
+                    self._turn(page, *viewport)
+                    found = page.evaluate(SEEN, [trigger, menu, group])
+                    if found:
+                        problems[f"{name} {language} open, turned {turned}"] = found
+                page.keyboard.press("Escape")
+            # Scrolled past an open menu, the page stays where the user put it
+            # while the layout changes: the address bar shows as the page
+            # scrolls (and shortens it), and the generate bar's status line
+            # grows, which re-places the menu. Only opening a menu scrolls.
+            self._turn(page, *PORTRAIT)
+            page.click("#twGenerateMenu")
+            if not page.evaluate(SCROLL_PAST_GENERATE):
+                problems[f"page {language}"] = ["too short to scroll past the Generate menu"]
+            self._turn(page, PORTRAIT[0], PORTRAIT[1] - 56)
+            found = page.evaluate(STILL_PAST_GENERATE)
+            if found:
+                problems[f"Generate {language} open, address bar shown"] = found
+            page.evaluate(
+                "document.getElementById('twGenStatus').textContent = 'Saved. '.repeat(40)"
+            )
+            page.evaluate(SETTLED)
+            found = page.evaluate(STILL_PAST_GENERATE)
+            if found:
+                problems[f"Generate {language} open, status line grown"] = found
+            page.keyboard.press("Escape")
+            if sent or errors:
+                problems[f"page {language} turned"] = [*sent, *errors]
+            page.context.close()
         self.assertEqual(problems, {})

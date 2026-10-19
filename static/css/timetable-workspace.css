@@ -89,7 +89,7 @@ button.tw-bottom-handle { width: 100%; appearance: none; border: 0; border-botto
   #twGenerateGroup, #twOptimiseGroup, #twExportGroup { position: static !important; }
   #twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown {
     position: absolute !important; top: 100% !important; inset-inline: 12px !important;
-    min-width: 0 !important; margin-top: 4px;
+    min-width: 0 !important;
   }
 }
 @media (prefers-reduced-motion: reduce) {
