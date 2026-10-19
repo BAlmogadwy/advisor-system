@@ -515,6 +515,7 @@ def _collect(
     owners = frozenset(row[1] for row in frozen_rows if row[1] is not None)
     global_keys = frozenset(_norm(row[2] or row[3]) for row in frozen_rows if row[1] is None)
     rows = _section_instructor_rows(scenario_id, owners, global_keys)
+    info["rows"] = [row for row in rows if row[1] == scenario_id]
 
     own_primary: dict[tuple[str, str], tuple[int, str]] = {}
     non_primary: dict[tuple[str, str], set[int]] = defaultdict(set)
@@ -1555,15 +1556,16 @@ def _layout_fingerprint(scenario_id: int) -> tuple:
     )
 
 
-def load_assignment(scenario_id: int) -> TeacherAssignment:
+def load_assignment(scenario_id: int, *, ignore_pin: bool = False) -> TeacherAssignment:
     """The map in force for ``scenario_id`` on its current layout. Never writes.
 
-    Pinned inside a run. Otherwise: the stored engine rows that still hold
-    (eligible, active, within D10/the policy cap/the weekly ceiling — every
-    check ignores the layout), pins and frozen teachers as fixed load, and the
-    layout-aware greedy closure for the sections without a valid row.
+    Pinned inside a run (``ignore_pin`` reads what is stored instead). Otherwise:
+    the stored engine rows that still hold (eligible, active, within D10/the
+    policy cap/the weekly ceiling — every check ignores the layout), pins and
+    frozen teachers as fixed load, and the layout-aware greedy closure for the
+    sections without a valid row.
     """
-    pinned = current_pin(scenario_id)
+    pinned = None if ignore_pin else current_pin(scenario_id)
     if pinned is not None:
         return pinned
     cache = _scope_cache(scenario_id)
@@ -1601,6 +1603,21 @@ def load_assignment(scenario_id: int) -> TeacherAssignment:
     return assignment
 
 
+def close_on_layout(scenario_id: int, assignment: TeacherAssignment, *, bounds=None):
+    """``assignment`` closure-completed on the saved layout (K of 3.1 G5 / 3.3 C7):
+    its engine picks are fixed load, and every other section some teacher can
+    still take gets one."""
+    slots, info = _collect(scenario_id)
+    seed = {
+        key: teacher
+        for key, teacher in assignment.teacher.items()
+        if teacher is not None and assignment.status.get(key) == STATUS_ENGINE
+    }
+    closed = greedy_assign(slots, seed=seed, bounds=bounds)
+    closed.report.update(engine="closure", programmes_source=info["programmes_source"])
+    return closed
+
+
 def propose_layout_assignment(
     scenario_id: int,
     *,
@@ -1635,40 +1652,29 @@ def propose_layout_assignment(
 # ── Write path ───────────────────────────────────────────────────────────
 
 
-def _engine_rows_by_key(scenario_id: int) -> dict[tuple[str, str], tuple[int, int]]:
-    from core.models import SectionInstructor
-
+def _engine_rows_by_key(rows) -> dict[tuple[str, str], tuple[int, int]]:
+    """This scenario's engine rows by key, from the rows ``_collect`` read."""
     return {
         (_norm(ck), _norm(label)): (pk, teacher)
-        for pk, ck, label, teacher in SectionInstructor.objects.filter(
-            scenario_id=scenario_id, source=SOURCE_ENGINE, role=ROLE_PRIMARY
-        ).values_list("pk", "course_key", "section", "instructor_id")
+        for pk, _scenario, ck, label, teacher, role, source in rows
+        if source == SOURCE_ENGINE and role == ROLE_PRIMARY
     }
 
 
-def _non_engine_primary_keys(scenario_id: int) -> set[tuple[str, str]]:
-    from core.models import SectionInstructor
-
+def _non_engine_primary_keys(rows) -> set[tuple[str, str]]:
     return {
         (_norm(ck), _norm(label))
-        for ck, label in SectionInstructor.objects.filter(
-            scenario_id=scenario_id, role=ROLE_PRIMARY
-        )
-        .exclude(source=SOURCE_ENGINE)
-        .values_list("course_key", "section")
+        for _pk, _scenario, ck, label, _teacher, role, source in rows
+        if role == ROLE_PRIMARY and source != SOURCE_ENGINE
     }
 
 
 def _frozen_row_keys(scenario_id: int) -> set[tuple[str, str]]:
-    from core.models import TermSection
-    from core.services.board_ownership import teacher_frozen_section_ids
+    """Row keys of the teacher-frozen sections, computed at write time (the
+    same helper the snapshot restore uses)."""
+    from core.services.timetable_board_persistence import _teacher_frozen_row_keys
 
-    return {
-        (_norm(ck or code), _norm(label))
-        for ck, code, label in TermSection.objects.filter(
-            pk__in=teacher_frozen_section_ids(scenario_id)
-        ).values_list("course_key", "course_code", "section")
-    }
+    return _teacher_frozen_row_keys(scenario_id)
 
 
 def persist_assignment(
@@ -1684,7 +1690,7 @@ def persist_assignment(
     from core.models import SectionInstructor
 
     with transaction.atomic():
-        slots, _info = _collect(scenario_id)
+        slots, info = _collect(scenario_id)
         seed = {
             key: teacher
             for key, teacher in assignment.teacher.items()
@@ -1692,8 +1698,8 @@ def persist_assignment(
         }
         final, _added = _closure(slots, seed)
         frozen_keys = _frozen_row_keys(scenario_id)
-        pinned_keys = _non_engine_primary_keys(scenario_id)
-        existing = _engine_rows_by_key(scenario_id)
+        pinned_keys = _non_engine_primary_keys(info.get("rows", []))
+        existing = _engine_rows_by_key(info.get("rows", []))
         if only_missing:
             ignored = {tuple(k) for k in (assignment.report or {}).get("ignored_row_keys", [])}
             doomed = [
@@ -1742,13 +1748,25 @@ def persist_assignment(
     return {"written": len(new_rows), "deleted": deleted, "skipped_pinned": skipped}
 
 
+def _scenario_rows(scenario_id: int) -> list[tuple]:
+    from core.models import SectionInstructor
+
+    return list(
+        SectionInstructor.objects.filter(scenario_id=scenario_id).values_list(
+            "pk", "scenario_id", "course_key", "section", "instructor_id", "role", "source"
+        )
+    )
+
+
 def delete_engine_rows(scenario_id: int) -> int:
     """Drop the engine rows of every non-frozen section (a rebuild's first step)."""
     from core.models import SectionInstructor
 
     frozen_keys = _frozen_row_keys(scenario_id)
     doomed = [
-        pk for key, (pk, _t) in _engine_rows_by_key(scenario_id).items() if key not in frozen_keys
+        pk
+        for key, (pk, _t) in _engine_rows_by_key(_scenario_rows(scenario_id)).items()
+        if key not in frozen_keys
     ]
     deleted = SectionInstructor.objects.filter(pk__in=doomed).delete()[0] if doomed else 0
     invalidate_scope(scenario_id)
@@ -1856,6 +1874,19 @@ def status_by_term_section_id(
     return out
 
 
+def bridge_section_teachers(
+    scenario_id: int, rows: Mapping[tuple[str, str], int | None]
+) -> dict | None:
+    """The scheduler bridge's entry point: None (nothing touched) unless one
+    teacher per section is on. Lets ``scheduler`` stay clear of the classic
+    planner's own modules."""
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if not is_one_teacher_active():
+        return None
+    return persist_bridge_assignment(scenario_id, rows)
+
+
 def persist_bridge_assignment(scenario_id: int, rows: Mapping[tuple[str, str], int | None]) -> dict:
     """Store the scheduler bridge's per-section teachers under the classic rules.
 
@@ -1870,7 +1901,7 @@ def persist_bridge_assignment(scenario_id: int, rows: Mapping[tuple[str, str], i
 
     keys = {(_norm(ck), _norm(label)) for ck, label in rows}
     with transaction.atomic():
-        existing = _engine_rows_by_key(scenario_id)
+        existing = _engine_rows_by_key(_scenario_rows(scenario_id))
         doomed = [pk for key, (pk, _t) in existing.items() if key in keys]
         if doomed:
             SectionInstructor.objects.filter(pk__in=doomed).delete()

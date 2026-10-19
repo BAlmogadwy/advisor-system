@@ -63,6 +63,17 @@ _MEETING_FIELDS = (
     "updated_at",
 )
 
+# One-teacher engine rows captured for restore (``section_teacher_assignment``).
+_SECTION_TEACHER_FIELDS = (
+    "id",
+    "scenario_id",
+    "course_key",
+    "section",
+    "instructor_id",
+    "role",
+    "source",
+)
+
 
 @dataclass(frozen=True)
 class ResetResult:
@@ -84,11 +95,17 @@ class MeetingSyncResult:
 
 @dataclass(frozen=True)
 class ScenarioSnapshot:
-    """A restorable capture of both board tables for one scenario."""
+    """A restorable capture of both board tables for one scenario.
+
+    ``section_teachers`` holds the scenario's engine ``SectionInstructor`` rows
+    (one teacher per section) and is None whenever that rule is off, in which
+    case restore never touches the table.
+    """
 
     scenario_id: int
     placements: list[dict]
     meetings: list[dict]
+    section_teachers: list[dict] | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -185,7 +202,13 @@ def snapshot_scenario(scenario_id: int) -> ScenarioSnapshot:
     (section-scoped) including ``instructor`` — everything needed to restore the
     schedule. The placements' ``created_at``/``updated_at`` audit columns are not
     captured (see ``_PLACEMENT_FIELDS``); every other field round-trips exactly.
+
+    With one teacher per section it also captures EVERY engine row in the
+    scenario's scope, unfiltered — exactly as placements are captured unfiltered;
+    :func:`restore_scenario` filters at restore time.
     """
+    from core.services.timetable_flags import is_one_teacher_active
+
     placements = list(
         SectionPlacement.objects.filter(board__scenario_id=scenario_id)
         .order_by("id")
@@ -196,7 +219,22 @@ def snapshot_scenario(scenario_id: int) -> ScenarioSnapshot:
         .order_by("id")
         .values(*_MEETING_FIELDS)
     )
-    return ScenarioSnapshot(scenario_id=scenario_id, placements=placements, meetings=meetings)
+    section_teachers = None
+    if is_one_teacher_active():
+        from core.models import SectionInstructor
+        from core.services.section_teacher_assignment import SOURCE_ENGINE
+
+        section_teachers = list(
+            SectionInstructor.objects.filter(scenario_id=scenario_id, source=SOURCE_ENGINE)
+            .order_by("id")
+            .values(*_SECTION_TEACHER_FIELDS)
+        )
+    return ScenarioSnapshot(
+        scenario_id=scenario_id,
+        placements=placements,
+        meetings=meetings,
+        section_teachers=section_teachers,
+    )
 
 
 def restore_scenario(scenario_id: int, snapshot: ScenarioSnapshot) -> None:
@@ -211,8 +249,17 @@ def restore_scenario(scenario_id: int, snapshot: ScenarioSnapshot) -> None:
     sense that rows carry their own FKs; ``scenario_id`` scopes the delete.
     Term sections and boards are never deleted by the optimiser, so the FKs the
     recreated rows reference still exist.
+
+    When the snapshot carries one-teacher engine rows they are restored in the
+    same transaction and with the same filter as the placements: the frozen
+    keys are computed NOW (``teacher_frozen_section_ids``), a frozen section's
+    engine row is neither deleted nor recreated, and a section that has a pin
+    by now keeps it — so a restore can never duplicate a primary.
     """
     frozen = external_shared_section_ids(scenario_id)
+    teacher_frozen_keys = (
+        _teacher_frozen_row_keys(scenario_id) if snapshot.section_teachers is not None else set()
+    )
     with transaction.atomic():
         SectionPlacement.objects.filter(board__scenario_id=scenario_id).exclude(
             term_section_id__in=frozen
@@ -238,6 +285,58 @@ def restore_scenario(scenario_id: int, snapshot: ScenarioSnapshot) -> None:
                 ],
                 batch_size=500,
             )
+        if snapshot.section_teachers is not None:
+            _restore_section_teachers(scenario_id, snapshot.section_teachers, teacher_frozen_keys)
+
+
+def _row_key(course_key: object, section: object) -> tuple[str, str]:
+    return (str(course_key or "").strip().upper(), str(section or "").strip().upper())
+
+
+def _teacher_frozen_row_keys(scenario_id: int) -> set[tuple[str, str]]:
+    from core.models import TermSection
+    from core.services.board_ownership import teacher_frozen_section_ids
+
+    return {
+        _row_key(key or code, label)
+        for key, code, label in TermSection.objects.filter(
+            pk__in=teacher_frozen_section_ids(scenario_id)
+        ).values_list("course_key", "course_code", "section")
+    }
+
+
+def _restore_section_teachers(
+    scenario_id: int, rows: list[dict], frozen_keys: set[tuple[str, str]]
+) -> None:
+    """Put the snapshot's engine rows back, leaving frozen sections and pins be."""
+    from core.models import SectionInstructor
+    from core.services.section_teacher_assignment import (
+        ROLE_PRIMARY,
+        SOURCE_ENGINE,
+        invalidate_scope,
+    )
+
+    current = SectionInstructor.objects.filter(scenario_id=scenario_id).values_list(
+        "pk", "course_key", "section", "role", "source"
+    )
+    doomed, pinned = [], set()
+    for pk, course_key, label, role, source in current:
+        key = _row_key(course_key, label)
+        if source == SOURCE_ENGINE and key not in frozen_keys:
+            doomed.append(pk)
+        elif source != SOURCE_ENGINE and role == ROLE_PRIMARY:
+            pinned.add(key)
+    if doomed:
+        SectionInstructor.objects.filter(pk__in=doomed).delete()
+    keep = [
+        SectionInstructor(**row)
+        for row in rows
+        if _row_key(row["course_key"], row["section"]) not in frozen_keys
+        and _row_key(row["course_key"], row["section"]) not in pinned
+    ]
+    if keep:
+        SectionInstructor.objects.bulk_create(keep, batch_size=500)
+    invalidate_scope(scenario_id)
 
 
 def sync_meetings_from_placements(scenario_id: int) -> MeetingSyncResult:

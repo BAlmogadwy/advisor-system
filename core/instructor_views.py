@@ -438,6 +438,19 @@ def course_assignment_reconcile_view(request: HttpRequest) -> JsonResponse:
     scenario = TimetableScenario.objects.filter(pk=payload.get("scenario_id")).first()
     if scenario is None:
         return _err("Scenario not found", code="NOT_FOUND", status=404)
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        # One teacher per section: the names come from the map the engine
+        # charges (no row is written here), so never under a running job, and
+        # never into a published timetable.
+        from core.services.timetable_mutation_guard import reject_active_planner_job
+
+        busy = reject_active_planner_job(scenario.id)
+        if busy is not None:
+            return busy
+        if scenario.status == "published":
+            return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=409)
     updated = reconcile_scenario_instructors(scenario)
     log_audit_event(
         request,

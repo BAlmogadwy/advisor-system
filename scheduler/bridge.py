@@ -482,10 +482,18 @@ def build_into_scenario(
     if progress:
         progress("persist")
     written = orphaned = 0
+    bridge_teachers: dict[tuple[str, str], int | None] = {}
+    section_teachers: dict | None = None
     with transaction.atomic():
         # Replace only what this engine put there before; the old engine's rows
         # and any hand-made edits are left untouched.
         assert_rebuild_ownership(scenario_id)
+        # One teacher per section (classic engine): this engine's previous
+        # sections lose their stored teacher with them; nothing else does.
+        for old_key in TermSection.objects.filter(
+            scenario=scenario, source_tag=SOURCE_TAG
+        ).values_list("course_key", "section"):
+            bridge_teachers[old_key] = None
         TermSection.objects.filter(scenario=scenario, source_tag=SOURCE_TAG).delete()
 
         for section_id, placements in sorted(by_section.items()):
@@ -519,6 +527,7 @@ def build_into_scenario(
                 available_capacity=section.capacity,
                 source_tag=SOURCE_TAG,
             )
+            bridge_teachers[(term_section.course_key, term_section.section)] = section.instructor_id
             for placement in sorted(placements, key=lambda p: (p.day.index, p.window.start)):
                 start, end = _hhmm(placement.window.start), _hhmm(placement.window.end)
                 TermSectionMeeting.objects.get_or_create(
@@ -546,6 +555,16 @@ def build_into_scenario(
                 )
                 written += 1
 
+        # One teacher per section, when the classic rule is on: this engine's
+        # picks become engine rows through the classic rules (eligibility for
+        # these programmes, D10, the weekly ceiling, pins and frozen sections);
+        # what fails stays to the read path and is reported, and the names this
+        # engine wrote above are kept. Imported lazily, and never a
+        # ``timetable_*`` module, so the original planner stays out of here.
+        from core.services.section_teacher_assignment import bridge_section_teachers
+
+        section_teachers = bridge_section_teachers(scenario.id, bridge_teachers)
+
     report = validate(snapshot, board)
     rooms = room_shortfall(snapshot, board)
     instructors = instructor_metrics(snapshot, board)
@@ -555,6 +574,7 @@ def build_into_scenario(
     return {
         "engine": "scheduler",
         **({"seed": seed, "portfolio_seeds": list(search_seeds)} if seed is not None else {}),
+        **({"section_teachers": section_teachers} if section_teachers is not None else {}),
         "scenario_id": scenario.id,
         "sections": len(snapshot.sections),
         "meetings_written": written,
