@@ -154,6 +154,24 @@ for (const name of Object.keys(sources)) {
   });
 }
 
+test('split rollback chip counts dropped required sections and names the courses', () => {
+  const h = harness('page-timetable-workspace-split.js');
+  const outcome = { ...result(), safety_blocked: true, safety_regression: { blocked: true, regressions: [
+    { metric: 'unresolved_students', label: 'Unresolved students', before: 3, after: 5, delta: 2 },
+    { metric: 'required_sections_missing', label: 'Required sections dropped', before: 1, after: 6,
+      before_by_course: { 'CS112::PROGRAMMING_I': 1 },
+      after_by_course: { 'CS112::PROGRAMMING_I': 1, 'CS112::PROGRAMMING_II': 1, DS331: 2, AI124: 1, IS345: 1 },
+      sections: ['AI124', 'CS112::PROGRAMMING_II', 'DS331', 'IS345'],
+      course_labels: ['AI124 - AI PROGRAMMING', 'CS112 - PROGRAMMING II', 'DS331 - DATA MINING & WAREHOUSING', 'IS345 - IT AUDIT'] },
+  ] } };
+  h.context.showOptimiseResults(outcome, 'current');
+  const body = h.dialogs[0].body;
+  assert.match(body, /Required sections dropped: 1 -> 6 \(AI124 - AI PROGRAMMING, CS112 - PROGRAMMING II, DS331 - DATA MINING &amp; WAREHOUSING \+1\)<\/span>/);
+  assert.doesNotMatch(body, /IS345/);
+  assert.match(body, /Unresolved students: 3 -> 5<\/span>/);
+  assert.doesNotMatch(body, /NaN/);
+});
+
 test('split Generate waits for portfolio job, reports seating, and keeps results open', async () => {
   const h = harness('page-timetable-workspace-split.js');
   const requests = [], progress = [];

@@ -258,19 +258,12 @@ def test_reconcile_never_names_the_other_cs112_courses_lecturer() -> None:
 # ── the placer: identity, and honest diagnostics ─────────────────────────
 
 
-@pytest.mark.django_db
-@override_settings(
-    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
-    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
-    TIMETABLE_PR3_DECISION_TRACE_ENABLED=False,
-)
-def test_section_blocked_only_by_instructor_clash_reports_the_clash_under_its_key() -> None:
-    """Every option of the section clashes with its lecturer's other class, so it
-    is skipped. That used to be filed as NO_ROOM_CAPACITY for a bare "CS112" —
-    a room shortage that did not exist, for a course that could not be told
-    apart from the other CS112. The reason must not depend on the trace flag."""
-    from core.services.timetable_autoplace import auto_place_board
-
+def _unplaced_programming_ii_with_busy_lecturer(
+    busy_start: str, busy_end: str
+) -> tuple[DeliveryBoard, Instructor]:
+    """CS112 PROGRAMMING II generated but not yet placed (as in scenario 667) on a
+    board whose only slot is 09:00-10:15, and its lecturer already teaching AI113
+    at ``busy_start``-``busy_end`` every day of the week."""
     ProgrammeRequirement.objects.create(
         program="AI", course_code="CS112", course_name="PROGRAMMING II", programme_term=4
     )
@@ -291,9 +284,9 @@ def test_section_blocked_only_by_instructor_clash_reports_the_clash_under_its_ke
     _link("AI", "CS112", lecturer)
     _link("AI", "AI113", lecturer)
     busy = _section(scenario, "AI113")
-    for day in ("SUN", "MON", "TUE", "WED", "THU"):  # every 09:00 already taught
-        _meeting(busy, day=day)
-    _section(scenario, PII)  # generated, not yet placed — as in scenario 667
+    for day in ("SUN", "MON", "TUE", "WED", "THU"):
+        _meeting(busy, day=day, start=busy_start, end=busy_end)
+    _section(scenario, PII)
     ScenarioSectionBudget.objects.create(
         scenario=scenario,
         course_code="CS112",
@@ -306,6 +299,24 @@ def test_section_blocked_only_by_instructor_clash_reports_the_clash_under_its_ke
         total_demand=13,
         programme_term=4,
     )
+    return board, lecturer
+
+
+@pytest.mark.django_db
+@override_settings(
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR3_DECISION_TRACE_ENABLED=False,
+)
+def test_section_blocked_only_by_instructor_clash_reports_the_clash_under_its_key() -> None:
+    """Every option of the section clashes with its lecturer's other class, so it
+    is skipped. That used to be filed as NO_ROOM_CAPACITY for a bare "CS112" —
+    a room shortage that did not exist, for a course that could not be told
+    apart from the other CS112. The reason must not depend on the trace flag."""
+    from core.services.timetable_autoplace import auto_place_board
+
+    # Every 09:00 — the board's only slot — is already taught.
+    board, lecturer = _unplaced_programming_ii_with_busy_lecturer("09:00", "10:15")
 
     result = auto_place_board(board.id)
 
@@ -317,3 +328,36 @@ def test_section_blocked_only_by_instructor_clash_reports_the_clash_under_its_ke
     assert failure["context"]["clashing_instructor_id"] == lecturer.id
     assert failure["context"]["rejected_by"] == {"INSTRUCTOR_CLASH": failure["context"]["options"]}
     assert result["room_failure_breakdown"] == {"INSTRUCTOR_CLASH": 1}
+
+
+@pytest.mark.django_db
+@override_settings(
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_DAILY_CAP=1,
+    TIMETABLE_PR3_DECISION_TRACE_ENABLED=False,
+)
+def test_section_blocked_only_by_instructor_daily_cap_reports_the_cap_under_its_key() -> None:
+    """The lecturer is free at 09:00 every day — no clash — but already teaches
+    the one session a day the cap allows, so every option is over the cap. The
+    section must be reported as INSTRUCTOR_DAILY_CAP under its identity, not as
+    a room shortage of a bare "CS112"."""
+    from core.services.timetable_autoplace import auto_place_board
+
+    # Busy outside the board's only slot: a cap breach, never a time clash.
+    board, lecturer = _unplaced_programming_ii_with_busy_lecturer("13:00", "14:15")
+
+    result = auto_place_board(board.id)
+
+    assert result["placed"] == 0
+    [failure] = result["room_failures"]
+    assert failure["reason"] == "INSTRUCTOR_DAILY_CAP"
+    assert failure["course_code"] == PII
+    assert failure["section_code"] == "S1"
+    assert failure["context"]["instructor_id"] == lecturer.id
+    assert (failure["context"]["existing"], failure["context"]["cap"]) == (1, 1)
+    assert failure["context"]["rejected_by"] == {
+        "INSTRUCTOR_DAILY_CAP": failure["context"]["options"]
+    }
+    assert result["room_failure_breakdown"] == {"INSTRUCTOR_DAILY_CAP": 1}

@@ -277,6 +277,12 @@ def test_run_that_drops_a_required_section_is_rolled_back(monkeypatch, settings,
         if r.get("metric") == "required_sections_missing"
     )
     assert regression["sections"] == ["DS331"]
+    # Totals of sections short, like every other row the result chip renders
+    # as "before -> after" — a {course_key: short} map there read "NaN -> NaN".
+    assert (regression["before"], regression["after"]) == (0, 1)
+    assert regression["before_by_course"] == {}
+    assert regression["after_by_course"] == {"DS331": 1}
+    assert regression["course_labels"] == ["DS331 - DATA MINING"]
     restored = snapshot_scenario(scenario.id)
     assert restored.placements == original.placements
     assert restored.meetings == original.meetings
@@ -457,6 +463,11 @@ def test_dropping_one_cs112_is_rolled_back_while_the_other_is_already_short(monk
         if r.get("metric") == "required_sections_missing"
     )
     assert regression["sections"] == [PII]
+    # The totals count every short section; the label names the identity
+    # dropped, which the bare code "CS112" could not tell apart.
+    assert (regression["before"], regression["after"]) == (1, 2)
+    assert regression["after_by_course"] == {PI: 1, PII: 1}
+    assert regression["course_labels"] == ["CS112 - PROGRAMMING II"]
     assert snapshot_scenario(scenario.id).placements == original.placements
 
 
@@ -487,8 +498,11 @@ def test_an_already_short_course_losing_another_section_is_rolled_back(monkeypat
         if r.get("metric") == "required_sections_missing"
     )
     assert regression["sections"] == [PI]
-    assert regression["before"] == {PI: 1}
-    assert regression["after"] == {PI: 2}
+    # Sections short, not courses short: one course both times, 1 -> 2 sections.
+    assert (regression["before"], regression["after"]) == (1, 2)
+    assert regression["before_by_course"] == {PI: 1}
+    assert regression["after_by_course"] == {PI: 2}
+    assert regression["course_labels"] == ["CS112 - PROGRAMMING I"]
 
 
 @pytest.mark.django_db

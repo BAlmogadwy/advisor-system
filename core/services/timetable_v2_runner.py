@@ -317,6 +317,7 @@ def run_v2_optimisation_guarded(
     # the whole board, so there is nothing useful to pre-repair here).
     from core.services.timetable_flags import is_required_section_guarantee_enabled
     from core.services.timetable_required_sections import (
+        course_labels_by_key,
         describe_short_courses,
         find_missing_required_sections,
         reinstate_missing_required_sections,
@@ -488,19 +489,27 @@ def run_v2_optimisation_guarded(
     # reported, not blocked, unless the run made it shorter still — see
     # core.services.timetable_required_sections module docstring.
     if guarantee_on:
-        missing_after = sections_short_by_course(find_missing_required_sections(scenario_id))
+        after_rows = find_missing_required_sections(scenario_id)
+        missing_after = sections_short_by_course(after_rows)
         newly_missing = sorted(
             key for key, short in missing_after.items() if short > missing_before.get(key, 0)
         )
         if newly_missing:
+            labels = course_labels_by_key(after_rows)
             blocking_regressions.append(
                 {
                     "metric": "required_sections_missing",
                     "label": "Required sections dropped",
-                    # {course_key: sections short}, so "one short -> two short" shows.
-                    "before": dict(sorted(missing_before.items())),
-                    "after": dict(sorted(missing_after.items())),
+                    # Totals of sections short, so this row reads "1 -> 2" like
+                    # every other regression the result chip renders. The
+                    # per-identity counts behind them ({course_key: sections
+                    # short}) keep "one short -> two short" on one course visible.
+                    "before": sum(missing_before.values()),
+                    "after": sum(missing_after.values()),
+                    "before_by_course": dict(sorted(missing_before.items())),
+                    "after_by_course": dict(sorted(missing_after.items())),
                     "sections": newly_missing,
+                    "course_labels": [labels[key] for key in newly_missing],
                 }
             )
     # A from-scratch build (the scenario had no placements before this run, e.g.

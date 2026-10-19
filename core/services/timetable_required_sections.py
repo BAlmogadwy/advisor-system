@@ -34,6 +34,10 @@ from core.services.timetable_workspace import compute_scenario_budget
 logger = logging.getLogger(__name__)
 
 
+def _row_course_key(row: dict) -> str:
+    return str(row.get("course_key") or row["course_code"])
+
+
 def sections_short_by_course(rows: list[dict]) -> dict[str, int]:
     """``{course_key: sections still missing}`` for audit rows.
 
@@ -42,8 +46,13 @@ def sections_short_by_course(rows: list[dict]) -> dict[str, int]:
     let one of them hide the other's drop or repair. A count, not a set, so
     "short by one" turning into "short by two" is visible too.
     """
+    return {_row_course_key(row): int(row.get("remaining_sections") or 0) for row in rows}
+
+
+def course_labels_by_key(rows: list[dict]) -> dict[str, str]:
+    """``{course_key: "CS112 - PROGRAMMING II"}`` display labels for audit rows."""
     return {
-        str(row.get("course_key") or row["course_code"]): int(row.get("remaining_sections") or 0)
+        _row_course_key(row): display_course_label(row["course_code"], row.get("course_name"))
         for row in rows
     }
 
