@@ -334,3 +334,54 @@ def test_bulk_clean_room_gives_a_shared_class_a_room_that_suits_every_board(
 
     assert [row["new_room"] for row in result["applied"]] == ["RBOTH"]
     assert [row[3] for row in state(anchor, sibling)] == ["RBOTH", "RBOTH"]
+
+
+def test_bulk_clean_room_decides_a_shared_class_once_from_its_first_copy(
+    monkeypatch, scenario, section
+):
+    # The first copy has no clean room, so the class is skipped as a whole: a
+    # later copy must not room it anyway behind the first copy's back.
+    from core.services import timetable_workspace as tws
+
+    first = DeliveryBoard.objects.create(scenario=scenario, label="T5", program="AI")
+    second = DeliveryBoard.objects.create(scenario=scenario, label="T7", program="AI")
+    Room.objects.create(room_code="R100", capacity=60, room_type="lecture", department="AI")
+    anchor = place(first, section, room="UNASSIGNED", locked=True)
+    sibling = place(second, section, room="UNASSIGNED")
+    real = tws.preview_placement_room_candidates
+
+    def no_room_for_the_first_copy(placement_id, **kwargs):
+        preview = real(placement_id, **kwargs)
+        return {**preview, "candidates": []} if placement_id == anchor.id else preview
+
+    monkeypatch.setattr(tws, "preview_placement_room_candidates", no_room_for_the_first_copy)
+
+    preview = tws.preview_bulk_clean_room_assignments(scenario.id)
+    assert preview["assignments"] == []
+    assert [(row["placement_id"], row["reason"]) for row in preview["skipped"]] == [
+        (anchor.id, "no_clean_room"),
+        (sibling.id, "no_clean_room"),
+    ]
+    assert apply_bulk_clean_room_assignments(scenario.id)["applied"] == []
+    assert [row[3] for row in state(anchor, sibling)] == ["UNASSIGNED", "UNASSIGNED"]
+
+
+def test_bulk_clean_room_counts_remaining_classes_not_copies(scenario, section):
+    from core.services.timetable_workspace import preview_bulk_clean_room_assignments
+
+    first = DeliveryBoard.objects.create(scenario=scenario, label="T5", program="AI")
+    second = DeliveryBoard.objects.create(scenario=scenario, label="T7", program="AI")
+    for code in ("R100", "R101"):
+        Room.objects.create(room_code=code, capacity=60, room_type="lecture", department="AI")
+    single = TermSection.objects.create(
+        scenario=scenario, course_key="AI120", course_code="AI120", section="S1"
+    )
+    place(first, single, room="UNASSIGNED", day="MON")  # sorted first on its board
+    place(first, section, room="UNASSIGNED")  # one shared class, two copies
+    place(second, section, room="UNASSIGNED")
+
+    batch = preview_bulk_clean_room_assignments(scenario.id, limit=1)
+    assert (batch["ready_count"], batch["total_unassigned"]) == (1, 3)
+    assert (batch["remaining"], batch["truncated"]) == (1, True)
+    whole = preview_bulk_clean_room_assignments(scenario.id, limit=20)
+    assert (whole["ready_count"], whole["remaining"], whole["truncated"]) == (2, 0, False)

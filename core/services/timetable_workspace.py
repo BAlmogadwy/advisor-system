@@ -2151,10 +2151,12 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
     # place. A section another scenario also places stays fully frozen here.
     external_ids = external_shared_section_ids(scenario.id)
     # One physical class at one slot gets one room: the unroomed copies of a
-    # shared section are roomed together (assign_physical_meeting_room).
+    # shared section are roomed together (assign_physical_meeting_room), and
+    # the class is decided once, by its first copy: None once roomed, else the
+    # reason it was skipped, which its other copies then share.
     rooms_by_code = _rooms_by_code()
-    covered: set[tuple] = set()
-    covered_rows = 0
+    decided: dict[tuple, str | None] = {}
+    deferred: set[tuple] = set()  # classes left for another batch
 
     for placement in placements:
         if section_policy(placement.term_section):
@@ -2178,14 +2180,24 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
             placement.start_time,
             placement.end_time,
         )
-        if group_key in covered:
-            covered_rows += 1  # roomed with its group's first copy
+        if group_key in decided:
+            reason = decided[group_key]
+            if reason is not None:
+                skipped.append(
+                    {
+                        "placement_id": placement.id,
+                        "reason": reason,
+                        "label": f"{placement.term_section.course_code}-{placement.term_section.section}",
+                    }
+                )
             continue
         if len(assignments) >= max_items:
+            deferred.add(group_key)
             continue
 
         preview = preview_placement_room_candidates(placement.id)
         if (preview.get("target") or {}).get("is_online"):
+            decided[group_key] = "online"
             skipped.append(
                 {
                     "placement_id": placement.id,
@@ -2201,6 +2213,7 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
             accept=_shared_copy_room_filter(placement, rooms_by_code),
         )
         if not room:
+            decided[group_key] = "no_clean_room"
             skipped.append(
                 {
                     "placement_id": placement.id,
@@ -2219,7 +2232,7 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
             str(target.get("end") or placement.end_time),
         )
         reserved.add(reservation)
-        covered.add(group_key)
+        decided[group_key] = None
         assignments.append(
             {
                 "placement_id": placement.id,
@@ -2253,8 +2266,9 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
         "skipped_count": len(skipped),
         "assignments": assignments,
         "skipped": skipped[:40],
-        "truncated": len(assignments) >= max_items
-        and total_unassigned - covered_rows > len(assignments),
+        # Classes another batch could still room (copies of one class count once).
+        "remaining": len(deferred),
+        "truncated": bool(deferred),
     }
 
 

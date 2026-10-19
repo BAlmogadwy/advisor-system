@@ -4744,11 +4744,13 @@ async function collectCleanRoomAssignments(limit = BULK_ROOM_ASSIGN_LIMIT) {
   return {
     items,
     totalActions: Number(data?.total_unassigned || items.length || 0),
+    // Classes another batch can still room; copies of one class count once.
+    remaining: Number.isFinite(Number(data?.remaining)) ? Number(data.remaining) : null,
     skipped: data?.skipped || [],
   };
 }
 
-function confirmBulkRoomModal({ items, totalActions }) {
+function confirmBulkRoomModal({ items, totalActions, remaining = null }) {
   return new Promise(resolve => {
     let settled = false;
     const finish = value => {
@@ -4761,7 +4763,7 @@ function confirmBulkRoomModal({ items, totalActions }) {
       <span>${esc(item.boardLabel)} · ${esc(item.slot.day)} ${esc(item.slot.start)}-${esc(item.slot.end)}</span>
       <em>${esc(item.room.room_code)}</em>
     </div>`).join('');
-    const more = Math.max(0, totalActions - items.length);
+    const more = remaining ?? Math.max(0, totalActions - items.length);
     openModal({
       title: IS_AR ? 'Assign clean rooms' : 'Assign clean rooms',
       sub: `${items.length} clean assignment${items.length === 1 ? '' : 's'}`,
@@ -4785,11 +4787,13 @@ async function bulkAssignCleanRooms() {
   if (btn) btn.disabled = true;
   let items = [];
   let totalActions = 0;
+  let remaining = null;
   try {
     if (btn) btn.textContent = IS_AR ? 'Checking...' : 'Checking...';
     const result = await collectCleanRoomAssignments();
     items = result.items || [];
     totalActions = result.totalActions || 0;
+    remaining = result.remaining ?? null;
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -4800,7 +4804,7 @@ async function bulkAssignCleanRooms() {
     notify.warning(IS_AR ? 'No clean room assignments are ready.' : 'No clean room assignments are ready.');
     return;
   }
-  const ok = await confirmBulkRoomModal({ items, totalActions });
+  const ok = await confirmBulkRoomModal({ items, totalActions, remaining });
   if (!ok) return;
 
   if (btn) btn.disabled = true;

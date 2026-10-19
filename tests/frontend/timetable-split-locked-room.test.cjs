@@ -124,3 +124,19 @@ test('bulk clean rooms reloads every board a shared class was roomed on', async 
   await run;
   assert.equal(reloads(), before + 1);
 });
+
+for (const [remaining, note] of [[0, null], [2, '2 more room action(s) can be handled in another batch.']]) {
+  test(`the bulk room dialog counts remaining classes from the server (${remaining})`, async t => {
+    const slot = { day: 'SUN', start: '09:00', end: '10:15' };
+    const assignment = { placement_id: 10, board_id: 2, board_label: 'Board', label: 'AI10-S1', ...slot, slot, old_room: 'UNASSIGNED', room: { room_code: 'R100' }, new_room: 'R100' };
+    const h = await harness(t, url => url.startsWith('/ops/tw/scenarios/1/clean-room-assignments/?limit=')
+      ? { assignments: [assignment], total_unassigned: 4, ready_count: 1, remaining, skipped: [] }
+      : undefined);
+    const run = h.w.bulkAssignCleanRooms();
+    await wait(() => h.d.querySelector('#twsModalFooter button.primary'));
+    const shown = [...h.d.querySelectorAll('.tws-auto-confirm .note')].map(el => el.textContent);
+    assert.deepEqual(shown, note ? [note] : []);
+    h.d.querySelector('#twsModalFooter button:not(.primary)').click();
+    await run;
+  });
+}

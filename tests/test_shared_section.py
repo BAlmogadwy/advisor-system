@@ -546,3 +546,32 @@ def test_dry_run_applies_the_lock_rule_exactly_as_apply_does():
     )
     applied = canonicalise_shared_sections(scn.id, apply=True)
     assert applied.placements_rewritten == 1
+
+
+def test_report_command_prints_the_dry_run_including_external_sections():
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    scn = _scenario()
+    b1 = _board(scn, "Term 5", 5)
+    b2 = _board(scn, "Term 7", 7)
+    external = _section(scn, code="GSE1")
+    local = _section(scn, code="GSE2")
+    _place(b1, external, day="MON", start="10:45", room="R1")
+    _place(b2, external, day="WED", start="16:30", room="R2")
+    _owner_copy(external, day="WED", start="16:30", room="R2")
+    _place(b1, local, day="TUE", start="10:45", room="R3")
+    moved = _place(b2, local, day="THU", start="16:30", room="R4")
+    out = StringIO()
+
+    call_command("shared_sections", scn.id, stdout=out)
+
+    text = out.getvalue()
+    assert (
+        "DRY RUN — would rewrite 1 boards across 1 incoherent sections "
+        "(1 more are externally owned and stay frozen)." in text
+    )
+    assert "(read-only — re-run with --apply to repair)" in text
+    moved.refresh_from_db()
+    assert (moved.day, moved.room) == ("THU", "R4")
