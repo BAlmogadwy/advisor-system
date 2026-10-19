@@ -32,10 +32,12 @@ scoped to extend it, not inline parsing changes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from django.conf import settings
 
 from core.services import timetable_constraints as _constraints
-from core.services.course_identity import course_display_code
+from core.services.course_identity import course_display_code, programmes_serving_course
 
 INSTRUCTOR_CLASH_FLAG_SETTING = "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED"
 
@@ -235,23 +237,23 @@ def count_instructor_clashes(sections_by_id, section_instructor_ids) -> int:
     return _constraints.count_instructor_clashes(sections_by_id, section_instructor_ids)
 
 
-def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
-    """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
-    scenario-independent ``CourseInstructor`` assignments.
+def section_instructor_resolver(programs, gender: str) -> Callable[[object, object], set[int]]:
+    """Return ``resolve(course_key, display_code) -> {instructor_id, ...}``.
 
-    Each of the scenario's ``TermSection``s is matched to the course's
-    instructors for the scenario's gender + program(s). Only active instructors
-    are included (a deactivated person drops out of the clash, matching the
-    pickers). Sections with no course assignment are absent — the caller falls
-    back to the opaque free-text string for those.
+    The one place a section's instructors are read from the scenario-independent
+    ``CourseInstructor`` assignments: active instructors only (a deactivated
+    person drops out of the clash, matching the pickers), for ``gender``, and
+    only from the programmes that teach ``course_key`` itself — a link is keyed
+    by ``(programme, code)`` and a display code is not a course identity (see
+    ``programmes_serving_course``). Empty when ``gender`` is empty: the
+    assignment model is gender-scoped.
     """
-    from core.models import CourseInstructor, TermSection
+    from core.models import CourseInstructor
 
-    out: dict[str, set[int]] = {}
-    gender = getattr(scenario, "gender", "")
     if not gender:
-        return out
-    programs = list(getattr(scenario, "programs", []) or [])
+        return lambda _course_key, _display_code: set()
+    programs = [p for p in programs if p]
+    serving = programmes_serving_course(programs)
 
     # (program, normalised course_code) -> {instructor_id}
     by_course: dict[tuple[str, str], set[int]] = {}
@@ -260,13 +262,37 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     ).values_list("program", "course_code", "instructor_id"):
         by_course.setdefault((prog, (code or "").strip().upper()), set()).add(instructor_id)
 
+    def resolve(course_key: object, display_code: object) -> set[int]:
+        norm = str(display_code or "").strip().upper()
+        ids: set[int] = set()
+        for prog in serving(course_key):
+            ids |= by_course.get((prog, norm), set())
+        return ids
+
+    return resolve
+
+
+def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
+    """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
+    scenario-independent ``CourseInstructor`` assignments.
+
+    Each of the scenario's ``TermSection``s is matched to its course's
+    instructors for the scenario's gender, through
+    ``section_instructor_resolver``. Sections with no course assignment are
+    absent — the caller falls back to the opaque free-text string for those.
+    """
+    from core.models import TermSection
+
+    out: dict[str, set[int]] = {}
+    gender = getattr(scenario, "gender", "")
+    if not gender:
+        return out
+    resolve = section_instructor_resolver(list(getattr(scenario, "programs", []) or []), gender)
+
     for course_key, course_code, course_number, section in TermSection.objects.filter(
         scenario=scenario
     ).values_list("course_key", "course_code", "course_number", "section"):
-        norm = course_display_code(course_key, course_code, course_number)
-        ids: set[int] = set()
-        for prog in programs:
-            ids |= by_course.get((prog, norm), set())
+        ids = resolve(course_key, course_display_code(course_key, course_code, course_number))
         if ids:
             out[f"{course_key}|{section}"] = ids
     return out

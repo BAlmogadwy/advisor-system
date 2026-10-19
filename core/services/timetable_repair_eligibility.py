@@ -24,12 +24,14 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.course_identity import course_display_code
 from core.services.student_helpers import normalize_code
 from core.services.timetable_demand import load_student_course_demand_map
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_pr4_instructor import (
     is_instructor_links_enabled,
     normalise_instructor,
+    section_instructor_resolver,
 )
 from core.services.timetable_rooming import room_type_for_placement
 
@@ -1121,25 +1123,34 @@ def _section_instructor_policy(
     links_on = is_instructor_links_enabled()
     link_identities: dict[int, dict[str, str]] = defaultdict(dict)
     if links_on:
-        from core.models import CourseInstructor, TimetableScenario
+        from core.models import Instructor, TimetableScenario
 
         scenario = TimetableScenario.objects.filter(pk=scenario_id).first()
         gender = getattr(scenario, "gender", "") if scenario else ""
         if gender:
-            programs = list(getattr(scenario, "programs", []) or [])
-            # (program, normalised course_code) -> {"id:<n>": name}
-            by_course: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
-            for prog, code, iid, name in CourseInstructor.objects.filter(
-                program__in=programs, section=gender, instructor__is_active=True
-            ).values_list("program", "course_code", "instructor_id", "instructor__full_name"):
-                by_course[(prog, (code or "").strip().upper())][f"id:{iid}"] = name
+            # The planner's own resolver, so the report names exactly the people the
+            # clash filter enforced — by course identity, not by display code.
+            resolve = section_instructor_resolver(
+                list(getattr(scenario, "programs", []) or []), gender
+            )
+            ids_by_section: dict[int, set[int]] = {}
             for placement in placements:
-                sid = int(placement.term_section_id)
-                norm = (placement.term_section.course_code or "").strip().upper()
-                for prog in programs:
-                    for key, name in by_course.get((prog, norm), {}).items():
-                        link_identities[sid][key] = name
-                        instructor_names_by_section[sid].add(name)
+                section = placement.term_section
+                ids_by_section[int(placement.term_section_id)] = resolve(
+                    section.course_key,
+                    course_display_code(
+                        section.course_key, section.course_code, section.course_number
+                    ),
+                )
+            names = dict(
+                Instructor.objects.filter(
+                    id__in={iid for ids in ids_by_section.values() for iid in ids}
+                ).values_list("id", "full_name")
+            )
+            for sid, ids in ids_by_section.items():
+                for iid in ids:
+                    link_identities[sid][f"id:{iid}"] = names.get(iid, "")
+                    instructor_names_by_section[sid].add(names.get(iid, ""))
 
     by_instructor: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for placement in placements:

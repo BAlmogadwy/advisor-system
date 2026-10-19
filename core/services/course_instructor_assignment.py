@@ -14,6 +14,7 @@ from collections import defaultdict
 from django.db import transaction
 
 from core.models import CourseInstructor, Instructor
+from core.services.course_identity import programmes_serving_course
 from core.services.timetable_online import normalise_course_code
 
 
@@ -293,6 +294,9 @@ def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
     by the scenario's gender + program (preferring the board's own programme
     order, then the scenario's), then writes the primary's name into every
     ``TermSectionMeeting`` of the section (the legacy display/clash cache).
+    Only programmes that teach the section's own ``course_key`` are asked:
+    ``display_code`` alone cannot tell CS112 PROGRAMMING II (AI/DS) from CS112
+    PROGRAMMING I (AI2/DS2), and the first programme in board order would win.
     Returns ``True`` when a name is applied; ``False`` (no-op) when the
     scenario has no gender or the course has no active primary assignment.
 
@@ -319,7 +323,7 @@ def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
         if prog not in programs:
             programs.append(prog)
 
-    for prog in programs:
+    for prog in programmes_serving_course(programs)(getattr(ts, "course_key", "")):
         primary = (
             CourseInstructor.objects.filter(
                 program=prog,
@@ -345,6 +349,7 @@ def reconcile_scenario_instructors(scenario, *, excluded_section_ids=()) -> int:
 
     Lets a registrar's course-assignment edits reach an already-generated
     scenario without a full rebuild. Returns the number of sections updated.
+    Same course-identity rule as :func:`apply_primary_instructor`.
     """
     from core.models import TermSection, TermSectionMeeting
 
@@ -359,10 +364,11 @@ def reconcile_scenario_instructors(scenario, *, excluded_section_ids=()) -> int:
     ).values_list("program", "course_code", "instructor__full_name"):
         primaries[(prog, normalise_course_code(code))] = name
 
+    serving = programmes_serving_course(scenario.programs or [])
     updated = 0
     for ts in TermSection.objects.filter(scenario=scenario).exclude(id__in=excluded_section_ids):
         name: str | None = None
-        for prog in scenario.programs or []:
+        for prog in serving(ts.course_key):
             name = primaries.get((prog, normalise_course_code(ts.course_code)))
             if name:
                 break

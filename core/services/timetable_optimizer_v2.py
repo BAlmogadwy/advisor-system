@@ -21,7 +21,6 @@ from django.db import transaction
 from django.db.models import Q
 
 from core.models import (
-    CourseInstructor,
     DeliveryBoard,
     Room,
     ScenarioSectionBudget,
@@ -76,6 +75,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_compaction_enabled,
     is_instructor_daily_cap_enabled,
     is_instructor_gap_penalty_enabled,
+    section_instructor_resolver,
 )
 from core.services.timetable_stage_telemetry import STAGE_KEYS, empty_stage_telemetry
 from core.services.timetable_student_assignment import instructor_idle_of
@@ -381,10 +381,12 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
     Keys use the **same** ``section_id`` convention as
     ``build_section_states_for_scenario`` (``f"{course_key or course_code}_{section}"``),
     so the evaluator can resolve a section's instructors by direct lookup — no
-    ``|``-vs-``_`` key reconciliation. Resolution mirrors
-    ``build_section_instructor_ids``: only **active** instructors assigned via
-    ``CourseInstructor`` for the scenario's gender + programs are included, matched
-    on the (normalised) course code. Sections with no assignment are simply absent
+    ``|``-vs-``_`` key reconciliation. Resolution is the same
+    ``section_instructor_resolver`` that ``build_section_instructor_ids`` uses:
+    only **active** instructors assigned via ``CourseInstructor`` for the
+    scenario's gender, from the programmes that teach the section's own
+    ``course_key`` (CS112 PROGRAMMING II is not billed to PROGRAMMING I's
+    lecturers). Sections with no assignment are simply absent
     from the map (they then contribute nothing to the idle-gap metric). Returns
     ``{}`` when the scenario has no gender — the assignment model is gender-scoped.
     """
@@ -398,21 +400,12 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
     if not programs:
         return {}
 
-    # (program, normalised course_code) -> {instructor_id}
-    by_course: dict[tuple[str, str], set[int]] = defaultdict(set)
-    for prog, code, instr_id in CourseInstructor.objects.filter(
-        program__in=programs, section=gender, instructor__is_active=True
-    ).values_list("program", "course_code", "instructor_id"):
-        by_course[(prog, (code or "").strip().upper())].add(instr_id)
-
+    resolve = section_instructor_resolver(programs, gender)
     out: dict[str, frozenset[int]] = {}
     for course_key, course_code, course_number, section in TermSection.objects.filter(
         scenario_id=scenario_id
     ).values_list("course_key", "course_code", "course_number", "section"):
-        norm = course_display_code(course_key, course_code, course_number)
-        ids: set[int] = set()
-        for prog in programs:
-            ids |= by_course.get((prog, norm), set())
+        ids = resolve(course_key, course_display_code(course_key, course_code, course_number))
         if ids:
             section_id = f"{course_key or course_code}_{section}"
             out[section_id] = frozenset(ids)

@@ -8735,9 +8735,14 @@ function showOptimiseResults(o, mode) {
     <div style="padding:10px 12px;border-radius:6px;background:rgba(240,96,96,0.1);border:1px solid rgba(240,96,96,0.3);margin:10px 0">
       <div style="font-weight:800;color:#F06060;margin-bottom:5px">Result not applied</div>
       <div style="font-size:11px;color:var(--t3)">The optimiser candidate was rejected because it worsened protected student enrolment, hard operational constraints, or an instructor's working days.</div>
-      ${safetyRegressions.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">${safetyRegressions.map(r =>
-        `<span class="tws-repair-chip" style="border-color:rgba(240,96,96,0.35);color:#F06060">${esc(r.label || r.metric)}: ${Number(r.before || 0).toLocaleString()} -> ${Number(r.after || 0).toLocaleString()}</span>`
-      ).join('')}</div>` : ''}
+      ${safetyRegressions.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">${safetyRegressions.map(r => {
+        // Rows that concern courses (a dropped required section) name the first few.
+        const labels = Array.isArray(r.course_labels) ? r.course_labels : [];
+        const courses = labels.length
+          ? ` (${esc(labels.slice(0, 3).join(', '))}${labels.length > 3 ? ` +${labels.length - 3}` : ''})`
+          : '';
+        return `<span class="tws-repair-chip" style="border-color:rgba(240,96,96,0.35);color:#F06060">${esc(r.label || r.metric)}: ${Number(r.before || 0).toLocaleString()} -> ${Number(r.after || 0).toLocaleString()}${courses}</span>`;
+      }).join('')}</div>` : ''}
     </div>` : '';
   const crossTradeoffBlock = (!safetyBlocked && hasCrossMetric && crossPrimaryDelta < 0) ? `
     <div style="padding:8px 12px;border-radius:6px;background:rgba(245,183,49,0.08);border:1px solid rgba(245,183,49,.25);margin-top:10px;color:#F5B731;font-weight:600">
