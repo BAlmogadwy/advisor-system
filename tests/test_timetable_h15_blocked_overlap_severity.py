@@ -142,6 +142,48 @@ def test_blocked_overlap_below_the_threshold_stays_a_warning() -> None:
     assert (overlap["blocked_students"], overlap["severity"]) == (5, "warning")
 
 
+def _exported_overlap_lines(board) -> list[tuple[str, str]]:
+    from openpyxl import load_workbook
+
+    from core.services.timetable_export import export_scenario_xlsx
+
+    exported = export_scenario_xlsx(board.scenario_id)
+    try:
+        sheet = load_workbook(exported)[board.label]
+        return [
+            (str(cell.value), str(cell.font.color.rgb)[-6:])
+            for row in sheet.iter_rows()
+            for cell in row
+            if str(cell.value or "").startswith(("OVERLAP", "Conflicts:"))
+        ]
+    finally:
+        exported.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "sibling, expected",
+    [
+        (
+            True,
+            [
+                ("Conflicts:", "D97706"),
+                ("OVERLAP (non-blocking): AI201-S1 vs MATH201-S1", "D97706"),
+            ],
+        ),
+        (False, [("Conflicts:", "C03030"), ("OVERLAP: AI201-S1 vs MATH201-S1", "C03030")]),
+    ],
+)
+def test_export_board_sheet_writes_each_overlap_at_its_own_severity(sibling, expected) -> None:
+    board = _board()
+    _need_both(board, 25)
+    _place(board, NETS, "S1", "SUN")
+    _place(board, ALGEBRA, "S1", "SUN")
+    if sibling:
+        _place(board, NETS, "S2", "MON")
+
+    assert _exported_overlap_lines(board) == expected
+
+
 def test_same_course_overlap_stays_critical_and_blocks_publish() -> None:
     # Two sections of one course at one time double-book the course whatever
     # the demand. Students need only this course here: no pair needs both, so
