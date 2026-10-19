@@ -346,15 +346,22 @@ oracle pinned the locked rooms (`LOCKED_ROOM_CONFLICT`), its writer and meeting
 sync refused any locked change, board rooming skipped locked unroomed rows, and
 the compaction and classic persist guards rolled back a locked room change.
 
-A lock now freezes only the section's days, times and contact pattern on every
-path. Locked meetings are re-roomed like any other; the writer and meeting sync
-still reject a locked time change and keep an unroomable locked meeting's empty
+A lock now freezes only the section's days, times and contact pattern on the
+Optimise and repair room paths (recovery, cap/clash repair, compaction, board
+rooming and the classic SA/load-balanced persist). Build's auto-placer still
+seeds a locked meeting's existing room as occupied, which the contract allows.
+Locked meetings are re-roomed like any other; the writer and meeting sync still
+reject a locked time change and keep an unroomable locked meeting's empty
 representation. Externally owned sections (also placed by another scenario)
 remain fully frozen, room included. The compaction gate compares locked rows
 without `room`/`updated_at` and locked meetings without `room`; the classic
-persist guard compares locked rows without `room`. Recovery persists only a
-strict room-shortage or seat improvement, so a valid locked room is not churned
-on its own, though a persisted improvement may re-room any non-external meeting.
+persist guard compares locked rows without `room`.
+
+Room reassignment never means losing a room: the exact room solve keeps every
+locked meeting that already holds a valid, unclashed room roomed (it may move
+to another room), and its greedy fallback honours the same rule. Locked
+meetings double-booked with each other are not forced, so the constraint is
+always feasible. Unlocked meetings keep their previous count-only behaviour.
 
 `tests/test_timetable_locked_room_reassignment.py` reproduces scenario 26
 end to end through `run_v2_optimisation_guarded(mode="current")` and covers the

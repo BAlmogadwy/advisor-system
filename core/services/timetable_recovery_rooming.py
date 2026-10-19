@@ -227,12 +227,29 @@ class RecoveryRoomEvaluator:
             )
             for d in free
         ]
+        # A user lock lets a meeting change room, but a locked meeting already in
+        # a valid room must not lose it to an unlocked one. Incumbents that clash
+        # with each other are excluded, so the kept set is always jointly feasible.
+        holders = [
+            d
+            for d in constrained
+            if self.section_ids[d.term_section_id] in self.locked_sections
+            and d.incumbent_room in d.compatible_rooms
+        ]
+        clashing = {
+            d.demand_id
+            for i, left in enumerate(holders)
+            for right in holders[i + 1 :]
+            if left.incumbent_room == right.incumbent_room and _overlap(left, right)
+            for d in (left, right)
+        }
         solve = _solve_relaxed(
             constrained,
             self.capacities,
             time_limit_seconds=self.time_limit_seconds,
             strict_budget=True,
             count_only=self.count_only,
+            keep_roomed={d.demand_id for d in holders if d.demand_id not in clashing},
         )
         # Each solve leaves a dead CP-SAT model in reference cycles. Recovery runs
         # one per candidate, and until the cyclic collector gets to them they piled

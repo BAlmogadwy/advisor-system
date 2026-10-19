@@ -464,3 +464,115 @@ def test_classic_persist_guard_accepts_rooming_a_locked_unroomed_meeting(monkeyp
         True,
     )
     assert row.room == "R1"
+
+
+def _demand(sid, room, cap, rooms):
+    from core.services.timetable_exact_rooming import MeetingDemand
+
+    return MeetingDemand(
+        demand_id=f"{sid}#SUN#540-615",
+        term_section_id=sid,
+        course_code=f"C{sid}",
+        day="SUN",
+        start_min=540,
+        end_min=615,
+        required_type="lecture",
+        required_capacity=cap,
+        required_gender="M",
+        required_programmes=frozenset({"AI"}),
+        placement_ids=(sid,),
+        board_ids=(1,),
+        incumbent_rooms=(room,),
+        compatible_rooms=rooms,
+    )
+
+
+def _oracle(demands, capacities):
+    from core.services.timetable_recovery_rooming import RecoveryRoomEvaluator
+
+    return RecoveryRoomEvaluator(
+        demands,
+        {code: {"capacity": cap} for code, cap in capacities.items()},
+        {d.term_section_id: f"C{d.term_section_id}_1" for d in demands},
+        {d.term_section_id: 3 for d in demands},
+        time_limit_seconds=1,
+        frozen_section_ids={"C1_1"},  # section 1 is user-locked (time frozen)
+    )
+
+
+def test_locked_meeting_in_a_valid_room_is_never_dropped_for_an_unlocked_one():
+    # Only R1 fits either meeting; the larger unlocked meeting would win R1 on a
+    # bare count tie. A lock lets the room change, never lets it be lost.
+    oracle = _oracle([_demand(1, "R1", 30, ("R1",)), _demand(2, "", 40, ("R1",))], {"R1": 40})
+
+    result = oracle(None)
+
+    assert result["assignment_by_placement_id"] == {1: "R1", 2: ""}
+    assert result["unassigned_count"] == 1
+
+
+def test_locked_meeting_still_moves_room_when_that_seats_both():
+    # The locked meeting may move from R1 to R2 so the unlocked one can use R1.
+    oracle = _oracle(
+        [_demand(1, "R1", 30, ("R1", "R2")), _demand(2, "", 40, ("R1",))],
+        {"R1": 40, "R2": 30},
+    )
+
+    result = oracle(None)
+
+    assert result["assignment_by_placement_id"] == {1: "R2", 2: "R1"}
+    assert result["unassigned_count"] == 0
+
+
+def test_recovery_oracle_rejects_a_candidate_that_moves_a_locked_time(double_booked):
+    from core.services.timetable_assignment_models import SectionMeeting
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    scenario, _board, _sections = double_booked
+    states = {s.section_id: s for s in build_section_states_for_scenario(scenario.pk)}
+    evaluator = build_recovery_room_evaluator(scenario.pk)
+    moved = states["CS112_S1"]
+    first, *rest = sorted(moved.meetings, key=lambda m: (m.day, m.start_min))
+    # Same contact durations, one meeting shifted to another day (WED).
+    moved.meetings = [
+        SectionMeeting(day=3, start_min=first.start_min, end_min=first.end_min),
+        *rest,
+    ]
+
+    with pytest.raises(ExactRoomingError, match="moved locked section"):
+        evaluator(list(states.values()))
+
+
+def test_clashing_locked_incumbents_are_not_forced_to_stay_roomed():
+    # Both locked meetings sit in R1 at once and R1 is the only room: keeping
+    # both roomed is impossible, so neither is forced and the count stays proven.
+    from core.services.timetable_recovery_rooming import RecoveryRoomEvaluator
+
+    demands = [_demand(1, "R1", 30, ("R1",)), _demand(3, "R1", 30, ("R1",))]
+    oracle = RecoveryRoomEvaluator(
+        demands,
+        {"R1": {"capacity": 40}},
+        {1: "C1_1", 3: "C3_1"},
+        {1: 3, 3: 3},
+        time_limit_seconds=1,
+        frozen_section_ids={"C1_1", "C3_1"},
+    )
+
+    result = oracle(None)
+
+    assert result["unassigned_count"] == 1
+    assert result["count_proven_optimal"] is True
+    assert sorted(result["assignment_by_placement_id"].values()) == ["", "R1"]
+
+
+def test_greedy_fallback_keeps_a_locked_incumbent_room():
+    # The greedy warm start doubles as the timeout fallback; it must honour the
+    # same rule instead of handing R1 to the larger unlocked meeting first.
+    from core.services.timetable_exact_rooming import _greedy_room_assignment
+
+    locked, unlocked = _demand(1, "R1", 30, ("R1",)), _demand(2, "", 40, ("R1",))
+
+    assert _greedy_room_assignment([locked, unlocked], {"R1": 40}) == {unlocked.demand_id: "R1"}
+    assert _greedy_room_assignment(
+        [locked, unlocked], {"R1": 40}, keep_roomed={locked.demand_id}
+    ) == {locked.demand_id: "R1"}

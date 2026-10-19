@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from django.conf import settings
@@ -391,13 +392,15 @@ def build_meeting_demands(
 def _greedy_room_assignment(
     demands: list[MeetingDemand],
     capacity_by_code: dict[str, int],
+    keep_roomed: Collection[str] = (),
 ) -> dict[str, str]:
     """Deterministic first-fit warm start: best-fit room free at each interval.
 
     Meetings are taken largest-demand-first (best-fit-decreasing); each takes the
     smallest compatible room that is big enough and free, else the largest
     compatible room still free, else it stays unroomed. Used both as a CP-SAT hint
-    and as a total fallback so the pass never returns nothing.
+    and as a total fallback so the pass never returns nothing. ``keep_roomed``
+    meetings first keep their incumbent room, so the fallback honours them too.
     """
     busy: dict[str, list[tuple[int, int]]] = defaultdict(list)  # room -> [(start,end)]
 
@@ -405,7 +408,18 @@ def _greedy_room_assignment(
         return all(not (start < e and s < end) for (s, e) in busy[f"{room}#{day}"])
 
     assignment: dict[str, str] = {}
+    for d in sorted(demands, key=lambda x: x.demand_id):
+        room = d.incumbent_room
+        if (
+            d.demand_id in keep_roomed
+            and room in d.compatible_rooms
+            and free(room, d.day, d.start_min, d.end_min)
+        ):
+            assignment[d.demand_id] = room
+            busy[f"{room}#{d.day}"].append((d.start_min, d.end_min))
     for d in sorted(demands, key=lambda x: (-x.required_capacity, x.demand_id)):
+        if d.demand_id in assignment:
+            continue
         candidates = sorted(d.compatible_rooms, key=lambda r: (capacity_by_code[r], r))
         big_enough = [r for r in candidates if capacity_by_code[r] >= d.required_capacity]
         big_set = set(big_enough)
@@ -425,6 +439,7 @@ def _solve_relaxed(
     time_limit_seconds: float,
     strict_budget: bool = False,
     count_only: bool = False,
+    keep_roomed: Collection[str] = (),
 ) -> RelaxedRoomResult:
     """Fixed-time room assignment that may leave a meeting unroomed (total, exact).
 
@@ -445,6 +460,10 @@ def _solve_relaxed(
     objective: the returned assignment remains valid, and
     ``unroomed_proven_optimal`` reports its count proof, while
     ``proven_optimal`` remains false for the complete four-part objective.
+
+    ``keep_roomed`` names meetings that must stay roomed (in any compatible
+    room). The caller guarantees their incumbent rooms are jointly feasible, so
+    the constraint never makes the model infeasible.
     """
     from time import monotonic
 
@@ -457,7 +476,8 @@ def _solve_relaxed(
     if len({d.demand_id for d in demands}) != len(demands):
         raise ExactRoomingError("Duplicate demand_id: meeting identity is not unique.")
 
-    greedy = _greedy_room_assignment(demands, capacity_by_code)
+    keep = frozenset(keep_roomed)
+    greedy = _greedy_room_assignment(demands, capacity_by_code, keep)
 
     def greedy_result(status: str) -> RelaxedRoomResult:
         roomed = [d for d in demands if d.demand_id in greedy]
@@ -498,6 +518,8 @@ def _solve_relaxed(
             flag = model.new_bool_var(f"roomed_{d.demand_id}")
             roomed[d.demand_id] = flag
             model.add(sum(options) == flag)  # at most one room; flag records whether roomed
+            if d.demand_id in keep:
+                model.add(flag == 1)
             # Seed the greedy warm start as a hint on every assignment literal.
             hinted = greedy.get(d.demand_id)
             for room in d.compatible_rooms:

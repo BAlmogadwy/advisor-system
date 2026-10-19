@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from typing import Any
 
 from django.db import transaction
 
@@ -230,7 +231,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     # A lock freezes times and meeting assignments, not rooms: rooming may
     # legitimately re-room a locked meeting (and stamp the row's updated_at).
-    def locked_snapshot(term_section_ids=None):
+    def locked_snapshot(
+        term_section_ids: set[Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[Any]]:
         rows = [
             {k: v for k, v in row.items() if k not in ("room", "updated_at")}
             for row in SectionPlacement.objects.filter(
