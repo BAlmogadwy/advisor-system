@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from core.models import (
+    CourseInstructor,
     DeliveryBoard,
+    Instructor,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
@@ -195,3 +197,44 @@ def test_current_rejects_mandatory_repairs_that_exceed_saved_instructor_week(
     assert result["instructor_cap_repair"]["repaired"] == []
     assert result["instructor_compaction"]["relocations"] == []
     assert result["secondary_recovery"]["applied"] is False
+
+
+@pytest.mark.django_db
+def test_rollback_counts_remaining_overloads_on_a_scenario_with_instructor_links(
+    monkeypatch, settings
+) -> None:
+    """A whole-board rollback must report remaining overloads, not crash.
+
+    The rollback path re-counts daily overloads from the restored board. With
+    instructor links present (every real scenario), the counter must receive a
+    section_id -> state mapping; a bare list raised AttributeError and failed the
+    whole job instead of reporting the rejected run.
+    """
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    scenario, _, _ = _persisted_board("Linked rollback")
+    scenario.gender = "M"
+    scenario.programs = ["AI"]
+    scenario.save(update_fields=["gender", "programs"])
+    teacher = Instructor.objects.create(full_name="Dr Linked", normalised_name="dr linked")
+    CourseInstructor.objects.create(
+        program="AI", course_code="AI101", section="M", instructor=teacher, role="primary"
+    )
+    assert optimiser.build_section_instructor_map_for_scenario(scenario.id)
+    original = snapshot_scenario(scenario.id)
+
+    def worse(**_):
+        SectionPlacement.objects.filter(board__scenario_id=scenario.id).update(day="WED")
+        return {
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            "final_score": [1, 0, 0, 0, 0, 0],
+            "instructor_cap_repair": {"enabled": True, "detected": [], "repaired": []},
+        }
+
+    monkeypatch.setattr(optimiser, "optimise_current_timetable", worse)
+    result = run_v2_optimisation_guarded(scenario.id, mode="current")
+
+    assert result["safety_blocked"] is True
+    assert snapshot_scenario(scenario.id) == original
+    assert result["instructor_cap_repair"]["remaining_violations"] == 0
+    assert result["instructor_cap_repair"]["rollback_reason"] == "whole_board_rollback"
+    assert result["candidate_instructor_cap_repair"]["enabled"] is True

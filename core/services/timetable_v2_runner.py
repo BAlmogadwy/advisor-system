@@ -529,8 +529,13 @@ def run_v2_optimisation_guarded(
                         get_instructor_daily_cap,
                     )
 
+                    # The counter looks sections up by id; a bare list crashed
+                    # this rollback path whenever instructors were linked.
                     remaining = count_instructor_daily_overloads(
-                        build_section_states_for_scenario(scenario_id),
+                        {
+                            state.section_id: state
+                            for state in build_section_states_for_scenario(scenario_id)
+                        },
                         instructor_map or {},
                         get_instructor_daily_cap(),
                     )
