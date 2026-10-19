@@ -298,7 +298,10 @@ def move_exceeds_instructor_daily_cap(
 # one instructor teaches all sections of a course, so overlapping siblings are an
 # instructor clash even when the instructor_id field is blank. Already
 # interval-aware via the timetable_same_course window primitives; the engine owns
-# the board-level + delta forms so every stage shares one home.
+# the board-level + delta forms so every stage shares one home. With one teacher
+# per section (TIMETABLE_ONE_TEACHER_PER_SECTION) siblings may have different
+# teachers, but the rule stays: it also keeps a student's choice of section
+# open, and relaxing it is a separate owner decision (Q5).
 
 
 def _same_course_windows_by_course(sections_by_id: Mapping[str, Any]) -> dict[str, list]:

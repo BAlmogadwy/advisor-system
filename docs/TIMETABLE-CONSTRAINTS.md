@@ -28,8 +28,8 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 
 | # | Constraint | Rule | Where |
 |---|---|---|---|
-| H7 | **Instructor clash** | An instructor is never double-booked. **Interval-aware** (not exact-start): a 10:30–11:45 lecture and a 10:45–12:25 lab *do* conflict | `has_instructor_clash` / `count_instructor_clashes` / `move_introduces_instructor_clash` / `list_instructor_clashes` — `timetable_constraints.py`; flag `TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED` (**true**) |
-| H8 | **Instructor daily cap** | An instructor teaches **≤ 3 sessions/day** (lectures *and* labs count). A 4th is forbidden; the cap **wins against students** | `exceeds_instructor_daily_cap` / `count_instructor_daily_overloads` / `move_exceeds_instructor_daily_cap`; flags `TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED` (**true**), `TIMETABLE_INSTRUCTOR_DAILY_CAP` (**3**) |
+| H7 | **Instructor clash** | An instructor is never double-booked. **Interval-aware** (not exact-start): a 10:30–11:45 lecture and a 10:45–12:25 lab *do* conflict. With **one teacher per section** a section is charged to its own teacher only (nobody while its teacher is to be decided), and the assignment never chooses a teacher who would clash | `has_instructor_clash` / `count_instructor_clashes` / `move_introduces_instructor_clash` / `list_instructor_clashes` — `timetable_constraints.py`; flag `TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED` (**true**); assignment `section_teacher_assignment.py` |
+| H8 | **Instructor daily cap** | An instructor teaches **≤ 3 sessions/day** (lectures *and* labs count). A 4th is forbidden; the cap **wins against students**. With **one teacher per section** the cap is also hard inside the assignment, alongside **≤ 15 sessions a week** (nominal, from the budget pattern) and **D10**: a course running more than 3 sections gives one teacher at most 2 of them | `exceeds_instructor_daily_cap` / `count_instructor_daily_overloads` / `move_exceeds_instructor_daily_cap`; flags `TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED` (**true**), `TIMETABLE_INSTRUCTOR_DAILY_CAP` (**3**) |
 | H9 | **Room exclusivity** | No two meetings share a room at overlapping times | `detect_board_conflicts` → `room_clashes`; persist-time checks |
 | H10 | **Same-course separation** | Sibling sections of one course must **not overlap** in time | `has_same_course_overlap` / `move_introduces_same_course_overlap` — `timetable_constraints.py`, `timetable_same_course.py` |
 
@@ -96,7 +96,7 @@ strict quality-first.
 |---|---|---|
 | **Same-course same-day preference** | Sibling sections *prefer* the same day; a spread penalty prices deviation | `same_course_section_spread_penalty` |
 | **Back-to-back detection** | Adjacent sibling meetings scored separately | `is_back_to_back_gap`, `has_back_to_back_pair` |
-| **Instructor day compaction** | Post-build pass shrinking within-day instructor idle gaps, with layered student guards | `timetable_instructor_compaction.py`; flag `TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED` (**false**) |
+| **Instructor day compaction** | Post-build pass shrinking within-day instructor idle gaps, with layered student guards | `timetable_instructor_compaction.py`; flag `TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED` (**true**) |
 | **Warning-level overlap** | Sections sharing **1–19** students — flagged, does **not** block publish | `HARD_OVERLAP_THRESHOLD = 20` |
 
 > ✅ **Online sessions are excluded from gap terms** (positions 4 and 8). An online
@@ -134,7 +134,10 @@ reinstate the violation it just cleared.
 | `TIMETABLE_TIERED_SOFT_GAP_BUDGET` | **120** | position 4 trade |
 | `TIMETABLE_CAPACITY_BUFFER` | **1.1** | H12 room sizing |
 | `TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED` | **false** | position 8 (proven a no-op — see below) |
-| `TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED` | **false** | instructor compaction pass |
+| `TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED` | **true** | instructor compaction pass |
+| `TIMETABLE_ONE_TEACHER_PER_SECTION` | **false** | one teacher per section (or "to be decided"): H7/H8 charged per section, the 15-session weekly ceiling and D10; needs `TIMETABLE_INSTRUCTOR_LINKS_ENABLED`. Off: byte-identical to before |
+| `TIMETABLE_ONE_TEACHER_TIME_LIMIT_SECONDS` | **10** | wall budget of one whole assignment solve |
+| `TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME` | **1.0** | deterministic time of each of the assignment's lexicographic stages |
 
 ---
 

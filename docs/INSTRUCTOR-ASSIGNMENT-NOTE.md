@@ -101,9 +101,40 @@ suite green.
 ### Done since first cut
 - **Seed-from-advisor** — the create form pre-fills name/email/department from an existing
   `AcademicAdvisor` (`GET /ops/instructors/advisors/`).
-- **Editable workspace-drawer control** — the split-workspace placement drawer shows instructor
-  chips and an inline add/remove editor (`drawerSetInstructors` → `tw_section_instructors_set_view`),
-  reloading panes so clash badges recompute. Disabled on published scenarios.
+- **Workspace-drawer control (dead)** — the split-workspace placement drawer has an inline
+  add/remove editor (`drawerSetInstructors` → `tw_section_instructors_set_view`), but the board
+  payload never carried `instructors`, so it always showed "None" and edited nothing. With one
+  teacher per section on it is hidden; deleting it is a later clean-up.
+
+## One teacher per section (`TIMETABLE_ONE_TEACHER_PER_SECTION`, default off)
+
+`CourseInstructor` still says who *may* teach a course. With the flag on (it needs
+`TIMETABLE_INSTRUCTOR_LINKS_ENABLED`), each section is taught by exactly **one** of those
+teachers, or by nobody yet ("teacher to be decided", reported as missing coverage), and the
+planner charges clashes and the daily cap to that teacher only.
+
+- **Where the choice lives.** Scenario-scoped `SectionInstructor` rows. The engine writes rows
+  with source `engine`; any other primary row (`department`, `registrar`, ...) is a pin it never
+  overwrites, and `copied_frozen` is a copy's pin for a section the source did not own. A
+  section another scenario also places is frozen: it keeps its owner's teacher.
+- **Who picks it.** `core/services/section_teacher_assignment.py`, a staged CP-SAT solve
+  (fewest sections without a teacher, then the soft 12-session load, then fewer campus days,
+  then less idle, then stability). Hard: no clash, the daily cap, at most 15 sessions a week, and
+  D10 (a course with more than 3 sections gives one teacher at most 2 of them). Builds re-pick
+  with the board; Optimise Current starts from a re-pick bounded per teacher and keeps its end
+  re-pick only when it is no worse. Manual moves and repairs never re-pick.
+- **Link edits.** Adding, removing or deactivating a link writes nothing: a stored row that no
+  longer holds is ignored when the map is read, and the section gets a teacher it can have.
+- **Display.** The drawer shows the section's teacher (or "to be decided" with the reason); the
+  exports name it in the grid and the Instructors sheet; the run results and the quality panel
+  show how many sections have a teacher.
+- **Reconcile** (`course_assignment_reconcile_view`) writes the map's names into the meetings.
+  With the flag on it is refused (409) while a planner job holds the scenario or once it is
+  published.
+- **Ops note.** After switching the flag on, press **Reconcile** once per scenario, so the
+  readers that still use the meeting names (the split workspace's protected-instructor
+  hints and search, the grid's instructor line) catch up. The drawer, the badges, the
+  exports and the engine already read the map.
 - **Parity readers migrated** — `detect_board_conflicts` (`timetable_workspace.py`) and
   `_section_instructor_policy` (`timetable_repair_eligibility.py`) now group by the linked
   instructor ids when `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` is on (per section: links-or-free-text,
