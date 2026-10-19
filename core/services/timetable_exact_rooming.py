@@ -60,6 +60,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 from django.conf import settings
 
@@ -548,7 +549,8 @@ def _solve_relaxed(
     if kept:
         # One phase, two levels: the weight exceeds every possible tie-break
         # total, so the unroomed count (and its proof) is exactly the same.
-        count_expr = (len(kept) + 1) * unroomed_expr + sum(1 - roomed[k] for k in kept)
+        flags = cast("dict[str, Any]", roomed)
+        count_expr = (len(kept) + 1) * unroomed_expr + sum(1 - flags[k] for k in kept)
     else:
         count_expr = unroomed_expr
     shortfall_expr = sum(
