@@ -55,13 +55,20 @@ def _persist_exact_room_result(
             replacement[field] == row[field] for field in ("day", "start_time", "end_time", "room")
         ):
             continue
-        if row["is_locked"] or row["term_section_id"] in external_ids:
-            # An empty locked room is itself frozen, including its representation.
-            if (day, start, end) == (row["day"], row["start_time"], row["end_time"]) and (
-                not assignments[pk] and row["room"] in {"", "UNASSIGNED"}
-            ):
+        same_slot = (day, start, end) == (row["day"], row["start_time"], row["end_time"])
+        unroomed_as_before = not assignments[pk] and row["room"] in {"", "UNASSIGNED"}
+        if row["term_section_id"] in external_ids:
+            # Another scenario owns this meeting: its time and room are frozen,
+            # though an empty room keeps its own representation.
+            if same_slot and unroomed_as_before:
                 continue
-            raise ValueError("Recovery attempted to alter a locked or externally owned placement")
+            raise ValueError("Recovery attempted to alter an externally owned placement")
+        if row["is_locked"]:
+            # A lock freezes the meeting's time; only its room may change.
+            if not same_slot:
+                raise ValueError("Recovery attempted to move a locked placement's time")
+            if unroomed_as_before:
+                continue
         changed.append(replacement)
     if changed:
         # A delete/recreate with the same PK still SET_NULLs repair-run and
@@ -166,19 +173,18 @@ def _sync_recovered_meetings(
     changes: dict[tuple[int, str, int, int], tuple[str, str, str, str]] = {}
     for pid, slot in room_result["candidate_placements_by_id"].items():
         row = originals[pid]
-        target = (*slot, room_result["assignment_by_placement_id"][pid] or "UNASSIGNED")
-        if (
-            row["is_locked"]
-            or row["term_section_id"] in external_ids
-            or target
-            == (
-                row["day"],
-                row["start_time"],
-                row["end_time"],
-                row["room"],
-            )
-        ):
+        assigned = room_result["assignment_by_placement_id"][pid]
+        target = (*slot, assigned or "UNASSIGNED")
+        original_slot = (row["day"], row["start_time"], row["end_time"])
+        if row["term_section_id"] in external_ids or target == (*original_slot, row["room"]):
             continue
+        if row["is_locked"]:
+            # Mirror the placement writer: a locked time never moves, and an
+            # empty locked room keeps its representation.
+            if tuple(slot) != original_slot:
+                raise ExactRoomingError("Recovery attempted to move a locked meeting's time")
+            if not assigned and row["room"] in {"", "UNASSIGNED"}:
+                continue
         source_key = key(row)
         if source_key in changes and changes[source_key] != target:
             raise ExactRoomingError("Shared recovery meeting has inconsistent final slots or rooms")

@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from typing import Any
 
 from django.db import transaction
 
@@ -227,15 +228,34 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         )
 
     rooms_before = physical_unassigned(placements)
-    locked_before = list(
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
-        .order_by("pk")
-        .values()
-    )
-    locked_ts_ids = {p["term_section_id"] for p in locked_before}
-    locked_meetings_before = list(
-        TermSectionMeeting.objects.filter(term_section_id__in=locked_ts_ids).order_by("pk").values()
-    )
+
+    # A lock freezes times and meeting assignments, not rooms: rooming may
+    # legitimately re-room a locked meeting (and stamp the row's updated_at).
+    def locked_snapshot(
+        term_section_ids: set[Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[Any]]:
+        rows = [
+            {k: v for k, v in row.items() if k not in ("room", "updated_at")}
+            for row in SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id, is_locked=True
+            )
+            .order_by("pk")
+            .values()
+        ]
+        ts_ids = (
+            {row["term_section_id"] for row in rows}
+            if term_section_ids is None
+            else term_section_ids
+        )
+        meetings = [
+            {k: v for k, v in row.items() if k != "room"}
+            for row in TermSectionMeeting.objects.filter(term_section_id__in=ts_ids)
+            .order_by("pk")
+            .values()
+        ]
+        return rows, meetings, ts_ids
+
+    locked_before, locked_meetings_before, locked_ts_ids = locked_snapshot()
 
     # ── Metrics ──
     def evaluate():
@@ -904,16 +924,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 .select_related("board", "term_section")
             )
             candidate_rooms = physical_unassigned(candidate_rows)
-            locked_after = list(
-                SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
-                .order_by("pk")
-                .values()
-            )
-            locked_meetings_after = list(
-                TermSectionMeeting.objects.filter(term_section_id__in=locked_ts_ids)
-                .order_by("pk")
-                .values()
-            )
+            locked_after, locked_meetings_after, _ = locked_snapshot(locked_ts_ids)
             candidate_locked_preserved = (
                 locked_after == locked_before and locked_meetings_after == locked_meetings_before
             )

@@ -58,7 +58,9 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 from django.conf import settings
 
@@ -78,7 +80,8 @@ from core.services.timetable_rooming import (
 
 logger = logging.getLogger(__name__)
 
-#: ``_solve_relaxed`` pins each solved objective phase with one constraint.
+#: ``_solve_relaxed`` pins each solved objective phase with one constraint
+#: (plus one for the optional ``keep_roomed`` tie-break phase).
 _MAX_PHASE_PINS = 4
 
 
@@ -391,13 +394,15 @@ def build_meeting_demands(
 def _greedy_room_assignment(
     demands: list[MeetingDemand],
     capacity_by_code: dict[str, int],
+    keep_roomed: Collection[str] = (),
 ) -> dict[str, str]:
     """Deterministic first-fit warm start: best-fit room free at each interval.
 
     Meetings are taken largest-demand-first (best-fit-decreasing); each takes the
     smallest compatible room that is big enough and free, else the largest
     compatible room still free, else it stays unroomed. Used both as a CP-SAT hint
-    and as a total fallback so the pass never returns nothing.
+    and as a total fallback so the pass never returns nothing. ``keep_roomed``
+    meetings first keep their incumbent room, so the fallback honours them too.
     """
     busy: dict[str, list[tuple[int, int]]] = defaultdict(list)  # room -> [(start,end)]
 
@@ -405,7 +410,18 @@ def _greedy_room_assignment(
         return all(not (start < e and s < end) for (s, e) in busy[f"{room}#{day}"])
 
     assignment: dict[str, str] = {}
+    for d in sorted(demands, key=lambda x: x.demand_id):
+        room = d.incumbent_room
+        if (
+            d.demand_id in keep_roomed
+            and room in d.compatible_rooms
+            and free(room, d.day, d.start_min, d.end_min)
+        ):
+            assignment[d.demand_id] = room
+            busy[f"{room}#{d.day}"].append((d.start_min, d.end_min))
     for d in sorted(demands, key=lambda x: (-x.required_capacity, x.demand_id)):
+        if d.demand_id in assignment:
+            continue
         candidates = sorted(d.compatible_rooms, key=lambda r: (capacity_by_code[r], r))
         big_enough = [r for r in candidates if capacity_by_code[r] >= d.required_capacity]
         big_set = set(big_enough)
@@ -425,6 +441,7 @@ def _solve_relaxed(
     time_limit_seconds: float,
     strict_budget: bool = False,
     count_only: bool = False,
+    keep_roomed: Collection[str] = (),
 ) -> RelaxedRoomResult:
     """Fixed-time room assignment that may leave a meeting unroomed (total, exact).
 
@@ -445,6 +462,12 @@ def _solve_relaxed(
     objective: the returned assignment remains valid, and
     ``unroomed_proven_optimal`` reports its count proof, while
     ``proven_optimal`` remains false for the complete four-part objective.
+
+    ``keep_roomed`` meetings win ties: the unroomed count is solved, proven and
+    pinned first, then a further phase minimises how many of these meetings end
+    unroomed (any compatible room keeps one), so it never trades the count. The
+    warm start seats them in their incumbent rooms first unless that leaves more
+    meetings unroomed.
     """
     from time import monotonic
 
@@ -457,7 +480,15 @@ def _solve_relaxed(
     if len({d.demand_id for d in demands}) != len(demands):
         raise ExactRoomingError("Duplicate demand_id: meeting identity is not unique.")
 
+    keep = frozenset(keep_roomed)
+    kept_ids = [d.demand_id for d in demands if d.demand_id in keep]
     greedy = _greedy_room_assignment(demands, capacity_by_code)
+    if kept_ids:
+        # The warm start is also the fallback: seat kept meetings first only
+        # when that leaves no more meetings unroomed than the plain greedy.
+        kept_first = _greedy_room_assignment(demands, capacity_by_code, keep)
+        if len(kept_first) >= len(greedy):
+            greedy = kept_first
 
     def greedy_result(status: str) -> RelaxedRoomResult:
         roomed = [d for d in demands if d.demand_id in greedy]
@@ -516,13 +547,17 @@ def _solve_relaxed(
                     model.add(assign[(left.demand_id, room)] + assign[(right.demand_id, room)] <= 1)
         # Each phase below pins its objective with one more constraint. Admit the
         # model only if those pins fit too, so no budget check fires mid-solve.
-        if 0 < model.budget < model.elements + _MAX_PHASE_PINS:
+        if 0 < model.budget < model.elements + _MAX_PHASE_PINS + bool(kept_ids):
             raise ModelTooLarge(model.budget)
     except ModelTooLarge as exc:
         logger.warning("Exact rooming not solved: %s", exc)
         return greedy_result("UNKNOWN")
 
     unroomed_expr = sum(1 - roomed[d.demand_id] for d in demands)
+    flags = cast("dict[str, Any]", roomed)
+    # Tie-break phase, solved only after the unroomed count is pinned: it can
+    # never trade the count, and the count proof comes from phase one alone.
+    kept_phase = (sum(1 - flags[k] for k in kept_ids),) if kept_ids else ()
     shortfall_expr = sum(
         assign[(d.demand_id, room)] * max(0, d.required_capacity - capacity_by_code[room])
         for d in demands
@@ -543,9 +578,9 @@ def _solve_relaxed(
     # lower-priority refinement is unnecessary in its repeated candidate loop.
     # Existing preview/apply callers retain the full lexicographic solve.
     phases = (
-        (unroomed_expr,)
+        (unroomed_expr, *kept_phase)
         if count_only
-        else (unroomed_expr, shortfall_expr, changes_expr, excess_expr)
+        else (unroomed_expr, *kept_phase, shortfall_expr, changes_expr, excess_expr)
     )
     phase_limit = max(1.0, time_limit_seconds / len(phases))
     proofs: list[bool] = []

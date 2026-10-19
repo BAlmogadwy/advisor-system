@@ -29,13 +29,14 @@ The follow-up adds `timetable_secondary_recovery.py` and its atomic runner after
 the teacher passes. It recovers soft-course seats and physical room coverage
 inside per-teacher day/idle ceilings, protects both secondary counts, then
 polishes student gaps without losing recovered seats. Room evaluation uses strict
-per-meeting exact assignment, including capacity buffer, locks, gender and
-department eligibility. Count-only solves share the exact model and distinguish
+per-meeting exact assignment, including capacity buffer, locked times,
+externally owned rooms, gender and department eligibility (a lock never freezes
+a room). Count-only solves share the exact model and distinguish
 count proofs from full lexicographic proofs. Actual shortages include assigned
 rooms that are undersized; the old blank-room count understated shortages.
 Targeting follows congested room components and their blockers, including
 unlinked teachers' sections, rather than wasting searches on capacity-impossible
-meetings. Persistence preserves placement/meeting identities, locked metadata
+meetings. Persistence preserves placement/meeting identities, locked times
 and unchanged meetings; local rollback retains preceding mandatory repairs.
 `TIMETABLE_SECONDARY_RECOVERY_ENABLED` defaults on with 45 seconds/12 recovery
 iterations and bounded polishing in the same remaining budget. Turning off

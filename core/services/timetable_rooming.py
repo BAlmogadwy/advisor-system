@@ -609,8 +609,9 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
 
     Assigns rooms to ``SectionPlacement`` rows on the board that currently
     have an empty ``room`` field. Uses greedy best-fit per (day, start_time)
-    slot. When ``respect_locked`` is true, locked placements are treated as
-    fixed and are not assigned/repaired.
+    slot. Rooming never moves a time, and a lock freezes only the time, so
+    locked placements are roomed like any other; ``respect_locked`` is kept
+    for call compatibility. Externally owned sections are never re-roomed.
 
     Returns ``{assigned: int, unassigned: int}``.
     """
@@ -766,7 +767,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         for p in placements
         if (
             not is_room_exempt_placement(p)
-            and (p.term_section_id in external_ids or (respect_locked and p.is_locked))
+            and p.term_section_id in external_ids
             and (not p.room or p.room == "UNASSIGNED")
         )
     )
@@ -776,7 +777,7 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
         if (
             not is_room_exempt_placement(p)
             and (not p.room or p.room == "UNASSIGNED")
-            and not (p.term_section_id in external_ids or (respect_locked and p.is_locked))
+            and p.term_section_id not in external_ids
         )
     ]
     unassigned_placements.sort(

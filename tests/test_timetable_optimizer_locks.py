@@ -122,7 +122,8 @@ def test_locked_section_ids_freeze_whole_section_when_one_meeting_is_locked() ->
 
 
 @pytest.mark.django_db
-def test_optimiser_rooming_respects_locked_unassigned_rooms() -> None:
+def test_optimiser_rooming_rooms_locked_unassigned_meeting_without_moving_it() -> None:
+    """A lock freezes the time, not the room (BOARD-PERSISTENCE-DOR lock contract)."""
     scenario = TimetableScenario.objects.create(academic_year="1448", term="1", name="room lock")
     board = DeliveryBoard.objects.create(
         scenario=scenario,
@@ -168,9 +169,11 @@ def test_optimiser_rooming_respects_locked_unassigned_rooms() -> None:
     result = assign_rooms_to_board(board.id, respect_locked=True)
 
     placement.refresh_from_db()
-    assert placement.room == "UNASSIGNED"
-    assert result["assigned"] == 0
-    assert result["locked_skipped"] == 1
+    assert placement.room == "AI-101"
+    assert (placement.day, placement.start_time, placement.end_time) == ("SUN", "09:00", "10:15")
+    assert placement.is_locked is True
+    assert result["assigned"] == 1
+    assert result["locked_skipped"] == 0
 
 
 @pytest.mark.django_db

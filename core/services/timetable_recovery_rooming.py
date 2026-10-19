@@ -2,7 +2,8 @@
 
 The factory reads the scenario once. Candidate evaluation is pure: it uses the
 existing exact per-meeting solver with hard buffered-capacity domains, reserves
-locked rooms, and returns the exact assignment that persistence must apply.
+externally owned rooms, and returns the exact assignment that persistence must
+apply. A user lock freezes a section's meeting times, never its room.
 """
 
 from __future__ import annotations
@@ -46,9 +47,10 @@ def _hhmm(minutes: int) -> str:
 class RecoveryRoomEvaluator:
     """In-memory room oracle. Room demand and modality come from the snapshot.
 
-    Any actual placement lock freezes that section's meeting times; only the
-    locked physical meeting's room is frozen. Invalid locked rooms are retained
-    in the output and reported as shortages, rather than silently repaired.
+    ``frozen_section_ids`` freeze meeting times only. ``locked_rooms_by_placement``
+    pins rooms owned by another scenario (and freezes their times too); an
+    invalid pinned room is retained in the output and reported as a shortage,
+    rather than silently repaired.
     """
 
     def __init__(
@@ -225,12 +227,21 @@ class RecoveryRoomEvaluator:
             )
             for d in free
         ]
+        # A user lock lets a meeting change room. The unroomed count is still
+        # minimised exactly, but on a tie a locked meeting already in a valid
+        # room keeps a room rather than losing it to an unlocked one.
         solve = _solve_relaxed(
             constrained,
             self.capacities,
             time_limit_seconds=self.time_limit_seconds,
             strict_budget=True,
             count_only=self.count_only,
+            keep_roomed={
+                d.demand_id
+                for d in constrained
+                if self.section_ids[d.term_section_id] in self.locked_sections
+                and d.incumbent_room in d.compatible_rooms
+            },
         )
         # Each solve leaves a dead CP-SAT model in reference cycles. Recovery runs
         # one per candidate, and until the cyclic collector gets to them they piled
@@ -339,8 +350,11 @@ def build_recovery_room_evaluator(
         ts = p.term_section
         section_ids[ts.id] = f"{ts.course_key or ts.course_code}_{ts.section}"
         credits[ts.id] = _budget_value_for_placement(p, maps, "credit", 3)
-        if p.is_locked or p.term_section_id in external_ids:
+        # A user lock protects the section's times; its room stays assignable.
+        # Another scenario owns an external section, so its room is pinned too.
+        if p.term_section_id in external_ids:
             locked[p.id] = p.room or ""
+        if p.is_locked or p.term_section_id in external_ids:
             frozen_sections.add(section_ids[ts.id])
     return RecoveryRoomEvaluator(
         demands,
