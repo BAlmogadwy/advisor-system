@@ -317,15 +317,17 @@ def test_greedy_queues_repairs_with_their_own_failure_and_keyed_demand(monkeypat
     board = DeliveryBoard.objects.create(
         scenario=scenario, label="RQ", program="RQ", display_order=1
     )
+    # Two sections, so two meetings (on two days: one slot a day, and sibling
+    # sections never overlap) are queued, each with its own failure record.
     ScenarioSectionBudget.objects.create(
         scenario=scenario,
         course_key=PROG_II,
         course_code="CS112",
         department="RQ",
         credit_hours=1,
-        planned_sections=1,
+        planned_sections=2,
         max_per_section=30,
-        total_demand=30,
+        total_demand=60,
     )
     # Only a lab exists, so every lecture meeting is left UNASSIGNED and queued.
     Room.objects.create(
@@ -344,10 +346,18 @@ def test_greedy_queues_repairs_with_their_own_failure_and_keyed_demand(monkeypat
     auto_place_board(board.id)
 
     records = captured["records"]
-    assert records
+    assert len(records) >= 2
+    assert len({(record["day"], record["start"]) for record in records}) == len(records)
+    # Each queued meeting carries the record ITS failure raised -- not another
+    # meeting's -- so a rescue prunes exactly that one.
+    assert len({id(record["failure"]) for record in records}) == len(records)
     placement = SectionPlacement.objects.filter(board=board).first()
     for record in records:
         assert any(record["failure"] is failure for failure in captured["failures"])
+        assert (record["failure"]["day"], record["failure"]["start_time"]) == (
+            record["day"],
+            record["start"],
+        )
         assert _budget_value_for_placement(placement, record["budget_map"], "raw", 0) == 30
 
 
