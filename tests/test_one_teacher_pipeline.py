@@ -329,6 +329,49 @@ def test_i9_the_final_repick_is_rejected_when_it_costs_a_teacher_and_kept_otherw
     ) == {"Dr A"}
 
 
+def _enrol(sc, course_key: str, count: int = 3) -> None:
+    """Students who take ``course_key`` only, so Optimise Current has a board to
+    judge and no reason to move it."""
+    from core.models import ScenarioStudentCourseRequest, Student
+
+    for n in range(count):
+        Student.objects.create(
+            student_id=8_100_000 + n, program="AI", section="M", gpa=3.0, total_earned_credits=60
+        )
+        ScenarioStudentCourseRequest.objects.create(
+            scenario=sc,
+            student_id=8_100_000 + n,
+            course_key=course_key,
+            course_code=course_key.split("::", 1)[0],
+            course_name=course_key,
+        )
+
+
+@pytest.mark.django_db
+def test_c5_optimise_current_starts_from_a_bounded_repick(flags) -> None:
+    """C5 through the runner. Unbounded, the run-start re-pick would hand X to
+    Dr A (Dr B saves a day, Dr A gains 285 idle minutes) and the run would be
+    rolled back for Dr A's week; bounded by each teacher's saved week it keeps
+    X with Dr B, and the run keeps its work."""
+    flags.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    sc, x, _a, _b = _cross_and_pinned()
+    _enrol(sc, x)
+
+    result = _current_run(sc)
+
+    assert "error" not in result
+    assert result["safety_blocked"] is False
+    run_start = result["section_teachers"]["run_start"]
+    assert run_start["changed_sections"] == []
+    assert engine_rows(sc) == {(x, "S1"): "Dr B"}
+    # Each stage records the solver's own report (5.4), not the stored map's.
+    assert run_start["report"]["engine"] == "cpsat"
+    assert run_start["report"]["bounded"] is True and run_start["report"]["stages"]
+    final = result["section_teachers"]["final"]
+    assert final["report"]["engine"] == "cpsat" and final["report"]["stages"]
+    assert final["coverage"] == result["section_teachers"]["coverage"]
+
+
 @pytest.mark.django_db
 def test_i12_coverage_is_reported_and_a_tbd_rise_rolls_back(flags, monkeypatch) -> None:
     import dataclasses

@@ -347,6 +347,7 @@ class _RunTeachers:
         write_names(self.scenario_id, self.start)
         self.report["run_start"] = stage_report(
             self.start,
+            solver=proposed,
             persist=persisted,
             changed_sections=sorted(
                 key

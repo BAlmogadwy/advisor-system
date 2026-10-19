@@ -1491,10 +1491,15 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
     }
 
 
-def stage_report(assignment: TeacherAssignment, **extra: Any) -> dict:
+def stage_report(
+    assignment: TeacherAssignment, *, solver: TeacherAssignment | None = None, **extra: Any
+) -> dict:
     """One run stage's record in ``result["section_teachers"]``: how the map was
-    chosen (solver report) and what it covers."""
-    report = {k: v for k, v in (assignment.report or {}).items() if k != "tbd_blockers"}
+    chosen and what it covers. ``solver`` is the solve behind a map that was
+    stored and read back (whose own report only says ``"stored"``): its stages,
+    proof and fallback reason are the record; the coverage is the stored map's."""
+    source = solver if solver is not None else assignment
+    report = {k: v for k, v in (source.report or {}).items() if k != "tbd_blockers"}
     return {"report": report, "coverage": coverage_of(assignment), **extra}
 
 

@@ -1206,6 +1206,7 @@ def _final_teacher_recompute(scenario_id: int, in_force, *, bounds=None, gate=No
     changed = stored.v2_map() != in_force.v2_map()
     final = _teacher_stage(
         stored,
+        solver=proposed,
         adopted=reason == "adopted",
         reason=reason,
         persist=persisted,
