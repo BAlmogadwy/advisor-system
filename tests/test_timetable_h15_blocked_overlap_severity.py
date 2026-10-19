@@ -149,8 +149,8 @@ def _exported_overlap_lines(board) -> list[tuple[str, str]]:
 
     exported = export_scenario_xlsx(board.scenario_id)
     try:
-        sheet = load_workbook(exported)[board.label]
-        return [
+        sheet = load_workbook(exported)[f"Term {board.nominal_term}"]
+        lines = [
             (str(cell.value), str(cell.font.color.rgb)[-6:])
             for row in sheet.iter_rows()
             for cell in row
@@ -158,30 +158,38 @@ def _exported_overlap_lines(board) -> list[tuple[str, str]]:
         ]
     finally:
         exported.unlink(missing_ok=True)
+    # The heading first; the overlaps under it in whatever order they were found.
+    return lines[:1] + sorted(lines[1:])
+
+
+CRITICAL_LINE = ("OVERLAP: AI201-S1 vs MATH201-S1", "C03030")
+WARNING_LINE = ("OVERLAP (non-blocking): AI201-S1 vs MATH201-S1", "D97706")
+MIXED_WARNING_LINE = ("OVERLAP (non-blocking): CS301-S1 vs CS302-S1", "D97706")
 
 
 @pytest.mark.parametrize(
-    "sibling, expected",
+    "case, expected",
     [
-        (
-            True,
-            [
-                ("Conflicts:", "D97706"),
-                ("OVERLAP (non-blocking): AI201-S1 vs MATH201-S1", "D97706"),
-            ],
-        ),
-        (False, [("Conflicts:", "C03030"), ("OVERLAP: AI201-S1 vs MATH201-S1", "C03030")]),
+        ("warning_only", [("Conflicts:", "D97706"), WARNING_LINE]),
+        ("critical_only", [("Conflicts:", "C03030"), CRITICAL_LINE]),
+        # One critical conflict makes the heading red even beside a warning.
+        ("critical_and_warning", [("Conflicts:", "C03030"), CRITICAL_LINE, MIXED_WARNING_LINE]),
     ],
 )
-def test_export_board_sheet_writes_each_overlap_at_its_own_severity(sibling, expected) -> None:
+def test_export_board_sheet_writes_each_overlap_at_its_own_severity(case, expected) -> None:
     board = _board()
     _need_both(board, 25)
     _place(board, NETS, "S1", "SUN")
     _place(board, ALGEBRA, "S1", "SUN")
-    if sibling:
+    if case == "warning_only":
         _place(board, NETS, "S2", "MON")
+    if case == "critical_and_warning":
+        _need(board, ("CS301::ALPHA", "CS302::BETA"), 25)
+        _place(board, "CS301::ALPHA", "S1", "TUE")
+        _place(board, "CS302::BETA", "S1", "TUE")
+        _place(board, "CS301::ALPHA", "S2", "WED")
 
-    assert _exported_overlap_lines(board) == expected
+    assert _exported_overlap_lines(board) == expected[:1] + sorted(expected[1:])
 
 
 def test_same_course_overlap_stays_critical_and_blocks_publish() -> None:
