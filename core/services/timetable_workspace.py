@@ -427,7 +427,10 @@ def detect_board_conflicts(board_id: int) -> dict:
     link_map: dict[str, set] = {}
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
-        board_courses = {item.course_code for item in items}
+        # Demand rows are keyed by the planner identity ("CS112::PROGRAMMING_II"),
+        # so the matrix must be too: display codes match no row, which left the
+        # matrix empty and every cross-course student overlap invisible.
+        board_courses = {item.course_key for item in items}
         overlap_matrix = build_overlap_matrix(board.scenario_id, board_courses)
         if is_instructor_links_enabled():
             link_map = build_section_instructor_ids(board.scenario)
@@ -493,6 +496,7 @@ def detect_board_conflicts(board_id: int) -> dict:
                         ],
                         "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
                         "severity": "critical" if is_critical else "warning",
+                        "same_course": same_course,
                         "shared_students": shared if not same_course else None,
                     }
                 )
@@ -3016,13 +3020,16 @@ def compute_affected_students(board_id: int) -> dict:
     For every pair of overlapping placements (detected by
     :func:`detect_board_conflicts`):
 
-    1. Extract the two course codes from the ``"CS101-A"`` labels.
+    1. Take the two planner course keys of the overlap (``"CS101-A"``
+       labels are only a fallback for rows without keys).
     2. Use canonical scenario course requests to find students
        who need *both* courses -- these are the "affected" students.
-    3. Search for **alternative sections** of either course that do not
-       overlap with the *other* placement's time slot.  If at least one
-       alternative exists, the overlap is "resolvable"; otherwise
-       affected students are "blocked" (no schedule exists for them).
+    3. Search for **alternative sections** of either course (any other
+       placed section of the same planner course, including siblings on
+       this board) that do not overlap with the *other* placement's time
+       slot.  If at least one alternative exists, the overlap is
+       "resolvable"; otherwise affected students are "blocked" (no
+       schedule exists for them).
 
     Parameters:
         board_id: PK of the ``DeliveryBoard``.
@@ -3062,6 +3069,8 @@ def compute_affected_students(board_id: int) -> dict:
         }
 
     all_placements = _load_board_placements(board_id)
+    from django.db.models import Q
+
     from core.models import TermSectionMeeting as TSM
 
     # Precompute course->students map from canonical scenario demand.
@@ -3077,11 +3086,28 @@ def compute_affected_students(board_id: int) -> dict:
                 code = sec.rsplit("-", 1)[0] if "-" in sec else sec
                 overlap_courses.add(code)
 
+    scenario_ts_ids: set[int] = set()
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
         course_students_map = build_course_students_map(board.scenario_id, overlap_courses)
+        # Alternative sections are scoped to this scenario's placed sections
+        # (not all TermSections globally).
+        scenario_ts_ids = set(
+            SectionPlacement.objects.filter(board__scenario_id=board.scenario_id).values_list(
+                "term_section_id", flat=True
+            )
+        )
     except DeliveryBoard.DoesNotExist:
         course_students_map = {}
+
+    def _other_sections(course_key: str, clashing_ts_id: int | None):
+        # Matched by planner identity (a display code can name two courses).
+        # Sibling sections on this board count -- a term board holds every
+        # section of its courses -- so only the clashing section is excluded.
+        return TermSection.objects.filter(
+            Q(course_key=course_key) | Q(course_key="", course_code=course_key),
+            id__in=scenario_ts_ids,
+        ).exclude(id=clashing_ts_id)
 
     total_affected = 0
     total_blocked = 0
@@ -3122,31 +3148,23 @@ def compute_affected_students(board_id: int) -> dict:
             continue
 
         # --- Alternative-section search ---
-        # If we can find at least one *unplaced* section of course_a
+        # If we can find at least one other placed section of course_a
         # whose meetings do not overlap with placement_b (or vice versa),
         # then the conflict is "resolvable" -- the student could be moved
         # to the alternative section.
 
-        # Retrieve the bitmasks of the two conflicting placements.
+        # Retrieve the bitmasks and sections of the two conflicting placements.
         mask_a = 0
         mask_b = 0
+        ts_a = ts_b = None
         for p in all_placements:
             if p.id == ids[0]:
-                mask_a = p.mask
+                mask_a, ts_a = p.mask, p.term_section_id
             elif p.id == ids[1]:
-                mask_b = p.mask
+                mask_b, ts_b = p.mask, p.term_section_id
 
         # Alternative sections for course_a that don't clash with placement_b
-        # Scoped to this scenario's boards (not all TermSections globally)
-        scenario_boards = DeliveryBoard.objects.filter(scenario=board.scenario)
-        scenario_ts_ids = set(
-            SectionPlacement.objects.filter(board__in=scenario_boards).values_list(
-                "term_section_id", flat=True
-            )
-        )
-        alt_a_sections = TermSection.objects.filter(
-            course_code=code_a, id__in=scenario_ts_ids
-        ).exclude(id__in=[p.term_section_id for p in all_placements if p.course_code == code_a])
+        alt_a_sections = _other_sections(code_a, ts_a)
         has_alt_a = False
         for alt_ts in alt_a_sections:
             alt_meetings = TSM.objects.filter(term_section=alt_ts)
@@ -3158,9 +3176,7 @@ def compute_affected_students(board_id: int) -> dict:
                 break
 
         # Alternative sections for course_b that don't clash with placement_a
-        alt_b_sections = TermSection.objects.filter(
-            course_code=code_b, id__in=scenario_ts_ids
-        ).exclude(id__in=[p.term_section_id for p in all_placements if p.course_code == code_b])
+        alt_b_sections = _other_sections(code_b, ts_b)
         has_alt_b = False
         for alt_ts in alt_b_sections:
             alt_meetings = TSM.objects.filter(term_section=alt_ts)
@@ -3519,10 +3535,17 @@ def compute_scenario_safety_summary(
     )
     online_lookup = OnlineCourseLookup()
     budget = compute_scenario_budget(scenario_id)
-    same_board = {"overlaps": 0, "instructors": 0, "rooms": 0}
+    # ``same_course_overlaps`` is the hard part of ``overlaps``: two sections of
+    # one course at once. The rest are cross-course overlaps counted from course
+    # demand (students who need both courses, not students seated in both
+    # sections), which the optimiser's student-outcome gate judges instead.
+    same_board = {"overlaps": 0, "same_course_overlaps": 0, "instructors": 0, "rooms": 0}
     for board in boards:
         conflicts = board_conflicts_by_id.get(board.id) or detect_board_conflicts(board.id)
         same_board["overlaps"] += len(conflicts.get("overlaps", []))
+        same_board["same_course_overlaps"] += sum(
+            1 for overlap in conflicts.get("overlaps", []) if overlap.get("same_course")
+        )
         same_board["instructors"] += len(conflicts.get("instructor_clashes", []))
         same_board["rooms"] += len(conflicts.get("room_clashes", []))
 

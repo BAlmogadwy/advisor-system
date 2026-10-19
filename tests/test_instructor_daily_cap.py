@@ -590,11 +590,22 @@ class _FakeSnapshot:
 
 
 _CLEAN_SAFETY = {
-    "same_board_conflicts": {"overlaps": 0, "instructors": 0, "rooms": 0},
+    "same_board_conflicts": {
+        "overlaps": 0,
+        "same_course_overlaps": 0,
+        "instructors": 0,
+        "rooms": 0,
+    },
     "instructor_clashes_scenario": 0,
 }
+# A same-course overlap: the only kind of same-board overlap the gate counts.
 _OVERLAP_SAFETY = {
-    "same_board_conflicts": {"overlaps": 1, "instructors": 0, "rooms": 0},
+    "same_board_conflicts": {
+        "overlaps": 1,
+        "same_course_overlaps": 1,
+        "instructors": 0,
+        "rooms": 0,
+    },
     "instructor_clashes_scenario": 0,
 }
 
@@ -620,15 +631,15 @@ def _wire_runner(monkeypatch, summaries, opt_result):
 @pytest.mark.django_db
 def test_safety_gate_exempts_a_mandatory_repair_overlap(monkeypatch) -> None:
     """The cap is a hard rule that WINS against students, so a repair which accepts
-    a warning-level cross-course overlap as the least-harm way to relocate an
-    over-cap session must NOT be rolled back by the safety gate — rolling back
+    an overlap as the least-harm way to relocate an over-cap session must NOT be
+    rolled back by the safety gate — rolling back
     would reinstate the very violation the repair cleared. The gate judges the
     board the OPTIMISER produced (safety_before_instructor_passes), not the
     post-repair board.
     """
     from core.services.timetable_v2_runner import run_v2_optimisation_guarded
 
-    # before = clean; after = the repair added one warning overlap. A third copy
+    # before = clean; after = the repair added one overlap. A third copy
     # covers the pre-fix code path (which would roll back and re-read the summary),
     # so this guard fails on the clean assertion rather than a StopIteration.
     restored = _wire_runner(

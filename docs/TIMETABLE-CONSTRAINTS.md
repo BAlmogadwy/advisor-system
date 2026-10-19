@@ -51,6 +51,13 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 
 > **Publish gate:** `critical = len(overlaps) + len(instructor_clashes)`;
 > `warning = len(room_clashes)`. Critical blocks publication.
+>
+> **H15 counts course demand, keyed by planner identity.** "Share" means students
+> who *need both courses* (`CS112::PROGRAMMING_II`, never the bare display code,
+> which can name two courses), not students seated in both sections, so with
+> sibling sections it is an upper bound. The optimiser's rollback gate therefore
+> counts only the same-course part of H15 (`same_course_overlaps`); the real cost
+> of a cross-course overlap is what the student-outcome gate measures.
 
 ---
 
