@@ -377,11 +377,15 @@ placement without `override`, keeping the lock; any time change still returns
 same-scenario copy at that slot that was in the same room, plus a
 scenario-owned section's meeting rows in that room (merging a row the new room
 would duplicate); a copy already in another room is left alone, so undo
-restores every row exactly. Bulk clean rooms now rooms locked unroomed rows in
-place, and `shared_sections --apply` gives a locked copy that already meets at
-the canonical times the canonical room (never an unroomed one). Externally
-owned sections stay fully frozen on all three paths: the move endpoint returns
-409 `PLACEMENT_EXTERNALLY_OWNED`, bulk clean rooms skips them, and the
-canonicaliser skips the whole section and says so in its dry run and summary.
+restores every row exactly unless the new room was one such a copy already
+held. Bulk clean rooms now rooms locked unroomed rows in place and rooms the
+unroomed copies of a shared class together, in one room whose department suits
+every board, so undo and redo stay exact. `shared_sections --apply` gives a
+locked copy that already meets at the canonical times the canonical room (never
+an unroomed one). Externally owned sections stay fully frozen on every manual
+path: the move and pattern-switch endpoints return 409
+`PLACEMENT_EXTERNALLY_OWNED`, bulk clean rooms and bulk safe time moves skip
+them, and the canonicaliser skips the whole section and says so in its dry run
+and summary.
 The split and classic lock buttons explain the rule in English and Arabic.
 `tests/test_timetable_manual_locked_room_edit.py` covers the endpoint.

@@ -478,3 +478,25 @@ def test_english_is_excluded_from_bulk_room_and_missing_room_actions(context):
         row["kind"] in {"unassigned_room", "room_clash"}
         for row in build_scenario_builder_actions(context[0].id)["actions"]
     )
+
+
+def test_switch_route_refuses_a_section_another_scenario_also_places(context, http):
+    rows = bundle(context)
+    owner = TimetableScenario.objects.create(
+        academic_year="1448", term="1", gender="M", programs=["AI"], name="Owner"
+    )
+    owner_board = DeliveryBoard.objects.create(
+        scenario=owner, label="Owner", nominal_term=1, program="AI"
+    )
+    SectionPlacement.objects.create(
+        board=owner_board,
+        term_section=context[2],
+        day=rows[0].day,
+        start_time=rows[0].start_time,
+        end_time=rows[0].end_time,
+    )
+    before = list(SectionPlacement.objects.order_by("pk").values())
+    response = post(http, f"/ops/tw/placements/{rows[0].id}/switch-pattern/", {"pattern_id": PM})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PLACEMENT_EXTERNALLY_OWNED"
+    assert list(SectionPlacement.objects.order_by("pk").values()) == before

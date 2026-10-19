@@ -1171,3 +1171,61 @@ def test_student_evidence_lists_exact_students_for_selected_placement() -> None:
     assert evidence["affected_student_count"] == 2
     assert evidence["conflicts"][0]["affected_count"] == 2
     assert [row["student_id"] for row in evidence["students"]] == [10, 11]
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_bulk_safe_time_moves_skip_an_externally_owned_section(monkeypatch, stale) -> None:
+    # A time move on a section another scenario also places would desynchronise
+    # it from its owner: preview skips it, and apply re-checks a stale preview.
+    scenario, target_board, _other_board = _workspace()
+    term_section = _term_section(scenario, "AI101", "S1")
+    placement = SectionPlacement.objects.create(
+        board=target_board,
+        term_section=term_section,
+        day="MON",
+        start_time="09:00",
+        end_time="10:15",
+        room="R100",
+    )
+    action = {
+        "kind": "student_time_clash",
+        "board_id": target_board.id,
+        "placement_ids": [placement.id],
+    }
+    candidate = {
+        "tone": "clean",
+        "day": "TUE",
+        "start": "11:00",
+        "end": "12:15",
+        "critical_count": 0,
+        "warning_count": 0,
+        "impact_improvement": 1,
+        "student_improvement": 0,
+        "critical_improvement": 1,
+        "warning_improvement": 0,
+    }
+    monkeypatch.setattr(
+        tws,
+        "build_scenario_builder_actions",
+        lambda scenario_id, *, limit=18: {"actions": [action]},
+    )
+    monkeypatch.setattr(
+        tws, "preview_placement_slot_candidates", lambda placement_id: {"candidates": [candidate]}
+    )
+    if stale:
+        old_preview = preview_bulk_safe_time_moves(scenario.id, board_id=target_board.id)
+        assert old_preview["ready_count"] == 1
+        monkeypatch.setattr(tws, "preview_bulk_safe_time_moves", lambda *a, **k: old_preview)
+    _place_in_another_scenario(placement)
+    before = _section_snapshot(term_section.id)
+
+    if not stale:
+        preview = preview_bulk_safe_time_moves(scenario.id, board_id=target_board.id)
+        assert preview["ready_count"] == 0
+        assert [row["reason"] for row in preview["skipped"]] == ["externally_owned"]
+    result = apply_bulk_safe_time_moves(scenario.id, board_id=target_board.id)
+
+    assert result["applied_count"] == 0
+    expected = "externally_owned_after_preview" if stale else "externally_owned"
+    assert [row["reason"] for row in result["skipped"]] == [expected]
+    assert _section_snapshot(term_section.id) == before

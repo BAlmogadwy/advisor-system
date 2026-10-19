@@ -4816,7 +4816,8 @@ async function bulkAssignCleanRooms() {
   }
   const appliedRows = data?.applied || [];
   const applied = Number(data?.applied_count || appliedRows.length || 0);
-  const touchedBoards = new Set(appliedRows.map(row => Number(row.board_id)).filter(Boolean));
+  // A shared class is roomed on every board copy at once (row.board_ids).
+  const touchedBoards = new Set(appliedRows.flatMap(row => [row.board_id, ...(row.board_ids || [])]).map(Number).filter(Boolean));
   if (appliedRows.length) {
     S.undoStack.push({
       type: 'bundle_move',

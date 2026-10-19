@@ -523,3 +523,26 @@ def test_dry_run_and_summary_account_for_externally_owned_sections():
     assert applied.notes[-1].startswith(
         "Canonicalised 1 sections (1 placements rewritten, 1 externally owned); 1 still incoherent."
     )
+
+
+def test_dry_run_applies_the_lock_rule_exactly_as_apply_does():
+    """Locked boards count only when apply would really re-room them."""
+    scn = _scenario()
+    b1 = _board(scn, "Term 5", 5)  # canonical
+    b2 = _board(scn, "Term 7", 7)
+    unroomed = _section(scn, code="GSE1")  # canonical has no room: locked R2 kept
+    _place(b1, unroomed, day="MON", start="10:45", room="")
+    _place(b2, unroomed, day="MON", start="10:45", room="R2", locked=True)
+    room_only = _section(scn, code="GSE2")  # locked copy takes the canonical room
+    _place(b1, room_only, day="TUE", start="10:45", room="R1")
+    _place(b2, room_only, day="TUE", start="10:45", room="R3", locked=True)
+    moved = _section(scn, code="GSE3")  # locked copy at another time: skipped
+    _place(b1, moved, day="WED", start="10:45", room="R1")
+    _place(b2, moved, day="THU", start="10:45", room="R1", locked=True)
+
+    dry = canonicalise_shared_sections(scn.id, apply=False)
+    assert dry.notes[-1] == (
+        "DRY RUN — would rewrite 1 boards across 3 incoherent sections. Pass apply=True to write."
+    )
+    applied = canonicalise_shared_sections(scn.id, apply=True)
+    assert applied.placements_rewritten == 1

@@ -107,3 +107,20 @@ test('every board holding a copy of the shared section is reloaded after the roo
   await wait(() => h.notices.some(row => row.kind === 'success'));
   assert.equal(h.requests.filter(row => row.url === '/ops/tw/boards/3/').length, before + 1);
 });
+
+test('bulk clean rooms reloads every board a shared class was roomed on', async t => {
+  const slot = { day: 'SUN', start: '09:00', end: '10:15' };
+  const assignment = { placement_id: 10, board_id: 2, board_label: 'Board', label: 'AI10-S1', ...slot, slot, old_room: 'UNASSIGNED', room: { room_code: 'R100' }, new_room: 'R100' };
+  const h = await harness(t, url => {
+    if (url.startsWith('/ops/tw/scenarios/1/clean-room-assignments/?limit=')) return { assignments: [assignment], total_unassigned: 2, ready_count: 1, skipped: [] };
+    if (url === '/ops/tw/scenarios/1/clean-room-assignments/apply/') return { applied_count: 1, applied: [{ ...assignment, old_day: 'SUN', old_start: '09:00', old_end: '10:15', new_day: 'SUN', new_start: '09:00', new_end: '10:15', placement_ids: [10, 11], board_ids: [2, 3] }], skipped: [] };
+    return undefined;
+  });
+  const reloads = () => h.requests.filter(row => row.url === '/ops/tw/boards/3/').length;
+  const before = reloads();
+  const run = h.w.bulkAssignCleanRooms();
+  await wait(() => h.d.querySelector('#twsModalFooter button.primary'));
+  h.d.querySelector('#twsModalFooter button.primary').click();
+  await run;
+  assert.equal(reloads(), before + 1);
+});

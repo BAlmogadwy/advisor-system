@@ -179,7 +179,7 @@ def _slot_of(p: SectionPlacement) -> MeetingSlot:
 
 
 def _locked_room_targets(
-    rows: list[SectionPlacement], canonical: list[MeetingSlot]
+    slots: list[MeetingSlot], canonical: list[MeetingSlot]
 ) -> dict[tuple[str, str, str], str] | None:
     """The canonical room for each meeting of a locked copy that differs only in room.
 
@@ -188,7 +188,6 @@ def _locked_room_targets(
     copy holds a room: unrooming it would cost the locked meeting its room for
     nothing.
     """
-    slots = [_slot_of(p) for p in rows]
     if _time_key_set(slots) != _time_key_set(canonical):
         return None
     rooms = {s.time_key: s.room for s in canonical}
@@ -328,13 +327,25 @@ def canonicalise_shared_sections(
     external_ids = external_shared_section_ids(scenario_id)
     if not apply:
         owned = [s for s in divergent if s.term_section_id not in external_ids]
-        would = sum(
-            1
-            for s in owned
-            for bid in s.board_ids
-            if bid != s.canonical_board_id
-            and _full_key_set(s.schedule_by_board[bid]) != _full_key_set(s.canonical_schedule)
+        locked_boards = set(
+            SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id, is_locked=True
+            ).values_list("board_id", "term_section_id")
         )
+
+        def would_rewrite(s: SharedSection, bid: int) -> bool:
+            slots = s.schedule_by_board[bid]
+            if bid == s.canonical_board_id or _full_key_set(slots) == _full_key_set(
+                s.canonical_schedule
+            ):
+                return False
+            if (bid, s.term_section_id) not in locked_boards:
+                return True
+            # Exactly the apply rule: a locked board only takes the canonical room.
+            rooms = _locked_room_targets(slots, s.canonical_schedule)
+            return rooms is not None and any(slot.room != rooms[slot.time_key] for slot in slots)
+
+        would = sum(1 for s in owned for bid in s.board_ids if would_rewrite(s, bid))
         report.notes.append(
             f"DRY RUN — would rewrite {would} boards across {len(owned)} incoherent "
             "sections"
@@ -378,7 +389,7 @@ def canonicalise_shared_sections(
             if any(p.is_locked for p in existing):
                 # A lock freezes days, times and the contact pattern, not the room:
                 # a locked copy already at the canonical times takes its room.
-                rooms = _locked_room_targets(existing, canonical)
+                rooms = _locked_room_targets([_slot_of(p) for p in existing], canonical)
                 if rooms is None:
                     report.notes.append(
                         f"Skipped locked placement(s) for {shared.course_code}|{shared.section} "

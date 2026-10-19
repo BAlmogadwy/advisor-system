@@ -2640,6 +2640,14 @@ def tw_placement_pattern_switch_view(request: HttpRequest, placement_id: int) ->
         return _err("Placement not found", code="NOT_FOUND", status=404)
     if not payload.get("pattern_id"):
         return _err("pattern_id is required", code=SectionPolicyError.code, status=400)
+    # A pattern switch changes times; a section another scenario also places is
+    # owned there, exactly as on the move endpoint.
+    if placement.term_section_id in external_shared_section_ids(placement.board.scenario_id):
+        return _err(
+            "This section is also placed by another scenario, which owns its time and room.",
+            code="PLACEMENT_EXTERNALLY_OWNED",
+            status=409,
+        )
     return _switch_policy_response(request, placement, payload)
 
 
@@ -2652,8 +2660,9 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     A lock freezes days, start/end times and the contact pattern, not the room:
     changing day/start/end (or ``pattern_id``) on a locked placement requires
     ``override: true``, while a room-only change (same day/start/end) keeps the
-    lock and needs none. A room-only change writes every same-scenario board
-    copy of that physical meeting and its canonical meetings. Sections that
+    lock and needs none. A room-only change writes the same-scenario copies of
+    that physical meeting that share its room, and their canonical meetings
+    (``assign_physical_meeting_room``). Sections that
     another scenario also places are fully frozen (409
     ``PLACEMENT_EXTERNALLY_OWNED``), override or not.
     Returns updated placement data plus the new validation result.

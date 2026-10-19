@@ -287,3 +287,50 @@ def test_published_scenario_rejects_a_locked_room_only_change(http, scenario, bo
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "SCENARIO_PUBLISHED"
     assert state(row) == [("SUN", "09:00", "10:15", "R1", True)]
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_bulk_clean_room_rooms_a_shared_class_once_and_undo_redo_are_exact(
+    http, scenario, section, locked
+):
+    # The unroomed copies of one class at one slot get one room together, so
+    # replaying the batch through the move endpoint (undo, then redo) is exact.
+    first = DeliveryBoard.objects.create(scenario=scenario, label="T5", program="AI")
+    second = DeliveryBoard.objects.create(scenario=scenario, label="T7", program="AI")
+    for code in ("R100", "R101"):
+        Room.objects.create(room_code=code, capacity=60, room_type="lecture", department="AI")
+    anchor = place(first, section, room="UNASSIGNED", locked=locked)
+    sibling = place(second, section, room="UNASSIGNED")
+
+    result = apply_bulk_clean_room_assignments(scenario.id)
+
+    assert len(result["applied"]) == 1
+    applied = result["applied"][0]
+    assert sorted(applied["placement_ids"]) == sorted([anchor.id, sibling.id])
+    assert applied["board_ids"] == sorted([first.id, second.id])
+    assert {row[3] for row in state(anchor, sibling)} == {applied["new_room"]}
+    assert move(http, anchor, {**SLOT, "room": applied["old_room"]}).status_code == 200
+    assert state(anchor, sibling) == [
+        ("SUN", "09:00", "10:15", "UNASSIGNED", locked),
+        ("SUN", "09:00", "10:15", "UNASSIGNED", False),
+    ]
+    assert move(http, anchor, {**SLOT, "room": applied["new_room"]}).status_code == 200
+    assert {row[3] for row in state(anchor, sibling)} == {applied["new_room"]}
+
+
+def test_bulk_clean_room_gives_a_shared_class_a_room_that_suits_every_board(
+    http, scenario, section
+):
+    # The smaller AI-only room fits the first copy's board but not the DS one.
+    # One class takes one room, so it must suit both boards (H14 over boards).
+    first = DeliveryBoard.objects.create(scenario=scenario, label="T5", program="AI")
+    second = DeliveryBoard.objects.create(scenario=scenario, label="T7", program="DS")
+    Room.objects.create(room_code="RAI", capacity=40, room_type="lecture", department="AI")
+    Room.objects.create(room_code="RBOTH", capacity=60, room_type="lecture", department="AI,DS")
+    anchor = place(first, section, room="UNASSIGNED", locked=True)
+    sibling = place(second, section, room="UNASSIGNED")
+
+    result = apply_bulk_clean_room_assignments(scenario.id)
+
+    assert [row["new_room"] for row in result["applied"]] == ["RBOTH"]
+    assert [row[3] for row in state(anchor, sibling)] == ["RBOTH", "RBOTH"]
