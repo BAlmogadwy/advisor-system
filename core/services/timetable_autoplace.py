@@ -1136,6 +1136,7 @@ def auto_place_board(
     # ── 0. Load rooms for this board's programme(s) ─────────────────
     from core.services.timetable_rooming import (
         RoomTracker,
+        _build_rooming_budget_maps,
         get_board_gender,
         get_capacity_buffer,
         get_programme_rooms,
@@ -1322,17 +1323,14 @@ def auto_place_board(
     # a small section failed because its preferred small rooms were
     # already booked).
     unassigned_for_repair: list[dict] = []
-    # Repair-pass safety net: per-course raw demand keyed by course_code,
-    # used by ``repair_unassigned_after_greedy`` when a swap candidate's
+    # Repair-pass safety net: per-course raw demand, used by
+    # ``repair_unassigned_after_greedy`` when a swap candidate's
     # ``available_capacity`` is NULL/0 so the capacity filter doesn't
     # collapse to "any smallest room fits". Same ceil(total_demand /
-    # planned_sections) formula used everywhere else for raw_cap.
-    repair_budget_map: dict[str, int] = {}
-    for _b in budgets:
-        if _b.planned_sections and _b.planned_sections > 0:
-            repair_budget_map[_b.course_code] = -(-_b.total_demand // _b.planned_sections)
-        else:
-            repair_budget_map[_b.course_code] = int(_b.max_per_section or 0)
+    # planned_sections) formula used everywhere else for raw_cap, keyed by
+    # planner identity: two budgets sharing a display code (CS112
+    # PROGRAMMING I / II) must not overwrite each other's demand.
+    repair_budget_map = _build_rooming_budget_maps(budgets, capacity_buffer)
     meeting_result_refs: dict[tuple[int, str, str], dict] = {}
     # PR3 commit 3 — decision-trace capture (observational, flag-gated).
     # When ``trace_enabled`` is True we record one ``DecisionTrace`` per
@@ -2173,7 +2171,10 @@ def auto_place_board(
                                     section_code=sec_label,
                                 )
                             room_failures.append(m_refined.to_dict())
-                            # Queue this meeting for the post-greedy repair pass.
+                            # Queue this meeting for the post-greedy repair pass,
+                            # carrying the very failure record it raised so a
+                            # rescue prunes exactly that record (the record names
+                            # the display code, which two courses can share).
                             unassigned_for_repair.append(
                                 {
                                     "ts_id": ts.id,
@@ -2183,9 +2184,10 @@ def auto_place_board(
                                     "demand": 0 if rtype == "lab" else raw_cap,
                                     "room_type": rtype,
                                     "gender": board_gender,
-                                    "course_code": code,
+                                    "course_key": code,
                                     "section_code": sec_label,
                                     "budget_map": repair_budget_map,
+                                    "failure": room_failures[-1],
                                 }
                             )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":

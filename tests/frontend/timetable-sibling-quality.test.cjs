@@ -57,6 +57,67 @@ test('MRI pressure distinguishes assessed suitability from known room-sharing cl
   assert.equal(rows.find(row => row.label.startsWith('Room')).label, 'Room suitability');
 });
 
+// H15 severity is decided once on the server: a same-course overlap or one
+// that leaves students with no clash-free pair is critical; one they can route
+// round through sibling sections is a warning, and the MRI must not paint it red.
+test('MRI reads each overlap severity: critical count, tones, pressure and the move summary', () => {
+  const context = mriHarness({ rooms: { assessed: true, details: [] } });
+  const elements = {};
+  Object.assign(context, {
+    $: id => (elements[id] ||= { textContent: '', innerHTML: '' }),
+    esc: value => String(value ?? ''),
+    num: value => String(value || 0),
+    pct: (value, max) => Math.round((value / Math.max(1, max)) * 100),
+    plural: (count, label) => `${count} ${label}`,
+    capacityDiagnosis: () => ({ tone: 'stable', label: 'Seats cover demand', detail: '' }),
+    capacityCourseDiagnosis: () => ({ tone: 'stable', label: '', detail: '' }),
+    placementInstructor: () => '',
+    placementLabel: p => `${p.course_code}-${p.section}`,
+    crossBoardCounterparts: () => [],
+  });
+  for (const [begin, end] of [
+    ['  function renderMetrics(', '  function capacityCourseDiagnosis('],
+    ['  function renderLayers(', '  function renderHotspots('],
+    ['  function placementEvidence(', '  function renderGeneInspector('],
+    ['  function groupScans(', '  function expandedBoardIds('],
+    ['  function selectedGraphGroup(', '  function buildPreviewTarget('],
+    ['  function renderInterventions(', '  function buildRepairQueue('],
+    ['  function currentConflictSummary(', '  function classifyMoveTargets('],
+  ]) vm.runInContext(slice(mri, begin, end), context);
+  const at = id => ({ id, board_id: 2, course_code: `AI${id}`, section: 'S1' });
+  const overlap = (ids, severity) => ({ ids, sections: ids.map(id => `AI${id}-S1`), detail: 'SUN 09:00-10:15', severity, shared_students: 30 });
+  const mixed = { id: 1, label: 'Mixed', placement_count: 2 }, warnOnly = { id: 2, label: 'Warn only', placement_count: 2 };
+  context.state.boards = [mixed, warnOnly];
+  context.state.conflicts.set(1, { overlaps: [overlap([10, 11], 'critical'), overlap([10, 12], 'warning')] });
+  context.state.conflicts.set(2, { overlaps: [overlap([12, 13], 'warning')] });
+  context.state.boardDetails.set(2, { placements: [at(12), at(13)] });
+  const first = context.scanBoard(mixed), second = context.scanBoard(warnOnly);
+  // 26 per critical overlap, 4 per non-blocking one (what a cross-board demand overlap weighs).
+  assert.deepEqual([first.criticalOverlaps, first.warningOverlaps, first.pressure], [1, 1, 30]);
+  assert.deepEqual([second.criticalOverlaps, second.warningOverlaps, second.pressure], [0, 1, 4]);
+  const total = context.aggregateScan([first, second]);
+  assert.deepEqual([total.overlaps, total.criticalOverlaps, total.warningOverlaps], [3, 1, 2]);
+  assert.equal(context.pressureComponents(first).reduce((sum, row) => sum + row.score, 0), first.pressure);
+  const metric = label => elements.twmMetrics.innerHTML.match(new RegExp(`<strong>(\\d+)</strong>\\s*<span>${label}</span>`))[1];
+  context.renderMetrics(total);
+  assert.equal(metric('Critical'), '1');
+  context.renderMetrics(second);
+  assert.equal(metric('Critical'), '0');
+  context.renderLayers(second, [second]);
+  assert.match(elements.twmLayers.innerHTML, /<div class="twm-layer watch">\s*<div>\s*<strong>Time layer<\/strong>/);
+  const [hotspot] = context.collectHotspots([second]);
+  assert.deepEqual([hotspot.tone, hotspot.kind], ['watch', 'Non-blocking time overlap']);
+  assert.deepEqual(Array.from(context.collectHotspots([first]), row => row.tone), ['critical', 'watch']);
+  assert.deepEqual(Array.from(context.placementEvidence(second, at(12)), row => [row.tone, row.title]), [['watch', 'Non-blocking time overlap']]);
+  // Two sections only in a non-blocking overlap weigh 10 each, as a network hit does.
+  const [group] = context.groupScans([second]);
+  assert.deepEqual([group.localConflicts, group.pressure], [2, 20]);
+  assert.deepEqual(Object.fromEntries(Array.from(context.buildSuggestions([second]), move => [move.id.split(':')[0], move.tone])), { reslot: 'watch', 'board-balance': 'watch' });
+  context.renderInterventions([second]);
+  assert.match(elements.twmInterventions.innerHTML, /<div class="twm-action watch">[\s\S]*Separate AI12-S1 \/ AI13-S1/);
+  assert.deepEqual({ ...context.currentConflictSummary(at(12)) }, { critical: 0, warning: 1 });
+});
+
 test('graph cross-board detail labels course demand without mutating graph evidence or API property names', () => {
   const context = vm.createContext({});
   vm.runInContext(slice(graph, '  function demandEvidenceView(', '  function renderGraphDetail('), context);
