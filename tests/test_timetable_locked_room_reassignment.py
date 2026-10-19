@@ -679,3 +679,27 @@ def test_solver_fallback_never_trades_the_count_for_a_lock(settings):
 
     assert result.status == "UNKNOWN"
     assert result.assignment == {first.demand_id: "R1", second.demand_id: "R1"}
+
+
+def test_tie_break_pin_is_reserved_only_when_locks_are_present(settings):
+    # Lock-free callers keep the exact model-size admission they had before;
+    # only a solve with a tie-break phase reserves one more pin.
+    from core.services.timetable_exact_rooming import _solve_relaxed
+
+    locked, unlocked = _demand(1, "R1", 30, ("R1",)), _demand(2, "", 40, ("R1",))
+
+    def status(budget, keep):
+        settings.TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = budget
+        return _solve_relaxed(
+            [locked, unlocked],
+            {"R1": 40},
+            time_limit_seconds=1,
+            strict_budget=True,
+            count_only=True,
+            keep_roomed=keep,
+        ).status
+
+    smallest = next(b for b in range(1, 200) if status(b, ()) != "UNKNOWN")
+
+    assert status(smallest, {locked.demand_id}) == "UNKNOWN"
+    assert status(smallest + 1, {locked.demand_id}) != "UNKNOWN"
