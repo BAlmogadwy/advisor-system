@@ -1,15 +1,18 @@
-/* Keyboard and accessibility behaviour layered over the workspace's existing
- * click actions. The main workspace script remains the owner of application
- * state, requests, menu toggles and panel rendering. */
+/* Keyboard, accessibility and placement behaviour layered over the
+ * workspace's existing click actions. The main workspace script remains the
+ * owner of application state, requests, menu toggles and panel rendering. */
 (() => {
   'use strict';
   const byId = id => document.getElementById(id);
+  // `align`: the edge of its button group a menu prefers on wide screens. The
+  // Optimise and Export groups sit at the end of the command bar. `bar`: the
+  // toolbar the group sits in, whose layout the placement follows.
   const menus = [
-    ['twGenerateMenu', 'twGenerateDropdown', 'twGenerateGroup'],
-    ['twOptimiseMenu', 'twOptimiseDropdown', 'twOptimiseGroup'],
-    ['twExportMenu', 'twExportDropdown', 'twExportGroup'],
-  ].map(([trigger, menu, group]) => ({ trigger: byId(trigger), menu: byId(menu), group: byId(group) }))
-    .filter(({ trigger, menu, group }) => trigger && menu && group);
+    ['twGenerateMenu', 'twGenerateDropdown', 'twGenerateGroup', 'start', 'twGenBar'],
+    ['twOptimiseMenu', 'twOptimiseDropdown', 'twOptimiseGroup', 'end', 'twCmdBar'],
+    ['twExportMenu', 'twExportDropdown', 'twExportGroup', 'end', 'twCmdBar'],
+  ].map(([trigger, menu, group, align, bar]) => ({ trigger: byId(trigger), menu: byId(menu), group: byId(group), align, bar: byId(bar) }))
+    .filter(({ trigger, menu, group, bar }) => trigger && menu && group && bar);
 
   const isOpen = entry => entry.menu.style.display !== 'none';
   const itemsOf = entry => [...entry.menu.querySelectorAll('[role="menuitem"]')].filter(item => !item.disabled);
@@ -20,11 +23,68 @@
     const status = byId('twGenStatus');
     if (status) { status.tabIndex = -1; status.focus(); }
   };
+
+  // Placement. Where a group lands depends on how its bar wraps, so a fixed
+  // alignment cuts a menu off at some widths. On a phone the stylesheet makes
+  // the bar the containing block and the menu a full-width sheet; it is moved
+  // up to sit just under its own buttons. Elsewhere the menu takes its
+  // preferred edge of its group, the other edge when that one would leave the
+  // visible content, and is clamped inside it when neither fits. A menu is
+  // placed when it opens and again while open whenever its bar or group
+  // changes size (a resize, a rotation, the bar rewrapping).
+  const phone = window.matchMedia?.('(max-width: 640px)');
+  const GAP = 8;
+  const visibleSpan = element => {
+    let left = 0;
+    let right = window.innerWidth;
+    for (let a = element.parentElement; a; a = a.parentElement) {
+      if (getComputedStyle(a).overflowX === 'visible') continue;
+      const box = a.getBoundingClientRect();
+      left = Math.max(left, box.left);
+      right = Math.min(right, box.right);
+    }
+    return { left, right };
+  };
+  const placeMenu = entry => {
+    const { menu, group } = entry;
+    const set = (property, value) => menu.style.setProperty(property, value, 'important');
+    const buttons = group.getBoundingClientRect();
+    if (phone?.matches) {
+      // Offsets from a wide-screen placement (before a rotation, or a window
+      // narrowed with the menu open) would beat the sheet's insets.
+      menu.style.removeProperty('left');
+      menu.style.removeProperty('right');
+      const bar = menu.offsetParent;
+      if (bar && bar !== group) set('top', `${buttons.bottom - bar.getBoundingClientRect().top - bar.clientTop}px`);
+    } else {
+      set('top', '100%');
+      const width = menu.getBoundingClientRect().width;
+      const span = visibleSpan(group);
+      const rtl = getComputedStyle(group).direction === 'rtl';
+      const atStart = rtl ? buttons.right - width : buttons.left;
+      const atEnd = rtl ? buttons.left : buttons.right - width;
+      const order = entry.align === 'end' ? [atEnd, atStart] : [atStart, atEnd];
+      const fits = left => left >= span.left + GAP - 0.5 && left + width <= span.right - GAP + 0.5;
+      const left = order.find(fits) ?? Math.max(span.left + GAP, Math.min(order[0], span.right - GAP - width));
+      set('left', `${left - buttons.left - group.clientLeft}px`);
+      set('right', 'auto');
+    }
+  };
+
   const syncMenu = entry => {
     const open = isOpen(entry);
     entry.trigger.setAttribute('aria-expanded', String(open));
     entry.menu.setAttribute('aria-hidden', String(!open));
     if (!open && entry.menu.contains(document.activeElement)) restoreMenuFocus(entry);
+    // Place once per opening; placing writes the style the observer watches.
+    if (open && !entry.placed) {
+      placeMenu(entry);
+      // A short screen can open a menu below the fold. Only opening scrolls:
+      // a phone's address bar resizes the page as it is scrolled, and a
+      // re-placement must not pull the page back.
+      entry.menu.scrollIntoView?.({ block: 'nearest' });
+    }
+    entry.placed = open;
   };
   const closeMenu = (entry, restoreFocus = false) => {
     entry.menu.style.display = 'none';
@@ -84,6 +144,14 @@
   document.addEventListener('click', event => {
     menus.forEach(entry => { if (!entry.group.contains(event.target)) closeMenu(entry); });
   });
+  // An open menu follows its bar and group. The window's resize event comes
+  // too early: a bar can go on rewrapping and growing for several frames
+  // after it. The observer reports after each layout; placing moves only the
+  // menu, so it never resizes what is observed.
+  if (window.ResizeObserver) {
+    const relayout = new ResizeObserver(() => menus.filter(isOpen).forEach(placeMenu));
+    menus.forEach(({ group, bar }) => { relayout.observe(bar); relayout.observe(group); });
+  }
 
   document.querySelectorAll('.tw-panel-tabs[role="tablist"]').forEach(list => {
     const tabs = [...list.querySelectorAll('[role="tab"]')];

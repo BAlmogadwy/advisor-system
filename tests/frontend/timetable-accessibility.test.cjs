@@ -92,6 +92,45 @@ test('only one menu stays open and outside click or leaving focus closes it', as
   h.dom.window.close();
 });
 
+test('the Generate bar rises above the sticky command bar exactly while its menu is open', async () => {
+  // The bar's backdrop-filter traps the menu's own z-index, so the stylesheet
+  // raises the whole bar; use its exact selector and its resolved layer.
+  const css = fs.readFileSync(path.join(root, 'static/css/timetable-workspace.css'), 'utf8');
+  const globalCss = fs.readFileSync(path.join(root, 'static/css/global.css'), 'utf8');
+  const [, selector, body] = /(#twGenBar:has\([^{]+\))\s*{([^}]*)}/.exec(css);
+  const token = name => Number(new RegExp(`${name}:\\s*(\\d+)`).exec(globalCss)[1]);
+  const [, base, plus] = /z-index:\s*calc\(var\((--z-[\w-]+)\)\s*\+\s*(\d+)\)/.exec(body);
+  const raised = token(base) + Number(plus);
+  const commandBar = Number(/\n\.tw-cmd-bar\s*{[^}]*?z-index:\s*(\d+)/.exec(globalCss)[1]);
+  assert.match(body, /position:\s*relative/);
+  assert.ok(raised > commandBar, `${raised} must clear the command bar's ${commandBar}`);
+  for (const layer of ['--z-sidebar', '--z-drawer', '--z-modal', '--z-toast']) assert.ok(raised < token(layer), layer);
+
+  const h = harness();
+  const bar = h.doc.getElementById('twGenBar');
+  const gen = h.doc.getElementById('twGenerateMenu');
+  // jsdom's CSS parser rejects the menu's `border:1px solid var(--line)` and
+  // drops its whole inline style; a browser keeps `display:none`, so start there.
+  h.doc.getElementById('twGenerateDropdown').style.display = 'none';
+  const isRaised = async () => { await tick(); return bar.matches(selector); };
+  assert.equal(await isRaised(), false);
+  gen.click();
+  assert.equal(await isRaised(), true, 'click opens');
+  h.key(h.doc.getElementById('twGenerateDropdown'), 'Escape');
+  assert.equal(await isRaised(), false, 'Escape closes');
+  h.key(gen, 'ArrowDown');
+  assert.equal(await isRaised(), true, 'ArrowDown opens');
+  h.key(h.doc.activeElement, 'Tab');
+  assert.equal(await isRaised(), false, 'Tab closes');
+  gen.click(); h.doc.getElementById('twOptimiseMenu').click();
+  assert.equal(await isRaised(), false, 'opening Optimise closes it');
+  gen.click(); h.doc.getElementById('twSearch').click();
+  assert.equal(await isRaised(), false, 'outside click closes');
+  gen.click(); h.doc.querySelector('#twGenerateDropdown [role="menuitem"]').click();
+  assert.equal(await isRaised(), false, 'choosing an engine closes');
+  h.dom.window.close();
+});
+
 test('a planner action that disables the trigger restores focus to the visible status', async () => {
   const h = harness();
   const trigger = h.doc.getElementById('twGenerateMenu');
