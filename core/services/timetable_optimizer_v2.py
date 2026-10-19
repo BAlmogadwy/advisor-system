@@ -1576,11 +1576,11 @@ def optimise_scenario_timetable_v2(
 
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
         for board in boards:
-            # Clear rooms on changed placements so assign_rooms_to_board can redo
-            # them. A lock freezes only the time, so locked rows are re-roomed too.
+            # Clear rooms on changed placements so assign_rooms_to_board can redo them
             SectionPlacement.objects.filter(
                 board=board,
                 room="UNASSIGNED",
+                is_locked=False,
             ).exclude(term_section_id__in=external_shared_section_ids(scenario_id)).update(room="")
             rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
@@ -2034,10 +2034,10 @@ def optimise_current_timetable(
 
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
         for board in boards:
-            # A lock freezes only the time; locked rows are re-roomed too.
             SectionPlacement.objects.filter(
                 board=board,
                 room="UNASSIGNED",
+                is_locked=False,
             ).exclude(term_section_id__in=external_shared_section_ids(scenario_id)).update(room="")
             rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).

@@ -335,3 +335,27 @@ refresh selection and Split Close navigation. Ruff lint/format, scoped mypy and
 Bandit, JavaScript parsing, Django system checks and whitespace/control-character
 checks passed. Independent Codex review approved the frozen changes. These are
 local feature checks; this entry does not represent deployment of the copy UI.
+
+## Locks freeze times, not rooms — 2026-10-19
+
+The lock contract above accepts room reassignment, but five room paths still
+treated a lock as a room freeze. Production scenario 26 showed the cost: CS112
+S1 and S3 were both locked into one room at SUN/TUE 09:00 while compatible rooms
+were free, and every Optimise Current kept the double-booking. The recovery room
+oracle pinned the locked rooms (`LOCKED_ROOM_CONFLICT`), its writer and meeting
+sync refused any locked change, board rooming skipped locked unroomed rows, and
+the compaction and classic persist guards rolled back a locked room change.
+
+A lock now freezes only the section's days, times and contact pattern on every
+path. Locked meetings are re-roomed like any other; the writer and meeting sync
+still reject a locked time change and keep an unroomable locked meeting's empty
+representation. Externally owned sections (also placed by another scenario)
+remain fully frozen, room included. The compaction gate compares locked rows
+without `room`/`updated_at` and locked meetings without `room`; the classic
+persist guard compares locked rows without `room`. Recovery persists only a
+strict room-shortage or seat improvement, so a valid locked room is not churned
+on its own, though a persisted improvement may re-room any non-external meeting.
+
+`tests/test_timetable_locked_room_reassignment.py` reproduces scenario 26
+end to end through `run_v2_optimisation_guarded(mode="current")` and covers the
+oracle, writer, meeting sync and an externally owned control.

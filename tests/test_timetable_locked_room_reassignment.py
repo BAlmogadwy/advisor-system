@@ -331,3 +331,136 @@ def test_sync_updates_a_locked_meetings_room_only(double_booked):
     }
     with pytest.raises(ExactRoomingError, match="locked meeting's time"):
         _sync_recovered_meetings(rows, meetings, moved, scenario_id=scenario.pk)
+
+
+@pytest.fixture
+def compaction_settings(settings):
+    settings.TIMETABLE_ENFORCE_LOCKS = True
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = True
+    settings.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS = 4
+    settings.TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = 0
+
+
+def _locked_extra_section(scenario, code, start, end, room):
+    board = DeliveryBoard.objects.get(scenario=scenario, label="T1")
+    section = TermSection.objects.create(
+        scenario=scenario,
+        course_key=code,
+        course_code=code,
+        course_number=code,
+        course_name=code,
+        section="S1",
+        source_tag="tw_auto",
+        available_capacity=30,
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=section,
+        day="MON",
+        start_time=start,
+        end_time=end,
+        room=room,
+        is_locked=True,
+    )
+    TermSectionMeeting.objects.create(
+        term_section=section, day="MON", start_time=start, end_time=end, room=room, instructor=""
+    )
+    return section
+
+
+@pytest.mark.usefixtures("compaction_settings")
+def test_compaction_accepts_a_locked_meeting_rerooming_by_the_shared_exact_pass():
+    """Moving a shared section re-rooms the scenario exactly; that may re-room a
+    locked meeting (placement and canonical meeting) without rolling back."""
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+    from tests.test_instructor_compaction import _gappy_board
+
+    scenario = _gappy_board()
+    Room.objects.create(
+        room_code="R2", department="AI", capacity=50, room_type="lecture", section="M"
+    )
+    SectionPlacement.objects.filter(
+        board__scenario=scenario, term_section__course_code="C1"
+    ).update(is_locked=True)
+    # A second locked section double-booked with C1 at MON 09:00 in R1.
+    _locked_extra_section(scenario, "L1", "09:00", "10:15", "R1")
+    # C2 has a copy on another board, so moving it triggers the exact re-room.
+    c2 = SectionPlacement.objects.get(board__scenario=scenario, term_section__course_code="C2")
+    shared = DeliveryBoard.objects.create(
+        scenario=scenario, label="Shared", nominal_term=2, program="AI"
+    )
+    SectionPlacement.objects.create(
+        board=shared,
+        term_section=c2.term_section,
+        day=c2.day,
+        start_time=c2.start_time,
+        end_time=c2.end_time,
+        room=c2.room,
+    )
+    locked_ids = list(
+        SectionPlacement.objects.filter(board__scenario=scenario, is_locked=True).values_list(
+            "pk", flat=True
+        )
+    )
+    times_before = list(
+        SectionPlacement.objects.filter(pk__in=locked_ids).order_by("pk").values(*TIME_FIELDS)
+    )
+
+    report = compact_instructor_schedules(scenario.pk)
+
+    assert not report.get("rollback_reason"), report.get("rollback_reason")
+    assert report["search"]["moves_accepted"] == 1
+    locked = SectionPlacement.objects.filter(pk__in=locked_ids).order_by("pk")
+    assert list(locked.values(*TIME_FIELDS)) == times_before
+    assert {p.room for p in locked} == {"R1", "R2"}
+    moved = [p for p in locked if p.room == "R2"]
+    meeting = TermSectionMeeting.objects.get(
+        term_section_id=moved[0].term_section_id, day="MON", start_time="09:00"
+    )
+    assert meeting.room == "R2"
+
+
+@pytest.mark.usefixtures("compaction_settings")
+def test_classic_persist_guard_accepts_rooming_a_locked_unroomed_meeting(monkeypatch):
+    from core.services import timetable_local_search as sa
+    from tests.test_instructor_compaction import _gappy_board
+
+    scenario = _gappy_board()
+    locked = _locked_extra_section(scenario, "L1", "10:30", "11:45", "")
+    board = DeliveryBoard.objects.get(scenario=scenario, label="T1")
+    sections = [
+        {"code": ts.course_key, "label": ts.section, "term_section_id": ts.pk}
+        for ts in TermSection.objects.filter(scenario=scenario).order_by("pk")
+    ]
+    current = {
+        p.term_section_id: (p.day, p.start_time, p.end_time)
+        for p in SectionPlacement.objects.filter(board=board)
+    }
+    candidate = {
+        "status": "optimized",
+        "schedule": {
+            i: [dict(zip(("day", "start", "end"), current[sec["term_section_id"]], strict=True))]
+            for i, sec in enumerate(sections)
+        },
+        "sections": sections,
+        "cost_before": 200,
+        "cost_after": 100,
+        "improvements": 1,
+    }
+    monkeypatch.setattr(sa, "optimize_board", lambda *a, **k: candidate)
+
+    result = sa.optimize_and_persist_board(board.pk)
+
+    assert not result.get("persist_rolled_back"), result.get("rollback_reasons")
+    row = SectionPlacement.objects.get(term_section=locked)
+    assert (row.day, row.start_time, row.end_time, row.is_locked) == (
+        "MON",
+        "10:30",
+        "11:45",
+        True,
+    )
+    assert row.room == "R1"
