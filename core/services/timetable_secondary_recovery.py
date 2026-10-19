@@ -97,7 +97,8 @@ def _recoverable_room_targets(
         return set(room_result["recoverable_section_ids"])
     failures = room_result.get("failures")
     if failures:
-        # Moving a meeting cannot create a larger lab or change a locked room.
+        # Moving a meeting cannot create a larger lab or free an externally
+        # owned room.
         # Focus the time search on shortages caused by simultaneous demand.
         targets = {
             failure["section_id"]

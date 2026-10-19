@@ -23,12 +23,14 @@ Each accepted recovery move must satisfy all of these conditions:
   remote teaching does not create campus days.
 - Neither unresolved soft enrolments nor physical room shortages increases.
   Hard student score components, instructor clashes and daily caps are protected.
-- Meeting contact minutes, physical/remote delivery, locked placements and
-  section identity are preserved. Reserve use and student gaps can change when
-  more enrolments are seated.
+- Meeting contact minutes, physical/remote delivery, locked sections' meeting
+  times and section identity are preserved. Reserve use and student gaps can
+  change when more enrolments are seated.
 - Exact room checks retain existing capacity buffers, room kind, department and
-  gender eligibility. Locked rooms remain fixed. Count proofs are reported
-  separately from full lexicographic room optimality.
+  gender eligibility. A lock freezes a section's times, not its room: locked
+  meetings may be re-roomed, while externally owned meetings keep both time and
+  room. Count proofs are reported separately from full lexicographic room
+  optimality.
 
 Optimise Current additionally protects the instructor metrics of the original
 saved board through the entire run, including mandatory repairs. A repair that

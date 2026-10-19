@@ -31,7 +31,8 @@ trade-offs documented here.
 - Optional instructor compaction is enabled by default with a 20-second search
   budget. It protects each teacher's day ceiling, student feasibility, reserve,
   soft coverage and bounded student-gap impact. A local transaction rolls back
-  only this pass if room coverage or locked metadata worsens, preserving any
+  only this pass if room coverage worsens or a locked time or meeting
+  assignment changes (a lock does not freeze the room), preserving any
   preceding mandatory repairs.
 - Returned optimiser errors restore the original board, just like exceptions.
 - Scheduler Generate uses three seeds by default, ranks strict instructor gaps

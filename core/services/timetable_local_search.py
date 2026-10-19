@@ -545,6 +545,7 @@ def _capture_persist_guard(board):
             section_id: sorted(_to_min(end) - _to_min(start) for _day, start, end in meetings)
             for section_id, meetings in placed_meetings.items()
         },
+        # A lock freezes the meeting's time; its room may be reassigned.
         "locked": list(
             SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
             .order_by("pk")
@@ -555,7 +556,6 @@ def _capture_persist_guard(board):
                 "day",
                 "start_time",
                 "end_time",
-                "room",
                 "is_locked",
             )
         ),

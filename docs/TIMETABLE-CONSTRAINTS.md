@@ -22,7 +22,7 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 | H3 | **Legal slot grid** | Lectures start only at 09:00, 10:30, 10:50, 13:00, 14:30, 14:45, 16:00; labs at 09:00, 10:45, 13:00, 14:45, 16:30. Days SUN–THU | `scenario.slot_config` / `lab_slot_config`, `DEFAULT_SLOTS` |
 | H4 | **Blocked slots** | Scenario `blocked_slots` cells are never used | `blocked_slot_keys()` in `timetable_validation.py` |
 | H5 | **Prayer compliance** | No lecture starts in **11:30–12:59**, no lab in **11:10–12:59**. NOT enforced in code — holds only by curated grid construction (the earlier grid validator was unused and removed) | `DEFAULT_SLOTS` / `DEFAULT_LAB_SLOTS` (curated start times) |
-| H6 | **Locked placements** | `is_locked` placements are never moved or deleted | gated by `TIMETABLE_ENFORCE_LOCKS` (default **true**) |
+| H6 | **Locked placements** | `is_locked` placements' days/times are never moved and the rows are never deleted; their rooms may be reassigned | gated by `TIMETABLE_ENFORCE_LOCKS` (default **true**) |
 
 ### 1.2 Resource exclusivity
 
