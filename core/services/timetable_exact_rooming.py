@@ -461,9 +461,10 @@ def _solve_relaxed(
     ``unroomed_proven_optimal`` reports its count proof, while
     ``proven_optimal`` remains false for the complete four-part objective.
 
-    ``keep_roomed`` names meetings that must stay roomed (in any compatible
-    room). The caller guarantees their incumbent rooms are jointly feasible, so
-    the constraint never makes the model infeasible.
+    ``keep_roomed`` meetings win ties in the first objective: it still minimises
+    the number of unroomed meetings exactly, then how many of these meetings end
+    unroomed (any compatible room keeps one). The greedy warm start seats them
+    in their incumbent rooms first.
     """
     from time import monotonic
 
@@ -518,8 +519,6 @@ def _solve_relaxed(
             flag = model.new_bool_var(f"roomed_{d.demand_id}")
             roomed[d.demand_id] = flag
             model.add(sum(options) == flag)  # at most one room; flag records whether roomed
-            if d.demand_id in keep:
-                model.add(flag == 1)
             # Seed the greedy warm start as a hint on every assignment literal.
             hinted = greedy.get(d.demand_id)
             for room in d.compatible_rooms:
@@ -545,6 +544,13 @@ def _solve_relaxed(
         return greedy_result("UNKNOWN")
 
     unroomed_expr = sum(1 - roomed[d.demand_id] for d in demands)
+    kept = [d.demand_id for d in demands if d.demand_id in keep]
+    if kept:
+        # One phase, two levels: the weight exceeds every possible tie-break
+        # total, so the unroomed count (and its proof) is exactly the same.
+        count_expr = (len(kept) + 1) * unroomed_expr + sum(1 - roomed[k] for k in kept)
+    else:
+        count_expr = unroomed_expr
     shortfall_expr = sum(
         assign[(d.demand_id, room)] * max(0, d.required_capacity - capacity_by_code[room])
         for d in demands
@@ -565,9 +571,7 @@ def _solve_relaxed(
     # lower-priority refinement is unnecessary in its repeated candidate loop.
     # Existing preview/apply callers retain the full lexicographic solve.
     phases = (
-        (unroomed_expr,)
-        if count_only
-        else (unroomed_expr, shortfall_expr, changes_expr, excess_expr)
+        (count_expr,) if count_only else (count_expr, shortfall_expr, changes_expr, excess_expr)
     )
     phase_limit = max(1.0, time_limit_seconds / len(phases))
     proofs: list[bool] = []

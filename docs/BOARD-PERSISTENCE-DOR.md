@@ -357,11 +357,13 @@ remain fully frozen, room included. The compaction gate compares locked rows
 without `room`/`updated_at` and locked meetings without `room`; the classic
 persist guard compares locked rows without `room`.
 
-Room reassignment never means losing a room: the exact room solve keeps every
-locked meeting that already holds a valid, unclashed room roomed (it may move
-to another room), and its greedy fallback honours the same rule. Locked
-meetings double-booked with each other are not forced, so the constraint is
-always feasible. Unlocked meetings keep their previous count-only behaviour.
+Room reassignment never costs a locked meeting its room for nothing. The exact
+room solve still minimises the number of unroomed meetings exactly (its count
+proof is unchanged); on a tie it then keeps every locked meeting that already
+holds a valid room roomed, in any compatible room. A locked meeting therefore
+yields its room only when that seats strictly more meetings overall. The greedy
+warm start, which is also the timeout/size fallback, seats those locked
+meetings in their current rooms first. Unlocked meetings get no tie-break.
 
 `tests/test_timetable_locked_room_reassignment.py` reproduces scenario 26
 end to end through `run_v2_optimisation_guarded(mode="current")` and covers the

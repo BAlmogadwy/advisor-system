@@ -543,26 +543,106 @@ def test_recovery_oracle_rejects_a_candidate_that_moves_a_locked_time(double_boo
         evaluator(list(states.values()))
 
 
-def test_clashing_locked_incumbents_are_not_forced_to_stay_roomed():
-    # Both locked meetings sit in R1 at once and R1 is the only room: keeping
-    # both roomed is impossible, so neither is forced and the count stays proven.
+def _evaluator(demands, capacities, locked_sections):
     from core.services.timetable_recovery_rooming import RecoveryRoomEvaluator
 
-    demands = [_demand(1, "R1", 30, ("R1",)), _demand(3, "R1", 30, ("R1",))]
-    oracle = RecoveryRoomEvaluator(
+    return RecoveryRoomEvaluator(
         demands,
-        {"R1": {"capacity": 40}},
-        {1: "C1_1", 3: "C3_1"},
-        {1: 3, 3: 3},
+        {code: {"capacity": cap} for code, cap in capacities.items()},
+        {d.term_section_id: f"C{d.term_section_id}_1" for d in demands},
+        {d.term_section_id: 3 for d in demands},
         time_limit_seconds=1,
-        frozen_section_ids={"C1_1", "C3_1"},
+        frozen_section_ids=locked_sections,
     )
 
-    result = oracle(None)
 
+def _timed(demand, start, end):
+    from dataclasses import replace
+
+    return replace(
+        demand,
+        demand_id=f"{demand.term_section_id}#SUN#{start}-{end}",
+        start_min=start,
+        end_min=end,
+    )
+
+
+def test_locked_room_yields_only_when_that_seats_more_meetings():
+    # Two unlocked meetings fit R1 back to back, but both overlap the locked one.
+    # The unroomed count is still minimised exactly: 1 beats keeping the lock (2).
+    locked = _timed(_demand(1, "R1", 30, ("R1",)), 540, 640)
+    first = _timed(_demand(2, "", 30, ("R1",)), 540, 615)
+    second = _timed(_demand(3, "", 30, ("R1",)), 630, 705)
+
+    result = _evaluator([locked, first, second], {"R1": 40}, {"C1_1"})(None)
+
+    assert result["assignment_by_placement_id"] == {1: "", 2: "R1", 3: "R1"}
     assert result["unassigned_count"] == 1
     assert result["count_proven_optimal"] is True
-    assert sorted(result["assignment_by_placement_id"].values()) == ["", "R1"]
+
+
+def test_room_count_outranks_any_number_of_locked_tie_breaks():
+    # Dropping both locked meetings seats all three unlocked ones (2 unroomed
+    # instead of 3). The count must win however many locks yield for it.
+    first_lock = _timed(_demand(1, "R1", 30, ("R1",)), 540, 600)
+    second_lock = _timed(_demand(4, "R1", 30, ("R1",)), 600, 660)
+    early = _timed(_demand(2, "", 30, ("R1",)), 510, 570)
+    middle = _timed(_demand(3, "", 30, ("R1",)), 570, 630)
+    late = _timed(_demand(5, "", 30, ("R1",)), 630, 690)
+
+    result = _evaluator(
+        [first_lock, second_lock, early, middle, late], {"R1": 40}, {"C1_1", "C4_1"}
+    )(None)
+
+    assert result["assignment_by_placement_id"] == {1: "", 4: "", 2: "R1", 3: "R1", 5: "R1"}
+    assert result["unassigned_count"] == 2
+    assert result["count_proven_optimal"] is True
+
+
+def test_double_booked_locked_meetings_both_keep_a_room_before_an_unlocked_one():
+    # Locked 1 and 3 are double-booked in R1; R2 is spare. On the count tie the
+    # larger unlocked meeting yields, so both locked meetings stay roomed.
+    demands = [
+        _demand(1, "R1", 30, ("R1", "R2")),
+        _demand(3, "R1", 30, ("R1", "R2")),
+        _demand(2, "", 40, ("R1", "R2")),
+    ]
+
+    result = _evaluator(demands, {"R1": 40, "R2": 40}, {"C1_1", "C3_1"})(None)
+
+    rooms = result["assignment_by_placement_id"]
+    assert {rooms[1], rooms[3]} == {"R1", "R2"} and rooms[2] == ""
+    assert result["count_proven_optimal"] is True
+
+
+def test_unlocked_incumbent_rooms_get_no_tie_break():
+    # Without a lock the previous count-only behaviour stands: the larger
+    # unroomed meeting may take R1 from its current, smaller holder.
+    demands = [_demand(1, "R1", 30, ("R1",)), _demand(2, "", 40, ("R1",))]
+
+    result = _evaluator(demands, {"R1": 40}, set())(None)
+
+    assert result["assignment_by_placement_id"] == {1: "", 2: "R1"}
+
+
+def test_solver_fallback_keeps_a_locked_incumbent_room(settings):
+    # A model past the element budget is answered by the greedy warm start.
+    from core.services.timetable_exact_rooming import _solve_relaxed
+
+    settings.TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS = 1
+    locked, unlocked = _demand(1, "R1", 30, ("R1",)), _demand(2, "", 40, ("R1",))
+
+    result = _solve_relaxed(
+        [locked, unlocked],
+        {"R1": 40},
+        time_limit_seconds=1,
+        strict_budget=True,
+        count_only=True,
+        keep_roomed={locked.demand_id},
+    )
+
+    assert result.status == "UNKNOWN"
+    assert result.assignment == {locked.demand_id: "R1"}
 
 
 def test_greedy_fallback_keeps_a_locked_incumbent_room():
