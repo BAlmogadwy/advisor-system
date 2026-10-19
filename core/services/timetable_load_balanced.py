@@ -49,6 +49,7 @@ from core.services.timetable_local_search import (
     _apply_move,
     _capture_persist_guard,
     _check_hard_constraints,
+    _course_identity,
     _generate_relocate_move,
     _instructor_quality,
     _original_schedule,
@@ -83,7 +84,7 @@ def _same_course_windows_by_course(schedule: dict[int, list[dict]], sections: li
     by_course = defaultdict(list)
     for idx, meetings in schedule.items():
         sec = sections[idx]
-        code = sec["code"]
+        code = _course_identity(sec)
         label = sec.get("label", str(idx))
         by_course[code].append(
             [make_meeting_window(code, m["day"], m["start"], m["end"], label) for m in meetings]
@@ -203,7 +204,7 @@ def _daily_load(
         sec = sections[i]
         if normalise_course_code(sec["code"]) in online_codes:
             continue
-        load_w = max(1, _col(overlap_matrix, sec["code"])) if overlap_matrix else 1
+        load_w = max(1, _col(overlap_matrix, _course_identity(sec))) if overlap_matrix else 1
         for m in meetings:
             day_count[m["day"]] += load_w
     return day_count
@@ -231,7 +232,9 @@ def _compute_balance_score(
         if normalise_course_code(sec["code"]) in online_codes:
             continue
         for m in meetings:
-            course_day_times[sec["code"]][m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
+            course_day_times[_course_identity(sec)][m["day"]].append(
+                (_to_min(m["start"]), _to_min(m["end"]))
+            )
 
     gap_total = 0.0
     codes = list(course_day_times.keys())
@@ -273,17 +276,6 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         return {"status": "error"}
 
     slot_config = placeable_slots(board.scenario.slot_config or DEFAULT_SLOTS)
-
-    # Build real overlap matrix
-    from core.models import ScenarioSectionBudget as _SSB
-    from core.services.timetable_overlap import build_overlap_matrix as _bom
-
-    _board_courses = set(
-        _SSB.objects.filter(scenario=board.scenario, programme_term=board.nominal_term).values_list(
-            "course_code", flat=True
-        )
-    )
-    overlap_matrix = _bom(board.scenario_id, _board_courses) if _board_courses else {}
     lab_slot_config = placeable_slots(board.scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
     sections, schedule, online_codes = _build_schedule_from_db(
         board_id, slot_config, lab_slot_config
@@ -291,6 +283,12 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
 
     if not sections:
         return {"status": "empty"}
+
+    # Real student-overlap matrix over the courses actually on this board,
+    # keyed by planner identity like the demand rows it counts.
+    from core.services.timetable_overlap import build_overlap_matrix as _bom
+
+    overlap_matrix = _bom(board.scenario_id, {_course_identity(sec) for sec in sections})
 
     from core.services.timetable_validation import (
         blocked_slot_keys,

@@ -131,7 +131,13 @@ def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict
 def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
     same_board = summary.get("same_board_conflicts") or {}
     if metric == "same_board_overlaps" and isinstance(same_board, dict):
-        return int(same_board.get("overlaps") or 0)
+        # The hard rule only: two sections of one course at once. Cross-course
+        # overlaps are counted from course DEMAND, so reshuffling sections trades
+        # them freely even when every student keeps a clash-free choice; their
+        # real cost is what the student-outcome gate measures. (Before the
+        # overlap matrix was keyed by planner identity it was empty, so this gate
+        # has only ever seen same-course overlaps.)
+        return int(same_board.get("same_course_overlaps") or 0)
     if metric == "same_board_instructors" and isinstance(same_board, dict):
         return int(same_board.get("instructors") or 0)
     if metric == "same_board_rooms" and isinstance(same_board, dict):
@@ -211,7 +217,7 @@ def optimiser_safety_regression(
 ) -> dict[str, object]:
     """Block hard operational regressions, not board-level tradeoffs."""
     checks = [
-        ("same_board_overlaps", "Same-board time overlaps"),
+        ("same_board_overlaps", "Same-board time overlaps (same course)"),
         ("same_board_instructors", "Same-board instructor clashes"),
         ("same_board_rooms", "Same-board room clashes"),
         # Scenario-wide, so it also catches an instructor double-booked ACROSS

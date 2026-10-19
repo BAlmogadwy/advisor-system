@@ -1002,8 +1002,22 @@ def test_optimiser_safety_regression_treats_cross_board_as_tradeoff() -> None:
 
 
 def test_optimiser_safety_regression_blocks_hard_same_board_worsening() -> None:
-    before = {"same_board_conflicts": {"overlaps": 0, "instructors": 0, "rooms": 0}}
-    after = {"same_board_conflicts": {"overlaps": 1, "instructors": 0, "rooms": 0}}
+    before = {
+        "same_board_conflicts": {
+            "overlaps": 0,
+            "same_course_overlaps": 0,
+            "instructors": 0,
+            "rooms": 0,
+        }
+    }
+    after = {
+        "same_board_conflicts": {
+            "overlaps": 1,
+            "same_course_overlaps": 1,
+            "instructors": 0,
+            "rooms": 0,
+        }
+    }
 
     regression = _optimiser_safety_regression(before, after)
 

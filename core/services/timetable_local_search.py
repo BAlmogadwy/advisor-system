@@ -99,11 +99,22 @@ MIDDAY_BOUNDARY = 13 * 60  # 13:00
 # ── Cost Function ────────────────────────────────────────────────
 
 
+def _course_identity(sec: dict) -> str:
+    """The course a section belongs to: its planner ``course_key``.
+
+    ``sec["code"]`` is the display code, which can name two different courses
+    (CS112 PROGRAMMING I and II); it is kept for the online and meeting-policy
+    lookups only. Same-course grouping and the student-overlap matrix -- whose
+    demand rows are keyed by planner identity -- use this.
+    """
+    return sec.get("course_key") or sec["code"]
+
+
 def _same_course_windows_by_course(schedule: dict[int, list[dict]], sections: list[dict]) -> dict:
     by_course = defaultdict(list)
     for idx, meetings in schedule.items():
         sec = sections[idx]
-        code = sec["code"]
+        code = _course_identity(sec)
         label = sec.get("label", str(idx))
         by_course[code].append(
             [make_meeting_window(code, m["day"], m["start"], m["end"], label) for m in meetings]
@@ -151,7 +162,7 @@ def _compute_cost(
         for m in meetings:
             s_min = _to_min(m["start"])
             e_min = _to_min(m["end"])
-            course_day_times[sec["code"]][m["day"]].append((s_min, e_min))
+            course_day_times[_course_identity(sec)][m["day"]].append((s_min, e_min))
 
     # Compute pairwise gap costs weighted by shared students
     from core.services.timetable_overlap import shared_student_count as _ssc
@@ -213,7 +224,7 @@ def _check_hard_constraints(
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         for m in meetings:
-            all_masks.append((sec["code"], m["mask"]))
+            all_masks.append((_course_identity(sec), m["mask"]))
 
     for a in range(len(all_masks)):
         for b in range(a + 1, len(all_masks)):
@@ -643,17 +654,6 @@ def optimize_board(
     slot_config = placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
     lab_slot_config = placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
 
-    # Build real overlap matrix
-    from core.models import ScenarioSectionBudget
-    from core.services.timetable_overlap import build_overlap_matrix as _bom
-
-    board_courses = set(
-        ScenarioSectionBudget.objects.filter(
-            scenario=scenario, programme_term=board.nominal_term
-        ).values_list("course_code", flat=True)
-    )
-    overlap_matrix = _bom(scenario.id, board_courses) if board_courses else {}
-
     online_codes = OnlineCourseLookup().codes_for_board(board)
 
     # Load current placements as the initial solution
@@ -736,6 +736,12 @@ def optimize_board(
                 "placement_id": p.id,
             }
         )
+
+    # Real student-overlap matrix over the courses actually on this board,
+    # keyed by planner identity like the demand rows it counts.
+    from core.services.timetable_overlap import build_overlap_matrix as _bom
+
+    overlap_matrix = _bom(scenario.id, {_course_identity(sec) for sec in sections})
 
     # Resolve per-section instructor identity for the daily-session cap (hard
     # constraint). Uses the same CourseInstructor link source as the greedy /

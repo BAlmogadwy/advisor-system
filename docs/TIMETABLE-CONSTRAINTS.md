@@ -46,11 +46,36 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 
 | # | Constraint | Rule | Where |
 |---|---|---|---|
-| H15 | **Critical student overlap** | Two sections at the same time are **critical** if they are same-course *or* share **≥ 20 students** (`HARD_OVERLAP_THRESHOLD`); critical conflicts block publish | `timetable_overlap.py`, `detect_board_conflicts` |
+| H15 | **Critical student overlap** | Two sections at the same time are **critical** if they are same-course, *or* if the overlap **blocks students**: **≥ 20 students** (`HARD_OVERLAP_THRESHOLD`) need both courses **and** no placed section of one course fits round a placed section of the other (`blocked_students > 0`). A cross-course overlap every student can route round through sibling sections is a **warning**. Critical conflicts block publish | `detect_board_conflicts` (decides severity once; `compute_affected_students` reports the same blocked count), `timetable_overlap.py` |
 | H16 | **Section capacity** | A section never exceeds `max_capacity`; `reserve_capacity` is held back so `regular_limit = max_capacity − reserve_capacity` | `SectionState` in `timetable_assignment_models.py` |
 
-> **Publish gate:** `critical = len(overlaps) + len(instructor_clashes)`;
-> `warning = len(room_clashes)`. Critical blocks publication.
+> **Publish gate:** `critical = critical overlaps + len(instructor_clashes)`;
+> `warning = warning overlaps + len(room_clashes)`. Critical blocks publication.
+> Board badges, the conflict panel, next actions (block vs warn), exports, the
+> graph twin and the publish gate all read the one severity `detect_board_conflicts`
+> sets. So do the workspace screens: the split Issues tab and the older
+> workspace's issues list put a warning overlap under its own amber
+> "non-blocking" heading, and the older workspace's cards and board strip and
+> both MRI views (critical count, tones, pressure) count it as a warning, never
+> as a red clash.
+>
+> **H15 counts course demand, keyed by planner identity.** "Share" means students
+> who *need both courses* (`CS112::PROGRAMMING_II`, never the bare display code,
+> which can name two courses), not students seated in both sections, so with
+> sibling sections it is an upper bound. The optimiser's rollback gate therefore
+> counts only the same-course part of H15 (`same_course_overlaps`); the real cost
+> of a cross-course overlap is what the student-outcome gate measures.
+>
+> **Why "blocked", not "shared", decides critical.** A student is hurt by an
+> overlap only when *every* pair of their two courses' placed sections clashes
+> (each section's whole week, all its placements); one clash-free pair is a
+> timetable they can take. The old rule — critical at ≥ 20 shared — never ran:
+> the matrix was keyed by display code and stayed empty, so no cross-course
+> overlap was ever seen. Restoring the matrix made it flag 44 critical overlaps
+> on scenario 667 and publish-block every board while **0** students were
+> blocked (each could take a sibling section) and the seated assignment had
+> **0** clashes. The threshold now applies to blocked students only; a blocked
+> overlap below it stays a warning, as it was.
 
 ---
 
@@ -97,7 +122,7 @@ strict quality-first.
 | **Same-course same-day preference** | Sibling sections *prefer* the same day; a spread penalty prices deviation | `same_course_section_spread_penalty` |
 | **Back-to-back detection** | Adjacent sibling meetings scored separately | `is_back_to_back_gap`, `has_back_to_back_pair` |
 | **Instructor day compaction** | Post-build pass shrinking within-day instructor idle gaps, with layered student guards | `timetable_instructor_compaction.py`; flag `TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED` (**true**) |
-| **Warning-level overlap** | Sections sharing **1–19** students — flagged, does **not** block publish | `HARD_OVERLAP_THRESHOLD = 20` |
+| **Warning-level overlap** | Cross-course sections sharing demand that do **not** block students — every student has a clash-free section pair, or fewer than 20 need both — flagged, does **not** block publish | `HARD_OVERLAP_THRESHOLD = 20`, `detect_board_conflicts` |
 
 > ✅ **Online sessions are excluded from gap terms** (positions 4 and 8). An online
 > class is attended remotely, so it neither creates nor bridges a campus gap.

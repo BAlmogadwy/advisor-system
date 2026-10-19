@@ -623,13 +623,17 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             if summary["critical"] > 0 or summary["warning"] > 0:
                 row += 1
                 ws.cell(row=row, column=1, value="Conflicts:").font = Font(
-                    bold=True, color="C03030", size=9
+                    bold=True, color="C03030" if summary["critical"] > 0 else "D97706", size=9
                 )
                 row += 1
                 for o in conflicts.get("overlaps", []):
+                    # H15: an overlap students can route round is a warning, so it
+                    # must not read like the critical ones the summary sheet counts.
+                    critical = o.get("severity") == "critical"
+                    label = "OVERLAP" if critical else "OVERLAP (non-blocking)"
                     ws.cell(
-                        row=row, column=1, value=f"OVERLAP: {' vs '.join(o.get('sections', []))}"
-                    ).font = Font(color="C03030", size=8)
+                        row=row, column=1, value=f"{label}: {' vs '.join(o.get('sections', []))}"
+                    ).font = Font(color="C03030" if critical else "D97706", size=8)
                     ws.cell(row=row, column=3, value=o.get("detail", ""))
                     row += 1
                 for c in conflicts.get("instructor_clashes", []):

@@ -72,8 +72,11 @@ from core.services.timetable_demand import sync_scenario_student_course_requests
 # 2. EXCLUDED_SUFFIXES — course numbers ending with these digits are
 #    capstone / graduation-project sequences (e.g. CS490, CS491, CS492).
 # 3. EXCLUDED_NAME_KEYWORDS / EXCLUDED_NAME_PATTERNS_PROJECT — fuzzy match
-#    against the course description (English and Arabic) to catch training,
-#    cooperative, internship, and graduation-project courses.
+#    against the course name (English and Arabic) to catch training,
+#    cooperative, internship, and graduation-project courses. The name is the
+#    student's own programme plan's name for that code (the catalogue
+#    description only when the plan has none): one display code can name two
+#    courses, e.g. CYB386 is CYP's internship but CYP2's machine-learning class.
 #
 # The helper ``_is_excluded_course()`` applies all three layers.
 # ---------------------------------------------------------------------------
@@ -98,34 +101,8 @@ EXCLUDED_NAME_KEYWORDS = frozenset(
 # like "Project Management" — only multi-word capstone patterns are listed.
 EXCLUDED_NAME_PATTERNS_PROJECT = ("project i", "project ii", "graduation project")
 
-# Lazy-loaded mapping of course_code (upper-case) to lower-cased course
-# description.  Populated once by ``_load_course_names()`` and reused for
-# the lifetime of the process to avoid repeated DB queries.
-_course_name_cache: dict[str, str] | None = None
 
-
-def _load_course_names() -> dict[str, str]:
-    """Return a mapping of normalised course codes to lower-cased descriptions.
-
-    The result is cached module-globally so the Course table is only queried
-    once per process.  Used by ``_is_excluded_course()`` to perform
-    keyword-based exclusion checks against course descriptions.
-
-    Returns:
-        dict mapping upper-cased course codes to lower-cased description
-        strings (empty string when no description is stored).
-    """
-    global _course_name_cache
-    if _course_name_cache is None:
-        from core.models import Course
-
-        _course_name_cache = {
-            c.course_code.upper(): (c.description or "").lower() for c in Course.objects.all()
-        }
-    return _course_name_cache
-
-
-def _is_excluded_course(code: str) -> bool:
+def _is_excluded_course(code: str, course_name: object) -> bool:
     """Determine whether a course should be excluded from timetable scheduling.
 
     A course is excluded if **any** of the following are true:
@@ -133,11 +110,15 @@ def _is_excluded_course(code: str) -> bool:
     1. Its normalised code is in the ``EXCLUDED_COURSE_CODES`` set.
     2. The numeric portion of the code ends with one of the
        ``EXCLUDED_SUFFIXES`` (490, 491, 492 — capstone sequences).
-    3. The course description (from the Course model) contains any of the
-       ``EXCLUDED_NAME_KEYWORDS`` or ``EXCLUDED_NAME_PATTERNS_PROJECT``.
+    3. ``course_name`` contains any of the ``EXCLUDED_NAME_KEYWORDS`` or
+       ``EXCLUDED_NAME_PATTERNS_PROJECT``.
 
     Args:
         code: Raw course code string (e.g. "CS 490", "ARAB101").
+        course_name: The name of THIS course identity -- the student's
+            programme plan name for ``code`` (catalogue description only
+            when the plan has none). Never looked up by the bare code: a
+            display code is not a course identity.
 
     Returns:
         True if the course should be kept off the timetable, False otherwise.
@@ -153,9 +134,8 @@ def _is_excluded_course(code: str) -> bool:
     if digits.endswith(EXCLUDED_SUFFIXES):
         return True
 
-    # Layer 3: keyword / pattern match against course description
-    names = _load_course_names()
-    name = names.get(c, "")
+    # Layer 3: keyword / pattern match against this identity's name
+    name = str(course_name or "").lower()
     if name:
         if any(kw in name for kw in EXCLUDED_NAME_KEYWORDS):
             return True
@@ -461,14 +441,20 @@ def generate_workspace_scenario(
     course_metadata: dict[str, dict[str, object]] = {}
 
     for sid, recs in all_recs.items():
-        filtered = [c for c in recs if not _is_excluded_course(c)]
+        # Exclusion is decided per course identity: the student's own plan
+        # names the course, so CYP's CYB386 internship drops out while CYP2's
+        # CYB386 machine-learning class stays.
+        filtered: list[str] = []
+        keys: list[str] = []
+        for code in recs:
+            meta = _course_meta_for_student(int(sid), code)
+            if _is_excluded_course(code, meta.get("course_name")):
+                continue
+            key = str(meta["course_key"])
+            course_metadata.setdefault(key, meta)
+            filtered.append(code)
+            keys.append(key)
         if filtered:
-            keys: list[str] = []
-            for code in filtered:
-                meta = _course_meta_for_student(int(sid), code)
-                key = str(meta["course_key"])
-                course_metadata.setdefault(key, meta)
-                keys.append(key)
             aggregate.update(keys)
             student_recs[sid] = filtered
             student_course_keys[sid] = keys

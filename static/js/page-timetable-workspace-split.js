@@ -3920,6 +3920,13 @@ function issueRowIds(row) {
   return (row?.ids || [row?.placement_a_id, row?.placement_b_id]).filter(id => id != null);
 }
 
+// The server decides an overlap's severity once (H15): critical when it is
+// same-course or leaves students with no clash-free pair of sections, a
+// warning when they can route round it. A row without one stays critical.
+function isWarningOverlap(row) {
+  return row?.severity === 'warning';
+}
+
 function addPlacementIssue(map, id, issue) {
   const key = String(id);
   const list = map.get(key) || [];
@@ -3940,7 +3947,7 @@ function placementIssueMap(conflicts, boardId) {
       : '';
     issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
       kind: 'Same-board time clash',
-      tone: row.severity === 'warning' ? 'warn' : 'critical',
+      tone: isWarningOverlap(row) ? 'warn' : 'critical',
       title: sections || 'Same-board time clash',
       detail: `${row.detail || ''}${shared}`,
     }));
@@ -5131,13 +5138,20 @@ function renderRpanelIssues(body) {
     <div id="twsFixQueueBody" class="tws-fix-queue">
       <div class="tws-fix-empty">${IS_AR ? 'جاري حساب أفضل النقلات...' : 'Calculating best moves...'}</div>
     </div>`;
-  if (overlaps.length) {
-    html += `<div class="section-head danger">${IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash'}<span class="n">${overlaps.length}</span></div>`;
-    html += overlaps.map(o => issueRow('critical', (o.sections || []).join(' / '), `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
+  const overlapRow = (o, kind) => issueRow(kind, (o.sections || []).join(' / '), `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx);
+  const criticalOverlaps = overlaps.filter(o => !isWarningOverlap(o));
+  const warningOverlaps = overlaps.filter(isWarningOverlap);
+  if (criticalOverlaps.length) {
+    html += `<div class="section-head danger">${IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash'}<span class="n">${criticalOverlaps.length}</span></div>`;
+    html += criticalOverlaps.map(o => overlapRow(o, 'critical')).join('');
   }
   if (iClashes.length) {
     html += `<div class="section-head danger">${IS_AR ? 'تعارض مدرس' : 'Instructor clash'}<span class="n">${iClashes.length}</span></div>`;
     html += iClashes.map(o => issueRow('critical', `${o.instructor || '—'} · ${(o.sections || []).join(' / ')}`, `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
+  }
+  if (warningOverlaps.length) {
+    html += `<div class="section-head warn">${IS_AR ? 'تداخل زمني داخل اللوحة لا يمنع النشر' : 'Same-board overlap (non-blocking)'}<span class="n">${warningOverlaps.length}</span></div>`;
+    html += warningOverlaps.map(o => overlapRow(o, 'warn')).join('');
   }
   if (rClashes.length) {
     html += `<div class="section-head warn">${IS_AR ? 'تعارض قاعة' : 'Room clash'}<span class="n">${rClashes.length}</span></div>`;
