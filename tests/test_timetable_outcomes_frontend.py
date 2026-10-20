@@ -24,6 +24,7 @@ def test_timetable_outcome_frontend_regressions() -> None:
             "tests/frontend/timetable-split-locked-room.test.cjs",
             "tests/frontend/timetable-copy.test.cjs",
             "tests/frontend/timetable-one-teacher.test.cjs",
+            "tests/frontend/timetable-preview-lane.test.cjs",
         ],
         cwd=root,
         capture_output=True,

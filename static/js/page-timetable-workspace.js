@@ -163,11 +163,22 @@ async function twFetch(url, opts = {}) {
   if (writes) { TW_ACTIVITY.writes++; syncWorkspaceControls(); }
   // Wrap safeFetch with better error extraction for our {ok, error: {code, message}} format
   try {
-    const response = await fetch(url, _injectCsrf(requestOptions));
+    let response = await fetch(url, _injectCsrf(requestOptions));
+    let busyBody = null;
+    // A heavy preview (slot candidates) refused because the server's preview
+    // lane is full is asked again after Retry-After; a read is safe to repeat.
+    for (let attempt = 0; !writes && response.status === 503 && attempt < 6; attempt++) {
+      try { busyBody = await response.json(); } catch { busyBody = null; }
+      if (busyBody?.code !== 'SERVER_BUSY' && busyBody?.error?.code !== 'SERVER_BUSY') break;
+      const seconds = Number(response.headers?.get?.('Retry-After')) || 2;
+      await new Promise(resolve => setTimeout(resolve, Math.min(30, Math.max(1, seconds)) * 1000));
+      busyBody = null;
+      response = await fetch(url, _injectCsrf(requestOptions));
+    }
     if (!response.ok) {
       let msg = `${response.status}`;
       try {
-        const d = await response.json();
+        const d = busyBody || await response.json();
         const e = d.error;
         if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) {
           announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);

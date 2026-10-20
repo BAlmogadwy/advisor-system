@@ -220,8 +220,83 @@ function splitCanCopyScenario() {
 function syncCopyScenarioControl() {
   if ($('twsCopyScenario')) $('twsCopyScenario').disabled = !splitCanCopyScenario();
 }
+/* Heavy previews (rooms, outcomes, slot candidates, move analysis) share a
+   small server lane that keeps threads free for saves and the health check.
+   A full lane answers 503 SERVER_BUSY with Retry-After at once: the newest
+   request of a kind waits that long and asks again, so a panel keeps its
+   loading state instead of going blank. A newer request of the same kind
+   aborts the older one, and a burst of clicks waits PREVIEW_DEBOUNCE_MS so
+   only the last selection is sent. */
+const PREVIEW_DEBOUNCE_MS = 280;
+const PREVIEW_BUSY_RETRIES = 6;
+const PREVIEW = { inflight: new Map(), lastStart: new Map() };
+function previewWait(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+}
+function abortPreview(kind) {
+  const controller = PREVIEW.inflight.get(kind);
+  if (controller) controller.abort();
+  PREVIEW.inflight.delete(kind);
+}
+function serverBusy(response, body) {
+  return response.status === 503 && (body?.code === 'SERVER_BUSY' || body?.error?.code === 'SERVER_BUSY');
+}
+async function previewFetch(url, options, { kind = '', debounce = false } = {}) {
+  const controller = new AbortController();
+  if (kind) {
+    const burst = PREVIEW.inflight.has(kind) || Date.now() - (PREVIEW.lastStart.get(kind) || 0) < PREVIEW_DEBOUNCE_MS;
+    abortPreview(kind);
+    PREVIEW.inflight.set(kind, controller);
+    PREVIEW.lastStart.set(kind, Date.now());
+    if (debounce || burst) await previewWait(PREVIEW_DEBOUNCE_MS, controller.signal);
+  }
+  try {
+    for (let attempt = 0; ; attempt++) {
+      if (controller.signal.aborted) return { superseded: true };
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if (controller.signal.aborted) return { superseded: true };
+      if (response.ok || response.status !== 503) return { response };
+      let body = null;
+      try { body = await response.json(); } catch {}
+      if (!serverBusy(response, body) || attempt >= PREVIEW_BUSY_RETRIES) return { response, body };
+      const seconds = Number(response.headers?.get?.('Retry-After')) || 2;
+      await previewWait(Math.min(30, Math.max(1, seconds)) * 1000, controller.signal);
+    }
+  } catch (e) {
+    if (controller.signal.aborted) return { superseded: true };
+    throw e;
+  } finally {
+    if (kind && PREVIEW.inflight.get(kind) === controller) PREVIEW.inflight.delete(kind);
+  }
+}
 async function api(url, opts = {}, onError = null) {
-  const { _copyToken, ...requestOptions } = opts;
+  const { _copyToken, _preview, ...requestOptions } = opts;
+  if (_preview) {
+    // A preview reads: it neither waits for nor blocks a scenario copy.
+    const o = Object.assign({ credentials: 'same-origin', headers: {} }, requestOptions);
+    if (opts.method && opts.method !== 'GET') o.headers['X-CSRFToken'] = CSRF;
+    const previewOptions = typeof _preview === 'object' ? _preview : { kind: typeof _preview === 'string' ? _preview : '' };
+    try {
+      const { response: r, body, superseded } = await previewFetch(url, o, previewOptions);
+      if (superseded) return null;
+      if (!r.ok) {
+        let msg = `${r.status}`;
+        try { const d = body || await r.json(); msg = d.error?.message || d.error || d.message || msg; } catch {}
+        console.error('api error', url, msg);
+        if (onError) onError(msg);
+        return null;
+      }
+      return await r.json();
+    } catch (e) {
+      console.error(e);
+      if (onError) onError(e.message || String(e));
+      return null;
+    }
+  }
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && COPY_ACTIVITY.pending && _copyToken !== COPY_ACTIVITY.pending) {
     const message = IS_AR ? 'انتظر انتهاء نسخ السيناريو.' : 'Wait for the scenario copy to finish.';
@@ -1848,7 +1923,7 @@ async function refreshCreateSectionCandidates(token) {
   await Promise.all(targets.map(async ({ idx, pane }) => {
     const boardId = pane.boardId;
     if (!boardId) return;
-    const data = await api(`/ops/tw/boards/${boardId}/planned-slot-candidates/?${params.toString()}`);
+    const data = await api(`/ops/tw/boards/${boardId}/planned-slot-candidates/?${params.toString()}`, { _preview: `create-assist-${idx}` });
     if (!data) return;
     if (data.message && data.status !== 'ready') messages.push(data.message);
     (data.candidates || []).forEach(candidate => {
@@ -1977,6 +2052,8 @@ function clearSlotAssistDecorations() {
 
 function clearSlotAssist() {
   clearSlotAssistDecorations();
+  abortPreview('slot-outcome');
+  abortPreview('slot-analysis');
   S.slotAssist.active = false;
   S.slotAssist.paneIdx = null;
   S.slotAssist.placementId = null;
@@ -2251,6 +2328,7 @@ async function enrichMoveCandidate(placementId, placement, candidate) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ candidates: [moveOutcomeCandidatePayload(candidate, placement)] }),
+      _preview: true,
     });
     const row = (data?.candidates || [])[0];
     if (!row) return candidate;
@@ -2270,6 +2348,7 @@ async function refreshStudentAwareSlotAssist(placementId, token, opts = {}) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ candidates: studentOutcomeCandidatePayload(localCandidates) }),
+    _preview: { kind: 'slot-outcome', debounce: true },
   });
   if (!data || !S.slotAssist.active || token !== S.slotAssist.requestToken) return;
   if (String(S.slotAssist.placementId) !== String(placementId)) return;
@@ -2338,6 +2417,8 @@ async function refreshDeepRepairSlotAssist(placementId, token, opts = {}) {
           max_total_solver_seconds: 45,
         },
       }),
+      // A selection is analysed only once the clicking stops.
+      _preview: { kind: 'slot-analysis', debounce: true },
     });
   } catch {
     data = null;
@@ -4143,7 +4224,7 @@ async function roomCandidatesForGuidedSlot(placementId, slot) {
   const key = roomCacheKey(placementId, slot);
   if (RP.builder.roomCache[key]) return RP.builder.roomCache[key];
   const qs = new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end });
-  const data = await api(`/ops/tw/placements/${placementId}/room-candidates/?${qs.toString()}`);
+  const data = await api(`/ops/tw/placements/${placementId}/room-candidates/?${qs.toString()}`, { _preview: true });
   if (data) RP.builder.roomCache[key] = data;
   return data;
 }
@@ -4196,7 +4277,7 @@ async function buildGuidedRoomResolver(action, locatedItems) {
 async function buildGuidedTimeResolver(action, locatedItems) {
   const options = [];
   await Promise.all(locatedItems.map(async item => {
-    const data = await api(`/ops/tw/placements/${item.placement.id}/slot-candidates/`);
+    const data = await api(`/ops/tw/placements/${item.placement.id}/slot-candidates/`, { _preview: true });
     let candidate = bestVisibleQueueCandidate(item.paneIdx, item.placement, data);
     if (!candidate) return;
     candidate = await enrichMoveCandidate(item.placement.id, item.placement, candidate);
@@ -4581,11 +4662,14 @@ async function refreshFixQueue(boards) {
 
   const token = ++RP.fixQueue.token;
   container.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'جاري حساب أفضل النقلات...' : 'Calculating best moves...'}</div>`;
-  await Promise.all(placementIds.map(async id => {
-    if (RP.fixQueue.cache[id]) return;
-    const data = await api(`/ops/tw/placements/${id}/slot-candidates/`);
+  // One preview at a time: a burst of up to 18 would fill the server's
+  // preview lane and be turned away.
+  for (const id of placementIds) {
+    if (token !== RP.fixQueue.token) return;
+    if (RP.fixQueue.cache[id]) continue;
+    const data = await api(`/ops/tw/placements/${id}/slot-candidates/`, { _preview: true });
     if (data) RP.fixQueue.cache[id] = data;
-  }));
+  }
   if (token !== RP.fixQueue.token) return;
 
   const preliminaryItems = [];
@@ -6297,6 +6381,7 @@ async function runRepairAnalysisFromPanel() {
       active_plan_filter: activePlanFilter(),
       limits: { max_candidates: 80, max_solver_seconds: 5, max_total_solver_seconds: 45 },
     }),
+    _preview: 'repair-panel',
   });
   RP.repair.busy = false;
   if (!data) {
@@ -6982,13 +7067,13 @@ async function refreshSelectionBuilderPanels(body, placement, pending) {
   const key = roomCacheKey(placementId, slot);
   const roomPromise = RP.builder.roomCache[key]
     ? Promise.resolve(RP.builder.roomCache[key])
-    : api(`/ops/tw/placements/${placementId}/room-candidates/?${new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end }).toString()}`).then(data => {
+    : api(`/ops/tw/placements/${placementId}/room-candidates/?${new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end }).toString()}`, { _preview: 'selection-rooms' }).then(data => {
       if (data) RP.builder.roomCache[key] = data;
       return data;
     });
   const studentPromise = RP.builder.studentCache[placementId]
     ? Promise.resolve(RP.builder.studentCache[placementId])
-    : api(`/ops/tw/placements/${placementId}/student-evidence/?limit=40`).then(data => {
+    : api(`/ops/tw/placements/${placementId}/student-evidence/?limit=40`, { _preview: 'selection-evidence' }).then(data => {
       if (data) RP.builder.studentCache[placementId] = data;
       return data;
     });
@@ -8281,7 +8366,7 @@ async function switchEnglishSplitPattern(placementId, patternId = null, replay =
   S.englishPicker = true;
   const scenarioId = S.scenarioId;
   try {
-    const choices = await api(`/ops/tw/placements/${placementId}/slot-candidates/`);
+    const choices = await api(`/ops/tw/placements/${placementId}/slot-candidates/`, { _preview: true });
     if (!choices) return null;
     const bundle = (S.panes[located.paneIdx].boardData?.placements || []).filter(row => row.term_section_id === located.placement.term_section_id);
     if (!replay && !allowProtected && bundle.some(row => placementProtectionReasons(row).length)) { notify.warning(IS_AR ? 'الشعبة محمية من النقل.' : 'The section is protected from moving.'); return null; }
@@ -8319,7 +8404,7 @@ async function chooseEnglishSplitCreate(payload, paneIdx = null) {
   try {
     const boards = [];
     for (const target of targets) {
-      const data = await api(`/ops/tw/boards/${target.pane.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`);
+      const data = await api(`/ops/tw/boards/${target.pane.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`, { _preview: true });
       if (data) boards.push({ id: target.pane.boardId, label: data.board?.label || target.pane.boardData?.board?.label || `Board ${target.pane.boardId}`, candidates: data.candidates || [] });
     }
     if (!boards.length) return null;
