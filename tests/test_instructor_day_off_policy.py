@@ -247,6 +247,29 @@ def test_t11_without_the_day_trade_a_first_day_off_earns_no_idle():
     assert accepts(policy, board({"Y": 4}, {"Y": 0}))
 
 
+@pytest.mark.parametrize(("w_fall", "accepted"), [(0, False), (15, False), (16, True)])
+def test_t11_a_second_day_off_cannot_spend_what_the_first_left(w_fall, accepted):
+    """Y started on 5 days; a first day off cost 15 of the 255 minutes. Freeing
+    a second day for 15 more would still fit the 255, but that allowance is
+    for the first day off only: the move needs the total to fall."""
+    policy = policy_at({"Y": 5, "W": 2}, {"Y": 0, "W": 100}, saved_idle=255)
+    first = board({"Y": 4, "W": 2}, {"Y": 15, "W": 100})
+    assert accepts(policy, first)
+    second = board({"Y": 3, "W": 2}, {"Y": 30, "W": 100 - w_fall}, student(gap=-1))
+    assert accepts(policy, second, base=first) is accepted
+    with day_off_scope(policy):
+        # A stage boundary judges the stage's output, not each move.
+        assert stage_is_better(second, first) is True
+
+
+@pytest.mark.parametrize(("w_fall", "admitted"), [(0, False), (16, True)])
+def test_t11_a_swap_cannot_spend_the_first_days_allowance_on_a_second(w_fall, admitted):
+    policy = policy_at({"Y": 5, "W": 2}, {"Y": 0, "W": 100}, saved_idle=255)
+    kept = schedule({"Y": 4, "W": 2}, {"Y": 15, "W": 100})
+    swapped = schedule({"Y": 3, "W": 2}, {"Y": 30, "W": 100 - w_fall})
+    assert policy.swap_ok(swapped, kept, score=START) is admitted
+
+
 def test_t11_the_allowance_is_frozen_with_the_run_start(settings):
     settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
     settings.TIMETABLE_INSTRUCTOR_DAY_TRADE_ENABLED = True

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import ExitStack, nullcontext
 
 from django.conf import settings
 from django.db import transaction
@@ -64,11 +65,15 @@ from core.services.timetable_flags import (
 )
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_optimisation_policy import (
-    evaluation_is_better,
+    DayOffAnchor,
+    DayOffPolicy,
+    day_off_scope,
     evaluation_order_key,
     instructor_schedule_metrics,
+    is_day_off_policy_active,
     is_instructor_priority_enabled,
     schedule_metrics_of,
+    stage_is_better,
 )
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
@@ -1170,10 +1175,13 @@ class _FullRunTeachers:
 
         write_names(self.scenario_id, self.win)
 
-    def final(self) -> dict:
-        """G5: re-pick on the final board; adopt it only if it is no worse.
+    def final(self, *, policy: DayOffPolicy | None = None, score=None) -> dict:
+        """G5: re-pick on the final board; adopt it only if it is no worse
+        (with the day-off policy: only if the policy admits the swap).
         Returns the V2 map of the map stored and pinned."""
-        chosen, _changed, final = _final_teacher_recompute(self.scenario_id, self.win)
+        chosen, _changed, final = _final_teacher_recompute(
+            self.scenario_id, self.win, policy=policy, score=score
+        )
         self.report["final"] = final
         self.report["coverage"] = final["coverage"]
         self.win = chosen
@@ -1181,12 +1189,27 @@ class _FullRunTeachers:
         return chosen.v2_map()
 
 
-def _final_teacher_recompute(scenario_id: int, in_force, *, bounds=None, gate=None):
+def _final_teacher_recompute(
+    scenario_id: int,
+    in_force,
+    *,
+    bounds=None,
+    gate=None,
+    policy: DayOffPolicy | None = None,
+    score=None,
+):
     """K = the map in force closed on the final board; M_end = the exact re-pick,
     stable against it and keeping its violations. M_end is adopted iff its
     (TBD, TBD position, over-12, days, idle) key is no worse than K's, it adds
     no clash or over-cap session K does not have, and ``gate(M_end)`` (if any)
-    passes. The chosen map is persisted and its names written."""
+    passes. The chosen map is persisted and its names written.
+
+    With the day-off ``policy`` both maps are bounded by ``policy.swap_bounds``
+    of the map in force on this board (a day given up earlier for students is
+    kept), and M_end is adopted iff its coverage (TBD, TBD position) is no worse
+    than K's, it adds no violation, and ``policy.swap_ok`` admits it against K
+    with the board's student ``score``. Without complete evidence for the
+    policy the legacy ``bounds``/``gate`` decide."""
     from core.services.section_teacher_assignment import (
         adds_violations,
         assignment_key,
@@ -1198,12 +1221,37 @@ def _final_teacher_recompute(scenario_id: int, in_force, *, bounds=None, gate=No
     )
 
     with assignment_scope(scenario_id):  # one read of the stored rows
-        closed = close_on_layout(scenario_id, in_force, bounds=bounds)
+        swap_bounds = None
+        if policy is not None:
+            states = build_section_states_for_scenario(scenario_id)
+
+            def measured(assignment) -> dict:
+                return instructor_schedule_metrics(states, assignment.v2_map())
+
+            swap_bounds = policy.swap_bounds(measured(in_force))
+        closed = close_on_layout(
+            scenario_id, in_force, bounds=swap_bounds if swap_bounds is not None else bounds
+        )
         proposed = propose_layout_assignment(
-            scenario_id, current=in_force, keep_violations_of=in_force, bounds=bounds
+            scenario_id,
+            current=in_force,
+            keep_violations_of=in_force,
+            bounds=swap_bounds if swap_bounds is not None else bounds,
         )
         reason = "adopted"
-        if assignment_key(proposed) > assignment_key(closed):
+        if policy is not None and swap_bounds is not None:
+            # Coverage first; assignment_key's day/idle stages give way to the policy.
+            if assignment_key(proposed)[:2] > assignment_key(closed)[:2]:
+                reason = "worse_than_kept_map"
+            elif adds_violations(proposed, closed):
+                reason = "adds_violations"
+            elif not policy.swap_ok(
+                measured(proposed),
+                measured(closed),
+                score=score if score is not None else policy.score,
+            ):
+                reason = "day_off_policy"
+        elif assignment_key(proposed) > assignment_key(closed):
             reason = "worse_than_kept_map"
         elif adds_violations(proposed, closed):
             reason = "adds_violations"
@@ -1224,6 +1272,8 @@ def _final_teacher_recompute(scenario_id: int, in_force, *, bounds=None, gate=No
             for key in set(stored.teacher) | set(in_force.teacher)
             if stored.teacher.get(key) != in_force.teacher.get(key)
         ),
+        # Present only when a policy was handed in: did it judge this swap?
+        **({"day_off_policy": swap_bounds is not None} if policy is not None else {}),
     )
     return stored, changed, final
 
@@ -1246,10 +1296,10 @@ def optimise_scenario_timetable_v2(
 
     See :func:`_optimise_scenario_timetable_v2`. With one teacher per section
     (``is_one_teacher_active``) the run also chooses each section's teacher
-    (``_FullRunTeachers``) and pins every map it uses until it returns.
+    (``_FullRunTeachers``) and pins every map it uses until it returns. With
+    the day-off policy (``is_day_off_policy_active``) the run is judged against
+    the winning candidate from there on (``day_off_scope``), until it returns.
     """
-    from contextlib import ExitStack
-
     from core.services.timetable_flags import is_one_teacher_active
 
     kwargs = {
@@ -1265,11 +1315,12 @@ def optimise_scenario_timetable_v2(
         "chain_time_limit_seconds": chain_time_limit_seconds,
         "checkpoint": checkpoint,
     }
-    if not is_one_teacher_active():
-        return _optimise_scenario_timetable_v2(scenario_id, **kwargs)
     with ExitStack() as stack:
         return _optimise_scenario_timetable_v2(
-            scenario_id, teachers=_FullRunTeachers(scenario_id, stack), **kwargs
+            scenario_id,
+            teachers=_FullRunTeachers(scenario_id, stack) if is_one_teacher_active() else None,
+            scope=stack,
+            **kwargs,
         )
 
 
@@ -1287,8 +1338,11 @@ def _optimise_scenario_timetable_v2(
     chain_time_limit_seconds: float | None = None,
     checkpoint: Callable[[], None] | None = None,
     teachers: _FullRunTeachers | None = None,
+    scope: ExitStack | None = None,
 ) -> dict:
     """Full optimisation pipeline: generate → rank → improve → persist.
+
+    ``scope`` holds the day-off policy's scope until the caller's stack exits.
 
     Pipeline:
       1. Build student profiles + course rigidity from DB
@@ -1494,6 +1548,22 @@ def _optimise_scenario_timetable_v2(
         "stage_telemetry": empty_stage_telemetry(),
     }
 
+    # Day-off policy (R1-R5): from here on every optional stage is judged against
+    # the winning candidate under its own teachers — Generate's run start. The
+    # placers and candidate generation keep their own rules (``day_off_scope(None)``
+    # around the re-placement and the reinstatement below).
+    day_off = None
+    if is_day_off_policy_active() and scope is not None:
+        anchor = DayOffAnchor.from_metrics(
+            schedule_metrics_of(best),
+            padded=teachers is not None,
+            universe=teachers.win.universe if teachers is not None else (),
+        )
+        if anchor is not None:
+            day_off = DayOffPolicy(anchor, tuple(best.lexicographic_score), "generate_winner")
+            scope.enter_context(day_off_scope(day_off))
+            result["day_off_policy"] = day_off.to_dict()
+
     # The evaluated winner's sections, built once and mutated in place by the
     # local-search, chain, and CP-SAT stages below. After improvements this
     # holds the EXACT board that produced ``result["final_score"]``; step 5
@@ -1557,7 +1627,7 @@ def _optimise_scenario_timetable_v2(
             ]
             result["unresolved_students"] = len(improved.unresolved_student_ids)
 
-            if evaluation_is_better(improved, best):
+            if stage_is_better(improved, best):
                 logger.info("Local search improved score: %s → %s", score_before, score_after)
             else:
                 logger.info("Local search found no improvement (score unchanged)")
@@ -1625,7 +1695,7 @@ def _optimise_scenario_timetable_v2(
                 ),
             )
 
-            if evaluation_is_better(chain_result, current_eval_for_chain):
+            if stage_is_better(chain_result, current_eval_for_chain):
                 logger.info(
                     "Chain search improved: %s -> %s",
                     current_eval_for_chain.lexicographic_score,
@@ -1732,13 +1802,15 @@ def _optimise_scenario_timetable_v2(
     # sections instead of saving the evaluated winner's improvements.
     winning_strategy = best.candidate_id.rsplit("_", 1)[0]
     _reset_unlocked_placements(scenario_id)
-    from contextlib import nullcontext
-
     from core.services.timetable_autoplace import auto_place_scenario
 
     # One teacher per section: the skeleton is rebuilt under the map it was
-    # generated with, so it is the same skeleton (G3).
-    with teachers.building() if teachers is not None else nullcontext():
+    # generated with, so it is the same skeleton (G3). The placer (and the SA
+    # it may run) keeps its own rules: the day-off scope is suspended.
+    with (
+        teachers.building() if teachers is not None else nullcontext(),
+        day_off_scope(None) if day_off is not None else nullcontext(),
+    ):
         scenario_place_result = auto_place_scenario(
             scenario_id,
             strategy=winning_strategy,
@@ -1949,7 +2021,8 @@ def _optimise_scenario_timetable_v2(
 
     if checkpoint:
         checkpoint()
-    reinstatement = maybe_reinstate_missing_required_sections(scenario_id)
+    with day_off_scope(None) if day_off is not None else nullcontext():  # a placer
+        reinstatement = maybe_reinstate_missing_required_sections(scenario_id)
     if reinstatement is not None:
         result["required_section_reinstatement"] = reinstatement
         refresh_final_score_after_required_section_repair(
@@ -1964,7 +2037,12 @@ def _optimise_scenario_timetable_v2(
     if teachers is not None:
         # G5, whether or not anything was reinstated: re-pick on the final board,
         # then re-score if the map kept is not the one the score was judged under.
-        final_map = teachers.final()
+        # With the day-off policy the swap is judged against Generate's own start.
+        final_map = (
+            teachers.final(policy=day_off, score=result["final_score"])
+            if day_off is not None
+            else teachers.final()
+        )
         if section_instructor_ids is not None:
             scored_with, section_instructor_ids = section_instructor_ids, final_map
             refresh_final_score_after_teacher_recompute(
@@ -2011,6 +2089,8 @@ def optimise_current_timetable(
     cpsat_hotspot_only: bool = False,
     chain_time_limit_seconds: float | None = None,
     checkpoint: Callable[[], None] | None = None,
+    day_off_anchor: DayOffAnchor | None = None,
+    teacher_swap: Callable[..., dict | None] | None = None,
 ) -> dict:
     """Improve the CURRENT timetable without regenerating from scratch.
 
@@ -2023,7 +2103,65 @@ def optimise_current_timetable(
 
     Use this when you've manually adjusted the board and want to
     improve it without losing your work.
+
+    With the day-off policy (``is_day_off_policy_active``) every stage after
+    the baseline is judged by one ``DayOffPolicy`` against ``day_off_anchor``
+    (the runner's saved board; else this run's own baseline) and the
+    baseline's score, inside ``day_off_scope`` until this returns; the policy
+    is stored in ``result["day_off_policy"]``. ``teacher_swap(stage, policy=,
+    score=)`` (the runner's one-teacher re-pick) runs between the search and
+    the post passes and returns the new map when it changed who teaches what.
     """
+    with ExitStack() as scope:
+        return _optimise_current_timetable(
+            scenario_id,
+            max_search_iterations=max_search_iterations,
+            run_local_search=run_local_search,
+            run_chain_search=run_chain_search,
+            max_chain_iterations=max_chain_iterations,
+            run_cpsat_polish=run_cpsat_polish,
+            cpsat_time_limit=cpsat_time_limit,
+            cpsat_hotspot_only=cpsat_hotspot_only,
+            chain_time_limit_seconds=chain_time_limit_seconds,
+            checkpoint=checkpoint,
+            day_off_anchor=day_off_anchor,
+            teacher_swap=teacher_swap,
+            scope=scope,
+        )
+
+
+def _own_day_off_anchor(scenario_id: int, baseline) -> DayOffAnchor | None:
+    """A run called without the runner's anchor starts from its own baseline,
+    over the universe of the map in force (one teacher) or as measured."""
+    from core.services.timetable_flags import is_one_teacher_active
+
+    universe: frozenset = frozenset()
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import load_assignment
+
+        universe = load_assignment(scenario_id).universe
+    return DayOffAnchor.from_metrics(
+        schedule_metrics_of(baseline), padded=is_one_teacher_active(), universe=universe
+    )
+
+
+def _optimise_current_timetable(
+    scenario_id: int,
+    *,
+    max_search_iterations: int,
+    run_local_search: bool,
+    run_chain_search: bool,
+    max_chain_iterations: int,
+    run_cpsat_polish: bool,
+    cpsat_time_limit: float,
+    cpsat_hotspot_only: bool,
+    chain_time_limit_seconds: float | None,
+    checkpoint: Callable[[], None] | None,
+    day_off_anchor: DayOffAnchor | None,
+    teacher_swap: Callable[..., dict | None] | None,
+    scope: ExitStack,
+) -> dict:
+    """See :func:`optimise_current_timetable`."""
     import time
 
     t0 = time.time()
@@ -2161,6 +2299,20 @@ def optimise_current_timetable(
         "stage_telemetry": empty_stage_telemetry(),
     }
 
+    # Day-off policy (R1-R5): one relation judges every stage of this run, from
+    # the saved board (the runner's anchor) and the baseline's student score.
+    day_off = None
+    if is_day_off_policy_active():
+        anchor = (
+            day_off_anchor
+            if day_off_anchor is not None
+            else _own_day_off_anchor(scenario_id, baseline)
+        )
+        if anchor is not None:
+            day_off = DayOffPolicy(anchor, tuple(baseline.lexicographic_score), "saved_board")
+            scope.enter_context(day_off_scope(day_off))
+            result["day_off_policy"] = day_off.to_dict()
+
     # ── Step 3: Local search on current state ──
     if checkpoint:
         checkpoint()
@@ -2202,7 +2354,7 @@ def optimise_current_timetable(
         result["unresolved_students"] = len(improved.unresolved_student_ids)
 
         t3 = time.time()
-        if evaluation_is_better(improved, baseline):
+        if stage_is_better(improved, baseline):
             logger.info(
                 "Local search improved: %s -> %s (%.1fs)", score_before, score_after, t3 - t2
             )
@@ -2242,7 +2394,7 @@ def optimise_current_timetable(
                 else getattr(settings, "TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", 60.0)
             ),
         )
-        if evaluation_is_better(chain_result, current_eval):
+        if stage_is_better(chain_result, current_eval):
             result["chain_search_applied"] = True
             result["final_score"] = list(chain_result.lexicographic_score)
             result["hotspot_courses"] = chain_result.hotspot_courses[:10]
@@ -2300,7 +2452,8 @@ def optimise_current_timetable(
         checkpoint()
     # Only update placements that changed — no deletion, no re-generation.
     # Respects is_locked flag on placements.
-    if evaluation_is_better(current_eval, baseline):
+    search_persisted = stage_is_better(current_eval, baseline)
+    if search_persisted:
         persist_result = persist_section_states_to_scenario(scenario_id, sections_by_id)
         result["persist_result"] = {
             "action": "updated_in_place",
@@ -2368,6 +2521,25 @@ def optimise_current_timetable(
             )
 
             sync_meetings_from_placements(scenario_id)
+
+    # S1 (day-off policy): re-pick who teaches what on the board the search left
+    # in the database, judged against the run start, before the repairs,
+    # compaction and recovery work on it. Only a swap the policy admits is kept;
+    # from here every stage charges the map it stored (pinned by the runner).
+    if day_off is not None and teacher_swap is not None:
+        board_score = (current_eval if search_persisted else baseline).lexicographic_score
+        swapped = teacher_swap("after_search", policy=day_off, score=tuple(board_score))
+        if swapped is not None and section_instructor_ids is not None:
+            section_instructor_ids = swapped
+            refresh_final_score_after_teacher_recompute(
+                result,
+                scenario_id,
+                student_profiles,
+                course_rigidity,
+                section_instructor_ids,
+                course_tiers,
+                changed=True,
+            )
 
     # Snapshot the safety state the OPTIMISER produced, BEFORE the mandatory
     # instructor repairs run, so the runner's safety gate judges the optimiser's

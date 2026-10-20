@@ -569,6 +569,19 @@ def _days_rise(new: DayOffMeasure, old: DayOffMeasure) -> bool:
     return any(days > old.days[i] for i, days in new.days.items())
 
 
+def _spare_day_paid_in_idle(new: DayOffMeasure, old: DayOffMeasure) -> bool:
+    """One change frees a second or third day off (an instructor already on at
+    most 4 working days) at a rise in that instructor's own idle while the
+    total does not fall. The day trade's allowance is for a first day off only
+    (owner, 2026-10-20), so a later day may not spend what is left of it."""
+    if new.total_idle < old.total_idle:
+        return False
+    return any(
+        days < old.days[i] <= MAX_WORKING_DAYS and new.idle[i] > old.idle[i]
+        for i, days in new.days.items()
+    )
+
+
 @dataclass(frozen=True)
 class DayOffPolicy:
     """The one acceptance relation of a run: its start A and the start's score.
@@ -580,7 +593,8 @@ class DayOffPolicy:
     overloads and V can only shrink, no 5th day is added, and the key falls (a
     strict partial order, so committed stages compose). ``step`` judges a move
     inside a scan: ``core`` against the board in hand, plus R2 per move (a day
-    given up must buy a strictly better score). ``swap_ok`` judges a change of
+    given up must buy a strictly better score) and no second or third day off
+    paid in its teacher's idle unless the total falls. ``swap_ok`` judges a change of
     who teaches what on one layout, where the student score is fixed.
     """
 
@@ -682,6 +696,8 @@ class DayOffPolicy:
             return False
         if _days_rise(after, before) and not new < here:
             return False  # R2 per move: a day given up buys a strictly better score
+        if _spare_day_paid_in_idle(after, before):
+            return False
         return self._key(new, after) < self.key(incumbent)
 
     def keeps_breaches(
@@ -696,12 +712,16 @@ class DayOffPolicy:
         """Map ``new`` against map ``old``, both measured on one layout whose
         student score is ``score``: no breach grows, no instructor's days rise
         (with the score fixed a day given up buys nothing, so no day-neutral
-        swap), and (fives, idle net of allowances, days, idle) is no worse."""
+        swap), no second or third day off is paid in its teacher's idle unless
+        the total falls, and (fives, idle net of allowances, days, idle) is no
+        worse."""
         fixed = tuple(score)
         after, before = self.measure(new, fixed), self.measure(old, fixed)
         if after is None or before is None:
             return False
         if not _no_new_breach(after, before) or _days_rise(after, before):
+            return False
+        if _spare_day_paid_in_idle(after, before):
             return False
         return after.instructor_key() <= before.instructor_key()
 

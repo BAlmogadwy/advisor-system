@@ -128,6 +128,17 @@ def _cap_on() -> bool:
     return is_instructor_daily_cap_enabled()
 
 
+def _day_off_max_days() -> int | None:
+    """The exact solve's L3 under the day-off policy: most working days a
+    teacher keeps a day off with (R1), else None (the soft weekly target)."""
+    from core.services.timetable_optimisation_policy import (
+        MAX_WORKING_DAYS,
+        is_day_off_policy_active,
+    )
+
+    return MAX_WORKING_DAYS if is_day_off_policy_active() else None
+
+
 def _label_order(label: str) -> tuple[int, str]:
     tail = label[1:] if label[:1].upper() == "S" else label
     return (int(tail) if tail.isdigit() else 10**6, label)
@@ -1197,11 +1208,14 @@ def _solve_component(
     idle_terms: dict[int, list] = defaultdict(list)
     const_days: Counter = Counter()
     const_idle: Counter = Counter()
+    # With the day-off policy L3 counts the teachers left without a day off
+    # (R1) instead of the sessions over the soft weekly target.
+    max_days = _day_off_max_days()
     for teacher in teachers:
         own = mine[teacher]
         load_terms = [s.nominal_sessions * x[(s.key, teacher)] for s in own]
         most = ledger.load[teacher] + sum(s.nominal_sessions for s in own)
-        if own and most > ledger.soft:
+        if max_days is None and own and most > ledger.soft:
             over = model.new_int_var(0, most, "")
             model.add(over >= ledger.load[teacher] + sum(load_terms) - ledger.soft)
             l3.append(over)
@@ -1244,6 +1258,14 @@ def _solve_component(
             model.add(idle >= last - first - busy - sum(en - st for st, en in fixed_here))
             l5.append(idle)
             idle_terms[teacher].append(idle)
+        if (
+            max_days is not None
+            and own
+            and len(day_terms[teacher]) + const_days[teacher] > max_days
+        ):
+            five = model.new_bool_var("")  # 1 when this teacher works all five days
+            model.add(sum(day_terms[teacher]) + const_days[teacher] <= max_days + five)
+            l3.append(five)
         if bounds is not None:
             limit_days, limit_idle, allowance = bounds.get(str(teacher), (0, 0, 0))
             days_expr = sum(day_terms[teacher]) + const_days[teacher]
@@ -1339,9 +1361,10 @@ def solve_layout_aware(
     """The exact assignment on the slots' layout (staged lexicographic CP-SAT).
 
     Stages: L1 TBD count, L2 TBD position (unplaced before placed, then the
-    highest rank of its course), L3 sessions over the day-off target, L4
-    campus working days, L5 campus idle, L6 changes from ``current``, L7 the
-    lowest instructor id. Clash, the daily cap, the weekly ceiling and D10 are
+    highest rank of its course), L3 sessions over the day-off target (with the
+    day-off policy: teachers left with no day off, R1), L4 campus working days,
+    L5 campus idle, L6 changes from ``current``, L7 the lowest instructor id.
+    Clash, the daily cap, the weekly ceiling and D10 are
     constraints, and so is a free option for each section not placed yet (see
     ``Slot.options``); ``kept`` sections (charged under ``current`` and already
     in a clash, an over-cap day, or left no option) are fixed to their current

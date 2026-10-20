@@ -13,6 +13,7 @@ from core.models import SectionPlacement, TermSectionMeeting
 from core.services.timetable_assignment_models import SectionState, TimetableEvaluationResult
 from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_optimisation_policy import (
+    current_day_off_policy,
     instructor_schedule_regressions,
     is_instructor_priority_enabled,
     schedule_metrics_of,
@@ -380,6 +381,16 @@ def _run_secondary_recovery_for_scenario(
         failures += instructor_schedule_regressions(
             schedule_metrics_of(baseline), schedule_metrics_of(persisted)
         )
+        day_off = current_day_off_policy()
+        if day_off is not None and not day_off.keeps_breaches(persisted, baseline):
+            # The run's day-off ratchet: frozen days and idle can still turn a
+            # spare day's student gain or an offset idle rise into a breach.
+            failures.append(
+                {
+                    "metric": "instructor_day_off_policy",
+                    "label": "Persisted recovery breached the instructor day-off rules",
+                }
+            )
         if (
             _signatures(sections) != _signatures(persisted_sections)
             or any(

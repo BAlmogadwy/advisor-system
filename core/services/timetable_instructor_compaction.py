@@ -48,6 +48,8 @@ from core.services.timetable_assignment_models import RiskTier, SectionMeeting
 from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_optimisation_policy import (
+    MAX_WORKING_DAYS,
+    current_day_off_policy,
     evaluation_is_better,
     evaluation_order_key,
     instructor_schedule_metrics,
@@ -132,6 +134,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     # instructor-first policy (days are a ranked quantity there); default OFF.
     trade = get_instructor_day_trade_config()
     trade_on = is_instructor_day_trade_active()
+    # The run's day-off policy (R1-R5), when the optimiser runs this pass inside
+    # its scope: moves are judged against the run's start (see ``_assess``).
+    day_off = current_day_off_policy()
     room_stats: dict = {"rejected": 0, "over_floor": {}}
     if trade_on:
         # Report-only; absent while the rule is off so the report matches master.
@@ -539,7 +544,14 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         when it is an acceptable improvement over the round's ``best`` candidate
         (or the accepted board), else None. A move that saves an instructor campus day may, when
         the bounded trade is on, spend students/idle within its configured
-        limits; every other move keeps the original gates unchanged."""
+        limits; every other move keeps the original gates unchanged.
+
+        With the run's day-off policy (R5): only a FIRST day off (an instructor
+        going from 5 working days to 4 or fewer) may spend the trade's student
+        budgets; a second or third day off must not cost students at all; no
+        instructor's days may rise; and a move is judged by the policy against
+        the run's start, so one instructor's idle may rise when the total falls
+        (R4), and the trade's idle allowance holds for a first day off only."""
         nonlocal moves_evaluated
         sig = _signature()
         if sig in visited:
@@ -576,7 +588,24 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 "idle_minutes_by_instructor": allowed,
                 "idle_minutes": sum(allowed.values()),
             }
-        if not gates_ok(res, idle_saved, gap_added, day_saved > 0):
+        day_saving = day_saved > 0
+        if day_off is not None:
+            cur_days = cur_schedule["working_days_by_instructor"]
+            trial_days = trial_schedule.get("working_days_by_instructor") or {}
+            teachers = set(cur_days) | set(trial_days)
+            before = {i: int(cur_days.get(i, 0)) for i in teachers}
+            after = {i: int(trial_days.get(i, 0)) for i in teachers}
+            if any(after[i] > before[i] for i in teachers):
+                return None  # after the search no instructor's days rise
+            first_day_off = any(before[i] > MAX_WORKING_DAYS >= after[i] for i in teachers)
+            if (
+                not first_day_off
+                and any(after[i] < before[i] for i in teachers)
+                and tuple(res.lexicographic_score) > tuple(cur_eval.lexicographic_score)
+            ):
+                return None  # R5: a second or third day off never costs students
+            day_saving = first_day_off  # R5: the student budgets buy first days off only
+        if not gates_ok(res, idle_saved, gap_added, day_saving):
             return None
         if trade_on and day_saved > 0:
             # A traded move relocates whole sessions; keep it only if the room
@@ -603,7 +632,24 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 return None
         it = ituple(im, tg - base_total_gap)
         rank = None
-        if instructor_priority and trade_on:
+        if day_off is not None:
+            # The policy's step (prelude of evaluation_is_better) against the
+            # board in hand replaces the strict per-instructor ceilings, and the
+            # move must buy an instructor gain (days, then idle). Candidates are
+            # ranked by the policy's key with the student tail as tie-breaks, the
+            # same shape as the trade rank below.
+            improves = evaluation_is_better(res, cur_eval, feasibility_ceilings=cur_eval) and (
+                trial_schedule["working_days"],
+                trial_schedule["idle_minutes"],
+            ) < (cur_schedule["working_days"], cur_schedule["idle_minutes"])
+            if improves:
+                max_added = max(
+                    (g - cur_ctx["per"].get(sid_, 0) for sid_, g in per_after.items()), default=0
+                )
+                policy_key = day_off.key(res)
+                rank = (*policy_key[:6], gap_added, max_added, *policy_key[6:])
+                improves = best is None or rank < best[5]
+        elif instructor_priority and trade_on:
             # Accept only a strict improvement on the board in hand, then rank the
             # acceptable candidates: fewest working days, least instructor idle,
             # and WITHIN equal idle the least student cost - lower total added gap,
