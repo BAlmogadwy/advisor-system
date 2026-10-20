@@ -179,3 +179,23 @@ test('the quality grid template carries the coverage row after instructor idle, 
   assert.ok(idle > 0 && row > idle, 'coverage row after the idle cell');
   assert.match(html, /<dd id="twQualityTeacherCoverage">/);
 });
+
+test('the wide quality grid has one column per shown cell, with or without the coverage cell', () => {
+  // jsdom lays out no grid, so pair the stylesheet's column counts with the
+  // real markup's cells: six without the rule, seven (one row) with it.
+  const css = read('static/css/timetable-workspace.css');
+  const columns = body => Number(/grid-template-columns:\s*repeat\((\d+),/.exec(body)[1]);
+  const base = columns(/\n\.tw-quality-metrics\s*{([^}]*)}/.exec(css)[1]);
+  const [, selector, wide] = /@media \(min-width: 1101px\) {\s*(\.tw-quality-metrics:has\([^{]+\))\s*{([^}]*)}/.exec(css);
+  const html = read('core/templates/core/timetable_workspace.html')
+    .replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
+  const dom = new JSDOM(html);
+  const grid = dom.window.document.querySelector('.tw-quality-metrics');
+  const shown = () => [...grid.children].filter(cell => !cell.hidden).length;
+  assert.equal(grid.matches(selector), false, 'rule off: the six-column grid applies');
+  assert.equal(shown(), base);
+  dom.window.document.getElementById('twQualityTeacherCoverageRow').hidden = false;
+  assert.equal(grid.matches(selector), true, 'rule on: the wide grid widens');
+  assert.equal(shown(), columns(wide));
+  dom.window.close();
+});
