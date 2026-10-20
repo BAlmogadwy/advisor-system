@@ -143,6 +143,43 @@ gates** — they are judged against `score_before_instructor_passes` /
 `safety_before_instructor_passes` so a required repair cannot be vetoed and
 reinstate the violation it just cleared.
 
+### 3.1 Instructor days off (`TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY`, owner rulings 2026-10-19)
+
+With instructor priority on, the default is a strict veto: no optional change
+may raise any instructor's working days or idle minutes. With this flag on, the
+owner's rulings replace it, judged **per instructor against the run's start**
+(the saved board under the saved teacher map for Optimise Current; the winning
+candidate for Generate):
+
+- **R1** The teaching week is SUN–THU. Everyone keeps at least one day off where
+  possible (at most 4 working days); no optional change **adds a 5th day**.
+- **R2** A **spare** day off (an instructor on 3 working days or fewer) may be
+  given up, never above 4 days, only for a student gain: the full score strictly
+  better and the four hard positions each no worse — on every move that gives one
+  up, and against the run's start.
+- **R3** Whoever gives up a spare day may gain at most **60 idle minutes per day
+  given up**, cumulative, against the run's start. A large total fall does not
+  excuse more.
+- **R4** One instructor's idle may rise only if the **total** instructor idle
+  strictly falls.
+- **R5** Compaction spends the day trade's student budgets only on a **first day
+  off** (5 days → 4); a second or third day off must not cost students. The day
+  trade's 255-minute idle allowance also covers a first day off only: freeing a
+  second or third day off may raise that instructor's idle only when the total
+  falls (owner, 2026-10-20).
+
+Ranking (one key for every optional stage): the four hard student positions,
+then instructors with no day off, then instructor idle net of the R3 and
+first-day allowances, then the rest of the student score, then total working
+days (spare days), then raw idle. Stage boundaries use a strict partial order
+with a breach ratchet (a breach can only shrink), moves add R2 per move, and
+a change of who teaches what (one teacher per section) is admitted only with no
+worse coverage, no new violation, no instructor's days rising and a no-worse
+instructor key. The runner blocks any final breach of R1–R4 (a mandatory
+repair's included); Generate only reports a 5th day added against the saved
+board (`day_off_policy.audit`). The constants 5, 4 and 60 are rulings in
+`timetable_optimisation_policy`, not settings. Off: the strict veto, unchanged.
+
 ---
 
 ## 4. Feature flags that gate constraints
@@ -163,6 +200,7 @@ reinstate the violation it just cleared.
 | `TIMETABLE_ONE_TEACHER_PER_SECTION` | **false** | one teacher per section (or "to be decided"): H7/H8 charged per section, the 15-session weekly ceiling and D10; needs `TIMETABLE_INSTRUCTOR_LINKS_ENABLED`. Off: byte-identical to before |
 | `TIMETABLE_ONE_TEACHER_TIME_LIMIT_SECONDS` | **10** | wall budget of one whole assignment solve |
 | `TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME` | **1.0** | deterministic time of each of the assignment's lexicographic stages |
+| `TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY` | **false** | the owner's day-off rulings R1–R5 (§3.1) instead of the strict per-instructor day/idle veto; needs `TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED` |
 
 ---
 

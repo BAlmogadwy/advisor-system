@@ -133,6 +133,17 @@ planner charges clashes and the daily cap to that teacher only.
   results list it under `unplaced_teacher_busy`. Builds re-pick with the board; Optimise Current
   starts from a re-pick bounded per teacher and keeps its end re-pick only when it is no worse.
   Manual moves and repairs never re-pick.
+- **With the day-off policy** (`TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY`, see
+  `TIMETABLE-CONSTRAINTS.md` §3.1) the solve's third stage counts teachers left with **no
+  day off** (5 working days) instead of the soft 12-session load; the greedy hint, the
+  fallback and the read path keep the 12-session rank. Optimise Current also re-picks once
+  between the search and the post passes (`after_search` in the run's `section_teachers`),
+  so the repairs, compaction, recovery and the end re-pick charge that map. Every re-pick
+  is bounded per teacher by the board in hand (a day given up for students earlier is
+  kept) and judged against the run's start: coverage first, no new clash or over-cap
+  session, no teacher's days rising (a swap buys students nothing, so no teacher gives up a
+  day for another's day off), and a no-worse (teachers with no day off, idle net of
+  allowances, days, idle); refused re-picks report `reason="day_off_policy"`.
 - **Link edits.** Adding, removing or deactivating a link writes nothing: a stored row that no
   longer holds is ignored when the map is read, and the section gets a teacher it can have.
 - **Display.** The drawer shows the section's teacher (or "to be decided" with the reason); the
