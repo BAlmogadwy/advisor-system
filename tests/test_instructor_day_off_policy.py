@@ -209,8 +209,11 @@ def test_t8_r3_is_absolute_a_large_total_fall_does_not_excuse_it():
 
 @pytest.mark.parametrize(("first", "accepted"), [(69, True), (70, False)])
 def test_t9_r4_needs_a_strictly_lower_total(first, accepted):
+    """Teacher 2 gains 30: teacher 1 must lose MORE than 30. A student gain
+    rides along, so a level total is refused by R4 itself, not by the rank."""
     policy = policy_at({"1": 2, "2": 2}, {"1": 100, "2": 0})
-    assert accepts(policy, board({"1": 2, "2": 2}, {"1": first, "2": 30})) is accepted
+    after = board({"1": 2, "2": 2}, {"1": first, "2": 30}, student(gap=-1))
+    assert accepts(policy, after) is accepted
 
 
 @pytest.mark.parametrize(("fall", "accepted"), [(50, False), (71, True)])
@@ -269,8 +272,9 @@ def _broken(defect: str) -> TimetableEvaluationResult:
         metrics["idle_minutes_by_instructor"]["Y"] = None
     elif defect == "negative":
         metrics["idle_minutes_by_instructor"]["Y"] = -1
-    elif defect == "bool":
+    elif defect == "bool":  # True would add up as one day
         metrics["working_days_by_instructor"]["Y"] = True
+        metrics["working_days"] = 4
     elif defect == "total":
         metrics["idle_minutes"] = 5
     elif defect == "count":
