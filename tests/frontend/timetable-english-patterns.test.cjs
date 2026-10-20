@@ -197,7 +197,8 @@ test('split whole-section create, switch and removal history survives undo/redo 
     refreshBoardsSummary: async () => {}, loadSidebarBudget: async () => {}, refreshEnglishSplit: refresh,
     clearSlotAssist: () => {}, notifyInstructorClashBackstop: () => {},
     api: async (url, options) => {
-      if (!options) return { section_policy: { current_pattern_id: h.policy.identify(rows) }, candidates: h.policy.patterns };
+      // The pattern read is a preview (a GET with only the `_preview` option).
+      if (!options?.body) return { section_policy: { current_pattern_id: h.policy.identify(rows) }, candidates: h.policy.patterns };
       const body = JSON.parse(options.body); calls.push({ url, body });
       if (url.endsWith('/create/') || url.endsWith('/create-planned/')) {
         rows = body.meetings.map(row => ({ ...row, id: nextId++, course_code: 'ENG101' })); await refresh();

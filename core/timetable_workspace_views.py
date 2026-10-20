@@ -80,7 +80,15 @@ from core.models import (
 )
 from core.services.audit import log_audit_event
 from core.services.board_ownership import external_shared_section_ids
+from core.services.job_runtime import (
+    HOLDER_EXAM_JOB,
+    HOLDER_PLANNER,
+    HOLDER_REPAIR_ANALYSIS,
+    SolverBusy,
+    solver_slot,
+)
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
+from core.services.request_lanes import preview_lane, server_busy_response
 from core.services.section_move_optimisation import section_move_optimisation_engine
 from core.services.section_programmes import (
     filter_sections_for_delivery_board,
@@ -1298,6 +1306,7 @@ def tw_scenario_student_blockers_view(request: HttpRequest, scenario_id: int) ->
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
     """List all boards for a scenario with summary stats (``?scenario_id=``)."""
     deny = _require_general_advisor(request)
@@ -1441,6 +1450,7 @@ def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return the full conflict analysis for a board.
 
@@ -1587,6 +1597,7 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@preview_lane
 def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return ranked read-only target slots for a missing planned section."""
     deny = _require_general_advisor(request)
@@ -1913,6 +1924,8 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@preview_lane
+@_one_teacher_request
 def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Return student-aware move candidates for a placement without mutating data."""
     deny = _require_general_advisor(request)
@@ -1927,6 +1940,8 @@ def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -
 
 @login_required(login_url="login")
 @require_http_methods(["GET", "POST"])
+@preview_lane
+@_one_teacher_request
 def tw_placement_student_outcome_candidates_view(
     request: HttpRequest, placement_id: int
 ) -> JsonResponse:
@@ -1954,6 +1969,7 @@ def tw_placement_student_outcome_candidates_view(
 
 @login_required(login_url="login")
 @require_POST
+@preview_lane
 def tw_repair_analyse_view(request: HttpRequest) -> JsonResponse:
     """Create a read-only audited registration repair analysis run."""
     deny = _require_general_advisor(request)
@@ -1984,16 +2000,27 @@ def tw_repair_analyse_view(request: HttpRequest) -> JsonResponse:
     if not isinstance(limits, dict):
         return _err("limits must be an object", code="VALIDATION_LIMITS", status=400)
 
+    # A synchronous CP-SAT search of up to 45 s: it takes the process's one
+    # solver slot like every other solve (job_runtime), without waiting - a
+    # planner run or an exam job may hold it for minutes.
     try:
-        detail = section_move_optimisation_engine.analyse_section_move(
-            placement_id=int(placement_id),
-            blocked_student_ids=blocked_student_ids,
-            blocked_requests=blocked_requests,
-            mode=str(payload.get("mode") or "conservative"),
-            move_scope=str(payload.get("move_scope") or "single_session"),
-            requested_by=request.user,
-            limits=limits,
-            active_plan_filter=str(payload.get("active_plan_filter") or "ALL"),
+        with solver_slot(holder=HOLDER_REPAIR_ANALYSIS, wait=False):
+            detail = section_move_optimisation_engine.analyse_section_move(
+                placement_id=int(placement_id),
+                blocked_student_ids=blocked_student_ids,
+                blocked_requests=blocked_requests,
+                mode=str(payload.get("mode") or "conservative"),
+                move_scope=str(payload.get("move_scope") or "single_session"),
+                requested_by=request.user,
+                limits=limits,
+                active_plan_filter=str(payload.get("active_plan_filter") or "ALL"),
+            )
+    except SolverBusy as busy:
+        kind = (busy.holder or {}).get("kind")
+        return server_busy_response(
+            "Another timetable action is using the solver. Retrying shortly.",
+            retry_after={HOLDER_PLANNER: 30, HOLDER_EXAM_JOB: 15}.get(kind, 5),
+            details={"holder": busy.holder},
         )
     except (TypeError, ValueError):
         return _err("placement_id must be an integer", code="VALIDATION_PLACEMENT", status=400)
@@ -2554,6 +2581,8 @@ def tw_repair_run_rollback_view(request: HttpRequest, run_id) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@preview_lane
+@_one_teacher_request
 def tw_placement_room_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Return room candidates for a placement at its current or previewed slot."""
     deny = _require_general_advisor(request)

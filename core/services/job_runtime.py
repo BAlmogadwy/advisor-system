@@ -31,6 +31,9 @@ HOLDER_EXAM_SYNC = "exam_sync"
 HOLDER_PLANNER = "planner"
 HOLDER_CHECK = "check"
 HOLDER_MULTISTART = "multistart"
+#: The timetable workspace's move analysis (repair/analyse): a CP-SAT search of
+#: up to 45 s inside its request.
+HOLDER_REPAIR_ANALYSIS = "repair_analysis"
 _holder_lock = threading.Lock()
 _holder: tuple[str, float] | None = None
 

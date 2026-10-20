@@ -713,6 +713,236 @@ def _section_teacher_matcher(scenario_id: int):
     return teacher_of, same_teacher
 
 
+class _PlacementTimeCheck:
+    """The room-independent half of :func:`validate_placement`, computed once.
+
+    Student overlaps and instructor clashes depend on the board, the time and
+    the section, never on the room. The room half is a lookup in an index of
+    every placement whose time overlaps the target (same board and cross
+    board), built on first use, so a caller that tries many rooms at one slot
+    (the room-candidate preview: one ``Room`` row each) pays for the board
+    load, the overlap matrix and the one-teacher map once rather than per room.
+    """
+
+    def __init__(
+        self,
+        board_id: int,
+        day: str,
+        start_time: str,
+        end_time: str,
+        term_section_id: int,
+        exclude_placement_id: int | None = None,
+        ignore_overlap_term_section_ids: set[int] | None = None,
+    ) -> None:
+        self.board_id = board_id
+        self.exclude_placement_id = exclude_placement_id
+        items = _load_board_placements(board_id)
+        new_mask = _time_mask(day, start_time, end_time)
+        self.new_mask = new_mask
+        ignored_overlap_term_sections = {
+            int(value) for value in (ignore_overlap_term_section_ids or set())
+        }
+
+        # Get instructor for the section being placed
+        meeting = TermSectionMeeting.objects.filter(term_section_id=term_section_id).first()
+        new_instructor = meeting.instructor if meeting else ""
+
+        ts = TermSection.objects.filter(id=term_section_id).first()
+        new_requires_room = not bool(ts and section_policy(ts))
+        self.online_lookup = online_lookup = OnlineCourseLookup()
+        new_is_online = False
+
+        # Build real overlap matrix for this board
+
+        board_obj: DeliveryBoard | None = None
+        try:
+            board_obj = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+            if ts:
+                new_is_online = online_lookup.is_online_course_for_board(board_obj, ts.course_code)
+            board_courses = {item.course_key for item in items}
+            if ts:
+                board_courses.add(ts.course_key or ts.course_code)
+            from core.services.timetable_overlap import build_overlap_matrix as _bom
+
+            _overlap_mat = _bom(board_obj.scenario_id, board_courses)
+        except DeliveryBoard.DoesNotExist:
+            _overlap_mat = {}
+        self.board_obj = board_obj
+        # A room clash counts only for a section that sits in a room of its own.
+        self.room_rule_applies = not new_is_online and new_requires_room
+
+        # One teacher per section: the section's own teacher, by id (as the engine
+        # and the backstop charge it), not the free-text name of its meetings.
+        teacher_of = same_teacher = new_teacher = None
+        if board_obj is not None and is_one_teacher_active():
+            teacher_of, same_teacher = _section_teacher_matcher(board_obj.scenario_id)
+            new_teacher = teacher_of(
+                term_section_id, f"{ts.course_key or ts.course_code}_{ts.section}" if ts else None
+            )
+            if new_teacher is not None:
+                new_instructor = new_teacher[1]
+
+        overlaps: list[dict] = []
+        instructor_clashes: list[dict] = []
+        # Same-board items the target overlaps in time: the room half's first part.
+        self._same_board_timed: list[PlacementInfo] = []
+
+        for item in items:
+            if item.id == exclude_placement_id:
+                continue
+
+            # Time overlap — graduated severity matching the placement engines
+            if new_mask & item.mask:
+                from core.services.timetable_overlap import (
+                    HARD_OVERLAP_THRESHOLD,
+                    SAME_COURSE_SENTINEL,
+                )
+                from core.services.timetable_overlap import (
+                    shared_student_count as _ssc_val,
+                )
+
+                ts_key = (ts.course_key or ts.course_code) if ts else ""
+                same_course = bool(ts and _same_course_code(item.course_key, ts_key))
+                ignore_student_overlap = (
+                    item.term_section_id in ignored_overlap_term_sections
+                    or _parallel_policy_sections(item.course_key, ts_key)
+                )
+                if not ignore_student_overlap:
+                    shared = (
+                        _ssc_val(_overlap_mat, ts_key, item.course_key)
+                        if ts and not same_course
+                        else (SAME_COURSE_SENTINEL if same_course else 0)
+                    )
+
+                    if same_course or shared > 0:
+                        is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
+                        overlaps.append(
+                            {
+                                "id": item.id,
+                                "section": f"{item.course_code}-{item.section}",
+                                "detail": f"{item.day} {item.start_time}-{item.end_time}",
+                                "severity": "critical" if is_critical else "warning",
+                                "shared_students": shared if not same_course else None,
+                            }
+                        )
+
+                # Instructor clash
+                if (
+                    same_teacher(
+                        new_teacher,
+                        new_instructor,
+                        teacher_of(item.term_section_id, f"{item.course_key}_{item.section}"),
+                        item.instructor,
+                    )
+                    if same_teacher is not None
+                    else (
+                        new_instructor
+                        and item.instructor
+                        and new_instructor.strip().upper() == item.instructor.strip().upper()
+                    )
+                ):
+                    instructor_clashes.append(
+                        {
+                            "id": item.id,
+                            "instructor": new_instructor,
+                            "section": f"{item.course_code}-{item.section}",
+                        }
+                    )
+
+                self._same_board_timed.append(item)
+
+        self.overlaps = overlaps
+        self.instructor_clashes = instructor_clashes
+        critical_overlaps = sum(1 for o in overlaps if o.get("severity") == "critical")
+        self.warning_overlaps = sum(1 for o in overlaps if o.get("severity") == "warning")
+        self.critical_count = critical_overlaps + len(instructor_clashes)
+        self._room_index: dict[str, list[dict]] | None = None
+
+    def _build_room_index(self) -> dict[str, list[dict]]:
+        """Every roomed placement the target overlaps in time, keyed by room.
+
+        Same-board items first, in board order, then cross-board placements in
+        query order: the order :func:`validate_placement` has always listed
+        them in. ``"room"`` is a placeholder the lookup fills with the caller's
+        spelling of the room, in its usual key position.
+        """
+        index: dict[str, list[dict]] = defaultdict(list)
+        # Room clash on the same board (exclude blank/UNASSIGNED).
+        for item in self._same_board_timed:
+            room_key = _room_key(item.room)
+            if room_key and not item.is_online:
+                index[room_key].append(
+                    {
+                        "id": item.id,
+                        "room": None,
+                        "section": f"{item.course_code}-{item.section}",
+                        "scope": "same_board",
+                    }
+                )
+        if self.board_obj is None:
+            return index
+        cross_board_placements = (
+            SectionPlacement.objects.filter(board__scenario=self.board_obj.scenario)
+            .exclude(board_id=self.board_id)
+            .exclude(room="")
+            .exclude(room="UNASSIGNED")
+            .select_related("board", "term_section")
+        )
+        if self.exclude_placement_id:
+            cross_board_placements = cross_board_placements.exclude(id=self.exclude_placement_id)
+
+        for other in cross_board_placements:
+            if section_policy(other.term_section):
+                continue
+            if self.online_lookup.is_online_course_for_board(
+                other.board, other.term_section.course_code
+            ):
+                continue
+            room_key = _room_key(other.room)
+            if not room_key:
+                continue
+            other_mask = _time_mask(other.day, other.start_time, other.end_time)
+            if not (self.new_mask & other_mask):
+                continue
+            index[room_key].append(
+                {
+                    "id": other.id,
+                    "room": None,
+                    "section": f"{other.term_section.course_code}-{other.term_section.section}",
+                    "scope": "cross_board",
+                    "board_id": other.board_id,
+                    "board_label": other.board.label,
+                    "detail": (
+                        f"{other.board.label}: {other.day} {other.start_time}-{other.end_time}"
+                    ),
+                }
+            )
+        return index
+
+    def room_clashes(self, room: str) -> list[dict]:
+        """The room clashes of placing the target in ``room``: one lookup."""
+        room_key = _room_key(room) if self.room_rule_applies else ""
+        if not room_key:
+            return []
+        if self._room_index is None:
+            self._room_index = self._build_room_index()
+        return [dict(entry, room=room) for entry in self._room_index.get(room_key, ())]
+
+    def result(self, room: str) -> dict:
+        """:func:`validate_placement`'s answer for ``room``."""
+        room_clashes = self.room_clashes(room)
+        critical = self.critical_count
+        warning = self.warning_overlaps + len(room_clashes)
+        return {
+            "valid": critical == 0,
+            "overlaps": self.overlaps,
+            "instructor_clashes": self.instructor_clashes,
+            "room_clashes": room_clashes,
+            "critical_count": critical,
+            "warning_count": warning,
+        }
+
+
 def validate_placement(
     board_id: int,
     day: str,
@@ -751,178 +981,20 @@ def validate_placement(
                 "critical_count":     int,
                 "warning_count":      int,
             }
+
+    The room-independent checks and the room lookup live in
+    :class:`_PlacementTimeCheck`; a caller trying many rooms at one slot uses
+    it directly.
     """
-    items = _load_board_placements(board_id)
-    new_mask = _time_mask(day, start_time, end_time)
-    ignored_overlap_term_sections = {
-        int(value) for value in (ignore_overlap_term_section_ids or set())
-    }
-
-    # Get instructor for the section being placed
-    meeting = TermSectionMeeting.objects.filter(term_section_id=term_section_id).first()
-    new_instructor = meeting.instructor if meeting else ""
-
-    ts = TermSection.objects.filter(id=term_section_id).first()
-    new_requires_room = not bool(ts and section_policy(ts))
-    online_lookup = OnlineCourseLookup()
-    new_is_online = False
-
-    # Build real overlap matrix for this board
-
-    board_obj: DeliveryBoard | None = None
-    try:
-        board_obj = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
-        if ts:
-            new_is_online = online_lookup.is_online_course_for_board(board_obj, ts.course_code)
-        board_courses = {item.course_key for item in items}
-        if ts:
-            board_courses.add(ts.course_key or ts.course_code)
-        from core.services.timetable_overlap import build_overlap_matrix as _bom
-
-        _overlap_mat = _bom(board_obj.scenario_id, board_courses)
-    except DeliveryBoard.DoesNotExist:
-        _overlap_mat = {}
-
-    # One teacher per section: the section's own teacher, by id (as the engine
-    # and the backstop charge it), not the free-text name of its meetings.
-    teacher_of = same_teacher = new_teacher = None
-    if board_obj is not None and is_one_teacher_active():
-        teacher_of, same_teacher = _section_teacher_matcher(board_obj.scenario_id)
-        new_teacher = teacher_of(
-            term_section_id, f"{ts.course_key or ts.course_code}_{ts.section}" if ts else None
-        )
-        if new_teacher is not None:
-            new_instructor = new_teacher[1]
-
-    overlaps: list[dict] = []
-    instructor_clashes: list[dict] = []
-    room_clashes: list[dict] = []
-
-    for item in items:
-        if item.id == exclude_placement_id:
-            continue
-
-        # Time overlap — graduated severity matching the placement engines
-        if new_mask & item.mask:
-            from core.services.timetable_overlap import (
-                HARD_OVERLAP_THRESHOLD,
-                SAME_COURSE_SENTINEL,
-            )
-            from core.services.timetable_overlap import (
-                shared_student_count as _ssc_val,
-            )
-
-            ts_key = (ts.course_key or ts.course_code) if ts else ""
-            same_course = bool(ts and _same_course_code(item.course_key, ts_key))
-            ignore_student_overlap = (
-                item.term_section_id in ignored_overlap_term_sections
-                or _parallel_policy_sections(item.course_key, ts_key)
-            )
-            if not ignore_student_overlap:
-                shared = (
-                    _ssc_val(_overlap_mat, ts_key, item.course_key)
-                    if ts and not same_course
-                    else (SAME_COURSE_SENTINEL if same_course else 0)
-                )
-
-                if same_course or shared > 0:
-                    is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
-                    overlaps.append(
-                        {
-                            "id": item.id,
-                            "section": f"{item.course_code}-{item.section}",
-                            "detail": f"{item.day} {item.start_time}-{item.end_time}",
-                            "severity": "critical" if is_critical else "warning",
-                            "shared_students": shared if not same_course else None,
-                        }
-                    )
-
-            # Instructor clash
-            if (
-                same_teacher(
-                    new_teacher,
-                    new_instructor,
-                    teacher_of(item.term_section_id, f"{item.course_key}_{item.section}"),
-                    item.instructor,
-                )
-                if same_teacher is not None
-                else (
-                    new_instructor
-                    and item.instructor
-                    and new_instructor.strip().upper() == item.instructor.strip().upper()
-                )
-            ):
-                instructor_clashes.append(
-                    {
-                        "id": item.id,
-                        "instructor": new_instructor,
-                        "section": f"{item.course_code}-{item.section}",
-                    }
-                )
-
-            # Room clash on the same board (exclude blank/UNASSIGNED).
-            room_key = "" if new_is_online or not new_requires_room else _room_key(room)
-            if room_key and not item.is_online and room_key == _room_key(item.room):
-                room_clashes.append(
-                    {
-                        "id": item.id,
-                        "room": room,
-                        "section": f"{item.course_code}-{item.section}",
-                        "scope": "same_board",
-                    }
-                )
-
-    room_key = "" if new_is_online or not new_requires_room else _room_key(room)
-    if board_obj and room_key:
-        cross_board_placements = (
-            SectionPlacement.objects.filter(board__scenario=board_obj.scenario)
-            .exclude(board_id=board_id)
-            .exclude(room="")
-            .exclude(room="UNASSIGNED")
-            .select_related("board", "term_section")
-        )
-        if exclude_placement_id:
-            cross_board_placements = cross_board_placements.exclude(id=exclude_placement_id)
-
-        for other in cross_board_placements:
-            if section_policy(other.term_section):
-                continue
-            if online_lookup.is_online_course_for_board(
-                other.board, other.term_section.course_code
-            ):
-                continue
-            if room_key != _room_key(other.room):
-                continue
-            other_mask = _time_mask(other.day, other.start_time, other.end_time)
-            if not (new_mask & other_mask):
-                continue
-            room_clashes.append(
-                {
-                    "id": other.id,
-                    "room": room,
-                    "section": f"{other.term_section.course_code}-{other.term_section.section}",
-                    "scope": "cross_board",
-                    "board_id": other.board_id,
-                    "board_label": other.board.label,
-                    "detail": (
-                        f"{other.board.label}: {other.day} {other.start_time}-{other.end_time}"
-                    ),
-                }
-            )
-
-    critical_overlaps = sum(1 for o in overlaps if o.get("severity") == "critical")
-    warning_overlaps = sum(1 for o in overlaps if o.get("severity") == "warning")
-    critical = critical_overlaps + len(instructor_clashes)
-    warning = warning_overlaps + len(room_clashes)
-
-    return {
-        "valid": critical == 0,
-        "overlaps": overlaps,
-        "instructor_clashes": instructor_clashes,
-        "room_clashes": room_clashes,
-        "critical_count": critical,
-        "warning_count": warning,
-    }
+    return _PlacementTimeCheck(
+        board_id,
+        day,
+        start_time,
+        end_time,
+        term_section_id,
+        exclude_placement_id=exclude_placement_id,
+        ignore_overlap_term_section_ids=ignore_overlap_term_section_ids,
+    ).result(room)
 
 
 # ── Direct Student Feasibility ───────────────────────────────────
@@ -2188,6 +2260,19 @@ def preview_placement_room_candidates(
             }
         )
 
+    # Everything but the room clash is the same for every room at this slot:
+    # checked once, then one index lookup per room (validate_placement's answer
+    # for that room, without re-reading the board for each of ~80 rooms).
+    time_check = _PlacementTimeCheck(
+        board.id,
+        target_day,
+        target_start,
+        target_end,
+        term_section.id,
+        exclude_placement_id=placement.id,
+        ignore_overlap_term_section_ids=ignore_overlap_term_section_ids,
+    )
+
     candidates: list[dict] = []
     rooms = Room.objects.all().order_by("capacity", "room_code", "section")
     for room in rooms:
@@ -2203,16 +2288,7 @@ def preview_placement_room_candidates(
         fits_capacity = room_capacity >= required_capacity
         department_fit = _room_department_fits(room, board)
 
-        validation = validate_placement(
-            board_id=board.id,
-            day=target_day,
-            start_time=target_start,
-            end_time=target_end,
-            room=room_code,
-            term_section_id=term_section.id,
-            exclude_placement_id=placement.id,
-            ignore_overlap_term_section_ids=ignore_overlap_term_section_ids,
-        )
+        validation = time_check.result(room_code)
 
         reasons = []
         if not fits_type:

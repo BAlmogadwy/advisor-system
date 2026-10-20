@@ -220,8 +220,83 @@ function splitCanCopyScenario() {
 function syncCopyScenarioControl() {
   if ($('twsCopyScenario')) $('twsCopyScenario').disabled = !splitCanCopyScenario();
 }
+/* Heavy previews (rooms, outcomes, slot candidates, move analysis) share a
+   small server lane that keeps threads free for saves and the health check.
+   A full lane answers 503 SERVER_BUSY with Retry-After at once: the newest
+   request of a kind waits that long and asks again, so a panel keeps its
+   loading state instead of going blank. A newer request of the same kind
+   aborts the older one, and a burst of clicks waits PREVIEW_DEBOUNCE_MS so
+   only the last selection is sent. */
+const PREVIEW_DEBOUNCE_MS = 280;
+const PREVIEW_BUSY_RETRIES = 6;
+const PREVIEW = { inflight: new Map(), lastStart: new Map() };
+function previewWait(ms, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+}
+function abortPreview(kind) {
+  const controller = PREVIEW.inflight.get(kind);
+  if (controller) controller.abort();
+  PREVIEW.inflight.delete(kind);
+}
+function serverBusy(response, body) {
+  return response.status === 503 && (body?.code === 'SERVER_BUSY' || body?.error?.code === 'SERVER_BUSY');
+}
+async function previewFetch(url, options, { kind = '', debounce = false } = {}) {
+  const controller = new AbortController();
+  if (kind) {
+    const burst = PREVIEW.inflight.has(kind) || Date.now() - (PREVIEW.lastStart.get(kind) || 0) < PREVIEW_DEBOUNCE_MS;
+    abortPreview(kind);
+    PREVIEW.inflight.set(kind, controller);
+    PREVIEW.lastStart.set(kind, Date.now());
+    if (debounce || burst) await previewWait(PREVIEW_DEBOUNCE_MS, controller.signal);
+  }
+  try {
+    for (let attempt = 0; ; attempt++) {
+      if (controller.signal.aborted) return { superseded: true };
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if (controller.signal.aborted) return { superseded: true };
+      if (response.ok || response.status !== 503) return { response };
+      let body = null;
+      try { body = await response.json(); } catch {}
+      if (!serverBusy(response, body) || attempt >= PREVIEW_BUSY_RETRIES) return { response, body };
+      const seconds = Number(response.headers?.get?.('Retry-After')) || 2;
+      await previewWait(Math.min(30, Math.max(1, seconds)) * 1000, controller.signal);
+    }
+  } catch (e) {
+    if (controller.signal.aborted) return { superseded: true };
+    throw e;
+  } finally {
+    if (kind && PREVIEW.inflight.get(kind) === controller) PREVIEW.inflight.delete(kind);
+  }
+}
 async function api(url, opts = {}, onError = null) {
-  const { _copyToken, ...requestOptions } = opts;
+  const { _copyToken, _preview, ...requestOptions } = opts;
+  if (_preview) {
+    // A preview reads: it neither waits for nor blocks a scenario copy.
+    const o = Object.assign({ credentials: 'same-origin', headers: {} }, requestOptions);
+    if (opts.method && opts.method !== 'GET') o.headers['X-CSRFToken'] = CSRF;
+    const previewOptions = typeof _preview === 'object' ? _preview : { kind: typeof _preview === 'string' ? _preview : '' };
+    try {
+      const { response: r, body, superseded } = await previewFetch(url, o, previewOptions);
+      if (superseded) return null;
+      if (!r.ok) {
+        let msg = `${r.status}`;
+        try { const d = body || await r.json(); msg = d.error?.message || d.error || d.message || msg; } catch {}
+        console.error('api error', url, msg);
+        if (onError) onError(msg);
+        return null;
+      }
+      return await r.json();
+    } catch (e) {
+      console.error(e);
+      if (onError) onError(e.message || String(e));
+      return null;
+    }
+  }
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && COPY_ACTIVITY.pending && _copyToken !== COPY_ACTIVITY.pending) {
     const message = IS_AR ? 'انتظر انتهاء نسخ السيناريو.' : 'Wait for the scenario copy to finish.';
@@ -1696,7 +1771,9 @@ function renderCreateSectionSummary(targetPane, payload, highlighted, candidates
     targetsEl.innerHTML = topTargets.map((candidate, idx) => {
       const tone = createAssistTone(candidate);
       const key = createAssistCandidateKey(candidate);
-      return `<button type="button" class="tws-create-target ${tone}" data-create-target-key="${esc(key)}" ${tone === 'avoid' ? 'disabled' : ''} title="${esc(createAssistDetail(candidate))}">
+      // An 'avoid' target keeps its tone and reasons but stays clickable: a
+      // manual placement is allowed with its clash (owner ruling 2026-10-20).
+      return `<button type="button" class="tws-create-target ${tone}" data-create-target-key="${esc(key)}" title="${esc(createAssistDetail(candidate))}">
         <span>${idx + 1}</span>${esc(createAssistTargetLabel(candidate))}
       </button>`;
     }).join('');
@@ -1706,7 +1783,7 @@ function renderCreateSectionSummary(targetPane, payload, highlighted, candidates
         e.preventDefault();
         e.stopPropagation();
         const candidate = S.createAssist.candidates.get(btn.dataset.createTargetKey || '');
-        if (!candidate || createAssistTone(candidate) === 'avoid') return;
+        if (!candidate) return;
         btn.disabled = true;
         await applyCreateAssistCandidate(candidate);
       });
@@ -1848,7 +1925,7 @@ async function refreshCreateSectionCandidates(token) {
   await Promise.all(targets.map(async ({ idx, pane }) => {
     const boardId = pane.boardId;
     if (!boardId) return;
-    const data = await api(`/ops/tw/boards/${boardId}/planned-slot-candidates/?${params.toString()}`);
+    const data = await api(`/ops/tw/boards/${boardId}/planned-slot-candidates/?${params.toString()}`, { _preview: `create-assist-${idx}` });
     if (!data) return;
     if (data.message && data.status !== 'ready') messages.push(data.message);
     (data.candidates || []).forEach(candidate => {
@@ -1873,8 +1950,10 @@ async function refreshCreateSectionCandidates(token) {
 async function applyCreateAssistCandidate(candidate) {
   if (!candidate || !S.createAssist.active || !S.createAssist.payload) return null;
   const cell = slotCellForCandidate(candidate.paneIdx, candidate, candidate.kind || 'lect');
-  if (!cell || !createAssistCandidateIsVisibleAndEmpty(candidate)) {
-    notify.warning(IS_AR ? 'اختر خانة فارغة' : 'Choose an empty slot');
+  // A target filled since it was offered is now a clash, which a manual
+  // placement may keep; only a target off the visible grid is refused.
+  if (!cell || !createAssistCandidateIsVisible(candidate)) {
+    notify.warning(IS_AR ? 'اختر خانة ظاهرة' : 'Choose a visible slot');
     return null;
   }
   document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
@@ -1977,6 +2056,8 @@ function clearSlotAssistDecorations() {
 
 function clearSlotAssist() {
   clearSlotAssistDecorations();
+  abortPreview('slot-outcome');
+  abortPreview('slot-analysis');
   S.slotAssist.active = false;
   S.slotAssist.paneIdx = null;
   S.slotAssist.placementId = null;
@@ -2066,10 +2147,14 @@ function createAssistCandidateCells(candidate) {
     .filter(Boolean);
 }
 
-function createAssistCandidateIsVisibleAndEmpty(candidate) {
+function createAssistCandidateIsVisible(candidate) {
   const meetings = createAssistCandidateMeetings(candidate);
-  const cells = createAssistCandidateCells(candidate);
-  return meetings.length > 0 && cells.length === meetings.length && cells.every(cell => !cell.classList.contains('filled'));
+  return meetings.length > 0 && createAssistCandidateCells(candidate).length === meetings.length;
+}
+
+function createAssistCandidateIsVisibleAndEmpty(candidate) {
+  return createAssistCandidateIsVisible(candidate)
+    && createAssistCandidateCells(candidate).every(cell => !cell.classList.contains('filled'));
 }
 
 function slotKindForCell(cell) {
@@ -2251,6 +2336,7 @@ async function enrichMoveCandidate(placementId, placement, candidate) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ candidates: [moveOutcomeCandidatePayload(candidate, placement)] }),
+      _preview: true,
     });
     const row = (data?.candidates || [])[0];
     if (!row) return candidate;
@@ -2270,6 +2356,7 @@ async function refreshStudentAwareSlotAssist(placementId, token, opts = {}) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ candidates: studentOutcomeCandidatePayload(localCandidates) }),
+    _preview: { kind: 'slot-outcome', debounce: true },
   });
   if (!data || !S.slotAssist.active || token !== S.slotAssist.requestToken) return;
   if (String(S.slotAssist.placementId) !== String(placementId)) return;
@@ -2338,6 +2425,8 @@ async function refreshDeepRepairSlotAssist(placementId, token, opts = {}) {
           max_total_solver_seconds: 45,
         },
       }),
+      // A selection is analysed only once the clicking stops.
+      _preview: { kind: 'slot-analysis', debounce: true },
     });
   } catch {
     data = null;
@@ -3108,8 +3197,9 @@ async function movePlacementToSlot({
 
   const v = data.validation || {};
   if (notifyResult) {
-    if ((v.critical_count || 0) > 0) {
-      notify.warning(IS_AR ? `تم النقل مع ${v.critical_count} تعارض` : `Moved with ${v.critical_count} conflict(s)`);
+    const conflicts = manualConflictCount(v);
+    if (conflicts > 0) {
+      notify.warning(IS_AR ? `تم النقل مع ${conflicts} تعارض` : `Moved with ${conflicts} conflict(s)`);
     } else {
       notify.success(T.moveOk);
     }
@@ -3259,6 +3349,12 @@ function deepRepairCandidateForSlot(candidate) {
   return { run, candidateId, candidate: full || candidate };
 }
 
+function deepRepairSlotReady(candidate) {
+  const resolved = deepRepairCandidateForSlot(candidate);
+  return !!(resolved.run && resolved.candidateId && resolved.candidate)
+    && candidateDirectRepairReady({ ...candidate, ...resolved.candidate, deepRepair: true, deepRepairCandidateId: resolved.candidateId });
+}
+
 function candidateDirectRepairReady(candidate) {
   const exact = candidateExactRepair(candidate);
   const status = String(candidate?.status || '').toLowerCase();
@@ -3358,7 +3454,9 @@ function previewSelectedMoveToSlot(paneIdx, cell) {
   const start = cell.dataset.start;
   const end = cell.dataset.end;
   const pending = S.slotAssist.pendingMove;
-  if (candidate.deepRepair && candidate.deepRepairCandidateId) {
+  // An apply-ready repair applies its audited reassignment; any other slot is
+  // a plain manual move, allowed with its clashes (owner ruling 2026-10-20).
+  if (candidate.deepRepair && candidate.deepRepairCandidateId && deepRepairSlotReady(candidate)) {
     document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
     cell.classList.add('assist-preview');
     applyDeepRepairCandidateFromSlot(candidate, S.selectedPlacementId, cell).catch(() => {
@@ -3419,9 +3517,9 @@ async function createPlannedPlacementFromMeetings(boardId, payload, meetings) {
     }),
   });
   if (!data) return null;
-  const v = data.validation || {};
-  if ((v.critical_count || 0) > 0) {
-    notify.warning(IS_AR ? `Placed with ${v.critical_count} conflict(s)` : `Placed with ${v.critical_count} conflict(s)`);
+  const conflicts = manualConflictCount(data.validation);
+  if (conflicts > 0) {
+    notify.warning(IS_AR ? `تم الوضع مع ${conflicts} تعارض` : `Placed with ${conflicts} conflict(s)`);
   } else {
     const count = Array.isArray(data.placements) ? data.placements.length : 1;
     notify.success(count > 1 ? `Placed full ${count}-meeting pattern` : (IS_AR ? 'Placed' : 'Placed'));
@@ -3437,10 +3535,9 @@ async function createPlannedPlacementFromCell(paneIdx, cell, payload) {
     notify.error(IS_AR ? 'Select a board in this pane first' : 'Select a board in this pane first');
     return null;
   }
-  if (cell.classList.contains('filled')) {
-    notify.warning(IS_AR ? 'Choose an empty slot' : 'Choose an empty slot');
-    return null;
-  }
+  // A filled cell is a clash with the section already there: a drop places
+  // the section anyway and the result reports the conflict (owner ruling
+  // 2026-10-20), exactly as dragging a placed section onto it does.
   const day = cell.dataset.day;
   const start = cell.dataset.start;
   const end = cell.dataset.end;
@@ -4102,6 +4199,33 @@ function roomIsAssignable(room) {
     && room.fits_capacity !== false;
 }
 
+/* Owner ruling 2026-10-20: a manual edit is allowed with any clash, and the
+   clash is shown. A room that fits the section (type, gender, seats) may be
+   assigned by hand even when another section holds it at that time: that is
+   a room clash, not a misfit. Suggestions and bulk passes still pick only free
+   rooms (roomIsAssignable). */
+function roomIsOccupied(room) {
+  return Array.isArray(room?.occupied_by) && room.occupied_by.length > 0;
+}
+
+function roomFitsSection(room) {
+  return !!room
+    && (!!room.available || roomIsOccupied(room))
+    && room.fits_type !== false
+    && room.fits_gender !== false
+    && room.fits_capacity !== false;
+}
+
+/* Clashes a manual edit kept: critical issues plus room double-bookings (a
+   multi-meeting create reports its room clashes per meeting, in items). */
+function manualConflictCount(validation) {
+  const v = validation || {};
+  const roomClashes = Array.isArray(v.room_clashes)
+    ? v.room_clashes.length
+    : (Array.isArray(v.items) ? v.items.reduce((n, item) => n + (item?.room_clashes?.length || 0), 0) : 0);
+  return Number(v.critical_count || 0) + roomClashes;
+}
+
 function roomIsScheduleClean(room) {
   return roomIsAssignable(room)
     && (room.schedule_clean ?? room.slot_clean) !== false
@@ -4143,7 +4267,7 @@ async function roomCandidatesForGuidedSlot(placementId, slot) {
   const key = roomCacheKey(placementId, slot);
   if (RP.builder.roomCache[key]) return RP.builder.roomCache[key];
   const qs = new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end });
-  const data = await api(`/ops/tw/placements/${placementId}/room-candidates/?${qs.toString()}`);
+  const data = await api(`/ops/tw/placements/${placementId}/room-candidates/?${qs.toString()}`, { _preview: true });
   if (data) RP.builder.roomCache[key] = data;
   return data;
 }
@@ -4196,7 +4320,7 @@ async function buildGuidedRoomResolver(action, locatedItems) {
 async function buildGuidedTimeResolver(action, locatedItems) {
   const options = [];
   await Promise.all(locatedItems.map(async item => {
-    const data = await api(`/ops/tw/placements/${item.placement.id}/slot-candidates/`);
+    const data = await api(`/ops/tw/placements/${item.placement.id}/slot-candidates/`, { _preview: true });
     let candidate = bestVisibleQueueCandidate(item.paneIdx, item.placement, data);
     if (!candidate) return;
     candidate = await enrichMoveCandidate(item.placement.id, item.placement, candidate);
@@ -4581,11 +4705,14 @@ async function refreshFixQueue(boards) {
 
   const token = ++RP.fixQueue.token;
   container.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'جاري حساب أفضل النقلات...' : 'Calculating best moves...'}</div>`;
-  await Promise.all(placementIds.map(async id => {
-    if (RP.fixQueue.cache[id]) return;
-    const data = await api(`/ops/tw/placements/${id}/slot-candidates/`);
+  // One preview at a time: a burst of up to 18 would fill the server's
+  // preview lane and be turned away.
+  for (const id of placementIds) {
+    if (token !== RP.fixQueue.token) return;
+    if (RP.fixQueue.cache[id]) continue;
+    const data = await api(`/ops/tw/placements/${id}/slot-candidates/`, { _preview: true });
     if (data) RP.fixQueue.cache[id] = data;
-  }));
+  }
   if (token !== RP.fixQueue.token) return;
 
   const preliminaryItems = [];
@@ -6297,6 +6424,7 @@ async function runRepairAnalysisFromPanel() {
       active_plan_filter: activePlanFilter(),
       limits: { max_candidates: 80, max_solver_seconds: 5, max_total_solver_seconds: 45 },
     }),
+    _preview: 'repair-panel',
   });
   RP.repair.busy = false;
   if (!data) {
@@ -6843,11 +6971,11 @@ function roomCacheKey(placementId, slot) {
 
 function roomCandidateStatusText(room) {
   const reasons = Array.isArray(room?.reasons) ? room.reasons.filter(Boolean) : [];
-  if (!roomIsAssignable(room)) {
+  if (!roomFitsSection(room)) {
     return reasons.slice(0, 3).join(' | ') || 'Blocked for this section';
   }
   if (roomIsScheduleClean(room)) return 'Room fits and the schedule is clean';
-  if (roomIsAssignable(room) && reasons.length) return reasons.slice(0, 3).join(' | ');
+  if (reasons.length) return reasons.slice(0, 3).join(' | ');
   if (Number(room.validation?.critical_count || 0) > 0) {
     return reasons.slice(0, 3).join(' | ') || 'Room fits, but time/instructor conflict remains';
   }
@@ -6861,8 +6989,13 @@ function roomCandidateCardHtml(room, idx, currentRoom) {
   const tone = room.tone || (roomIsScheduleClean(room) ? 'clean' : roomIsAssignable(room) ? 'warn' : 'block');
   const detail = roomCandidateStatusText(room);
   const isCurrent = String(currentRoom || '').trim().toUpperCase() === String(room.room_code || '').trim().toUpperCase();
-  const apply = roomIsAssignable(room)
-    ? `<button class="tws-room-apply" data-room-idx="${idx}" type="button">${isCurrent ? 'Keep' : 'Apply'}</button>`
+  // An occupied room that fits stays assignable by hand; its card keeps the
+  // clash tone and names the occupier.
+  const clashTitle = !roomIsAssignable(room) && roomFitsSection(room)
+    ? ` title="${esc(IS_AR ? 'القاعة مشغولة في هذا الوقت: سيُحفظ التعيين مع تعارض قاعة' : 'Room occupied at this time: assigning it keeps a room clash')}"`
+    : '';
+  const apply = roomFitsSection(room)
+    ? `<button class="tws-room-apply" data-room-idx="${idx}" type="button"${clashTitle}>${isCurrent ? 'Keep' : 'Apply'}</button>`
     : `<button class="tws-room-apply" type="button" disabled>Blocked</button>`;
   return `<div class="tws-room-card ${tone}">
     <div class="tws-room-main">
@@ -6907,7 +7040,7 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
     if (notifyResult) notify.warning('This room is not clean enough for bulk assignment.');
     return null;
   }
-  if (!roomIsAssignable(room)) {
+  if (!roomFitsSection(room)) {
     if (notifyResult) notify.warning('This room does not meet the section requirements.');
     return null;
   }
@@ -6966,7 +7099,16 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
     S.selectedPlacementId = placementId;
     S.selectedPaneIdx = located.paneIdx;
   }
-  if (notifyResult) notify.success(`Assigned room ${room.room_code}`);
+  if (notifyResult) {
+    const conflicts = manualConflictCount(data.validation);
+    if (conflicts > 0) {
+      notify.warning(IS_AR
+        ? `تم تعيين القاعة ${room.room_code} مع ${conflicts} تعارض`
+        : `Assigned room ${room.room_code} with ${conflicts} conflict(s)`);
+    } else {
+      notify.success(`Assigned room ${room.room_code}`);
+    }
+  }
   return data;
 }
 
@@ -6982,13 +7124,13 @@ async function refreshSelectionBuilderPanels(body, placement, pending) {
   const key = roomCacheKey(placementId, slot);
   const roomPromise = RP.builder.roomCache[key]
     ? Promise.resolve(RP.builder.roomCache[key])
-    : api(`/ops/tw/placements/${placementId}/room-candidates/?${new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end }).toString()}`).then(data => {
+    : api(`/ops/tw/placements/${placementId}/room-candidates/?${new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end }).toString()}`, { _preview: 'selection-rooms' }).then(data => {
       if (data) RP.builder.roomCache[key] = data;
       return data;
     });
   const studentPromise = RP.builder.studentCache[placementId]
     ? Promise.resolve(RP.builder.studentCache[placementId])
-    : api(`/ops/tw/placements/${placementId}/student-evidence/?limit=40`).then(data => {
+    : api(`/ops/tw/placements/${placementId}/student-evidence/?limit=40`, { _preview: 'selection-evidence' }).then(data => {
       if (data) RP.builder.studentCache[placementId] = data;
       return data;
     });
@@ -8281,7 +8423,7 @@ async function switchEnglishSplitPattern(placementId, patternId = null, replay =
   S.englishPicker = true;
   const scenarioId = S.scenarioId;
   try {
-    const choices = await api(`/ops/tw/placements/${placementId}/slot-candidates/`);
+    const choices = await api(`/ops/tw/placements/${placementId}/slot-candidates/`, { _preview: true });
     if (!choices) return null;
     const bundle = (S.panes[located.paneIdx].boardData?.placements || []).filter(row => row.term_section_id === located.placement.term_section_id);
     if (!replay && !allowProtected && bundle.some(row => placementProtectionReasons(row).length)) { notify.warning(IS_AR ? 'الشعبة محمية من النقل.' : 'The section is protected from moving.'); return null; }
@@ -8319,7 +8461,7 @@ async function chooseEnglishSplitCreate(payload, paneIdx = null) {
   try {
     const boards = [];
     for (const target of targets) {
-      const data = await api(`/ops/tw/boards/${target.pane.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`);
+      const data = await api(`/ops/tw/boards/${target.pane.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`, { _preview: true });
       if (data) boards.push({ id: target.pane.boardId, label: data.board?.label || target.pane.boardData?.board?.label || `Board ${target.pane.boardId}`, candidates: data.candidates || [] });
     }
     if (!boards.length) return null;
