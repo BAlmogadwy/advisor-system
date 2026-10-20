@@ -1298,6 +1298,7 @@ def tw_scenario_student_blockers_view(request: HttpRequest, scenario_id: int) ->
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
     """List all boards for a scenario with summary stats (``?scenario_id=``)."""
     deny = _require_general_advisor(request)
@@ -1441,6 +1442,7 @@ def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return the full conflict analysis for a board.
 
@@ -1913,6 +1915,7 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Return student-aware move candidates for a placement without mutating data."""
     deny = _require_general_advisor(request)
@@ -1927,6 +1930,7 @@ def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -
 
 @login_required(login_url="login")
 @require_http_methods(["GET", "POST"])
+@_one_teacher_request
 def tw_placement_student_outcome_candidates_view(
     request: HttpRequest, placement_id: int
 ) -> JsonResponse:
@@ -2554,6 +2558,7 @@ def tw_repair_run_rollback_view(request: HttpRequest, run_id) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_placement_room_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Return room candidates for a placement at its current or previewed slot."""
     deny = _require_general_advisor(request)

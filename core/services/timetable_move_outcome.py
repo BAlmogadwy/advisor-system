@@ -73,7 +73,10 @@ def preview_placement_student_outcome_candidates(
         course_rigidity=rigidity,
         course_tiers=course_tiers,
     )
-    baseline_summary = summarise_evaluation(baseline, sections)
+    # The baseline is the same for every candidate: summarised once, not once
+    # per candidate inside compare_evaluations.
+    baseline_statuses = student_statuses(baseline, ssa.build_sections_by_id(sections))
+    baseline_summary = summarise_evaluation(baseline, sections, statuses=baseline_statuses)
     baseline_quality = baseline.quality_score or {}
     placement_ids = {placement.id}
     for row in source_candidates:
@@ -144,6 +147,8 @@ def preview_placement_student_outcome_candidates(
             candidate=candidate_eval,
             baseline_sections=sections,
             candidate_sections=candidate_sections,
+            before=baseline_summary,
+            before_status=baseline_statuses,
         )
         enriched.append(
             {
@@ -299,8 +304,14 @@ def candidate_source_rows(
 def summarise_evaluation(
     result: TimetableEvaluationResult,
     sections: list[SectionState],
+    *,
+    statuses: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
-    """Return the stable outcome fields the UI needs."""
+    """Return the stable outcome fields the UI needs.
+
+    ``statuses`` is ``student_statuses(result, ...)`` when the caller already
+    has it, so it is not computed twice.
+    """
 
     score = list(result.lexicographic_score)
     # Layout-aware decode: a legacy 6/7-tuple yields exactly the historical keys
@@ -309,8 +320,11 @@ def summarise_evaluation(
     # named view so a tier-aware frontend never reads the raw array positionally.
     decoded = decode_score(tuple(score))
     reason_counts = unresolved_reason_counts(result)
-    sections_by_id = ssa.build_sections_by_id(sections)
-    per_student = student_statuses(result, sections_by_id)
+    per_student = (
+        statuses
+        if statuses is not None
+        else student_statuses(result, ssa.build_sections_by_id(sections))
+    )
     return {
         "score": score,
         "score_breakdown": decoded,
@@ -345,13 +359,22 @@ def compare_evaluations(
     candidate: TimetableEvaluationResult,
     baseline_sections: list[SectionState],
     candidate_sections: list[SectionState],
+    before: dict[str, Any] | None = None,
+    before_status: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
-    """Compare candidate outcome against the current timetable outcome."""
+    """Compare candidate outcome against the current timetable outcome.
 
-    before = summarise_evaluation(baseline, baseline_sections)
-    after = summarise_evaluation(candidate, candidate_sections)
-    before_status = student_statuses(baseline, ssa.build_sections_by_id(baseline_sections))
+    ``before`` and ``before_status`` are the baseline's summary and student
+    statuses, passed in by a caller comparing many candidates with one
+    baseline; they are computed here when absent.
+    """
+
+    if before_status is None:
+        before_status = student_statuses(baseline, ssa.build_sections_by_id(baseline_sections))
+    if before is None:
+        before = summarise_evaluation(baseline, baseline_sections, statuses=before_status)
     after_status = student_statuses(candidate, ssa.build_sections_by_id(candidate_sections))
+    after = summarise_evaluation(candidate, candidate_sections, statuses=after_status)
     improved = 0
     worsened = 0
     newly_unblocked = 0
