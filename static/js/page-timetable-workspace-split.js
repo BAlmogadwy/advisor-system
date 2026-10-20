@@ -1771,7 +1771,9 @@ function renderCreateSectionSummary(targetPane, payload, highlighted, candidates
     targetsEl.innerHTML = topTargets.map((candidate, idx) => {
       const tone = createAssistTone(candidate);
       const key = createAssistCandidateKey(candidate);
-      return `<button type="button" class="tws-create-target ${tone}" data-create-target-key="${esc(key)}" ${tone === 'avoid' ? 'disabled' : ''} title="${esc(createAssistDetail(candidate))}">
+      // An 'avoid' target keeps its tone and reasons but stays clickable: a
+      // manual placement is allowed with its clash (owner ruling 2026-10-20).
+      return `<button type="button" class="tws-create-target ${tone}" data-create-target-key="${esc(key)}" title="${esc(createAssistDetail(candidate))}">
         <span>${idx + 1}</span>${esc(createAssistTargetLabel(candidate))}
       </button>`;
     }).join('');
@@ -1781,7 +1783,7 @@ function renderCreateSectionSummary(targetPane, payload, highlighted, candidates
         e.preventDefault();
         e.stopPropagation();
         const candidate = S.createAssist.candidates.get(btn.dataset.createTargetKey || '');
-        if (!candidate || createAssistTone(candidate) === 'avoid') return;
+        if (!candidate) return;
         btn.disabled = true;
         await applyCreateAssistCandidate(candidate);
       });
@@ -1948,8 +1950,10 @@ async function refreshCreateSectionCandidates(token) {
 async function applyCreateAssistCandidate(candidate) {
   if (!candidate || !S.createAssist.active || !S.createAssist.payload) return null;
   const cell = slotCellForCandidate(candidate.paneIdx, candidate, candidate.kind || 'lect');
-  if (!cell || !createAssistCandidateIsVisibleAndEmpty(candidate)) {
-    notify.warning(IS_AR ? 'اختر خانة فارغة' : 'Choose an empty slot');
+  // A target filled since it was offered is now a clash, which a manual
+  // placement may keep; only a target off the visible grid is refused.
+  if (!cell || !createAssistCandidateIsVisible(candidate)) {
+    notify.warning(IS_AR ? 'اختر خانة ظاهرة' : 'Choose a visible slot');
     return null;
   }
   document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
@@ -2143,10 +2147,14 @@ function createAssistCandidateCells(candidate) {
     .filter(Boolean);
 }
 
-function createAssistCandidateIsVisibleAndEmpty(candidate) {
+function createAssistCandidateIsVisible(candidate) {
   const meetings = createAssistCandidateMeetings(candidate);
-  const cells = createAssistCandidateCells(candidate);
-  return meetings.length > 0 && cells.length === meetings.length && cells.every(cell => !cell.classList.contains('filled'));
+  return meetings.length > 0 && createAssistCandidateCells(candidate).length === meetings.length;
+}
+
+function createAssistCandidateIsVisibleAndEmpty(candidate) {
+  return createAssistCandidateIsVisible(candidate)
+    && createAssistCandidateCells(candidate).every(cell => !cell.classList.contains('filled'));
 }
 
 function slotKindForCell(cell) {
@@ -3189,8 +3197,9 @@ async function movePlacementToSlot({
 
   const v = data.validation || {};
   if (notifyResult) {
-    if ((v.critical_count || 0) > 0) {
-      notify.warning(IS_AR ? `تم النقل مع ${v.critical_count} تعارض` : `Moved with ${v.critical_count} conflict(s)`);
+    const conflicts = manualConflictCount(v);
+    if (conflicts > 0) {
+      notify.warning(IS_AR ? `تم النقل مع ${conflicts} تعارض` : `Moved with ${conflicts} conflict(s)`);
     } else {
       notify.success(T.moveOk);
     }
@@ -3340,6 +3349,12 @@ function deepRepairCandidateForSlot(candidate) {
   return { run, candidateId, candidate: full || candidate };
 }
 
+function deepRepairSlotReady(candidate) {
+  const resolved = deepRepairCandidateForSlot(candidate);
+  return !!(resolved.run && resolved.candidateId && resolved.candidate)
+    && candidateDirectRepairReady({ ...candidate, ...resolved.candidate, deepRepair: true, deepRepairCandidateId: resolved.candidateId });
+}
+
 function candidateDirectRepairReady(candidate) {
   const exact = candidateExactRepair(candidate);
   const status = String(candidate?.status || '').toLowerCase();
@@ -3439,7 +3454,9 @@ function previewSelectedMoveToSlot(paneIdx, cell) {
   const start = cell.dataset.start;
   const end = cell.dataset.end;
   const pending = S.slotAssist.pendingMove;
-  if (candidate.deepRepair && candidate.deepRepairCandidateId) {
+  // An apply-ready repair applies its audited reassignment; any other slot is
+  // a plain manual move, allowed with its clashes (owner ruling 2026-10-20).
+  if (candidate.deepRepair && candidate.deepRepairCandidateId && deepRepairSlotReady(candidate)) {
     document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
     cell.classList.add('assist-preview');
     applyDeepRepairCandidateFromSlot(candidate, S.selectedPlacementId, cell).catch(() => {
@@ -3500,9 +3517,9 @@ async function createPlannedPlacementFromMeetings(boardId, payload, meetings) {
     }),
   });
   if (!data) return null;
-  const v = data.validation || {};
-  if ((v.critical_count || 0) > 0) {
-    notify.warning(IS_AR ? `Placed with ${v.critical_count} conflict(s)` : `Placed with ${v.critical_count} conflict(s)`);
+  const conflicts = manualConflictCount(data.validation);
+  if (conflicts > 0) {
+    notify.warning(IS_AR ? `تم الوضع مع ${conflicts} تعارض` : `Placed with ${conflicts} conflict(s)`);
   } else {
     const count = Array.isArray(data.placements) ? data.placements.length : 1;
     notify.success(count > 1 ? `Placed full ${count}-meeting pattern` : (IS_AR ? 'Placed' : 'Placed'));
@@ -3518,10 +3535,9 @@ async function createPlannedPlacementFromCell(paneIdx, cell, payload) {
     notify.error(IS_AR ? 'Select a board in this pane first' : 'Select a board in this pane first');
     return null;
   }
-  if (cell.classList.contains('filled')) {
-    notify.warning(IS_AR ? 'Choose an empty slot' : 'Choose an empty slot');
-    return null;
-  }
+  // A filled cell is a clash with the section already there: a drop places
+  // the section anyway and the result reports the conflict (owner ruling
+  // 2026-10-20), exactly as dragging a placed section onto it does.
   const day = cell.dataset.day;
   const start = cell.dataset.start;
   const end = cell.dataset.end;
@@ -4181,6 +4197,33 @@ function roomIsAssignable(room) {
     && room.fits_type !== false
     && room.fits_gender !== false
     && room.fits_capacity !== false;
+}
+
+/* Owner ruling 2026-10-20: a manual edit is allowed with any clash, and the
+   clash is shown. A room that fits the section (type, gender, seats) may be
+   assigned by hand even when another section holds it at that time: that is
+   a room clash, not a misfit. Suggestions and bulk passes still pick only free
+   rooms (roomIsAssignable). */
+function roomIsOccupied(room) {
+  return Array.isArray(room?.occupied_by) && room.occupied_by.length > 0;
+}
+
+function roomFitsSection(room) {
+  return !!room
+    && (!!room.available || roomIsOccupied(room))
+    && room.fits_type !== false
+    && room.fits_gender !== false
+    && room.fits_capacity !== false;
+}
+
+/* Clashes a manual edit kept: critical issues plus room double-bookings (a
+   multi-meeting create reports its room clashes per meeting, in items). */
+function manualConflictCount(validation) {
+  const v = validation || {};
+  const roomClashes = Array.isArray(v.room_clashes)
+    ? v.room_clashes.length
+    : (Array.isArray(v.items) ? v.items.reduce((n, item) => n + (item?.room_clashes?.length || 0), 0) : 0);
+  return Number(v.critical_count || 0) + roomClashes;
 }
 
 function roomIsScheduleClean(room) {
@@ -6928,11 +6971,11 @@ function roomCacheKey(placementId, slot) {
 
 function roomCandidateStatusText(room) {
   const reasons = Array.isArray(room?.reasons) ? room.reasons.filter(Boolean) : [];
-  if (!roomIsAssignable(room)) {
+  if (!roomFitsSection(room)) {
     return reasons.slice(0, 3).join(' | ') || 'Blocked for this section';
   }
   if (roomIsScheduleClean(room)) return 'Room fits and the schedule is clean';
-  if (roomIsAssignable(room) && reasons.length) return reasons.slice(0, 3).join(' | ');
+  if (reasons.length) return reasons.slice(0, 3).join(' | ');
   if (Number(room.validation?.critical_count || 0) > 0) {
     return reasons.slice(0, 3).join(' | ') || 'Room fits, but time/instructor conflict remains';
   }
@@ -6946,8 +6989,13 @@ function roomCandidateCardHtml(room, idx, currentRoom) {
   const tone = room.tone || (roomIsScheduleClean(room) ? 'clean' : roomIsAssignable(room) ? 'warn' : 'block');
   const detail = roomCandidateStatusText(room);
   const isCurrent = String(currentRoom || '').trim().toUpperCase() === String(room.room_code || '').trim().toUpperCase();
-  const apply = roomIsAssignable(room)
-    ? `<button class="tws-room-apply" data-room-idx="${idx}" type="button">${isCurrent ? 'Keep' : 'Apply'}</button>`
+  // An occupied room that fits stays assignable by hand; its card keeps the
+  // clash tone and names the occupier.
+  const clashTitle = !roomIsAssignable(room) && roomFitsSection(room)
+    ? ` title="${esc(IS_AR ? 'القاعة مشغولة في هذا الوقت: سيُحفظ التعيين مع تعارض قاعة' : 'Room occupied at this time: assigning it keeps a room clash')}"`
+    : '';
+  const apply = roomFitsSection(room)
+    ? `<button class="tws-room-apply" data-room-idx="${idx}" type="button"${clashTitle}>${isCurrent ? 'Keep' : 'Apply'}</button>`
     : `<button class="tws-room-apply" type="button" disabled>Blocked</button>`;
   return `<div class="tws-room-card ${tone}">
     <div class="tws-room-main">
@@ -6992,7 +7040,7 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
     if (notifyResult) notify.warning('This room is not clean enough for bulk assignment.');
     return null;
   }
-  if (!roomIsAssignable(room)) {
+  if (!roomFitsSection(room)) {
     if (notifyResult) notify.warning('This room does not meet the section requirements.');
     return null;
   }
@@ -7051,7 +7099,16 @@ async function applyRoomCandidate(placementId, room, slot, opts = {}) {
     S.selectedPlacementId = placementId;
     S.selectedPaneIdx = located.paneIdx;
   }
-  if (notifyResult) notify.success(`Assigned room ${room.room_code}`);
+  if (notifyResult) {
+    const conflicts = manualConflictCount(data.validation);
+    if (conflicts > 0) {
+      notify.warning(IS_AR
+        ? `تم تعيين القاعة ${room.room_code} مع ${conflicts} تعارض`
+        : `Assigned room ${room.room_code} with ${conflicts} conflict(s)`);
+    } else {
+      notify.success(`Assigned room ${room.room_code}`);
+    }
+  }
   return data;
 }
 
