@@ -128,6 +128,25 @@ def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict
     }
 
 
+def day_off_audit(before: dict, after: dict) -> dict:
+    """Generate's R1 report (owner default: reported, never blocking): who has
+    no day off on the final board but had one on the saved board."""
+    from core.services.timetable_optimisation_policy import MAX_WORKING_DAYS
+
+    before_days = {str(i): d for i, d in (before.get("working_days_by_instructor") or {}).items()}
+    after_days = {str(i): d for i, d in (after.get("working_days_by_instructor") or {}).items()}
+    return {
+        "blocking": False,
+        "fifth_day_added": [
+            {"instructor_id": i, "days_before": before_days.get(i, 0), "days_after": days}
+            for i, days in sorted(after_days.items())
+            if days > MAX_WORKING_DAYS >= before_days.get(i, 0)
+        ],
+        "five_day_before": sum(1 for d in before_days.values() if d > MAX_WORKING_DAYS),
+        "five_day_after": sum(1 for d in after_days.values() if d > MAX_WORKING_DAYS),
+    }
+
+
 def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
     same_board = summary.get("same_board_conflicts") or {}
     if metric == "same_board_overlaps" and isinstance(same_board, dict):
@@ -298,12 +317,18 @@ class _RunTeachers:
     run starts from a bounded re-pick that can never cost a teacher a day or
     idle the rules forbid (C5), and ends with a re-pick that is adopted only if
     it is no worse than the map it replaces (C7). Every phase runs pinned.
+    With the day-off policy a re-pick between the search and the post passes
+    (S1) may change the map in force (``in_force``); C7 starts from it.
     """
 
     def __init__(self, scenario_id: int) -> None:
         self.scenario_id = scenario_id
-        self.saved = self.start = self.final = None
+        self.saved = self.start = self.final = self.in_force = None
         self.report: dict = {"enabled": True}
+        # The run-level stack S1 pins its map on, and the strict bounds and gate
+        # S1 falls back to when the policy lacks evidence.
+        self.stack = None
+        self.fallback: tuple = (None, None)
 
     def pin(self, assignment):
         from core.services.section_teacher_assignment import pinned_assignment
@@ -363,12 +388,36 @@ class _RunTeachers:
         )
         return self.pin(self.start)
 
-    def finish(self, *, bounds, gate) -> bool:
-        """C7: the final re-pick on the optimised board."""
+    def swap(self, stage: str, *, policy, score) -> dict | None:
+        """S1: a re-pick on the board the search left, judged by the day-off
+        ``policy`` (strict ``fallback`` without its evidence). The map it stores
+        is pinned on the run's stack and stays in force; returns its V2 map
+        when it changed who teaches what, else None."""
+        from core.services.timetable_optimizer_v2 import _final_teacher_recompute
+
+        bounds, gate = self.fallback
+        stored, changed, report = _final_teacher_recompute(
+            self.scenario_id, self.current(), bounds=bounds, gate=gate, policy=policy, score=score
+        )
+        self.report[stage] = report
+        self.in_force = stored
+        self.stack.enter_context(self.pin(stored))
+        return stored.v2_map() if changed else None
+
+    def current(self):
+        """The map in force: S1's when it ran, else the run start's."""
+        return self.in_force if self.in_force is not None else self.start
+
+    def finish(self, *, bounds, gate, policy=None, score=None) -> bool:
+        """C7: the final re-pick on the optimised board, from the map in force."""
         from core.services.timetable_optimizer_v2 import _final_teacher_recompute
 
         self.final, changed, final = _final_teacher_recompute(
-            self.scenario_id, self.start, bounds=bounds, gate=gate
+            self.scenario_id,
+            self.current(),
+            bounds=bounds,
+            gate=gate,
+            **({"policy": policy, "score": score} if policy is not None else {}),
         )
         self.report["final"] = final
         return changed
@@ -496,7 +545,7 @@ def run_v2_optimisation_guarded(
     # on top of a complete board. Full mode does its own reinstatement
     # internally, at the very end of its own pipeline (it already overwrites
     # the whole board, so there is nothing useful to pre-repair here).
-    from contextlib import nullcontext
+    from contextlib import ExitStack, nullcontext
 
     from core.services.timetable_flags import (
         is_one_teacher_active,
@@ -554,6 +603,7 @@ def run_v2_optimisation_guarded(
     board_snapshot = snapshot_scenario(scenario_id)
     from core.services.timetable_optimisation_policy import (
         instructor_schedule_metrics,
+        is_day_off_policy_active,
         is_instructor_priority_enabled,
     )
     from core.services.timetable_optimizer_v2 import (
@@ -577,6 +627,23 @@ def run_v2_optimisation_guarded(
         from core.services.section_teacher_assignment import teacher_bounds as _bounds
 
         teacher_bounds = _bounds(instructor_before)
+    # Day-off policy (R1-R5): Optimise Current judges every stage, the teacher
+    # re-picks and the final board against the saved board under the saved
+    # map — the run's start A. None (strict gates) when the flag is off or the
+    # measurement is incomplete.
+    day_off_anchor = None
+    if mode == "current" and is_day_off_policy_active():
+        from core.services.timetable_optimisation_policy import DayOffAnchor
+
+        day_off_anchor = DayOffAnchor.from_metrics(
+            instructor_before,
+            padded=teachers is not None,
+            universe=teachers.saved.universe if teachers is not None else (),
+        )
+        if day_off_anchor is not None and teacher_bounds is not None:
+            # C5 under the policy: the day trade's idle allowance holds for a
+            # first day off only, so a spare day saved at C5 costs no idle.
+            teacher_bounds = day_off_anchor.start_bounds()
 
     try:
         if mode == "full":
@@ -595,16 +662,26 @@ def run_v2_optimisation_guarded(
         else:
             from core.services.timetable_optimizer_v2 import optimise_current_timetable
 
-            run_context = nullcontext()
-            if teachers is not None:
-                # C5, after the snapshot so rollback and cancel return the saved
-                # map: a re-pick no teacher's week can lose by, pinned for the run.
-                run_context = (
-                    teachers.start_run(teacher_bounds)
-                    if has_existing_board
-                    else teachers.pin(teachers.saved)
-                )
-            with run_context:
+            with ExitStack() as run_stack:
+                policy_kwargs: dict = {}
+                if teachers is not None:
+                    # C5, after the snapshot so rollback and cancel return the saved
+                    # map: a re-pick no teacher's week can lose by, pinned for the run.
+                    run_stack.enter_context(
+                        teachers.start_run(teacher_bounds)
+                        if has_existing_board
+                        else teachers.pin(teachers.saved)
+                    )
+                    if day_off_anchor is not None and teachers.start is not None:
+                        # S1 pins the map it stores on this run's stack.
+                        teachers.stack = run_stack
+                        teachers.fallback = (
+                            teacher_bounds,
+                            _week_gate(scenario_id, instructor_before, {}, teachers),
+                        )
+                        policy_kwargs["teacher_swap"] = teachers.swap
+                if day_off_anchor is not None:
+                    policy_kwargs["day_off_anchor"] = day_off_anchor
                 result = optimise_current_timetable(
                     scenario_id=scenario_id,
                     max_search_iterations=max_iterations,
@@ -613,6 +690,7 @@ def run_v2_optimisation_guarded(
                     run_cpsat_polish=run_cpsat,
                     cpsat_time_limit=cpsat_limit,
                     checkpoint=checkpoint,
+                    **policy_kwargs,
                 )
     except Exception:
         # An async cooperative signal belongs to the job's complete baseline
@@ -631,6 +709,19 @@ def run_v2_optimisation_guarded(
         restore_scenario(scenario_id, board_snapshot)
         return result
 
+    # The policy the run was judged by, re-read from the result: only one that
+    # starts from this runner's own anchor governs C7 and the final gate; a
+    # missing or different one leaves the strict gates (a superset) in charge.
+    run_policy = None
+    if day_off_anchor is not None:
+        from core.services.timetable_optimisation_policy import DayOffPolicy
+
+        carried = DayOffPolicy.from_dict(result.get("day_off_policy"))
+        if carried is not None and carried.anchor == day_off_anchor:
+            run_policy = carried
+        else:
+            result["day_off_policy_fallback"] = "missing" if carried is None else "anchor_mismatch"
+
     if teachers is not None and mode == "current" and teachers.start is not None:
         # C7: the final re-pick on the optimised board, in its own guard — a
         # failure here restores the snapshot like any optimiser failure.
@@ -640,6 +731,8 @@ def run_v2_optimisation_guarded(
                 gate=_week_gate(scenario_id, instructor_before, result, teachers)
                 if is_instructor_priority_enabled()
                 else None,
+                policy=run_policy,
+                score=result.get("final_score"),
             )
             if changed:
                 _refresh_after_teacher_recompute(result, scenario_id, teachers.final)
@@ -682,12 +775,29 @@ def run_v2_optimisation_guarded(
 
         instructor_before = pad_schedule_metrics(instructor_before, teachers.universe())
         instructor_after = pad_schedule_metrics(instructor_after, teachers.universe())
-    instructor_regression = (
-        optimiser_instructor_day_regression(instructor_before, instructor_after, result)
-        if mode == "current"
-        else {"blocked": False, "regressions": [], "repair_exceptions": []}
-    )
-    if mode == "current":
+    day_off_report = None
+    if mode == "current" and run_policy is not None:
+        # R1-R5 against the saved board: every breach blocks, a repair's
+        # included (the owner's default). R2 reads the optimiser's own board
+        # (like-for-like, as the student gate does): a mandatory repair's
+        # student cost does not void a spare day the search paid for.
+        rows, day_off_report = run_policy.final_check(
+            instructor_after,
+            result.get("score_before_instructor_passes") or result.get("final_score") or (),
+        )
+        instructor_regression = {
+            "blocked": bool(rows),
+            "regressions": rows,
+            "repair_exceptions": [],
+            "trade_exceptions": [],
+        }
+    else:
+        instructor_regression = (
+            optimiser_instructor_day_regression(instructor_before, instructor_after, result)
+            if mode == "current"
+            else {"blocked": False, "regressions": [], "repair_exceptions": []}
+        )
+    if mode == "current" and run_policy is None:
         idle_regression = optimiser_instructor_idle_regression(
             instructor_before, instructor_after, result
         )
@@ -713,6 +823,12 @@ def run_v2_optimisation_guarded(
         "repair_exceptions": instructor_regression["repair_exceptions"],
         "trade_exceptions": instructor_regression.get("trade_exceptions", []),
     }
+    if day_off_report is not None:
+        result["instructor_schedule_metric"]["day_off_policy"] = day_off_report
+    if mode == "full" and isinstance(result.get("day_off_policy"), dict):
+        # Generate is judged against its own winning candidate; R1 against the
+        # saved board is reported here and does not block (owner default).
+        result["day_off_policy"]["audit"] = day_off_audit(instructor_before, instructor_after)
     student_regression = optimiser_student_outcome_regression(result)
     # LIKE-FOR-LIKE, mirroring the student gate above: judge the OPTIMISER's own
     # board, captured BEFORE the mandatory instructor cap/clash repairs mutated it.
