@@ -433,6 +433,38 @@ def _refresh_after_teacher_recompute(result: dict, scenario_id: int, final) -> N
     )
 
 
+def _score_restored_board(result: dict, scenario_id: int, teachers: _RunTeachers) -> None:
+    """C9: a rolled-back run reports its baseline, which was judged under the
+    run-start map; the restore brought the saved map back, so when C5 had
+    changed who teaches what the restored board is re-judged under it."""
+    if teachers.start is None or teachers.start.v2_map() == teachers.saved.v2_map():
+        return
+    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
+        build_section_states_for_scenario,
+        build_student_profiles_for_scenario,
+    )
+
+    profiles = build_student_profiles_for_scenario(scenario_id)
+    sections = build_section_states_for_scenario(scenario_id)
+    if not profiles or not sections:
+        return
+    restored = evaluate_generated_timetable_candidate(
+        candidate_id="restored",
+        generated_sections=sections,
+        student_profiles=profiles,
+        course_rigidity=build_course_rigidity_for_scenario(scenario_id),
+        section_instructor_ids=teachers.saved.v2_map(),
+        course_tiers=build_course_tier_map_for_scenario(scenario_id)
+        if is_tiered_objective_enabled()
+        else None,
+    )
+    result["final_score"] = list(restored.lexicographic_score)
+
+
 def run_v2_optimisation_guarded(
     scenario_id: int,
     *,
@@ -874,6 +906,8 @@ def run_v2_optimisation_guarded(
                     result["unresolved_students"] = result["baseline_unresolved_students"]
             elif len(baseline_score) > 1:
                 result["unresolved_students"] = baseline_score[1]
+        if teachers is not None:
+            _score_restored_board(result, scenario_id, teachers)
         logger.warning(
             "V2 optimiser result rolled back for scenario %d: %s",
             scenario_id,

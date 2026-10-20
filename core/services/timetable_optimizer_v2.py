@@ -1068,12 +1068,14 @@ def refresh_final_score_after_teacher_recompute(
     *,
     changed: bool,
 ) -> None:
-    """Re-score the persisted board after the final teacher recompute.
+    """Re-score the persisted board under the one-teacher map now in force.
 
     Twin of :func:`refresh_final_score_after_required_section_repair`: the
-    one-teacher map can change at the end of a run without a placement moving,
-    and every instructor-dependent field must describe the map that was kept.
-    No-op when the map did not change.
+    one-teacher map can change without a placement moving (the winner map
+    closed on the persisted board, the final re-pick), and every
+    instructor-dependent field must describe the map that is stored and pinned.
+    ``changed`` says the map in force is not the one the reported score was
+    judged under; no-op when it is.
     """
     if not changed or not student_profiles:
         return
@@ -1150,26 +1152,33 @@ class _FullRunTeachers:
         return pinned_assignment(self.scenario_id, self.build)
 
     def persist_winner(self) -> None:
-        """G4: store the winner map with the winning board and pin what is stored."""
+        """G4: store the winner map with the winning board and pin what is
+        stored — the winner map closed on that board, which can fill a section
+        the winner map left to be decided (``stored_map``)."""
         from core.services.section_teacher_assignment import persist_and_read
 
         self.win, persisted = persist_and_read(self.scenario_id, self.win)
         self.report["winner"]["persist"] = persisted
         self._pin(self.win)
 
+    def stored_map(self) -> dict:
+        """The V2 map of the map stored and pinned now."""
+        return self.win.v2_map()
+
     def write_names(self) -> None:
         from core.services.section_teacher_assignment import write_names
 
         write_names(self.scenario_id, self.win)
 
-    def final(self) -> tuple[dict, bool]:
-        """G5: re-pick on the final board; adopt it only if it is no worse."""
-        chosen, changed, final = _final_teacher_recompute(self.scenario_id, self.win)
+    def final(self) -> dict:
+        """G5: re-pick on the final board; adopt it only if it is no worse.
+        Returns the V2 map of the map stored and pinned."""
+        chosen, _changed, final = _final_teacher_recompute(self.scenario_id, self.win)
         self.report["final"] = final
         self.report["coverage"] = final["coverage"]
         self.win = chosen
         self._pin(chosen)
-        return chosen.v2_map(), changed
+        return chosen.v2_map()
 
 
 def _final_teacher_recompute(scenario_id: int, in_force, *, bounds=None, gate=None):
@@ -1406,8 +1415,9 @@ def _optimise_scenario_timetable_v2(
     best = ranked[0]
     if teachers is not None:
         # G2: choose the teachers for the winning layout, then judge the winner
-        # under them — every later stage and every reported field uses this map
-        # (``all_scores`` stays as ranked, under the pre-build map).
+        # under them — the searches use this map until G4 stores it, closed on
+        # the persisted board (``all_scores`` stays as ranked, under the
+        # pre-build map).
         best_sections = next(c["sections"] for c in candidates if c["id"] == best.candidate_id)
         winner_map = teachers.choose_winner(best_sections)
         if section_instructor_ids is not None:
@@ -1847,6 +1857,20 @@ def _optimise_scenario_timetable_v2(
         if not ls_persisted:
             teachers.persist_winner()
         teachers.write_names()  # each section's own teacher, under the winner map
+        if section_instructor_ids is not None:
+            # From here every stage charges the stored map, and the score so far
+            # — judged under the winner map — is re-judged under it when the
+            # closure on the persisted board changed who teaches what.
+            scored_with, section_instructor_ids = section_instructor_ids, teachers.stored_map()
+            refresh_final_score_after_teacher_recompute(
+                result,
+                scenario_id,
+                student_profiles,
+                course_rigidity,
+                section_instructor_ids,
+                course_tiers,
+                changed=section_instructor_ids != scored_with,
+            )
 
     # Snapshot the safety state the OPTIMISER produced, BEFORE the mandatory
     # instructor repairs run. The runner's safety gate compares against this
@@ -1938,19 +1962,20 @@ def _optimise_scenario_timetable_v2(
         )
 
     if teachers is not None:
-        # G5, whether or not anything was reinstated: re-pick on the final board.
-        final_map, changed = teachers.final()
+        # G5, whether or not anything was reinstated: re-pick on the final board,
+        # then re-score if the map kept is not the one the score was judged under.
+        final_map = teachers.final()
         if section_instructor_ids is not None:
-            section_instructor_ids = final_map
-        refresh_final_score_after_teacher_recompute(
-            result,
-            scenario_id,
-            student_profiles,
-            course_rigidity,
-            section_instructor_ids,
-            course_tiers,
-            changed=changed,
-        )
+            scored_with, section_instructor_ids = section_instructor_ids, final_map
+            refresh_final_score_after_teacher_recompute(
+                result,
+                scenario_id,
+                student_profiles,
+                course_rigidity,
+                section_instructor_ids,
+                course_tiers,
+                changed=section_instructor_ids != scored_with,
+            )
         result["section_teachers"] = teachers.report
 
     elapsed = time.time() - t0

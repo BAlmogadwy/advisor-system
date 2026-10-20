@@ -13,6 +13,8 @@ keep the stored rows, and the backstop reports a clash they introduce.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -98,6 +100,53 @@ def _current_run(sc, **extra):
     return run_v2_optimisation_guarded(sc.id, mode="current", **{**RUN, **extra})
 
 
+def _score_of_saved_board(sc, section_instructor_ids=None) -> list[int]:
+    """The saved board evaluated under ``section_instructor_ids`` (default: the
+    map stored for it) — what a run must report as its final score."""
+    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
+        build_section_instructor_map_for_scenario,
+        build_section_states_for_scenario,
+        build_student_profiles_for_scenario,
+    )
+
+    if section_instructor_ids is None:
+        section_instructor_ids = build_section_instructor_map_for_scenario(sc.id)
+    return list(
+        evaluate_generated_timetable_candidate(
+            candidate_id="check",
+            generated_sections=build_section_states_for_scenario(sc.id),
+            student_profiles=build_student_profiles_for_scenario(sc.id),
+            course_rigidity=build_course_rigidity_for_scenario(sc.id),
+            section_instructor_ids=section_instructor_ids,
+            course_tiers=build_course_tier_map_for_scenario(sc.id)
+            if is_tiered_objective_enabled()
+            else None,
+        ).lexicographic_score
+    )
+
+
+def _without_teacher(assignment, key: str):
+    """``assignment`` with section ``key`` left to be decided."""
+    return dataclasses.replace(
+        assignment,
+        teacher={**assignment.teacher, key: None},
+        status={**assignment.status, key: sta.STATUS_TBD},
+    )
+
+
+def _charged(assignment) -> list[str]:
+    """The placed sections ``assignment`` gives to the engine's pick."""
+    return [
+        slot.key
+        for slot in assignment.slots
+        if slot.placed and assignment.status[slot.key] == sta.STATUS_ENGINE
+    ]
+
+
 # ── I17: Generate ─────────────────────────────────────────────────────────
 
 
@@ -106,7 +155,6 @@ def test_i17_generate_rebuilds_persists_and_finally_repicks_the_teachers(
     flags, monkeypatch
 ) -> None:
     from core.services import timetable_autoplace, timetable_optimizer_v2
-    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 
     flags.TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = True
     sc = build_corpus()
@@ -158,31 +206,128 @@ def test_i17_generate_rebuilds_persists_and_finally_repicks_the_teachers(
     assert engine_rows(sc)
     assert _names_follow_the_map(sc)
     # The reported score is the persisted board's, under the persisted map.
-    from core.services.timetable_flags import is_tiered_objective_enabled
-    from core.services.timetable_optimizer_v2 import (
-        build_course_rigidity_for_scenario,
-        build_course_tier_map_for_scenario,
-        build_section_instructor_map_for_scenario,
-        build_section_states_for_scenario,
-        build_student_profiles_for_scenario,
-    )
     from core.services.timetable_student_assignment import instructor_idle_of
 
-    persisted = evaluate_generated_timetable_candidate(
-        candidate_id="check",
-        generated_sections=build_section_states_for_scenario(sc.id),
-        student_profiles=build_student_profiles_for_scenario(sc.id),
-        course_rigidity=build_course_rigidity_for_scenario(sc.id),
-        section_instructor_ids=build_section_instructor_map_for_scenario(sc.id),
-        course_tiers=build_course_tier_map_for_scenario(sc.id)
-        if is_tiered_objective_enabled()
-        else None,
-    )
-    assert list(persisted.lexicographic_score) == result["final_score"]
+    assert _score_of_saved_board(sc) == result["final_score"]
     # The winner was judged under its own teachers before anything read it.
     assert result["instructor_gap_metric"]["idle_minutes_before"] == instructor_idle_of(
         result["best_score"]
     )
+
+
+@pytest.mark.django_db
+def test_i17_generate_reports_the_score_of_the_map_it_stores(flags, monkeypatch) -> None:
+    """Review round 3: the winner map leaves a section to be decided (a clash or
+    the daily cap on the winning candidate's layout can) and G4's closure on
+    the persisted board gives it a teacher. From G4 on every stage charges the
+    stored map, and the result reports it: the run used to report 280 idle
+    minutes for a board that holds 430 under the map it saved, with G5
+    changing nothing."""
+    from core.services import timetable_optimizer_v2, timetable_secondary_recovery_runner
+    from core.services.timetable_student_assignment import instructor_idle_of
+
+    flags.TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = True
+    sc = build_corpus()
+    seen: dict = {"recovery": []}
+    real_choose = timetable_optimizer_v2._FullRunTeachers.choose_winner
+    real_recovery = timetable_secondary_recovery_runner.run_secondary_recovery_for_scenario
+
+    def choose_winner(self, best_sections):
+        real_choose(self, best_sections)
+        seen["key"] = _charged(self.win)[0]
+        self.win = _without_teacher(self.win, seen["key"])
+        self._pin(self.win)
+        seen["winner_map"] = self.win.v2_map()
+        return seen["winner_map"]
+
+    def recovery(scenario_id, result, profiles, rigidity, section_instructor_ids, tiers):
+        seen["recovery"].append(section_instructor_ids)
+        return real_recovery(scenario_id, result, profiles, rigidity, section_instructor_ids, tiers)
+
+    monkeypatch.setattr(timetable_optimizer_v2._FullRunTeachers, "choose_winner", choose_winner)
+    monkeypatch.setattr(
+        timetable_secondary_recovery_runner, "run_secondary_recovery_for_scenario", recovery
+    )
+
+    result = _full_run(sc)
+
+    assert result["safety_blocked"] is False
+    stored = sta.load_assignment(sc.id)
+    assert stored.teacher[seen["key"]] is not None  # G4's closure gave it a teacher
+    assert result["section_teachers"]["final"]["changed_sections"] == []  # and G5 kept it
+    saved = _score_of_saved_board(sc)
+    assert instructor_idle_of(saved) != instructor_idle_of(
+        _score_of_saved_board(sc, seen["winner_map"])
+    )
+    assert result["final_score"] == saved
+    assert result["instructor_gap_metric"]["idle_minutes_after"] == instructor_idle_of(saved)
+    assert seen["recovery"] == [stored.v2_map()]
+
+
+def _worse_by_one(assignment):
+    """``assignment`` with one placed section given to another eligible teacher
+    who can take it, at a strictly worse week (more days, or as many and more
+    idle): a map the final re-pick improves on. Returns it and the section."""
+    base = sta.assignment_key(assignment)
+    for key in _charged(assignment):
+        slot = assignment.slot(key)
+        ledger = sta._Ledger()
+        for other in assignment.slots:
+            teacher = assignment.teacher.get(other.key)
+            if (
+                other.key != key
+                and teacher is not None
+                and assignment.status[other.key] in sta.CHARGED
+            ):
+                ledger.add(other, teacher)
+        for teacher in slot.eligible:
+            if teacher == assignment.teacher[key] or ledger.blocker(slot, teacher) is not None:
+                continue
+            worse = dataclasses.replace(assignment, teacher={**assignment.teacher, key: teacher})
+            if sta.assignment_key(worse)[:3] == base[:3] and sta.assignment_key(worse) > base:
+                return worse, key
+    raise AssertionError("every section is with its only possible teacher")
+
+
+@pytest.mark.django_db
+def test_i17_a_final_repick_that_changes_the_map_re_scores_the_saved_board(
+    flags, monkeypatch
+) -> None:
+    """G5 adopts a better map than the one the run charged until then (here the
+    winner gave a section to the teacher it costs most): the result reports
+    the saved board under the map G5 stored."""
+    from core.services import timetable_optimizer_v2
+    from core.services.timetable_student_assignment import instructor_idle_of
+
+    flags.TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = True
+    sc = build_corpus()
+    seen: dict = {}
+    teachers = timetable_optimizer_v2._FullRunTeachers
+    real_choose, real_final = teachers.choose_winner, teachers.final
+
+    def choose_winner(self, best_sections):
+        real_choose(self, best_sections)
+        self.win, seen["key"] = _worse_by_one(self.win)
+        self._pin(self.win)
+        return self.win.v2_map()
+
+    def final(self):
+        seen["charged"] = self.stored_map()  # the map the score so far was judged under
+        return real_final(self)
+
+    monkeypatch.setattr(teachers, "choose_winner", choose_winner)
+    monkeypatch.setattr(teachers, "final", final)
+
+    result = _full_run(sc)
+
+    assert result["safety_blocked"] is False
+    final = result["section_teachers"]["final"]
+    assert final["adopted"] is True and seen["key"] in final["changed_sections"]
+    saved = _score_of_saved_board(sc)
+    assert instructor_idle_of(saved) != instructor_idle_of(
+        _score_of_saved_board(sc, seen["charged"])
+    )
+    assert result["final_score"] == saved
 
 
 @pytest.mark.django_db
@@ -370,6 +515,90 @@ def test_c5_optimise_current_starts_from_a_bounded_repick(flags) -> None:
     final = result["section_teachers"]["final"]
     assert final["report"]["engine"] == "cpsat" and final["report"]["stages"]
     assert final["coverage"] == result["section_teachers"]["coverage"]
+
+
+def _idle_bearing(assignment, scenario_id: int) -> str:
+    """A placed section whose teacher's idle changes when it is left to be decided."""
+    from core.services.timetable_optimisation_policy import instructor_schedule_metrics
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    states = build_section_states_for_scenario(scenario_id)
+
+    def idle(a) -> int:
+        return instructor_schedule_metrics(states, a.v2_map())["idle_minutes"]
+
+    return next(
+        key
+        for key in _charged(assignment)
+        if idle(_without_teacher(assignment, key)) != idle(assignment)
+    )
+
+
+def _start_without_a_teacher(monkeypatch, sc, seen: dict) -> None:
+    """C5 leaves one idle-bearing section to be decided, as a clash or the
+    daily cap on the saved layout can; the run charges that map."""
+    from core.services.timetable_v2_runner import _RunTeachers
+
+    real_start = _RunTeachers.start_run
+
+    def start_run(self, bounds):
+        real_start(self, bounds)
+        self.start = _without_teacher(self.start, _idle_bearing(self.start, sc.id))
+        seen["start_map"] = self.start.v2_map()
+        return self.pin(self.start)
+
+    monkeypatch.setattr(_RunTeachers, "start_run", start_run)
+
+
+@pytest.mark.django_db
+def test_c7_optimise_current_reports_the_score_of_the_map_it_stores(flags, monkeypatch) -> None:
+    """C7's closure on the optimised board gives the run start's TBD section a
+    teacher: the result reports the saved board under the map C7 stored, not
+    under the run-start map the searches charged."""
+    from core.services.timetable_student_assignment import instructor_idle_of
+
+    flags.TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = True
+    sc = _built()
+    seen: dict = {}
+    _start_without_a_teacher(monkeypatch, sc, seen)
+
+    result = _current_run(sc)
+
+    assert result["safety_blocked"] is False
+    assert sta.load_assignment(sc.id).v2_map() != seen["start_map"]
+    saved = _score_of_saved_board(sc)
+    assert instructor_idle_of(saved) != instructor_idle_of(
+        _score_of_saved_board(sc, seen["start_map"])
+    )
+    assert result["final_score"] == saved
+
+
+@pytest.mark.django_db
+def test_c9_a_rolled_back_run_reports_the_saved_board_under_the_saved_map(
+    flags, monkeypatch
+) -> None:
+    """The run start changed who teaches a section and the run is rolled back:
+    the restore brings the saved map back, so the reported score is the saved
+    board under it — not the baseline the run judged under its run-start map."""
+    from core.services import timetable_v2_runner
+    from core.services.timetable_student_assignment import instructor_idle_of
+
+    flags.TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = True
+    sc = _built()
+    seen: dict = {}
+    _start_without_a_teacher(monkeypatch, sc, seen)
+    monkeypatch.setattr(
+        timetable_v2_runner,
+        "optimiser_safety_regression",
+        lambda before, after: {"blocked": True, "regressions": [{"metric": "forced"}]},
+    )
+
+    result = _current_run(sc)
+
+    assert result["safety_blocked"] is True
+    saved = _score_of_saved_board(sc)
+    assert instructor_idle_of(result["baseline_score"]) != instructor_idle_of(saved)
+    assert result["final_score"] == saved
 
 
 @pytest.mark.django_db
