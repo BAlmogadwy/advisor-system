@@ -19,7 +19,16 @@ button.tw-panel-tab.active { border-bottom-color: var(--teal); }
 #twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown {
   max-width: calc(100vw - 32px); max-height: min(420px, 65vh); overflow-y: auto;
 }
-#twOptimiseDropdown, #twExportDropdown { right: auto !important; inset-inline-end: 0; }
+/* Before the menu script places them: under the end edge of their group, in
+   either direction (the inline `right:0` alone is wrong in Arabic). */
+#twOptimiseDropdown, #twExportDropdown { inset-inline-start: auto !important; inset-inline-end: 0 !important; }
+/* The Generate bar's glass blur (backdrop-filter) makes it a stacking context,
+   so its menu's own z-index cannot rise above the sticky command bar painted
+   after it. While the menu is open, lift the whole bar just above the sticky
+   layer, still under sidebars, drawers, modals and toasts; closed, the page
+   layers exactly as before. aria-expanded is kept current on every open and
+   close path by timetable-workspace-accessibility.js. */
+#twGenBar:has(#twGenerateMenu[aria-expanded="true"]) { position: relative; z-index: calc(var(--z-sticky) + 1); }
 .tw-cmd-bar .tw-btn:disabled, #twGenBar button:disabled { opacity: .5; cursor: not-allowed; }
 .tw-cmd-bar .tw-btn:disabled:hover { background: var(--card); }
 .tw-cmd-bar .tw-btn-primary:disabled:hover { background: var(--teal); }
@@ -74,8 +83,18 @@ button.tw-bottom-handle { width: 100%; appearance: none; border: 0; border-botto
   .tw-quality-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
   .tw-quality-metrics dt { font-size: .66rem; }
   .tw-right .tw-panel-tab { font-size: .76rem; }
-  #twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown { min-width: min(280px, calc(100vw - 24px)) !important; }
-  #twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown { position: fixed !important; top: auto !important; inset-inline: 12px; margin-top: 4px; }
+  /* Phones: each menu is a full-width sheet across its own bar. The button
+     groups stop being the containing block, so the sheet spans the bar; the
+     menu script lifts it to just under its buttons (without the script it
+     falls to the bar's bottom edge, never over the buttons that opened it).
+     The command bar is not sticky here, so the Generate bar can sit above it
+     for good: browsers without :has() still show its sheet whole. */
+  #twGenBar { position: relative; z-index: calc(var(--z-sticky) + 1); }
+  #twGenerateGroup, #twOptimiseGroup, #twExportGroup { position: static !important; }
+  #twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown {
+    position: absolute !important; top: 100% !important; inset-inline: 12px !important;
+    min-width: 0 !important;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .tw-card, .tw-btn, .tw-panel-tab, .tw-bottom { transition: none; }
