@@ -267,18 +267,32 @@ def test_u6_nominal_sessions_come_from_the_budget_pattern_not_the_placements(fla
 # ── U7: the day-off target before days ────────────────────────────────────
 
 
-def test_u7_the_lighter_teacher_gets_the_section_over_a_fewer_days_choice(flags) -> None:
+def _heavy_and_light():
+    """Teacher 1 holds 10 sessions on Sunday and Tuesday, teacher 2 holds 4 on
+    Monday and Wednesday; X (3 sessions) sits on Sunday and Tuesday, so it adds
+    no day for teacher 1 but takes him past the day-off target of 12."""
     heavy = pinned_load(1, 10, meetings=(m(0, "08:00", "09:15"), m(2, "08:00", "09:15")))
     light = pinned_load(2, 4, meetings=(m(1, "08:00", "09:15"), m(3, "08:00", "09:15")))
-    slots = [
+    return [
         heavy,
         light,
         *course("X", [{"meetings": [m(0, "09:30", "10:45"), m(2, "09:30", "10:45")]}]),
     ]
 
-    a = sta.solve_layout_aware(slots)
+
+def test_u7_the_lighter_teacher_gets_the_section_over_a_fewer_days_choice(flags) -> None:
+    a = sta.solve_layout_aware(_heavy_and_light())
 
     assert a.teacher["X_S1"] == 2
+
+
+def test_u7_the_greedy_ranks_the_day_off_target_before_days_too(flags) -> None:
+    """The greedy is the closure, the solver's hint, its fallback and the
+    pre-build seed: it keeps the day-off target first as well."""
+    slots = _heavy_and_light()
+
+    assert sta.greedy_assign(slots).teacher["X_S1"] == 2
+    assert sta.greedy_assign(slots, seed={}).teacher["X_S1"] == 2
 
 
 # ── U8 / U9 / U10: clash and the daily cap are hard ───────────────────────
