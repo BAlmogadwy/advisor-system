@@ -900,6 +900,22 @@ TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_TOP_N = int(
     os.getenv("TIMETABLE_INSTRUCTOR_DAY_TRADE_VACATE_TOP_N", "12")
 )
 
+# TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY: the owner's day-off rulings (2026-10-19)
+# replace the strict "no instructor's days or idle may rise" veto (needs
+# TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED). R1 teaching week SUN-THU, everyone
+# keeps a day off where possible (at most 4 working days) and no optional change
+# adds a 5th day; R2 a SPARE day off (3 working days or fewer) may be given up,
+# never above 4 days, only for a student gain (full score strictly better, the
+# four hard positions each no worse); R3 who gives one up may gain at most 60
+# idle minutes per day given up, against the run's start; R4 one instructor's
+# idle may rise only if the TOTAL strictly falls; R5 the day trade above spends
+# student gap only on a FIRST day off (5 -> 4). The constants (5, 4, 60) are
+# owner rulings in core.services.timetable_optimisation_policy, not settings.
+# Default OFF: off, every path is today's strict veto.
+TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = os.getenv(
+    "TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY", "false"
+).lower() in ("1", "true", "yes", "on")
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised
