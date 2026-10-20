@@ -280,8 +280,21 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     instructors for the scenario's gender, through
     ``section_instructor_resolver``. Sections with no course assignment are
     absent — the caller falls back to the opaque free-text string for those.
+
+    With one teacher per section (``is_one_teacher_active``) each section maps
+    to its ONE teacher instead (``section_teacher_assignment``): a section
+    whose teacher is still to be decided is present with an EMPTY set, which
+    charges nobody and suppresses the free-text fallback; a section with no
+    links, or a frozen section with no known teacher, stays absent. The map
+    also covers the teacher-frozen sections placed on the scenario's boards.
     """
     from core.models import TermSection
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import load_assignment
+
+        return load_assignment(scenario.id).pr4_map()
 
     out: dict[str, set[int]] = {}
     gender = getattr(scenario, "gender", "")

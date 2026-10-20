@@ -742,14 +742,37 @@ TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 
 # When on, the planner's instructor-clash filter sources per-person identity
-# from structured SectionInstructor links (true multi-instructor: a section's
-# meeting clashes if ANY assigned instructor is double-booked) instead of the
-# single opaque free-text name. Default ON as of 2026-07-16; set ``=false`` and
-# the clash reads the free-text field exactly as before. Sections without links
-# always fall back to the free-text path regardless of this flag.
+# from the structured course links (``CourseInstructor``: who MAY teach a course
+# for a programme) instead of the single opaque free-text name. Without the
+# one-teacher rule below, every linked person is charged with every section of
+# the course (a section's meeting clashes if ANY of them is double-booked).
+# Default ON as of 2026-07-16; set ``=false`` and the clash reads the free-text
+# field exactly as before. Sections without links always fall back to the
+# free-text path regardless of this flag.
 TIMETABLE_INSTRUCTOR_LINKS_ENABLED = os.getenv(
     "TIMETABLE_INSTRUCTOR_LINKS_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# TIMETABLE_ONE_TEACHER_PER_SECTION: charge each section to exactly ONE of its
+# linked teachers, or to nobody ("teacher to be decided"), instead of to every
+# linked teacher at once (owner rulings 2026-10-19). The engine stores its pick
+# per section in scenario-scoped ``SectionInstructor`` rows (source "engine");
+# any other primary row there is a department/registrar pin it never overwrites.
+# Hard: no clash, the daily cap, at most 15 sessions a week, and D10 (a course
+# running more than 3 sections gives one teacher at most 2 of them). Needs the
+# links flag. Default OFF: off, nothing reads ``section_instructors`` and every
+# path is byte-identical to before (tests/test_one_teacher_flag_parity.py).
+# The time limit bounds one whole assignment solve; the deterministic time
+# bounds each of its seven lexicographic stages (the lab needed <= 0.012).
+TIMETABLE_ONE_TEACHER_PER_SECTION = os.getenv(
+    "TIMETABLE_ONE_TEACHER_PER_SECTION", "false"
+).lower() in ("1", "true", "yes", "on")
+TIMETABLE_ONE_TEACHER_TIME_LIMIT_SECONDS = float(
+    os.getenv("TIMETABLE_ONE_TEACHER_TIME_LIMIT_SECONDS", "10")
+)
+TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME = float(
+    os.getenv("TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME", "1.0")
+)
 
 # TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED: gates a soft objective that minimises
 # idle time gaps in each instructor's daily schedule. When True, the canonical

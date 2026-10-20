@@ -332,18 +332,36 @@ function renderSecondaryRecoveryOutcome(result) {
   </div>`;
 }
 
+/* One teacher per section: who teaches what, beside the days and idle — a
+ * section left without a teacher must never make those numbers look better
+ * unseen. Present only with the rule on. */
+function teacherCoverageOf(result) {
+  return instructorScheduleOf(result).coverage?.after || result.section_teachers?.coverage || null;
+}
+
+function teacherCoverageText(coverage) {
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  const assigned = number(coverage.assigned);
+  const needing = number((coverage.assigned || 0) + (coverage.tbd || 0));
+  return IS_AR
+    ? `شعب لها مدرس: ${assigned} / ${needing} · لم يُحدَّد بعد: ${number(coverage.tbd)} (D10: ${number(coverage.tbd_d10_floor)})`
+    : `Sections with a teacher: ${assigned} / ${needing} · to be decided: ${number(coverage.tbd)} (D10: ${number(coverage.tbd_d10_floor)})`;
+}
+
 function renderInstructorOutcome(result) {
   const metric = instructorScheduleOf(result);
   const after = metric.after || result.quality_score?.instructor_schedule;
   const before = metric.before || result.baseline_instructor_schedule;
   const priority = result.optimisation_policy === 'instructor_first';
-  if (!after && !priority) return '';
+  const coverage = teacherCoverageOf(result);
+  if (!after && !priority && !coverage) return '';
   const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
   const row = (label, key) => `<div>${label}: <b>${before ? `${number(before[key])} → ` : ''}${number(after?.[key])}</b></div>`;
   return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
     <div style="font-weight:700;color:var(--teal)">${IS_AR ? 'جدول المدرسين' : 'Instructor schedule'}</div>
     ${row(IS_AR ? 'مجموع أيام العمل' : 'Total working days', 'working_days')}
     ${row(IS_AR ? 'دقائق الانتظار' : 'Idle minutes', 'idle_minutes')}
+    ${coverage ? `<div>${esc(teacherCoverageText(coverage))}</div>` : ''}
     ${priority ? `<div style="font-size:11px;color:var(--t3);margin-top:5px">${IS_AR ? 'الأولوية لتقليل أيام المدرسين ثم الانتظار، مع حماية التسجيل والقيود الأساسية. قد تتغير فراغات الطلاب.' : 'Priority: fewer instructor days, then less idle time, with hard enrolment and operational constraints protected. Student gaps may change.'}</div>` : ''}
   </div>`;
 }
@@ -2483,6 +2501,17 @@ function renderWorkspaceQuality() {
   put('twQualityInstructorIdle', quality?.instructor?.assessed ? quality.instructor.idle_minutes : null);
   put('twQualityUnplaced', quality?.soft_seats?.assessed ? quality.soft_seats.unresolved : null, quality?.soft_seats?.unresolved > 0);
   put('twQualityRooms', quality?.rooms?.assessed ? quality.rooms.shortages : null, quality?.rooms?.shortages > 0);
+  // One teacher per section: shown only when the quality endpoint reports it;
+  // red when a section lacks a teacher for more than the D10 limit's reasons.
+  const coverage = quality?.instructor?.coverage;
+  const coverageRow = $('twQualityTeacherCoverageRow');
+  if (coverageRow) coverageRow.hidden = !coverage;
+  const coverageCell = $('twQualityTeacherCoverage');
+  if (coverage && coverageCell) {
+    coverageCell.textContent = `${(coverage.assigned || 0).toLocaleString()} / ${((coverage.assigned || 0) + (coverage.tbd || 0)).toLocaleString()}`;
+    coverageCell.title = teacherCoverageText(coverage);
+    coverageCell.classList.toggle('danger', (coverage.tbd || 0) > (coverage.tbd_d10_floor || 0));
+  }
   const status = $('twQualityStatus');
   if (!status) return;
   if (!TW.scenarioId) { status.textContent = IS_AR ? 'اختر سيناريو لعرض جودة الجدول.' : 'Select a scenario to view timetable quality.'; return; }

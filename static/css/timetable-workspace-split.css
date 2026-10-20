@@ -1956,6 +1956,9 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
 }
 .tws-instr-x:hover { color: #f47272; }
 .tws-instr-none { color: var(--t4); }
+/* One teacher per section: a section whose teacher is still to be decided */
+.tws-instr-tbd { color: var(--warning); font-weight: 700; }
+.tws-instr-hint { display: block; color: var(--t3); font-size: 11px; margin-top: 2px; }
 .tws-drawer-instr-edit { display: flex; gap: 4px; margin: 4px 0 8px; }
 .tws-drawer-instr-edit input {
   flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line);

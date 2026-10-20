@@ -117,6 +117,40 @@ def _merge_english_spans(ws, row: int, slots: list[dict], placements: list) -> N
         )
 
 
+# One teacher per section: what a grid cell prints for a section whose teacher
+# is still to be decided.
+TEACHER_TBD = "TBD"
+
+
+def section_teacher_texts(scenario_id: int) -> dict[int, str] | None:
+    """One teacher per section: ``{term_section_id: teacher name}``, read once
+    per export from the map the engine charges, so the export agrees with the
+    drawer and the engine before any reconcile.
+
+    ``engine``, ``pinned`` and ``frozen`` sections give their teacher's name; a
+    section to be decided gives ``""`` (the grid prints ``TEACHER_TBD``, the
+    Instructors sheet leaves it out). No-links and unknown frozen sections are
+    absent and keep their meeting name. None with the rule off.
+    """
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if not is_one_teacher_active():
+        return None
+    from core.services.section_teacher_assignment import (
+        CHARGED,
+        STATUS_TBD,
+        section_teacher_display,
+    )
+
+    out: dict[int, str] = {}
+    for ts_id, row in section_teacher_display(scenario_id).items():
+        if row["status"] in CHARGED and row["name"]:
+            out[ts_id] = row["name"]
+        elif row["status"] == STATUS_TBD:
+            out[ts_id] = ""
+    return out
+
+
 def export_scenario_xlsx(scenario_id: int) -> Path:
     """Export a scenario's timetable to a styled XLSX workbook.
 
@@ -148,6 +182,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     boards = list(
         DeliveryBoard.objects.filter(scenario=scenario).order_by("display_order", "label")
     )
+    teachers = section_teacher_texts(scenario_id)
 
     # ── Styles ───────────────────────────────────────────────────
     hdr_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")
@@ -490,6 +525,8 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             term_section=ts, day=day
                         ).first()
                         instructor = meeting.instructor if meeting else ""
+                        if teachers is not None and ts.id in teachers:
+                            instructor = teachers[ts.id] or TEACHER_TBD
                         room = (
                             "No room required"
                             if _english_lecture(pp)
@@ -1041,7 +1078,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 ws_room.column_dimensions[_gcl(2 + si)].width = 15
 
     # ── Instructors sheet (one weekly grid per assigned instructor) ──
-    _render_instructors_sheet(wb, scenario, lambda cc: _course_fill(cc, course_color_map))
+    _render_instructors_sheet(
+        wb, scenario, lambda cc: _course_fill(cc, course_color_map), teachers=teachers
+    )
 
     # ── Save ─────────────────────────────────────────────────────
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -1050,13 +1089,16 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     return Path(tmp.name)
 
 
-def _render_instructors_sheet(wb, scenario, fill_for) -> None:
+def _render_instructors_sheet(wb, scenario, fill_for, *, teachers=None) -> None:
     """Add an "Instructors" sheet: one weekly grid (days × slots) per instructor,
     mirroring the Rooms sheet, showing the courses each instructor teaches.
 
     Only instructors actually assigned in the current timetable appear — the
     instructor name is read from ``TermSectionMeeting.instructor`` (the planner
     write-through fans the primary's name into every meeting of a section).
+    With one teacher per section, ``teachers`` (``section_teacher_texts``)
+    overrides it: each section under its own teacher, a section to be decided
+    left out, a no-links section kept under its meeting name.
     ``fill_for(course_code)`` supplies the per-course cell colour so the palette
     matches the Rooms/Courses sheets. No-op when nothing is assigned.
     """
@@ -1078,6 +1120,11 @@ def _render_instructors_sheet(wb, scenario, fill_for) -> None:
         name = (instr or "").strip()
         if name and ts_id not in ts_instructor:
             ts_instructor[ts_id] = name
+    for ts_id, name in (teachers or {}).items():
+        if name:
+            ts_instructor[ts_id] = name
+        else:
+            ts_instructor.pop(ts_id, None)
     if not ts_instructor:
         return
 

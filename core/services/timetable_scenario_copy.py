@@ -28,6 +28,7 @@ from core.models import (
     TermSectionProgram,
     TimetableScenario,
 )
+from core.services.timetable_flags import is_one_teacher_active
 from core.services.timetable_mutation_guard import (
     ScenarioPlannerBusy,
     conflicting_planner_job,
@@ -118,6 +119,69 @@ def _new_draft(source: TimetableScenario, name: str | None, created_by: str) -> 
     )
 
 
+def _frozen_teacher_pins(
+    sections: list[TermSection],
+    external: set[tuple],
+    external_rows: list[SectionInstructor],
+    meetings: list[TermSectionMeeting],
+) -> tuple[list[SectionInstructor], int]:
+    """One teacher per section: pin, in the copy, the teacher of every section
+    the source did not own.
+
+    The copy takes ownership of those sections, so without a pin the copy's
+    engine would re-choose a teacher the source could not. The teacher is the
+    one the source treats as frozen: the owner's primary row (an engine pick
+    becomes ``copied_frozen``; a registrar or department row keeps its source),
+    else the active instructor named on its meetings (``copied_frozen``). A
+    section whose teacher is unknown gets no pin and is counted as released.
+    """
+    from core.models import Instructor
+    from core.services.section_teacher_assignment import SOURCE_COPIED_FROZEN, SOURCE_ENGINE
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    def norm(value: object) -> str:
+        return str(value or "").strip().upper()
+
+    owner_primary = {
+        (row.scenario_id, norm(row.course_key), norm(row.section)): row
+        for row in external_rows
+        if row.role == "primary"
+    }
+    names: dict[int, str] = {}
+    for meeting in meetings:
+        if (meeting.instructor or "").strip():
+            names.setdefault(meeting.term_section_id, meeting.instructor)
+    by_name = dict(Instructor.objects.filter(is_active=True).values_list("normalised_name", "pk"))
+    pins: list[SectionInstructor] = []
+    released = 0
+    for section in sections:
+        if (section.scenario_id, section.course_key, section.section) not in external:
+            continue
+        key = (norm(section.course_key), norm(section.section))
+        row = owner_primary.get((section.scenario_id, *key))
+        if row is not None:
+            teacher, kind = (
+                row.instructor_id,
+                SOURCE_COPIED_FROZEN if row.source == SOURCE_ENGINE else row.source,
+            )
+        else:
+            teacher = by_name.get(normalise_instructor(names.get(section.pk)) or "")
+            kind = SOURCE_COPIED_FROZEN
+        if teacher is None:
+            released += 1
+            continue
+        pins.append(
+            SectionInstructor(
+                course_key=key[0],
+                section=key[1],
+                instructor_id=teacher,
+                role="primary",
+                source=kind,
+            )
+        )
+    return pins, released
+
+
 def _copy_locked(
     source: TimetableScenario, name: str | None, created_by: str
 ) -> ScenarioCopyResult:
@@ -187,6 +251,7 @@ def _copy_locked(
         for section in sections
         if section.scenario_id != source.pk
     }
+    released = 0 if is_one_teacher_active() else None
     if external:
         owners = {owner for owner, _, _ in external if owner is not None}
         rows = (
@@ -209,9 +274,22 @@ def _copy_locked(
                 "Resolve those allocations before copying this scenario.",
                 code="COPY_INSTRUCTOR_IDENTITY_CONFLICT",
             )
-        instructors.extend(
-            row for row in external_rows if (row.course_key, row.section) not in explicit
-        )
+        if is_one_teacher_active():
+            frozen_rows, released = _frozen_teacher_pins(
+                sections, external, external_rows, meetings
+            )
+            instructors.extend(
+                row
+                for row in external_rows
+                if (row.course_key, row.section) not in explicit and row.role != "primary"
+            )
+            instructors.extend(
+                row for row in frozen_rows if (row.course_key, row.section) not in explicit
+            )
+        else:
+            instructors.extend(
+                row for row in external_rows if (row.course_key, row.section) not in explicit
+            )
     scenario_tables = (ScenarioStudentMap, ScenarioStudentCourseRequest, ScenarioSectionBudget)
     scenario_rows = {
         table: list(table.objects.select_for_update().filter(scenario=source).order_by("pk"))
@@ -291,6 +369,7 @@ def _copy_locked(
             "placements": len(placements),
             "locked_placements": sum(row.is_locked for row in placements),
             "students": len(scenario_rows[ScenarioStudentMap]),
+            **({"teachers_released": released} if released is not None else {}),
         },
     )
 

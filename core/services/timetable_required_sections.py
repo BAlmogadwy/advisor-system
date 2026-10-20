@@ -128,10 +128,11 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
     # already wrote something — would propagate uncaught with nothing left
     # to roll back to. Report a zero-progress attempt instead; the courses
     # that were missing going in are the safe assumption still missing.
+    placed = None
     try:
         from core.services.timetable_autoplace import auto_place_scenario
 
-        auto_place_scenario(scenario_id)
+        placed = auto_place_scenario(scenario_id)
         after = find_missing_required_sections(scenario_id)
     except Exception:
         logger.exception(
@@ -156,13 +157,26 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
             describe_short_courses(after),
         )
 
-    return {
+    report = {
         "enabled": True,
         "attempted": len(before),
         "before_missing": before,
         "after_missing": after,
         "newly_placed": newly_placed,
     }
+    # One teacher per section: a section the placer could only put at an option
+    # its guard ranks last (``PlacerGuard``) is listed here; the coverage's
+    # ``tbd_sections`` say what stops each teacher.
+    boards = placed.get("boards") if isinstance(placed, dict) else None
+    ranked_last = [
+        row
+        for board in (boards or {}).values()
+        if isinstance(board, dict)
+        for row in (board.get("teacher_guard") or {}).get("ranked_last", [])
+    ]
+    if ranked_last:
+        report["teacher_guard_ranked_last"] = ranked_last
+    return report
 
 
 def maybe_reinstate_missing_required_sections(scenario_id: int) -> dict | None:

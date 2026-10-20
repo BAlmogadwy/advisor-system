@@ -73,6 +73,7 @@ from core.services.timetable_demand import (
     compute_course_students_index,
     load_scenario_course_demands,
 )
+from core.services.timetable_flags import is_one_teacher_active
 from core.services.timetable_online import (
     OnlineCourseLookup,
     exclude_online_courses_for_board,
@@ -504,9 +505,17 @@ def detect_board_conflicts(board_id: int) -> dict:
 
     by_instructor: dict[object, list] = defaultdict(list)
     by_room: dict[str, list] = defaultdict(list)
+    # One teacher per section: PRESENCE in the map decides, as in the placer. A
+    # section still to be decided is present with no teacher and charges
+    # nobody — its meeting row may still carry a stale name.
+    by_presence = is_one_teacher_active()
     for item in items:
-        ids = link_map.get(f"{item.course_key}|{item.section}")
-        if ids:
+        key = f"{item.course_key}|{item.section}"
+        ids = link_map.get(key)
+        if by_presence and key in link_map:
+            for iid in ids:
+                by_instructor[iid].append(item)
+        elif ids:
             for iid in ids:
                 by_instructor[iid].append(item)
         elif item.instructor:
@@ -651,6 +660,59 @@ def detect_board_conflicts(board_id: int) -> dict:
     }
 
 
+def _section_teacher_matcher(scenario_id: int):
+    """One teacher per section: ``(teacher_of, same_teacher)`` for one request.
+
+    ``teacher_of(term_section_id, section_key)`` is ``(teacher_id, name)`` for a
+    section the one-teacher map charges, ``(None, "")`` for one still to be
+    decided, and None for one the map leaves out (no links, or a frozen section
+    with no known teacher). ``same_teacher(a, a_name, b, b_name)`` is the clash
+    test the manual-placement checks share with the engine: two charged
+    sections clash when their teacher ids are equal; a section to be decided
+    clashes with nobody; when either is left out, the free-text names decide,
+    as they did before the rule.
+    """
+    from core.models import Instructor
+    from core.services.section_teacher_assignment import CHARGED, STATUS_TBD, load_assignment
+
+    assignment = load_assignment(scenario_id)
+    names = dict(
+        Instructor.objects.filter(
+            pk__in={t for t in assignment.teacher.values() if t is not None}
+        ).values_list("pk", "full_name")
+    )
+    by_ts: dict[int, tuple[int | None, str]] = {}
+    by_key: dict[str, tuple[int | None, str]] = {}
+    for slot in assignment.slots:
+        status = assignment.status.get(slot.key)
+        teacher = assignment.teacher.get(slot.key)
+        if status in CHARGED and teacher is not None:
+            entry: tuple[int | None, str] = (teacher, names.get(teacher, ""))
+        elif status == STATUS_TBD:
+            entry = (None, "")
+        else:
+            continue
+        by_key[slot.key] = entry
+        if slot.term_section_id is not None:
+            by_ts[slot.term_section_id] = entry
+
+    def teacher_of(term_section_id, section_key=None):
+        if term_section_id is not None and term_section_id in by_ts:
+            return by_ts[term_section_id]
+        return by_key.get(section_key) if section_key is not None else None
+
+    def same_teacher(a, a_name, b, b_name) -> bool:
+        if (a is not None and a[0] is None) or (b is not None and b[0] is None):
+            return False
+        if a is not None and b is not None:
+            return a[0] == b[0]
+        left = ((a[1] if a is not None else a_name) or "").strip().upper()
+        right = ((b[1] if b is not None else b_name) or "").strip().upper()
+        return bool(left and right and left == right)
+
+    return teacher_of, same_teacher
+
+
 def validate_placement(
     board_id: int,
     day: str,
@@ -721,6 +783,17 @@ def validate_placement(
     except DeliveryBoard.DoesNotExist:
         _overlap_mat = {}
 
+    # One teacher per section: the section's own teacher, by id (as the engine
+    # and the backstop charge it), not the free-text name of its meetings.
+    teacher_of = same_teacher = new_teacher = None
+    if board_obj is not None and is_one_teacher_active():
+        teacher_of, same_teacher = _section_teacher_matcher(board_obj.scenario_id)
+        new_teacher = teacher_of(
+            term_section_id, f"{ts.course_key or ts.course_code}_{ts.section}" if ts else None
+        )
+        if new_teacher is not None:
+            new_instructor = new_teacher[1]
+
     overlaps: list[dict] = []
     instructor_clashes: list[dict] = []
     room_clashes: list[dict] = []
@@ -766,9 +839,18 @@ def validate_placement(
 
             # Instructor clash
             if (
-                new_instructor
-                and item.instructor
-                and new_instructor.strip().upper() == item.instructor.strip().upper()
+                same_teacher(
+                    new_teacher,
+                    new_instructor,
+                    teacher_of(item.term_section_id, f"{item.course_key}_{item.section}"),
+                    item.instructor,
+                )
+                if same_teacher is not None
+                else (
+                    new_instructor
+                    and item.instructor
+                    and new_instructor.strip().upper() == item.instructor.strip().upper()
+                )
             ):
                 instructor_clashes.append(
                     {
@@ -926,6 +1008,13 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
 
     new_meeting = TermSectionMeeting.objects.filter(term_section=placement.term_section).first()
     new_instructor = (new_meeting.instructor if new_meeting else "").strip().upper()
+    # One teacher per section: compare teachers by id (see validate_placement).
+    teacher_of = same_teacher = new_teacher = None
+    if is_one_teacher_active():
+        teacher_of, same_teacher = _section_teacher_matcher(scenario.id)
+        new_teacher = teacher_of(
+            placement.term_section_id, f"{course_key}_{placement.term_section.section}"
+        )
     days = ["SUN", "MON", "TUE", "WED", "THU"]
     base_day_counts = Counter(
         _DAY_INDEX.get(str(other.day).upper(), 99)
@@ -1019,17 +1108,26 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                         )
                     )
 
+            item_teacher = (
+                teacher_of(item.term_section_id, f"{item.course_key}_{item.section}")
+                if teacher_of is not None
+                else None
+            )
             if (
-                new_instructor
-                and item.instructor
-                and new_instructor == item.instructor.strip().upper()
+                same_teacher(new_teacher, new_instructor, item_teacher, item.instructor)
+                if same_teacher is not None
+                else (
+                    new_instructor
+                    and item.instructor
+                    and new_instructor == item.instructor.strip().upper()
+                )
             ):
                 instructor_critical += 1
                 candidate_evidence.append(
                     evidence(
                         "instructor",
                         "critical",
-                        f"Instructor clash: {item.instructor}",
+                        f"Instructor clash: {item_teacher[1] if item_teacher else item.instructor}",
                         f"{item.course_code}-{item.section} is at {item.day} {item.start_time}-{item.end_time}",
                     )
                 )
@@ -1272,6 +1370,17 @@ def preview_planned_section_slot_candidates(
     )
     existing_meetings = list(existing_section.meetings.all()) if existing_section else []
     new_instructor = (existing_meetings[0].instructor if existing_meetings else "").strip().upper()
+    # One teacher per section: the planned section's own teacher (a budget
+    # label has one before it is placed), compared by id (see validate_placement).
+    teacher_of = same_teacher = new_teacher = None
+    if is_one_teacher_active():
+        teacher_of, same_teacher = _section_teacher_matcher(scenario.id)
+        new_teacher = teacher_of(
+            existing_section.id if existing_section else None,
+            f"{existing_section.course_key or existing_section.course_code}_{existing_section.section}"
+            if existing_section
+            else f"{key}_{section}",
+        )
 
     board_items = [
         row
@@ -1383,10 +1492,19 @@ def preview_planned_section_slot_candidates(
                         )
                     )
 
+            item_teacher = (
+                teacher_of(item.term_section_id, f"{item.course_key}_{item.section}")
+                if teacher_of is not None
+                else None
+            )
             if (
-                new_instructor
-                and item.instructor
-                and new_instructor == item.instructor.strip().upper()
+                same_teacher(new_teacher, new_instructor, item_teacher, item.instructor)
+                if same_teacher is not None
+                else (
+                    new_instructor
+                    and item.instructor
+                    and new_instructor == item.instructor.strip().upper()
+                )
             ):
                 instructor_critical += 1
                 instructor_sessions.add(
@@ -1396,7 +1514,7 @@ def preview_planned_section_slot_candidates(
                     evidence(
                         "instructor",
                         "critical",
-                        f"Instructor clash: {item.instructor}",
+                        f"Instructor clash: {item_teacher[1] if item_teacher else item.instructor}",
                         f"{item.course_code}-{item.section} is at {item.day} {item.start_time}-{item.end_time}",
                     )
                 )
@@ -1410,11 +1528,22 @@ def preview_planned_section_slot_candidates(
             other_meetings = list(other.term_section.meetings.all())
             other_instructor = other_meetings[0].instructor if other_meetings else ""
             identity = (other.term_section_id, other.day, other.start_time, other.end_time)
+            other_teacher = (
+                teacher_of(
+                    other.term_section_id,
+                    f"{other.term_section.course_key or other.term_section.course_code}"
+                    f"_{other.term_section.section}",
+                )
+                if teacher_of is not None
+                else None
+            )
+            if other_teacher is not None:
+                other_instructor = other_teacher[1]
             if (
-                new_instructor
-                and new_instructor == other_instructor.strip().upper()
-                and identity not in instructor_sessions
-            ):
+                same_teacher(new_teacher, new_instructor, other_teacher, other_instructor)
+                if same_teacher is not None
+                else (new_instructor and new_instructor == other_instructor.strip().upper())
+            ) and identity not in instructor_sessions:
                 instructor_sessions.add(identity)
                 instructor_critical += 1
                 candidate_evidence.append(
@@ -1886,6 +2015,13 @@ def create_planned_section_placements(
                     room=row["room"],
                 )
             )
+
+    if is_one_teacher_active():
+        # One teacher per section: the planned section gets a teacher it does
+        # not clash with, when there is one, and shows that teacher's name.
+        from core.services.section_teacher_assignment import name_new_section
+
+        name_new_section(board.scenario_id, term_section, board)
 
     # Populate involving_this_section HERE rather than at the view, so every
     # caller gets the actionable field without re-deriving the section_id
@@ -3511,8 +3647,31 @@ def compute_scenario_safety_summary(
     board_conflicts_by_id: dict[int, dict] | None = None,
     cross_board_conflicts: list[dict] | None = None,
 ) -> dict:
-    """Return the backend truth contract used by the split workspace UI."""
+    """Return the backend truth contract used by the split workspace UI.
 
+    With one teacher per section every board's conflict scan and the
+    scenario-wide backstop read the same map, loaded once for the summary.
+    """
+    kwargs = {
+        "boards": boards,
+        "board_conflicts_by_id": board_conflicts_by_id,
+        "cross_board_conflicts": cross_board_conflicts,
+    }
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import assignment_scope
+
+        with assignment_scope(scenario_id):
+            return _scenario_safety_summary(scenario_id, **kwargs)
+    return _scenario_safety_summary(scenario_id, **kwargs)
+
+
+def _scenario_safety_summary(
+    scenario_id: int,
+    *,
+    boards: list[DeliveryBoard] | None = None,
+    board_conflicts_by_id: dict[int, dict] | None = None,
+    cross_board_conflicts: list[dict] | None = None,
+) -> dict:
     def _scenario_instructor_clash_count(sid: int) -> int:
         import logging
 

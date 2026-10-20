@@ -24,7 +24,10 @@ and instructors routinely span boards, since boards are program/gender scoped.
 The two real clashes fixed in PR #44 were exactly that shape. So the per-board
 number is a strict *subset* of the truth and cannot serve as the backstop.
 
-**Sibling sections are excluded, and that is load-bearing.**
+**Sibling sections are excluded — with ``TIMETABLE_ONE_TEACHER_PER_SECTION``
+off, and that is load-bearing.** With it on, each section is charged to its own
+one teacher, so overlapping siblings that share a teacher are a real
+double-booking and are counted like any other pair. Off,
 ``build_section_instructor_map_for_scenario`` attributes instructors at COURSE
 granularity: it unions every instructor assigned to a course and hands that same
 set to *every section* of it. So a course with two instructors and two
@@ -118,10 +121,16 @@ def scenario_instructor_clash_report(scenario_id: int) -> dict[str, Any]:
         sections_by_id = {
             state.section_id: state for state in build_section_states_for_scenario(scenario_id)
         }
+        from core.services.timetable_flags import is_one_teacher_active
+
+        # One teacher per section charges each section to its own teacher, so
+        # two overlapping siblings that share one ARE a double-booking; the
+        # sibling exclusion only answers the course-wide union.
+        one_teacher = is_one_teacher_active()
         clashes = [
             row
             for row in list_instructor_clashes(sections_by_id, section_instructor_ids)
-            if not _is_sibling_pair(sections_by_id, row)
+            if one_teacher or not _is_sibling_pair(sections_by_id, row)
         ]
         return {"count": len(clashes), "clashes": clashes, "checked": True}
     except Exception:  # pragma: no cover - defensive; see docstring

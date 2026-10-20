@@ -78,7 +78,8 @@ unrelated to prayer.)
 | `TIMETABLE_CAPACITY_BUFFER` | 1.1 | room-sizing multiplier |
 | `TIMETABLE_PR2_ROOM_ORACLE_ENABLED` | true | typed room-feasibility reasons |
 | `TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED` | true | real instructor-clash hard filter |
-| `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` | false | source instructor identity from structured `CourseInstructor` links (per-person clash) instead of free-text |
+| `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` | true | source instructor identity from structured `CourseInstructor` links (per-person clash) instead of free-text |
+| `TIMETABLE_ONE_TEACHER_PER_SECTION` | **false** | charge each section to ONE linked teacher (or "to be decided") instead of every linked teacher; needs the links flag; off → byte parity |
 | `TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED` | **false** | soft objective minimising instructor daily idle gaps; needs `TIMETABLE_INSTRUCTOR_LINKS_ENABLED`; off → 6-element score (byte parity) |
 | `TIMETABLE_LAB_HEURISTIC_UNIFIED` | true | unified lab-room predicate |
 | `TIMETABLE_PR3_WARM_START_ENABLED` / decision-trace / stage-telemetry / async (PR6/7/8) | true | observability + async shims |

@@ -1122,7 +1122,25 @@ def _section_instructor_policy(
     # free-text; both map to a display name.
     links_on = is_instructor_links_enabled()
     link_identities: dict[int, dict[str, str]] = defaultdict(dict)
-    if links_on:
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if links_on and is_one_teacher_active():
+        # One teacher per section: the report names the section's own teacher,
+        # exactly as the engine charges it. A section still to be decided is
+        # present with NO identity (it clashes with nobody); a section with no
+        # links, or a frozen one with no known teacher, uses its free-text name.
+        from core.services.section_teacher_assignment import status_by_term_section_id
+
+        for sid, (teacher, name, status, _reason) in status_by_term_section_id(scenario_id).items():
+            if sid not in placement_section_ids:
+                continue
+            if teacher is not None:
+                link_identities[sid] = {f"id:{teacher}": name or ""}
+                instructor_names_by_section[sid] = {name or ""}
+            elif status == "tbd":
+                link_identities[sid] = {}
+                instructor_names_by_section.pop(sid, None)
+    elif links_on:
         from core.models import Instructor, TimetableScenario
 
         scenario = TimetableScenario.objects.filter(pk=scenario_id).first()

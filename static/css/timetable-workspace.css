@@ -56,6 +56,10 @@ button.tw-bottom-handle { width: 100%; appearance: none; border: 0; border-botto
 .tw-quality-metrics dt { color: var(--t3); font-size: .68rem; font-weight: 500; line-height: 1.45; }
 .tw-quality-metrics dd { margin: 5px 0 0; color: var(--teal); font-size: 1.1rem; font-weight: 750; font-variant-numeric: tabular-nums; }
 .tw-quality-metrics dd.danger { color: var(--danger); }
+/* One teacher per section adds a seventh cell; keep the wide grid on one row. */
+@media (min-width: 1101px) {
+  .tw-quality-metrics:has(> #twQualityTeacherCoverageRow:not([hidden])) { grid-template-columns: repeat(7, minmax(80px, 1fr)); }
+}
 @media (max-width: 1100px) {
   .tw-workspace { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .tw-workspace .tw-left, .tw-workspace .tw-right { display: block; max-height: none; border-inline: 0; border-bottom: 1px solid var(--line); }

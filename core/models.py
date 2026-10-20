@@ -426,8 +426,23 @@ class SectionInstructor(models.Model):
     (``S{index}``, recomputed from demand each build), so it is not a stable
     identity.
 
-    This table changes no behaviour on its own: nothing reads it into the planner
-    yet, and nothing here writes ``TermSectionMeeting.instructor``.
+    With ``TIMETABLE_ONE_TEACHER_PER_SECTION`` off this table changes no
+    behaviour: nothing reads it into the planner, and nothing here writes
+    ``TermSectionMeeting.instructor``.  With it on, the scenario rows ARE the
+    one-teacher map (``core/services/section_teacher_assignment.py``), told
+    apart by ``source``:
+
+    - ``engine`` — the engine's own pick; rewritten by its runs, restored by a
+      rollback, never kept when it no longer holds (read-time validation).
+    - ``department``, ``registrar``, ``registrar_faculty_sections`` or blank —
+      a pin: never overwritten, counted as the teacher's load and toward D10.
+    - ``copied_frozen`` — a scenario copy's pin for a section the source did
+      not own, so the copy keeps the source's teacher.
+
+    A teacher still to be decided is never stored: it is the absence of a row
+    the read path cannot fill.  Another scenario's rows, and global rows, are
+    read only for their own sections placed on this scenario's boards: those
+    sections are frozen here and keep their owner's teacher.
     """
 
     scenario = models.ForeignKey(

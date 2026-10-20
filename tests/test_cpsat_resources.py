@@ -22,6 +22,7 @@ from ortools.sat.python import cp_model
 from core.models import DeliveryBoard, ScenarioSectionBudget, SectionPlacement, TimetableScenario
 from core.services import (
     cpsat_resources,
+    section_teacher_assignment,
     timetable_cpsat_polisher,
     timetable_exact_rooming,
     timetable_solver,
@@ -546,12 +547,24 @@ def test_call_sites_use_the_configured_workers(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "module", [timetable_solver, timetable_cpsat_polisher, timetable_exact_rooming]
+    "module",
+    [
+        timetable_solver,
+        timetable_cpsat_polisher,
+        timetable_exact_rooming,
+        section_teacher_assignment,
+    ],
 )
 def test_every_model_builder_the_solvers_call_is_counted(module) -> None:
     src = inspect.getsource(module)
     used = set(re.findall(r"\bmodel\.((?:add|new)\w*)\(", src))
-    uncounted = {n for n in used if n not in BudgetedCpModel.__dict__ and n != "add_hint"}
+    # _BUILDERS lists what test_every_counted_builder_counts_exactly_one proves
+    # counted, add_implication (through add_bool_and) included.
+    uncounted = {
+        n
+        for n in used
+        if n not in BudgetedCpModel.__dict__ and n not in _BUILDERS and n != "add_hint"
+    }
     assert not uncounted, f"builders that bypass the model budget: {sorted(uncounted)}"
 
 

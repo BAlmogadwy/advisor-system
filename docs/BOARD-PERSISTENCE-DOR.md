@@ -98,6 +98,15 @@ manual-placement gap.
 `restore_scenario(snapshot_scenario(s))` is an exact round-trip (identity) for
 both tables including `instructor`.
 
+**One teacher per section** (`TIMETABLE_ONE_TEACHER_PER_SECTION`, default off):
+the snapshot also carries every `engine` `SectionInstructor` row of the
+scenario, unfiltered, and the restore puts them back in the same transaction,
+filtered exactly like the placements: the teacher-frozen sections are computed
+at restore time (`teacher_frozen_section_ids`) and their rows are never deleted
+or recreated, and a section that has a pin by then keeps it — so a rollback
+can never duplicate a primary. Flag off: the snapshot carries no teacher rows
+and the table is never touched.
+
 ## Design decisions
 
 - **Update-in-place, not delete-recreate, for future write-throughs.**

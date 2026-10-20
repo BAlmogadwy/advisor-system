@@ -13,6 +13,11 @@ This command is **additive and inert**: it creates ``Instructor`` and
 ``SectionInstructor`` rows only.  It never touches ``TermSectionMeeting.instructor``
 and never touches ``CourseInstructor``, so no planner, clash, cap, compaction or
 export behaviour changes as a result of running it.
+
+With ``TIMETABLE_ONE_TEACHER_PER_SECTION`` on, one thing reads its global rows:
+a global section placed on a scenario's board is frozen there, and its row
+names the teacher charged for it (fixed load, never changed). It still writes no
+scenario row and no meeting name.
 """
 
 from __future__ import annotations

@@ -93,6 +93,17 @@ def _assignment_clashes(evaluation: TimetableEvaluationResult, sections: list[Se
 
 
 def build_scenario_quality(scenario_id: int) -> dict[str, Any]:
+    from core.services.timetable_flags import is_one_teacher_active
+
+    if is_one_teacher_active():
+        from core.services.section_teacher_assignment import assignment_scope
+
+        with assignment_scope(scenario_id):  # one teacher map for the whole panel
+            return _build_scenario_quality(scenario_id)
+    return _build_scenario_quality(scenario_id)
+
+
+def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
     result: dict[str, Any] = {
         "scenario_id": scenario_id,
         "instructor": {
@@ -138,6 +149,22 @@ def build_scenario_quality(scenario_id: int) -> dict[str, Any]:
             "instructors": metrics["affected_instructors"],
             "assessed": True,
         }
+        from core.services.timetable_flags import is_one_teacher_active
+
+        if is_one_teacher_active():
+            # Days and idle count only the sections that have a teacher, so
+            # the panel says how many do — a TBD section never reads as a
+            # better week unseen.
+            from core.services.section_teacher_assignment import coverage_of, load_assignment
+
+            coverage = coverage_of(load_assignment(scenario_id))
+            result["instructor"]["coverage"] = {
+                "assigned": coverage["assigned"],
+                "tbd": coverage["tbd"],
+                "tbd_d10_floor": coverage["tbd_d10_floor"],
+                "no_links": coverage["no_links"],
+                "sections_total": coverage["sections_total"],
+            }
     except Exception:
         logger.exception("Could not assess saved meetings for scenario %s", scenario_id)
         result["instructor"]["reason"] = "assessment_failed"
