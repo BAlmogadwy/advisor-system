@@ -474,6 +474,81 @@ def test_i9_the_final_repick_is_rejected_when_it_costs_a_teacher_and_kept_otherw
     ) == {"Dr A"}
 
 
+def _stored_clash():
+    """Dr A is stored on X S1 (Sunday 08:00-09:15) and Y S1 (Sunday
+    08:30-09:45): a clash, as a manual move or a link edit can leave. Dr B may
+    teach both and is pinned on Sunday 09:45-11:00, so Y with Dr B costs no day
+    and no idle — a re-pick free to clear the clash would move Y to Dr B, which
+    is a teacher taken away for a violation the run did not cause."""
+    x = requirement("AI", "AI301", "X COURSE")
+    y = requirement("AI", "AI302", "Y COURSE")
+    p = requirement("AI", "AI401", "PIN B")
+    sc, board = scenario()
+    a, b = instructor("Dr A"), instructor("Dr B")
+    for code in ("AI301", "AI302"):
+        link("AI", code, a)
+        link("AI", code, b, role="co")
+    for key in (x, y, p):
+        budget(sc, key, 1)
+    place(board, section(sc, p, "S1"), [("SUN", "09:45", "11:00")], instructor_name="Dr B")
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=p, section="S1", instructor=b, source="department"
+    )
+    for key, start, end in ((x, "08:00", "09:15"), (y, "08:30", "09:45")):
+        place(board, section(sc, key, "S1"), [("SUN", start, end)], instructor_name="Dr A")
+        SectionInstructor.objects.create(
+            scenario=sc, course_key=key, section="S1", instructor=a, source="engine"
+        )
+    return sc, [f"{x}_S1", f"{y}_S1"], a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("phase", ["run_start", "final", "layout"])
+def test_kept_rule_the_runs_never_take_a_teacher_away_to_clear_a_clash(flags, phase) -> None:
+    """The kept rule where the runs reach it: ``propose_layout_assignment``'s
+    ``keep_violations_of`` in the bounded run-start re-pick (C5), the final
+    re-pick of Optimise Current and Generate (C7/G5), and the re-pick a
+    rebuild or the required-section retry stores (``phase="layout"``)."""
+    from core.services.section_teacher_assignment import teacher_bounds
+    from core.services.timetable_optimisation_policy import instructor_schedule_metrics
+    from core.services.timetable_optimizer_v2 import (
+        _final_teacher_recompute,
+        build_section_states_for_scenario,
+    )
+    from core.services.timetable_v2_runner import _RunTeachers
+
+    sc, keys, a = _stored_clash()
+    rows = _rows(sc)
+    in_force = sta.load_assignment(sc.id)
+    assert sta.violations(in_force)["clash_pairs"] == 1
+
+    if phase == "run_start":
+        teachers = _RunTeachers(sc.id)
+        teachers.save(rename=False)
+        states = build_section_states_for_scenario(sc.id)
+        bounds = teacher_bounds(instructor_schedule_metrics(states, teachers.saved.v2_map()))
+        with teachers.start_run(bounds):
+            pass
+        chosen, stage = teachers.start, teachers.report["run_start"]
+        assert stage["changed_sections"] == []
+    elif phase == "final":
+        chosen, changed, stage = _final_teacher_recompute(sc.id, in_force)
+        assert (changed, stage["adopted"]) == (False, True)
+    else:
+        prepared = sta.prepare_section_teachers(sc.id, phase="layout")
+        chosen = prepared["assignment"]  # read back after the persist
+        stage = {"coverage": sta.coverage_of(chosen)}
+        assert prepared["persist"]["written"] == prepared["persist"]["deleted"] == 2
+
+    assert {key: chosen.teacher[key] for key in keys} == dict.fromkeys(keys, a.id)
+    if phase != "layout":  # the read path re-derives the map; it keeps nothing
+        assert stage["coverage"]["kept_in_violation"] == keys
+        assert stage["report"]["kept"] == 2
+    assert stage["coverage"]["tbd"] == 0
+    assert stage["coverage"]["violations"]["clash_pairs"] == 1
+    assert _rows(sc) == rows
+
+
 def _enrol(sc, course_key: str, count: int = 3) -> None:
     """Students who take ``course_key`` only, so Optimise Current has a board to
     judge and no reason to move it."""
