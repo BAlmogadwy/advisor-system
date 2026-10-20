@@ -123,7 +123,12 @@ planner charges clashes and the daily cap to that teacher only.
   D10 (a course with more than 3 sections gives one teacher at most 2 of them). A section not
   placed yet goes only to a teacher who keeps one of its placer options free of clash and the
   cap, so the required-section retry can still place it; a section no teacher can keep a time
-  for is "to be decided" (reason clash or cap) and the retry places it without a teacher. A map
+  for is "to be decided" (reason clash or cap). The placer keeps the same rule while it places:
+  it takes an option that would use up the last free time of another section the same teacher
+  still has to place, or a time at which none of a to-be-decided section's teachers could take
+  it, only when every option is like that. Such a section is still placed (the required-section
+  guarantee); the retry lists it under `teacher_guard_ranked_last`, and the coverage's
+  `tbd_sections` say what stops each eligible teacher (`blocked_by`). A map
   in force that already left a missing section no time keeps it (the kept rule), and the run
   results list it under `unplaced_teacher_busy`. Builds re-pick with the board; Optimise Current
   starts from a re-pick bounded per teacher and keeps its end re-pick only when it is no worse.

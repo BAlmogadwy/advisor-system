@@ -1203,3 +1203,270 @@ def test_u26_a_missing_section_no_teacher_can_still_place_is_tbd_with_its_reason
         for a in (sta.solve_layout_aware(slots), sta.greedy_assign(slots)):
             assert a.status["U_S1"] == sta.STATUS_TBD, reason
             assert a.tbd_reason["U_S1"] == reason
+
+
+# ── U27: the placer keeps the free-option rule while it places ────────────
+
+
+def _placer_option(*meetings: tuple[str, str, str]) -> list[dict]:
+    return [{"day": day, "start": start, "end": end} for day, start, end in meetings]
+
+
+def _guarded(slots):
+    """The greedy map over ``slots``, its placer guard, and the pinned
+    sections' meetings as the placer's occupancy."""
+    a = sta.greedy_assign(slots)
+    days = ("SUN", "MON", "TUE", "WED", "THU")
+    schedule: dict[int, set] = {}
+    for slot in slots:
+        if slot.fixed is not None:
+            for day, start, end in slot.meetings:
+                schedule.setdefault(slot.fixed, set()).add((slot.pr4_key, days[day], start, end))
+    return a, sta.PlacerGuard(a), schedule
+
+
+def test_u27_an_option_that_takes_a_later_sections_last_time_ranks_last(flags) -> None:
+    """Dr 1 alone teaches U and A, neither placed yet, and works Sunday and
+    Monday at 10:00. U's options are Sunday + Tuesday or Monday + Wednesday at
+    08:00: an option of A over U's Sunday and Monday times leaves U none."""
+    slots = [
+        pinned_load(1, 3, meetings=(m(0, "10:00", "11:15"), m(1, "10:00", "11:15"))),
+        *course("U", [{"placed": False, "options": (SUN_TUE, MON_WED)}], eligible=(1,)),
+        *course("A", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1,)),
+    ]
+    a, guard, schedule = _guarded(slots)
+    assert (a.teacher["U_S1"], a.teacher["A_S1"]) == (1, 1)
+
+    check = guard.check("A|S1", {1}, schedule)
+
+    assert check(_placer_option(("SUN", "08:30", "09:45"), ("MON", "08:30", "09:45"))) is True
+    assert check(_placer_option(("SUN", "08:30", "09:45"), ("TUE", "13:00", "14:15"))) is False
+    assert check(_placer_option(("TUE", "13:00", "14:15"), ("THU", "13:00", "14:15"))) is False
+    # The daily cap boxes U too: with two sessions on Sunday and on Monday, one
+    # more on both days leaves neither of U's options under the cap of 3.
+    capped = {1: schedule[1] | {("B|S1", "SUN", 780, 855), ("B|S1", "MON", 780, 855)}}
+    check = guard.check("A|S1", {1}, capped)
+    assert check(_placer_option(("SUN", "14:30", "15:45"), ("MON", "14:30", "15:45"))) is True
+    assert check(_placer_option(("SUN", "14:30", "15:45"), ("TUE", "14:30", "15:45"))) is False
+    # Nothing is at stake once U is placed, nor for a teacher with nothing pending.
+    placed = {1: schedule[1] | {("U|S1", "TUE", 480, 555), ("U|S1", "THU", 480, 555)}}
+    assert guard.check("A|S1", {1}, placed) is None
+    assert guard.check("A|S1", {2}, schedule) is None
+
+
+def test_u27_a_later_section_already_without_a_time_holds_nothing_back(flags) -> None:
+    """The kept rule's twin: a pending section the board has already left no
+    option is not won back by holding the placer off other times."""
+    slots = [
+        pinned_load(1, 3, meetings=(m(0, "10:00", "11:15"), m(1, "10:00", "11:15"))),
+        *course("U", [{"placed": False, "options": (SUN_TUE,), "fixed": 1}], eligible=(1,)),
+        *course("A", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1,)),
+    ]
+    _a, guard, schedule = _guarded(slots)
+    schedule[1] |= {("C|S1", "SUN", 480, 555)}  # U's only option clashes already
+
+    assert guard.check("A|S1", {1}, schedule) is None
+
+
+def test_u27_a_section_still_to_be_decided_ranks_last_where_no_teacher_can_take_it(
+    flags,
+) -> None:
+    slots = [
+        pinned_load(1, 3, meetings=(m(0, "08:00", "09:15"),)),
+        *course("X", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1, 2)),
+    ]
+    a, _guard, schedule = _guarded(slots)
+    tbd_x = dataclasses.replace(
+        a, teacher={**a.teacher, "X_S1": None}, status={**a.status, "X_S1": sta.STATUS_TBD}
+    )
+    guard = sta.PlacerGuard(tbd_x)
+    schedule[2] = {("P2|S1", "SUN", 480, 555)}
+
+    check = guard.check("X|S1", (), schedule)
+
+    assert check(_placer_option(("SUN", "08:00", "09:15"), ("TUE", "08:00", "09:15"))) is True
+    assert check(_placer_option(("SUN", "13:00", "14:15"), ("TUE", "13:00", "14:15"))) is False
+    # D10 stops both teachers whatever the time: nothing to rank.
+    d10 = course("X", [{} for _ in range(5)], eligible=(1, 2))
+    assert sta.PlacerGuard(sta.greedy_assign(d10)).check("X|S5", (), {}) is None
+
+
+def test_u27_the_guard_needs_clash_or_the_cap(flags) -> None:
+    flags.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = False
+    flags.TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = False
+    slots = [
+        *course("U", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1,)),
+        *course("A", [{"placed": False, "options": (SUN_TUE,)}], eligible=(1,)),
+    ]
+    _a, guard, schedule = _guarded(slots)
+
+    assert guard.check("A|S1", {1}, schedule) is None
+
+
+def _term_four_board(sc):
+    from core.models import DeliveryBoard
+
+    return DeliveryBoard.objects.create(
+        scenario=sc, label="Term 4", nominal_term=4, program="AI", display_order=2
+    )
+
+
+def _pin(sc, board, teacher, code: str, meetings) -> None:
+    key = requirement("AI", code, f"PIN {code}", term=4)
+    place(board, section(sc, key, "S1"), meetings)
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=key, section="S1", instructor=teacher, source="department"
+    )
+
+
+def _afternoon_gaps(*days: str) -> list[tuple[str, str, str]]:
+    """13:00 and 16:00 on each day: a gap a 14:30 meeting would fill."""
+    return [
+        (day, start, end) for day in days for start, end in (("13:00", "14:15"), ("16:00", "17:15"))
+    ]
+
+
+def _guard_board(flags):
+    """Dr T alone teaches A (term 2) and U (term 4), neither placed, and is
+    pinned on the term-4 board on Monday + Wednesday 09:00, Tuesday + Thursday
+    09:00 and Wednesday + Thursday 10:30; the daily cap is 2. A fits Sunday +
+    Monday, Sunday + Tuesday or Monday + Tuesday, and the last leaves U no pair
+    of days under the cap — while a no-links course with gaps on Monday and
+    Tuesday afternoons, which A would fill, makes it the placer's favourite."""
+    flags.TIMETABLE_INSTRUCTOR_DAILY_CAP = 2
+    a_key = requirement("AI", "AI301", "A COURSE")
+    u_key = requirement("AI", "AI302", "U COURSE", term=4)
+    filler = requirement("AI", "AI303", "FILLER")
+    sc, board = scenario()
+    later = _term_four_board(sc)
+    teacher = instructor("Dr T")
+    link("AI", "AI301", teacher)
+    link("AI", "AI302", teacher)
+    budget(sc, a_key, 1)
+    u_budget = budget(sc, u_key, 1)
+    u_budget.programme_term = 4
+    u_budget.save()
+    place(board, section(sc, filler, "S1"), _afternoon_gaps("MON", "TUE"))
+    _pin(sc, later, teacher, "AI401", [("MON", "09:00", "10:15"), ("WED", "09:00", "10:15")])
+    _pin(sc, later, teacher, "AI402", [("TUE", "09:00", "10:15"), ("THU", "09:00", "10:15")])
+    _pin(sc, later, teacher, "AI403", [("WED", "10:30", "11:45"), ("THU", "10:30", "11:45")])
+    return sc, a_key, u_key, teacher
+
+
+def _blind(monkeypatch) -> None:
+    """The control: the placer as it was, blind to the rule."""
+    monkeypatch.setattr(sta.PlacerGuard, "check", lambda self, *args: None)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("guarded", [True, False], ids=["guarded", "blind"])
+def test_u27_the_retry_keeps_a_later_section_of_the_same_teacher_a_time(
+    flags, monkeypatch, guarded
+) -> None:
+    """Lab scenario 667 in small (board P_G333, Generate, seed 4242: instructor
+    308's AI124 sections took every day DS331 S1 could use). Blind to the rule,
+    the placer gives A Monday + Tuesday, and U is placed (the guarantee) where
+    Dr T cannot teach it; with the rule A goes where U keeps a pair of days,
+    and both get Dr T."""
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, a_key, u_key, teacher = _guard_board(flags)
+    if not guarded:
+        _blind(monkeypatch)
+
+    report = reinstate_missing_required_sections(sc.id)
+
+    assert report["after_missing"] == []
+    final = sta.load_assignment(sc.id)
+    if not guarded:
+        assert final.status[f"{u_key}_S1"] == sta.STATUS_TBD
+        return
+    assert "teacher_guard_ranked_last" not in report
+    assert final.teacher[f"{a_key}_S1"] == final.teacher[f"{u_key}_S1"] == teacher.id
+    assert sta.violations(final) == {"clash_pairs": 0, "over_cap_sessions": 0}
+
+
+def _tbd_board(flags, slots: list[dict] | None = None):
+    """X (term 2) is Dr T's alone; Dr T is pinned on the term-4 board on Sunday
+    and Monday at 09:00 and 10:30 — both days at the daily cap of 2 — and a
+    no-links course with gaps on Sunday and Monday afternoons, which X would
+    fill, makes Sunday + Monday the placer's favourite for X."""
+    flags.TIMETABLE_INSTRUCTOR_DAILY_CAP = 2
+    x_key = requirement("AI", "AI301", "X COURSE")
+    filler = requirement("AI", "AI303", "FILLER")
+    sc, board = scenario()
+    if slots is not None:
+        sc.slot_config = slots
+        sc.save()
+    later = _term_four_board(sc)
+    teacher = instructor("Dr T")
+    link("AI", "AI301", teacher)
+    budget(sc, x_key, 1)
+    place(board, section(sc, filler, "S1"), _afternoon_gaps("SUN", "MON"))
+    _pin(sc, later, teacher, "AI401", [("SUN", "09:00", "10:15"), ("MON", "09:00", "10:15")])
+    _pin(sc, later, teacher, "AI402", [("SUN", "10:30", "11:45"), ("MON", "10:30", "11:45")])
+    return sc, later, x_key, teacher
+
+
+def _left_to_be_decided(sc, key: str):
+    """The map in force with ``key`` still to be decided — as Generate's stored
+    map can be when the end-of-run retry runs on a board that has moved on."""
+    a = sta.load_assignment(sc.id)
+    return dataclasses.replace(
+        a, teacher={**a.teacher, key: None}, status={**a.status, key: sta.STATUS_TBD}
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("guarded", [True, False], ids=["guarded", "blind"])
+def test_u27_the_retry_places_a_section_to_be_decided_where_a_teacher_can_take_it(
+    flags, monkeypatch, guarded
+) -> None:
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, _later, x_key, teacher = _tbd_board(flags)
+    if not guarded:
+        _blind(monkeypatch)
+
+    with sta.pinned_assignment(sc.id, _left_to_be_decided(sc, f"{x_key}_S1")):
+        report = reinstate_missing_required_sections(sc.id)
+
+    assert report["after_missing"] == []  # placed either way (the guarantee)
+    final = sta.load_assignment(sc.id)
+    if guarded:
+        assert final.teacher[f"{x_key}_S1"] == teacher.id
+        assert "teacher_guard_ranked_last" not in report
+    else:
+        assert final.status[f"{x_key}_S1"] == sta.STATUS_TBD
+        assert final.tbd_reason[f"{x_key}_S1"] == "daily_cap"
+
+
+@pytest.mark.django_db
+def test_u27_a_section_no_teacher_can_take_anywhere_is_placed_and_says_why(flags) -> None:
+    """One weekly time (09:00), and Dr T is busy at it or at the cap on every
+    day: X is still placed (the required-section guarantee), the retry reports
+    it, and the coverage says what stops Dr T."""
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, later, x_key, teacher = _tbd_board(
+        flags, slots=[{"label": "09:00-10:15", "start": "09:00", "end": "10:15"}]
+    )
+    _pin(
+        sc,
+        later,
+        teacher,
+        "AI403",
+        [("TUE", "09:00", "10:15"), ("WED", "09:00", "10:15"), ("THU", "09:00", "10:15")],
+    )
+
+    with sta.pinned_assignment(sc.id, _left_to_be_decided(sc, f"{x_key}_S1")):
+        report = reinstate_missing_required_sections(sc.id)
+
+    assert report["after_missing"] == []
+    assert report["teacher_guard_ranked_last"] == [
+        {"section": f"{x_key}|S1", "reason": "no_eligible_teacher_free"}
+    ]
+    [row] = sta.coverage_of(sta.load_assignment(sc.id))["tbd_sections"]
+    assert (row["course_key"], row["placed"]) == (x_key, True)
+    assert row["reason"] in ("clash", "daily_cap")
+    assert row["blocked_by"] == {str(teacher.id): row["reason"]}

@@ -25,7 +25,8 @@ placed yet is charged only to a teacher who keeps one of its placer options
 free of clash and of the daily cap, so the required-section retry can still
 place it: on lab scenario 667 the days-first optimum otherwise gave instructor
 298 all three AI124 sections, and DS331 S1, which only 298 teaches, had none
-of its 190 options left. Soft: the day-off target of 12 sessions a week, then
+of its 190 options left. The greedy placer keeps the rule while it places
+(``PlacerGuard``). Soft: the day-off target of 12 sessions a week, then
 campus working days, then campus idle, then keeping the current teacher, then
 the lowest id. A section nobody can take is TBD with the reason that stopped
 each teacher.
@@ -865,8 +866,8 @@ class _Ledger:
             idle_added += _merged_idle(after) - _merged_idle(before)
         return new_days, idle_added
 
-    def blocker(self, slot: Slot, teacher: int, bounds=None) -> str | None:
-        """The first rule that stops ``teacher`` taking ``slot`` (2.5 order)."""
+    def layout_free_blocker(self, slot: Slot, teacher: int) -> str | None:
+        """D10 or the weekly ceiling: what stops ``teacher`` at any time."""
         if (
             slot.course_cap is not None
             and self.per_course[(teacher, slot.course_key)] >= slot.course_cap
@@ -874,6 +875,13 @@ class _Ledger:
             return "d10"
         if self.load[teacher] + slot.nominal_sessions > self.ceiling:
             return "weekly_ceiling"
+        return None
+
+    def blocker(self, slot: Slot, teacher: int, bounds=None) -> str | None:
+        """The first rule that stops ``teacher`` taking ``slot`` (2.5 order)."""
+        reason = self.layout_free_blocker(slot, teacher)
+        if reason is not None:
+            return reason
         if slot.placed and slot.meetings:
             mine = [(d, s, e) for d, s, e, key in self.cells.get(teacher, ()) if key != slot.key]
             if self.clash_on and _overlaps(slot.meetings, mine):
@@ -1715,6 +1723,8 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
                 "label": s.label,
                 "placed": s.placed,
                 "reason": a.tbd_reason.get(s.key),
+                # What stops each eligible teacher (teacher id -> rule).
+                "blocked_by": (report.get("tbd_blockers") or {}).get(s.key, {}),
             }
             for s in sorted(tbd_slots, key=lambda s: s.key)
         ][:50],
@@ -1920,6 +1930,130 @@ def propose_layout_assignment(
         key_collisions=info["key_collisions"],
     )
     return result
+
+
+# ── The placer: the free-option rule while it places ─────────────────────
+
+#: Added to the first element of an option's score in ``auto_place_board``
+#: when ``PlacerGuard`` ranks it last — above any count of student conflicts.
+GUARD_RANK = 10**9
+
+
+class PlacerGuard:
+    """The free-option rule kept while the greedy placer places (spec 3.2).
+
+    The assignment gives a section not placed yet only to a teacher who keeps
+    one of its placer options free. The placer then places that teacher's
+    sections one at a time, blind to the rule, and could take the option the
+    later section needed: on lab scenario 667 (board P_G333, Generate, seed
+    4242) the candidate build put instructor 308's three AI124 sections on
+    Sunday, Monday and Tuesday, three sessions each, so DS331 S1 — 308's and
+    only 308's — had none of its 190 options left; the required-section retry
+    placed it with no teacher. :meth:`check` ranks such an option after every
+    option that does not do it, and likewise an option of a section still to
+    be decided at which none of its eligible teachers could take it. Neither
+    is a hard filter: when every option ranks last the best of them is still
+    placed (the required-section guarantee) and the section stays to be
+    decided, with its reason in the coverage.
+    """
+
+    RANK = GUARD_RANK
+
+    def __init__(self, assignment: TeacherAssignment) -> None:
+        from core.services.timetable_autoplace import WEEKDAYS
+
+        ledger = _Ledger()
+        for slot in assignment.slots:
+            teacher = assignment.teacher.get(slot.key)
+            if teacher is not None and assignment.status.get(slot.key) in CHARGED:
+                ledger.add(slot, teacher)
+        self.clash_on, self.cap_on, self.cap = ledger.clash_on, ledger.cap_on, ledger.cap
+        self.days = {day: index for index, day in enumerate(WEEKDAYS)}
+        #: teacher -> [(placer key, options)] of the sections charged to them
+        #: that were not placed when the map was chosen.
+        self.pending: dict[int, list[tuple[str, tuple]]] = {
+            teacher: [(slot.pr4_key, slot.options) for slot in slots]
+            for teacher, slots in ledger.pending.items()
+        }
+        #: placer key -> the eligible teachers of a section still to be decided
+        #: whom only the layout stops (not D10, not the weekly ceiling).
+        self.open: dict[str, tuple[int, ...]] = {}
+        for slot in assignment.slots:
+            if assignment.status.get(slot.key) != STATUS_TBD:
+                continue
+            free = tuple(t for t in slot.eligible if ledger.layout_free_blocker(slot, t) is None)
+            if free:
+                self.open[slot.pr4_key] = free
+
+    def _meetings(self, option) -> list[tuple[int, int, int]]:
+        return [
+            (self.days[m["day"].upper()], _minutes(m["start"]), _minutes(m["end"]))
+            for m in option
+            if m["day"].upper() in self.days
+        ]
+
+    def _load(self, schedule, teacher) -> tuple[list, Counter]:
+        cells = [
+            (self.days[day], start, end)
+            for _section, day, start, end in schedule.get(teacher, ())
+            if day in self.days
+        ]
+        return cells, Counter(day for day, _s, _e in cells)
+
+    def _free(self, option, cells, per_day) -> bool:
+        """``option`` clears a teacher holding ``cells`` (clash, daily cap)."""
+        if self.clash_on and _overlaps(option, cells):
+            return False
+        return not (
+            self.cap_on
+            and any(
+                per_day[day] + count > self.cap
+                for day, count in Counter(d for d, _s, _e in option).items()
+            )
+        )
+
+    def check(self, key: str, teachers, schedule):
+        """For the section ``key`` (``course|label``) about to be placed, an
+        ``option -> bool`` that is True when the option ranks last, or None when
+        nothing is at stake. ``teachers`` are the section's charged teachers
+        (none: still to be decided) and ``schedule`` the placer's
+        ``instructor_schedule_full`` (teacher -> ``{(key, DAY, start, end)}``)."""
+        if not (self.clash_on or self.cap_on):
+            return None
+        if teachers:
+            at_stake = []
+            for teacher in teachers:
+                cells, per_day = self._load(schedule, teacher)
+                placed = {section for section, *_rest in schedule.get(teacher, ())}
+                for other, options in self.pending.get(teacher, ()):
+                    if other == key or other in placed:
+                        continue
+                    # One already without a free option stays as it is: the
+                    # placer is not held back to win it a time.
+                    if any(self._free(o, cells, per_day) for o in options):
+                        at_stake.append((options, cells, per_day))
+            if not at_stake:
+                return None
+
+            def boxes_a_later_section(option) -> bool:
+                mine = self._meetings(option)
+                added = Counter(day for day, _s, _e in mine)
+                return any(
+                    not any(self._free(o, cells + mine, per_day + added) for o in options)
+                    for options, cells, per_day in at_stake
+                )
+
+            return boxes_a_later_section
+        candidates = self.open.get(key)
+        if not candidates:
+            return None
+        loads = [self._load(schedule, teacher) for teacher in candidates]
+
+        def no_teacher_can_take_it(option) -> bool:
+            mine = self._meetings(option)
+            return not any(self._free(mine, cells, per_day) for cells, per_day in loads)
+
+        return no_teacher_can_take_it
 
 
 # ── Write path ───────────────────────────────────────────────────────────

@@ -1388,11 +1388,23 @@ def auto_place_board(
     # so output is byte-identical to before.
     daily_cap_on = instructor_clash_on and is_instructor_daily_cap_enabled()
     daily_cap = get_instructor_daily_cap()
+    # One teacher per section: keeps the free-option rule while this board is
+    # placed (``PlacerGuard``). None with the flag off, so nothing changes.
+    teacher_guard = None
+    teacher_guard_ranked_last: list[dict] = []
     if instructor_clash_on:
-        # NB: build_section_instructor_ids reads scenario.gender/.programs, so it
-        # must receive the scenario OBJECT — passing scenario.id (an int) silently
-        # returns {} and disables the links-keyed clash.
-        link_map = build_section_instructor_ids(scenario) if links_on else {}
+        if links_on and is_one_teacher_active():
+            from core.services.section_teacher_assignment import PlacerGuard, load_assignment
+
+            # The map ``build_section_instructor_ids`` would return, read once.
+            _one_teacher_map = load_assignment(scenario.id)
+            link_map = _one_teacher_map.pr4_map()
+            teacher_guard = PlacerGuard(_one_teacher_map)
+        else:
+            # NB: build_section_instructor_ids reads scenario.gender/.programs, so
+            # it must receive the scenario OBJECT — passing scenario.id (an int)
+            # silently returns {} and disables the links-keyed clash.
+            link_map = build_section_instructor_ids(scenario) if links_on else {}
         # Seed section->instructor IDENTITY from the link map BEFORE reading
         # meeting rows. Instructor clash is a HARD constraint, but the loop below
         # was the only writer of ``section_instructors`` and it iterates
@@ -1689,6 +1701,20 @@ def auto_place_board(
             is_online = cd.get("is_online", False)
 
             # ── Score every candidate option and keep the best ────────
+            # One teacher per section: an option that would leave a later
+            # section of this section's teacher no free time — or, for a section
+            # still to be decided, one none of its eligible teachers could take —
+            # ranks after every option that does not.
+            guard_check = (
+                teacher_guard.check(
+                    f"{code}|{sec_label}",
+                    section_instructors.get(f"{code}|{sec_label}", ()),
+                    instructor_schedule_full,
+                )
+                if teacher_guard is not None
+                else None
+            )
+
             # Use actual students per section (not theoretical max) for room matching
             # ceil division to ensure room can hold the largest possible section
             budget = cd["budget"]
@@ -1928,8 +1954,11 @@ def auto_place_board(
                             option, _sec_ids, instr_placed
                         )
 
+                guard_rank = (
+                    teacher_guard.RANK if guard_check is not None and guard_check(option) else 0
+                )
                 score = (
-                    raw_score[0],
+                    raw_score[0] + guard_rank,
                     raw_score[1],
                     raw_score[5] + same_course_adjacency_penalty,
                     raw_score[2] * gap_weight
@@ -2048,6 +2077,16 @@ def auto_place_board(
                     )
                 room_failures.append(refined.to_dict())
                 continue
+
+            if guard_check is not None and guard_check(best_option):
+                teacher_guard_ranked_last.append(
+                    {
+                        "section": f"{code}|{sec_label}",
+                        "reason": "boxes_a_later_section"
+                        if section_instructors.get(f"{code}|{sec_label}")
+                        else "no_eligible_teacher_free",
+                    }
+                )
 
             # ── Persist the chosen placement ──────────────────────────
             # TermSection: the logical section record (e.g. "MATH101 S1").
@@ -2429,6 +2468,13 @@ def auto_place_board(
         # PR6 commit 3 — schema-stable telemetry block. Keys always
         # present; values populated when the flag is on, zero otherwise.
         "stage_telemetry": _stage_telemetry,
+        # One teacher per section only: the sections placed at an option the
+        # guard ranked last, because every option was.
+        **(
+            {"teacher_guard": {"ranked_last": teacher_guard_ranked_last}}
+            if teacher_guard is not None
+            else {}
+        ),
     }
 
 
