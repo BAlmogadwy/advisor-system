@@ -98,6 +98,11 @@ services:
       # 575k-element board model peaked at 800 MB and OOM-killed this instance.
       - key: TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS
         value: "40000"
+      # Each section is charged to exactly one of its linked teachers (owner
+      # rulings 2026-10-19), not to every linked teacher at once. "false"
+      # restores the old charging; nothing stored has to change either way.
+      - key: TIMETABLE_ONE_TEACHER_PER_SECTION
+        value: "true"
       # Used only by explicit staff scraper operations; never sent to a client.
       - key: PORTAL_ADMIN_USERNAME
         sync: false
