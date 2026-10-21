@@ -29,10 +29,11 @@ exercise, and why it is solved rather than approximated.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from time import perf_counter
 
-from scheduler.domain import Day, DeliveryMode, Snapshot, TimeWindow
+from scheduler.domain import Day, DeliveryMode, SectionId, Snapshot, TimeWindow
 from scheduler.domain.board import Board
 from scheduler.meeting_patterns import policy_accepts
 
@@ -60,6 +61,9 @@ class SeatingResult:
     students_fully_seated: int = 0
     status: str = "UNKNOWN"
     fully_seated_students_with_a_clash: int | None = None
+    #: What "mainly for programme" marks did, when any were passed (else None,
+    #: and the summary has no such key): see `seat_students`.
+    programme_grouping: dict | None = None
 
     @property
     def solution_found(self) -> bool:
@@ -116,7 +120,27 @@ class SeatingResult:
             "solution_found": self.solution_found,
             "seated_demands": self.seated_demands if self.solution_found else None,
             "notes": list(self.notes),
+            **(
+                {"programme_grouping": dict(self.programme_grouping)}
+                if self.programme_grouping is not None
+                else {}
+            ),
         }
+
+
+def grouping_cost(programme: str, mark: str, own: bool) -> int:
+    """How far one seat is from what the section marks ask for (0 = as asked).
+
+    ``programme`` is the student's, ``mark`` the section's "mainly for
+    programme" ("" = any) and ``own`` whether the offering has a section marked
+    for the student's programme. Another programme's section costs 1; outside
+    one's own programme's section (when the offering has one) costs 1 more.
+
+    The same table as ``core.services.timetable_student_assignment.
+    programme_grouping_cost``; restated, not imported, because this subsystem
+    stays isolated from the original planner. A test pins the two together.
+    """
+    return int(bool(mark) and mark != programme) + int(own and mark != programme)
 
 
 def seat_students(
@@ -124,6 +148,8 @@ def seat_students(
     board: Board,
     *,
     time_limit_seconds: float = 60.0,
+    preferred_programme: Mapping[SectionId, str] | None = None,
+    grouping_seconds: float | None = None,
 ) -> SeatingResult:
     """Assign each student to one section per course they need, respecting capacity.
 
@@ -133,12 +159,29 @@ def seat_students(
     students spread evenly across sections, and a registrar is not.
 
     A student who cannot be seated at all is reported rather than hidden.
+
+    ``preferred_programme`` maps a section to the programme it is mainly for.
+    With none (or an empty map) this is exactly the seating above. With marks, a
+    second solve on the same model re-seats the students towards their
+    programme's section with every phase-1 unseated flag pinned (so a missed
+    seat can never pay for a better grouping) and each student's clashes held
+    at or below phase 1. It gets ``grouping_seconds`` of its own (default
+    ``min(10, limit / 2)``; 0 skips it) and is kept only if it finds a
+    solution; otherwise phase 1 stands. Waiting time may change and is reported
+    before and after in ``programme_grouping``.
     """
     from ortools.sat.python import cp_model
 
     started = perf_counter()
     if time_limit_seconds < 0:
         raise ValueError("time_limit_seconds must be nonnegative")
+    if grouping_seconds is not None and grouping_seconds < 0:
+        raise ValueError("grouping_seconds must be nonnegative")
+    marks = {
+        section_id: str(mark or "").strip().upper()
+        for section_id, mark in (preferred_programme or {}).items()
+        if str(mark or "").strip()
+    }
     offerings = snapshot.offerings_by_id
     sections_by_offering = snapshot.sections_by_offering
 
@@ -288,43 +331,72 @@ def seat_students(
             False,
             [f"no seating found within {time_limit_seconds:.0f}s"],
             status=solver.status_name(status),
+            programme_grouping=(
+                {"marked_sections": sorted(marks), "status": "NO_SEATING"} if marks else None
+            ),
         )
 
-    chosen: dict[int, list[str]] = defaultdict(list)
-    for (student_id, _offering_id, section_id), var in y.items():
-        if solver.value(var):
-            chosen[student_id].append(section_id)
-
-    missed = sum(1 for v in unseated.values() if solver.value(v))
-    short = {student_id for (student_id, _o), v in unseated.items() if solver.value(v)}
-    clashed = sum(
-        1
-        for student_id, flags in per_student_clashes.items()
-        if any(solver.value(f) for f in flags)
-    )
-    total = sum(int(solver.value(c)) for c in clash_terms)
+    def chosen_of(answer) -> dict[int, list[str]]:
+        chosen: dict[int, list[str]] = defaultdict(list)
+        for (student_id, _offering_id, section_id), var in y.items():
+            if answer.value(var):
+                chosen[student_id].append(section_id)
+        return chosen
 
     # Waiting time is measured the same way it is for instructors: the day's
     # span minus the time actually spent in class.
     regular_ids = {int(d.student_id) for d in snapshot.demand if not d.is_cross_term}
-    idle = regular_idle = 0
-    for student_id, section_ids in chosen.items():
-        by_day: dict[Day, list[TimeWindow]] = defaultdict(list)
-        for section_id in section_ids:
-            for day, window in campus_windows(section_id):
-                by_day[day].append(window)
-        theirs = 0
-        for windows in by_day.values():
-            if len(windows) < 2:
-                continue
-            ordered_windows = sorted(windows, key=lambda w: w.start)
-            end = ordered_windows[0].end
-            for window in ordered_windows[1:]:
-                theirs += max(0, window.start - end)
-                end = max(end, window.end)
-        idle += theirs
-        if int(student_id) in regular_ids:
-            regular_idle += theirs
+
+    def waiting(chosen: dict[int, list[str]]) -> tuple[int, int]:
+        idle = regular_idle = 0
+        for student_id, section_ids in chosen.items():
+            by_day: dict[Day, list[TimeWindow]] = defaultdict(list)
+            for section_id in section_ids:
+                for day, window in campus_windows(section_id):
+                    by_day[day].append(window)
+            theirs = 0
+            for windows in by_day.values():
+                if len(windows) < 2:
+                    continue
+                ordered_windows = sorted(windows, key=lambda w: w.start)
+                end = ordered_windows[0].end
+                for window in ordered_windows[1:]:
+                    theirs += max(0, window.start - end)
+                    end = max(end, window.end)
+            idle += theirs
+            if int(student_id) in regular_ids:
+                regular_idle += theirs
+        return idle, regular_idle
+
+    # The answer read below: phase 1, or the grouped phase 2 when it found one.
+    answer = solver
+    grouping: dict | None = None
+    if marks:
+        answer, grouping = _group_by_programme(
+            cp_model,
+            model,
+            solver,
+            snapshot,
+            marks,
+            y=y,
+            unseated=unseated,
+            per_student_clashes=per_student_clashes,
+            seconds=(
+                min(10.0, time_limit_seconds / 2) if grouping_seconds is None else grouping_seconds
+            ),
+            waiting=lambda solved: waiting(chosen_of(solved))[0],
+        )
+
+    chosen = chosen_of(answer)
+    missed = sum(1 for v in unseated.values() if answer.value(v))
+    short = {student_id for (student_id, _o), v in unseated.items() if answer.value(v)}
+    clashed = sum(
+        1
+        for student_id, flags in per_student_clashes.items()
+        if any(answer.value(f) for f in flags)
+    )
+    total = sum(int(answer.value(c)) for c in clash_terms)
+    idle, regular_idle = waiting(chosen)
 
     return SeatingResult(
         students=len(wanted),
@@ -341,6 +413,83 @@ def seat_students(
         fully_seated_students_with_a_clash=sum(
             1
             for student_id, flags in per_student_clashes.items()
-            if student_id not in short and any(solver.value(f) for f in flags)
+            if student_id not in short and any(answer.value(f) for f in flags)
         ),
+        programme_grouping=grouping,
     )
+
+
+def _group_by_programme(
+    cp_model,
+    model,
+    solver,
+    snapshot: Snapshot,
+    marks: dict[str, str],
+    *,
+    y: dict,
+    unseated: dict,
+    per_student_clashes: dict,
+    seconds: float,
+    waiting,
+):
+    """Phase 2 of `seat_students`: the phase-1 seating, grouped by programme.
+
+    Returns ``(answer, report)``: the solver whose values to read (phase 2's
+    when it found a solution, else phase 1's) and what happened. Phase 2 cannot
+    cost a seat: every unseated flag is pinned to its phase-1 value — without
+    that, a missed seat costs nothing here and the cheapest grouping would leave
+    mismatched students out — and every student's clashes are held at or below
+    phase 1, so unseated, total clashes and students with a clash are each the
+    same or better.
+    """
+    programme = {int(d.student_id): str(d.program or "").strip().upper() for d in snapshot.demand}
+    own: dict[str, set[str]] = {}
+    for offering_id, sections in snapshot.sections_by_offering.items():
+        offering_marks = {marks.get(s.id, "") for s in sections} - {""}
+        if offering_marks:
+            own[offering_id] = offering_marks
+    costs = []
+    for (student_id, offering_id, section_id), var in y.items():
+        if offering_id not in own:
+            continue
+        theirs = programme.get(int(student_id), "")
+        cost = grouping_cost(
+            theirs, marks.get(section_id, ""), bool(theirs) and theirs in own[offering_id]
+        )
+        if cost:
+            costs.append((var, cost))
+    before = sum(cost for var, cost in costs if solver.value(var))
+    idle_before = waiting(solver)
+    report = {
+        "marked_sections": sorted(marks),
+        "grouping_cost_before": before,
+        "grouping_cost_after": before,
+        "idle_minutes_before": idle_before,
+        "idle_minutes_after": idle_before,
+        "status": "NOT_NEEDED" if not before else "NOT_RUN",
+    }
+    if not before or seconds <= 0:
+        return solver, report
+
+    for var in unseated.values():
+        model.add(var == int(solver.value(var)))
+    for flags in per_student_clashes.values():
+        model.add(sum(flags) <= sum(int(solver.value(flag)) for flag in flags))
+    model.clear_hints()
+    for var in (*y.values(), *unseated.values()):
+        model.add_hint(var, int(solver.value(var)))
+    for flags in per_student_clashes.values():
+        for flag in flags:
+            model.add_hint(flag, int(solver.value(flag)))
+    model.minimize(sum(var * cost for var, cost in costs))
+
+    grouped = cp_model.CpSolver()
+    grouped.parameters.max_time_in_seconds = max(0.001, seconds)
+    grouped.parameters.num_search_workers = 8
+    status = grouped.solve(model)
+    report["status"] = grouped.status_name(status)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return solver, report
+    report["grouping_cost_after"] = sum(cost for var, cost in costs if grouped.value(var))
+    report["idle_minutes_after"] = waiting(grouped)
+    return grouped, report

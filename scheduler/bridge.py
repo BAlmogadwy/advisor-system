@@ -72,6 +72,43 @@ def _hhmm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
+def seat_marks_for(snapshot, stored: dict[tuple[str, str], str]) -> dict[str, str]:
+    """The stored "mainly for programme" marks, keyed by this snapshot's section ids.
+
+    A stored section is ``(planner_course_key, label)`` — exactly what the
+    persist loop below writes — so a mark finds the section of the same course
+    and label in the new plan, whatever its scheduler id.
+    """
+    from core.services.course_identity import planner_course_key
+
+    if not stored:
+        return {}
+    offerings = snapshot.offerings_by_id
+    out: dict[str, str] = {}
+    for section in snapshot.sections:
+        offering = offerings.get(section.offering_id)
+        if offering is None:
+            continue
+        mark = stored.get(
+            (planner_course_key(offering.course_code, offering.course_name), section.label)
+        )
+        if mark:
+            out[section.id] = mark
+    return out
+
+
+def _no_worse(regrouped: dict, selected: dict) -> bool:
+    """Is a grouped re-confirmation at least as good for students as the selection's?"""
+    if not regrouped.get("solution_found"):
+        return False
+    if not selected.get("solution_found"):
+        return True
+    return all(
+        regrouped[key] <= selected[key]
+        for key in ("unseated_demands", "total_clashes", "students_with_a_clash")
+    )
+
+
 #: Over this many minutes, both the workbook export and the on-screen grid read a
 #: meeting as a lab and look for it in the lab columns. Not a choice made here —
 #: it is the existing convention on both surfaces, named so the dependency is
@@ -298,6 +335,18 @@ def build_into_scenario(
         )
     )
 
+    # "Mainly for programme" marks on this engine's sections (owner wish
+    # 2026-10-21). They reach the exact seating only under the flag, and only its
+    # FINAL confirmation: choosing between portfolio runs stays seat-first and
+    # mark-blind. The rows are carried across the rebuild below either way.
+    from core.services import section_programme_preference as programme_marks
+
+    seat_marks = (
+        seat_marks_for(snapshot, programme_marks.section_marks(scenario_id, source_tag=SOURCE_TAG))
+        if programme_marks.is_enabled()
+        else {}
+    )
+
     if progress:
         progress("solve")
     # The same-hour ceilings (D14) are deliberately NOT restated here. They come
@@ -368,10 +417,36 @@ def build_into_scenario(
             snapshot,
             board,
             time_limit_seconds=confirmation_seconds,
+            preferred_programme=seat_marks or None,
         ).summary()
         result.wall_time_seconds += perf_counter() - started_confirmation
         if not result.seating_confirmation["solution_found"]:
             result.warnings.append("student seating could not be confirmed within the time budget")
+    elif seat_marks and result.seating_confirmation is not None and confirmation_seconds > 0:
+        # The portfolio chose this board on mark-blind seating. Re-confirm it
+        # grouped, and keep that only when it is no worse for students than the
+        # selection's own confirmation (two CP-SAT runs can differ).
+        if progress:
+            progress("seating")
+        started_confirmation = perf_counter()
+        regrouped = seat_students(
+            snapshot,
+            board,
+            time_limit_seconds=confirmation_seconds,
+            preferred_programme=seat_marks,
+        ).summary()
+        result.wall_time_seconds += perf_counter() - started_confirmation
+        if _no_worse(regrouped, result.seating_confirmation):
+            result.seating_confirmation = regrouped
+        else:
+            # The selection's seating stands, mark-blind; say so.
+            result.seating_confirmation = {
+                **result.seating_confirmation,
+                "programme_grouping": {
+                    "marked_sections": sorted(seat_marks),
+                    "status": "NOT_CONFIRMED",
+                },
+            }
 
     # ONE board per course. This is the rule the existing engine follows, and
     # departing from it was a real mistake.
@@ -494,6 +569,9 @@ def build_into_scenario(
             scenario=scenario, source_tag=SOURCE_TAG
         ).values_list("course_key", "section"):
             bridge_teachers[old_key] = None
+        # "Mainly for programme" marks live on the rows deleted next; each new
+        # section of the same course and label takes its mark back below.
+        carried_marks = programme_marks.section_marks(scenario.id, source_tag=SOURCE_TAG)
         TermSection.objects.filter(scenario=scenario, source_tag=SOURCE_TAG).delete()
 
         for section_id, placements in sorted(by_section.items()):
@@ -517,15 +595,17 @@ def build_into_scenario(
             # all 71 sections matched nothing and every course read as missing
             # from its plan. Same rule the subsystem states in its own blueprint,
             # violated at the one place it had to cross over.
+            course_key = planner_course_key(offering.course_code, offering.course_name)
             term_section = TermSection.objects.create(
                 scenario=scenario,
-                course_key=planner_course_key(offering.course_code, offering.course_name),
+                course_key=course_key,
                 course_code=offering.course_code,
                 course_number=offering.course_code,
                 course_name=offering.course_name,
                 section=section.label,
                 available_capacity=section.capacity,
                 source_tag=SOURCE_TAG,
+                preferred_programme=carried_marks.pop((course_key, section.label), ""),
             )
             bridge_teachers[(term_section.course_key, term_section.section)] = section.instructor_id
             for placement in sorted(placements, key=lambda p: (p.day.index, p.window.start)):
@@ -564,6 +644,21 @@ def build_into_scenario(
         from core.services.section_teacher_assignment import bridge_section_teachers
 
         section_teachers = bridge_section_teachers(scenario.id, bridge_teachers)
+
+    # A mark whose section this run no longer has (fewer sections, a renamed
+    # course) is gone with its row: never silently.
+    dropped_marks = [
+        {"course_key": key, "section": label, "programme": mark}
+        for (key, label), mark in sorted(carried_marks.items())
+    ]
+    if dropped_marks:
+        result.warnings.append(
+            f"{len(dropped_marks)} 'mainly for programme' mark(s) were on sections this "
+            "run no longer has and were dropped: "
+            + ", ".join(
+                f"{d['course_key']} {d['section']} ({d['programme']})" for d in dropped_marks
+            )
+        )
 
     report = validate(snapshot, board)
     rooms = room_shortfall(snapshot, board)
@@ -615,6 +710,7 @@ def build_into_scenario(
         ],
         "students_left_unserved": snapshot.students_left_unserved,
         "min_demand": snapshot.policy.min_demand,
+        **({"programme_preferences_dropped": dropped_marks} if dropped_marks else {}),
         # Separate from `notes`, which every successful run also fills. A screen
         # that shows both as warnings teaches the reader to ignore warnings.
         "warnings": list(result.warnings),
