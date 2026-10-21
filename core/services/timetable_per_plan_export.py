@@ -893,6 +893,13 @@ def _build_program_workbook(
     out_of_plan_codes: set[str] = set()
     course_status: dict[str, str] = {}
     course_board_terms: dict[str, set[int]] = defaultdict(set)
+    # A course's status and boards come from its main (or mixed) sections: an
+    # other section is mainly another programme's, so its board must not turn
+    # the course misplaced (a DS2 section on the T4 board seating two AI2
+    # students says nothing about where AI2's CS112 sits). Kept apart, and
+    # used only for a course the text search left with other sections alone.
+    other_status: dict[str, str] = {}
+    other_board_terms: dict[str, set[int]] = defaultdict(set)
     ranking = {"matched": 0, "misplaced": 1, "missing": 2}
     for p in placements:
         ts = p.term_section
@@ -919,10 +926,18 @@ def _build_program_workbook(
         text_matched_keys.add(key)
         in_plan_placements.append(p)
         placement_terms[p.id] = plan_term
-        course_board_terms[key].add(board_term or 0)
-        prev = course_status.get(key)
+        is_other = section_seats[plan_term][p.term_section_id].role == ROLE_OTHER
+        statuses = other_status if is_other else course_status
+        (other_board_terms if is_other else course_board_terms)[key].add(board_term or 0)
+        prev = statuses.get(key)
         if prev is None or ranking.get(status, 0) > ranking.get(prev, 0):
+            statuses[key] = status
+    # Still placed, so never "missing": the course's only shown sections are
+    # other ones (the text search kept them and dropped its main sections).
+    for key, status in other_status.items():
+        if key not in course_status:
             course_status[key] = status
+            course_board_terms[key].update(other_board_terms[key])
 
     for slot_key, filling_keys in elective_fills.items():
         placed_on = {
@@ -1221,6 +1236,8 @@ def _render_plan_term_sheet(
     :func:`classify_course_sections`): the main groups come first, one section
     of every main course each, then the other sections seating some of its
     students in their own block. A section without an entry draws as main.
+    A main cell carries its course's status ("(on T3)"); an other cell its own
+    board's, as the course's status never counts other sections.
     """
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.cell.text import InlineFont
@@ -1366,7 +1383,11 @@ def _render_plan_term_sheet(
 
         for p in group_placements:
             # Who sits here, last in the cell: line 2 stays the teacher (D3).
-            note = _seat_note(seats.get(p.term_section_id), program)
+            seat = seats.get(p.term_section_id)
+            note = _seat_note(seat, program)
+            # An other section is judged by its own board: the course's status
+            # and boards are its main sections' (_build_program_workbook).
+            own_board = seat is not None and seat.role == ROLE_OTHER
             ts_placements = section_all_placements.get(p.term_section_id, [])
             for pp in ts_placements:
                 day = pp.day.upper()[:3]
@@ -1387,7 +1408,16 @@ def _render_plan_term_sheet(
 
                 ts = pp.term_section
                 code = _term_section_course_key(ts) or "?"
-                is_misplaced = course_status.get(code) == "misplaced"
+                if own_board:
+                    board_term = board_term_by_id.get(pp.board_id)
+                    _sheet, own_status = _placement_plan_term(
+                        code, board_term, plan_map, elective_terms or {}
+                    )
+                    is_misplaced = own_status == "misplaced"
+                    actual = [board_term or 0]
+                else:
+                    is_misplaced = course_status.get(code) == "misplaced"
+                    actual = sorted(course_board_terms.get(code, set()))
                 meeting = _meeting(ts, day)
                 instructor = meeting.instructor if meeting else ""
                 if teachers is not None and ts.id in teachers:
@@ -1398,7 +1428,6 @@ def _render_plan_term_sheet(
                     # Show the actual board term beside the course code so
                     # the registrar sees AT A GLANCE that the placement is
                     # off-plan — e.g. "AI113 S1 (on T3)".
-                    actual = sorted(course_board_terms.get(code, set()))
                     if actual:
                         text += f" (on T{actual[0]})"
                 if instructor:

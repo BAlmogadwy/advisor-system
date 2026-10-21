@@ -487,6 +487,119 @@ def test_each_programme_file_groups_by_its_own_seating(monkeypatch) -> None:
     assert ds2_cell[-1] == "DS2: 1 of 12"
 
 
+# ── a course's place is its main sections' ─────────────────────────────────
+
+
+def _sidebar_status(ws) -> dict[str, str]:
+    """The term sheet's course list: ``{course: Status}``."""
+    [head] = [cell for cell in ws[1] if cell.value == "Course"]
+    out = {}
+    for values in ws.iter_rows(min_row=2, min_col=head.column, values_only=True):
+        if not values[0]:
+            break
+        out[values[0]] = values[6]
+    return out
+
+
+def _cs112_on_two_boards(monkeypatch, *, s2_room: str = ""):
+    """CS112 is AI2's at T2 and DS2's at T4: S1 on the T2 board (Monday 09:00)
+    seats 28 AI2, S2 on the T4 board (Monday 10:30) 28 DS2 and 2 AI2."""
+    scenario, boards = _scenario(2, 4)
+    for program, term in (("AI2", 2), ("DS2", 4)):
+        ProgrammeRequirement.objects.create(
+            program=program, course_code="CS112", course_name="CS112", programme_term=term
+        )
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_code="CS112",
+        course_key="CS112",
+        course_name="CS112",
+        department="CS",
+        programme_term=2,
+        credit_hours=3,
+        planned_sections=2,
+        max_per_section=40,
+    )
+    sections = {}
+    for label, board, start, room in (
+        ("S1", boards[0], "09:00", ""),
+        ("S2", boards[1], "10:30", s2_room),
+    ):
+        sections[label] = TermSection.objects.create(
+            scenario=scenario,
+            course_code="CS112",
+            course_number="CS112",
+            course_key="CS112",
+            course_name="CS112",
+            section=label,
+            source_tag="tw_auto",
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=sections[label],
+            day="MON",
+            start_time=start,
+            end_time=END[start],
+            room=room,
+        )
+    _seat(
+        monkeypatch,
+        {
+            sections["S1"]: _row(plans=("AI2",), AI2=28),
+            sections["S2"]: _row(plans=("DS2",), AI2=2, DS2=28),
+        },
+    )
+    return scenario
+
+
+def _misplaced_fill(cell) -> bool:
+    return str(cell.fill.start_color.rgb).endswith("FFF3CD")
+
+
+@pytest.mark.django_db
+def test_an_other_section_on_another_board_leaves_the_course_in_place(monkeypatch) -> None:
+    scenario = _cs112_on_two_boards(monkeypatch)
+
+    workbooks = _export(scenario)
+    wb = workbooks["AI2"]
+    ws = wb["Term 2"]
+
+    # AI2's own section is on its plan's board: two AI2 students in DS2's
+    # section on the T4 board do not make the course misplaced.
+    assert _coverage_status(wb)["CS112"] == "matched"
+    assert _sidebar_status(ws)["CS112"] == "OK"
+    [(main_row, main_lines)] = [c for c in _grid_cells(ws) if c[1][0].startswith("CS112 S1")]
+    assert main_lines == ["CS112 S1"]
+    main_cell = next(c for c in ws[main_row] if c.value == "CS112 S1")
+    assert not _misplaced_fill(main_cell)
+    # The other section still says where it is: on its own board, not the course's.
+    [(other_row, other_lines)] = [c for c in _grid_cells(ws) if c[1][0].startswith("CS112 S2")]
+    assert other_lines == ["CS112 S2 (on T4)", "AI2: 2 of 30"]
+    assert _misplaced_fill(next(c for c in ws[other_row] if str(c.value).startswith("CS112 S2")))
+    # DS2's file, the mirror: its section matches, AI2's (no DS2 in it) is not there.
+    assert _coverage_status(workbooks["DS2"])["CS112"] == "matched"
+    assert not _cell_lines(workbooks["DS2"]["Term 4"], "CS112 S1")
+
+
+@pytest.mark.django_db
+def test_a_course_searched_down_to_an_other_section_is_still_placed(monkeypatch) -> None:
+    # Only S2's room matches. S1 is read first, before the course is known to
+    # match, so the search drops it and keeps S2 alone.
+    scenario = _cs112_on_two_boards(monkeypatch, s2_room="B12")
+
+    path, name, is_zip = export_scenario_per_plan(scenario.id, search="AI2 B12")
+    try:
+        assert not is_zip and name.endswith(".xlsx")
+        wb = load_workbook(path)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+    # The search keeps only DS2's section: the course is placed, on T4 by it.
+    assert _blocks(wb["Term 2"]) == [("Other sections with AI2 students", {"CS112 S2"})]
+    assert _coverage_status(wb)["CS112"] == "misplaced"
+    assert _sidebar_status(wb["Term 2"])["CS112"] == "On T4"
+
+
 # ── R7: one seating per export ─────────────────────────────────────────────
 
 
