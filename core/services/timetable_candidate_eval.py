@@ -56,17 +56,24 @@ def evaluate_generated_timetable_candidate(
     working_sections = _working_copy(generated_sections)
     sections_by_id = ssa.build_sections_by_id(working_sections)
     sections_by_course = ssa.build_sections_by_course(sections_by_id)
+    grouping: dict[str, Any] = {}
     states, unresolved_ids = ssa.assign_students_to_sections(
         student_profiles,
         sections_by_id,
         sections_by_course,
         course_rigidity,
         course_tiers=course_tiers if is_tiered_objective_enabled() else None,
+        grouping_report=grouping,
     )
     score = ssa.evaluate_assignability_lexicographic(
         states, student_profiles, sections_by_id, section_instructor_ids, course_tiers
     )
     quality_score = evaluate_timetable_quality(working_sections, states)
+    if grouping:
+        # Side-band only, present only when a section is marked "mainly for
+        # programme": what the grouping did and what it cost in student gap.
+        # Never part of ``score``; without marks the dict is exactly as before.
+        quality_score["programme_grouping"] = grouping
     if is_gap_regular_students_only_enabled():
         # Side-band, ON only: both numbers, so visitors' gap stays visible even
         # though the objective no longer counts it. Absent when the flag is off.
