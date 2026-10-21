@@ -33,6 +33,7 @@ from core.models import (
 )
 from core.services.course_classifier import FAILING_LETTER_GRADES
 from core.services.course_identity import course_display_code
+from core.services.section_programme_preference import normalise_programme
 from core.services.student_helpers import normalize_code
 from core.services.timetable_assignment_models import (
     RiskTier,
@@ -61,6 +62,7 @@ from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_flags import (
     is_gap_regular_students_only_enabled,
     is_online_gap_exclusion_enabled,
+    is_section_programme_preference_enabled,
     is_tiered_objective_enabled,
 )
 from core.services.timetable_online import OnlineCourseLookup
@@ -274,6 +276,9 @@ def build_section_states_for_scenario(
     # programme set, so the per-section calls are cheap.
     online_lookup = OnlineCourseLookup()
     exclude_online_gaps = is_online_gap_exclusion_enabled()
+    # "Mainly for programme" marks: read once here, the only gate on seating (as
+    # is_online above). Off, every state carries "" and grouping never runs.
+    programme_marks = is_section_programme_preference_enabled()
 
     sections: list[SectionState] = []
     for ts_id, pls in grouped.items():
@@ -355,6 +360,9 @@ def build_section_states_for_scenario(
                 is_online=is_online,
                 delivery_is_online=delivery_is_online,
                 uses_shared_room=policy.uses_shared_room if policy else True,
+                preferred_programme=(
+                    normalise_programme(ts.preferred_programme) if programme_marks else ""
+                ),
             )
         )
 

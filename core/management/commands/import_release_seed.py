@@ -438,6 +438,10 @@ def _validate_records(
             exported_student_ids.add(str(normalized_pk))
         elif label == "core.termsection" and fields["scenario"] is not None:
             raise _fail("fixture contains a scenario-owned term section")
+        elif label == "core.termsection" and fields["preferred_programme"]:
+            # Only a scenario's own section may be marked "mainly for programme"
+            # (ck_term_sections_pref_scenario_only); refuse before any flush.
+            raise _fail("fixture contains a global term section with a programme mark")
         elif label == "core.studenttermsection":
             try:
                 student_section_student_ids.add(

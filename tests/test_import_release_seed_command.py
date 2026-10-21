@@ -1207,3 +1207,31 @@ def test_target_flush_never_requests_cascade(monkeypatch):
     monkeypatch.setattr(import_release_seed, "connections", {"release": fake_connection})
     import_release_seed._flush_target_database("release")
     assert observed == {"allow_cascade": False}
+
+
+def test_a_global_section_with_a_programme_mark_makes_no_writes(tmp_path, monkeypatch):
+    """A mark belongs to a scenario's own section; a seed carrying one on a
+    global row is refused before the target is touched (the database CHECK
+    would refuse it too, but only after the flush)."""
+    from core.models import TermSection
+
+    _source_records()
+    section = TermSection.objects.create(
+        course_key="ENGL214", course_code="ENGL214", course_number="214", section="M1"
+    )
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    def mark(records):
+        rows = [r for r in records if r["model"] == "core.termsection" and r["pk"] == section.pk]
+        assert [row["fields"]["preferred_programme"] for row in rows] == [""]
+        rows[0]["fields"]["preferred_programme"] = "AI2"
+
+    _rewrite_fixture(fixture, manifest, mark)
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="global term section with a programme mark"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()

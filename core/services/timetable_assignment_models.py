@@ -72,6 +72,12 @@ class SectionState:
     delivery_is_online: bool = False
     # Dedicated English teaching space is distinct from remote delivery.
     uses_shared_room: bool = True
+    # "Mainly for programme" mark (upper-case programme code, "" = any). Resolved
+    # once when states are built and only ever set under
+    # TIMETABLE_SECTION_PROGRAMME_PREFERENCE, so with the flag off every state is
+    # "" and the grouping pass in ``assign_students_to_sections`` never runs.
+    # Every rebuild of a state (the CP-SAT polisher) must carry it, as ``is_online``.
+    preferred_programme: str = ""
 
     def __post_init__(self) -> None:
         if self.max_capacity < 0:

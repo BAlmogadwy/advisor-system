@@ -557,6 +557,11 @@ class TermSection(models.Model):
     source_file = models.TextField(blank=True, default="")
     created_at = models.TextField(blank=True, default="")
     updated_at = models.TextField(blank=True, default="")
+    # "Mainly for programme": the one programme (upper-case code, e.g. "AI2") whose
+    # students the seating puts in this section first; "" = any programme. Only a
+    # scenario's own section can carry one (CHECK below). It never costs a seat:
+    # see ``timetable_student_assignment._group_by_programme``.
+    preferred_programme = models.CharField(max_length=32, blank=True, default="")
 
     class Meta:
         db_table = "term_sections"
@@ -572,6 +577,12 @@ class TermSection(models.Model):
                 fields=["course_key", "section"],
                 condition=models.Q(scenario__isnull=True),
                 name="ux_term_sections_global",
+            ),
+            # A global (registrar) section belongs to no scenario, so no scenario
+            # may mark it as mainly for one programme.
+            models.CheckConstraint(
+                condition=models.Q(preferred_programme="") | models.Q(scenario__isnull=False),
+                name="ck_term_sections_pref_scenario_only",
             ),
         ]
         indexes = [

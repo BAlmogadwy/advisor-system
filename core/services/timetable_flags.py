@@ -116,6 +116,21 @@ def is_one_teacher_active() -> bool:
     )
 
 
+SECTION_PROGRAMME_PREFERENCE_SETTING = "TIMETABLE_SECTION_PROGRAMME_PREFERENCE"
+
+
+def is_section_programme_preference_enabled() -> bool:
+    """Honour "mainly for programme X" section marks — default OFF.
+
+    Read where ``SectionState``s are built (the only gate on seating, like
+    ``is_online``), by the placement/lens payloads, the mark endpoint, the repair
+    fingerprint and the scheduler bridge. Off, every state carries "" and the
+    grouping pass is never entered, so all output is byte-identical. The stored
+    marks themselves are data and are kept (and copied) either way.
+    """
+    return bool(getattr(settings, SECTION_PROGRAMME_PREFERENCE_SETTING, False))
+
+
 def is_async_planner_enabled() -> bool:
     return bool(getattr(settings, ASYNC_PLANNER_SETTING, False))
 
@@ -139,6 +154,7 @@ __all__ = [
     "GAP_REGULAR_STUDENTS_ONLY_SETTING",
     "ONE_TEACHER_PER_SECTION_SETTING",
     "REQUIRED_SECTION_GUARANTEE_SETTING",
+    "SECTION_PROGRAMME_PREFERENCE_SETTING",
     "STAGE_TELEMETRY_SETTING",
     "TIERED_OBJECTIVE_SETTING",
     "TIERED_SOFT_GAP_BUDGET_SETTING",
@@ -151,6 +167,7 @@ __all__ = [
     "is_gap_regular_students_only_enabled",
     "is_one_teacher_active",
     "is_required_section_guarantee_enabled",
+    "is_section_programme_preference_enabled",
     "is_stage_telemetry_enabled",
     "is_tiered_objective_enabled",
 ]

@@ -916,6 +916,17 @@ TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = os.getenv(
     "TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_SECTION_PROGRAMME_PREFERENCE: honour "mainly for programme X" marks on
+# sections (owner wish 2026-10-21). A marked section takes X's students first and
+# students of other programmes prefer the course's other sections. It is SOFT and
+# ranks below seating: it only re-sections students who are already seated, so it
+# never costs a seat, adds a clash or uses a reserve seat. The mark is stored on
+# ``TermSection.preferred_programme`` whatever this says (copy, cancel-restore and
+# Generate carry it); off, nothing reads it and every number is byte-identical.
+TIMETABLE_SECTION_PROGRAMME_PREFERENCE = os.getenv(
+    "TIMETABLE_SECTION_PROGRAMME_PREFERENCE", "false"
+).lower() in ("1", "true", "yes", "on")
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised
