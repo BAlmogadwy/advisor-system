@@ -607,6 +607,9 @@ def polish_scenario_with_cpsat(
                 is_online=sec.is_online,
                 delivery_is_online=sec.delivery_is_online,
                 uses_shared_room=sec.uses_shared_room,
+                # Likewise the programme mark, or the polished board would be
+                # rescored as if no section were marked.
+                preferred_programme=sec.preferred_programme,
             )
         )
 

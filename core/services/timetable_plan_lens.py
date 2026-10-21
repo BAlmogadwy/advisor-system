@@ -7,6 +7,7 @@ from typing import Any
 from core.models import ScenarioSectionBudget, Student, TermSection
 from core.services import timetable_student_assignment as ssa
 from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
+from core.services.timetable_flags import is_section_programme_preference_enabled
 from core.services.timetable_optimizer_v2 import (
     build_course_rigidity_for_scenario,
     build_section_states_for_scenario,
@@ -61,11 +62,15 @@ def _demand_by_course_and_plan(
     return dict(by_course), plans
 
 
-def _section_assignment_evidence(scenario_id: int) -> dict[tuple[str, str], Counter[str]]:
+def _section_assignment_evidence(
+    scenario_id: int, grouping_report: dict | None = None
+) -> dict[tuple[str, str], Counter[str]]:
     """Return current evaluator enrollment by (course_key, section).
 
     This is intentionally read-only. It runs the same assignment evaluator
-    used by the optimiser, but does not persist assignment states.
+    used by the optimiser, but does not persist assignment states. The states
+    carry any "mainly for programme" mark (under the flag), so the counts are
+    the grouped seating; ``grouping_report`` receives what the grouping did.
     """
     try:
         profiles = build_student_profiles_for_scenario(scenario_id)
@@ -87,7 +92,12 @@ def _section_assignment_evidence(scenario_id: int) -> dict[tuple[str, str], Coun
             else None
         )
         ssa.assign_students_to_sections(
-            profiles, sections_by_id, sections_by_course, rigidity, course_tiers=course_tiers
+            profiles,
+            sections_by_id,
+            sections_by_course,
+            rigidity,
+            course_tiers=course_tiers,
+            grouping_report=grouping_report,
         )
     except Exception:
         return {}
@@ -253,7 +263,11 @@ def build_scenario_plan_lens(scenario_id: int) -> dict[str, Any]:
     ):
         sections_by_course[section.course_key or section.course_code].append(section)
 
-    evidence = _section_assignment_evidence(scenario_id)
+    # "Mainly for programme": with the flag on, each section says its mark and the
+    # lens says what the grouping did; off, the payload is exactly as before.
+    marks_on = is_section_programme_preference_enabled()
+    grouping: dict = {}
+    evidence = _section_assignment_evidence(scenario_id, grouping)
     course_keys = sorted(
         set(budgets) | set(demand_by_course) | set(sections_by_course),
         key=lambda key: (
@@ -338,11 +352,16 @@ def build_scenario_plan_lens(scenario_id: int) -> dict[str, Any]:
                 "shared": owner == SHARED_OWNER,
                 "shared_contributors": target_contributors,
             }
+            if marks_on:
+                sections[str(section.id)]["preferred_programme"] = section.preferred_programme
 
-    return {
+    lens: dict[str, Any] = {
         "scenario_id": scenario_id,
         "plans": plans,
         "courses": courses,
         "sections": sections,
         "mode": "read_only_plan_lens",
     }
+    if marks_on:
+        lens["programme_grouping"] = grouping or None
+    return lens

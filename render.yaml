@@ -106,6 +106,9 @@ services:
       # Instructor weeks follow the owner's day-off rulings R1-R5 (2026-10-19), not the strict veto.
       - key: TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY
         value: "true"
+      # Sections marked "mainly for programme X" seat X's students there first; never costs a seat.
+      - key: TIMETABLE_SECTION_PROGRAMME_PREFERENCE
+        value: "true"
       # Used only by explicit staff scraper operations; never sent to a client.
       - key: PORTAL_ADMIN_USERNAME
         sync: false

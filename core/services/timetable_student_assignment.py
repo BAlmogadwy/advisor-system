@@ -53,11 +53,26 @@ thread the same tier map**, otherwise it models a board that was never built.
 Byte-parity: with ``course_tiers`` absent every course ranks 0, so the sort keys
 collapse to the original ordering and the legacy tuple is returned verbatim —
 flag-off output is identical to pre-feature.
+
+Programme grouping
+------------------
+A section may be marked "mainly for programme X"
+(``SectionState.preferred_programme``, set only under
+``TIMETABLE_SECTION_PROGRAMME_PREFERENCE``). After the seating and the repair
+pass, ``_group_by_programme`` re-sections students who are ALREADY seated so X's
+students sit in X's section and other programmes prefer the other sections. It
+never adds, removes or swaps out a course, never raises a student's clash count
+and never takes a reserve seat, so every hard position of the objective is the
+same or better than without marks — on every board, by construction, with a
+guard behind it. Student gap may change (the reported trade). With no marked
+section the pass is never entered and the output is the frozen seating.
 """
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
+from itertools import islice, product
 from operator import itemgetter
 
 from core.services.timetable_assignment_models import (
@@ -79,6 +94,8 @@ from core.services.timetable_same_course import (
     make_meeting_window,
     same_course_section_spread_penalty,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def build_sections_by_course(
@@ -640,13 +657,474 @@ def _repair(
                 state.unresolved_courses[unres_course] = UnresolvedReason(unres_course, reason)
 
 
+# ── Programme grouping ("mainly for programme") ──────────────────────────
+#
+# A post-pass over a FINISHED seating, run only when some section is marked.
+# Each student keeps exactly the courses they were seated in; only which section
+# of a marked course they sit in may change. That is what makes it safe to rank
+# below seating: unresolved courses (and so every tier position) are untouched,
+# a step is taken only if the student's clash-pair count does not rise, and a
+# student moves only into a regular seat (or out of a section already using its
+# reserve), so reserve use never rises. The frozen seating code above is not
+# touched; with no mark this block is never entered.
+
+#: Bounds on the work per evaluation (the pass runs inside the optimiser loop).
+GROUPING_MAX_ROUNDS = 4
+GROUPING_MAX_JOINT_COMBINATIONS = 256
+
+
+def programme_grouping_cost(programme: str, mark: str, own: bool) -> int:
+    """How far one seat is from what the marks ask for (0 = as asked).
+
+    ``programme`` is the student's, ``mark`` the section's ("" = any) and
+    ``own`` whether the course has a section marked for the student's programme.
+    Sitting in another programme's section costs 1, and so does sitting outside
+    one's own programme's section when the course has one: 0 in one's own
+    section, 1 in an unmarked one, 2 in another programme's; a student whose
+    programme has no marked section prefers an unmarked one. When every section
+    is marked for someone else the student is indifferent and gap decides.
+
+    ``scheduler.seating.grouping_cost`` is the same table, kept separately
+    because the scheduler stays isolated from this engine; a test pins the two.
+    """
+    return int(bool(mark) and mark != programme) + int(own and mark != programme)
+
+
+def _seat_rule_allows(source: SectionState, dest: SectionState) -> bool:
+    """A grouping move may take a seat in ``dest``, given it leaves ``source``.
+
+    Never past capacity, and never a reserve seat unless the student leaves a
+    section that is itself over its regular limit — then reserve use is net zero.
+    """
+    cur = dest.current_enrollment
+    if cur >= dest.max_capacity:
+        return False
+    if cur < dest.max_capacity - dest.reserve_capacity:
+        return True
+    return source.current_enrollment > source.max_capacity - source.reserve_capacity
+
+
+def _meeting_pairs(dms: list[tuple[tuple[int, int], ...]]) -> int:
+    """Pairs of meetings that share a day and overlap — the objective's clash count.
+
+    Exactly ``evaluate_assignability_lexicographic``'s per-student count: every
+    meeting of every section (online included), a section overlapping itself too.
+    """
+    masks_by_day: dict[int, list[int]] = {}
+    for dm in dms:
+        for day, mask in dm:
+            masks_by_day.setdefault(day, []).append(mask)
+    pairs = 0
+    for masks in masks_by_day.values():
+        for i in range(len(masks) - 1):
+            first = masks[i]
+            for other in masks[i + 1 :]:
+                if first & other:
+                    pairs += 1
+    return pairs
+
+
+def _gap_after(seat: _Seat, drop: list[_SecInfo], add: list[_SecInfo]) -> int:
+    """The student's total gap if ``drop`` were unseated and then ``add`` seated.
+
+    Pure: works on copies of the day chains. Trying a move on the live ``_Seat``
+    and undoing it could reorder meetings that start together, which changes
+    ``_sorted_gap``. The order (drop all, then add in order) is exactly what
+    ``_remove``/``_apply`` do when the move is taken, so the figure is exact.
+    """
+    days: set[int] = set()
+    for info in (*drop, *add):
+        days.update(day for day, _ms, _ordered, _alone in info.campus)
+    total = seat.total
+    for day in days:
+        chain = list(seat.by_day.get(day) or ())
+        for info in drop:
+            for d, ms, _ordered, _alone in info.campus:
+                if d == day:
+                    for meeting in ms:
+                        chain.remove(meeting)
+        for info in add:
+            for d, ms, _ordered, _alone in info.campus:
+                if d == day:
+                    chain.extend(ms)
+        chain.sort(key=_START)
+        total += _sorted_gap(chain) - seat.gap_by_day.get(day, 0)
+    return total
+
+
+class _Grouping:
+    """One run of the grouping pass over a seated board (see the block comment)."""
+
+    def __init__(
+        self,
+        states: dict[str, StudentAssignmentState],
+        profiles: dict[str, StudentProfile],
+        pairs_by_course: _CoursePairs,
+        seats: dict[str, _Seat],
+    ) -> None:
+        self.states = states
+        self.seats = seats
+        self.infos = pairs_by_course.infos
+        self.sections_by_id = self.infos.sections_by_id
+        self.mark = {
+            sid: str(sec.preferred_programme or "").strip().upper()
+            for sid, sec in self.sections_by_id.items()
+        }
+        self.courses = sorted(
+            {sec.course_code for sid, sec in self.sections_by_id.items() if self.mark[sid]}
+        )
+        self.pairs = {course: pairs_by_course[course] for course in self.courses}
+        self.own = {
+            course: {self.mark[s.section_id] for s, _info in self.pairs[course]} - {""}
+            for course in self.courses
+        }
+        self.programme = {
+            sid: str(profiles[sid].department or "").strip().upper() for sid in states
+        }
+        # The seater's own priority order: risk tier, intra-tier score, id.
+        self.ordered = [
+            p.student_id
+            for p in sorted(
+                (profiles[sid] for sid in states),
+                key=lambda s: (s.risk_tier, s.intra_tier_score, s.student_id),
+                reverse=True,
+            )
+        ]
+        self.rank = {sid: i for i, sid in enumerate(self.ordered)}
+        # Undo log: the ORIGINAL containers of everything touched, so a revert
+        # restores the exact objects (and their iteration order).
+        self.saved_states: dict[str, tuple] = {}
+        self.saved_sections: dict[str, tuple[int, set[str]]] = {}
+        self.pairs_before: dict[str, int] = {}
+        # Each student's current clash-pair count, dropped when they move.
+        self.pair_cache: dict[str, int] = {}
+        self.moves = 0
+        self.swaps = 0
+
+    # ── costs ──
+    def cost(self, sid: str, course: str, section_id: str) -> int:
+        programme = self.programme[sid]
+        return programme_grouping_cost(
+            programme, self.mark[section_id], bool(programme) and programme in self.own[course]
+        )
+
+    def total_cost(self) -> tuple[int, int, int]:
+        """(grouping cost, seated pairs in marked courses, pairs with cost > 0)."""
+        total = seated = outside = 0
+        for sid, state in self.states.items():
+            for course in self.courses:
+                section_id = state.assigned_sections.get(course)
+                if section_id is None:
+                    continue
+                c = self.cost(sid, course, section_id)
+                total += c
+                seated += 1
+                outside += c > 0
+        return total, seated, outside
+
+    def student_pairs(self, section_ids) -> int:
+        return _meeting_pairs([self.infos.seated(x).dm for x in section_ids])
+
+    def current_pairs(self, sid: str) -> int:
+        pairs = self.pair_cache.get(sid)
+        if pairs is None:
+            pairs = self.pair_cache[sid] = self.student_pairs(self.states[sid].section_ids)
+        return pairs
+
+    def clash_ok(self, sid: str, drop: list[SectionState], add: list[SectionState]) -> bool:
+        """Would the student's clash-pair count stay the same or fall?
+
+        The usual student has no clash at all: their meetings' time bits are then
+        disjoint, so taking a section's bits out of the occupancy is exact and
+        the question is whether the new sections fit the rest (and each other,
+        and themselves) — a few mask tests. Anyone else is counted in full.
+        """
+        state = self.states[sid]
+        current = self.current_pairs(sid)
+        if current == 0:
+            occ = dict(state.occupied_mask_by_day)
+            for section in drop:
+                for day, mask in self.infos.of(section).dm:
+                    occ[day] &= ~mask
+            for section in add:
+                for day, mask in self.infos.of(section).dm:
+                    if occ[day] & mask:
+                        return False
+                    occ[day] |= mask
+            return True
+        dropped = {s.section_id for s in drop}
+        kept = [x for x in state.section_ids if x not in dropped]
+        return self.student_pairs([*kept, *(s.section_id for s in add)]) <= current
+
+    # ── mutation with an undo log ──
+    def touch(self, sid: str, sections: list[SectionState]) -> None:
+        state = self.states[sid]
+        if sid not in self.saved_states:
+            self.pairs_before[sid] = self.current_pairs(sid)
+            self.saved_states[sid] = (
+                state.assigned_sections,
+                state.section_ids,
+                state.occupied_mask_by_day,
+                state.total_gap_minutes,
+            )
+            state.assigned_sections = dict(state.assigned_sections)
+            state.section_ids = set(state.section_ids)
+            state.occupied_mask_by_day = dict(state.occupied_mask_by_day)
+        for section in sections:
+            if section.section_id not in self.saved_sections:
+                self.saved_sections[section.section_id] = (
+                    section.current_enrollment,
+                    section.enrolled_student_ids,
+                )
+                section.enrolled_student_ids = set(section.enrolled_student_ids)
+
+    def move(self, sid: str, changes: list[tuple[SectionState, SectionState]]) -> None:
+        """Re-section one student: drop every source, then seat every destination."""
+        self.touch(sid, [s for pair in changes for s in pair])
+        self.pair_cache.pop(sid, None)
+        state, seat = self.states[sid], self.seats[sid]
+        for source, _dest in changes:
+            _remove(state, seat, source, self.infos)
+        for _source, dest in changes:
+            _apply(state, seat, dest, self.infos.of(dest))
+
+    def revert(self) -> None:
+        for sid, (assigned, section_ids, occ, gap) in self.saved_states.items():
+            state = self.states[sid]
+            state.assigned_sections = assigned
+            state.section_ids = section_ids
+            state.occupied_mask_by_day = occ
+            state.total_gap_minutes = gap
+        for section_id, (enrollment, enrolled) in self.saved_sections.items():
+            section = self.sections_by_id[section_id]
+            section.current_enrollment = enrollment
+            section.enrolled_student_ids = enrolled
+
+    # ── step A: move one student ──
+    def best_move(self, sid: str) -> list[tuple[SectionState, SectionState]] | None:
+        state = self.states[sid]
+        held = [c for c in self.courses if c in state.assigned_sections]
+        costs = {c: self.cost(sid, c, state.assigned_sections[c]) for c in held}
+        current = sum(costs.values())
+        if not current:
+            return None
+        seat = self.seats[sid]
+        best_key = None
+        best: list[tuple[SectionState, SectionState]] | None = None
+        for course in held:
+            if not costs[course]:
+                continue
+            source = self.sections_by_id[state.assigned_sections[course]]
+            source_info = self.infos.of(source)
+            for dest, dest_info in self.pairs[course]:
+                if dest is source:
+                    continue
+                new_cost = current - costs[course] + self.cost(sid, course, dest.section_id)
+                if new_cost >= current or not _seat_rule_allows(source, dest):
+                    continue
+                if not self.clash_ok(sid, [source], [dest]):
+                    continue
+                key = (new_cost, _gap_after(seat, [source_info], [dest_info]), dest.section_id)
+                if best_key is None or key < best_key:
+                    best_key, best = key, [(source, dest)]
+        if best is not None or len(held) < 2:
+            return best
+        # No single move helps: try the student's marked courses together (a
+        # student's AI236 section can decide which IS124 section is clash-free).
+        sources = [self.sections_by_id[state.assigned_sections[c]] for c in held]
+        options = [[s for s, _info in self.pairs[c]] for c in held]
+        for combo in islice(product(*options), GROUPING_MAX_JOINT_COMBINATIONS):
+            changes = [(s, d) for s, d in zip(sources, combo, strict=True) if d is not s]
+            if len(changes) < 2:
+                continue  # single moves were all tried above
+            new_cost = sum(
+                self.cost(sid, c, d.section_id) for c, d in zip(held, combo, strict=True)
+            )
+            if new_cost >= current or not all(_seat_rule_allows(s, d) for s, d in changes):
+                continue
+            if not self.clash_ok(sid, [s for s, _d in changes], [d for _s, d in changes]):
+                continue
+            gap = _gap_after(
+                seat,
+                [self.infos.of(s) for s, _d in changes],
+                [self.infos.of(d) for _s, d in changes],
+            )
+            key = (new_cost, gap, tuple(d.section_id for d in combo))
+            if best_key is None or key < best_key:
+                best_key, best = key, changes
+        return best
+
+    def move_round(self) -> int:
+        accepted = 0
+        for sid in self.ordered:
+            changes = self.best_move(sid)
+            if changes:
+                self.move(sid, changes)
+                self.moves += 1
+                accepted += 1
+        return accepted
+
+    # ── step B: swap two students within one course ──
+    def swap_side(self, holders: list[str], source: SectionState, dest: SectionState, bound: int):
+        """Sorted (Δcost, Δgap, rank, sid) for moving each holder source→dest.
+
+        Only holders whose Δcost is below ``bound`` can be in a swap that lowers
+        the total, and only they are priced. A holder's figures read only their
+        own sections, so they hold whoever the partner is.
+        """
+        course = source.course_code
+        out = []
+        for sid in holders:
+            delta = self.cost(sid, course, dest.section_id) - self.cost(
+                sid, course, source.section_id
+            )
+            if delta >= bound or not self.clash_ok(sid, [source], [dest]):
+                continue
+            seat = self.seats[sid]
+            gap = _gap_after(seat, [self.infos.of(source)], [self.infos.of(dest)]) - seat.total
+            out.append((delta, gap, self.rank[sid], sid))
+        out.sort()
+        return out
+
+    def best_delta(self, holders: list[str], source: SectionState, dest: SectionState) -> int:
+        course = source.course_code
+        return min(
+            (
+                self.cost(sid, course, dest.section_id) - self.cost(sid, course, source.section_id)
+                for sid in holders
+            ),
+            default=0,
+        )
+
+    def swap_round(self) -> int:
+        accepted = 0
+        for course in self.courses:
+            sections = [s for s, _info in self.pairs[course]]
+            if len(sections) < 2:
+                continue
+            holders: dict[str, list[str]] = {s.section_id: [] for s in sections}
+            for sid in self.ordered:
+                section_id = self.states[sid].assigned_sections.get(course)
+                if section_id in holders:
+                    holders[section_id].append(sid)
+            for i, first in enumerate(sections):
+                for second in sections[i + 1 :]:
+                    there, back = holders[first.section_id], holders[second.section_id]
+                    if not there or not back:
+                        continue
+                    up_best = self.best_delta(there, first, second)
+                    down_best = self.best_delta(back, second, first)
+                    if up_best + down_best >= 0:
+                        continue
+                    ups = self.swap_side(there, first, second, -down_best)
+                    downs = self.swap_side(back, second, first, -up_best)
+                    for up, down in zip(ups, downs, strict=False):
+                        if up[0] + down[0] >= 0:
+                            break
+                        u, v = up[3], down[3]
+                        self.move(u, [(first, second)])
+                        self.move(v, [(second, first)])
+                        holders[first.section_id].remove(u)
+                        holders[second.section_id].remove(v)
+                        holders[first.section_id].append(v)
+                        holders[second.section_id].append(u)
+                        self.swaps += 1
+                        accepted += 1
+                    holders[first.section_id].sort(key=self.rank.__getitem__)
+                    holders[second.section_id].sort(key=self.rank.__getitem__)
+        return accepted
+
+    # ── guard ──
+    def marked_sections(self) -> list[SectionState]:
+        return [s for course in self.courses for s, _info in self.pairs[course]]
+
+    def guard_failures(self, enrolment_before: dict[str, int], reserve_before: int) -> list[str]:
+        failures = []
+        sections = self.marked_sections()
+        if any(s.current_enrollment > s.max_capacity for s in sections):
+            failures.append("a section is over its capacity")
+        for course in self.courses:
+            after = sum(s.current_enrollment for s, _info in self.pairs[course])
+            if after != enrolment_before[course]:
+                failures.append(f"{course} enrolment changed")
+        if sum(s.reserve_used() for s in sections) > reserve_before:
+            failures.append("reserve use rose")
+        for sid, before in self.pairs_before.items():
+            if self.student_pairs(self.states[sid].section_ids) > before:
+                failures.append(f"student {sid} gained a clash")
+        return failures
+
+    def run(self, report: dict | None) -> None:
+        sections = self.marked_sections()
+        enrolment_before = {
+            course: sum(s.current_enrollment for s, _info in self.pairs[course])
+            for course in self.courses
+        }
+        reserve_before = sum(s.reserve_used() for s in sections)
+        cost_before, seated, _outside = self.total_cost()
+        for _round in range(GROUPING_MAX_ROUNDS):
+            if not (self.move_round() + self.swap_round()):
+                break
+        failures = self.guard_failures(enrolment_before, reserve_before)
+        if failures:
+            # A safety net only: every step above already keeps these.
+            logger.error("programme grouping reverted: %s", "; ".join(failures))
+            self.revert()
+        cost_after, _seated, outside = self.total_cost()
+        if report is None:
+            return
+        gap_change = sum(
+            self.states[sid].total_gap_minutes - saved[3]
+            for sid, saved in self.saved_states.items()
+        )
+        regrouped = sum(
+            1
+            for sid, saved in self.saved_states.items()
+            if self.states[sid].assigned_sections != saved[0]
+        )
+        report.update(
+            {
+                "marked_sections": sorted(
+                    s.section_id for s in sections if self.mark[s.section_id]
+                ),
+                "marked_courses": list(self.courses),
+                "seats_in_marked_courses": seated,
+                "students_regrouped": 0 if failures else regrouped,
+                "moves": 0 if failures else self.moves,
+                "swaps": 0 if failures else self.swaps,
+                "grouping_cost_before": cost_before,
+                "grouping_cost_after": cost_after,
+                "seats_outside_preference": outside,
+                "student_gap_minutes_change": 0 if failures else gap_change,
+                "guard_reverted": bool(failures),
+            }
+        )
+
+
+def _group_by_programme(
+    states: dict[str, StudentAssignmentState],
+    profiles: dict[str, StudentProfile],
+    pairs_by_course: _CoursePairs,
+    seats: dict[str, _Seat],
+    report: dict | None = None,
+) -> None:
+    """Re-section seated students towards their programme's marked section."""
+    _Grouping(states, profiles, pairs_by_course, seats).run(report)
+
+
 def assign_students_to_sections(
     profiles: dict[str, StudentProfile],
     sections_by_id: dict[str, SectionState],
     sections_by_course: dict[str, list[SectionState]],
     course_rigidity: dict[str, float],
     course_tiers: dict[str, str] | None = None,
+    grouping_report: dict | None = None,
 ) -> tuple[dict[str, StudentAssignmentState], list[str]]:
+    """Seat every student, then group marked sections by programme.
+
+    ``grouping_report`` (optional) is filled by the grouping pass, and only when
+    some section carries a "mainly for programme" mark; it stays empty otherwise.
+    """
     states = {sid: StudentAssignmentState(student_id=sid) for sid in profiles}
     pairs_by_course = _CoursePairs(sections_by_course, _InfoMap(sections_by_id))
     # Fresh states hold no sections, so every student starts with an empty chain.
@@ -684,6 +1162,10 @@ def assign_students_to_sections(
         )
 
     _repair(states, profiles, pairs_by_course, seats, course_tiers)
+
+    # O(sections) check: with no mark the pass is never entered (byte-identical).
+    if any(getattr(sec, "preferred_programme", "") for sec in sections_by_id.values()):
+        _group_by_programme(states, profiles, pairs_by_course, seats, grouping_report)
 
     unresolved_ids = [sid for sid, st in states.items() if st.unresolved_courses]
     return states, unresolved_ids

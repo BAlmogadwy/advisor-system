@@ -689,8 +689,16 @@ function renderPlanLensControls() {
   });
 }
 
+/* The lens runs a full seating evaluation on the server, so it is a heavy
+   preview: it goes through the preview lane (a newer request cancels the
+   older one, a burst is debounced, a busy answer is retried after
+   Retry-After). A token keeps a superseded, failed or empty answer from
+   clearing a lens that is already loaded. */
+const PLAN_LENS_LOAD = { token: 0 };
+
 function resetPlanLens() {
-  S.planLens = { plans: [], courses: {}, sections: {}, active: 'ALL', loaded: false };
+  PLAN_LENS_LOAD.token++;
+  S.planLens = { plans: [], courses: {}, sections: {}, active: 'ALL', loaded: false, loading: false };
   renderPlanLensControls();
 }
 
@@ -699,14 +707,20 @@ async function loadPlanLens({ rerender = false } = {}) {
     resetPlanLens();
     return;
   }
-  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/plan-lens/`);
+  const scenarioId = S.scenarioId;
+  const token = ++PLAN_LENS_LOAD.token;
+  S.planLens.loading = true;
+  planLensChanged();
+  const data = await api(`/ops/tw/scenarios/${scenarioId}/plan-lens/`, { _preview: 'plan-lens' });
+  if (token !== PLAN_LENS_LOAD.token || S.scenarioId !== scenarioId) return;
+  S.planLens.loading = false;
   if (!data || !data.plan_lens) {
-    S.planLens.loaded = false;
     renderPlanLensControls();
+    planLensChanged();
     return;
   }
   const active = S.planLens.active || 'ALL';
-  S.planLens = Object.assign({ plans: [], courses: {}, sections: {}, active, loaded: true }, data.plan_lens);
+  S.planLens = Object.assign({ plans: [], courses: {}, sections: {}, active, loaded: true, loading: false }, data.plan_lens);
   if (S.planLens.active !== 'ALL' && !S.planLens.plans.includes(S.planLens.active) && S.planLens.active !== 'SHARED') {
     S.planLens.active = 'ALL';
   }
@@ -715,6 +729,7 @@ async function loadPlanLens({ rerender = false } = {}) {
     for (let i = 0; i < paneCount(); i++) renderPane(i);
     if (SB.open) renderSidebar();
   }
+  planLensChanged();
 }
 
 // 20 distinct mid-dark course colours — tuned for a dark workspace so
@@ -2645,10 +2660,10 @@ async function loadSplitScenario() {
   S.scenarioId = data.scenario.id;
   S.scenarioMeta = data.scenario;
   loadProtections();
-  const [bdata] = await Promise.all([
-    api(`/ops/tw/boards/?scenario_id=${sid}`),
-    loadPlanLens(),
-  ]);
+  // The lens is a heavy preview: the boards never wait for it, and the panes
+  // repaint with its plan badges when it arrives.
+  loadPlanLens({ rerender: true });
+  const bdata = await api(`/ops/tw/boards/?scenario_id=${sid}`);
   S.boards = (bdata && bdata.boards) || [];
   S.scenarioSummary = (bdata && bdata.scenario_summary) || null;
   S.crossBoardClashCount = (bdata && Number(bdata.cross_board_clashes || 0)) || 0;
@@ -3661,7 +3676,9 @@ async function refreshBoardsSummary() {
     updateAggregateMetrics();
     renderSlotBar();
   }
-  await loadPlanLens({ rerender: true });
+  // A heavy preview on the server's lane: a write never waits for it, and the
+  // panes repaint when it arrives (a burst of writes asks once).
+  loadPlanLens({ rerender: true });
   // Invalidate capacity cache and refresh the panels if open — mutations
   // may have changed conflict counts and capacity deltas.
   RP.capacity = {};
@@ -7199,6 +7216,7 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section || '—')}</span></div>
     ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" id="twsEnglishPattern">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
     ${planLensDetailsFieldsHtml(p)}
+    ${programmeMarkSelectionHtml(p)}
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اللوحة' : 'Board'}</span><span class="value">${esc(board.label)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
@@ -8137,6 +8155,7 @@ function openDrawer(paneIdx, placementId) {
     <div class="field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value mono">${esc(p.section || '—')}</span></div>
     ${planLensDetailsFieldsHtml(p, 'field')}
+    ${hasProgrammeMark(p) ? '<div id="twsDrawerProgramme"></div>' : ''}
     <div class="field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value mono">${esc(p.day)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
@@ -8155,6 +8174,7 @@ function openDrawer(paneIdx, placementId) {
     ${meetings}
   `;
 
+  renderDrawerProgramme();
   // Instructor editor — links are the source of truth; the backend writes the
   $('twsDrawerEnglishPattern')?.addEventListener('click', () => switchEnglishSplitPattern(p.id));
   // primary name through to the meeting rows so clash badges recompute on reload.
@@ -8193,6 +8213,132 @@ function closeDrawer() {
   $('twsDrawer').setAttribute('aria-hidden', 'true');
   $('twsDrawer').setAttribute('inert', '');
   $('twsDrawerBackdrop').classList.remove('open');
+}
+
+/* ── "Mainly for programme" (section programme marks) ──
+ * The server adds `preferred_programme` (and `preferred_programme_editable`)
+ * to a placement only with the feature on; without the key nothing here
+ * renders. The seated mix comes from the plan lens already loaded (a heavy
+ * preview on the server's lane), so opening the drawer sends no request; a
+ * save posts once and the lens reloads once. */
+const PROGRAMME_MARK = { pending: new Set() };
+const PM_T = {
+  label: IS_AR ? 'مخصّصة أساساً لبرنامج' : 'Mainly for programme',
+  any: IS_AR ? 'أي برنامج' : 'Any',
+  seated: IS_AR ? 'المقاعد' : 'Seated',
+  loading: IS_AR ? 'جارٍ حساب توزيع البرامج…' : 'Loading programme mix…',
+  saved: IS_AR ? 'حُفظ برنامج الشعبة' : 'Section programme saved',
+};
+
+function hasProgrammeMark(p) {
+  return Boolean(p) && Object.prototype.hasOwnProperty.call(p, 'preferred_programme');
+}
+
+function programmeMarkOptions(p) {
+  const mark = String(p.preferred_programme || '');
+  const plans = (S.planLens.plans || []).filter(plan => plan && plan !== 'UNKNOWN');
+  if (mark && !plans.includes(mark)) plans.push(mark);
+  return [['', PM_T.any], ...plans.map(plan => [plan, plan])];
+}
+
+function programmeMixHtml(p) {
+  if (S.planLens.loading || !S.planLens.loaded) {
+    return `—<span class="tws-programme-note">${esc(PM_T.loading)}</span>`;
+  }
+  const lens = sectionLensForPlacement(p);
+  const total = Number(lens?.actual_total || 0);
+  const entries = planLensActualEntries(p);
+  if (!lens || !total || !entries.length) return '—';
+  const parts = entries.map(([plan, count]) => `<bdi>${esc(plan)}</bdi> ${Number(count)}`).join(' · ');
+  // One LTR isolate: the figure leads with digits, which an Arabic drawer
+  // would otherwise paint as «23 AI2 :23».
+  return `<bdi dir="ltr">${total}: ${parts}</bdi>`;
+}
+
+function programmeTradeHtml(grouping) {
+  if (!grouping || !Number.isFinite(Number(grouping.students_regrouped))) return '';
+  const moved = Number(grouping.students_regrouped);
+  const minutes = Number(grouping.student_gap_minutes_change || 0);
+  // The signed figure is isolated so Arabic prose never paints «450+».
+  const signed = `<bdi dir="ltr">${minutes > 0 ? '+' : minutes < 0 ? '−' : '±'}${Math.abs(minutes)}</bdi>`;
+  return IS_AR
+    ? `نقل التجميع ${moved} طالباً؛ إجمالي انتظار الطلاب ${signed} دقيقة`
+    : `Grouping moved ${moved} student${moved === 1 ? '' : 's'}; total student waiting ${signed} min`;
+}
+
+function programmeMarkInnerHtml(p) {
+  const mark = String(p.preferred_programme || '');
+  const published = S.scenarioMeta && S.scenarioMeta.status === 'published';
+  const pending = PROGRAMME_MARK.pending.has(String(p.term_section_id));
+  const disabled = published || p.preferred_programme_editable === false || pending;
+  const options = programmeMarkOptions(p)
+    .map(([value, label]) => `<option value="${esc(value)}"${value === mark ? ' selected' : ''}>${esc(label)}</option>`)
+    .join('');
+  const course = courseLensForItem(p);
+  const nobody = mark && S.planLens.loaded && course && !Number((course.plans || {})[mark] || 0);
+  const warning = nobody
+    ? `<span class="tws-programme-note warn">${IS_AR
+      ? `لا يحتاج أي طالب من <bdi>${esc(mark)}</bdi> هذا المقرر؛ العلامة توجّه البرامج الأخرى إلى الشعب الأخرى فقط.`
+      : `No <bdi>${esc(mark)}</bdi> student needs this course; the mark only steers other programmes to the other sections.`}</span>`
+    : '';
+  const trade = programmeTradeHtml(S.planLens.programme_grouping);
+  return `
+    <div class="field"><label class="label" for="twsDrawerProgrammeSelect">${esc(PM_T.label)}</label><span class="value"><select class="tws-select tws-programme-select" id="twsDrawerProgrammeSelect"${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}>${options}</select></span></div>
+    ${warning}
+    <div class="field"><span class="label">${esc(PM_T.seated)}</span><span class="value mono" id="twsDrawerProgrammeMix">${programmeMixHtml(p)}</span></div>
+    ${trade ? `<span class="tws-programme-note">${trade}</span>` : ''}
+  `;
+}
+
+function renderDrawerProgramme() {
+  const host = $('twsDrawerProgramme');
+  if (!host || DRAWER.placementId == null) return;
+  const p = findPlacement(DRAWER.placementId)?.placement;
+  if (!hasProgrammeMark(p)) return;
+  host.innerHTML = programmeMarkInnerHtml(p);
+  $('twsDrawerProgrammeSelect')?.addEventListener('change', event => saveProgrammeMark(p.id, event.target.value));
+}
+
+/* Parts of the page that read the lens repaint when it starts loading and when
+   it arrives (or fails). */
+function planLensChanged() {
+  renderDrawerProgramme();
+}
+
+async function saveProgrammeMark(placementId, value) {
+  const p = findPlacement(placementId)?.placement;
+  if (!hasProgrammeMark(p)) return;
+  const key = String(p.term_section_id);
+  if (PROGRAMME_MARK.pending.has(key)) return;
+  PROGRAMME_MARK.pending.add(key);
+  renderDrawerProgramme();
+  try {
+    const data = await api(`/ops/tw/placements/${placementId}/programme-preference/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferred_programme: value }),
+    }, message => notify.error(message));
+    if (!data || typeof data.preferred_programme !== 'string') return;
+    // Every visible copy of the section takes the server's answer.
+    S.panes.forEach(pane => (pane.boardData?.placements || []).forEach(row => {
+      if (String(row.term_section_id) === key) row.preferred_programme = data.preferred_programme;
+    }));
+    if (data.changed) {
+      notify.success(PM_T.saved);
+      // The seating changed: the lens (seated mix, plan counts) reloads once.
+      await refreshBoardsSummary();
+    }
+  } finally {
+    PROGRAMME_MARK.pending.delete(key);
+    if (DRAWER.placementId != null) renderDrawerProgramme();
+    if (RP.open && String(S.selectedPlacementId) === String(placementId)) renderRpanel();
+  }
+}
+
+/* Read-only line for the selection panel. */
+function programmeMarkSelectionHtml(p) {
+  if (!hasProgrammeMark(p)) return '';
+  const mark = String(p.preferred_programme || '');
+  return `<div class="tws-sel-field"><span class="label">${esc(PM_T.label)}</span><span class="value">${mark ? `<bdi>${esc(mark)}</bdi>` : esc(PM_T.any)}</span></div>`;
 }
 
 /* ── Drawer instructor assignment ── */

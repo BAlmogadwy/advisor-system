@@ -411,3 +411,27 @@ def test_section_instructor_export_carries_global_rows_and_drops_scenario_rows(t
     assert record["fields"]["course_key"] == "CS113"
     assert record["fields"]["section"] == "M1"
     assert record["fields"]["scenario"] is None
+
+
+def test_programme_marks_never_leave_with_the_release_seed(tmp_path):
+    """Only global sections are exported, and a global section carries no mark:
+    every exported row says "" and a marked scenario section stays behind."""
+    global_section = TermSection.objects.create(
+        course_key="ENGL214", course_code="ENGL214", course_number="214", section="M1"
+    )
+    scenario = TimetableScenario.objects.create(academic_year="1448", term="2", name="marks")
+    marked = TermSection.objects.create(
+        scenario=scenario,
+        course_key="AI236",
+        course_code="AI236",
+        course_number="236",
+        section="S2",
+        preferred_programme="AI2",
+    )
+
+    _, _, _, records = _export(tmp_path / "programme-marks-release.json.gz")
+
+    sections = [record for record in records if record["model"] == "core.termsection"]
+    assert {record["pk"] for record in sections} == {global_section.pk}
+    assert marked.pk not in {record["pk"] for record in sections}
+    assert all(record["fields"]["preferred_programme"] == "" for record in sections)

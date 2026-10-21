@@ -7,7 +7,7 @@
 {% block main_padding %}p-0{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/timetable-workspace-split.css' %}?v=4" rel="stylesheet">
+<link href="{% static 'css/timetable-workspace-split.css' %}?v=5" rel="stylesheet">
 <link href="{% static 'css/timetable-meeting-policy.css' %}?v=2" rel="stylesheet">
 {% endblock %}
 
@@ -388,5 +388,5 @@
   const DEFAULT_TERM = "{{ default_term|default:''|escapejs }}";
 </script>
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=129"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=132"></script>
 {% endblock %}

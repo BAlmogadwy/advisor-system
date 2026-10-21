@@ -26,6 +26,7 @@ def test_timetable_outcome_frontend_regressions() -> None:
             "tests/frontend/timetable-one-teacher.test.cjs",
             "tests/frontend/timetable-preview-lane.test.cjs",
             "tests/frontend/timetable-manual-clash-ruling.test.cjs",
+            "tests/frontend/timetable-programme-preference.test.cjs",
         ],
         cwd=root,
         capture_output=True,
