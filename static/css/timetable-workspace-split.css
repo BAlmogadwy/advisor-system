@@ -1959,8 +1959,12 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
 /* One teacher per section: a section whose teacher is still to be decided */
 .tws-instr-tbd { color: var(--warning); font-weight: 700; }
 .tws-instr-hint { display: block; color: var(--t3); font-size: 11px; margin-top: 2px; }
-/* "Mainly for programme": the drawer's select, its seated mix and notes */
-.tws-drawer .tws-programme-select { min-width: 0; max-width: 170px; padding: 3px 24px 3px 8px; }
+/* "Mainly for programme": the select (Selection tab and drawer), its seated mix and notes */
+.tws-drawer .tws-programme-select,
+.tws-rpanel .tws-programme-select { min-width: 0; max-width: 170px; padding: 3px 24px 3px 8px; }
+.tws-rpanel .tws-programme-select { font-size: 11px; }
+/* A group's last row keeps the dashed rule the panel's other rows have. */
+.tws-sel-group > .tws-sel-field:last-of-type { border-bottom: 1px dashed var(--line); }
 .tws-programme-note { display: block; color: var(--t3); font-size: 11px; margin: 2px 0 6px; }
 .tws-programme-note.warn { color: var(--warning); }
 .tws-drawer-instr-edit { display: flex; gap: 4px; margin: 4px 0 8px; }
