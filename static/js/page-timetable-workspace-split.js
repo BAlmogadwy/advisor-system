@@ -689,8 +689,16 @@ function renderPlanLensControls() {
   });
 }
 
+/* The lens runs a full seating evaluation on the server, so it is a heavy
+   preview: it goes through the preview lane (a newer request cancels the
+   older one, a burst is debounced, a busy answer is retried after
+   Retry-After). A token keeps a superseded, failed or empty answer from
+   clearing a lens that is already loaded. */
+const PLAN_LENS_LOAD = { token: 0 };
+
 function resetPlanLens() {
-  S.planLens = { plans: [], courses: {}, sections: {}, active: 'ALL', loaded: false };
+  PLAN_LENS_LOAD.token++;
+  S.planLens = { plans: [], courses: {}, sections: {}, active: 'ALL', loaded: false, loading: false };
   renderPlanLensControls();
 }
 
@@ -699,14 +707,18 @@ async function loadPlanLens({ rerender = false } = {}) {
     resetPlanLens();
     return;
   }
-  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/plan-lens/`);
+  const scenarioId = S.scenarioId;
+  const token = ++PLAN_LENS_LOAD.token;
+  S.planLens.loading = true;
+  const data = await api(`/ops/tw/scenarios/${scenarioId}/plan-lens/`, { _preview: 'plan-lens' });
+  if (token !== PLAN_LENS_LOAD.token || S.scenarioId !== scenarioId) return;
+  S.planLens.loading = false;
   if (!data || !data.plan_lens) {
-    S.planLens.loaded = false;
     renderPlanLensControls();
     return;
   }
   const active = S.planLens.active || 'ALL';
-  S.planLens = Object.assign({ plans: [], courses: {}, sections: {}, active, loaded: true }, data.plan_lens);
+  S.planLens = Object.assign({ plans: [], courses: {}, sections: {}, active, loaded: true, loading: false }, data.plan_lens);
   if (S.planLens.active !== 'ALL' && !S.planLens.plans.includes(S.planLens.active) && S.planLens.active !== 'SHARED') {
     S.planLens.active = 'ALL';
   }
@@ -2645,10 +2657,10 @@ async function loadSplitScenario() {
   S.scenarioId = data.scenario.id;
   S.scenarioMeta = data.scenario;
   loadProtections();
-  const [bdata] = await Promise.all([
-    api(`/ops/tw/boards/?scenario_id=${sid}`),
-    loadPlanLens(),
-  ]);
+  // The lens is a heavy preview: the boards never wait for it, and the panes
+  // repaint with its plan badges when it arrives.
+  loadPlanLens({ rerender: true });
+  const bdata = await api(`/ops/tw/boards/?scenario_id=${sid}`);
   S.boards = (bdata && bdata.boards) || [];
   S.scenarioSummary = (bdata && bdata.scenario_summary) || null;
   S.crossBoardClashCount = (bdata && Number(bdata.cross_board_clashes || 0)) || 0;
@@ -3661,7 +3673,9 @@ async function refreshBoardsSummary() {
     updateAggregateMetrics();
     renderSlotBar();
   }
-  await loadPlanLens({ rerender: true });
+  // A heavy preview on the server's lane: a write never waits for it, and the
+  // panes repaint when it arrives (a burst of writes asks once).
+  loadPlanLens({ rerender: true });
   // Invalidate capacity cache and refresh the panels if open — mutations
   // may have changed conflict counts and capacity deltas.
   RP.capacity = {};

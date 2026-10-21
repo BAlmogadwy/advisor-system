@@ -65,6 +65,7 @@ from core.services.section_move_optimisation_components import (
     StudentProfileCompressor,
 )
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_flags import is_section_programme_preference_enabled
 from core.services.timetable_move_outcome import preview_placement_student_outcome_candidates
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_repair_domain import (
@@ -3003,6 +3004,9 @@ def _repair_state_fingerprint(scenario_id: int, blocked_ids: list[int]) -> str:
             "is_locked",
         )
     )
+    # A "mainly for programme" mark changes the seating every cached analysis
+    # was computed on, so under the flag it is part of the fingerprint (and the
+    # flag flip itself invalidates them). Off, the fingerprint is unchanged.
     term_sections = list(
         TermSection.objects.filter(scenario_id=scenario_id)
         .order_by("id")
@@ -3015,6 +3019,7 @@ def _repair_state_fingerprint(scenario_id: int, blocked_ids: list[int]) -> str:
             "available_capacity",
             "registered_count",
             "source_tag",
+            *(("preferred_programme",) if is_section_programme_preference_enabled() else ()),
         )
     )
     assignments = list(

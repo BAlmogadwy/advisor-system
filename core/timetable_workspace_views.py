@@ -705,8 +705,13 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
 
 @login_required(login_url="login")
 @require_GET
+@preview_lane
 def tw_scenario_plan_lens_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
-    """Return read-only programme demand and section ownership metadata."""
+    """Return read-only programme demand and section ownership metadata.
+
+    It runs a full seating evaluation (the drawer's seated mix by programme and
+    the per-plan counts), so it is a heavy preview and takes the preview lane.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny

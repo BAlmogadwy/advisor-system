@@ -35,6 +35,8 @@ HEAVY_PREVIEW_VIEWS = [
     views.tw_placement_student_outcome_candidates_view,
     views.tw_board_planned_slot_candidates_view,
     views.tw_repair_analyse_view,
+    # A full seating evaluation (the drawer's seated mix by programme).
+    views.tw_scenario_plan_lens_view,
 ]
 #: Never gated: the health check and the manual writes.
 UNGATED_VIEWS = [
@@ -119,6 +121,9 @@ def _previews(placement):
         "preview_planned_section_slot_candidates": lambda c: c.get(
             f"/ops/tw/boards/{placement.board_id}/planned-slot-candidates/?course_code=AI111"
         ),
+        "build_scenario_plan_lens": lambda c: c.get(
+            f"/ops/tw/scenarios/{placement.board.scenario_id}/plan-lens/"
+        ),
     }
 
 
@@ -138,6 +143,7 @@ def _refuse(*_args, **_kwargs):
         "preview_placement_slot_candidates",
         "preview_placement_student_outcome_candidates",
         "preview_planned_section_slot_candidates",
+        "build_scenario_plan_lens",
     ],
 )
 def test_a_full_lane_answers_busy_at_once_without_running_the_preview(
