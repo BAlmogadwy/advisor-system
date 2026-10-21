@@ -7,10 +7,12 @@ on a FINISHED board and only re-sections students who are already seated, so:
 * R1 — no mark, no pass: the frozen seating is returned untouched;
 * R2 — on every board, with marks, every student keeps the same courses and the
   same unresolved reasons, nobody gains a clash, every course keeps its free
-  seats and nothing passes capacity; reserve use rises by no more than the moves
-  of a programme's own students into its marked section's reserve, each leaving
-  a regular seat of that course (a property test over the anonymised real boards
-  and random synthetic ones, both score layouts) — and the guard never fires;
+  seats and nothing passes capacity; every hard position of the objective,
+  reserve included, is EQUAL (physical reserve use rises only by moves of a
+  programme's own students into its marked section's reserve, each leaving a
+  regular seat of that course, and the objective does not count that as
+  pressure) — a property test over the anonymised real boards and random
+  synthetic ones, both score layouts — and the guard never fires;
 * R3 — the marked programme fills its section, the overflow goes elsewhere and
   is never unseated; coupled courses move together; full sections swap;
 * R4 — among equally grouped choices the smaller gap wins, and the gap change
@@ -19,6 +21,8 @@ on a FINISHED board and only re-sections students who are already seated, so:
   costs no seat: the marked programme's own students may fill the section's
   reserve seats when that frees a regular seat in the same course; no other
   student ever gets that, and a regular seat wins when one groups as well.
+  Those seats are not reserve pressure: neither the objective nor the
+  reserve-heavy listing (the search's priority sections) counts them.
 """
 
 from __future__ import annotations
@@ -75,8 +79,10 @@ def _student(sid, programme, courses, tier=1, score=0.0):
     )
 
 
-def _seat(sections, profiles, rigidity=None, tiers=None):
-    """Seat a private copy of ``sections``; returns (states, by_id, report)."""
+def _seat(sections, profiles, rigidity=None, tiers=None, shift=None):
+    """Seat a private copy of ``sections``; returns (states, by_id, report).
+
+    ``shift`` (a dict) receives the pass's per-section change in reserve use."""
     by_id = ssa.build_sections_by_id(deepcopy(sections))
     report: dict = {}
     states, _unresolved = ssa.assign_students_to_sections(
@@ -86,6 +92,7 @@ def _seat(sections, profiles, rigidity=None, tiers=None):
         rigidity or {},
         course_tiers=tiers,
         grouping_report=report,
+        reserve_shift=shift,
     )
     return states, by_id, report
 
@@ -200,6 +207,11 @@ def _hard(score):
     return (score[0], score[1], score[2], *score[6:]), score[3], score[5]
 
 
+def _reserve(by_id):
+    """Physical reserve use over the board."""
+    return sum(s.reserve_used() for s in by_id.values())
+
+
 def _free_seats_by_course(by_id):
     free: dict[str, int] = {}
     for s in by_id.values():
@@ -260,19 +272,21 @@ def _assert_never_a_seat(case, seed):
     sections, profiles = _marked_case(case, seed)
     if not any(s.preferred_programme for s in sections):
         pytest.skip("no multi-section course to mark")
+    plain_shift: dict = {}
+    shift: dict = {}
     with override_settings(**flags), pytest.MonkeyPatch.context() as monkeypatch:
         plain, plain_by_id, plain_report = _seat(
-            _unmarked(sections), profiles, case.rigidity, tiers
+            _unmarked(sections), profiles, case.rigidity, tiers, plain_shift
         )
         taken = _record_moves(monkeypatch)
-        grouped, by_id, report = _seat(sections, profiles, case.rigidity, tiers)
+        grouped, by_id, report = _seat(sections, profiles, case.rigidity, tiers, shift)
         plain_score = ssa.evaluate_assignability_lexicographic(
-            plain, profiles, plain_by_id, case.instructors, tiers
+            plain, profiles, plain_by_id, case.instructors, tiers, reserve_shift=plain_shift
         )
         score = ssa.evaluate_assignability_lexicographic(
-            grouped, profiles, by_id, case.instructors, tiers
+            grouped, profiles, by_id, case.instructors, tiers, reserve_shift=shift
         )
-    assert plain_report == {}
+    assert plain_report == {} and plain_shift == {}
     assert report["guard_reverted"] is False, "the guard had to undo a step"
     for sid in profiles:
         assert grouped[sid].unresolved_courses == plain[sid].unresolved_courses, sid
@@ -282,10 +296,17 @@ def _assert_never_a_seat(case, seed):
     plain_equal, plain_clashes, plain_reserve = _hard(plain_score)
     assert equal == plain_equal
     assert clashes <= plain_clashes
+    # Reserve as the objective reads it: EQUAL — grouping is not capacity pressure.
+    assert reserve == plain_reserve
+    # Physically, each section reads as before grouping once its shift is undone,
+    # and the rise comes only from the marked programme's own reserve takes.
+    for section_id, section in by_id.items():
+        before = plain_by_id[section_id].reserve_used()
+        assert section.reserve_used() - shift.get(section_id, 0) == before, section_id
     marks = {s.section_id: str(s.preferred_programme or "").strip().upper() for s in sections}
     matched_moves = _matched_reserve_moves(taken, profiles, marks)
     assert report["reserve_seats_taken"] == matched_moves
-    assert reserve <= plain_reserve + matched_moves
+    assert _reserve(by_id) <= _reserve(plain_by_id) + matched_moves
     assert _free_seats_by_course(by_id) == _free_seats_by_course(plain_by_id)
     for section_id, section in by_id.items():
         assert section.current_enrollment <= section.max_capacity, section_id
@@ -389,10 +410,6 @@ def test_full_sections_swap_students_to_group_them():
 
 
 # ── R5: reserve seats ────────────────────────────────────────────────────
-
-
-def _reserve(by_id):
-    return sum(s.reserve_used() for s in by_id.values())
 
 
 def test_the_marked_programme_fills_its_reserve_when_that_frees_a_regular_seat():
@@ -518,6 +535,79 @@ def test_a_joint_move_also_prefers_the_regular_seat():
     assert states["s1"].section_ids == {"A_S3", "B_S2"}
     assert report["moves"] == 1 and report["reserve_seats_taken"] == 0
     assert by_id["A_S2"].current_enrollment == 23
+
+
+def _pressure_board(mark="AI2"):
+    """Scenario 38's AI236 (S2 marked) beside Z, one section of 10 with 2 reserve
+    seats that 10 DS2 students genuinely need."""
+    sections = [
+        *_two_sections(reserve=2, mark2=mark),
+        _section("Z_S1", "Z", [(4, 540, 615)], 10, 2),
+    ]
+    profiles = {f"a{i:02d}": _student(f"a{i:02d}", "AI2", ["AI236"]) for i in range(26)}
+    profiles |= {
+        f"d{i:02d}": _student(f"d{i:02d}", "DS2", ["AI236", "Z"] if i < 10 else ["AI236"])
+        for i in range(11)
+    }
+    return sections, profiles
+
+
+def _evaluate(sections, profiles):
+    return evaluate_generated_timetable_candidate(
+        candidate_id="c",
+        generated_sections=sections,
+        student_profiles=profiles,
+        course_rigidity={},
+    )
+
+
+def _seated_in(result, section_id):
+    return sum(section_id in st.section_ids for st in result.assignment_states.values())
+
+
+@pytest.mark.parametrize("tiered", [False, True])
+def test_reserve_seats_taken_by_grouping_are_not_reserve_pressure(tiered):
+    """Through the real evaluation: AI236 S2 physically fills its 2 reserve seats
+    by grouping, yet it is not listed as reserve-heavy (nor so a search priority)
+    and the objective's reserve position equals the unmarked board's. Z_S1's
+    genuine reserve use is still listed and counted."""
+    sections, profiles = _pressure_board()
+    tiers = {"AI236": "T1", "Z": "T1"} if tiered else None
+    with override_settings(TIMETABLE_TIERED_OBJECTIVE_ENABLED=tiered):
+        marked = evaluate_generated_timetable_candidate(
+            "c", sections, profiles, {}, course_tiers=tiers
+        )
+        plain = evaluate_generated_timetable_candidate(
+            "c", _unmarked(sections), profiles, {}, course_tiers=tiers
+        )
+    assert ssa.is_tiered_score(marked.lexicographic_score) is tiered
+    assert marked.quality_score["programme_grouping"]["reserve_seats_taken"] >= 2
+    assert _seated_in(marked, "AI236_S2") == 25
+    assert _seated_in(plain, "AI236_S2") <= 23
+    assert marked.reserve_heavy_sections == plain.reserve_heavy_sections == [("Z_S1", 1.0)]
+    assert ssa.reserve_used_of(marked.lexicographic_score) == 2
+    assert ssa.reserve_used_of(plain.lexicographic_score) == 2
+
+
+def test_no_reserve_shift_leaks_between_evaluations_of_the_same_sections():
+    """The same SectionState objects, evaluated marked, then unmarked, then marked
+    again: each evaluation reads as a fresh one would."""
+    sections, profiles = _pressure_board()
+    first = _evaluate(sections, profiles)
+    for section in sections:
+        section.preferred_programme = ""
+    unmarked = _evaluate(sections, profiles)
+    sections[1].preferred_programme = "AI2"
+    again = _evaluate(sections, profiles)
+    # Pinned values, not another evaluation: a leak would skew a baseline too.
+    # Z_S1's 2 reserve seats are the only reserve pressure on this board.
+    for result in (first, unmarked, again):
+        assert ssa.reserve_used_of(result.lexicographic_score) == 2
+        assert result.reserve_heavy_sections == [("Z_S1", 1.0)]
+    assert _seated_in(unmarked, "AI236_S2") <= 23 < _seated_in(again, "AI236_S2") == 25
+    assert again.lexicographic_score == first.lexicographic_score
+    assert again.quality_score == first.quality_score
+    assert [s.current_enrollment for s in sections] == [0, 0, 0]
 
 
 @pytest.mark.parametrize(

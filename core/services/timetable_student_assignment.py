@@ -62,14 +62,15 @@ A section may be marked "mainly for programme X"
 pass, ``_group_by_programme`` re-sections students who are ALREADY seated so X's
 students sit in X's section and other programmes prefer the other sections. It
 never adds, removes or swaps out a course, never raises a student's clash count
-and never changes a course's free seats, so every hard position of the
-objective is the same or better than without marks — on every board, by
-construction, with a guard behind it. The one exception is reserve use: an X
-student may take a reserve seat in X's section when the move frees a regular
-seat in another section of the same course (the spare seat only shifts), and
-reserve use rises by at most the number of those moves (reported). Student gap
-may change (the reported trade). With no marked section the pass is never
-entered and the output is the frozen seating.
+and never changes a course's free seats. An X student may take a reserve seat
+in X's section when the move frees a regular seat in another section of the
+same course (the spare seat only shifts; reported as ``reserve_seats_taken``).
+That is not capacity pressure, so the pass's change to each section's reserve
+use is handed back (``reserve_shift``) and every reserve reader subtracts it:
+every hard position of the objective, reserve included, is the same or better
+than without marks — on every board, by construction, with a guard behind it.
+Student gap may change (the reported trade). With no marked section the pass is
+never entered and the output is the frozen seating.
 """
 
 from __future__ import annotations
@@ -671,10 +672,11 @@ def _repair(
 # student moves only into a regular seat, out of a section already using its
 # reserve (net zero), or — their programme's own marked section only — into its
 # reserve while leaving a regular seat of the same course. That last case never
-# changes the course's free seats; reserve use rises by at most the number of
-# such moves, and a regular seat wins over one when both group equally well. The
-# frozen seating code above is not touched; with no mark this block is never
-# entered.
+# changes the course's free seats; physical reserve use rises by at most the
+# number of such moves, and a regular seat wins over one when both group equally
+# well. Reserve readers (objective, reserve-heavy listing) subtract the pass's
+# per-section change, so they read the seating as before grouping. The frozen
+# seating code above is not touched; with no mark this block is never entered.
 
 #: Bounds on the work per evaluation (the pass runs inside the optimiser loop).
 GROUPING_MAX_ROUNDS = 4
@@ -1108,13 +1110,14 @@ class _Grouping:
                 failures.append(f"student {sid} gained a clash")
         return failures
 
-    def run(self, report: dict | None) -> None:
+    def run(self, report: dict | None, reserve_shift: dict[str, int] | None = None) -> None:
         sections = self.marked_sections()
         enrolment_before = {
             course: sum(s.current_enrollment for s, _info in self.pairs[course])
             for course in self.courses
         }
-        reserve_before = sum(s.reserve_used() for s in sections)
+        reserve_by_section = {s.section_id: s.reserve_used() for s in sections}
+        reserve_before = sum(reserve_by_section.values())
         cost_before, seated, _outside = self.total_cost()
         for _round in range(GROUPING_MAX_ROUNDS):
             if not (self.move_round() + self.swap_round()):
@@ -1124,6 +1127,15 @@ class _Grouping:
             # A safety net only: every step above already keeps these.
             logger.error("programme grouping reverted: %s", "; ".join(failures))
             self.revert()
+        elif reserve_shift is not None:
+            # What the pass did to each section's reserve use. Re-sectioning
+            # within a course never changes its free seats, so it is not
+            # capacity pressure: reserve readers subtract this (see
+            # ``assign_students_to_sections``).
+            for section in sections:
+                shift = section.reserve_used() - reserve_by_section[section.section_id]
+                if shift:
+                    reserve_shift[section.section_id] = shift
         cost_after, _seated, outside = self.total_cost()
         if report is None:
             return
@@ -1162,9 +1174,10 @@ def _group_by_programme(
     pairs_by_course: _CoursePairs,
     seats: dict[str, _Seat],
     report: dict | None = None,
+    reserve_shift: dict[str, int] | None = None,
 ) -> None:
     """Re-section seated students towards their programme's marked section."""
-    _Grouping(states, profiles, pairs_by_course, seats).run(report)
+    _Grouping(states, profiles, pairs_by_course, seats).run(report, reserve_shift)
 
 
 def assign_students_to_sections(
@@ -1174,11 +1187,21 @@ def assign_students_to_sections(
     course_rigidity: dict[str, float],
     course_tiers: dict[str, str] | None = None,
     grouping_report: dict | None = None,
+    reserve_shift: dict[str, int] | None = None,
 ) -> tuple[dict[str, StudentAssignmentState], list[str]]:
     """Seat every student, then group marked sections by programme.
 
     ``grouping_report`` (optional) is filled by the grouping pass, and only when
     some section carries a "mainly for programme" mark; it stays empty otherwise.
+
+    ``reserve_shift`` (optional, pass a fresh dict per seating) receives, for
+    each section whose reserve use the grouping pass changed, ``after - before``.
+    Grouping only re-sections students within a course, so a course's free seats
+    never change: a marked section filling its reserve is not capacity pressure.
+    Every reader of reserve use as a signal subtracts it — the objective
+    (``evaluate_assignability_lexicographic``) and the reserve-heavy listing
+    (``timetable_candidate_eval.extract_reserve_heavy_sections``) — so each
+    section reads as it did before grouping. Sections keep their physical counts.
     """
     states = {sid: StudentAssignmentState(student_id=sid) for sid in profiles}
     pairs_by_course = _CoursePairs(sections_by_course, _InfoMap(sections_by_id))
@@ -1220,7 +1243,9 @@ def assign_students_to_sections(
 
     # O(sections) check: with no mark the pass is never entered (byte-identical).
     if any(getattr(sec, "preferred_programme", "") for sec in sections_by_id.values()):
-        _group_by_programme(states, profiles, pairs_by_course, seats, grouping_report)
+        _group_by_programme(
+            states, profiles, pairs_by_course, seats, grouping_report, reserve_shift
+        )
 
     unresolved_ids = [sid for sid, st in states.items() if st.unresolved_courses]
     return states, unresolved_ids
@@ -1629,7 +1654,11 @@ def evaluate_assignability_lexicographic(
     sections_by_id: dict[str, SectionState],
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
     course_tiers: dict[str, str] | None = None,
+    reserve_shift: dict[str, int] | None = None,
 ) -> tuple[int, ...]:
+    # ``reserve_shift``: the grouping pass's per-section change in reserve use on
+    # THIS seating (see ``assign_students_to_sections``); it is subtracted, so
+    # the reserve position reads exactly as before grouping.
     # The tiered objective engages only when a per-run tier map is supplied AND
     # the flag is on. A missing map (course_tiers is None) forces the legacy
     # path even under the flag, so any un-threaded caller stays safe.
@@ -1697,6 +1726,8 @@ def evaluate_assignability_lexicographic(
 
     for section in sections_by_id.values():
         total_reserve_used += section.reserve_used()
+    if reserve_shift:
+        total_reserve_used -= sum(reserve_shift.values())
 
     # The same-course section-spread penalty (minutes-equivalent). Computed once
     # in every path — the legacy tuple folds it into gap-minutes; the tiered
