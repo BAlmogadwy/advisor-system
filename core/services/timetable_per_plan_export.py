@@ -18,6 +18,15 @@ The two outputs are complementary: the planner-facing combined export keeps
 the board-as-sitting view, and this per-plan export gives each cohort an
 auditable view of their own term-by-term week.
 
+A term sheet's groups follow who actually sits in each section (owner
+2026-10-21). The seating is the plan lens's, the evaluator with the "mainly
+for programme" marks, read once per export. A programme's MAIN groups hold the
+sections mostly for it (:func:`classify_course_sections`), one of every course
+per group so each group is a complete cohort timetable; the sections mostly
+for other programmes that still seat some of its students follow in their own
+"Other sections with ..." block, each cell counting them. A section seating
+none of its students is not in its file.
+
 Returns a path to a ``.zip`` archive when the scenario spans multiple
 programs, or a single ``.xlsx`` when it spans only one.
 
@@ -46,6 +55,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.course_identity import display_course_label, planner_course_key
+from core.services.section_programme_preference import normalise_programme
 from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_plan_lens import build_scenario_plan_lens
@@ -208,19 +218,186 @@ def _build_export_filter(search: object | None, programs: list[str]) -> ExportFi
     )
 
 
+def _section_passes_search(
+    term_section_id: int | None,
+    plan_lens: dict[str, Any],
+    export_filter: ExportFilter,
+) -> bool:
+    """The ``SHARED`` search token: only sections the lens shares. A section
+    with no lens row passes."""
+    section_lens = (plan_lens.get("sections") or {}).get(str(term_section_id or ""))
+    if not section_lens:
+        return True
+    return not (export_filter.shared_only and not section_lens.get("shared"))
+
+
+def _section_allocated_to_plan(
+    term_section_id: int | None,
+    program: str,
+    plan_lens: dict[str, Any],
+) -> bool:
+    """The lens's demand allocation gives this section to ``program`` (or to
+    nobody in particular). A section with no lens row passes."""
+    section_lens = (plan_lens.get("sections") or {}).get(str(term_section_id or ""))
+    if not section_lens:
+        return True
+    filter_plans = {_upper(plan) for plan in section_lens.get("filter_plans") or []}
+    return _upper(program) in filter_plans if filter_plans else True
+
+
 def _section_matches_plan_filter(
     term_section_id: int | None,
     program: str,
     plan_lens: dict[str, Any],
     export_filter: ExportFilter,
 ) -> bool:
-    section_lens = (plan_lens.get("sections") or {}).get(str(term_section_id or ""))
-    if not section_lens:
-        return True
-    if export_filter.shared_only and not section_lens.get("shared"):
-        return False
-    filter_plans = {_upper(plan) for plan in section_lens.get("filter_plans") or []}
-    return _upper(program) in filter_plans if filter_plans else True
+    """Search and allocation together; used for out-of-plan placements only
+    (in-plan ones are kept by who sits in them, see
+    :func:`classify_course_sections`)."""
+    return _section_passes_search(
+        term_section_id, plan_lens, export_filter
+    ) and _section_allocated_to_plan(term_section_id, program, plan_lens)
+
+
+# ── who sits in each section (owner 2026-10-21) ──────────────────────────────
+
+#: R1: a section is MAIN for programme P when at least this share of the
+#: students the evaluator seats in it are P's (or it is marked for P).
+MAIN_SECTION_SHARE = 0.70
+
+ROLE_MAIN = "main"  # R1 (mark or share), or R2's no-one-seated fallback
+ROLE_MIXED = "mixed"  # R2: no section is main, so the one seating most P stands in
+ROLE_OTHER = "other"  # R4: not main, but seats at least one P student
+
+
+@dataclass(frozen=True)
+class SectionSeat:
+    """One section's role in one programme's file, and the seating behind it."""
+
+    role: str
+    programme_count: int  # the programme's students the evaluator seats here
+    total: int  # everyone it seats here, UNKNOWN programme included
+
+
+def _lens_seating(
+    plan_lens: dict[str, Any], term_section_id: int, program: str
+) -> tuple[int, int, str]:
+    """``(program's students seated, everyone seated, mark)`` for one section.
+
+    Read only from the lens row: ``actual_plans`` is the evaluator's seating
+    (the course payload's ``plans`` is demand, not seating), and the row
+    carries ``preferred_programme`` only under the flag, so with it off a
+    stored mark is inert here as everywhere else. A section with no row
+    (another scenario's, or a registrar section placed on our boards) seats
+    nobody the workspace shows, so it reads as empty.
+    """
+    row = (plan_lens.get("sections") or {}).get(str(term_section_id))
+    if not isinstance(row, dict):
+        return 0, 0, ""
+    target = normalise_programme(program)
+    count = sum(
+        int(n or 0)
+        for plan, n in (row.get("actual_plans") or {}).items()
+        if normalise_programme(plan) == target
+    )
+    mark = normalise_programme(row.get("preferred_programme"))
+    return count, int(row.get("actual_total") or 0), mark
+
+
+def classify_course_sections(
+    program: str, section_ids: list[int], plan_lens: dict[str, Any]
+) -> dict[int, SectionSeat]:
+    """Each section's role for ``program`` in one course on one plan-term sheet.
+
+    ``section_ids`` are the course's sections on that sheet in grid order
+    (label, then id). A section missing from the result is not in the file.
+
+    * R1 main: marked for the programme, or at least ``MAIN_SECTION_SHARE`` of
+      the students seated in it are the programme's. Literal: a section marked
+      for another programme that is 70% this one's is main here too, so one
+      section may be main in two programmes' files.
+    * R2 no course disappears: with the programme seated in the course but no
+      main section, the section seating most of its students (then the higher
+      share, then grid order) is main, labelled mixed. With none of its
+      students seated anywhere in the course, the sections the lens allocates
+      to it (and any marked for it) are main, as before seating counted.
+    * R4 other: any other section seating at least one of its students.
+    """
+    target = normalise_programme(program)
+    seats = {ts_id: _lens_seating(plan_lens, ts_id, program) for ts_id in section_ids}
+
+    def marked(mark: str) -> bool:
+        return bool(target) and mark == target
+
+    out: dict[int, SectionSeat] = {}
+    if not any(count for count, _total, _mark in seats.values()):
+        for ts_id, (count, total, mark) in seats.items():
+            if marked(mark) or _section_allocated_to_plan(ts_id, program, plan_lens):
+                out[ts_id] = SectionSeat(ROLE_MAIN, count, total)
+        return out
+
+    for ts_id, (count, total, mark) in seats.items():
+        if marked(mark) or (total and count / total >= MAIN_SECTION_SHARE):
+            out[ts_id] = SectionSeat(ROLE_MAIN, count, total)
+    if not out:
+        grid_order = {ts_id: idx for idx, ts_id in enumerate(section_ids)}
+        best = max(
+            (ts_id for ts_id, (count, _total, _mark) in seats.items() if count),
+            key=lambda ts_id: (
+                seats[ts_id][0],
+                seats[ts_id][0] / max(seats[ts_id][1], 1),
+                -grid_order[ts_id],
+            ),
+        )
+        out[best] = SectionSeat(ROLE_MIXED, seats[best][0], seats[best][1])
+    for ts_id, (count, total, _mark) in seats.items():
+        if ts_id not in out and count:
+            out[ts_id] = SectionSeat(ROLE_OTHER, count, total)
+    return out
+
+
+def _seat_note(seat: SectionSeat | None, program: str) -> str:
+    """The last line of a section's cell: who it seats, unless it is main."""
+    if seat is None or seat.role == ROLE_MAIN:
+        return ""
+    count = f"{program}: {seat.programme_count} of {seat.total}"
+    return f"mixed · {count}" if seat.role == ROLE_MIXED else count
+
+
+def _time_fit_groups(
+    course_options: dict[str, list[tuple[Any, int]]], *, repeat: bool
+) -> list[list[Any]]:
+    """Pack each course's sections into groups by least time overlap.
+
+    ``course_options`` maps a course to its ``(representative placement,
+    time mask)`` sections in grid order. One group per section of the course
+    with the most; the courses with most sections go first, each taking its
+    unused section that overlaps the group so far least (the lowest index on a
+    tie). With ``repeat`` a course whose sections are all used reuses its least
+    overlapping one, so every group holds every course (R3: each main group is
+    a complete timetable for the cohort); without it the course sits out.
+    """
+    count = max((len(options) for options in course_options.values()), default=0)
+    order = sorted(course_options, key=lambda code: -len(course_options[code]))
+    used: dict[str, set[int]] = defaultdict(set)
+    groups: list[list[Any]] = []
+    for _ in range(count):
+        mask = 0
+        group: list[Any] = []
+        for code in order:
+            options = course_options[code]
+            free = [idx for idx in range(len(options)) if idx not in used[code]]
+            if not free and repeat:
+                free = list(range(len(options)))
+            if not free:
+                continue
+            overlaps = {idx: bin(mask & options[idx][1]).count("1") for idx in free}
+            best = min(free, key=overlaps.__getitem__)
+            group.append(options[best][0])
+            mask |= options[best][1]
+            used[code].add(best)
+        groups.append(group)
+    return groups
 
 
 def _plan_lens_course_payload(plan_lens: dict[str, Any], course_key: str) -> dict[str, Any] | None:
@@ -417,6 +594,27 @@ def _classify_placement_term(
     if board_term is None or board_term == plan_term:
         return plan_term, "matched"
     return plan_term, "misplaced"
+
+
+def _placement_plan_term(
+    course_key: str,
+    board_term: int | None,
+    plan_map: dict[str, int],
+    elective_terms: dict[str, set[int]],
+) -> tuple[int | None, str]:
+    """The plan-term sheet a placement belongs on, and its plan-vs-board status.
+
+    A mapped elective is in place on any of its slots' terms (see
+    :func:`get_plan_elective_terms`); every other course goes by
+    :func:`_classify_placement_term`. One decision for the classification
+    pre-pass and the placement loop, so the two cannot diverge.
+    """
+    slot_terms = elective_terms.get(course_key)
+    if slot_terms and board_term in slot_terms:
+        return board_term, "matched"
+    if slot_terms:
+        return min(slot_terms), "misplaced"
+    return _classify_placement_term(course_key, board_term, plan_map)
 
 
 def export_scenario_per_plan(
@@ -664,8 +862,32 @@ def _build_program_workbook(
         if slot_key in text_matched_keys:
             text_matched_keys.update(filling_keys)
 
-    # Filter to placements whose identity is in this program's plan and whose
-    # section belongs to the same Plan Lens used on the screen.
+    # Who sits where decides what the file shows (owner 2026-10-21): each
+    # course's sections on each plan-term sheet are classified once, from the
+    # lens's seating, before any placement is kept. Per sheet, so an elective
+    # on two slot terms is judged on each. SHARED narrows the candidates
+    # first; the text search filters what classification shows (below).
+    sheet_sections: dict[tuple[int, str], dict[int, str]] = defaultdict(dict)
+    for p in placements:
+        key = _term_section_course_key(p.term_section)
+        plan_term, _status = _placement_plan_term(
+            key, board_term_by_id.get(p.board_id), plan_map, elective_terms
+        )
+        if plan_term is None:
+            continue
+        if not _section_passes_search(p.term_section_id, plan_lens, export_filter):
+            continue
+        sheet_sections[(plan_term, key)][p.term_section_id] = p.term_section.section or "?"
+    section_seats: dict[int, dict[int, SectionSeat]] = defaultdict(dict)
+    for (plan_term, _key), labels in sheet_sections.items():
+        grid_order = [
+            ts_id for ts_id, _label in sorted(labels.items(), key=lambda kv: (kv[1], kv[0]))
+        ]
+        section_seats[plan_term].update(classify_course_sections(program, grid_order, plan_lens))
+
+    # Keep the placements of the sections this program's file shows: an
+    # in-plan section by who sits in it, an out-of-plan one by the lens's
+    # allocation (the audit sheet's list).
     in_plan_placements: list[SectionPlacement] = []
     placement_terms: dict[int, int] = {}
     out_of_plan_codes: set[str] = set()
@@ -680,13 +902,7 @@ def _build_program_workbook(
             export_filter.text_tokens,
             _placement_search_text(p, key, course_names),
         )
-        slot_terms = elective_terms.get(key)
-        if slot_terms and board_term in slot_terms:
-            plan_term, status = board_term, "matched"
-        elif slot_terms:
-            plan_term, status = min(slot_terms), "misplaced"
-        else:
-            plan_term, status = _classify_placement_term(key, board_term, plan_map)
+        plan_term, status = _placement_plan_term(key, board_term, plan_map, elective_terms)
         if plan_term is None:
             if not _section_matches_plan_filter(
                 p.term_section_id, program, plan_lens, export_filter
@@ -696,7 +912,7 @@ def _build_program_workbook(
                 out_of_plan_codes.add(key)
                 course_board_terms[key].add(board_term or 0)
             continue
-        if not _section_matches_plan_filter(p.term_section_id, program, plan_lens, export_filter):
+        if p.term_section_id not in section_seats.get(plan_term, {}):
             continue
         if export_filter.text_tokens and not (placement_matches_text or key in text_matched_keys):
             continue
@@ -811,6 +1027,7 @@ def _build_program_workbook(
             course_fill=_course_fill,
             apply_outer_border=_apply_outer_border,
             teachers=teachers,
+            section_seats=section_seats.get(term_num, {}),
         )
 
     _render_plan_rooms_sheet(
@@ -996,8 +1213,15 @@ def _render_plan_term_sheet(
     course_fill,
     apply_outer_border,
     teachers: dict[int, str] | None = None,
+    section_seats: dict[int, SectionSeat] | None = None,
 ) -> None:
-    """Render the day×slot grid + course info sidebar for one plan term."""
+    """Render the day×slot grid + course info sidebar for one plan term.
+
+    ``section_seats`` is each shown section's role in ``program``'s file (see
+    :func:`classify_course_sections`): the main groups come first, one section
+    of every main course each, then the other sections seating some of its
+    students in their own block. A section without an entry draws as main.
+    """
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.cell.text import InlineFont
     from openpyxl.styles import Alignment, Font
@@ -1041,55 +1265,39 @@ def _render_plan_term_sheet(
     for p in placements:
         section_all_placements[p.term_section_id].append(p)
 
-    # course_key -> {section_label: [SectionPlacement]} (representative per section)
-    seen_sections: dict[str, dict[str, list[SectionPlacement]]] = defaultdict(dict)
+    # course_key -> {term_section_id: representative placement}. Keyed by the
+    # section, not its label, so two sections sharing a label stay two.
+    seen_sections: dict[str, dict[int, SectionPlacement]] = defaultdict(dict)
     for p in placements:
         code = _term_section_course_key(p.term_section) or "?"
-        sec = (p.term_section.section if p.term_section else "?") or "?"
-        seen_sections[code].setdefault(sec, []).append(p)
-
-    course_sections: dict[str, list[SectionPlacement]] = {
-        code: [secs[s][0] for s in sorted(secs.keys())] for code, secs in seen_sections.items()
-    }
-    max_groups = max((len(secs) for secs in course_sections.values()), default=1)
+        seen_sections[code].setdefault(p.term_section_id, p)
 
     # Bitmask-based smart group split (clone of timetable_export logic) ──
     from core.services.timetable_workspace import _time_mask
 
     def _section_bitmask(ts_id: int) -> int:
         mask = 0
-        for pp in section_all_placements.get(ts_id, []):  # noqa: B023
+        for pp in section_all_placements.get(ts_id, []):
             mask |= _time_mask(pp.day, pp.start_time, pp.end_time)
         return mask
 
-    course_options: dict[str, list[tuple]] = {
-        code: [(s, _section_bitmask(s.term_section_id)) for s in secs]
-        for code, secs in course_sections.items()
-    }
+    def _grid_order(item: tuple[int, SectionPlacement]) -> tuple[str, int]:
+        ts_id, rep = item
+        return ((rep.term_section.section if rep.term_section else "?") or "?", ts_id)
 
-    group_assignments: list[list[SectionPlacement]] = []
-    used_sections: dict[str, set[int]] = defaultdict(set)
-    for _g in range(max_groups):
-        group_mask = 0
-        group: list[SectionPlacement] = []
-        sorted_codes = sorted(course_options.keys(), key=lambda c: -len(course_options[c]))
-        for code in sorted_codes:
-            options = course_options[code]
-            best_idx = None
-            best_conflicts = float("inf")
-            for idx, (_sp, sec_mask) in enumerate(options):
-                if idx in used_sections[code]:
-                    continue
-                overlap = bin(group_mask & sec_mask).count("1")
-                if overlap < best_conflicts:
-                    best_conflicts = overlap
-                    best_idx = idx
-            if best_idx is not None:
-                sec_p, sec_mask = options[best_idx]
-                group.append(sec_p)
-                group_mask |= sec_mask
-                used_sections[code].add(best_idx)
-        group_assignments.append(group)
+    seats = section_seats or {}
+    main_options: dict[str, list[tuple[SectionPlacement, int]]] = {}
+    other_options: dict[str, list[tuple[SectionPlacement, int]]] = {}
+    for code, secs in seen_sections.items():
+        for ts_id, rep in sorted(secs.items(), key=_grid_order):
+            seat = seats.get(ts_id)
+            options = other_options if seat and seat.role == ROLE_OTHER else main_options
+            options.setdefault(code, []).append((rep, _section_bitmask(ts_id)))
+    # R3: one main group per main section of the course with most, each a
+    # complete timetable (a course short of sections repeats one). R4: the
+    # other sections packed the same way after them, each section once.
+    main_groups = _time_fit_groups(main_options, repeat=True)
+    other_groups = _time_fit_groups(other_options, repeat=False)
 
     # ── Render each group's grid ─────────────────────────────────────────
     def _tm(t: str) -> int:
@@ -1108,6 +1316,156 @@ def _render_plan_term_sheet(
                 best_overlap = overlap
                 best_idx = i
         return best_idx
+
+    # One meeting read per section and day, however many groups repeat it.
+    meetings: dict[tuple[int, str], TermSectionMeeting | None] = {}
+
+    def _meeting(ts: Any, day: str) -> TermSectionMeeting | None:
+        if (ts.id, day) not in meetings:
+            meetings[(ts.id, day)] = TermSectionMeeting.objects.filter(
+                term_section=ts, day=day
+            ).first()
+        return meetings[(ts.id, day)]
+
+    def _group_heading(row: int, text: str) -> int:
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
+        gcell = ws.cell(row=row, column=1)
+        gcell.value = text
+        gcell.font = Font(bold=True, size=9, color="4056E3")
+        gcell.alignment = center_align
+        return row + 1
+
+    def _draw_grid(row: int, group_placements: list[SectionPlacement]) -> int:
+        """Draw one group's day×slot grid from ``row``; return the next row."""
+        grid_start_row = row
+        ws.cell(row=row, column=1).border = thin_border
+        for s_idx, _slot in enumerate(slot_config):
+            cell = ws.cell(row=row, column=2 + s_idx)
+            cell.value = s_idx + 1
+            cell.fill = hdr_fill
+            cell.font = hdr_font
+            cell.alignment = hdr_align
+            cell.border = thin_border
+        row += 1
+        ws.cell(row=row, column=1).border = thin_border
+        for s_idx, slot in enumerate(slot_config):
+            cell = ws.cell(row=row, column=2 + s_idx)
+            cell.value = f"{slot['start']}-{slot['end']}"
+            cell.fill = hdr_fill
+            cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
+            cell.alignment = hdr_align
+            cell.border = thin_border
+        row += 1
+
+        grid: dict[str, dict[str, dict]] = {}
+        for day in DAY_LABELS:
+            grid[day] = {}
+            for slot in slot_config:
+                sk = f"{slot['start']}-{slot['end']}"
+                grid[day][sk] = {"text": "", "courses": [], "lab_time": "", "misplaced": False}
+
+        for p in group_placements:
+            # Who sits here, last in the cell: line 2 stays the teacher (D3).
+            note = _seat_note(seats.get(p.term_section_id), program)
+            ts_placements = section_all_placements.get(p.term_section_id, [])
+            for pp in ts_placements:
+                day = pp.day.upper()[:3]
+                if day not in grid:
+                    continue
+
+                is_lab = _is_lab_p(pp)
+                if is_lab:
+                    idx = _best_lecture_slot(pp)
+                    slot_key = f"{slot_config[idx]['start']}-{slot_config[idx]['end']}"
+                else:
+                    slot_key = f"{pp.start_time}-{pp.end_time}"
+                    if slot_key not in grid.get(day, {}):
+                        for slot in slot_config:
+                            if slot["start"] == pp.start_time:
+                                slot_key = f"{slot['start']}-{slot['end']}"
+                                break
+
+                ts = pp.term_section
+                code = _term_section_course_key(ts) or "?"
+                is_misplaced = course_status.get(code) == "misplaced"
+                meeting = _meeting(ts, day)
+                instructor = meeting.instructor if meeting else ""
+                if teachers is not None and ts.id in teachers:
+                    instructor = teachers[ts.id] or TEACHER_TBD
+                room = pp.room or (meeting.room if meeting else "")
+                text = _section_cell_label(ts, duplicate_course_codes)
+                if is_misplaced:
+                    # Show the actual board term beside the course code so
+                    # the registrar sees AT A GLANCE that the placement is
+                    # off-plan — e.g. "AI113 S1 (on T3)".
+                    actual = sorted(course_board_terms.get(code, set()))
+                    if actual:
+                        text += f" (on T{actual[0]})"
+                if instructor:
+                    text += f"\n{instructor}"
+                if room:
+                    text += f"\n{room}"
+                if note:
+                    text += f"\n{note}"
+
+                cd = grid[day][slot_key]
+                if cd["text"]:
+                    cd["text"] += f"\n---\n{text}"
+                else:
+                    cd["text"] = text
+                cd["courses"].append(code)
+                if is_lab:
+                    cd["lab_time"] = f"{pp.start_time}-{pp.end_time}"
+                if is_misplaced:
+                    cd["misplaced"] = True
+
+        for day_code, day_name in zip(DAY_LABELS, DAY_NAMES, strict=False):
+            cell = ws.cell(row=row, column=1)
+            cell.value = day_name
+            cell.font = bold_font
+            cell.fill = slot_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            for s_idx, slot in enumerate(slot_config):
+                sk = f"{slot['start']}-{slot['end']}"
+                cell = ws.cell(row=row, column=2 + s_idx)
+                cd = grid.get(day_code, {}).get(
+                    sk, {"text": "", "courses": [], "lab_time": "", "misplaced": False}
+                )
+
+                if cd["lab_time"]:
+                    normal_if = InlineFont(sz=8.5, rFont="Consolas")
+                    red_if = InlineFont(sz=8, rFont="Consolas", b=True, color="C03030")
+                    cell.value = CellRichText(
+                        TextBlock(normal_if, cd["text"]),
+                        TextBlock(red_if, f"\n{cd['lab_time']}"),
+                    )
+                else:
+                    cell.value = cd["text"]
+                    cell.font = normal_font
+
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+                if len(cd["courses"]) > 1:
+                    cell.fill = conflict_fill
+                elif len(cd["courses"]) == 1:
+                    if cd["misplaced"]:
+                        cell.fill = misplaced_fill
+                    else:
+                        cell.fill = course_fill(cd["courses"][0])
+
+            has_lab_in_row = any(
+                grid.get(day_code, {}).get(f"{s['start']}-{s['end']}", {}).get("lab_time")
+                for s in slot_config
+            )
+            if has_lab_in_row:
+                ws.row_dimensions[row].height = 42
+            row += 1
+
+        apply_outer_border(ws, grid_start_row, 1, row - 1, 1 + num_slots)
+        return row
 
     # If no placements, we still draw the empty grid header so the sheet
     # isn't blank. Skip group rendering loop.
@@ -1150,146 +1508,48 @@ def _render_plan_term_sheet(
             row=row, column=1, value="No placements for this plan term in the current scenario."
         ).font = Font(italic=True, color="888888", size=9)
     else:
-        for group_idx, group_placements in enumerate(group_assignments):
+        # Main groups: headed whenever there is more than one block to tell apart.
+        headed = len(main_groups) > 1 or bool(other_groups)
+        for group_idx, group_placements in enumerate(main_groups):
             if not group_placements:
                 continue
             if group_idx > 0:
                 row += 1
-
-            if max_groups > 1:
-                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
-                gcell = ws.cell(row=row, column=1)
-                gcell.value = f"Group {group_idx + 1} — {len(group_placements)} courses"
-                gcell.font = Font(bold=True, size=9, color="4056E3")
-                gcell.alignment = center_align
-                row += 1
-
-            grid_start_row = row
-            ws.cell(row=row, column=1).border = thin_border
-            for s_idx, _slot in enumerate(slot_config):
-                cell = ws.cell(row=row, column=2 + s_idx)
-                cell.value = s_idx + 1
-                cell.fill = hdr_fill
-                cell.font = hdr_font
-                cell.alignment = hdr_align
-                cell.border = thin_border
-            row += 1
-            ws.cell(row=row, column=1).border = thin_border
-            for s_idx, slot in enumerate(slot_config):
-                cell = ws.cell(row=row, column=2 + s_idx)
-                cell.value = f"{slot['start']}-{slot['end']}"
-                cell.fill = hdr_fill
-                cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
-                cell.alignment = hdr_align
-                cell.border = thin_border
-            row += 1
-
-            grid: dict[str, dict[str, dict]] = {}
-            for day in DAY_LABELS:
-                grid[day] = {}
-                for slot in slot_config:
-                    sk = f"{slot['start']}-{slot['end']}"
-                    grid[day][sk] = {"text": "", "courses": [], "lab_time": "", "misplaced": False}
-
-            for p in group_placements:
-                ts_placements = section_all_placements.get(p.term_section_id, [])
-                for pp in ts_placements:
-                    day = pp.day.upper()[:3]
-                    if day not in grid:
-                        continue
-
-                    is_lab = _is_lab_p(pp)
-                    if is_lab:
-                        idx = _best_lecture_slot(pp)
-                        slot_key = f"{slot_config[idx]['start']}-{slot_config[idx]['end']}"
-                    else:
-                        slot_key = f"{pp.start_time}-{pp.end_time}"
-                        if slot_key not in grid.get(day, {}):
-                            for slot in slot_config:
-                                if slot["start"] == pp.start_time:
-                                    slot_key = f"{slot['start']}-{slot['end']}"
-                                    break
-
-                    ts = pp.term_section
-                    code = _term_section_course_key(ts) or "?"
-                    is_misplaced = course_status.get(code) == "misplaced"
-                    meeting = TermSectionMeeting.objects.filter(term_section=ts, day=day).first()
-                    instructor = meeting.instructor if meeting else ""
-                    if teachers is not None and ts.id in teachers:
-                        instructor = teachers[ts.id] or TEACHER_TBD
-                    room = pp.room or (meeting.room if meeting else "")
-                    text = _section_cell_label(ts, duplicate_course_codes)
-                    if is_misplaced:
-                        # Show the actual board term beside the course code so
-                        # the registrar sees AT A GLANCE that the placement is
-                        # off-plan — e.g. "AI113 S1 (on T3)".
-                        actual = sorted(course_board_terms.get(code, set()))
-                        if actual:
-                            text += f" (on T{actual[0]})"
-                    if instructor:
-                        text += f"\n{instructor}"
-                    if room:
-                        text += f"\n{room}"
-
-                    cd = grid[day][slot_key]
-                    if cd["text"]:
-                        cd["text"] += f"\n---\n{text}"
-                    else:
-                        cd["text"] = text
-                    cd["courses"].append(code)
-                    if is_lab:
-                        cd["lab_time"] = f"{pp.start_time}-{pp.end_time}"
-                    if is_misplaced:
-                        cd["misplaced"] = True
-
-            for day_code, day_name in zip(DAY_LABELS, DAY_NAMES, strict=False):
-                cell = ws.cell(row=row, column=1)
-                cell.value = day_name
-                cell.font = bold_font
-                cell.fill = slot_fill
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-
-                for s_idx, slot in enumerate(slot_config):
-                    sk = f"{slot['start']}-{slot['end']}"
-                    cell = ws.cell(row=row, column=2 + s_idx)
-                    cd = grid.get(day_code, {}).get(
-                        sk, {"text": "", "courses": [], "lab_time": "", "misplaced": False}
-                    )
-
-                    if cd["lab_time"]:
-                        normal_if = InlineFont(sz=8.5, rFont="Consolas")
-                        red_if = InlineFont(sz=8, rFont="Consolas", b=True, color="C03030")
-                        cell.value = CellRichText(
-                            TextBlock(normal_if, cd["text"]),
-                            TextBlock(red_if, f"\n{cd['lab_time']}"),
-                        )
-                    else:
-                        cell.value = cd["text"]
-                        cell.font = normal_font
-
-                    cell.border = thin_border
-                    cell.alignment = Alignment(
-                        horizontal="center", vertical="center", wrap_text=True
-                    )
-
-                    if len(cd["courses"]) > 1:
-                        cell.fill = conflict_fill
-                    elif len(cd["courses"]) == 1:
-                        if cd["misplaced"]:
-                            cell.fill = misplaced_fill
-                        else:
-                            cell.fill = course_fill(cd["courses"][0])
-
-                has_lab_in_row = any(
-                    grid.get(day_code, {}).get(f"{s['start']}-{s['end']}", {}).get("lab_time")
-                    for s in slot_config
+            if headed:
+                row = _group_heading(
+                    row, f"Group {group_idx + 1} — {len(group_placements)} courses"
                 )
-                if has_lab_in_row:
-                    ws.row_dimensions[row].height = 42
-                row += 1
+            row = _draw_grid(row, group_placements)
 
-            apply_outer_border(ws, grid_start_row, 1, row - 1, 1 + num_slots)
+        # Other sections seating some of this program's students (R4).
+        if other_groups:
+            if any(main_groups):
+                row += 1
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
+            cell = ws.cell(row=row, column=1)
+            cell.value = f"Other sections with {program} students"
+            cell.font = board_hdr_font
+            cell.alignment = center_align
+            for c in range(1, 2 + num_slots):
+                ws.cell(row=row, column=c).fill = board_hdr_fill
+            row += 1
+            ws.cell(
+                row=row,
+                column=1,
+                value=(
+                    "Mainly for other programmes; "
+                    f"each cell counts {program} students of all seated."
+                ),
+            ).font = Font(italic=True, color="888888", size=9)
+            row += 1
+            for group_idx, group_placements in enumerate(other_groups):
+                if group_idx > 0:
+                    row += 1
+                if len(other_groups) > 1:
+                    row = _group_heading(
+                        row, f"Other group {group_idx + 1} — {len(group_placements)} courses"
+                    )
+                row = _draw_grid(row, group_placements)
 
     # ── Course info sidebar (right side) ─────────────────────────────────
     # An elective is listed where it has a section; its slots' rows carry the
