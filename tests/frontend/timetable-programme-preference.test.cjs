@@ -421,3 +421,61 @@ test('without the feature the Selection tab has no mark control', async t => {
   assert.equal(body.querySelector('select'), null);
   assert.doesNotMatch(body.textContent, /Mainly for programme|Seated/);
 });
+
+/* ── a double-click on a card opens its drawer ──────────────────────────
+ * The first click selects the card and mounts the move summary above the grid,
+ * which pushes the grid down before the second click lands (in Chromium the
+ * second click and the dblclick then hit the pane body, or the card that slid
+ * under the pointer). Both still belong to the card the first click selected. */
+
+const fire = (h, target, type, detail) => target.dispatchEvent(new h.w.MouseEvent(type, { bubbles: true, cancelable: true, detail }));
+const card = (h, id) => h.d.querySelector(`.tws-pane .cell.filled[data-placement-id="${id}"]`);
+
+/* Both sections on one grid: S1 on Sunday (10) and S1 on Monday (11). */
+async function grid(t) {
+  const h = await harness(t, () => undefined, { placementExtra: { ...MARKED, section: 'S1' } });
+  assert.ok(card(h, 10) && card(h, 11), 'both cards are on the grid');
+  return h;
+}
+
+test('a double-click opens the drawer of the card the first click selected, wherever the second click lands', async t => {
+  for (const landing of ['card', 'body']) {
+    const h = await grid(t);
+    fire(h, card(h, 11), 'click', 1);
+    assert.equal(h.state.selectedPlacementId, 11);
+    assert.ok(h.d.querySelector('.tws-assist-summary'), 'the first click mounted the move summary');
+    const analyses = () => h.requests.filter(row => row.url.endsWith('/repair/analyse/')).length;
+    await wait(() => analyses() === 1);
+    for (let i = 0; i < 6; i++) await settle();
+    const before = h.requests.length;
+    const target = landing === 'card' ? card(h, 10) : h.d.querySelector('.tws-pane .pane-body');
+    fire(h, target, 'click', 2);
+    fire(h, target, 'dblclick', 2);
+    await settle();
+    assert.equal(h.w.__splitAudit.DRAWER.placementId, 11, `landing on the ${landing}`);
+    assert.match(h.d.getElementById('twsDrawerSub').textContent, /MON/);
+    assert.equal(h.d.getElementById('twsDrawerProgrammeSelect').value, 'AI2');
+    assert.equal(h.state.selectedPlacementId, 11, 'the second click selected nothing else');
+    assert.deepEqual(h.requests.slice(before).map(row => row.url), [], 'the second click re-ran no analysis');
+  }
+});
+
+test('the second click of any other double-click is left alone', async t => {
+  const h = await grid(t);
+  const body = h.d.querySelector('.tws-pane .pane-body');
+  fire(h, card(h, 11), 'click', 1);
+  await settle();
+  // A new first click elsewhere disarms the card.
+  fire(h, body, 'click', 1);
+  let reached = 0;
+  body.addEventListener('click', () => { reached += 1; });
+  body.addEventListener('dblclick', () => { reached += 1; });
+  fire(h, body, 'click', 2);
+  fire(h, body, 'dblclick', 2);
+  await settle();
+  assert.equal(reached, 2, 'the second click and the dblclick reached their target');
+  assert.equal(h.w.__splitAudit.DRAWER.placementId, null);
+  // A card's own dblclick still opens that card's drawer.
+  fire(h, card(h, 10), 'dblclick', 2);
+  assert.equal(h.w.__splitAudit.DRAWER.placementId, 10);
+});

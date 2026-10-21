@@ -3085,7 +3085,7 @@ function bindPaneControls(idx) {
         e.dataTransfer.effectAllowed = 'move';
       });
       cell.addEventListener('dragend', () => clearSlotAssist());
-      cell.addEventListener('click', () => {
+      cell.addEventListener('click', (e) => {
         document.querySelectorAll('.tws-pane .cell.selected').forEach(c => c.classList.remove('selected'));
         cell.classList.add('selected');
         S.selectedPaneIdx = idx;
@@ -3095,6 +3095,7 @@ function bindPaneControls(idx) {
         // Conflicted cells open directly into evidence so the marker is actionable.
         if (cell.classList.contains('clash')) openSelectionInspector();
         else if (RP.open && RP.tab === 'selection') renderRpanel();
+        if (e.detail === 1) armCardDoubleClick(idx, S.selectedPlacementId);
       });
       cell.addEventListener('dblclick', (e) => {
         e.stopPropagation();
@@ -3102,6 +3103,42 @@ function bindPaneControls(idx) {
       });
     }
   });
+}
+
+/* ── Double-click on a section card opens its drawer ──
+ * The first click selects the card and mounts the move summary above the grid
+ * (and a conflicted card opens the inspector), so the grid moves before the
+ * second click lands: that click and the dblclick hit whatever slid under the
+ * pointer — the pane body, or another section's card. The browser still counts
+ * them as one double-click (detail 2), so they belong to the card the first
+ * click selected: the second click is swallowed (it would select or preview
+ * elsewhere, and re-run the slot analysis) and the dblclick opens that card's
+ * drawer. Any other first click, anywhere on the page, disarms it, so a fast
+ * double-click on an empty slot (preview, then move) is untouched. Listening on
+ * the document also catches a second click that the opening inspector slid
+ * under the pointer. */
+const CARD_DBLCLICK = { paneIdx: null, placementId: null };
+
+function armCardDoubleClick(paneIdx, placementId) {
+  CARD_DBLCLICK.paneIdx = paneIdx;
+  CARD_DBLCLICK.placementId = Number.isFinite(placementId) ? placementId : null;
+}
+
+function initCardDoubleClick() {
+  document.addEventListener('click', (e) => {
+    if (e.detail < 2) { armCardDoubleClick(null, null); return; }
+    if (CARD_DBLCLICK.placementId == null) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  document.addEventListener('dblclick', (e) => {
+    const { paneIdx, placementId } = CARD_DBLCLICK;
+    if (placementId == null) return;
+    armCardDoubleClick(null, null);
+    e.stopPropagation();
+    e.preventDefault();
+    openDrawer(paneIdx, placementId);
+  }, true);
 }
 
 /* ── Drag & drop handler — mirrors main-page onDrop semantics ── */
@@ -9311,6 +9348,7 @@ function initDismissibleDetailsMenus() {
   $('twsScenario').addEventListener('change', onScenarioChange);
   initDismissibleDetailsMenus();
   initPaneHeaderActionDelegation();
+  initCardDoubleClick();
   $('twsOptimise').addEventListener('click', () => doOptimise('current'));
   $('twsGlobalRepairPlan')?.addEventListener('click', () => openGlobalRepairPlanModal());
   $('twsOptimiseMenu')?.addEventListener('click', (e) => {
