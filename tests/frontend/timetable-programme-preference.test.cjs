@@ -257,7 +257,12 @@ test('in Arabic the drawer and the selection panel speak Arabic', async t => {
   h.state.selectedPlacementId = 11; h.state.selectedPaneIdx = 0;
   Object.assign(h.w.__splitAudit.RP, { open: true, tab: 'selection' });
   h.w.renderRpanel();
-  assert.match(h.d.body.textContent, /مخصّصة أساساً لبرنامج\s*AI2/);
+  const tab = h.d.getElementById('twsSelProgramme');
+  assert.equal(tab.querySelector('label').textContent, 'مخصّصة أساساً لبرنامج');
+  const select = h.d.getElementById('twsSelProgrammeSelect');
+  assert.equal(select.value, 'AI2');
+  assert.equal(select.options[0].textContent, 'أي برنامج');
+  assert.match(tab.textContent, /المقاعد/);
 });
 
 test('without the feature the drawer renders exactly as before', async t => {
@@ -270,4 +275,149 @@ test('without the feature the drawer renders exactly as before', async t => {
   assert.equal(h.d.getElementById('twsDrawerProgrammeSelect'), null);
   assert.doesNotMatch(h.d.getElementById('twsDrawerBody').textContent, /Mainly for programme|Seated/);
   assert.equal(h.requests.length, 0);
+});
+
+/* ── the Selection tab ──────────────────────────────────────────────────
+ * A click on a section lands in the inspector's Selection tab, so the mark is
+ * edited there too, not only in the drawer. */
+
+async function selection(t, options = {}, intercept = () => undefined) {
+  const h = await harness(t, intercept, { placementExtra: MARKED, ...options });
+  if (options.published) h.state.scenarioMeta.status = 'published';
+  await h.w.loadPlanLens();
+  h.requests.length = 0;
+  h.state.selectedPlacementId = 11; h.state.selectedPaneIdx = 0;
+  Object.assign(h.w.__splitAudit.RP, { open: true, tab: 'selection' });
+  h.w.renderRpanel();
+  await settle();
+  const select = () => h.d.getElementById('twsSelProgrammeSelect');
+  const block = () => h.d.getElementById('twsSelProgramme');
+  return { ...h, select, block };
+}
+
+const change = (h, select, value) => {
+  select.value = value;
+  select.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+};
+
+test('the Selection tab offers the mark as a select and sends nothing beyond its own look-ups', async t => {
+  const h = await selection(t);
+  const urls = h.requests.map(row => row.url.split('?')[0]);
+  assert.deepEqual(urls.filter(url => !/\/(room-candidates|student-evidence)\/$/.test(url)), [],
+    `selecting a section asks for nothing new: ${urls}`);
+  assert.ok(h.d.getElementById('twsRpanelBody').contains(h.block()));
+  assert.equal(h.block().querySelector('label').textContent, 'Mainly for programme');
+  assert.equal(h.block().querySelector('label').htmlFor, 'twsSelProgrammeSelect');
+  assert.deepEqual([...h.select().options].map(option => [option.value, option.textContent]),
+    [['', 'Any'], ['AI2', 'AI2'], ['DS', 'DS']]);
+  assert.equal(h.select().value, 'AI2');
+  assert.equal(h.select().disabled, false);
+  assert.equal(h.select().hasAttribute('aria-busy'), false);
+  assert.equal(h.d.getElementById('twsSelProgrammeMix').textContent, '6: AI2 6');
+});
+
+test('the Selection tab cannot change the mark on a published scenario or a section owned elsewhere', async t => {
+  const published = await selection(t, { published: true });
+  assert.equal(published.select().disabled, true);
+  assert.equal(published.select().value, 'AI2');
+  const owned = await selection(t, { placementExtra: { preferred_programme: 'AI2', preferred_programme_editable: false } });
+  assert.equal(owned.select().disabled, true);
+});
+
+test('the Selection tab warns when no student of the marked programme needs the course', async t => {
+  const h = await selection(t, { placementExtra: { preferred_programme: 'CYS', preferred_programme_editable: true } });
+  assert.deepEqual([...h.select().options].map(option => option.value), ['', 'AI2', 'DS', 'CYS']);
+  assert.match(h.block().querySelector('.tws-programme-note.warn').textContent, /No CYS student needs this course/);
+});
+
+test('a change in the Selection tab posts once; the tab and an open drawer both show the new mark', async t => {
+  const answer = deferred();
+  let lensCalls = 0;
+  const h = await selection(t, {}, url => {
+    if (url.endsWith('/programme-preference/')) return answer.promise;
+    if (url.endsWith('/plan-lens/') && ++lensCalls > 1) {
+      const lens = LENS();
+      lens.plan_lens.sections['111'].actual_plans = { AI2: 1, DS: 5 };
+      return lens;
+    }
+    return undefined;
+  });
+  h.w.openDrawer(0, 11);
+  await settle();
+  const drawerSelect = () => h.d.getElementById('twsDrawerProgrammeSelect');
+  h.select().focus();
+  change(h, h.select(), 'DS');
+  await settle();
+  // While it saves, both copies are locked and say they are busy.
+  for (const select of [h.select(), drawerSelect()]) {
+    assert.equal(select.disabled, true);
+    assert.equal(select.getAttribute('aria-busy'), 'true');
+  }
+  answer.resolve({ ok: true, term_section_id: 111, preferred_programme: 'DS', changed: true });
+  await wait(() => /DS 5/.test(h.d.getElementById('twsSelProgrammeMix')?.textContent || ''));
+  for (let i = 0; i < 10; i++) await settle();
+  const posts = h.requests.filter(row => row.url.endsWith('/programme-preference/'));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, '/ops/tw/placements/11/programme-preference/');
+  assert.equal(posts[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(posts[0].options.body), { preferred_programme: 'DS' });
+  assert.equal(h.lensRequests().length, 1);
+  for (const select of [h.select(), drawerSelect()]) {
+    assert.equal(select.value, 'DS');
+    assert.equal(select.disabled, false);
+    assert.equal(select.hasAttribute('aria-busy'), false);
+  }
+  assert.match(h.d.getElementById('twsDrawerProgrammeMix').textContent, /DS 5/);
+  // The lens rows beside the mark agree with the new seating.
+  assert.match(h.d.getElementById('twsSelLens').textContent, /DS 5 · AI2 1 · total 6/);
+  // Focus is handed back to the select the change came from.
+  assert.equal(h.d.activeElement, h.select());
+});
+
+test('focus is not pulled back to the Selection tab once the user has moved to another section', async t => {
+  const answer = deferred();
+  const h = await selection(t, {}, url => (url.endsWith('/programme-preference/') ? answer.promise : undefined));
+  h.select().focus();
+  change(h, h.select(), 'DS');
+  await settle();
+  // Meanwhile the user selects the other section; the tab now shows it.
+  h.state.selectedPlacementId = 10;
+  h.w.renderRpanel();
+  assert.equal(h.d.getElementById('twsSelProgramme').dataset.placementId, '10');
+  answer.resolve({ ok: true, term_section_id: 111, preferred_programme: 'DS', changed: false });
+  await wait(() => !h.w.__splitAudit.S.panes[0].boardData.placements.some(row => row.preferred_programme === 'AI2' && row.id === 11));
+  for (let i = 0; i < 6; i++) await settle();
+  assert.equal(h.d.activeElement, h.d.body);
+});
+
+test('a change in the drawer shows in the Selection tab before the lens is back', async t => {
+  let lensCalls = 0;
+  const h = await selection(t, {}, url => {
+    if (url.endsWith('/programme-preference/')) return { ok: true, term_section_id: 111, preferred_programme: '', changed: true };
+    // The reloaded lens is a heavy preview: it is still out when the save is done.
+    if (url.endsWith('/plan-lens/') && ++lensCalls > 1) return new Promise(() => {});
+    return undefined;
+  });
+  h.w.openDrawer(0, 11);
+  await settle();
+  change(h, h.d.getElementById('twsDrawerProgrammeSelect'), '');
+  await wait(() => h.select()?.value === '' && !h.select().disabled);
+  assert.equal(h.requests.filter(row => row.url.endsWith('/programme-preference/')).length, 1);
+  assert.equal(h.state.planLens.loading, true, 'the lens is still out');
+  assert.equal(h.d.getElementById('twsDrawerProgrammeSelect').value, '');
+  assert.equal(h.d.getElementById('twsDrawerProgrammeSelect').disabled, false);
+});
+
+test('without the feature the Selection tab has no mark control', async t => {
+  const h = await harness(t);
+  await h.w.loadPlanLens();
+  h.state.selectedPlacementId = 11; h.state.selectedPaneIdx = 0;
+  Object.assign(h.w.__splitAudit.RP, { open: true, tab: 'selection' });
+  h.w.renderRpanel();
+  await settle();
+  const body = h.d.getElementById('twsRpanelBody');
+  assert.match(body.textContent, /AI236/, 'the tab rendered the section');
+  assert.equal(h.d.getElementById('twsSelProgramme'), null);
+  assert.equal(body.querySelector('select'), null);
+  assert.doesNotMatch(body.textContent, /Mainly for programme|Seated/);
 });

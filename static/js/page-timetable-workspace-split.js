@@ -7215,8 +7215,8 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section || '—')}</span></div>
     ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" id="twsEnglishPattern">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
-    ${planLensDetailsFieldsHtml(p)}
-    ${programmeMarkSelectionHtml(p)}
+    <div id="twsSelLens" class="tws-sel-group" data-placement-id="${esc(p.id)}">${planLensDetailsFieldsHtml(p)}</div>
+    ${programmeMarkHostHtml(p, PM_VIEWS.selection)}
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اللوحة' : 'Board'}</span><span class="value">${esc(board.label)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
@@ -7254,6 +7254,7 @@ function renderRpanelSelection(body) {
       <button class="tws-btn primary" id="twsSelRepair" style="flex:1">${IS_AR ? 'إصلاح' : 'Repair'}</button>
     </div>
   `;
+  renderSelectionProgramme();
   // Wire the button — no inline onclick
   body.querySelector('#twsEnglishPattern')?.addEventListener('click', () => switchEnglishSplitPattern(p.id));
   const openBtn = body.querySelector('#twsSelOpen');
@@ -8155,7 +8156,7 @@ function openDrawer(paneIdx, placementId) {
     <div class="field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value mono">${esc(p.section || '—')}</span></div>
     ${planLensDetailsFieldsHtml(p, 'field')}
-    ${hasProgrammeMark(p) ? '<div id="twsDrawerProgramme"></div>' : ''}
+    ${programmeMarkHostHtml(p, PM_VIEWS.drawer)}
     <div class="field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value mono">${esc(p.day)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
@@ -8219,9 +8220,17 @@ function closeDrawer() {
  * The server adds `preferred_programme` (and `preferred_programme_editable`)
  * to a placement only with the feature on; without the key nothing here
  * renders. The seated mix comes from the plan lens already loaded (a heavy
- * preview on the server's lane), so opening the drawer sends no request; a
- * save posts once and the lens reloads once. */
+ * preview on the server's lane), so opening the drawer or selecting a section
+ * sends no request; a save posts once and the lens reloads once.
+ * The control sits in two places: the inspector's Selection tab, where a
+ * click on a section lands, and the drawer. Each host carries the placement it
+ * was drawn for and repaints on its own, so a save never re-runs the Selection
+ * tab's room and student look-ups. */
 const PROGRAMME_MARK = { pending: new Set() };
+const PM_VIEWS = {
+  selection: { host: 'twsSelProgramme', hostClass: 'tws-sel-group', fieldClass: 'tws-sel-field', shown: () => RP.open && RP.tab === 'selection' },
+  drawer: { host: 'twsDrawerProgramme', hostClass: '', fieldClass: 'field', shown: () => DRAWER.placementId != null },
+};
 const PM_T = {
   label: IS_AR ? 'مخصّصة أساساً لبرنامج' : 'Mainly for programme',
   any: IS_AR ? 'أي برنامج' : 'Any',
@@ -8266,7 +8275,7 @@ function programmeTradeHtml(grouping) {
     : `Grouping moved ${moved} student${moved === 1 ? '' : 's'}; total student waiting ${signed} min`;
 }
 
-function programmeMarkInnerHtml(p) {
+function programmeMarkInnerHtml(p, view) {
   const mark = String(p.preferred_programme || '');
   const published = S.scenarioMeta && S.scenarioMeta.status === 'published';
   const pending = PROGRAMME_MARK.pending.has(String(p.term_section_id));
@@ -8282,27 +8291,59 @@ function programmeMarkInnerHtml(p) {
       : `No <bdi>${esc(mark)}</bdi> student needs this course; the mark only steers other programmes to the other sections.`}</span>`
     : '';
   const trade = programmeTradeHtml(S.planLens.programme_grouping);
+  const field = view.fieldClass;
   return `
-    <div class="field"><label class="label" for="twsDrawerProgrammeSelect">${esc(PM_T.label)}</label><span class="value"><select class="tws-select tws-programme-select" id="twsDrawerProgrammeSelect"${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}>${options}</select></span></div>
+    <div class="${field}"><label class="label" for="${view.host}Select">${esc(PM_T.label)}</label><span class="value"><select class="tws-select tws-programme-select" id="${view.host}Select"${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}>${options}</select></span></div>
     ${warning}
-    <div class="field"><span class="label">${esc(PM_T.seated)}</span><span class="value mono" id="twsDrawerProgrammeMix">${programmeMixHtml(p)}</span></div>
+    <div class="${field}"><span class="label">${esc(PM_T.seated)}</span><span class="value mono" id="${view.host}Mix">${programmeMixHtml(p)}</span></div>
     ${trade ? `<span class="tws-programme-note">${trade}</span>` : ''}
   `;
 }
 
-function renderDrawerProgramme() {
-  const host = $('twsDrawerProgramme');
-  if (!host || DRAWER.placementId == null) return;
-  const p = findPlacement(DRAWER.placementId)?.placement;
+/* The empty host a view fills; no host at all without the feature. */
+function programmeMarkHostHtml(p, view) {
+  if (!hasProgrammeMark(p)) return '';
+  const cls = view.hostClass ? ` class="${view.hostClass}"` : '';
+  return `<div id="${view.host}"${cls} data-placement-id="${esc(p.id)}"></div>`;
+}
+
+function renderProgrammeMark(view) {
+  const host = $(view.host);
+  if (!host || !view.shown()) return;
+  const p = findPlacement(host.dataset.placementId)?.placement;
   if (!hasProgrammeMark(p)) return;
-  host.innerHTML = programmeMarkInnerHtml(p);
-  $('twsDrawerProgrammeSelect')?.addEventListener('change', event => saveProgrammeMark(p.id, event.target.value));
+  // A repaint (the lens arriving) must not take focus off the select.
+  const focused = host.contains(document.activeElement);
+  host.innerHTML = programmeMarkInnerHtml(p, view);
+  const select = $(`${view.host}Select`);
+  select?.addEventListener('change', event => saveProgrammeMark(p.id, event.target.value));
+  if (focused) select?.focus();
+}
+
+function renderDrawerProgramme() {
+  renderProgrammeMark(PM_VIEWS.drawer);
+}
+
+/* The Selection tab's lens rows sit just above the mark and repaint with it,
+   so after a save its plan counts and seated mix agree. */
+function renderSelectionProgramme() {
+  const lensHost = $('twsSelLens');
+  if (lensHost && PM_VIEWS.selection.shown()) {
+    const p = findPlacement(lensHost.dataset.placementId)?.placement;
+    if (p) lensHost.innerHTML = planLensDetailsFieldsHtml(p);
+  }
+  renderProgrammeMark(PM_VIEWS.selection);
+}
+
+function renderProgrammeMarks() {
+  renderSelectionProgramme();
+  renderDrawerProgramme();
 }
 
 /* Parts of the page that read the lens repaint when it starts loading and when
    it arrives (or fails). */
 function planLensChanged() {
-  renderDrawerProgramme();
+  renderProgrammeMarks();
 }
 
 async function saveProgrammeMark(placementId, value) {
@@ -8310,8 +8351,13 @@ async function saveProgrammeMark(placementId, value) {
   if (!hasProgrammeMark(p)) return;
   const key = String(p.term_section_id);
   if (PROGRAMME_MARK.pending.has(key)) return;
+  // The select is disabled while it saves, which drops focus to the page
+  // (where Backspace removes the selected section): it is handed back after,
+  // unless the user has moved on to another section or control meanwhile.
+  const active = document.activeElement;
+  const refocus = active?.classList?.contains('tws-programme-select') ? active.id : '';
   PROGRAMME_MARK.pending.add(key);
-  renderDrawerProgramme();
+  renderProgrammeMarks();
   try {
     const data = await api(`/ops/tw/placements/${placementId}/programme-preference/`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8329,16 +8375,12 @@ async function saveProgrammeMark(placementId, value) {
     }
   } finally {
     PROGRAMME_MARK.pending.delete(key);
-    if (DRAWER.placementId != null) renderDrawerProgramme();
-    if (RP.open && String(S.selectedPlacementId) === String(placementId)) renderRpanel();
+    renderProgrammeMarks();
+    const focused = document.activeElement;
+    const select = refocus ? $(refocus) : null;
+    const sameSection = select && String(select.closest('[data-placement-id]')?.dataset.placementId) === String(placementId);
+    if (sameSection && (!focused || focused === document.body)) select.focus();
   }
-}
-
-/* Read-only line for the selection panel. */
-function programmeMarkSelectionHtml(p) {
-  if (!hasProgrammeMark(p)) return '';
-  const mark = String(p.preferred_programme || '');
-  return `<div class="tws-sel-field"><span class="label">${esc(PM_T.label)}</span><span class="value">${mark ? `<bdi>${esc(mark)}</bdi>` : esc(PM_T.any)}</span></div>`;
 }
 
 /* ── Drawer instructor assignment ── */
