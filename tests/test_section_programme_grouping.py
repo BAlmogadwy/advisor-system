@@ -6,13 +6,19 @@ on a FINISHED board and only re-sections students who are already seated, so:
 
 * R1 — no mark, no pass: the frozen seating is returned untouched;
 * R2 — on every board, with marks, every student keeps the same courses and the
-  same unresolved reasons, nobody gains a clash, reserve use does not rise and
-  nothing passes capacity (a property test over the anonymised real boards and
-  random synthetic ones, both score layouts) — and the guard never has to fire;
+  same unresolved reasons, nobody gains a clash, every course keeps its free
+  seats and nothing passes capacity; reserve use rises by no more than the moves
+  of a programme's own students into its marked section's reserve, each leaving
+  a regular seat of that course (a property test over the anonymised real boards
+  and random synthetic ones, both score layouts) — and the guard never fires;
 * R3 — the marked programme fills its section, the overflow goes elsewhere and
   is never unseated; coupled courses move together; full sections swap;
 * R4 — among equally grouped choices the smaller gap wins, and the gap change
-  is reported.
+  is reported;
+* R5 — (owner, 2026-10-21) the mark stays soft, but purity is wanted where it
+  costs no seat: the marked programme's own students may fill the section's
+  reserve seats when that frees a regular seat in the same course; no other
+  student ever gets that, and a regular seat wins when one groups as well.
 """
 
 from __future__ import annotations
@@ -194,16 +200,71 @@ def _hard(score):
     return (score[0], score[1], score[2], *score[6:]), score[3], score[5]
 
 
+def _free_seats_by_course(by_id):
+    free: dict[str, int] = {}
+    for s in by_id.values():
+        free[s.course_code] = free.get(s.course_code, 0) + s.max_capacity - s.current_enrollment
+    return free
+
+
+def _record_moves(monkeypatch):
+    """Record every single or joint move the pass takes, with the seat counts it
+    was decided on. ``best_move`` is what ``move_round`` acts on, straight away;
+    a swap's two halves never pass through it."""
+    taken: list[tuple[str, list[tuple]]] = []
+    best_move = ssa._Grouping.best_move
+
+    def spy(self, sid):
+        changes = best_move(self, sid)
+        if changes:
+            taken.append(
+                (
+                    sid,
+                    [
+                        (
+                            s.course_code,
+                            s.current_enrollment,
+                            s.max_capacity - s.reserve_capacity,
+                            d.section_id,
+                            d.course_code,
+                            d.current_enrollment,
+                            d.max_capacity - d.reserve_capacity,
+                        )
+                        for s, d in changes
+                    ],
+                )
+            )
+        return changes
+
+    monkeypatch.setattr(ssa._Grouping, "best_move", spy)
+    return taken
+
+
+def _matched_reserve_moves(taken, profiles, marks):
+    """How many recorded moves took a reserve seat and left a regular one — each
+    must be the marked programme's own student, within one course."""
+    count = 0
+    for sid, changes in taken:
+        for course, s_n, s_regular, dest_id, dest_course, d_n, d_regular in changes:
+            assert course == dest_course, (sid, dest_id)
+            if d_n >= d_regular and s_n <= s_regular:
+                programme = str(profiles[sid].department or "").strip().upper()
+                assert marks[dest_id] and marks[dest_id] == programme, (sid, dest_id)
+                count += 1
+    return count
+
+
 def _assert_never_a_seat(case, seed):
     flags = FLAG_COMBOS[seed % len(FLAG_COMBOS)]
     tiers = case.tiers if seed % 3 else None
     sections, profiles = _marked_case(case, seed)
     if not any(s.preferred_programme for s in sections):
         pytest.skip("no multi-section course to mark")
-    with override_settings(**flags):
+    with override_settings(**flags), pytest.MonkeyPatch.context() as monkeypatch:
         plain, plain_by_id, plain_report = _seat(
             _unmarked(sections), profiles, case.rigidity, tiers
         )
+        taken = _record_moves(monkeypatch)
         grouped, by_id, report = _seat(sections, profiles, case.rigidity, tiers)
         plain_score = ssa.evaluate_assignability_lexicographic(
             plain, profiles, plain_by_id, case.instructors, tiers
@@ -221,7 +282,11 @@ def _assert_never_a_seat(case, seed):
     plain_equal, plain_clashes, plain_reserve = _hard(plain_score)
     assert equal == plain_equal
     assert clashes <= plain_clashes
-    assert reserve <= plain_reserve
+    marks = {s.section_id: str(s.preferred_programme or "").strip().upper() for s in sections}
+    matched_moves = _matched_reserve_moves(taken, profiles, marks)
+    assert report["reserve_seats_taken"] == matched_moves
+    assert reserve <= plain_reserve + matched_moves
+    assert _free_seats_by_course(by_id) == _free_seats_by_course(plain_by_id)
     for section_id, section in by_id.items():
         assert section.current_enrollment <= section.max_capacity, section_id
         pre = {x for x in section.enrolled_student_ids if x.startswith("pre")}
@@ -323,25 +388,56 @@ def test_full_sections_swap_students_to_group_them():
     assert report["swaps"] > 0
 
 
-# ── reserve seats ────────────────────────────────────────────────────────
+# ── R5: reserve seats ────────────────────────────────────────────────────
 
 
-def test_grouping_never_takes_a_reserve_seat():
-    """S2 (marked AI2) has only its 2 reserve seats left: nobody moves in."""
+def _reserve(by_id):
+    return sum(s.reserve_used() for s in by_id.values())
+
+
+def test_the_marked_programme_fills_its_reserve_when_that_frees_a_regular_seat():
+    """Scenario 38's AI236: 26 AI2 and 11 DS2 over two sections of 25 (23
+    regular + 2 reserve). S2, marked AI2, takes 25 AI2 — its last two seats are
+    reserve, paid for by two regular seats freed in S1 — and S1 holds the one AI2
+    left over and every DS2. Nobody is unseated; the course's free seats stay 13."""
+    profiles = {f"a{i:02d}": _student(f"a{i:02d}", "AI2", ["AI236"]) for i in range(26)}
+    profiles |= {f"d{i:02d}": _student(f"d{i:02d}", "DS2", ["AI236"]) for i in range(11)}
+    plain, plain_by_id, _r = _seat(_unmarked(_two_sections(reserve=2)), profiles)
+    assert _reserve(plain_by_id) == 0
+    states, by_id, report = _seat(_two_sections(reserve=2), profiles)
+    assert report["guard_reverted"] is False
+    assert _who(states, profiles, "AI236_S2") == ["AI2"] * 25
+    assert _who(states, profiles, "AI236_S1") == ["AI2"] + ["DS2"] * 11
+    assert by_id["AI236_S2"].reserve_used() == 2 and by_id["AI236_S1"].reserve_used() == 0
+    assert _reserve(by_id) - _reserve(plain_by_id) == 2 <= report["reserve_seats_taken"]
+    assert _free_seats_by_course(by_id) == _free_seats_by_course(plain_by_id) == {"AI236": 13}
+    assert all(not st.unresolved_courses for st in states.values())
+
+
+def test_pre_filled_seats_stay_and_matched_students_take_the_reserve_behind_them():
+    """S2 (marked AI2) has 23 pre-filled seats: only its 2 reserve seats are left.
+    Two AI2 students take them, each freeing a regular seat in S1."""
     sections = [
         _section("AI236_S1", "AI236", [(0, 540, 615)], 25, 2),
         _section("AI236_S2", "AI236", [(1, 540, 615)], 25, 2, mark="AI2", enrolled=23),
     ]
     profiles = {f"a{i}": _student(f"a{i}", "AI2", ["AI236"]) for i in range(5)}
+    plain, plain_by_id, _r = _seat(_unmarked(sections), profiles)
+    assert _who(plain, profiles, "AI236_S1") == ["AI2"] * 5
     states, by_id, report = _seat(sections, profiles)
     assert report["guard_reverted"] is False
-    assert by_id["AI236_S2"].current_enrollment == 23
-    assert _who(states, profiles, "AI236_S1") == ["AI2"] * 5
-    assert report["moves"] == report["swaps"] == 0
+    assert [by_id[s].current_enrollment for s in ("AI236_S1", "AI236_S2")] == [3, 25]
+    assert {x for x in by_id["AI236_S2"].enrolled_student_ids if x.startswith("pre")} == {
+        f"preAI236_S2{i}" for i in range(23)
+    }
+    assert report["moves"] == report["reserve_seats_taken"] == 2
+    assert _reserve(by_id) == _reserve(plain_by_id) + 2
 
 
-def test_leaving_a_section_over_its_regular_limit_may_take_a_reserve_seat():
-    """Net zero: one student leaves S1's reserve and takes S2's — and only one."""
+def test_leaving_a_reserve_seat_is_net_zero_and_is_not_counted_as_a_take():
+    """S1 starts over its regular limit. The first AI2 student to leave it frees
+    a RESERVE seat (net zero, not a take); the next one frees a regular seat, so
+    S2's last reserve seat is a take. Reserve use rises by that one only."""
     sections = [
         _section("AI236_S1", "AI236", [(0, 540, 615)], 25, 2, enrolled=20),
         _section("AI236_S2", "AI236", [(1, 540, 615)], 25, 2, mark="AI2", enrolled=23),
@@ -351,11 +447,101 @@ def test_leaving_a_section_over_its_regular_limit_may_take_a_reserve_seat():
     assert [plain_by_id[s].current_enrollment for s in ("AI236_S1", "AI236_S2")] == [24, 23]
     states, by_id, report = _seat(sections, profiles)
     assert report["guard_reverted"] is False
-    assert [by_id[s].current_enrollment for s in ("AI236_S1", "AI236_S2")] == [23, 24]
-    assert sum(s.reserve_used() for s in by_id.values()) == sum(
-        s.reserve_used() for s in plain_by_id.values()
-    )
-    assert report["moves"] == 1
+    assert [by_id[s].current_enrollment for s in ("AI236_S1", "AI236_S2")] == [22, 25]
+    assert report["moves"] == 2
+    assert report["reserve_seats_taken"] == 1
+    assert _reserve(by_id) == _reserve(plain_by_id) + 1
+
+
+@pytest.mark.parametrize(("a2_filled", "moves"), [(22, True), (23, False)])
+def test_another_programme_never_takes_a_marked_reserve_seat(a2_filled, moves):
+    """A DS2 student sits in AI2's B1 (cost 2). B2 (DS2's own) clashes with A1,
+    so the only better place is the joint move A1→A2 + B1→B2 — and A2 is
+    marked AI2. With a regular seat left in A2 the student moves; with only A2's
+    reserve left they stay put: that seat is for AI2's students alone."""
+    sections = [
+        _section("A_S1", "A", [(0, 540, 615)], 25, 2),
+        _section("A_S2", "A", [(1, 540, 615)], 25, 2, mark="AI2", enrolled=a2_filled),
+        _section("B_S1", "B", [(2, 540, 615)], 25, 2, mark="AI2"),
+        _section("B_S2", "B", [(0, 540, 615)], 25, 2, mark="DS2"),
+    ]
+    profiles = {"d": _student("d", "DS2", ["A", "B"])}
+    plain, _plain_by_id, _r = _seat(_unmarked(sections), profiles)
+    assert plain["d"].section_ids == {"A_S1", "B_S1"}
+    states, by_id, report = _seat(sections, profiles)
+    assert report["guard_reverted"] is False
+    assert report["reserve_seats_taken"] == 0
+    if moves:
+        assert states["d"].section_ids == {"A_S2", "B_S2"}
+        assert by_id["A_S2"].current_enrollment == 23
+    else:
+        assert states["d"].section_ids == {"A_S1", "B_S1"}
+        assert by_id["A_S2"].current_enrollment == 23
+        assert report["moves"] == report["swaps"] == 0
+
+
+def test_a_regular_seat_wins_over_a_reserve_seat_that_groups_as_well():
+    """S2 and S3 are both marked AI2. S2 has only reserve seats left and the
+    smaller gap; S3 has regular seats. Same grouping cost, so the regular seat
+    wins and reserve use does not rise."""
+    sections = [
+        _section("O_S1", "O", [(0, 540, 615)], 10),
+        _section("C_S1", "C", [(0, 630, 705)], 25, 2),  # 15 min after O
+        _section("C_S2", "C", [(0, 720, 795)], 25, 2, mark="AI2", enrolled=23),  # 105 min
+        _section("C_S3", "C", [(0, 900, 975)], 25, 2, mark="AI2"),  # 285 min
+    ]
+    profiles = {"s1": _student("s1", "AI2", ["O", "C"])}
+    plain, _by, _r = _seat(_unmarked(sections), profiles)
+    assert plain["s1"].assigned_sections["C"] == "C_S1"
+    states, by_id, report = _seat(sections, profiles)
+    assert states["s1"].assigned_sections["C"] == "C_S3"
+    assert report["reserve_seats_taken"] == 0
+    assert by_id["C_S2"].current_enrollment == 23
+
+
+def test_a_joint_move_also_prefers_the_regular_seat():
+    """Only a joint move helps (A2/A3 clash with B1, B2 with A1). A2 and A3 are
+    both AI2's; A2 has only reserve seats left and the smaller gap to B2's day-1
+    meeting (45 vs 165 min). The joint move takes A3's regular seat."""
+    sections = [
+        _section("A_S1", "A", [(0, 540, 615)], 25, 2),
+        _section("A_S2", "A", [(1, 660, 735)], 25, 2, mark="AI2", enrolled=23),
+        _section("A_S3", "A", [(1, 540, 615)], 25, 2, mark="AI2"),
+        _section("B_S1", "B", [(1, 540, 735)], 25, 2),
+        _section("B_S2", "B", [(0, 540, 615), (1, 780, 855)], 25, 2, mark="AI2"),
+    ]
+    profiles = {"s1": _student("s1", "AI2", ["A", "B"])}
+    plain, _by, _r = _seat(_unmarked(sections), profiles)
+    assert plain["s1"].section_ids == {"A_S1", "B_S1"}
+    states, by_id, report = _seat(sections, profiles)
+    assert report["guard_reverted"] is False
+    assert states["s1"].section_ids == {"A_S3", "B_S2"}
+    assert report["moves"] == 1 and report["reserve_seats_taken"] == 0
+    assert by_id["A_S2"].current_enrollment == 23
+
+
+@pytest.mark.parametrize(
+    ("dest_filled", "source_filled", "same_course", "other_programme", "own_programme"),
+    [
+        (22, 10, True, True, True),  # a regular seat: anyone
+        (25, 10, True, False, False),  # full: nobody
+        (25, 24, True, False, False),
+        (23, 24, True, True, True),  # leaves a reserve seat: net zero, anyone
+        (23, 10, True, False, True),  # leaves a regular seat: own programme only
+        (23, 23, True, False, True),  # (a source AT its limit holds regular seats only)
+        (24, 10, True, False, True),
+        (23, 10, False, False, False),  # never against a seat of another course
+    ],
+)
+def test_the_seat_rule(dest_filled, source_filled, same_course, other_programme, own_programme):
+    """Capacity 25 with 2 reserve (regular limit 23) on both sides."""
+    source = _section("X_S1", "X" if same_course else "Y", [(0, 540, 615)], 25, 2)
+    dest = _section("X_S2", "X", [(1, 540, 615)], 25, 2, mark="AI2")
+    source.current_enrollment, dest.current_enrollment = source_filled, dest_filled
+    assert ssa._seat_rule_allows(source, dest) is other_programme
+    assert ssa._seat_rule_allows(source, dest, False) is other_programme
+    assert ssa._seat_rule_allows(source, dest, True) is own_programme
+    assert ssa._raises_reserve(source, dest) is (dest_filled >= 23 and source_filled <= 23)
 
 
 # ── R4: the smaller gap wins, and the trade is reported ─────────────────
@@ -383,12 +569,26 @@ def test_among_equally_grouped_sections_the_smaller_gap_wins_and_is_reported():
 
 
 def test_the_guard_undoes_a_pass_that_breaks_capacity(monkeypatch):
-    monkeypatch.setattr(ssa, "_seat_rule_allows", lambda _source, _dest: True)
+    monkeypatch.setattr(ssa, "_seat_rule_allows", lambda _source, _dest, _matched=False: True)
     profiles = {f"a{i:02d}": _student(f"a{i:02d}", "AI2", ["AI236"]) for i in range(30)}
     sections = _two_sections()
     plain, plain_by_id, _r = _seat(_unmarked(sections), profiles)
     states, by_id, report = _seat(sections, profiles)
     assert report["guard_reverted"] is True
     assert report["moves"] == report["swaps"] == report["students_regrouped"] == 0
+    assert _states_sig(states) == _states_sig(plain)
+    assert _sections_sig(by_id.values()) == _sections_sig(plain_by_id.values())
+
+
+def test_the_guard_undoes_reserve_use_the_pass_did_not_count(monkeypatch):
+    """Reserve use may rise only by the marked seats taken; if the count missed
+    one, the guard restores the plain seating."""
+    monkeypatch.setattr(ssa, "_raises_reserve", lambda _source, _dest: False)
+    profiles = {f"a{i:02d}": _student(f"a{i:02d}", "AI2", ["AI236"]) for i in range(26)}
+    profiles |= {f"d{i:02d}": _student(f"d{i:02d}", "DS2", ["AI236"]) for i in range(11)}
+    plain, plain_by_id, _r = _seat(_unmarked(_two_sections(reserve=2)), profiles)
+    states, by_id, report = _seat(_two_sections(reserve=2), profiles)
+    assert report["guard_reverted"] is True
+    assert report["reserve_seats_taken"] == report["moves"] == 0
     assert _states_sig(states) == _states_sig(plain)
     assert _sections_sig(by_id.values()) == _sections_sig(plain_by_id.values())
