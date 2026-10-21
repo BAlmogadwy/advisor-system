@@ -57,6 +57,9 @@ def evaluate_generated_timetable_candidate(
     sections_by_id = ssa.build_sections_by_id(working_sections)
     sections_by_course = ssa.build_sections_by_course(sections_by_id)
     grouping: dict[str, Any] = {}
+    # Fresh per evaluation, like the working copy: the grouping pass's change
+    # to each section's reserve use, which the reserve readers below subtract.
+    reserve_shift: dict[str, int] = {}
     states, unresolved_ids = ssa.assign_students_to_sections(
         student_profiles,
         sections_by_id,
@@ -64,9 +67,15 @@ def evaluate_generated_timetable_candidate(
         course_rigidity,
         course_tiers=course_tiers if is_tiered_objective_enabled() else None,
         grouping_report=grouping,
+        reserve_shift=reserve_shift,
     )
     score = ssa.evaluate_assignability_lexicographic(
-        states, student_profiles, sections_by_id, section_instructor_ids, course_tiers
+        states,
+        student_profiles,
+        sections_by_id,
+        section_instructor_ids,
+        course_tiers,
+        reserve_shift=reserve_shift,
     )
     quality_score = evaluate_timetable_quality(working_sections, states)
     if grouping:
@@ -99,7 +108,9 @@ def evaluate_generated_timetable_candidate(
         unresolved_student_ids=unresolved_ids,
         hotspot_courses=extract_hotspot_courses(states),
         capacity_pressure_courses=extract_capacity_pressure_courses(states),
-        reserve_heavy_sections=extract_reserve_heavy_sections(sections_by_id),
+        reserve_heavy_sections=extract_reserve_heavy_sections(
+            sections_by_id, reserve_shift=reserve_shift
+        ),
         quality_score=quality_score,
         instructor_overload_count=overload_count,
     )
@@ -130,12 +141,22 @@ def extract_capacity_pressure_courses(
 
 
 def extract_reserve_heavy_sections(
-    sections_by_id: dict[str, SectionState], threshold: float = 0.5
+    sections_by_id: dict[str, SectionState],
+    threshold: float = 0.5,
+    reserve_shift: dict[str, int] | None = None,
 ) -> list[tuple[str, float]]:
+    """Sections whose reserve use is at least ``threshold`` of their reserve.
+
+    ``reserve_shift`` is the grouping pass's per-section change in reserve use
+    (``assign_students_to_sections``), subtracted: a marked section that fills
+    its reserve by re-sectioning within the course is not capacity pressure, so
+    it is neither listed nor made a search priority because of that.
+    """
+    shift = reserve_shift or {}
     heavy: list[tuple[str, float]] = []
     for sec_id, sec in sections_by_id.items():
         if sec.reserve_capacity > 0:
-            ratio = sec.reserve_used() / sec.reserve_capacity
+            ratio = (sec.reserve_used() - shift.get(sec_id, 0)) / sec.reserve_capacity
             if ratio >= threshold:
                 heavy.append((sec_id, ratio))
     heavy.sort(key=lambda x: (-x[1], x[0]))
