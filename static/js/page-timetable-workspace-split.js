@@ -8250,14 +8250,17 @@ function programmeMixHtml(p) {
   const entries = planLensActualEntries(p);
   if (!lens || !total || !entries.length) return '—';
   const parts = entries.map(([plan, count]) => `<bdi>${esc(plan)}</bdi> ${Number(count)}`).join(' · ');
-  return `${total}: ${parts}`;
+  // One LTR isolate: the figure leads with digits, which an Arabic drawer
+  // would otherwise paint as «23 AI2 :23».
+  return `<bdi dir="ltr">${total}: ${parts}</bdi>`;
 }
 
-function programmeTradeText(grouping) {
+function programmeTradeHtml(grouping) {
   if (!grouping || !Number.isFinite(Number(grouping.students_regrouped))) return '';
   const moved = Number(grouping.students_regrouped);
   const minutes = Number(grouping.student_gap_minutes_change || 0);
-  const signed = `${minutes > 0 ? '+' : minutes < 0 ? '−' : '±'}${Math.abs(minutes)}`;
+  // The signed figure is isolated so Arabic prose never paints «450+».
+  const signed = `<bdi dir="ltr">${minutes > 0 ? '+' : minutes < 0 ? '−' : '±'}${Math.abs(minutes)}</bdi>`;
   return IS_AR
     ? `نقل التجميع ${moved} طالباً؛ إجمالي انتظار الطلاب ${signed} دقيقة`
     : `Grouping moved ${moved} student${moved === 1 ? '' : 's'}; total student waiting ${signed} min`;
@@ -8278,12 +8281,12 @@ function programmeMarkInnerHtml(p) {
       ? `لا يحتاج أي طالب من <bdi>${esc(mark)}</bdi> هذا المقرر؛ العلامة توجّه البرامج الأخرى إلى الشعب الأخرى فقط.`
       : `No <bdi>${esc(mark)}</bdi> student needs this course; the mark only steers other programmes to the other sections.`}</span>`
     : '';
-  const trade = programmeTradeText(S.planLens.programme_grouping);
+  const trade = programmeTradeHtml(S.planLens.programme_grouping);
   return `
     <div class="field"><label class="label" for="twsDrawerProgrammeSelect">${esc(PM_T.label)}</label><span class="value"><select class="tws-select tws-programme-select" id="twsDrawerProgrammeSelect"${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}>${options}</select></span></div>
     ${warning}
     <div class="field"><span class="label">${esc(PM_T.seated)}</span><span class="value mono" id="twsDrawerProgrammeMix">${programmeMixHtml(p)}</span></div>
-    ${trade ? `<span class="tws-programme-note">${esc(trade)}</span>` : ''}
+    ${trade ? `<span class="tws-programme-note">${trade}</span>` : ''}
   `;
 }
 

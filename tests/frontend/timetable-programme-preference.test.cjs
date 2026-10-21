@@ -171,7 +171,9 @@ test('the drawer offers Any and the lens programmes, the mark selected, and the 
   assert.match(h.block().textContent, /Mainly for programme/);
   const mix = h.d.getElementById('twsDrawerProgrammeMix');
   assert.equal(mix.textContent, '6: AI2 6');
-  assert.equal(mix.querySelectorAll('bdi').length, 1);
+  // One LTR isolate around the figure (it leads with digits), codes isolated inside.
+  assert.equal(mix.querySelector(':scope > bdi[dir="ltr"]').textContent, '6: AI2 6');
+  assert.deepEqual([...mix.querySelectorAll('bdi:not([dir])')].map(node => node.textContent), ['AI2']);
 });
 
 test('changing the mark posts once, then reloads the lens once, and shows the new mix', async t => {
@@ -245,11 +247,12 @@ test('while the lens loads the mix says so; a programme nobody in the course has
 test('in Arabic the drawer and the selection panel speak Arabic', async t => {
   const h = await drawer(t, { arabic: true }, url => (url.endsWith('/plan-lens/')
     ? LENS({ programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } }) : undefined));
-  h.w.loadPlanLens();
-  await wait(() => /نقل التجميع/.test(h.block().textContent));
   assert.match(h.block().textContent, /مخصّصة أساساً لبرنامج/);
   assert.match(h.block().textContent, /المقاعد/);
   assert.match(h.block().textContent, /نقل التجميع 3 طالباً؛ إجمالي انتظار الطلاب −20 دقيقة/);
+  // A signed figure inside Arabic prose is isolated, or it is painted «20−».
+  assert.equal(h.block().querySelector('.tws-programme-note bdi[dir="ltr"]').textContent, '−20');
+  assert.equal(h.d.getElementById('twsDrawerProgrammeMix').querySelector('bdi[dir="ltr"]').textContent, '6: AI2 6');
   assert.equal(h.select().options[0].textContent, 'أي برنامج');
   h.state.selectedPlacementId = 11; h.state.selectedPaneIdx = 0;
   Object.assign(h.w.__splitAudit.RP, { open: true, tab: 'selection' });
