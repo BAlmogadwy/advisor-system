@@ -34,7 +34,13 @@ openpyxl==3.1.5
 et-xmlfile==2.0.0
 # Pillow — renders the prerequisite dependency-graph PNG embedded in the
 # XLSX export (core.report_views._render_prereq_graph).
-Pillow==12.3.0
+# 13.0.0 resolves GHSA-p4wg-p73j-c528, GHSA-65qm-jvmh-6pqg, GHSA-58r4-6rv3-gfh8,
+# GHSA-pchr-8j38-3x4p, GHSA-q45j-58j2-45rg, GHSA-462x-pgg6-55fp,
+# GHSA-c6hw-5grf-ff96 and GHSA-vx6w-vv9f-6gvg; it is the first release after
+# 12.3.0, so there is no smaller fixing bump. Major only in name for this
+# project: 13 drops Python 3.10 (we run 3.11) and removes nothing the graph
+# renderer calls (draw/text/filter/alpha_composite/resize/PNG save).
+Pillow==13.0.0
 tqdm==4.67.3
 neo4j==6.2.0
 
