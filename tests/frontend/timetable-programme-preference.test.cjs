@@ -66,7 +66,7 @@ async function harness(t, intercept = () => undefined, { arabic = false, placeme
     return { ok: !body.httpError, status: body.httpError || 200, headers, json: async () => body };
   };
   w.eval(read('static/js/timetable-meeting-policy.js'));
-  w.eval(read('static/js/page-timetable-workspace-split.js') + '\n;globalThis.__splitAudit = { S, DRAWER };');
+  w.eval(read('static/js/page-timetable-workspace-split.js') + '\n;globalThis.__splitAudit = { S, DRAWER, RP };');
   await settle();
   const { S: state } = w.__splitAudit;
   state.scenarioId = 1; state.scenarioMeta = { id: 1, status: 'draft' }; state.boards = [board];
@@ -143,4 +143,128 @@ test('a scenario load never waits for the lens; the panes repaint when it arrive
   lens.resolve(LENS());
   await wait(() => h.state.planLens.loaded);
   await wait(() => h.d.querySelectorAll('.plan-badges').length > 0);
+});
+
+/* ── the drawer ─────────────────────────────────────────────────────── */
+
+const MARKED = { preferred_programme: 'AI2', preferred_programme_editable: true };
+
+async function drawer(t, options = {}, intercept = () => undefined) {
+  const h = await harness(t, intercept, { placementExtra: MARKED, ...options });
+  if (options.published) h.state.scenarioMeta.status = 'published';
+  await h.w.loadPlanLens();
+  h.requests.length = 0;
+  h.w.openDrawer(0, 11);
+  await settle();
+  const select = () => h.d.getElementById('twsDrawerProgrammeSelect');
+  const block = () => h.d.getElementById('twsDrawerProgramme');
+  return { ...h, select, block };
+}
+
+test('the drawer offers Any and the lens programmes, the mark selected, and the seated mix', async t => {
+  const h = await drawer(t);
+  assert.equal(h.requests.length, 0, `opening the drawer sends nothing: ${h.requests.map(r => r.url)}`);
+  const options = [...h.select().options].map(option => [option.value, option.textContent]);
+  assert.deepEqual(options, [['', 'Any'], ['AI2', 'AI2'], ['DS', 'DS']]);
+  assert.equal(h.select().value, 'AI2');
+  assert.equal(h.select().disabled, false);
+  assert.match(h.block().textContent, /Mainly for programme/);
+  const mix = h.d.getElementById('twsDrawerProgrammeMix');
+  assert.equal(mix.textContent, '6: AI2 6');
+  assert.equal(mix.querySelectorAll('bdi').length, 1);
+});
+
+test('changing the mark posts once, then reloads the lens once, and shows the new mix', async t => {
+  let lensCalls = 0;
+  const h = await drawer(t, {}, (url, options) => {
+    if (url.endsWith('/programme-preference/')) return { ok: true, term_section_id: 111, preferred_programme: 'DS', changed: true };
+    if (url.endsWith('/plan-lens/') && ++lensCalls > 1) {
+      const lens = LENS();
+      lens.plan_lens.sections['111'].actual_plans = { AI2: 1, DS: 5 };
+      return lens;
+    }
+    return undefined;
+  });
+  h.select().value = 'DS';
+  h.select().dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await wait(() => h.requests.some(row => row.url.endsWith('/plan-lens/')));
+  await wait(() => /DS 5/.test(h.d.getElementById('twsDrawerProgrammeMix')?.textContent || ''));
+  const posts = h.requests.filter(row => row.url.endsWith('/programme-preference/'));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, '/ops/tw/placements/11/programme-preference/');
+  assert.equal(posts[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(posts[0].options.body), { preferred_programme: 'DS' });
+  for (let i = 0; i < 10; i++) await settle();
+  assert.equal(h.requests.filter(row => row.url.endsWith('/plan-lens/')).length, 1);
+  assert.equal(h.select().value, 'DS');
+  assert.equal(h.state.panes[0].boardData.placements[1].preferred_programme, 'DS');
+  assert.ok(h.notices.some(row => row.kind === 'success'));
+});
+
+test('an unchanged or refused save sends no lens reload and keeps the stored mark', async t => {
+  for (const answer of [
+    { ok: true, term_section_id: 111, preferred_programme: 'AI2', changed: false },
+    { httpError: 409, ok: false, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'owned elsewhere' } },
+  ]) {
+    const h = await drawer(t, {}, url => (url.endsWith('/programme-preference/') ? answer : undefined));
+    h.select().value = 'DS';
+    h.select().dispatchEvent(new h.w.Event('change', { bubbles: true }));
+    await wait(() => h.requests.some(row => row.url.endsWith('/programme-preference/')) && !h.select().disabled);
+    for (let i = 0; i < 6; i++) await settle();
+    assert.equal(h.requests.filter(row => row.url.endsWith('/plan-lens/')).length, 0);
+    assert.equal(h.select().value, 'AI2');
+  }
+});
+
+test('the mark cannot be changed on a published scenario or a section owned elsewhere', async t => {
+  const published = await drawer(t, { published: true });
+  assert.equal(published.select().disabled, true);
+  const owned = await drawer(t, { placementExtra: { preferred_programme: '', preferred_programme_editable: false } });
+  assert.equal(owned.select().disabled, true);
+  assert.equal(owned.select().value, '');
+});
+
+test('while the lens loads the mix says so; a programme nobody in the course has is warned', async t => {
+  const pending = deferred();
+  const gate = { reloading: false };
+  const h = await drawer(t, { placementExtra: { preferred_programme: 'CYS', preferred_programme_editable: true } }, url => (
+    url.endsWith('/plan-lens/') && gate.reloading ? pending.promise : undefined));
+  // The current mark is offered even when the lens does not list it.
+  assert.deepEqual([...h.select().options].map(option => option.value), ['', 'AI2', 'DS', 'CYS']);
+  assert.match(h.block().textContent, /No CYS student needs this course/);
+  gate.reloading = true;
+  const reload = h.w.loadPlanLens();
+  await settle();
+  assert.match(h.d.getElementById('twsDrawerProgrammeMix').textContent, /Loading programme mix/);
+  pending.resolve(LENS({ programme_grouping: { students_regrouped: 7, student_gap_minutes_change: 150 } }));
+  await reload;
+  assert.equal(h.d.getElementById('twsDrawerProgrammeMix').textContent, '6: AI2 6');
+  assert.match(h.block().textContent, /Grouping moved 7 students; total student waiting \+150 min/);
+});
+
+test('in Arabic the drawer and the selection panel speak Arabic', async t => {
+  const h = await drawer(t, { arabic: true }, url => (url.endsWith('/plan-lens/')
+    ? LENS({ programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } }) : undefined));
+  h.w.loadPlanLens();
+  await wait(() => /نقل التجميع/.test(h.block().textContent));
+  assert.match(h.block().textContent, /مخصّصة أساساً لبرنامج/);
+  assert.match(h.block().textContent, /المقاعد/);
+  assert.match(h.block().textContent, /نقل التجميع 3 طالباً؛ إجمالي انتظار الطلاب −20 دقيقة/);
+  assert.equal(h.select().options[0].textContent, 'أي برنامج');
+  h.state.selectedPlacementId = 11; h.state.selectedPaneIdx = 0;
+  Object.assign(h.w.__splitAudit.RP, { open: true, tab: 'selection' });
+  h.w.renderRpanel();
+  assert.match(h.d.body.textContent, /مخصّصة أساساً لبرنامج\s*AI2/);
+});
+
+test('without the feature the drawer renders exactly as before', async t => {
+  const h = await harness(t);
+  await h.w.loadPlanLens();
+  h.requests.length = 0;
+  h.w.openDrawer(0, 11);
+  await settle();
+  assert.equal(h.d.getElementById('twsDrawerProgramme'), null);
+  assert.equal(h.d.getElementById('twsDrawerProgrammeSelect'), null);
+  assert.doesNotMatch(h.d.getElementById('twsDrawerBody').textContent, /Mainly for programme|Seated/);
+  assert.equal(h.requests.length, 0);
 });

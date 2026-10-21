@@ -22,6 +22,30 @@ def normalise_programme(value: object | None) -> str:
     return str(value or "").strip().upper()
 
 
+def allowed_programmes(scenario) -> list[str]:
+    """The programmes a section of ``scenario`` may be marked for, sorted.
+
+    The scenario's own programmes plus the programmes of the students it seats
+    (a shared course such as ENGL214 serves programmes the scenario was not
+    generated for). A programme with no student in the course is allowed; the
+    drawer warns, and its only effect is to steer others to the other sections.
+    """
+    from core.models import ScenarioStudentCourseRequest, Student
+
+    students = ScenarioStudentCourseRequest.objects.filter(scenario_id=scenario.pk).values(
+        "student_id"
+    )
+    found = {normalise_programme(p) for p in scenario.programs or []}
+    found.update(
+        normalise_programme(p)
+        for p in Student.objects.filter(student_id__in=students)
+        .values_list("program", flat=True)
+        .distinct()
+    )
+    found.discard("")
+    return sorted(found)
+
+
 def is_enabled() -> bool:
     """``TIMETABLE_SECTION_PROGRAMME_PREFERENCE``, for callers outside the
     ``timetable_*`` modules (the scheduler bridge)."""

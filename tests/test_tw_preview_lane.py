@@ -47,6 +47,7 @@ UNGATED_VIEWS = [
     views.tw_placement_pattern_switch_view,
     views.tw_placement_remove_view,
     views.tw_placement_lock_view,
+    views.tw_placement_programme_preference_view,
     views.tw_placement_student_evidence_view,
     views.tw_boards_list_view,
     views.tw_board_conflicts_view,

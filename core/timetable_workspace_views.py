@@ -47,6 +47,7 @@ Placements
     POST tw_placement_move_view          -- move placement to new slot
     POST tw_placement_remove_view        -- remove placement
     POST tw_placement_lock_view          -- toggle lock on a placement
+    POST tw_placement_programme_preference_view -- mark a section mainly for a programme
 
 Slot Templates
     GET  tw_slot_templates_list_view     -- list slot templates
@@ -62,7 +63,7 @@ import math
 import re
 
 from django.contrib.auth.decorators import login_required
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -90,12 +91,16 @@ from core.services.job_runtime import (
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.request_lanes import preview_lane, server_busy_response
 from core.services.section_move_optimisation import section_move_optimisation_engine
+from core.services.section_programme_preference import allowed_programmes, normalise_programme
 from core.services.section_programmes import (
     filter_sections_for_delivery_board,
     section_is_available_to_delivery_board,
 )
 from core.services.timetable_demand import compute_board_capacity
-from core.services.timetable_flags import is_one_teacher_active
+from core.services.timetable_flags import (
+    is_one_teacher_active,
+    is_section_programme_preference_enabled,
+)
 from core.services.timetable_generate import generate_workspace_scenario
 from core.services.timetable_graph_twin import (
     TimetableGraphError,
@@ -311,14 +316,29 @@ def _one_teacher_request(view):
     return wrapped
 
 
-def _placement_to_dict(p: SectionPlacement, teachers: dict | None = None) -> dict[str, object]:
+def _programme_marks(scenario_id: int) -> dict | None:
+    """The "mainly for programme" context for ``_placement_to_dict``, read once
+    per request: None with the feature off (no placement gets the keys, as with
+    ``teacher``), else the board's scenario and the sections another scenario
+    also places — a mark, like a time, is set where the section is owned."""
+    if not is_section_programme_preference_enabled():
+        return None
+    return {"scenario_id": scenario_id, "frozen": external_shared_section_ids(scenario_id)}
+
+
+def _placement_to_dict(
+    p: SectionPlacement, teachers: dict | None = None, marks: dict | None = None
+) -> dict[str, object]:
     """Serialise a ``SectionPlacement`` with its meetings to a JSON-safe dict.
 
     Includes the related ``TermSection`` fields (course code, capacity, etc.)
     and all ``TermSectionMeeting`` records for that section. ``teachers``
     (``_section_teachers``, one teacher per section only) adds the section's
     ``teacher``: ``{"id", "name", "status", "source", "reason"}``, or None for
-    a section the map leaves out.
+    a section the map leaves out. ``marks`` (``_programme_marks``) adds the
+    section's ``preferred_programme`` and whether this board may change it
+    (``preferred_programme_editable``: the board's scenario owns the section
+    and no other scenario places it).
     """
     ts = p.term_section
     meetings = list(
@@ -349,6 +369,11 @@ def _placement_to_dict(p: SectionPlacement, teachers: dict | None = None) -> dic
     }
     if teachers is not None:
         out["teacher"] = teachers.get(ts.id)
+    if marks is not None:
+        out["preferred_programme"] = ts.preferred_programme
+        out["preferred_programme_editable"] = (
+            ts.scenario_id == marks["scenario_id"] and ts.id not in marks["frozen"]
+        )
     return out
 
 
@@ -1425,12 +1450,13 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
     primary_count = BoardStudentLink.objects.filter(board=board, link_type="primary").count()
     visitor_count = BoardStudentLink.objects.filter(board=board, link_type="visitor").count()
     teachers = _section_teachers(board.scenario_id)
+    marks = _programme_marks(board.scenario_id)
     return _ok(
         {
             "board": _board_to_dict(board),
             "slot_config": board.scenario.slot_config,
             "lab_slot_config": board.scenario.lab_slot_config,
-            "placements": [_placement_to_dict(p, teachers) for p in placements],
+            "placements": [_placement_to_dict(p, teachers, marks) for p in placements],
             "primary_student_count": primary_count,
             "visitor_student_count": visitor_count,
         }
@@ -1736,10 +1762,11 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
         },
     )
     teachers = _section_teachers(result["board"].scenario_id)
+    marks = _programme_marks(result["board"].scenario_id)
     return _ok(
         {
-            "placement": _placement_to_dict(placement, teachers),
-            "placements": [_placement_to_dict(item, teachers) for item in placements],
+            "placement": _placement_to_dict(placement, teachers, marks),
+            "placements": [_placement_to_dict(item, teachers, marks) for item in placements],
             "validation": validation,
             "validations": validations,
             # Forwarded from the service, which already populated
@@ -1847,10 +1874,11 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             },
         )
         teachers = _section_teachers(board.scenario_id)
+        marks = _programme_marks(board.scenario_id)
         return _ok(
             {
-                "placement": _placement_to_dict(placement, teachers),
-                "placements": [_placement_to_dict(row, teachers) for row in placements],
+                "placement": _placement_to_dict(placement, teachers, marks),
+                "placements": [_placement_to_dict(row, teachers, marks) for row in placements],
                 "section_policy": policy_payload(section_policy(ts), placements),
                 **_policy_bundle_feedback(placements),
             },
@@ -1919,7 +1947,11 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(ts))
     return _ok(
         {
-            "placement": _placement_to_dict(placement, _section_teachers(board.scenario_id)),
+            "placement": _placement_to_dict(
+                placement,
+                _section_teachers(board.scenario_id),
+                _programme_marks(board.scenario_id),
+            ),
             "validation": validation,
             "instructor_clash_backstop": backstop,
         },
@@ -2698,11 +2730,12 @@ def _switch_policy_response(
             "pattern_id": result["section_policy"]["current_pattern_id"],
         },
     )
+    marks = _programme_marks(placement.board.scenario_id)
     return _ok(
         {
             **result,
-            "placement": _placement_to_dict(result["placement"], teachers),
-            "placements": [_placement_to_dict(row, teachers) for row in rows],
+            "placement": _placement_to_dict(result["placement"], teachers, marks),
+            "placements": [_placement_to_dict(row, teachers, marks) for row in rows],
             **_policy_bundle_feedback(rows),
         }
     )
@@ -2866,10 +2899,11 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         backstop, section_id_for(placement.term_section)
     )
     teachers = _section_teachers(scenario_id)
+    marks = _programme_marks(scenario_id)
     return _ok(
         {
-            "placement": _placement_to_dict(placement, teachers),
-            "placements": [_placement_to_dict(row, teachers) for row in rows],
+            "placement": _placement_to_dict(placement, teachers, marks),
+            "placements": [_placement_to_dict(row, teachers, marks) for row in rows],
             "validation": validation,
             "instructor_clash_backstop": backstop,
         }
@@ -2954,6 +2988,88 @@ def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonRespo
     placement.is_locked = not placement.is_locked
     placement.save(update_fields=["is_locked", "updated_at"])
     return _ok({"placement_id": placement_id, "is_locked": placement.is_locked})
+
+
+@login_required(login_url="login")
+@require_POST
+@guard_manual_scenario_write
+def tw_placement_programme_preference_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Mark the placement's section "mainly for programme" X, or for any ("").
+
+    POST body ``{"preferred_programme": "AI2" | ""}``. The seating then puts
+    X's students in this section first and others in the course's other
+    sections, without ever costing a seat. A lock freezes only days and times,
+    so a locked section may be marked; a section this scenario does not own (a
+    global one, another scenario's) or that another scenario also places is
+    marked where it is owned. Saving the same value is a no-op with no audit
+    row. Returns ``{term_section_id, preferred_programme, changed}``.
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    if not is_section_programme_preference_enabled():
+        return _err(
+            "Grouping sections by programme is not enabled.", code="FEATURE_DISABLED", status=409
+        )
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
+            pk=placement_id
+        )
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    scenario = placement.board.scenario
+    if scenario.status == "published":
+        return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
+    section = placement.term_section
+    if section.scenario_id != scenario.id:
+        return _err(
+            "This section belongs to another scenario or to the registrar; mark it there.",
+            code="SECTION_NOT_SCENARIO_OWNED",
+            status=409,
+        )
+    if section.id in external_shared_section_ids(scenario.id):
+        return _err(
+            "This section is also placed by another scenario.",
+            code="PLACEMENT_EXTERNALLY_OWNED",
+            status=409,
+        )
+    raw = payload.get("preferred_programme", "")
+    allowed = allowed_programmes(scenario)
+    programme = normalise_programme(raw) if isinstance(raw, str) else None
+    if programme is None or (programme and programme not in allowed):
+        return _err(
+            "Choose one of this scenario's programmes, or Any.",
+            code="INVALID_PROGRAMME",
+            status=400,
+            details={"allowed": allowed},
+        )
+    with transaction.atomic():
+        row = TermSection.objects.select_for_update().get(pk=section.pk)
+        before = row.preferred_programme
+        if before == programme:
+            return _ok(
+                {"term_section_id": row.id, "preferred_programme": programme, "changed": False}
+            )
+        row.preferred_programme = programme
+        row.save(update_fields=["preferred_programme"])
+    log_audit_event(
+        request,
+        action="tw.section.programme_preference",
+        status="success",
+        details={
+            "scenario_id": scenario.id,
+            "placement_id": placement.id,
+            "term_section_id": row.id,
+            "course_key": row.course_key,
+            "section": row.section,
+            "from": before,
+            "to": programme,
+        },
+    )
+    return _ok({"term_section_id": row.id, "preferred_programme": programme, "changed": True})
 
 
 @login_required(login_url="login")

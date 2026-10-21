@@ -216,6 +216,7 @@ from .timetable_workspace_views import (
     tw_placement_lock_view,
     tw_placement_move_view,
     tw_placement_pattern_switch_view,
+    tw_placement_programme_preference_view,
     tw_placement_remove_view,
     tw_placement_room_candidates_view,
     tw_placement_slot_candidates_view,
@@ -1119,6 +1120,11 @@ urlpatterns = [
         "ops/tw/placements/<int:placement_id>/lock/",
         tw_placement_lock_view,
         name="tw_placement_lock",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/programme-preference/",
+        tw_placement_programme_preference_view,
+        name="tw_placement_programme_preference",
     ),
     path(
         "ops/tw/scenarios/<int:scenario_id>/blocked-slots/",
