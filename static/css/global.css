@@ -2390,6 +2390,46 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 .ux-choice:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
 .ux-choice:focus-within { outline: 2px solid var(--teal); outline-offset: 2px; }
 
+/* ── Choosing dialogs (UXControls.dialog) ────────────────────
+   `.ux-dialog-scroll`: a long list scrolls inside the body while the head
+   (the title) and the foot (the commit button) stay in view.
+   `.ux-choice-list`: rows of `.ux-choice`, one native radio each; the page
+   sets `aria-busy` on the list alone while it reads, so the status lines
+   outside it are still announced. A `data-tone` row has a start-edge bar,
+   with its verdict in words beside it, so the tone never rests on colour
+   alone. `.ux-choice-static` is a row that cannot be chosen, its reason
+   written in it (there are no disabled radios). */
+.ux-dialog-scroll[open] { display: flex; flex-direction: column; overflow: hidden; }
+.ux-dialog-scroll > form { display: flex; flex-direction: column; min-height: 0; }
+.ux-dialog-scroll .ux-dialog-head,
+.ux-dialog-scroll .ux-dialog-foot { flex: none; }
+.ux-dialog-scroll .ux-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+/* A fieldset can be the list: no frame, and it may shrink in a narrow dialog. */
+.ux-choice-list { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; list-style: none; }
+.ux-choice-list[aria-busy="true"] { opacity: .6; }
+.ux-choice[data-tone] { border-inline-start: 3px solid transparent; }
+.ux-choice[data-tone="critical"] { border-inline-start-color: var(--sev-critical); }
+.ux-choice[data-tone="warning"]  { border-inline-start-color: var(--sev-warning); }
+.ux-choice[data-tone="info"]     { border-inline-start-color: var(--sev-info); }
+.ux-choice[data-tone="ok"]       { border-inline-start-color: color-mix(in srgb, var(--sev-ok) 55%, transparent); }
+.ux-choice-static { cursor: default; }
+.ux-choice-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ux-choice-status { margin: 0; color: var(--t3); font-size: var(--text-xs); }
+/* A paragraph: no margins of its own, and it pushes the buttons to the end. */
+.ux-dialog-foot-note { margin: 0; margin-inline-end: auto; color: var(--t2); font-size: var(--text-xs); }
+/* Forced colours drop the row's shadow frame and its tint, and the radio is a
+   clipped pixel. The row draws a real border; the chosen row a thick
+   Highlight one, its padding trading for the width so nothing moves; the row
+   with the keyboard an outline outside it. The two marks never share a
+   property, so a chosen row that has the keyboard shows both. */
+@media (forced-colors: active) {
+  .ux-choice { border: 1px solid CanvasText; padding: 9px 11px; }
+  .ux-choice[data-tone] { border-inline-start-color: CanvasText; }
+  .ux-choice:has(input:checked) { border: 3px solid Highlight; padding: 7px 9px; }
+  .ux-choice[data-tone]:has(input:checked) { padding-inline-start: 11px; }
+  .ux-choice:focus-within { outline: 2px solid CanvasText; outline-offset: 2px; }
+}
+
 /* ── Job card: a long-running job, floating at the window's end edge ─
    Fixed, so nothing in the page moves when it appears (a banner would push the
    board down mid-drag). Holds the job's status, its fields and its Cancel. */
