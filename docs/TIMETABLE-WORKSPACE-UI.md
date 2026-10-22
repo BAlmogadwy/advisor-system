@@ -1619,8 +1619,11 @@ rows refused for seats the audit accepts.
     boards: [{board_id, board_label, programmes}], placement_ids,
     moving_placement_ids, kept: [{placement_id, board_id, board_label, room}],
     current}`, or `{assessed: false, reason}` with `duplicate_room_codes`,
-    `online` (online by display code only), `unknown_day`, `invalid_interval`
-    or `boards_disagree_on_gender`;
+    `online` (online on this board), `no_room_required` (a policy course that
+    takes no room), `unknown_day`, `invalid_interval` (also a time the audit
+    cannot read, such as `9:00:00`) or `boards_disagree_on_gender`. Every
+    answer to `?audit=1` carries `target.audit`, so a missing key means a
+    server older than this PR (the client then keeps its legacy rule);
   - each candidate gains `audit` = `{compatible, undersized, reasons,
     programme_board_ids, quality_reasons}`. `reasons`, in order: `type`,
     `gender`, `programme`, `capacity`, `split` (another copy of the class stays
@@ -1639,13 +1642,22 @@ rows refused for seats the audit accepts.
   dialog.
 - Cost: one query (the class's copies), plus the gender of each other board
   in the meeting (two queries at most each); nothing grows with the room count.
-  Measured on the QA copy (scenario 665's four sample placements, best of
-  31, this machine): +0.7 to +1.6 ms (+2% to +6%) on 19 to 31 ms, with one
-  teacher per section off and on; 17 → 18 and 33 → 34 queries; peak memory
-  +0.09 MiB. The audit pays one predicate call per meeting and room:
+  Measured on the QA copy (this machine), within the 10% budget:
+  - scenario 665's four sample placements, best of 31: +0.7 to +1.6 ms
+    (+2% to +6%) on 19 to 31 ms, with one teacher per section off and on;
+    17 → 18 and 33 → 34 queries; peak memory +0.09 MiB;
+  - every one of its 187 placements, mean of 3 interleaved passes (two
+    runs): 20.5–21.6 → 22.0–23.4 ms (+7.0% to +8.2%) with one teacher off,
+    32.5–34.0 → 33.7–35.1 ms (+3.0% to +3.7%) with it on; 52.3 → 57.9 rows
+    per answer (the listing past the cap); peak memory 2.93 → 2.98 MiB.
+
+  The audit pays one predicate call per meeting and room:
   `build_meeting_demands` 10.6 → 11.8 ms and quality's `_rooms` 15.6 → 16.4 ms
-  (a generator in the predicate had cost +3.5 ms; it is a plain loop).
-- On real data: on every scenario of the QA copy (662–666, 705 placements
+  (a generator in the predicate had cost +3.5 ms; it is a plain loop). That is
+  a little over the 1 ms budget, and harmless: the optimiser builds the
+  demands a few times per run (local search, v2, compaction, cap repair), not
+  per search step.
+- On real data: on every scenario of the QA copy (662–666, 705 meetings
   the audit judges), the answer's need equals the audit's, every listed
   room's `compatible` equals the audit's domain, and the current room's
   `quality_reasons` equal Issues' rows: no mismatch.
@@ -1687,6 +1699,10 @@ later change to it) needs no server change.
 - The default-40 need, shared meetings, boards without a programme and rooms
   without a department have no instance in the QA data; their parity rests on
   the fixture (`tests/tw_room_audit_support.py`).
+- A policy course that uses a shared room is skipped as an occupant by the
+  candidates but judged by the audit, which then reads the budget itself (the
+  legacy fields read none for a policy course). No policy uses a shared room
+  today; a test patches the English one to.
 
 **Follow-ups.** The client PR (`feat/workspace-change-room-audit`); F3 (split
 view on the module with `?audit=1`); bulk clean rooms and repair accepting only

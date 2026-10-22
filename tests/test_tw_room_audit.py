@@ -21,6 +21,7 @@ candidates call it when asked (``?audit=1``).
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 import os
@@ -38,10 +39,12 @@ from core.models import (
     DeliveryBoard,
     ProgrammeRequirement,
     Room,
+    ScenarioSectionBudget,
     SectionPlacement,
     Student,
     TermSection,
 )
+from core.services import timetable_course_policy as course_policy
 from core.services import timetable_exact_rooming as exact_rooming
 from core.services import timetable_recovery_rooming as recovery_rooming
 from core.services import timetable_repair as repair
@@ -194,6 +197,43 @@ def _check_parity(scenario, client, placement, answer: dict, payload_for) -> int
     return checked
 
 
+def _extra_course(scenario, code: str, demand: tuple[int, int], copies, slot) -> None:
+    """A course outside the oracle's corpus (the oracle stays as recorded):
+    a budget row ``(total_demand, planned_sections)``, section ``S1`` and one
+    copy per ``(board symbol, room)`` at ``slot``."""
+    total, planned = demand
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_key=support.course_key(code),
+        course_code=code,
+        course_name=f"COURSE {code}",
+        department="AI",
+        credit_hours=3,
+        planned_sections=planned,
+        max_per_section=40,
+        total_demand=total,
+        programme_term=3,
+    )
+    section = TermSection.objects.create(
+        scenario=scenario,
+        course_key=support.course_key(code),
+        course_code=code,
+        course_number=code,
+        course_name=f"COURSE {code}",
+        section="S1",
+        available_capacity=30,
+        source_tag="tw_auto",
+    )
+    labels = {symbol: label for symbol, label, _program in support.BOARDS}
+    for board, room in copies:
+        place(
+            DeliveryBoard.objects.get(scenario=scenario, label=labels[board]),
+            section,
+            [slot],
+            room=room,
+        )
+
+
 # ── S1: the legacy oracle ─────────────────────────────────────────────────
 
 
@@ -282,6 +322,59 @@ def test_s3_a_copy_spelled_differently_is_the_same_meeting(teacher_off, scenario
         assert [k["placement_id"] for k in target["kept"]] != [placement.id]
         checked = _check_parity(scenario, client, placement, answer, lambda code: {"room": code})
         assert checked == len(support.ROOMS)
+
+
+def test_s3_a_copy_online_on_its_own_board_is_not_part_of_the_meeting(
+    teacher_off, scenario, client
+):
+    """AI314 is online on the DS board only: the audit leaves the DS copy out,
+    so its empty room neither splits the class nor leaves it unroomed."""
+    _extra_course(
+        scenario, "AI314", (20, 1), (("AI", "L40"), ("DS", "")), ("TUE", "11:00", "12:15")
+    )
+    ProgrammeRequirement.objects.create(
+        program="DS",
+        course_code="AI314",
+        course_name="COURSE AI314",
+        programme_term=3,
+        credit_hours=3,
+        is_online=True,
+    )
+    placement = support.placement_of("AI314", "AI")
+    answer = _answer(client, "AI314", "AI")
+    target = answer["target"]["audit"]
+    assert target["placement_ids"] == target["moving_placement_ids"] == [placement.id]
+    assert target["kept"] == []
+    assert [board["board_label"] for board in target["boards"]] == ["AI T3"]
+    assert _by_code(answer)["L40"]["audit"]["reasons"] == []
+    assert _by_code(answer)["L40"]["audit"]["quality_reasons"] == []
+    checked = _check_parity(scenario, client, placement, answer, lambda code: {"room": code})
+    assert checked == len(support.ROOMS)
+
+
+def test_s3_a_kept_copy_in_a_small_room_is_not_the_chosen_room_s_shortage(
+    teacher_off, scenario, client
+):
+    """AI313 needs 33 seats; its DS copy stays in L30. Whatever room the AI copy
+    gets, Issues say "Room too small" (the meeting holds L30), but only a room
+    short on its own reads ``capacity`` and ``undersized``."""
+    _extra_course(
+        scenario, "AI313", (30, 1), (("AI", "L40"), ("DS", "L30")), ("TUE", "11:00", "12:15")
+    )
+    placement = support.placement_of("AI313", "AI")
+    answer = _answer(client, "AI313", "AI")
+    target = answer["target"]["audit"]
+    assert (target["required_capacity"], target["capacity_source"]) == (33, "budget")
+    assert [kept["room"] for kept in target["kept"]] == ["L30"]
+    rooms = _by_code(answer)
+    big = rooms["L60"]["audit"]
+    assert (big["compatible"], big["undersized"], big["reasons"]) == (True, False, ["split"])
+    assert big["quality_reasons"] == ["undersized", "incompatible"]
+    joined = rooms["L30"]["audit"]  # the kept copy's own room: one room, too small
+    assert (joined["undersized"], joined["reasons"]) == (True, ["capacity"])
+    assert joined["quality_reasons"] == ["undersized"]
+    checked = _check_parity(scenario, client, placement, answer, lambda code: {"room": code})
+    assert checked == len(support.ROOMS)
 
 
 def test_s13_unroomed_and_unassigned_copies_move_together(teacher_off, scenario, client):
@@ -474,6 +567,27 @@ def test_s7_the_answer_shape(teacher_off, scenario, client):
     assert small["quality_reasons"] == ["undersized", "incompatible"]
 
 
+def test_s7_a_policy_course_in_a_shared_room_reads_its_budget(
+    teacher_off, scenario, client, monkeypatch
+):
+    """The legacy fields read no budget for a policy course (its type is fixed),
+    so the audit reads the budget itself. No policy uses a shared room today:
+    the English one is made to here."""
+    monkeypatch.setattr(
+        course_policy,
+        "ENGLISH_INTENSIVE_POLICY",
+        dataclasses.replace(course_policy.ENGLISH_INTENSIVE_POLICY, uses_shared_room=True),
+    )
+    _extra_course(scenario, "ENG101", (24, 1), (("AI", "L40"),), ("TUE", "11:00", "12:15"))
+    placement = support.placement_of("ENG101", "AI")
+    answer = _answer(client, "ENG101", "AI")
+    target = answer["target"]["audit"]
+    (demand,) = [d for d in build_meeting_demands(scenario.id) if placement.id in d.placement_ids]
+    assert (target["required_capacity"], target["capacity_source"]) == (26, "budget")
+    assert target["required_capacity"] == demand.required_capacity
+    assert _by_code(answer)["L25"]["audit"]["reasons"] == ["capacity"]
+
+
 # ── S8: meetings the audit cannot judge ───────────────────────────────────
 
 
@@ -544,6 +658,37 @@ def test_s8_an_unknown_day_or_a_reversed_interval_is_not_assessed(teacher_off, s
     _assert_not_assessed(
         _answer(client, "AI301", "AI", slot=("SUN", "10:00", "10:00")), "invalid_interval"
     )
+    # The legacy rule reads 9:00:00 as 09:00; the audit's HH:MM is "9:00:", which
+    # it cannot parse (a 422 to the quality audit, never a 500 here).
+    _assert_not_assessed(
+        _answer(client, "AI301", "AI", slot=("SUN", "9:00:00", "10:15")), "invalid_interval"
+    )
+
+
+def test_s8_a_meeting_that_takes_no_room_still_answers_the_flag(teacher_off, scenario, client):
+    """A policy course with no shared room and a course online on its board by
+    its course code answer before any room is read; ``?audit=1`` still gets
+    ``target.audit``, and without it the answer has no ``audit`` key."""
+    _extra_course(scenario, "ENG101", (24, 1), (("AI", "L40"),), ("TUE", "11:00", "12:15"))
+    _extra_course(scenario, "AI315", (20, 1), (("DS", "L40"),), ("TUE", "13:00", "14:15"))
+    ProgrammeRequirement.objects.create(
+        program="DS",
+        course_code="AI315",
+        course_name="COURSE AI315",
+        programme_term=3,
+        credit_hours=3,
+        is_online=True,
+    )
+    for (code, board), flag, reason in (
+        (("ENG101", "AI"), "no_room_required", "no_room_required"),
+        (("AI315", "DS"), "is_online", "online"),
+    ):
+        plain = _answer(client, code, board, extra="")
+        body = _answer(client, code, board)
+        assert plain["target"][flag] is True and plain["candidates"] == [], code
+        assert "audit" not in plain["target"], code
+        assert body["target"].pop("audit") == {"assessed": False, "reason": reason}, code
+        assert body == plain, code
 
 
 # ── S9: cost shape ────────────────────────────────────────────────────────
@@ -675,6 +820,15 @@ def test_s14_past_the_cap_every_room_not_refused_for_gender_is_listed(
     teacher_off, scenario, client, monkeypatch
 ):
     _filler_rooms(60)  # 36 seats: each fits the legacy 35 and ranks first
+    # Refused for gender and for something else too: still refused.
+    Room.objects.create(
+        room_code="LFLAB", capacity=40, room_type="lab", section="F", department="AI,DS"
+    )
+    Room.objects.create(
+        room_code="LFOUT", capacity=40, room_type="lecture", section="F", department="CS"
+    )
+    gender_refused = {"LF40": ["gender"], "LN40": ["gender"]}
+    gender_refused |= {"LFLAB": ["type", "gender"], "LFOUT": ["gender", "programme"]}
     plain = _answer(client, "AI302", "AI", extra="")
     audited = _answer(client, "AI302", "AI")
     plain_codes = [c["room_code"] for c in plain["candidates"]]
@@ -686,12 +840,14 @@ def test_s14_past_the_cap_every_room_not_refused_for_gender_is_listed(
     assert audited["summary"] == plain["summary"]
     # ...then every other room in rank order, but the ones refused for gender.
     monkeypatch.setattr(tws, "_ROOM_CANDIDATE_LIMIT", 10**6)
-    ranked = [c["room_code"] for c in _answer(client, "AI302", "AI", extra="")["candidates"]]
+    everything = _answer(client, "AI302", "AI")["candidates"]
+    ranked = [c["room_code"] for c in everything]
     assert audited_codes[len(plain_codes) :] == [
-        code for code in ranked if code not in plain_codes and code not in {"LF40", "LN40"}
+        code for code in ranked if code not in plain_codes and code not in gender_refused
     ]
     for code in ("BUSY40", "L30"):  # in use and fitting; short to the legacy rule only
         assert code in audited_codes and code not in plain_codes
-    for code in ("LF40", "LN40"):
-        assert code not in audited_codes
+    for code, reasons in gender_refused.items():
+        assert _by_code({"candidates": everything})[code]["audit"]["reasons"] == reasons, code
+        assert code not in audited_codes and code not in plain_codes, code
     assert all("gender" not in c["audit"]["reasons"] for c in audited["candidates"][61:])

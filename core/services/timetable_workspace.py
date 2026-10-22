@@ -2328,7 +2328,9 @@ def preview_placement_room_candidates(
     ``include_audit`` adds what the quality audit (Issues' room rows) will say
     about each room once it is saved: ``target.audit`` and ``candidates[].audit``
     (``_room_choice_audit``), and lists past the cap every room the audit does
-    not refuse for gender. Without it the answer is unchanged.
+    not refuse for gender. Every such answer carries ``target.audit``: a meeting
+    that takes no room (a policy course, a course online on this board) is
+    ``{"assessed": false, "reason": ...}``. Without it the answer is unchanged.
     """
     from core.services.timetable_room_audit import board_gender_memo
     from core.services.timetable_rooming import (
@@ -2346,8 +2348,16 @@ def preview_placement_room_candidates(
     term_section = placement.term_section
     board = placement.board
     policy = section_policy(term_section)
+
+    def without_rooms(answer: dict, reason: str) -> dict:
+        # A meeting that takes no room: nothing for the audit to judge, and an
+        # audit answer still says so (``target.audit``), as every one does.
+        if include_audit:
+            answer["target"]["audit"] = {"assessed": False, "reason": reason}
+        return answer
+
     if policy and not policy.uses_shared_room:
-        return {
+        no_room = {
             "placement": {
                 "id": placement.id,
                 "course_code": term_section.course_code,
@@ -2381,10 +2391,11 @@ def preview_placement_room_candidates(
                 "no_room_required": True,
             },
         }
+        return without_rooms(no_room, "no_room_required")
     online_lookup = OnlineCourseLookup()
     is_online = online_lookup.is_online_course_for_board(board, term_section.course_code)
     if is_online:
-        return {
+        online = {
             "placement": {
                 "id": placement.id,
                 "course_code": term_section.course_code,
@@ -2412,6 +2423,7 @@ def preview_placement_room_candidates(
                 "is_online": True,
             },
         }
+        return without_rooms(online, "online")
     required_capacity = int(
         term_section.registered_count or term_section.available_capacity or board.target_size or 0
     )
