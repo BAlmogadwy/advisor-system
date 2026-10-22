@@ -2170,6 +2170,11 @@ def _room_department_fits(room: Room, board: DeliveryBoard) -> bool:
     return not room_departments or bool(programmes & room_departments)
 
 
+# The most rooms one preview lists, best first (the current room is listed
+# beyond it when it ranks past it).
+_ROOM_CANDIDATE_LIMIT = 60
+
+
 def preview_placement_room_candidates(
     placement_id: int,
     *,
@@ -2276,6 +2281,20 @@ def preview_placement_room_candidates(
         .select_related("board", "term_section")
     )
     for other in occupiers:
+        # Every copy of the section at this very slot (the query is already this
+        # scenario) is skipped: the same section at the same time is the same
+        # class, not another class holding the room. Choosing the room of a copy
+        # that sits in another room makes the copies agree, and the move itself
+        # takes only the copies in this placement's room with it
+        # (assign_physical_meeting_room). The same section at another time is
+        # another class, and stays an occupant.
+        if (
+            other.term_section_id == placement.term_section_id
+            and str(other.day).strip().upper() == target_day
+            and str(other.start_time).strip() == target_start
+            and str(other.end_time).strip() == target_end
+        ):
+            continue
         if section_policy(other.term_section):
             continue
         if online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
@@ -2288,6 +2307,7 @@ def preview_placement_room_candidates(
                 "placement_id": other.id,
                 "board_id": other.board_id,
                 "board_label": other.board.label,
+                "term_section_id": other.term_section_id,
                 "section": f"{other.term_section.course_code}-{other.term_section.section}",
                 "day": other.day,
                 "start": other.start_time,
@@ -2396,6 +2416,17 @@ def preview_placement_room_candidates(
             c["section"],
         )
     )
+    listed = candidates[:_ROOM_CANDIDATE_LIMIT]
+    # The placement's current room is always listed, even when it ranks past the
+    # cap (a big hall is a poor fit for a small section): every candidate that
+    # carries its code is appended, in rank order, when none made the cut.
+    current_key = _room_key(placement.room)
+    if current_key and not any(_room_key(c["room_code"]) == current_key for c in listed):
+        listed += [
+            c
+            for c in candidates[_ROOM_CANDIDATE_LIMIT:]
+            if _room_key(c["room_code"]) == current_key
+        ]
     return {
         "placement": {
             "id": placement.id,
@@ -2415,7 +2446,7 @@ def preview_placement_room_candidates(
             "required_gender": required_gender,
             "is_online": False,
         },
-        "candidates": candidates[:60],
+        "candidates": listed,
         "summary": {
             "total": len(candidates),
             "available": sum(1 for c in candidates if c["available"]),
