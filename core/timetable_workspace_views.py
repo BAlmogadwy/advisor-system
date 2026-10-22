@@ -847,6 +847,10 @@ def tw_scenario_plan_lens_view(request: HttpRequest, scenario_id: int) -> JsonRe
 
     It runs a full seating evaluation (the drawer's seated mix by programme and
     the per-plan counts), so it is a heavy preview and takes the preview lane.
+    Its ``seating`` says whether that seating was assessed: a failed one is
+    ``{"assessed": false, "students": 0, "reason": "assessment_failed"}``,
+    never "nobody sits here". ``quality/?lens=1`` answers the same lens from
+    the quality read's own seating.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -1014,7 +1018,12 @@ def tw_scenario_detail_view(request: HttpRequest, scenario_id: int) -> JsonRespo
 @login_required(login_url="login")
 @require_GET
 def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
-    """Return current scenario-wide quality without modifying or solving rooms."""
+    """Return current scenario-wide quality without modifying or solving rooms.
+
+    ``?lens=1`` (exactly ``"1"``) adds ``plan_lens``, last: the plan lens from
+    the quality read's own seating, so the page pays one seating for both, or
+    ``null`` when it cannot be built. No preview lane, with or without it.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1022,7 +1031,8 @@ def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResp
         return _err("Scenario not found", code="NOT_FOUND", status=404)
     from core.services.timetable_scenario_quality import build_scenario_quality
 
-    return _ok(build_scenario_quality(scenario_id))
+    with_lens = request.GET.get("lens") == "1"
+    return _ok(build_scenario_quality(scenario_id, with_lens=with_lens))
 
 
 @login_required(login_url="login")

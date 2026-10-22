@@ -3,16 +3,21 @@
 Student seats are reconstructed by the canonical evaluator. Room auditing only
 checks persisted assignments against its canonical domains; it never solves or
 repairs the timetable. Failed or absent assessments are explicitly unknown.
+
+Asked with the lens (``with_lens``), the plan lens is built from this read's
+own seating, so the page pays one seating for both; a lens that cannot be
+built is ``None`` and never costs the quality read.
 """
 
 from __future__ import annotations
 
 import logging
 from itertools import combinations
-from typing import Any
+from typing import Any, NamedTuple
 
 from core.services.timetable_assignment_models import SectionState, TimetableEvaluationResult
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
 from core.services.timetable_flags import is_tiered_objective_enabled
 from core.services.timetable_optimisation_policy import instructor_schedule_metrics
 from core.services.timetable_optimizer_v2 import (
@@ -21,6 +26,11 @@ from core.services.timetable_optimizer_v2 import (
     build_section_instructor_map_for_scenario,
     build_section_states_for_scenario,
     build_student_profiles_for_scenario,
+)
+from core.services.timetable_plan_lens import (
+    SeatingEvidence,
+    build_scenario_plan_lens,
+    seating_evidence,
 )
 from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
 from core.services.timetable_room_audit import QUALITY_REASON
@@ -139,18 +149,76 @@ def _seat_tiers(evaluation: TimetableEvaluationResult) -> dict[str, Any]:
     return {"assessed": True, "layout": "legacy", "total": int(score["unresolved_courses"])}
 
 
-def build_scenario_quality(scenario_id: int) -> dict[str, Any]:
+class _Seated(NamedTuple):
+    """What this read's own seating leaves for the lens: the evaluation, when
+    it ran to the end; ``no_demand`` when there was nobody to seat. Neither:
+    the seating never ran or it raised, and the lens seats on its own.
+    ``demands``: the demand rows the seating read, which the lens reuses."""
+
+    evaluation: TimetableEvaluationResult | None = None
+    no_demand: bool = False
+    demands: list[StudentCourseDemand] | None = None
+
+
+def build_scenario_quality(scenario_id: int, *, with_lens: bool = False) -> dict[str, Any]:
+    """The scenario's quality; ``with_lens`` adds ``plan_lens`` as its last key.
+
+    Without the lens the answer and its reads are exactly what they always
+    were. With it, the quality keys are the same and the lens comes from the
+    same seating, inside the same one-teacher scope.
+    """
     from core.services.timetable_flags import is_one_teacher_active
 
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import assignment_scope
 
         with assignment_scope(scenario_id):  # one teacher map for the whole panel
-            return _build_scenario_quality(scenario_id)
-    return _build_scenario_quality(scenario_id)
+            return _quality_and_lens(scenario_id, with_lens=with_lens)
+    return _quality_and_lens(scenario_id, with_lens=with_lens)
 
 
-def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
+def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
+    """Quality, then (``with_lens``) the plan lens from the same seating.
+
+    The lens equals ``/plan-lens/``: it reads the evaluation's states when the
+    seating ran; nobody to seat without demand; otherwise it seats on its own
+    (cheap when the sections cannot even be built), so a quality failure that
+    is not the seating's never reads as a failed seating. Any failure here is
+    logged and the lens is ``None``; the quality keys are never touched.
+    """
+    result, seated = _build_scenario_quality(scenario_id)
+    if not with_lens:
+        return result
+    lens: dict[str, Any] | None
+    try:
+        seating, demands = _lens_seating(seated), seated.demands
+        # Drop the evaluation (every student's state) before the lens reads its
+        # own inputs, so the two never sit in memory together: that keeps this
+        # read's peak near quality's own on the 512 MB host.
+        del seated
+        lens = build_scenario_plan_lens(scenario_id, seating=seating, demands=demands)
+    except Exception:
+        logger.exception(
+            "Could not build the plan lens with the quality of scenario %s", scenario_id
+        )
+        lens = None
+    result["plan_lens"] = lens
+    return result
+
+
+def _lens_seating(seated: _Seated) -> SeatingEvidence | None:
+    """The lens's evidence from this read's seating; ``None``: none was made."""
+    if seated.evaluation is not None:
+        return seating_evidence(
+            seated.evaluation.assignment_states,
+            grouping=seated.evaluation.quality_score.get("programme_grouping") or {},
+        )
+    if seated.no_demand:
+        return SeatingEvidence(assessed=True, students=0)
+    return None
+
+
+def _build_scenario_quality(scenario_id: int) -> tuple[dict[str, Any], _Seated]:
     result: dict[str, Any] = {
         "scenario_id": scenario_id,
         "instructor": {
@@ -224,15 +292,18 @@ def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
     except Exception:
         logger.exception("Could not assess saved meetings for scenario %s", scenario_id)
         result["instructor"]["reason"] = "assessment_failed"
-        return result
+        return result, _Seated()
 
     try:
-        profiles = build_student_profiles_for_scenario(scenario_id)
+        # Read here, at the point the profile builder would read it, so a lens
+        # asked with this read reuses the rows instead of reading them again.
+        demands = load_scenario_course_demands(scenario_id)
+        profiles = build_student_profiles_for_scenario(scenario_id, demand_rows=demands)
         if not profiles:
             result["soft_seats"]["reason"] = "no_student_demand"
             result["seats"]["reason"] = "no_student_demand"
             result["assigned_student_clashes"]["reason"] = "no_student_demand"
-            return result
+            return result, _Seated(no_demand=True, demands=demands)
         tiers = (
             build_course_tier_map_for_scenario(scenario_id)
             if is_tiered_objective_enabled()
@@ -263,4 +334,5 @@ def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
         result["soft_seats"]["reason"] = "assessment_failed"
         result["seats"]["reason"] = "assessment_failed"
         result["assigned_student_clashes"]["reason"] = "assessment_failed"
-    return result
+        return result, _Seated()
+    return result, _Seated(evaluation=evaluation, demands=demands)
