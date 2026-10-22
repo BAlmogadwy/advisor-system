@@ -122,7 +122,7 @@
         return `<li><bdi>${escape(item.board_label)}</bdi> · <bdi>${escape(item.course_code)} ${escape(item.section)}</bdi> · ${escape(DAY[item.day] || item.day)} ${time(item.start_time, item.end_time)}${locked}</li>`;
       }).join('');
       const more = count > hidden.length
-        ? `<p class="tw-readiness-lead">${AR ? `و${meetingsText(count - hidden.length)} غيرها.` : `And ${meetingsText(count - hidden.length)} more.`}</p>` : '';
+        ? `<p class="tw-readiness-lead">${AR ? `عدد إضافي غير معروض: ${count - hidden.length}.` : `And ${meetingsText(count - hidden.length)} more.`}</p>` : '';
       html += `<p class="tw-readiness-lead">${lead}</p><ul class="tw-readiness-list">${rows}</ul>${more}`;
     }
     const dropped = details.dropped_flags || [];

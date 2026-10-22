@@ -71,7 +71,7 @@ test('the hidden meetings are escaped, their times isolated, and the rest counte
   ] });
   assert.match(html, /<bdi>Term &lt;2&gt;<\/bdi>/);
   assert.match(html, /الاثنين <bdi dir="ltr">10:50–12:05<\/bdi>/);
-  assert.match(html, /ولقاءين غيرها/);
+  assert.match(html, /عدد إضافي غير معروض: 2/);
   assert.match(html, /يترك 3 لقاءات خارج/);
 });
 

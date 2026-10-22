@@ -593,6 +593,16 @@ test('a declined confirmation reopens the editor with the typed text, and sends 
   assert.ok(!h.notices.some(n => n.type === 'success'));
 });
 
+test('a save the server cannot take now (busy) gives the typed text back', async t => {
+  const h = await slotHarness(t, () => ({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }));
+  await h.select();
+  const shown = dialogs(h, d => { d.getElementById('twSlotInput').value = 'Kept	09:00	10:15'; return true; }, false);
+  await h.w.openSlotEditor();
+  assert.equal(h.posts.length, 1);
+  assert.equal(shown.length, 2, 'the editor came back');
+  assert.match(shown[1].body, /Kept	09:00	10:15/);
+});
+
 test('a line the editor cannot read saves nothing and is named; a refused column is named', async t => {
   let invalid = false;
   const h = await slotHarness(t, () => invalid

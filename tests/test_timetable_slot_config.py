@@ -336,6 +336,34 @@ def test_moving_an_online_window_is_confirmed_by_name(http) -> None:
 
 
 @pytest.mark.django_db
+def test_an_empty_list_is_the_defaults_and_keeps_their_flags_without_asking(http) -> None:
+    scenario = _scenario(slot_config=[], lab_slot_config=[])
+    response = _save(http, scenario, [], [])
+    assert response.status_code == 200, response.content
+
+
+@pytest.mark.django_db
+def test_switching_a_kept_window_off_online_only_is_confirmed_too(http) -> None:
+    scenario = _scenario()
+    explicit = [
+        *_plain(LABS[:2]),
+        {"label": "Online 1", "start": "15:50", "end": "17:30", "online_only": False},
+    ]
+    response = _save(http, scenario, _plain(LECTURES), explicit)
+    assert response.status_code == 409
+    details = response.json()["error"]["details"]
+    assert [(d["start"], d["flags"]) for d in details["dropped_flags"]] == [
+        ("15:50", ["online_only"])
+    ]
+    assert (
+        _save(
+            http, scenario, _plain(LECTURES), explicit, confirm=details["fingerprint"]
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.django_db
 def test_without_lab_columns_in_the_request_the_lab_columns_stay(http) -> None:
     scenario = _scenario()
     assert _save(http, scenario, _plain(LECTURES)).status_code == 200

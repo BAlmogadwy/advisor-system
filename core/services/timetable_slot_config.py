@@ -274,27 +274,40 @@ def hidden_by_slot_change(
 def dropped_flagged_columns(
     previous_rows: list[dict], new_rows: list[dict], list_name: str
 ) -> list[dict[str, object]]:
-    """Flagged columns (online-only, policy) the new list no longer has.
+    """Flags (online-only, policy) that a change takes off a column.
 
-    A column is kept when a new column has its start and end. One that moves
-    loses its flag with it: an online window edited to another time becomes a
-    plain column the automatic placers may use, so it is confirmed by name.
+    Compared after the carry-over: a column keeps a flag when a new column
+    with its start and end still has it. One that moves loses it (an online
+    window edited to other times is a plain column the automatic placers may
+    use), and so does one the request sets false. An empty new list means the
+    defaults, as it does when saved.
     """
-    kept = {(row["start"], row["end"]) for row in new_rows}
+    if not new_rows:
+        defaults = DEFAULT_SLOTS if list_name == "slot_config" else DEFAULT_LAB_SLOTS
+        new_rows = [dict(slot) for slot in defaults if isinstance(slot, dict)]
+    kept: dict[tuple[str | None, str | None], set[str]] = {}
+    for row in new_rows:
+        if isinstance(row, dict):
+            key = (_hhmm(row.get("start")), _hhmm(row.get("end")))
+            kept.setdefault(key, set()).update(flag for flag in SLOT_FLAGS if row.get(flag))
     dropped: list[dict[str, object]] = []
     for slot in previous_rows:
         if not isinstance(slot, dict):
             continue
-        flags = [flag for flag in SLOT_FLAGS if slot.get(flag)]
         start, end = _hhmm(slot.get("start")), _hhmm(slot.get("end"))
-        if flags and (start, end) not in kept:
+        lost = [
+            flag
+            for flag in SLOT_FLAGS
+            if slot.get(flag) and flag not in kept.get((start, end), set())
+        ]
+        if lost:
             dropped.append(
                 {
                     "list": list_name,
                     "label": str(slot.get("label") or f"{start}-{end}"),
                     "start": start,
                     "end": end,
-                    "flags": flags,
+                    "flags": lost,
                 }
             )
     return dropped

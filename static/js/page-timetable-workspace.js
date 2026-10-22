@@ -3061,7 +3061,6 @@ async function openSlotEditor(typed = null) {
   if (lectures.rows.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return openSlotEditor(text); }
   const scenarioId = TW.scenarioId;
 
-  let stopped = false;
   const data = await SC.save({
     send: async extra => {
       let error = null;
@@ -3085,16 +3084,14 @@ async function openSlotEditor(typed = null) {
         kind: 'danger',
         confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
       });
-      if (!ok) stopped = true;
       return ok;
     },
-    report: message => { stopped = true; notify.error(message); },
+    report: message => notify.error(message),
   });
   if (TW.scenarioId !== scenarioId) return;
-  if (!data) {
-    if (stopped) return openSlotEditor(text);
-    return;
-  }
+  // Nothing saved — declined, refused, busy or offline: the typed text comes
+  // back, so it can be adjusted or tried again.
+  if (!data) return openSlotEditor(text);
 
   TW.scenario = data.scenario;
   notify.success(IS_AR ? 'تم تحديث الفترات' : `${lectures.rows.length} lecture + ${labs.rows.length} lab slots saved`);
