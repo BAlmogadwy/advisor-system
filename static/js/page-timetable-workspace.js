@@ -2342,14 +2342,8 @@ function renderRightPanel(tab) {
   const body = $('twRightBody');
 
   if (tab === 'issues') {
-    const overlaps = TW.conflicts.overlaps || [];
-    const iClashes = TW.conflicts.instructor_clashes || [];
-    const rClashes = TW.conflicts.room_clashes || [];
-    const xConflictsEarly = activeBoardCrossBoardClashes();
-    const roomShortages = activeBoardRoomShortages();
-    const serverBlockers = boardReadinessBlockers(TW.boardId);
-    const total = serverBlockers.length + overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length + roomShortages.length;
-    setIssuesCount(total, ((TW.conflicts.summary || {}).critical || 0) + serverBlockers.length);
+    const { serverBlockers, overlaps, iClashes, rClashes, crossBoard: xConflictsEarly, roomShortages, total, critical } = boardIssues();
+    setIssuesCount(total, critical);
 
     if (total === 0) {
       body.innerHTML = `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${T.noIssues}</p>${TW.quality?.rooms?.assessed ? '' : `<small>${IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.'}</small>`}</div>`;
@@ -2825,8 +2819,12 @@ async function refreshWorkspaceQuality(force = false) {
 /* The stat strip. Two scopes (whole scenario / instructors), each number with
    its meaning in its label and its direction in its tone:
    critical blocks something, warning lowers quality, ok meets its target.
-   "—" is unknown and says why in its tooltip — never a coloured 0. */
+   "—" is unknown and says why in its tooltip — never a coloured 0.
+   The Issues count is drawn with it: every input of that count (the board's
+   conflicts and placements, the quality, the readiness answer, a reset)
+   redraws the strip. */
 function renderWorkspaceQuality() {
+  renderIssuesCount();
   const quality = TW.quality;
   const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
   const put = (id, value, { tone = null, title = '', danger = false } = {}) => {
@@ -2961,6 +2959,29 @@ function renderDemandTable(body) {
       <td>${(t.deficit || 0) > 0 ? `−${t.deficit}` : '0'}</td>
     </tr></tfoot>
   </table>`;
+}
+
+/* Everything the Issues tab lists for the current board, and its count. The tab
+   and the counts read this one sum, so they can never disagree. */
+function boardIssues() {
+  const conflicts = TW.conflicts || {};
+  const serverBlockers = boardReadinessBlockers(TW.boardId);
+  const overlaps = conflicts.overlaps || [];
+  const iClashes = conflicts.instructor_clashes || [];
+  const rClashes = conflicts.room_clashes || [];
+  const crossBoard = activeBoardCrossBoardClashes();
+  const roomShortages = activeBoardRoomShortages();
+  const total = serverBlockers.length + overlaps.length + iClashes.length + rClashes.length + crossBoard.length + roomShortages.length;
+  const critical = ((conflicts.summary || {}).critical || 0) + serverBlockers.length;
+  return { serverBlockers, overlaps, iClashes, rClashes, crossBoard, roomShortages, total, critical };
+}
+
+/* The counts follow the data, whichever inspector tab is open: a card click
+   opens Selection, and the rail of a collapsed inspector exists to say how
+   much is wrong. */
+function renderIssuesCount() {
+  const { total, critical } = boardIssues();
+  setIssuesCount(total, critical);
 }
 
 /* The Issues tab's count, and the inspector rail's, so a collapsed inspector

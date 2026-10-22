@@ -364,3 +364,38 @@ test('a newly generated scenario never shows the previous scenario’s publish b
   assert.doesNotMatch(h.d.getElementById('twPublishLabel').textContent, /blocker/);
   await generated;
 });
+
+// A card click opens Selection; the Issues badge and the collapsed inspector's
+// rail must still follow the board, the conflicts and each readiness answer.
+test('the Issues count follows the data while another inspector tab is open', async t => {
+  const second = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const readiness = { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] };
+  const h = await harness(t, url => {
+    if (url.includes('/readiness/')) return { readiness };
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, second] };
+    if (url === '/ops/tw/boards/3/') return { placements: [{ ...placement, id: 11 }], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/3/conflicts/') return { summary: { critical: 0 } };
+    return undefined;
+  });
+  await h.select();
+  const counts = () => [h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twRightRailCount').textContent];
+  // Board 2: its cross-board clash and its undersized room.
+  assert.deepEqual(counts(), ['2', '2']);
+  h.d.getElementById('twTabSelection').click();
+  assert.ok(h.d.getElementById('twTabSelection').classList.contains('active'));
+  await h.w.selectBoard(3);
+  assert.deepEqual(counts(), ['', ''], 'board 3 has nothing wrong');
+  // A publish blocker lands on board 3 (a section of its term placed nowhere).
+  readiness.ready = false; readiness.blockers = ['x'];
+  readiness.blocker_items = [{ code: 'missing_required_section', board_id: null, count: 1,
+    params: { course_code: 'AI222', course_key: 'AI222', programme_term: 8, planned_sections: 2, used_sections: 1 } }];
+  h.w.TW.dataVersion++;
+  await h.w.refreshPublishReadiness(true);
+  assert.deepEqual(counts(), ['1', '1']);
+  assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'critical');
+  await h.w.selectBoard(2);
+  assert.deepEqual(counts(), ['2', '2']);
+  assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'warning');
+  assert.ok(h.d.getElementById('twTabSelection').classList.contains('active'), 'Selection stayed open throughout');
+  assert.deepEqual(h.errors, []);
+});
