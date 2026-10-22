@@ -3602,8 +3602,17 @@ test('M7 committing: the keyboard is on the chosen row before Commit turns off; 
     if (opts?.method === 'POST') seen = [h.d.activeElement, commit.disabled];
     return fetch(url, opts);
   };
+  // Where the keyboard is at the very moment Commit turns off.
+  let atOff = null;
+  const original = Object.getOwnPropertyDescriptor(h.w.HTMLButtonElement.prototype, 'disabled');
+  Object.defineProperty(commit, 'disabled', {
+    configurable: true,
+    get() { return original.get.call(this); },
+    set(value) { if (value && !atOff) atOff = h.d.activeElement; original.set.call(this, value); },
+  });
   commit.click();
   await settle();
+  assert.equal(atOff, moveRadio(h, 'WED|10:30'), 'the keyboard is on the chosen row when Commit turns off');
   assert.deepEqual(seen, [moveRadio(h, 'WED|10:30'), true], 'the keyboard on the chosen row as the request leaves');
   assert.equal(h.d.getElementById('twMoveChoices').getAttribute('aria-busy'), 'true');
   assert.deepEqual([moveStatus(h), h.d.getElementById('twMoveStatus').closest('[aria-busy="true"]')], ['Moving…', null]);
@@ -3890,6 +3899,14 @@ test('M11 the report reads Issues once the board is read again: what the moved m
   h.w.TW.qualityVersion = h.w.TW.dataVersion;
   assert.deepEqual(plainOf(h.w.editReport('Moved.', [10])), { text: 'Moved. · Lowers quality: Room too small', tone: 'warning' });
   assert.deepEqual(plainOf(h.w.editReport('Moved.', [12])), { text: 'Moved.', tone: 'success' }, 'another meeting’s rows are not this move’s');
+  // R's hint only beside a room problem the report names: a room row, yes;
+  // none (the clash the verdict saw has gone), or another kind only, no.
+  const hint = 'Press R on the card to change its room.';
+  assert.equal(plainOf(h.w.editReport('Moved.', [10], hint)).text, `Moved. · Lowers quality: Room too small · ${hint}`);
+  h.w.TW.quality = { ...noRooms, rooms: { assessed: true, shortages: 0, details: [] } };
+  assert.deepEqual(plainOf(h.w.editReport('Moved.', [10], hint)), { text: 'Moved.', tone: 'success' });
+  h.w.TW.conflicts = { ...quiet, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'CS323', section_b: 'AI9', overlap_count: 30 }] };
+  assert.doesNotMatch(plainOf(h.w.editReport('Moved.', [10], hint)).text, /Press R/);
 });
 
 test('M12 a move the user left (Escape, then R or M again) ends where the user is: in the dialog open by then, named when that dialog is about another meeting; a refusal of the same meeting holds Commit there', async t => {

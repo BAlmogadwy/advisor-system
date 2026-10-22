@@ -2750,7 +2750,8 @@ function editReport(verbWords, ids, hint = '') {
   const worst = rows.some(row => row.tone === 'critical') ? 'critical' : rows.length ? 'warning' : '';
   let text = verbWords;
   if (worst) text += ` · ${TONE_LEAD[worst]}: ${[...new Set(rows.map(row => row.kind))].map(issueKindLabel).join(', ')}`;
-  if (hint) text += ` · ${hint}`;
+  // A room hint only beside a room problem this report names.
+  if (hint && rows.some(row => String(row.kind).startsWith('room'))) text += ` · ${hint}`;
   return { text, tone: worst ? 'warning' : 'success' };
 }
 function reportEdit(verbWords, ids, { dialog = null, about = null, hint = '', data = null } = {}) {
@@ -3975,6 +3976,8 @@ async function commitMove() {
   const about = { key: `placement:${p.id}`, name: `${isolatedText(p.course_code)} ${isolatedText(p.section)}` };
   const hint = (chosen.verdict?.items || []).some(item => item.issue_kind === 'room') ? MOVE_WORDS.roomHint : '';
   const target = { day: chosen.day, start_time: chosen.start, end_time: chosen.end };
+  // The keyboard goes to the chosen time before Commit turns off under it.
+  dialog.querySelector('input[name="twMoveChoice"]:checked')?.focus({ preventScroll: true });
   MOVE.pending = true;
   dialogSay(dialog, '');
   syncMoveDialog();
@@ -4257,12 +4260,10 @@ function renderRightPanel(tab) {
       : '';
     const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
-    // Change room (5c) and Move… (5e), and why each is held when it is (each
-    // reason once, in the order the buttons come).
+    // Change room (5c) and Move… (5e); why each is held is written into
+    // #twSelActionNote by syncSelectionActions, right after this draw.
     const roomAction = roomActionHtml(p);
     const moveAction = moveActionHtml(p);
-    const held = [...new Set([roomAction ? cardActionRefusal('room', p) : '', moveAction ? cardActionRefusal('move', p) : '']
-      .filter(Boolean).map(refusal => refusal.text))].join(' ');
     draw(`
       <div class="tw-sel-head">
         <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
@@ -4279,7 +4280,7 @@ function renderRightPanel(tab) {
         ${field(IS_AR ? 'السعة' : 'Capacity', count(p.available_capacity))}
         ${field(IS_AR ? 'المسجلون' : 'Registered', count(p.registered_count))}
       </dl>
-      ${roomAction || moveAction ? `<p class="tw-sel-help" id="twSelActionNote"${held ? '' : ' hidden'}>${esc(held)}</p>` : ''}
+      ${roomAction || moveAction ? '<p class="tw-sel-help" id="twSelActionNote" hidden></p>' : ''}
       ${programmeMarkHtml(p)}
       ${meetings ? `<h3 class="tw-sel-subhead">${IS_AR ? 'جميع لقاءات الشعبة' : 'All meetings of this section'}</h3><ul class="tw-sel-meetings">${meetings}</ul>` : ''}
       <div class="tw-sel-actions">

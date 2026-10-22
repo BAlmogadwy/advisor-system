@@ -780,6 +780,17 @@ findings changed the plan:
    them on right after every draw); the 7 Chrome mutants (the scroll shell,
    the isolated times, focus back to a redrawn Move… and a redrawn card, the
    legacy tone, a room sent, the lock check) all go red.
+   **After review (5e):** the keyboard moves to the chosen time before
+   Commit turns off; R's hint is added only beside a room problem the
+   report itself names (the clash the verdict saw may be gone after the
+   save). The report lists every fresh critical or warning row of the
+   moved meeting (contract D), so it can name a row that was there before
+   the move as well as the one the chosen time's verdict showed. A drop
+   whose scenario changed while the write was out reports nothing (the
+   page shows another scenario by then). Equivalent, not pinned:
+   `ISSUE_KINDS.instructorElsewhere`'s tone (no code reads it: the board
+   model never produces the kind, the dialog takes severity from the
+   server) and Retry's `{fresh:true}` (a failed read is never kept).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
