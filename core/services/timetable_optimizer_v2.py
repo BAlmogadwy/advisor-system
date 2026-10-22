@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import Q
 
 from core.models import (
@@ -1291,18 +1291,28 @@ def _attach_hotspot_details(result: dict, scenario_id: int) -> dict:
     """``hotspot_details`` for the page, in the engine's order: each hotspot
     course's code (the part of the budget row's code, else of the key, before
     "::") and name (the budget row's, else none) and how many students it leaves
-    without a section. One query, only when there are hotspots."""
+    without a section. One query, only when there are hotspots. The names
+    are for display: a failed read is logged and leaves the run's result
+    as it was (its changes are already saved)."""
     keys = list(result.get("hotspot_courses") or [])
     if not keys:
         return result
     students = result.get("hotspot_students") or {}
     rows: dict[str, tuple[str, str]] = {}
-    for key, code, name in (
-        ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
-        .filter(Q(course_key__in=keys) | Q(course_code__in=keys))
-        .values_list("course_key", "course_code", "course_name")
-    ):
-        rows.setdefault(key or code, (code or "", name or ""))
+    try:
+        for key, code, name in (
+            ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
+            .filter(Q(course_key__in=keys) | Q(course_code__in=keys))
+            .values_list("course_key", "course_code", "course_name")
+        ):
+            # A row is found by its key or by its code: either may be the hotspot's.
+            for match in {key, code} & set(keys):
+                rows.setdefault(match, (code or "", name or ""))
+    except DatabaseError:
+        logger.warning(
+            "hotspot names could not be read for scenario %s", scenario_id, exc_info=True
+        )
+        rows = {}
     result["hotspot_details"] = [
         {
             "course_key": key,
