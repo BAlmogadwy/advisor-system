@@ -13,7 +13,9 @@ whatever opened it; a room in use can be chosen and its clash is shown; a room
 outside the board's programme rooms is the "Room unsuitable" warning Issues
 then show, before the save and after it; the dialog reads in both themes and
 languages, keeps its foot in view while its list scrolls, and follows the
-arrow keys down the list in either direction.
+arrow keys down the list in either direction. Since 5c-audit the dialog judges
+the rooms by the quality audit: a room short of the audit's seats is the
+"Room too small" warning Issues then show (the owner's answer to Q1).
 
 §7.3, 5e (MoveDialogTests): Move from Selection's Move… and by M on a card:
 the times the server offers, in the order of its verdict, read in both
@@ -343,6 +345,25 @@ FOOT_IN_VIEW = r"""() => {
 # The page's own words and functions (top-level names of its script).
 SHOW_CLASH_NOTE = """() => { ROOM.answer.candidates[0].validation = { critical_count: 2, warning_count: 0, room_clashes: [] };
   drawRoomDialog(); }"""
+# The quality audit's notes about the meeting (5c-audit), drawn as the dialog
+# draws them, in each tone a note takes: its mark is the tone's colour.
+NOTES_IN_TONE = r"""() => {
+  const clash = document.querySelector('#twRoomBody .tw-room-note');
+  const bad = [];
+  for (const tone of ['warning', 'info']) {
+    const note = document.createElement('p');
+    note.className = 'tw-room-note';
+    note.dataset.tone = tone;
+    note.textContent = tone === 'info' ? 'This course has no budget row, so the quality check assumes 40 seats.' : 'GEN T1 has no programme.';
+    clash.after(note);
+    const probe = document.createElement('span');
+    probe.style.color = `var(--sev-${tone})`;
+    note.after(probe);
+    if (getComputedStyle(note).borderInlineStartColor !== getComputedStyle(probe).color) bad.push(`the ${tone} note is not marked in its tone`);
+    probe.remove();
+  }
+  return bad;
+}"""
 SAY_IN_ALERT = """tone => dialogSay(document.getElementById('twRoomDialog'),
   tone === 'success' ? ROOM_WORDS.assigned(isolatedText('R101')) : REFUSAL.external, tone)"""
 # The alert takes its tone's colour: a refusal a warning, a saved change a success.
@@ -361,7 +382,10 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
     """Change room (§7.3, 5c) in a real browser. These write, to pytest's
     database. AI111 S1 meets on Sunday 09:00 in R100, its time locked; R101 is
     another free lecture room, R102 is held at that time on the same board (by
-    AI333), R103 is a lab and R104 has 10 seats for a section of 30."""
+    AI333), R103 is a lab and R104 has 10 seats for a section of 30 (22 by the
+    quality audit's buffered budget: 20 students, +10%). No room has a
+    department, so the audit holds each outside the board's programme rooms
+    (AI) until a test gives them one."""
 
     maxDiff = None
 
@@ -486,12 +510,21 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
             ),
             "critical",
         )
-        # R103 (a lab) and R104 (10 seats) are listed with their reasons, not offered.
+        # R103 (a lab) is listed with its reason, not offered. Judged by the
+        # quality audit (5c-audit), R104 (10 seats for a need of 22) is a
+        # warning that can be chosen (the owner's answer to Q1): with the
+        # rooms that lower quality, after the free ones and before those in use.
         self.assertEqual(
             page.evaluate(
                 "[...document.querySelectorAll('#twRoomBody input[name=\"twRoomChoice\"]')].map(r => r.value)"
             ),
-            ["R100", "R101", "R102"],
+            ["R100", "R101", "R104", "R102"],
+        )
+        self.assertEqual(
+            page.evaluate(
+                "[...document.querySelectorAll('#twRoomMisfits .ux-choice-static .ux-choice-title bdi')].map(b => b.textContent)"
+            ),
+            ["R103"],
         )
         page.click('#twRoomBody label:has(input[value="R102"])')
         page.click("#twRoomAssign")
@@ -515,7 +548,9 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
         """Live QA of 5c: a free room outside the board's programme rooms was
         offered as "For context", and Issues then listed it as "Room
         unsuitable", a warning that rang the card. The dialog now says what
-        Issues will say, and so does the report after the save."""
+        Issues will say, and so does the report after the save. Since
+        5c-audit the row is in the group of rooms that lower quality, and the
+        report names the row Issues will list."""
         from core.models import Room
 
         # The rooms so far serve the board's programme (AI); R105 is a free
@@ -528,14 +563,14 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
             "en": (
                 "Room unsuitable",
                 "Lowers quality: Room unsuitable · outside this board's programme rooms",
-                "Choosing one saves a “Room unsuitable” warning, which Issues then shows.",
-                "Room R105 assigned; Issues will show it as unsuitable for this board's programmes.",
+                "Choosing one saves the warning on its row, which Issues then shows.",
+                "Room R105 assigned; Issues will show “Room unsuitable”.",
             ),
             "ar": (
                 "القاعة غير مناسبة",
                 "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة",
-                "اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل».",
-                "عُيّنت القاعة R105، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة.",
+                "اختيار إحداها يحفظ التحذير المذكور في سطرها، ويظهر بعدها في «المشاكل».",
+                "عُيّنت القاعة R105، وستعرض «المشاكل»: «القاعة غير مناسبة».",
             ),
         }
         # The card's tone mark names its issues once the quality check has
@@ -562,7 +597,7 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                           text(group.getAttribute('aria-describedby'))];
                 }"""
             )
-            self.assertEqual(row, ["outside", "warning", verdict, hint], language)
+            self.assertEqual(row, ["flagged", "warning", verdict, hint], language)
             page.click('#twRoomBody label:has(input[value="R105"])')
             page.click("#twRoomAssign")
             self._saved(page, "R105")
@@ -582,6 +617,111 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                 ".some(row => row.querySelector('.tw-issue-kind').textContent === kind"
                 " && row.querySelector('.tw-issue-subject').textContent === subject)",
                 arg=[kind, "AI111 · R105"],
+            )
+            self.assertTrue(
+                page.evaluate(
+                    f"document.querySelector('{self.card}').classList.contains('warning')"
+                ),
+                language,
+            )
+            self.assertEqual(errors, [], language)
+            page.context.close()
+
+    def test_a_room_short_of_the_audits_seats_is_the_warning_issues_then_show(self) -> None:
+        """5c-audit (RB5): the dialog judges seats by the quality audit's need,
+        the buffered budget (24 students, +10%: 26), not the section's 30. A
+        25-seat room is "Room too small" to Issues once saved, and the owner
+        made that a warning that can be chosen (Q1): the row says so before the
+        save, the report after it, and Issues then list it and ring the card.
+        The wrong type stays refused."""
+        from core.models import Room, ScenarioSectionBudget
+
+        Room.objects.filter(room_code__startswith="R10").update(department="AI")
+        Room.objects.create(
+            room_code="R106", room_type="lecture", capacity=25, section="M", department="AI"
+        )
+        ScenarioSectionBudget.objects.filter(
+            scenario=self.scenario, course_key=self.ai111.course_key
+        ).update(total_demand=24)
+        words = {
+            "en": (
+                "Room too small",
+                "Lowers quality: Room too small · needs 26 seats",
+                "25 seats · 1 short",
+                "Choosing one saves the warning on its row, which Issues then shows.",
+                "This meeting needs a lecture room",
+                "Room R106 assigned; Issues will show “Room too small”.",
+                "needs 26 seats",
+            ),
+            "ar": (
+                "القاعة أصغر من المطلوب",
+                "يُضعف الجودة: القاعة أصغر من المطلوب · يحتاج 26 مقعداً",
+                "25 مقعداً · ينقصها مقعد واحد",
+                "اختيار إحداها يحفظ التحذير المذكور في سطرها، ويظهر بعدها في «المشاكل».",
+                "هذا اللقاء يحتاج إلى قاعة محاضرات",
+                "عُيّنت القاعة R106، وستعرض «المشاكل»: «القاعة أصغر من المطلوب».",
+                "يحتاج 26 مقعداً",
+            ),
+        }
+        card_issues = f"""() => {{
+          const mark = document.querySelector('{self.card} .tw-card-tone');
+          return TW.quality && TW.qualityVersion === TW.dataVersion ? (mark.hidden ? '' : mark.getAttribute('aria-label')) : null;
+        }}"""
+        for language, (kind, verdict, facts, hint, lab, report, needs) in words.items():
+            self._reset()
+            page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
+            page.wait_for_function(f"({card_issues})() !== null")
+            self.assertEqual(page.evaluate(card_issues), "", f"{language}: R100 fits")
+            page.click(self.card)
+            page.click('#twRightBody [data-tw-action="room"]')
+            page.wait_for_selector('#twRoomBody input[value="R106"]', state="attached")
+            row = page.evaluate(
+                """() => {
+                  const radio = document.querySelector('#twRoomBody input[value="R106"]');
+                  const group = radio.closest('fieldset');
+                  const text = id => document.getElementById(id || '')?.textContent ?? null;
+                  const [said, facts] = radio.getAttribute('aria-describedby').split(' ');
+                  return [group.dataset.group, radio.closest('.ux-choice').dataset.tone, text(said), text(facts),
+                          text(group.getAttribute('aria-describedby'))];
+                }"""
+            )
+            self.assertEqual(row[:3], ["flagged", "warning", verdict], language)
+            self.assertIn(facts, row[3], language)
+            self.assertEqual(row[4], hint, language)
+            # The lab is still refused, with its reason; R100 and R101 are free.
+            self.assertEqual(
+                page.evaluate(
+                    """() => [[...document.querySelectorAll('#twRoomBody fieldset[data-group="free"] input')].map(r => r.value),
+                      [...document.querySelectorAll('#twRoomMisfits .ux-choice-static')].map(row => row.textContent)]"""
+                )[0],
+                ["R100", "R101"],
+                language,
+            )
+            self.assertIn(
+                lab,
+                page.evaluate(
+                    "document.querySelector('#twRoomMisfits .ux-choice-static').textContent"
+                ),
+                language,
+            )
+            page.click('#twRoomBody label:has(input[value="R106"])')
+            page.click("#twRoomAssign")
+            self._saved(page, "R106")
+            self.assertEqual(self.placements.get(pk=self.sunday.pk).room, "R106", language)
+            page.wait_for_function(
+                """report => [...document.querySelectorAll('#toast-container .ux-toast.warning .ux-toast-title')]
+                  .some(title => title.textContent.replace(/[\\u2066\\u2069]/g, '') === report)""",
+                arg=report,
+            )
+            # Issues list it, with the seats it needs, and the card rings for it.
+            page.wait_for_function(f"({card_issues})()?.includes({kind!r})")
+            page.click("#twTabIssues")
+            page.wait_for_function(
+                "([kind, subject, needs]) => [...document.querySelectorAll('#twRightBody .tw-issue-row[data-tone=\"warning\"]')]"
+                ".some(row => row.querySelector('.tw-issue-kind').textContent === kind"
+                " && row.querySelector('.tw-issue-subject').textContent === subject"
+                " && row.querySelector('.tw-issue-detail').textContent === needs)",
+                arg=[kind, "AI111 · R106", needs],
             )
             self.assertTrue(
                 page.evaluate(
@@ -640,6 +780,7 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                     # takes: drawn here, since this meeting has no clash and
                     # nothing was refused.
                     page.evaluate(SHOW_CLASH_NOTE)
+                    found += page.evaluate(NOTES_IN_TONE)
                     for tone in ("warning", "success"):
                         page.evaluate(SAY_IN_ALERT, tone)
                         found += page.evaluate(
