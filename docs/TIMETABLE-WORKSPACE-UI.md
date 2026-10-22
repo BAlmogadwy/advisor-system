@@ -795,6 +795,129 @@ findings changed the plan:
    `ISSUE_KINDS.instructorElsewhere`'s tone (no code reads it: the board
    model never produces the kind, the dialog takes severity from the
    server) and Retry's `{fresh:true}` (a failed read is never kept).
+   **As built, 5f (Place… and its list rows):** a placeable budget row is the
+   control (`aria-haspopup="dialog"`; its head the code, the label in `<bdi>`
+   and a "Place…" hint hidden from assistive technology, shown on hover and
+   on the keyboard's focus, gone while the row cannot be dragged; "{n}
+   meetings a week" in its facts when n > 1, `pluralAr` in Arabic); the
+   English row's nested button is gone, and one click listener on the list
+   answers the hint. Enter (or the hint) on a complete course says so, on an
+   English row opens its chooser, on a row of the unplaced list says that
+   keyboard placement needs a section budget (F4), and on any other row
+   goes through `TW.keyActions.place(request, {origin})`. The keys line says
+   "Enter: place the section (opens a dialog)" / «Enter: وضع الشعبة (تُفتح
+   نافذة)». `#twPlaceDialog` has Move's shell. Its one read is
+   `/planned-slot-candidates/?course_code&course_key&section_label&limit=1000&verdict=1`
+   through `previewRead` (`planned|board|key|label`); the rows follow
+   `verdict_rank`, a pattern the server lists twice is one row at its best
+   rank, a row names every meeting by day (", " / "، ", a lab marked), and
+   its verdict and at most three items are Move's (`moveLines` and
+   `moveDetailHtml`, now taking the board and a lead), each item with a
+   `meeting` index led by that meeting, in the server's own order of the
+   candidate's meetings. Day and Time filter in place; a day and a time
+   must be one meeting's; a chosen row the filter hides gives way to the
+   first one it shows (the dialog's choice, not the user's). A drop of a
+   course that meets more than once a week opens the dialog on the dropped
+   time, nothing sent; so does the server's "complete pattern" refusal of a
+   one-meeting drop, the budget read again. The body is
+   `{board_id, course_code, course_key, course_name, section_label,
+   capacity, meetings}` (`plannedCreateBody`), sent by
+   `commitPlannedCreate`, which the one-meeting drop now uses too: one body
+   (`meetings[]`, no `day`/`start_time`/`end_time` keys), one undo entry,
+   `section_create` (the ids, the body sent, the meetings as the server
+   stored them). Undo removes every meeting, the last made first, skipping
+   a meeting a removal answered as removed with it; a refusal leaves the
+   rest on the stack and the board is read again when some went (D23); Redo
+   creates them all again and `remapHistory` moves every id on both stacks.
+   On success the dialog closes (the keyboard back on the row, by its key),
+   the board's tab stop goes to the first new card, the board is read
+   again, the new cards pulse, and the report reads the issue model
+   (contract D): "Placed AI222 S2. · Lowers quality: Room not assigned yet ·
+   Press R on the card to change its room." (a new meeting has no room, a
+   room row, so R's hint is beside it).
+   Where it differs from the spec, and why:
+   - The open guard comes first, then "Create a board first.", then the
+     gate's parts that apply (published, loading, a planner job): 5e's
+     order (a toast behind a modal is never seen). A planner job refuses
+     the opening (the Guards line, D3a); the States row's "Job or write in
+     flight: opens, Commit held" holds for a write in flight, and for a job
+     that starts while the dialog is open.
+   - What the list is doing is said in the visible status line above the
+     body (5e's), and that includes the drop's fallback ("No pattern
+     includes Monday 09:00–10:15; showing every pattern."), so it is in view
+     and announced; there is no second note in the body. The line is empty
+     once every section is placed (the alert says it once).
+   - Words the Strings table lacks, in both languages: the one-meeting
+     failure ("The times could not be ranked." / «تعذّر ترتيب الأوقات.»)
+     and clean count (Arabic «{n} وقت بلا تعارض», in `pluralAr`'s forms);
+     "The timetable changed since these patterns were read." / «تغيّر
+     الجدول منذ قراءة هذه الأنماط.» (Move's for one meeting); a read the
+     server answers "board not found" says the "board changed" words, with
+     no Try again. An item's lead is the short day ("Wed 10:30–11:45:"), as
+     the line's own times are.
+   - PL4's "190 نمط": in CLDR's Arabic rule 190 is "many", as 11 is, so it
+     reads «190 نمطاً»; the test pins 190 so and "other" with 100 («100
+     نمط»).
+   - A label is checked against the budget, which is read again after
+     every write: whenever the dialog syncs and before a commit, a label
+     placed meanwhile becomes the next free one ("Section S2 was placed
+     meanwhile; this is now S3."), read again, nothing sent; none left
+     holds Commit ("Every section of AI222 is placed."). The server's
+     `PLACEMENT_DUPLICATE` does the same, after `loadBudget()`. The server
+     refuses a duplicate only on the same board, day and start: a create of
+     a label already placed at other times adds rows to that section (a
+     server follow-up, below), so the page must not send one.
+   - After a duplicate the pattern the user chose is kept when the new
+     label's list still offers it (its verdict can differ: a section's
+     teacher can), not reset as Check again resets: the user had already
+     asked to place that pattern, and resetting would turn the next Enter
+     into another one. The alert says the label changed.
+   - A failure that does not say whether the section was made (no answer,
+     or a 5xx) is "Nothing was placed." as the spec says, and reads the
+     board, as Move's does; if it was made, the budget then names its label
+     and the dialog moves on to the next, so a second create of the same
+     label is never sent. An answer that never came is not undoable.
+   - The commit checks the board the dialog opened on (scenario, board, its
+     load) and the read's data version; the label is not part of that check,
+     since a new label is always read again before anything can be chosen.
+   - The course's last section: the row now at that place is the course's
+     own placed line (5a keeps a complete course reachable), not the next
+     course.
+   - Online: the board payload has no flag for a course not yet placed, so
+     the foot note reads it from another section of the course on this
+     board (`is_online` is the course's, per board); until one is placed
+     there, the rooms note shows.
+   - The unplaced list's English rows keep their pointer button (they are
+     not budget rows and have no hint). A create the user left with Escape
+     and the server refused as a duplicate says "The board changed; nothing
+     was placed." (no dialog is left to move on); "complete pattern" says
+     "Nothing was placed.".
+   - `dialogWrite` answers a failure's `status` too (Move ignores it).
+   - D24 for drops: a one-meeting planned drop and a drop from the unplaced
+     list report from the issue model ("Placed …"), no longer "Placed with
+     N conflict(s)".
+   The payload (D15, Risk 1), measured on a copy of the local data, for the
+   next section of every course in its boards' terms on scenario 665: 60
+   times for a course that meets once (176 KB median, 242 KB at most), 70 patterns
+   for twice (283 KB, 343 KB) and 190 for three times a week (979 KB, 1.04
+   MB; 27 KB gzipped), the server's work 37 to 45 ms median on this machine.
+   The app sends JSON uncompressed (no GZip middleware), so a three-meeting
+   course costs about 1 MB per read; the memo keeps it to one read per
+   section and data version (a server follow-up, below).
+   PL1–PL17 (jsdom) and PB1–PB3 (Chrome, `PlaceDialogTests`) pin these;
+   J2, J3 and J6 pinned 5b's refusal of a multi-meeting drop and are gone
+   (PL2 and PL5 pin what a drop does now); W5 expects no nested button.
+   Of 162 jsdom mutants all go red but one, equivalent: the board's
+   stop named with `{focus: true}` before the board is read again (the card
+   is not drawn yet, so the key waits, and a waiting key never takes the
+   keyboard). The 7 Chrome mutants (the list's Enter, Home and End, the
+   keyboard sent to the board after a place, the hint on keyboard focus,
+   the old POST of a drop, the whole dialog scrolling, the times painted
+   right to left, `dir="ltr"` removed) all go red.
+   Follow-ups (server): refuse a create of a label already placed in the
+   scenario (today only the same board, day and start is a duplicate);
+   name the courses online for each board in the board or budget payload;
+   compress JSON answers (or leave the legacy fields out with `verdict=1`).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
