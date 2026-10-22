@@ -142,7 +142,7 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
         self.scenario = sc
         self.path = f"/timetable-workspace/?scenario={sc.id}"
 
-    def _load(self, language: str, theme: str, width: int, height: int):
+    def _load(self, language: str, theme: str, width: int, height: int, cards: int = 4):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},
@@ -182,7 +182,7 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
         # Loaded: the board's cards are drawn and the readiness answer is in.
         page.wait_for_function(
-            "document.querySelectorAll('.tw-card').length === 4"
+            f"document.querySelectorAll('.tw-card').length === {cards}"
             " && !document.getElementById('twOptimiseMenu').disabled"
             " && /\\d/.test(document.getElementById('twPublishLabel').textContent)"
         )
@@ -320,3 +320,51 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
             self.assertTrue(seen["inside"], f"{language}: the chosen board is out of view")
             self.assertEqual(seen["pageScroll"], 0)
             context.close()
+
+    def test_a_seven_character_code_with_its_marks_fits_a_slot(self) -> None:
+        """The card's ~70px at a 96px slot, in the wide font: the code is never cut,
+        the room word and the marks (a lock, a critical tone) stay on the card."""
+        key = fx.requirement("AI", "MATH101", "Calculus")
+        fx.budget(self.scenario, key, 1)
+        board = self.scenario.boards.first()
+        fx.place(
+            board,
+            fx.section(self.scenario, key, "S1"),
+            (("SUN", "10:30", "11:45"), ("TUE", "10:30", "11:45")),
+            locked=True,
+            room="UNASSIGNED",
+        )
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                for width, height in ((1366, 650), (1440, 790)):
+                    page, sent, errors = self._load(language, theme, width, height, cards=6)
+                    found = page.evaluate(
+                        """() => [...document.querySelectorAll('.tw-card')].flatMap(card => {
+                          const bad = [], code = card.querySelector('.tw-card-code');
+                          const label = code.textContent;
+                          if (code.scrollWidth > code.clientWidth + 0.5) bad.push(`${label}: code cut`);
+                          if (card.scrollWidth > card.clientWidth + 1) bad.push(`${label}: card overflows`);
+                          const room = card.querySelector('.tw-card-room');
+                          if (room && room.getBoundingClientRect().width < 18) bad.push(`${label}: room squeezed`);
+                          const box = card.getBoundingClientRect();
+                          for (const mark of card.querySelectorAll('.tw-card-marks > :not([hidden])')) {
+                            const m = mark.getBoundingClientRect();
+                            if (m.width < 11 || m.left < box.left - 0.5 || m.right > box.right + 0.5) bad.push(`${label}: mark outside`);
+                          }
+                          return bad;
+                        })"""
+                    )
+                    marks = page.evaluate(
+                        "document.querySelectorAll('.tw-card [data-icon=lock]').length"
+                        " + ':' + document.querySelectorAll('.tw-card .tw-card-tone[data-tone=critical]:not([hidden])').length"
+                    )
+                    if marks != "2:2":
+                        found.append(f"marks {marks}")
+                    found += page.evaluate(
+                        CONTRAST, [".tw-card-code", ".tw-card-room", ".ux-legend-item"]
+                    )
+                    found += [*sent, *errors]
+                    if found:
+                        problems[f"{language} {theme} {width}"] = found
+        self.assertEqual(problems, {})
