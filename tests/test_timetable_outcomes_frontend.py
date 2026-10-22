@@ -35,7 +35,10 @@ def test_timetable_outcome_frontend_regressions() -> None:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=30,
+        # Fourteen jsdom files with the workspace's dialogs; a shared CI runner
+        # takes several times a laptop's ~20 s. The suite's own failures fail
+        # the test; this only stops a hung run.
+        timeout=240,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
