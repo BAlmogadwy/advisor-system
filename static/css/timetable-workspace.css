@@ -42,6 +42,16 @@
   border-bottom: 1px solid var(--line);
 }
 .tw-boards { max-width: min(760px, 52vw); }
+/* On a desktop the bar is one row. The board strip gives way — it scrolls
+   sideways and keeps the chosen board in view — and the controls keep their
+   size: with real boards (flags, "N left") the bar used to wrap at 1366 and
+   1440, pushing the panes 35px down. Narrower windows still wrap. */
+@media (min-width: 1025px) {
+  .tw-cmd-bar { flex-wrap: nowrap; }
+  .tw-cmd-bar > * { flex-shrink: 0; }
+  .tw-cmd-bar > .tw-boards { flex: 0 1 auto; min-width: 140px; }
+  .tw-cmd-bar > .ux-spacer { flex: 1 1 0; min-width: 0; }
+}
 .tw-filter .fb-search { min-width: 220px; }
 .tw-filter .fb-search > input { width: 30ch; }
 .tw-search-count { flex: none; color: var(--t3); font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }

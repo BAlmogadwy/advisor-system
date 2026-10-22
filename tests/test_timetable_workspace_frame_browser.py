@@ -280,11 +280,11 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                 display_order=term,
             )
         self.path = f"/timetable-workspace/?scenario={self.scenario.id}&board={last.id}"
-        for language in ("en", "ar"):
+        for language, width in (("en", 1440), ("ar", 1440), ("en", 1366), ("ar", 1366)):
             context = self.browser.new_context(
                 locale="ar" if language == "ar" else "en-US",
                 extra_http_headers={"Accept-Language": language},
-                viewport={"width": 1440, "height": 900},
+                viewport={"width": width, "height": 900},
             )
             context.add_cookies(
                 [
@@ -313,10 +313,18 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                   const chosen = document.querySelector('#twBoardTabs [aria-current="true"]').getBoundingClientRect();
                   return { overflow: document.getElementById('twBoardTabs').scrollWidth > strip.width + 1,
                            inside: chosen.left >= strip.left - 1 && chosen.right <= strip.right + 1,
-                           pageScroll: document.getElementById('main-content').scrollTop };
+                           pageScroll: document.getElementById('main-content').scrollTop,
+                           barHeight: Math.round(document.getElementById('twCmdBar').getBoundingClientRect().height) };
                 }"""
             )
-            self.assertTrue(seen["overflow"], f"{language}: the strip should overflow in this test")
-            self.assertTrue(seen["inside"], f"{language}: the chosen board is out of view")
+            # Many boards: the strip scrolls, the bar stays one row (it wrapped:
+            # one row is about 47px, two about 85px).
+            self.assertLessEqual(
+                seen["barHeight"], 56, f"{language} {width}: the board bar wrapped"
+            )
+            self.assertTrue(
+                seen["overflow"], f"{language} {width}: the strip should overflow in this test"
+            )
+            self.assertTrue(seen["inside"], f"{language} {width}: the chosen board is out of view")
             self.assertEqual(seen["pageScroll"], 0)
             context.close()
