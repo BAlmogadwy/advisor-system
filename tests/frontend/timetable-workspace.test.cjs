@@ -3246,6 +3246,71 @@ test('RC21 a room in use and outside the programme rooms keeps its clash, says b
   assert.equal(only.d.getElementById('twRoomMisfits').hidden, true);
 });
 
+/* ── Change room by the audit (5c-audit client): the legacy snapshot ──
+   An answer without `audit` (a server before 5c-audit) is drawn and saved
+   exactly as before the audit client: the dialog's title, sub-line, body
+   (markup, byte for byte), note and the report of each save, in English and
+   Arabic, recorded in tests/fixtures/room_dialog_legacy.json at 5892a12,
+   before any client change. ROOM_DIALOG_LEGACY_RECORD=1 writes the file
+   instead of comparing (only ever on that commit). */
+const LEGACY_DIALOG = path.join(root, 'tests/fixtures/room_dialog_legacy.json');
+const timedRoom = room => ({ ...room, validation: { ...room.validation, critical_count: 2 } });
+const copyChanged = body => ({ ok: true, placement: roomRow({ room: body.room }), placements: [roomRow({ room: body.room }), roomRow({ id: 31, board_id: 3, room: body.room })] });
+const LEGACY_DIALOG_CASES = [
+  { name: 'every group, the time keeping 2 clashes', rooms: () => ROOM_SET.map(timedRoom), saves: ['R1', 'R7', 'R9', 'R8'] },
+  { name: 'every group, in Arabic', arabic: true, rooms: () => ROOM_SET, saves: ['R2', 'R7', 'R9', 'R8'] },
+  { name: 'in use and outside the programme rooms, a copy changed with it', move: copyChanged,
+    rooms: () => [rc('R1'), rc('LAB25'), rc('R12', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(3)] }),
+      rc('R13', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(2)] })], saves: ['R12', 'R13', 'R1'] },
+  { name: 'in Arabic, in use and outside, a copy changed with it', arabic: true, move: copyChanged,
+    rooms: () => [rc('R1'), rc('LAB25'), rc('R12', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(3)] })], saves: ['R12', 'R1'] },
+  { name: 'only misfits, a cut list', rooms: () => ROOM_SET.filter(r => ['R3', 'R4', 'R5'].includes(r.room_code)), summary: { total: 75 }, saves: [] },
+  { name: 'no room yet, in Arabic, seats counted and no need', arabic: true, row: { room: 'UNASSIGNED', room_state: 'unassigned' }, target: { required_capacity: null },
+    rooms: () => [rc('R1', { capacity: 3, validation: { critical_count: 1 } }), rc('R2', { capacity: 11 }), rc('R6', { capacity: 1 })], saves: ['R2'] },
+  { name: 'the current room outside the programme rooms', row: { room: 'R7' }, rooms: () => ROOM_SET, saves: ['R1'] },
+  { name: 'the current room a misfit', row: { room: 'R5' }, rooms: () => ROOM_SET, saves: ['R2'] },
+];
+// One case drawn (and, given a code, that room saved): what the dialog says.
+async function legacyDialog(t, c, save = '', wrap = answer => answer) {
+  const h = await roomHarness(t, {
+    arabic: Boolean(c.arabic), move: c.move || null, rows: () => [roomRow(c.row || {})],
+    rooms: () => wrap(roomsAnswer(c.rooms(), { target: c.target || {}, summary: c.summary || {} })),
+  });
+  await h.select();
+  roomByKey(h);
+  await wait(() => !h.d.querySelector('#twRoomBody [aria-busy]'));
+  const drawn = { title: h.d.getElementById('twRoomTitle').innerHTML, sub: h.d.getElementById('twRoomSub').innerHTML,
+    body: h.d.getElementById('twRoomBody').innerHTML, note: roomNote(h) };
+  if (!save) return { h, drawn };
+  roomRadio(h, save).click();
+  h.d.getElementById('twRoomAssign').click();
+  await wait(() => h.notices.length > 0 && !roomDialogEl(h).hasAttribute('open'));
+  return { h, drawn, report: h.notices.at(-1) };
+}
+async function legacyDialogs(t, wrap) {
+  const out = {};
+  for (const c of LEGACY_DIALOG_CASES) {
+    const { drawn } = await legacyDialog(t, c, '', wrap);
+    const reports = {};
+    for (const code of c.saves) reports[code] = (await legacyDialog(t, c, code, wrap)).report;
+    out[c.name] = { ...drawn, reports };
+  }
+  return out;
+}
+
+test('RC22 an answer without the audit is drawn and saved byte for byte as before the audit client', async t => {
+  const produced = plainOf(await legacyDialogs(t));
+  if (process.env.ROOM_DIALOG_LEGACY_RECORD === '1') {
+    // Isolates written as escapes, so the file shows them.
+    const json = JSON.stringify(produced, null, 1).replace(/[\u2066\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16)}`);
+    fs.writeFileSync(LEGACY_DIALOG, `${json}\n`);
+    return;
+  }
+  const recorded = JSON.parse(fs.readFileSync(LEGACY_DIALOG, 'utf8'));
+  assert.deepEqual(Object.keys(produced), Object.keys(recorded));
+  for (const name of Object.keys(recorded)) assert.deepEqual(produced[name], recorded[name], name);
+});
+
 /* ── Move: M, Selection's Move… and the dialog (design record §7.3, 5e) ──
    The page reads the times the server offers a manual move with its verdict
    (what the publish check will say once the move is saved), lists them in
