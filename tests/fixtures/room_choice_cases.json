@@ -1,0 +1,144 @@
+{
+  "about": "Change room's rules, stated once for both implementations: TimetableRoomChoice (static/js/timetable-room-choice.js) and split view's roomCodeKey, roomIsOccupied and roomFitsSection (static/js/page-timetable-workspace-split.js). Each room is a candidate as preview_placement_room_candidates sends it; `target` overrides the shared target for that case. A room that fits (type, gender, seats) can be chosen when it is free or when another section holds it at that time (owner ruling 2026-10-20); the verdict reads occupied_by only, never the server's tone or `available`. Misfit reasons name the type and the gender only: a room short of seats says so in its facts.",
+  "placement": {"id": 10, "board_id": 2},
+  "target": {"day": "SUN", "start": "09:00", "end": "10:15", "required_type": "lecture", "required_gender": "M", "required_capacity": 30},
+  "cases": [
+    {
+      "name": "a free room that fits",
+      "room": {"room_code": "R1", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R1", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a free room outside the board's programme rooms is free, for context",
+      "room": {"room_code": "R7", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "warn", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false, "occupied_by": []},
+      "code_key": "R7", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "info", "en": "For context: outside this board's programme rooms", "ar": "للاطلاع: خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room that fits, held on this board at this time, can be chosen as a critical clash",
+      "room": {"room_code": "R9", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true,
+        "occupied_by": [{"placement_id": 21, "term_section_id": 121, "board_id": 2, "board_label": "Term 2", "section": "AI20-S1", "day": "SUN", "start": "09:00", "end": "10:15"}]},
+      "code_key": "R9", "fits": true, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "critical", "en": "Blocks publishing: Room double-booked", "ar": "يمنع النشر: القاعة محجوزة مرتين"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room that fits, held only on another board, can be chosen as a warning",
+      "room": {"room_code": "R8", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true,
+        "occupied_by": [{"placement_id": 31, "term_section_id": 131, "board_id": 3, "board_label": "Term 4", "section": "CS30-S2", "day": "SUN", "start": "09:00", "end": "10:15"}]},
+      "code_key": "R8", "fits": true, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "warning", "en": "Lowers quality: Room also booked on another board", "ar": "يُضعف الجودة: القاعة محجوزة في لوحة أخرى"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room held on another board and on this one is a critical clash",
+      "room": {"room_code": "R11", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true,
+        "occupied_by": [
+          {"placement_id": 31, "term_section_id": 131, "board_id": 3, "board_label": "Term 4", "section": "CS30-S2", "day": "SUN", "start": "09:00", "end": "10:15"},
+          {"placement_id": 22, "term_section_id": 122, "board_id": 2, "board_label": "Term 2", "section": "AI21-S1", "day": "SUN", "start": "09:30", "end": "10:45"}
+        ]},
+      "code_key": "R11", "fits": true, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "critical", "en": "Blocks publishing: Room double-booked", "ar": "يمنع النشر: القاعة محجوزة مرتين"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room held elsewhere and outside the programme rooms is in use, not context",
+      "room": {"room_code": "R12", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false,
+        "occupied_by": [{"placement_id": 31, "term_section_id": 131, "board_id": 3, "board_label": "Term 4", "section": "CS30-S2", "day": "SUN", "start": "09:00", "end": "10:15"}]},
+      "code_key": "R12", "fits": true, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "warning", "en": "Lowers quality: Room also booked on another board", "ar": "يُضعف الجودة: القاعة محجوزة في لوحة أخرى"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a lab where the meeting needs a lecture room is a misfit",
+      "room": {"room_code": "R3", "room_type": "lab", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": false, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R3", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a lecture room"], "ar": ["هذا اللقاء يحتاج إلى قاعة محاضرات"]}
+    },
+    {
+      "name": "a lecture room where the meeting needs a lab is a misfit",
+      "target": {"required_type": "lab"},
+      "room": {"room_code": "R2", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": false, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R2", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a lab"], "ar": ["هذا اللقاء يحتاج إلى معمل"]}
+    },
+    {
+      "name": "a room where the meeting needs another type names that type, isolated",
+      "target": {"required_type": "studio"},
+      "room": {"room_code": "R13", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": false, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R13", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a room of type \u2066studio\u2069"], "ar": ["هذا اللقاء يحتاج إلى قاعة من نوع \u2066studio\u2069"]}
+    },
+    {
+      "name": "a female room for a male meeting is a misfit",
+      "room": {"room_code": "R4", "room_type": "lecture", "capacity": 40, "section": "F", "available": false, "tone": "block", "fits_type": true, "fits_gender": false, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R4", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a Male (M) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة طلاب (M)"]}
+    },
+    {
+      "name": "a male room for a female meeting is a misfit",
+      "target": {"required_gender": "F"},
+      "room": {"room_code": "R6", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": false, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R6", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a Female (F) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة طالبات (F)"]}
+    },
+    {
+      "name": "a room with too few seats is a misfit whose facts say how many it lacks",
+      "room": {"room_code": "R5", "room_type": "lecture", "capacity": 10, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true, "occupied_by": []},
+      "code_key": "R5", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room of the wrong type and gender names both, the lead once",
+      "room": {"room_code": "R10", "room_type": "lab", "capacity": 40, "section": "F", "available": false, "tone": "block", "fits_type": false, "fits_gender": false, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R10", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a lecture room", "needs a Male (M) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة محاضرات", "إلى قاعة طلاب (M)"]}
+    },
+    {
+      "name": "a room held on this board that does not fit is a misfit, not a clash",
+      "room": {"room_code": "R14", "room_type": "lecture", "capacity": 20, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true,
+        "occupied_by": [{"placement_id": 21, "term_section_id": 121, "board_id": 2, "board_label": "Term 2", "section": "AI20-S1", "day": "SUN", "start": "09:00", "end": "10:15"}]},
+      "code_key": "R14", "fits": false, "occupied": true,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room neither free nor held by anyone is not offered",
+      "room": {"room_code": "R15", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R15", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a free room without an occupant list is not in use",
+      "room": {"room_code": "R16", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true},
+      "code_key": "R16", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "flags the answer leaves out count as fitting; a code is matched without case or spaces",
+      "room": {"room_code": " lab 2b ", "available": true},
+      "code_key": "LAB 2B", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "no room is not offered",
+      "room": null,
+      "code_key": "", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    }
+  ]
+}
