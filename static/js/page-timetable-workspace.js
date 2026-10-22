@@ -1290,14 +1290,19 @@ let readinessRequest = null;
 let readinessTimer = null;
 function scheduleReadinessRefresh() {
   clearTimeout(readinessTimer);
+  // Scheduled is as good as running for what the page says: "checking".
+  TW.readinessLoading = true;
   readinessTimer = setTimeout(() => { refreshPublishReadiness(); }, 800);
 }
 function refreshPublishReadiness(force = false) {
   const scenarioId = TW.scenarioId;
+  // A scheduled check that turns out not to be needed is not "checking".
   if (!scenarioId || TW.scenario?.status === 'published') {
-    TW.readiness = null; renderPublishState(); return Promise.resolve(null);
+    TW.readiness = null; TW.readinessLoading = Boolean(readinessRequest); renderPublishState(); return Promise.resolve(null);
   }
-  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) return Promise.resolve(TW.readiness);
+  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) {
+    TW.readinessLoading = Boolean(readinessRequest); renderPublishState(); return Promise.resolve(TW.readiness);
+  }
   const version = TW.dataVersion;
   // Background callers share one request per version. Publish (force) asks on
   // its own and reports a failure: joining a quiet request would make a failed
@@ -1307,6 +1312,7 @@ function refreshPublishReadiness(force = false) {
   }
   TW.readinessLoading = true;
   renderPublishState();
+  if (document.querySelector('.tw-right .tw-panel-tab.active')?.dataset.tab === 'issues') renderRightPanel('issues');
   const promise = (async () => {
     try {
       const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/readiness/`, { _quiet: !force });
@@ -1520,19 +1526,15 @@ function revealInStrip(strip, item) {
   else if (box.right > view.right) strip.scrollLeft += box.right - view.right + 4;
 }
 
-/* One board switcher: segmented buttons (not tabs — no arrow-key panels are
-   promised). Each says what is wrong on its board — blocking issues, with the
-   octagon — and how many sections are left; meetings and students are in its
-   name and tooltip. */
-/* What blocks publishing on a board that is not open: the publish check's
-   items for it (a clash or room count counts each one), or, before any check,
-   the board list's own clash count. */
 /* The open board: what the model knows, and while its clashes are unknown
    the board list's own count for them (rather than none). */
 function activeBoardCritical(board) {
   const model = buildBoardIssues();
   return model.counts.critical + (model.known.conflicts ? 0 : (board.critical || 0));
 }
+/* What blocks publishing on a board that is not open: the publish check's
+   items for it (a clash or room count counts each one), or, before any check,
+   the board list's own clash count. */
 const COUNTED_READINESS_CODES = new Set(['board_critical_conflicts', 'board_room_conflicts', 'board_sections_without_rooms', 'board_blocked_slot_placements']);
 function otherBoardCritical(board) {
   if (!TW.readiness) return board.critical || 0;
@@ -1541,6 +1543,10 @@ function otherBoardCritical(board) {
     .reduce((sum, item) => sum + (COUNTED_READINESS_CODES.has(item.code) ? (item.count || 1) : 1), 0);
 }
 
+/* One board switcher: segmented buttons (not tabs — no arrow-key panels are
+   promised). Each says what is wrong on its board — blocking issues, with the
+   octagon — and how many sections are left; meetings and students are in its
+   name and tooltip. */
 function renderBoardTabs() {
   const wrap = $('twBoardTabs');
   // A re-render replaces the buttons: keep the keyboard on the same board.
@@ -2358,7 +2364,7 @@ function renderRightPanel(tab) {
     TONE_ORDER.forEach(tone => {
       const rows = model.rows.filter(row => row.tone === tone);
       if (!rows.length) return;
-      html += `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span><span class="tw-issue-count tnum">${rows.length}</span></h3>`;
+      html += `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span><span class="tw-issue-count tnum">${model.counts[tone]}</span></h3>`;
       rows.forEach(row => {
         const pendingWord = checking ? (IS_AR ? 'يجري التحقق' : 'checking') : (IS_AR ? 'من قبل آخر تعديل' : 'from before your last change');
         const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
@@ -3050,9 +3056,14 @@ function computeBoardIssues() {
   // section patterns). What the board shows itself is not repeated.
   if (TW.readiness) {
     boardReadinessBlockers(TW.boardId).forEach(item => {
-      if (item.code === 'board_sections_without_rooms' || item.code === 'board_blocked_slot_placements') return;
+      // The board's own placements say these once loaded; until then the
+      // publish check's items stand in for them.
+      if (placementsKnown && (item.code === 'board_sections_without_rooms' || item.code === 'board_blocked_slot_placements')) return;
       if (item.code === 'board_room_conflicts' && conflictsKnown) return;
-      add('server', [], readinessItemText(item), '', { pending: !readinessFresh, item });
+      // A room or blocked-time item stands for each meeting it counts, as on
+      // the other boards' buttons.
+      const weight = COUNTED_READINESS_CODES.has(item.code) ? (item.count || 1) : 1;
+      add('server', [], readinessItemText(item), '', { pending: !readinessFresh, item, weight });
     });
   }
 
@@ -3071,7 +3082,7 @@ function computeBoardIssues() {
     });
   });
   const counts = { critical: 0, warning: 0, info: 0 };
-  rows.forEach(row => { counts[row.tone] += 1; });
+  rows.forEach(row => { counts[row.tone] += row.weight || 1; });
   return {
     rows, byPlacement, counts,
     known: { conflicts: conflictsKnown, placements: placementsKnown, quality: Boolean(quality), readiness: Boolean(TW.readiness) },

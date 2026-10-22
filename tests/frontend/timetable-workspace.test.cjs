@@ -716,7 +716,10 @@ test('a check older than the last edit lists its rows as being checked and tones
   h.w.renderWorkspaceQuality();
   assert.equal(card(h, 10), before, 'tones change in place: the grid is not rebuilt');
   assert.equal(tone(h, 10), '', 'a stale check tones nothing');
-  // No check in flight: it says how old the row is, not that it is being checked.
+  assert.match(issuesText(h), /Room too small · checking/, 'a readiness check is scheduled after the load');
+  // No check scheduled or running (it finished, or failed): it says how old the row is.
+  h.w.TW.readinessLoading = false;
+  h.w.TW.qualityLoading = false;
   let text = issuesText(h);
   assert.match(text, /Room too small · from before your last change/);
   assert.match(text, /have not been checked again/);
@@ -864,4 +867,31 @@ test('rooms are words everywhere, and those are the words the filter finds', asy
   assert.ok(card(h, 10), 'the meeting with no room matches what its card says');
   await find('unassigned');
   assert.equal(card(h, 10), null, 'the placer’s marker is not something the user can see, nor find');
+});
+
+test('while a switched board loads, the publish check’s room and blocked-time items stand in for it', async t => {
+  const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const held = deferred();
+  const readiness = { ready: false, blockers: ['x'], warnings: [], warning_items: [], blocker_items: [
+    { code: 'board_sections_without_rooms', board_id: 3, count: 2, params: {} },
+  ] };
+  const h = await harness(t, url => {
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, other] };
+    if (url === '/ops/tw/boards/2/') return { placements: [at(10)], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/3/') return held.promise;
+    if (url.includes('/readiness/')) return { readiness };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    return undefined;
+  });
+  await h.select();
+  await h.w.refreshPublishReadiness(true);
+  const flag = () => h.d.querySelector('#twBoardTabs [data-board-id="3"] .ux-seg-flag')?.textContent;
+  assert.equal(flag(), '2');
+  const switching = h.w.selectBoard(3);
+  h.w.renderReadinessViews();
+  assert.equal(flag(), '2', 'not dropped while board 3 loads');
+  held.resolve({ placements: [at(30, { room: 'UNASSIGNED', room_state: 'unassigned' }), at(31, { day: 'MON', room: 'UNASSIGNED', room_state: 'unassigned' })], slot_config: scenario.slot_config });
+  await switching;
+  assert.equal(flag(), '2', 'and now read from the board itself');
 });
