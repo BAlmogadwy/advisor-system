@@ -8330,7 +8330,10 @@ function renderProgrammeMark(view) {
 // One listener for every view's select, however often it is drawn; a
 // keyboard choice saves once the arrow keys rest.
 PM.saveOnSettle(document, '.tws-programme-select',
-  (select, value) => saveProgrammeMark(select.closest('[data-placement-id]')?.dataset.placementId, value));
+  (placementId, value) => saveProgrammeMark(placementId, value),
+  // Read when the choice is made: a repaint may take the select off the page
+  // before a keyboard choice settles.
+  select => select.closest('[data-placement-id]')?.dataset.placementId);
 
 function renderDrawerProgramme() {
   renderProgrammeMark(PM_VIEWS.drawer);

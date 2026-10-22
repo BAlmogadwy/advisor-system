@@ -1653,7 +1653,15 @@ function courseKeyOf(item) {
   return String(item?.course_key || item?.course_code || '').trim();
 }
 
+// The lens read in flight (shared by every ask for the same data) and the
+// count that lets only the newest read land.
+let planLensRead = null;
+let planLensRevision = 0;
 function resetPlanLens() {
+  // Whatever read is in flight answers for data that is gone (a reload after
+  // a planner job keeps the data version but not the timetable).
+  planLensRevision++;
+  planLensRead = null;
   TW.planLens = { plans: [], courses: {}, sections: {}, loaded: false };
 }
 
@@ -1662,13 +1670,9 @@ function resetPlanLens() {
    (Selection's Refresh, or after a programme mark is saved), never after
    every edit; `version` says which data it describes. A second request for
    the same data joins the read in flight; a newer read wins over an older. */
-let planLensRead = null;
-let planLensRevision = 0;
 function loadPlanLens() {
   const scenarioId = TW.scenarioId;
   if (!scenarioId) {
-    planLensRevision++;
-    planLensRead = null;
     resetPlanLens();
     return Promise.resolve();
   }
@@ -2455,12 +2459,15 @@ $('twRedo').addEventListener('click', () => runHistoryAction(false));
    never re-read per edit. A saved mark reads it once more, and the quality
    and the publish check with it (both are about the seating). The panel's
    redraw keeps the keyboard on the select through a save. */
-const PROGRAMME_MARK_PENDING = new Set();
+// Section → the mark being saved (the select shows it while it saves).
+const PROGRAMME_MARK_PENDING = new Map();
 function programmeMarkHtml(p) {
   const PM = window.TimetableProgrammeMark;
   if (!PM || !PM.hasMark(p)) return '';
   const lens = TW.planLens || {};
-  const pending = PROGRAMME_MARK_PENDING.has(String(p.term_section_id));
+  const key = String(p.term_section_id);
+  const pending = PROGRAMME_MARK_PENDING.has(key);
+  const shown = pending ? { ...p, preferred_programme: PROGRAMME_MARK_PENDING.get(key) } : p;
   // Off for its own reasons (held through the page's edit guard), or by it.
   const hold = p.preferred_programme_editable === false || pending;
   const disabled = hold || !workspaceCanEdit();
@@ -2480,7 +2487,7 @@ function programmeMarkHtml(p) {
   return `<h3 class="tw-sel-subhead">${IS_AR ? 'البرنامج' : 'Programme'}</h3>
     <dl class="tw-sel-fields">
       <div class="tw-sel-field tw-sel-field-stack"><dt><label for="twSelProgramme">${esc(PM.words.label)}</label></dt>
-        <dd><select id="twSelProgramme" class="form-select form-select-sm tw-programme-select" data-placement-id="${p.id}" data-tw-mutation${hold ? ' data-tw-hold' : ''}${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}${nobody ? ' aria-describedby="twSelProgrammeNote"' : ''}>${PM.optionsHtml(p, lens.plans)}</select>
+        <dd><select id="twSelProgramme" class="form-select form-select-sm tw-programme-select" data-placement-id="${p.id}" data-tw-mutation${hold ? ' data-tw-hold' : ''}${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}${nobody ? ' aria-describedby="twSelProgrammeNote"' : ''}>${PM.optionsHtml(shown, lens.plans)}</select>
           ${nobody ? `<span class="tw-sel-note" id="twSelProgrammeNote" data-tone="warning">${nobody}</span>` : ''}</dd></div>
       <div class="tw-sel-field tw-sel-field-stack"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${trade ? `<span class="tw-sel-hint">${trade}</span>` : ''}${state ? `<span class="tw-sel-hint">${esc(state)} ${refresh}</span>` : ''}</dd></div>
     </dl>`;
@@ -2493,7 +2500,8 @@ function redrawSelection() {
 // One listener each for the panel's select and Refresh, however often it is
 // drawn. A keyboard choice saves once the arrow keys rest.
 window.TimetableProgrammeMark?.saveOnSettle($('twRightBody'), '#twSelProgramme',
-  (select, value) => saveWorkspaceProgrammeMark(Number(select.dataset.placementId), value));
+  (placementId, value) => saveWorkspaceProgrammeMark(placementId, value),
+  select => Number(select.dataset.placementId));
 $('twRightBody').addEventListener('click', event => {
   const button = event.target.closest && event.target.closest('[data-tw-lens-refresh]');
   if (button && !button.disabled) refreshPlanLens();
@@ -2501,10 +2509,18 @@ $('twRightBody').addEventListener('click', event => {
 
 async function saveWorkspaceProgrammeMark(placementId, value) {
   const p = TW.placements.find(row => row.id === placementId);
-  // One write at a time (the page's edit guard): a second save waits its turn.
-  if (!window.TimetableProgrammeMark?.hasMark(p) || !workspaceCanEdit()) return;
+  if (!window.TimetableProgrammeMark?.hasMark(p)) return;
+  // One write at a time (the page's edit guard). A keyboard choice waits for
+  // the keys to rest, and the page can turn busy meanwhile: the select shows
+  // the saved mark again and the user hears why, never a silent drop.
+  if (!workspaceCanEdit()) {
+    const select = document.querySelector(`#twSelProgramme[data-placement-id="${placementId}"]`);
+    if (select) select.value = String(p.preferred_programme || '');
+    notify.warning(IS_AR ? 'الجدول قيد التحديث؛ لم يُحفظ البرنامج.' : 'The timetable is being updated; the programme was not saved.');
+    return;
+  }
   const key = String(p.term_section_id);
-  PROGRAMME_MARK_PENDING.add(key);
+  PROGRAMME_MARK_PENDING.set(key, value);
   redrawSelection();
   let changed = false;
   try {

@@ -1415,3 +1415,111 @@ test('a save that ends while another inspector tab is open leaves that tab alone
   assert.equal(h.select(), null);
   assert.ok(h.body().querySelector('.tw-empty, .tw-issue-group'), h.body().innerHTML.slice(0, 200));
 });
+
+// For saves behind the keyboard's settle timer: waits in time, not in turns.
+const waitTimed = async (condition, ms = 3000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 5)); }
+  assert.fail('timed out');
+};
+
+test('a keyboard choice the page turns busy for is not dropped silently: the select shows the saved mark and says why', async t => {
+  const h = await markHarness(t);
+  h.w.TimetableProgrammeMark.settleMs = 5;
+  card(h, 10).click();
+  h.select().focus();
+  h.choose('AI2', { keyed: true });
+  h.w.TW.plannerJob = { job_id: 'j', status: 'running' };  // busy before the keys rest
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await settle();
+  assert.equal(h.seen.posts.length, 0);
+  assert.equal(h.select().value, '', 'the saved mark again');
+  assert.ok(h.notices.some(n => n.type === 'warning' && /not saved/.test(n.text)), JSON.stringify(h.notices));
+});
+
+test('a redraw while a keyboard choice settles keeps the choice, and the select shows what is being saved', async t => {
+  const post = deferred();
+  const h = await markHarness(t, { hold: { post: () => post.promise } });
+  h.w.TimetableProgrammeMark.settleMs = 30;
+  card(h, 10).click();
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  h.choose('AI2', { keyed: true });
+  h.w.TW.dataVersion++;  // an answer arrives: the panel is drawn anew (the mix turns stale)
+  h.w.renderRightPanel('selection');
+  assert.match(h.body().textContent, /From before your last change/, 'it was drawn anew');
+  assert.equal(h.select().value, 'AI2', 'the choice is still shown');
+  await waitTimed(() => h.seen.posts.length === 1);
+  await settle();
+  assert.deepEqual([h.select().value, h.select().disabled], ['AI2', true], 'saving shows the mark being saved');
+  h.w.TW.qualityLoading = !h.w.TW.qualityLoading;  // another answer while it saves (the select no longer has the keyboard)
+  h.w.TW.dataVersion++;
+  h.w.renderRightPanel('selection');
+  assert.deepEqual([h.select().value, h.select().disabled], ['AI2', true], 'still the mark being saved');
+  post.resolve();
+  await wait(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  assert.equal(h.seen.posts[0].preferred_programme, 'AI2');
+});
+
+test('each arrow key restarts the wait; a pointer choice saves at once', async t => {
+  const h = await markHarness(t);
+  h.w.TimetableProgrammeMark.settleMs = 60;
+  card(h, 10).click();
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  h.choose('AI', { keyed: true });
+  await new Promise(resolve => setTimeout(resolve, 40));
+  h.choose('AI2', { keyed: true });  // before the first wait ends
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(h.seen.posts.length, 0, 'the first key’s wait was restarted');
+  await waitTimed(() => h.seen.posts.length === 1 && !h.select().disabled);
+  await wait(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  h.w.TimetableProgrammeMark.settleMs = 60000;
+  h.choose('AI', { keyed: true });
+  h.select().dispatchEvent(new h.w.Event('pointerdown', { bubbles: true }));  // then the mouse
+  h.choose('');
+  await wait(() => h.seen.posts.length === 2);
+  assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2', '']);
+  await wait(() => h.seen.quality === quality0 + 2 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+});
+
+test('a lens read joins only a read about the same scenario and data', async t => {
+  const held = deferred();
+  const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? held.promise : null) } });
+  const first = h.w.loadPlanLens();  // read 2, held
+  assert.equal(h.w.TW.planLens.loading, true);
+  const joined = h.w.loadPlanLens();
+  assert.equal(h.seen.lens, 2, 'the same data: one read');
+  h.w.TW.scenarioId = 2;  // another scenario, the same data version
+  await h.w.loadPlanLens();
+  assert.equal(h.seen.lens, 3, 'a read for another scenario is its own');
+  held.resolve();
+  await Promise.all([first, joined]);
+});
+
+test('a reset (the scenario reloaded after a planner job) forgets the read in flight', async t => {
+  const held = deferred();
+  const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? held.promise : null) } });
+  const old = h.w.loadPlanLens();  // read 2, held; the data version does not move on a reload
+  h.w.resetPlanLens();
+  const fresh = h.w.loadPlanLens();
+  assert.equal(h.seen.lens, 3, 'a new read, never the old one');
+  await fresh;
+  held.resolve();
+  await old;
+  assert.equal(h.w.TW.planLens.sections['110'].actual_total, 3, 'the forgotten read does not land');
+});
+
+test('an older read finishing never clears the newer read’s loading', async t => {
+  const older = deferred(), newer = deferred();
+  const h = await markHarness(t, { hold: { lens: n => (n === 2 ? older.promise : n === 3 ? newer.promise : null) } });
+  const a = h.w.loadPlanLens();
+  h.w.TW.dataVersion++;
+  const b = h.w.loadPlanLens();
+  older.resolve();
+  await a;
+  assert.equal(h.w.TW.planLens.loading, true, 'the newer read is still loading');
+  newer.resolve();
+  await b;
+  assert.equal(h.w.TW.planLens.loading, false);
+});

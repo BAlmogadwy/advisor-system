@@ -82,9 +82,10 @@
      passed on the way: a choice made from the keyboard saves once the keys
      rest (or at once on Enter, or on leaving the select); a pointer choice
      saves at once. Delegated from `root`, so a select drawn again later is
-     covered too; `save(select, value)` is called once per settled choice. */
+     covered too; `save(capture(select), value)` is called once per settled
+     choice, with what `capture` read from the select when it changed. */
   const SETTLE_MS = 700;
-  function saveOnSettle(root, selector, save) {
+  function saveOnSettle(root, selector, save, capture = select => select) {
     const state = new WeakMap();
     const of = select => {
       if (!state.has(select)) state.set(select, { timer: 0, keyed: false });
@@ -96,7 +97,7 @@
       if (!entry.timer) return;
       clearTimeout(entry.timer);
       entry.timer = 0;
-      save(select, select.value);
+      save(entry.target, entry.value);
     };
     root.addEventListener('pointerdown', event => { const select = target(event); if (select) of(select).keyed = false; });
     root.addEventListener('keydown', event => {
@@ -111,7 +112,11 @@
       const entry = of(select);
       clearTimeout(entry.timer);
       entry.timer = 0;
-      if (!entry.keyed) { save(select, select.value); return; }
+      // What the choice is about, read now: the select may be drawn again (or
+      // taken off the page) before a keyboard choice settles.
+      entry.target = capture(select);
+      entry.value = select.value;
+      if (!entry.keyed) { save(entry.target, entry.value); return; }
       entry.timer = setTimeout(() => commit(select), api.settleMs);
     });
     root.addEventListener('focusout', event => { const select = target(event); if (select) commit(select); });

@@ -116,8 +116,9 @@ padding-aware for `p-0`.
   held the same way: the region takes the keyboard and the control gets it
   back when it is switched on again, in place or by a redraw. A page that
   redraws a panel after every server answer uses it instead of `innerHTML`.
-  Limits: focus only, not an input's value or caret; the region needs a
-  `tabindex` to hold the keyboard.
+  The focused field keeps an edit not yet committed when the page draws it
+  from the same value (a new value from the page wins). Limits: not a caret
+  or text selection; the region needs a `tabindex` to hold the keyboard.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.
@@ -354,8 +355,15 @@ findings changed the plan:
    reasons) and keeps the keyboard through a save (the global redraw). A
    choice made from the keyboard saves once the arrow keys rest, or on Enter
    or on leaving — Chrome on Windows fires `change` per arrow key — in both
-   pages (`TimetableProgrammeMark.saveOnSettle`). A visually hidden status
-   line says when the mix has been read again.
+   pages (`TimetableProgrammeMark.saveOnSettle`, which reads the section and
+   the value when the choice is made, so a repaint before the keys rest loses
+   nothing). A visually hidden status line says when the mix has been read
+   again. While a mark saves, the select shows the mark being saved; a
+   keyboard choice the page turned busy for is not dropped silently (the
+   saved mark comes back and a warning says why); a reset lens (the scenario
+   reloaded after a planner job) forgets the read in flight. The global
+   redraw keeps an edit the user has not committed in the focused field
+   when the page draws that field from the same value.
 5. **Keyboard.** Grid semantics for the board (days × columns) with roving
    focus; the left list as one roving stop; `event.code` for `[` and `]`; a
    Move dialog with one ranked list whose verdict follows the server's

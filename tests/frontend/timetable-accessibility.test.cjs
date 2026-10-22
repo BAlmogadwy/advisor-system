@@ -358,3 +358,23 @@ test('a region taken off the page is let go, and watched again when it comes bac
   assert.equal(h.doc.activeElement, lock(), 'the hand-back still works after it came back');
   h.dom.window.close();
 });
+
+test('a redraw keeps an edit the user has not committed when the field is drawn from the same value', () => {
+  const h = bare();
+  const html = (mark, extra = '') => `<select id="mark"><option value="">Any</option><option value="AI"${mark === 'AI' ? ' selected' : ''}>AI</option><option value="DS"${mark === 'DS' ? ' selected' : ''}>DS</option></select>`
+    + `<input id="name" value="${mark}">${extra}`;
+  h.UX.redraw(h.region, html(''));
+  const select = () => h.doc.getElementById('mark');
+  select().focus();
+  select().value = 'DS';  // chosen, not saved yet
+  h.UX.redraw(h.region, html('', '<p>another answer</p>'));
+  assert.equal(select().value, 'DS', 'the choice survives an unrelated redraw');
+  h.UX.redraw(h.region, html('AI', '<p>the saved mark changed</p>'));
+  assert.equal(select().value, 'AI', 'a new value from the page wins');
+  const input = () => h.doc.getElementById('name');
+  input().focus();
+  input().value = 'typed';
+  h.UX.redraw(h.region, html('AI'));
+  assert.deepEqual([input().value, h.doc.activeElement.id], ['typed', 'name']);
+  h.dom.window.close();
+});
