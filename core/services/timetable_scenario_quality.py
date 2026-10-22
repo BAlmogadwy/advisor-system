@@ -180,11 +180,13 @@ def build_scenario_quality(scenario_id: int, *, with_lens: bool = False) -> dict
 def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
     """Quality, then (``with_lens``) the plan lens from the same seating.
 
-    The lens equals ``/plan-lens/``: it reads the evaluation's states when the
-    seating ran; nobody to seat without demand; otherwise it seats on its own
-    (cheap when the sections cannot even be built), so a quality failure that
-    is not the seating's never reads as a failed seating. Any failure here is
-    logged and the lens is ``None``; the quality keys are never touched.
+    The lens equals ``/plan-lens/``, plus ``programme_view`` (what each board
+    programme's per-plan file shows; ``None`` when it cannot be built): it
+    reads the evaluation's states when the seating ran; nobody to seat without
+    demand; otherwise it seats on its own (cheap when the sections cannot even
+    be built), so a quality failure that is not the seating's never reads as a
+    failed seating. Any failure here is logged and the lens is ``None``; the
+    quality keys are never touched.
     """
     result, seated = _build_scenario_quality(scenario_id, keep_demands=with_lens)
     if not with_lens:
@@ -196,7 +198,9 @@ def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
         # own inputs, so the two never sit in memory together: that keeps this
         # read's peak near quality's own on the 512 MB host.
         del seated
-        lens = build_scenario_plan_lens(scenario_id, seating=seating, demands=demands)
+        lens = build_scenario_plan_lens(
+            scenario_id, seating=seating, demands=demands, programme_view=True
+        )
     except Exception:
         logger.exception(
             "Could not build the plan lens with the quality of scenario %s", scenario_id
