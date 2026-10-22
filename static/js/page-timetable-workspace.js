@@ -1261,8 +1261,7 @@ function renderBudgetSidebar() {
         return;
       }
 
-      for (let s = used + 1; s <= planned; s++) {
-        const secLabel = `S${s}`;
+      freeSectionLabels(c).forEach(secLabel => {
         const div = listRow(termGrid, `place:${c.course_key}|${secLabel}`);
         div.className = 'tw-section-item';
         div.draggable = workspaceCanEdit();
@@ -1285,6 +1284,7 @@ function renderBudgetSidebar() {
             credit_hours: c.credit_hours || 0,
             max_per_section: c.max_per_section || 40,
             total_students: c.total_demand || 0,
+            required_meetings_per_section: c.required_meetings_per_section || 1,
           }));
           e.dataTransfer.effectAllowed = 'copy';
         });
@@ -1298,13 +1298,39 @@ function renderBudgetSidebar() {
           choose.addEventListener('click', () => div._twEnglish());
           div.appendChild(choose);
         }
-      }
+      });
     });
   });
   setLeftCount(leftToPlace);
   listNav?.refresh();
   renderBoardTabs();
   renderWorkspaceQuality();
+}
+
+/* The labels a course's next sections take: the first free S1, S2, … (the
+   server says which are placed anywhere in the scenario; with S1 and S3 placed
+   the next are S2 and S4, never S3 again). An older server without the list:
+   the first `used_sections` labels count as used, as before. */
+function freeSectionLabels(c) {
+  const count = Math.max(Number(c.remaining_sections) || 0, 0);
+  const placed = Array.isArray(c.used_section_labels)
+    ? c.used_section_labels
+    : Array.from({ length: Number(c.used_sections) || 0 }, (_, i) => `S${i + 1}`);
+  const used = new Set(placed.map(label => String(label).trim().toUpperCase()));
+  const free = [];
+  for (let n = 1; free.length < count && n <= count + used.size; n++) {
+    if (!used.has(`S${n}`)) free.push(`S${n}`);
+  }
+  return free;
+}
+
+/* A drop places one meeting; a course that meets several times a week is
+   placed with its whole pattern (the server refuses less). */
+function multiMeetingDropWords(code, n) {
+  const what = `\u2066${code}\u2069`;
+  return IS_AR
+    ? `يُدرَّس ${what} ${pluralAr(n, { two: 'مرتين أسبوعياً', few: '{n} مرات أسبوعياً', many: '{n} مرةً أسبوعياً', other: '{n} مرة أسبوعياً' })}، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.`
+    : `${what} meets ${n} times a week, and its meetings are placed together; a drop places one. Nothing was placed.`;
 }
 
 /* The list's grids: one per term (or one for the unplaced sections), each row
@@ -2485,20 +2511,37 @@ async function onDrop(e) {
   }
 
   if (payload.type === 'create_planned') {
-    // From generated plan — need to find or create a TermSection first
-    // Use the board's create-planned endpoint
+    // A planned section of a course that meets N times a week is created with
+    // its whole pattern (create_planned_section_placements refuses less): a
+    // drop places one meeting, so it is refused here, before any request.
+    const meetings = Number(payload.required_meetings_per_section) || 1;
+    if (meetings > 1) {
+      notify.warning(multiMeetingDropWords(payload.course_code, meetings));
+      return;
+    }
     const data = await twFetch('/ops/tw/placements/create-planned/', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         board_id: boardAtStart,
         course_code: payload.course_code,
+        course_key: payload.course_key,
+        course_name: payload.course_name,
         section_label: payload.section_label,
         day: day,
         start_time: startTime,
         end_time: endTime,
         capacity: payload.max_per_section || 40,
       }),
+      // An older budget without the meeting count: the server's own refusal
+      // reads the same.
+      _onError: body => {
+        if (body?.error?.code !== 'FULL_SECTION_PATTERN_REQUIRED') return false;
+        // "needs a complete N-meeting section pattern" (the view's message).
+        const n = Number(/(\d+)-meeting/.exec(String(body.error.message || ''))?.[1]) || 2;
+        notify.warning(multiMeetingDropWords(payload.course_code, n));
+        return true;
+      },
     });
     if (!data) return;
     TW.undoStack.push({ type: 'create', placement_id: data.placement.id,

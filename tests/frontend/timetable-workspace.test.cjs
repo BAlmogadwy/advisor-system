@@ -1802,3 +1802,70 @@ test('W11 Enter on an English row of the unplaced list opens its pattern; the ke
   await settle(); await settle();
   assert.equal(u.d.activeElement.id, 'twSearch', 'not pulled back to the list');
 });
+
+/* ── Placing a planned section from the list (design record §7.3, 5b) ── */
+function dropHarness(t, { arabic = false, refuse = null, budget = () => [] } = {}) {
+  const posts = [];
+  return harness(t, (url, opts) => {
+    if (url === '/ops/tw/placements/create-planned/' && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      if (refuse) return { httpError: 400, error: { code: 'FULL_SECTION_PATTERN_REQUIRED', message: refuse } };
+      return { placement: { id: 99, term_section_id: 199 }, validation: {} };
+    }
+    if (url.includes('/budget/')) return { budget: budget() };
+    if (url === '/ops/tw/boards/2/') return { placements: [at(10)], slot_config: scenario.slot_config };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    return undefined;
+  }, {}, arabic).then(h => Object.assign(h, { posts }));
+}
+const dropOn = async (h, payload) => {
+  const cell = h.d.querySelector('#twGrid [role="gridcell"][data-day="MON"]');
+  await h.w.onDrop({ preventDefault() {}, currentTarget: cell, dataTransfer: { getData: () => JSON.stringify(payload) } });
+};
+const plannedPayload = extra => ({ type: 'create_planned', course_code: 'CS323', course_key: 'CS323::k', course_name: 'Compilers', section_label: 'S2', max_per_section: 40, ...extra });
+
+test('J1 a one-meeting drop names the course: its key and its name go with it', async t => {
+  const h = await dropHarness(t);
+  await h.select();
+  await dropOn(h, plannedPayload({ required_meetings_per_section: 1 }));
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual([h.posts[0].course_key, h.posts[0].course_name], ['CS323::k', 'Compilers']);
+});
+
+test('J2 a drop of a course that meets several times a week sends nothing and says why, in both languages', async t => {
+  for (const arabic of [false, true]) {
+    const h = await dropHarness(t, { arabic });
+    await h.select();
+    await dropOn(h, plannedPayload({ required_meetings_per_section: 2 }));
+    assert.equal(h.posts.length, 0, 'no request');
+    const warning = h.notices.find(n => n.type === 'warning');
+    assert.equal(warning?.text, arabic
+      ? 'يُدرَّس \u2066CS323\u2069 مرتين أسبوعياً، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.'
+      : '\u2066CS323\u2069 meets 2 times a week, and its meetings are placed together; a drop places one. Nothing was placed.');
+  }
+});
+
+test('J3 the server’s "complete pattern" refusal reads the same, as a warning, never an error', async t => {
+  const h = await dropHarness(t, { refuse: 'CS323 needs a complete 3-meeting section pattern.' });
+  await h.select();
+  await dropOn(h, plannedPayload({}));  // an older budget row: no meeting count
+  assert.equal(h.posts.length, 1);
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 0);
+  assert.match(h.notices.find(n => n.type === 'warning')?.text || '', /meets 3 times a week/);
+});
+
+test('J4 the list proposes the free section labels: with S1 and S3 placed, S2', async t => {
+  const row = { course_code: 'CS323', course_key: 'CS323', programme_term: 3, planned_sections: 3, used_sections: 2, remaining_sections: 1, total_demand: 70 };
+  const h = await dropHarness(t, { budget: () => [{ ...row, used_section_labels: ['S1', 'S3'] }] });
+  await h.select();
+  await wait(() => h.d.querySelector('#twSectionList [data-focus-key^="place:CS323|"]'));
+  assert.deepEqual([...h.d.querySelectorAll('#twSectionList [data-focus-key^="place:CS323|"]')].map(e => e.dataset.focusKey), ['place:CS323|S2']);
+  assert.match(h.d.querySelector('#twSectionList [data-focus-key="place:CS323|S2"]').textContent, /CS323 S2/);
+  // An older server without the list: the first used labels count as used.
+  const old = await dropHarness(t, { budget: () => [row] });
+  await old.select();
+  await wait(() => old.d.querySelector('#twSectionList [data-focus-key^="place:CS323|"]'));
+  assert.deepEqual([...old.d.querySelectorAll('#twSectionList [data-focus-key^="place:CS323|"]')].map(e => e.dataset.focusKey), ['place:CS323|S3']);
+});
