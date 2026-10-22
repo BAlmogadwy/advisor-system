@@ -116,12 +116,13 @@ function clearSelectionFromKeyboard() {
   return true;
 }
 
-/* Enter on a list row: an English row opens its weekly pattern; a complete
-   course says so; any other row says how to place it (Place… comes in 5f). */
+/* Enter on a list row (or a click on its "Place…"): a complete course says
+   so; an English row opens its weekly pattern; a row of the unplaced list
+   says how to place it (keyboard placement needs a section budget); any
+   other row opens Place… (5f) through the seam, the row its origin. */
 function activateListRow(cell) {
   if (cell.getAttribute('aria-disabled') === 'true') {
-    const what = `\u2066${cell.dataset.course || ''}\u2069`;
-    announceBoard(IS_AR ? `وُضعت كل شعب ${what}.` : `Every section of ${what} is placed.`);
+    announceBoard(PLACE_WORDS.allPlaced(isolatedText(cell.dataset.course || '')));
     return;
   }
   if (typeof cell._twEnglish === 'function') {
@@ -138,18 +139,20 @@ function activateListRow(cell) {
     });
     return;
   }
-  // A course placed with its whole pattern cannot be dropped (5b): say so.
-  const meetings = Number(cell.dataset.meetings) || 1;
-  announceBoard(meetings > 1
-    ? multiMeetingDropWords(cell.dataset.course || '', meetings, { dropped: false })
-    : (IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.'));
+  if (String(cell.dataset.focusKey || '').startsWith('ts:') || !cell._twPlace) {
+    announceBoard(PLACE_WORDS.needsBudget);
+    return;
+  }
+  TW.keyActions.place(cell._twPlace, { origin: cell.dataset.focusKey });
 }
 
 /* ── Card actions: one gate, one seam (design record §7.3.2, 5c, 5e) ──
    Move (M on a card, or Selection's Move…) and Change room (R, or
    Selection's button) go through TW.keyActions[kind](placement, {origin})
-   after one gate, whose words are the same wherever it refuses; Place joins
-   the seam in 5f.
+   after one gate, whose words are the same wherever it refuses; Place… (a
+   list row, or a drop of a course that meets more than once a week) goes
+   through TW.keyActions.place(request, {origin}) after the gate's parts
+   that apply to a section not placed yet (5f).
    `origin` is a focus key, never a node: the page may draw the card or the
    button again while a dialog is open, and the keyboard goes back to
    whatever answers to that key when it closes. */
@@ -204,7 +207,11 @@ function runCardKey(kind, card) {
   action(p, { origin: `placement:${p.id}` });
   return true;
 }
-TW.keyActions = { move: (p, options) => openMoveDialog(p, options), room: (p, options) => openRoomDialog(p, options) };
+TW.keyActions = {
+  move: (p, options) => openMoveDialog(p, options),
+  room: (p, options) => openRoomDialog(p, options),
+  place: (request, options) => openPlaceDialog(request, options),
+};
 
 /* The element an origin key names now, else its region's own stop (or the
    inspector body, which takes the keyboard). */
@@ -226,8 +233,9 @@ function writeHold() {
   return workspaceCanEdit() ? '' : 'busy';
 }
 
-/* A dialog's commit (contract C): {data}, or {code} for every failure, with
-   nothing toasted (a toast behind a modal is never seen). The keyboard goes
+/* A dialog's commit (contract C): {data}, or {code, status} for every
+   failure (status 0: no answer was read), with nothing toasted (a toast
+   behind a modal is never seen). The keyboard goes
    to the chosen row first, since the commit button turns off as the write
    starts. twFetch's own busy guard would toast, so the hold is checked here
    and answered as a code like any refusal. */
@@ -235,15 +243,16 @@ async function dialogWrite(dialog, url, body) {
   const hold = writeHold();
   if (hold) return { code: hold };
   (dialog.querySelector('input[type="radio"]:checked') || dialog.querySelector('.ux-choice-list'))?.focus({ preventScroll: true });
-  let code = '';
+  let code = '', failed = 0;
   const data = await twFetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _quiet: true,
     _onError: (answer, status) => {
       code = answer?.error?.code || (answer ? String(status) : 'NETWORK');
+      failed = Number(status) || 0;
       return true;
     },
   });
-  return data ? { data } : { code: code || 'NETWORK' };
+  return data ? { data } : { code: code || 'NETWORK', status: failed };
 }
 
 /* What a dialog's work came to: in its alert line while it is open. Once the
@@ -353,6 +362,7 @@ function syncWorkspaceControls() {
   syncSelectionActions();
   syncMoveDialog();
   syncRoomDialog();
+  syncPlaceDialog();
 }
 
 /* The other views of this timetable are real links, so they open in a new tab
@@ -1478,12 +1488,18 @@ function renderBudgetSidebar() {
         const div = listRow(termGrid, `place:${c.course_key}|${secLabel}`);
         div.className = 'tw-section-item';
         div.dataset.course = c.course_code;
-        div.dataset.meetings = String(Number(c.required_meetings_per_section) || 1);
+        const meetings = Number(c.required_meetings_per_section) || 1;
         div.draggable = workspaceCanEdit();
         div.dataset.twDraggable = 'true';
+        // The row is the control (5f): Enter, or a click on its "Place…",
+        // opens Place… (an English row: its pattern chooser), a dialog
+        // either way. A click anywhere else on it is still a drag.
+        div.setAttribute('aria-haspopup', 'dialog');
+        const facts = [c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`,
+          meetings > 1 ? PLACE_WORDS.meetingsWeek(meetings) : ''];
         div.innerHTML = `
-          <span class="code">${esc(c.course_code)} ${secLabel}</span>
-          <span class="meta ux-meta">${[c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`].filter(Boolean).map(part => `<span>${esc(part)}</span>`).join('')}</span>
+          <span class="tw-section-head"><span class="code">${esc(c.course_code)} <bdi>${esc(secLabel)}</bdi></span><span class="tw-place-hint" aria-hidden="true">${esc(PLACE_WORDS.hint)}</span></span>
+          <span class="meta ux-meta">${facts.filter(Boolean).map(part => `<span>${esc(part)}</span>`).join('')}</span>
           <span class="meta ux-meta"><span>${IS_AR ? `${used}/${planned} موضوعة` : `${used}/${planned} placed`}</span><span>${IS_AR ? `${c.total_demand} طالب` : `demand ${c.total_demand}`}</span></span>
         `;
         div.addEventListener('dragstart', (e) => {
@@ -1500,18 +1516,14 @@ function renderBudgetSidebar() {
             max_per_section: c.max_per_section || 40,
             total_students: c.total_demand || 0,
             required_meetings_per_section: c.required_meetings_per_section || 1,
+            programme_term: c.programme_term,
           }));
           e.dataTransfer.effectAllowed = 'copy';
         });
         if (globalThis.TimetableMeetingPolicy?.isEnglish(c)) {
-          const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'tw-pattern-action';
-          choose.dataset.twMutation = ''; choose.disabled = !workspaceCanEdit();
-          // For the pointer: the keyboard reaches it with Enter on its row.
-          choose.tabIndex = -1;
-          choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
           div._twEnglish = () => chooseEnglishWorkspacePattern({ ...c, type: 'create_planned', section_label: secLabel });
-          choose.addEventListener('click', () => div._twEnglish());
-          div.appendChild(choose);
+        } else {
+          div._twPlace = placeRequestOf(c, secLabel);
         }
       });
     });
@@ -1522,16 +1534,20 @@ function renderBudgetSidebar() {
   renderWorkspaceQuality();
 }
 
-/* The labels a course's next sections take: the first free S1, S2, … (the
-   server says which are placed anywhere in the scenario; with S1 and S3 placed
-   the next are S2 and S4, never S3 again). An older server without the list:
-   the first `used_sections` labels count as used, as before. */
-function freeSectionLabels(c) {
-  const count = Math.max(Number(c.remaining_sections) || 0, 0);
+/* The labels of a course placed anywhere in the scenario, as the server
+   names them. An older server without the list: the first `used_sections`
+   labels count as used, as before. */
+function usedSectionLabels(c) {
   const placed = Array.isArray(c.used_section_labels)
     ? c.used_section_labels
     : Array.from({ length: Number(c.used_sections) || 0 }, (_, i) => `S${i + 1}`);
-  const used = new Set(placed.map(label => String(label).trim().toUpperCase()));
+  return new Set(placed.map(label => String(label).trim().toUpperCase()));
+}
+/* The labels a course's next sections take: the first free S1, S2, … (with
+   S1 and S3 placed the next are S2 and S4, never S3 again). */
+function freeSectionLabels(c) {
+  const count = Math.max(Number(c.remaining_sections) || 0, 0);
+  const used = usedSectionLabels(c);
   const free = [];
   for (let n = 1; free.length < count && n <= count + used.size; n++) {
     if (!used.has(`S${n}`)) free.push(`S${n}`);
@@ -1539,23 +1555,15 @@ function freeSectionLabels(c) {
   return free;
 }
 
-/* A drop places one meeting; a course that meets several times a week is
-   placed with its whole pattern (the server refuses less). Until Place… (5f),
-   split view's create places a whole pattern. `n` unknown (a refusal that
-   does not say it): no count is invented. */
-function multiMeetingDropWords(code, n, { dropped = true } = {}) {
-  const what = `\u2066${code}\u2069`;
-  // After a drop, nothing was placed; on Enter, nothing was tried.
-  const none = dropped ? (IS_AR ? ' لم يُوضع شيء.' : ' Nothing was placed.') : '';
-  const where = IS_AR ? ' «عرض مقسّم» يضع نمطاً كاملاً.' : ' Split view places a whole pattern.';
-  if (!n) {
-    return (IS_AR
-      ? `تُوضع ${what} بنمطها الأسبوعي كاملاً، والإفلات يضع لقاءً واحداً.`
-      : `${what} is placed with its whole weekly pattern; a drop places one meeting.`) + none + where;
-  }
-  return (IS_AR
-    ? `يُدرَّس ${what} ${pluralAr(n, { two: 'مرتين أسبوعياً', few: '{n} مرات أسبوعياً', many: '{n} مرةً أسبوعياً', other: '{n} مرة أسبوعياً' })}، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً.`
-    : `${what} meets ${n} times a week, and its meetings are placed together; a drop places one.`) + none + where;
+/* What Place… is asked to place (5f), from a budget row or a list row's
+   drag payload: the course's identity, the label, the seats, how many
+   meetings a week it needs and its programme term. */
+function placeRequestOf(c, label = c.section_label) {
+  return {
+    course_code: c.course_code, course_key: c.course_key || c.course_code, course_name: c.course_name || c.course_code,
+    section_label: label, capacity: Number(c.max_per_section) || 40,
+    required: Number(c.required_meetings_per_section) || 1, programme_term: c.programme_term,
+  };
 }
 
 /* The list's grids: one per term (or one for the unplaced sections), each row
@@ -2794,6 +2802,51 @@ async function commitPlacementMove(id, { day, start_time, end_time }, { dialog =
   return result;
 }
 
+/* "Placed AI222 S2." — the course and the label isolated (plain text). */
+function placedWords(code, label) {
+  return IS_AR ? `وُضعت ${isolatedText(code)} ${isolatedText(label)}.` : `Placed ${isolatedText(code)} ${isolatedText(label)}.`;
+}
+/* The body of a planned section's create: the course (code, key and name),
+   the label, the seats and every meeting as {day, start_time, end_time}. */
+function plannedCreateBody(request, boardId, label, meetings) {
+  return {
+    board_id: boardId, course_code: request.course_code, course_key: request.course_key, course_name: request.course_name,
+    section_label: label, capacity: request.capacity,
+    meetings: meetings.map(({ day, start, end }) => ({ day, start_time: start, end_time: end })),
+  };
+}
+/* One create of a planned section (5f), for the Place dialog and a drop
+   alike: one body (plannedCreateBody), and one undo entry, `section_create`,
+   holding the ids the server made, the body sent and the meetings as the
+   server stored them (raw days and times), so Undo removes every meeting
+   and Redo creates them all again (D23). With a dialog every failure is its
+   own {code, status} (dialogWrite: nothing toasted); without one the
+   server's "complete pattern" refusal is the caller's {code} (a drop then
+   opens Place…), and any other is twFetch's toast, as a drop always did. */
+async function commitPlannedCreate(body, { dialog = null } = {}) {
+  const url = '/ops/tw/placements/create-planned/';
+  let result;
+  if (dialog) result = await dialogWrite(dialog, url, body);
+  else {
+    let code = '';
+    const data = await twFetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      _onError: answer => {
+        if (answer?.error?.code !== 'FULL_SECTION_PATTERN_REQUIRED') return false;
+        code = answer.error.code;
+        return true;
+      },
+    });
+    result = data ? { data } : { code: code || 'FAILED' };
+  }
+  if (result.code) return result;
+  const rows = result.data.placements?.length ? result.data.placements : [result.data.placement].filter(Boolean);
+  TW.undoStack.push({ type: 'section_create', placement_ids: rows.map(row => row.id), board_id: body.board_id, payload: body,
+    meetings: globalThis.TimetableMeetingPolicy.snapshot(rows) });
+  TW.redoStack = [];
+  return { ...result, rows };
+}
+
 async function onDrop(e) {
   e.preventDefault();
   if (!workspaceCanEdit()) return;
@@ -2815,53 +2868,32 @@ async function onDrop(e) {
   }
 
   if (payload.type === 'create_planned') {
-    // A planned section of a course that meets N times a week is created with
-    // its whole pattern (create_planned_section_placements refuses less): a
-    // drop places one meeting, so it is refused here, before any request.
-    const meetings = Number(payload.required_meetings_per_section) || 1;
-    if (meetings > 1) {
-      notify.warning(multiMeetingDropWords(payload.course_code, meetings));
+    // A planned section is created with its whole weekly pattern
+    // (create_planned_section_placements refuses less). A course that meets
+    // more than once a week opens Place… on the dropped time (5f, D22c):
+    // the patterns that include it, nothing sent. One that meets once is
+    // placed here, through the dialog's own commit and report; the server's
+    // "complete pattern" refusal (an older budget row) opens Place… the
+    // same way, the budget read again.
+    const request = placeRequestOf(payload);
+    const place = () => openPlaceDialog(request, {
+      origin: `place:${request.course_key}|${request.section_label}`, includes: { day, start: startTime, end: endTime },
+    });
+    if (request.required > 1) {
+      place();
       return;
     }
-    const data = await twFetch('/ops/tw/placements/create-planned/', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        board_id: boardAtStart,
-        course_code: payload.course_code,
-        course_key: payload.course_key,
-        course_name: payload.course_name,
-        section_label: payload.section_label,
-        day: day,
-        start_time: startTime,
-        end_time: endTime,
-        capacity: payload.max_per_section || 40,
-      }),
-      // An older budget without the meeting count: the server's own refusal
-      // reads the same.
-      _onError: body => {
-        if (body?.error?.code !== 'FULL_SECTION_PATTERN_REQUIRED') return false;
-        // "needs a complete N-meeting section pattern" (the view's message);
-        // the code also covers other "complete pattern" messages: no count then.
-        const n = Number(/(\d+)-meeting/.exec(String(body.error.message || ''))?.[1]) || 0;
-        notify.warning(multiMeetingDropWords(payload.course_code, n));
-        // The row was offered from an older budget: read it again.
-        loadBudget();
-        return true;
-      },
-    });
-    if (!data) return;
-    TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
-      board_id: boardAtStart, term_section_id: data.placement.term_section_id,
-      day: day, start_time: startTime, end_time: endTime, room: '' });
-    TW.redoStack = [];
-    const v = data.validation || {};
-    if (v.critical_count > 0) {
-      notify.warning(IS_AR ? 'تم الوضع مع تعارضات' : `Placed with ${v.critical_count} conflict(s)`);
-    } else {
-      notify.success(IS_AR ? 'تم الوضع' : 'Placed');
+    const created = await commitPlannedCreate(plannedCreateBody(request, boardAtStart, request.section_label, [{ day, start: startTime, end: endTime }]));
+    if (created.code === 'FULL_SECTION_PATTERN_REQUIRED') {
+      loadBudget();
+      place();
+      return;
     }
-    notifyInstructorClashBackstop(data);
+    if (created.code || TW.scenarioId !== scenarioAtStart) return;
+    await selectBoard(TW.boardId);
+    updateUndoRedoButtons();
+    reportEdit(placedWords(request.course_code, request.section_label), created.rows.map(row => row.id), { data: created.data });
+    return;
   } else if (payload.type === 'create') {
     const data = await twFetch('/ops/tw/placements/create/', {
       method: 'POST',
@@ -2880,13 +2912,12 @@ async function onDrop(e) {
       board_id: boardAtStart, term_section_id: payload.term_section_id,
       day: day, start_time: startTime, end_time: endTime, room: payload.default_room || '' });
     TW.redoStack = [];
-    const v = data.validation || {};
-    if (v.critical_count > 0) {
-      notify.warning(IS_AR ? 'تم الوضع مع تعارضات' : `Placed with ${v.critical_count} conflict(s)`);
-    } else {
-      notify.success(IS_AR ? 'تم الوضع' : 'Placed');
-    }
-    notifyInstructorClashBackstop(data);
+    // Its report reads the board's issue model, as every placement's does (D24).
+    if (TW.scenarioId !== scenarioAtStart) return;
+    await selectBoard(TW.boardId);
+    updateUndoRedoButtons();
+    reportEdit(placedWords(payload.course_code, payload.section_label), [data.placement.id], { data });
+    return;
   } else if (payload.type === 'move') {
     // One write and one report for every move of a meeting (5e): one body,
     // one undo shape, and a report read from the board once it has been
@@ -2927,6 +2958,13 @@ async function applyHistoryAction(action, undo, token) {
       day: action[`${prefix}_day`], start_time: action[`${prefix}_start`], end_time: action[`${prefix}_end`],
     }));
   }
+  // A planned section's create (5f): undone meeting by meeting, last first;
+  // redone by creating it again with every meeting (the ids remapped).
+  if (action.type === 'section_create') {
+    if (undo) return undoSectionCreate(action, post);
+    return twFetch('/ops/tw/placements/create-planned/', post({ ...action.payload,
+      meetings: (action.meetings || []).map(({ day, start_time, end_time }) => ({ day, start_time, end_time })) }));
+  }
   // A room change goes back and forth by its room alone: no time is ever
   // sent, so it stays room-only and a time lock holds.
   if (action.type === 'room') {
@@ -2940,6 +2978,26 @@ async function applyHistoryAction(action, undo, token) {
       end_time: action.end_time, room: action.room || '', ...(action.meetings ? { meetings: action.meetings } : {}) }))
     : twFetch(`/ops/tw/placements/${action.placement_id}/remove/`, post({}));
 }
+/* Undo of a section's create (D23): each meeting removed, the last made
+   first; a meeting a removal already took with it (a policy bundle answers
+   every meeting it removed) is skipped. A removal refused stops there: the
+   entry keeps the meetings not yet removed, and the answer is {partial}
+   when some went (the board is then read again), else null. */
+async function undoSectionCreate(action, post) {
+  const ids = [...(action.placement_ids || [])];
+  const gone = new Set();
+  for (const id of [...ids].reverse()) {
+    if (gone.has(String(id))) continue;
+    const data = await twFetch(`/ops/tw/placements/${id}/remove/`, post({}));
+    if (!data || data.ok === false) {
+      action.placement_ids = ids.filter(left => !gone.has(String(left)));
+      return gone.size ? { ok: false, partial: true } : null;
+    }
+    gone.add(String(id));
+    (data.removed_placements || []).forEach(row => gone.add(String(row.id)));
+  }
+  return { ok: true };
+}
 async function runHistoryAction(undo) {
   if (!workspaceCanEdit()) return;
   const from = undo ? TW.undoStack : TW.redoStack;
@@ -2950,10 +3008,15 @@ async function runHistoryAction(undo) {
   if (!token) return;
   try {
     const data = await applyHistoryAction(action, undo, token);
-    if (!data || data.ok === false || TW.scenarioId !== token.scenarioId) return;
+    if (!data || data.ok === false || TW.scenarioId !== token.scenarioId) {
+      // Part of a section's create undone: the entry stays with what is
+      // left, and the board shows what went (D23).
+      if (data?.partial && TW.scenarioId === token.scenarioId) await selectBoard(TW.boardId);
+      return;
+    }
     from.pop();
     if (action.meetings && data.placements) globalThis.TimetableMeetingPolicy?.remapHistory([action, ...TW.undoStack, ...TW.redoStack], action.meetings, data.placements);
-    to.push({ ...action, placement_id: data.placement?.id || action.placement_id });
+    to.push(action.type === 'section_create' ? action : { ...action, placement_id: data.placement?.id || action.placement_id });
     await selectBoard(TW.boardId);
   } finally {
     finishWorkspaceOperation(token);
@@ -3756,14 +3819,15 @@ function moveVerdictWords(verdict) {
   return kinds.length ? `${lead}: ${kinds.map(issueKindLabel).join(', ')}` : lead;
 }
 /* One item of a verdict as a line (HTML): what it is, who or what it meets,
-   where (another board named), when, and how many students it costs. */
-function moveDetailHtml(item) {
+   where (a board other than `boardId` named), when, and how many students
+   it costs. Move's lines and Place's (5f) alike. */
+function moveDetailHtml(item, boardId = MOVE.boardId) {
   const label = esc(issueKindLabel(item.issue_kind));
   if (item.issue_kind === 'blocked') return label;
   const other = item.other || {};
   const course = `<bdi>${esc([other.course_code, other.section].filter(Boolean).join(' '))}</bdi>`;
   const board = other.board_label ? ` (<bdi>${esc(other.board_label)}</bdi>)` : '';
-  const elsewhere = other.board_id != null && String(other.board_id) !== String(MOVE.boardId) ? board : '';
+  const elsewhere = other.board_id != null && String(other.board_id) !== String(boardId) ? board : '';
   const when = other.day ? `${esc(dayName(other.day))} <bdi dir="ltr">${esc(other.start || '')}–${esc(other.end || '')}</bdi>` : '';
   const count = n => (n === null || n === undefined || !Number.isFinite(Number(n)) ? '' : Number(n));
   const parts = [];
@@ -3783,11 +3847,12 @@ function moveDetailHtml(item) {
   }
   return `${label}: ${parts.filter(Boolean).join(' · ')}`;
 }
-/* At most three lines, then how many more the verdict holds. */
-function moveLines(verdict, id) {
+/* At most three lines, then how many more the verdict holds. `lead(item)`
+   opens a line (Place's: the meeting it belongs to). */
+function moveLines(verdict, id, { boardId = MOVE.boardId, lead = () => '' } = {}) {
   const items = (verdict?.items || []).filter(item => ISSUE_KINDS[item.issue_kind]);
   const shown = items.slice(0, 3);
-  const lines = shown.map((item, index) => ({ id: `${id}-d${index}`, html: moveDetailHtml(item) }));
+  const lines = shown.map((item, index) => ({ id: `${id}-d${index}`, html: `${lead(item)}${moveDetailHtml(item, boardId)}` }));
   const rest = items.length - shown.length + (Number(verdict?.more) || 0);
   if (rest > 0) lines.push({ id: `${id}-more`, html: esc(MOVE_WORDS.more(rest)) });
   return lines;
@@ -4109,6 +4174,638 @@ function moveActionHtml(p) {
   return `<button type="button" class="btn btn-sm btn-neutral" data-tw-action="move" data-focus-key="move" data-placement-id="${p.id}" aria-haspopup="dialog"`
     + `${refusal ? ' disabled data-tw-hold aria-describedby="twSelActionNote"' : ''}>${esc(MOVE_WORDS.action)}</button>`;
 }
+
+/* ── Place (design record §7.3, 5f) ──
+   A planned section placed with its whole weekly pattern, in #twPlaceDialog:
+   from a list row (Enter, or a click on its "Place…"), or a drop of a course
+   that meets more than once a week (filtered to the dropped time). The
+   patterns are what the server offers (/planned-slot-candidates/, one read
+   with every pattern and its verdict, D15), in the order of the verdict, and
+   a day and a time they must include filter them in place. A pattern with
+   clashes is chosen like any other (owner rule): its verdict is said, never
+   confirmed. The body names the course and sends every meeting
+   (commitPlannedCreate, as a one-meeting drop does), and one Undo removes
+   every meeting. Rooms come afterwards (R on a card). */
+const PLACE_WORDS = IS_AR ? {
+  hint: 'وضع…', title: 'وضع',
+  meetingsWeek: n => pluralAr(n, { two: 'لقاءان أسبوعياً', few: '{n} لقاءات أسبوعياً', many: '{n} لقاءً أسبوعياً', other: '{n} لقاء أسبوعياً' }),
+  whole: 'النمط الأسبوعي كاملاً', once: 'لقاء واحد أسبوعياً', join: '، ',
+  termNote: (term, board) => `هذا المقرر في المستوى ${term}، وهذه اللوحة للمستوى ${board}.`,
+  mustInclude: 'يشمل', day: 'اليوم', time: 'الوقت', anyDay: 'أي يوم', anyTime: 'أي وقت', lab: 'معمل',
+  legend: { patterns: 'الأنماط الأسبوعية الكاملة، الأفضل أولاً', times: 'الأوقات، الأفضل أولاً' },
+  loading: { patterns: 'جارٍ ترتيب الأنماط…', times: 'جارٍ ترتيب الأوقات…' },
+  count: {
+    patterns: n => pluralAr(n, { zero: 'لا أنماط', one: 'نمط واحد', two: 'نمطان', few: '{n} أنماط', many: '{n} نمطاً', other: '{n} نمط' }),
+    times: n => pluralAr(n, { zero: 'لا أوقات', one: 'وقت واحد', two: 'وقتان', few: '{n} أوقات', many: '{n} وقتاً', other: '{n} وقت' }),
+  },
+  clean: {
+    patterns: n => pluralAr(n, { zero: 'لا نمط بلا تعارض', one: 'نمط واحد بلا تعارض', two: 'نمطان بلا تعارض', few: '{n} أنماط بلا تعارض', many: '{n} نمطاً بلا تعارض', other: '{n} نمط بلا تعارض' }),
+    times: n => pluralAr(n, { zero: 'لا وقت بلا تعارض', one: 'وقت واحد بلا تعارض', two: 'وقتان بلا تعارض', few: '{n} أوقات بلا تعارض', many: '{n} وقتاً بلا تعارض', other: '{n} وقت بلا تعارض' }),
+  },
+  ranked: (count, clean) => `${count}، الأفضل أولاً · ${clean}`,
+  include: (k, n, what) => `${k} من ${n} تشمل ${what}`,
+  fallback: what => `لا يوجد نمط يشمل ${what}؛ تُعرض كل الأنماط.`,
+  empty: 'لا يوجد نمط كامل يناسب أعمدة التدريس في هذه اللوحة. راجع «تعديل الفترات الزمنية…» والأوقات المحجوبة.',
+  failed: { patterns: 'تعذّر ترتيب الأنماط.', times: 'تعذّر ترتيب الأوقات.' },
+  stale: { patterns: 'تغيّر الجدول منذ قراءة هذه الأنماط.', times: MOVE_WORDS.stale },
+  progress: 'جارٍ وضع الشعبة…',
+  rooms: 'تُختار القاعات بعد الوضع (R على البطاقة). ولتغيير لقاء واحد لاحقاً استخدم «نقل…».',
+  online: 'عن بُعد في هذه اللوحة: لا تُحجز قاعة.',
+  needsPattern: n => `يحتاج هذا المقرر الآن إلى ${pluralAr(n, { one: 'لقاء واحد أسبوعياً', two: 'لقاءين أسبوعياً', few: '{n} لقاءات أسبوعياً', many: '{n} لقاءً أسبوعياً', other: '{n} لقاء أسبوعياً' })}؛ أُعيد ترتيب الأنماط.`,
+  duplicate: (was, now) => `وُضعت الشعبة ${was} في هذه الأثناء؛ هذه الآن ${now}.`,
+  allPlaced: c => `وُضعت كل شعب ${c}.`,
+  boardChanged: 'تغيّرت اللوحة؛ لم يُوضع شيء.', nothingPlaced: 'لم يُوضع شيء.', noBoard: 'أنشئ لوحة أولاً.',
+  needsBudget: 'اسحب هذه الشعبة إلى الجدول لوضعها؛ الوضع بلوحة المفاتيح يحتاج إلى ميزانية شعب.',
+} : {
+  hint: 'Place…', title: 'Place',
+  meetingsWeek: n => `${n} meetings a week`,
+  whole: 'the whole weekly pattern', once: 'one meeting a week', join: ', ',
+  termNote: (term, board) => `This course is in term ${term}; this board is term ${board}.`,
+  mustInclude: 'Must include', day: 'Day', time: 'Time', anyDay: 'Any day', anyTime: 'Any time', lab: 'Lab',
+  legend: { patterns: 'Complete weekly patterns, best first', times: 'Times, best first' },
+  loading: { patterns: 'Ranking the patterns…', times: 'Ranking the times…' },
+  count: { patterns: n => (n === 1 ? '1 pattern' : `${n} patterns`), times: n => (n === 1 ? '1 time' : `${n} times`) },
+  clean: { patterns: n => `${n} with no clash`, times: n => `${n} with no clash` },
+  ranked: (count, clean) => `${count}, best first · ${clean}`,
+  include: (k, n, what) => `${k} of ${n} include ${what}`,
+  fallback: what => `No pattern includes ${what}; showing every pattern.`,
+  empty: "No complete pattern fits this board's teaching columns. Check Edit time slots… and blocked times.",
+  failed: { patterns: 'The patterns could not be ranked.', times: 'The times could not be ranked.' },
+  stale: { patterns: 'The timetable changed since these patterns were read.', times: MOVE_WORDS.stale },
+  progress: 'Placing the section…',
+  rooms: 'Rooms are chosen afterwards (R on a card). To change one meeting later, use Move….',
+  online: 'Online for this board: no room is booked.',
+  needsPattern: n => `This course now needs ${n === 1 ? '1 meeting' : `${n} meetings`} a week; the patterns were ranked again.`,
+  duplicate: (was, now) => `Section ${was} was placed meanwhile; this is now ${now}.`,
+  allPlaced: c => `Every section of ${c} is placed.`,
+  boardChanged: 'The board changed; nothing was placed.', nothingPlaced: 'Nothing was placed.', noBoard: 'Create a board first.',
+  needsBudget: 'Drag this section onto the board to place it; keyboard placement needs a section budget.',
+};
+
+/* The dialog's session, as Move's: what it is asked to place (`request`)
+   and under which label now (`label`: another one once the asked one was
+   taken meanwhile), on which board (`scenarioId`, `boardId`: what its
+   patterns are read for and a commit is checked against), what it read
+   (`rows`, the filter's `options`, at data version `version`), the filter,
+   what is chosen. `includes` is a drop's time, taken once as the filter;
+   `fallback`, that time when no pattern included it (the filter cleared). */
+const PLACE = {
+  token: 0, read: 0, request: null, label: '', meetings: 1, scenarioId: null, boardId: null, origin: '', includes: null,
+  state: 'loading', answer: null, failure: null, rows: [], options: null, filter: { day: '', time: '' }, fallback: null,
+  choice: '', picked: false, version: null, pending: false, blocked: '', held: '', view: '', words: '', drawn: null,
+};
+function placeDialogOpen() {
+  return Boolean(window.UXControls?.dialog?.isOpen($('twPlaceDialog')));
+}
+/* The board the dialog is about is the one open and loaded now. */
+const placeBoardHere = () => TW.scenarioId === PLACE.scenarioId && TW.boardId === PLACE.boardId && TW.loadedBoardId === PLACE.boardId;
+const placeDataKey = () => [TW.scenarioId, TW.boardId, TW.loadedBoardId, TW.boards, TW.sectionBudget, TW.placements, TW.dataVersion];
+const placeReadOutdated = () => PLACE.version != null && PLACE.version !== TW.dataVersion;
+const placeKind = () => (PLACE.meetings > 1 ? 'patterns' : 'times');
+const placeDayIndex = day => (DAYS.includes(day) ? DAYS.indexOf(day) : DAYS.length);
+const placeMinutes = time => { const [h, m] = String(time || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const placeAbout = (label = PLACE.label) => ({
+  key: `place:${PLACE.request.course_key}|${label}`, name: `${isolatedText(PLACE.request.course_code)} ${isolatedText(label)}`,
+});
+function placeBudgetRow() {
+  const key = String(PLACE.request?.course_key || '').trim().toUpperCase();
+  return (TW.sectionBudget || []).find(c => String(c.course_key || c.course_code || '').trim().toUpperCase() === key) || null;
+}
+/* The budget (read again after every write) names the label as placed:
+   another section of this course took it while the dialog was open. */
+function placeLabelTaken() {
+  const row = placeBudgetRow();
+  return Boolean(row) && usedSectionLabels(row).has(String(PLACE.label).trim().toUpperCase());
+}
+/* Online for this board, as the board says of another section of the
+   course (a placement's `is_online` is the course's on its board); not
+   known until one is placed here (the server has no flag for a course). */
+function placeOnline() {
+  const code = String(PLACE.request?.course_code || '').trim().toUpperCase();
+  return TW.placements.some(p => String(p.course_code || '').trim().toUpperCase() === code && p.is_online);
+}
+
+/* The candidates as rows, in the verdict's order (verdict_rank; the
+   server's own order breaks ties). A row is a whole pattern: its meetings
+   as the server lists them (a verdict item's `meeting` is an index into
+   them), and by day (`sorted`, its title and its value `DAY@start-end|…`);
+   the same pattern twice is one row, at its best rank. A one-meeting
+   candidate is its own meeting. */
+function placeRows(answer) {
+  const rank = c => (c.verdict_rank !== null && c.verdict_rank !== undefined && Number.isFinite(Number(c.verdict_rank)) ? Number(c.verdict_rank) : Infinity);
+  const seen = new Set();
+  const rows = [];
+  (answer?.candidates || []).map((candidate, index) => ({ candidate, index }))
+    .sort((a, b) => (rank(a.candidate) - rank(b.candidate)) || (a.index - b.index))
+    .forEach(({ candidate }) => {
+      const listed = Array.isArray(candidate.meetings) && candidate.meetings.length ? candidate.meetings : [candidate];
+      const meetings = listed.map(m => ({ kind: String(m.kind || candidate.kind || ''), day: String(m.day || '').toUpperCase(), start: String(m.start || ''), end: String(m.end || '') }));
+      const sorted = [...meetings].sort((a, b) => (placeDayIndex(a.day) - placeDayIndex(b.day)) || (placeMinutes(a.start) - placeMinutes(b.start)));
+      const sig = sorted.map(m => `${m.day}@${m.start}-${m.end}`).join('|');
+      if (!meetings.every(m => m.day && m.start && m.end) || seen.has(sig)) return;
+      seen.add(sig);
+      rows.push({ sig, meetings, sorted, verdict: candidate.verdict || null });
+    });
+  return rows;
+}
+/* The filter's choices, from the rows' meetings: the days in week order,
+   and each time (start–end) by its start, marked a lab when every meeting
+   at it is one. */
+function placeOptions(rows) {
+  const days = new Set();
+  const times = new Map();
+  rows.forEach(row => row.meetings.forEach(m => {
+    days.add(m.day);
+    const key = `${m.start}-${m.end}`;
+    times.set(key, { key, start: m.start, end: m.end, lab: (times.get(key)?.lab ?? true) && m.kind === 'lab' });
+  }));
+  return {
+    days: [...days].sort((a, b) => placeDayIndex(a) - placeDayIndex(b)),
+    times: [...times.values()].sort((a, b) => (placeMinutes(a.start) - placeMinutes(b.start)) || (placeMinutes(a.end) - placeMinutes(b.end))),
+  };
+}
+/* A row includes the filter's day at its time: one of its meetings is on
+   that day at that time (either alone when the other is "any"). */
+function placeMatches(row, filter = PLACE.filter) {
+  if (!filter.day && !filter.time) return true;
+  return row.meetings.some(m => (!filter.day || m.day === filter.day) && (!filter.time || `${m.start}-${m.end}` === filter.time));
+}
+/* "Thursday 13:00–14:15" (plain text, the time isolated). */
+function placeWhat(filter) {
+  const [start, end] = String(filter.time || '').split('-');
+  return [filter.day ? moveDayWord(filter.day) : '', filter.time ? isolatedText(`${start}–${end}`) : ''].filter(Boolean).join(' ');
+}
+function chosenPlace() {
+  const row = PLACE.choice ? PLACE.rows.find(item => item.sig === PLACE.choice) : null;
+  return row && placeMatches(row) ? row : null;
+}
+
+/* What the dialog shows: the board gone from view (a reload, or another
+   board), every section placed, the read's state, or its patterns — stale
+   once the data moved since they were read. (A new label is always read
+   again before anything can be chosen.) */
+function placeDialogView() {
+  if (!placeBoardHere()) return { state: 'gone' };
+  if (PLACE.blocked === 'allPlaced') return { state: 'allPlaced' };
+  if (PLACE.state !== 'ready') return { state: PLACE.state };
+  if (placeReadOutdated()) return { state: 'stale' };
+  return { state: PLACE.rows.length ? 'ready' : 'empty' };
+}
+const placeGoneFailure = failure => failure?.code === 'NOT_FOUND' || failure?.status === 404;
+function placeFailureWords(failure) {
+  if (placeGoneFailure(failure)) return PLACE_WORDS.boardChanged;
+  return failure?.code === 'SERVER_BUSY' || failure?.status === 503 ? ROOM_WORDS.serverBusy : PLACE_WORDS.failed[placeKind()];
+}
+/* The list's line: how many, best first, and how many with no clash; with
+   a filter, how many include what it asks; a drop's time that no pattern
+   includes, said with the filter cleared. */
+function placeListWords() {
+  const kind = placeKind();
+  const rows = PLACE.rows;
+  if (PLACE.fallback) return PLACE_WORDS.fallback(placeWhat(PLACE.fallback));
+  if (PLACE.filter.day || PLACE.filter.time) return PLACE_WORDS.include(rows.filter(row => placeMatches(row)).length, rows.length, placeWhat(PLACE.filter));
+  return PLACE_WORDS.ranked(PLACE_WORDS.count[kind](rows.length), PLACE_WORDS.clean[kind](rows.filter(row => row.verdict?.severity === 'ok').length));
+}
+function placeViewWords(view) {
+  const kind = placeKind();
+  if (view.state === 'gone') {
+    // A reload of the open scenario takes the board away for a moment.
+    return TW.scenarioId === PLACE.scenarioId && (!TW.boardId || TW.loadedBoardId !== TW.boardId) ? REFUSAL.loading : PLACE_WORDS.boardChanged;
+  }
+  return {
+    loading: PLACE_WORDS.loading[kind], error: placeFailureWords(PLACE.failure), stale: PLACE_WORDS.stale[kind],
+    empty: PLACE_WORDS.empty, ready: view.state === 'ready' ? placeListWords() : '', allPlaced: '',
+  }[view.state] || '';
+}
+
+/* "Monday 13:00–14:15 · Lab" (HTML, the time isolated left to right); a
+   line's lead is short, "Mon 13:00–14:15", as the line's own times are. */
+function placeMeetingHtml(m, { lead = false } = {}) {
+  const day = lead ? dayName(m.day) : moveDayWord(m.day);
+  return `${esc(day)} <bdi dir="ltr">${esc(m.start)}–${esc(m.end)}</bdi>${!lead && m.kind === 'lab' ? ` · ${esc(PLACE_WORDS.lab)}` : ''}`;
+}
+/* The course's term when it is not the board's: context, never a refusal. */
+function placeTermNoteHtml() {
+  const term = Number(PLACE.request?.programme_term);
+  const board = TW.boards.find(b => b.id === PLACE.boardId) || PLACE.answer?.board;
+  const nominal = Number(board?.nominal_term);
+  if (!term || !nominal || term === nominal) return '';
+  return `<p class="tw-place-note" role="note"><span class="ux-tone-icon" data-tone="warning" aria-hidden="true"></span><span>${esc(PLACE_WORDS.termNote(term, nominal))}</span></p>`;
+}
+/* Must include: a day and a time, from the patterns read (each "any" first);
+   the times as plain text, isolated. */
+function placeFilterHtml() {
+  const W = PLACE_WORDS;
+  const o = PLACE.options;
+  const option = (value, text, chosen) => `<option value="${esc(value)}"${value === chosen ? ' selected' : ''}>${esc(text)}</option>`;
+  const days = [option('', W.anyDay, PLACE.filter.day), ...o.days.map(day => option(day, moveDayWord(day), PLACE.filter.day))].join('');
+  const times = [option('', W.anyTime, PLACE.filter.time),
+    ...o.times.map(t => option(t.key, `${isolatedText(`${t.start}–${t.end}`)}${t.lab ? ` · ${W.lab}` : ''}`, PLACE.filter.time))].join('');
+  return `<fieldset class="ux-field"><legend class="ux-field-label">${esc(W.mustInclude)}</legend><div class="ux-field-row fb-fit">`
+    + `<div class="fb-search fb-sm"><label class="fb-lbl" for="twPlaceDay">${esc(W.day)}</label><select id="twPlaceDay" data-focus-key="place-day" aria-controls="twPlaceChoices">${days}</select></div>`
+    + `<div class="fb-search fb-sm"><label class="fb-lbl" for="twPlaceTime">${esc(W.time)}</label><select id="twPlaceTime" data-focus-key="place-time" aria-controls="twPlaceChoices">${times}</select></div>`
+    + '</div></fieldset>';
+}
+function placeSubHtml() {
+  const board = TW.boards.find(b => b.id === PLACE.boardId) || PLACE.answer?.board || {};
+  const name = `<bdi>${esc(board.label || '')}</bdi>`;
+  return PLACE.meetings > 1 ? `${name} · ${esc(PLACE_WORDS.meetingsWeek(PLACE.meetings))} · ${esc(PLACE_WORDS.whole)}` : `${name} · ${esc(PLACE_WORDS.once)}`;
+}
+/* The body: the term note, the filter (kept drawn while the patterns are
+   read again, so a keyboard in it stays there), then the patterns, best
+   first: each names every meeting, then its verdict, then at most three of
+   its items, each led by the meeting it belongs to. Every other state is its
+   words in the status line, with its way on here. */
+function placeDialogHtml(view) {
+  const W = PLACE_WORDS;
+  let html = placeTermNoteHtml();
+  if (PLACE.options && (view.state === 'ready' || view.state === 'loading')) html += placeFilterHtml();
+  if (view.state === 'loading') return `${html}<div class="ux-choice-list" id="twPlaceChoices" aria-busy="true"></div>`;
+  if (view.state === 'stale') {
+    return `${html}<p class="tw-place-action"><button type="button" class="btn btn-sm btn-neutral" data-tw-place-recheck data-focus-key="place-recheck">${esc(ROOM_WORDS.checkAgain)}</button></p>`;
+  }
+  if (view.state === 'error') {
+    return html + (placeGoneFailure(PLACE.failure) ? ''
+      : `<p class="tw-place-action"><button type="button" class="btn btn-sm btn-neutral" data-tw-place-retry data-focus-key="place-retry">${esc(ROOM_WORDS.retry)}</button></p>`);
+  }
+  if (view.state !== 'ready') return html;
+  const rows = PLACE.rows.map((row, index) => {
+    const id = `twPlaceRow${index}`;
+    const verdict = row.verdict;
+    const lead = item => (Number.isInteger(item.meeting) && row.meetings[item.meeting] ? `${placeMeetingHtml(row.meetings[item.meeting], { lead: true })}: ` : '');
+    const lines = moveLines(verdict, id, { boardId: PLACE.boardId, lead });
+    return `<label class="ux-choice"${verdict ? ` data-tone="${esc(verdict.severity)}"` : ''}${placeMatches(row) ? '' : ' hidden'}>`
+      + `<input type="radio" name="twPlaceChoice" value="${esc(row.sig)}" data-focus-key="place-choice:${esc(row.sig)}" aria-labelledby="${id}-time"`
+      + ` aria-describedby="${[`${id}-verdict`, ...lines.map(line => line.id)].join(' ')}"${row.sig === PLACE.choice ? ' checked' : ''}>`
+      + `<span class="ux-choice-title">${moveToneIcon(verdict?.severity)}<span id="${id}-time">${row.sorted.map(m => placeMeetingHtml(m)).join(esc(W.join))}</span>`
+      + `<span class="tw-move-verdict" id="${id}-verdict">${esc(moveVerdictWords(verdict))}</span></span>${moveLinesHtml(lines)}</label>`;
+  }).join('');
+  return `${html}<fieldset class="ux-field"><legend class="ux-field-label">${esc(W.legend[placeKind()])}</legend>`
+    + `<div class="ux-choice-list" id="twPlaceChoices" data-ux-submit>${rows}</div></fieldset>`;
+}
+
+/* The whole dialog from PLACE and the board, through the global redraw (the
+   same content leaves the nodes, and the keyboard, alone). Until the user
+   chooses, the choice is the best pattern the filter shows. */
+function drawPlaceDialog() {
+  const body = $('twPlaceBody');
+  if (!body || !PLACE.request) return;
+  const view = placeDialogView();
+  PLACE.view = view.state;
+  if (!PLACE.picked) PLACE.choice = view.state === 'ready' ? (PLACE.rows.find(row => placeMatches(row))?.sig || '') : '';
+  PLACE.words = placeViewWords(view);
+  setDialogHead('twPlaceTitle', `${esc(PLACE_WORDS.title)} <bdi>${esc(PLACE.request.course_code)}</bdi> <bdi>${esc(PLACE.label)}</bdi>`);
+  setDialogHead('twPlaceSub', placeSubHtml());
+  const html = placeDialogHtml(view);
+  if (window.UXControls?.redraw) window.UXControls.redraw(body, html);
+  else body.innerHTML = html;
+  body.querySelectorAll('input[name="twPlaceChoice"]').forEach(radio => { radio.checked = radio.value === PLACE.choice; });
+  ['day', 'time'].forEach(part => {
+    const select = $(part === 'day' ? 'twPlaceDay' : 'twPlaceTime');
+    if (select && select.value !== PLACE.filter[part]) select.value = PLACE.filter[part];
+  });
+  // The keyboard on a row the dialog (not the user) chose goes with its choice.
+  if (!PLACE.picked && document.activeElement?.matches('#twPlaceBody input[name="twPlaceChoice"]')) {
+    body.querySelector('input[name="twPlaceChoice"]:checked')?.focus({ preventScroll: true });
+  }
+  PLACE.drawn = placeDataKey();
+  syncPlaceDialog();
+}
+
+/* Commit, its note and the status line, in place (cheap: it runs with
+   every control sync). A label taken meanwhile is replaced by the next free
+   one; patterns asked for before the data moved are asked for again while
+   the user has chosen none (a chosen one waits for Check again), never
+   while the dialog's own create is out. Commit is held until a pattern the
+   filter shows is chosen from a list that is current; it is off while the
+   page cannot write, and the note says why (published, a planner job,
+   busy), else what the chosen pattern brings and what comes afterwards. */
+function syncPlaceDialog() {
+  if (!placeDialogOpen()) return;
+  // Shown as gone (a scenario reload takes the board away for a moment):
+  // patterns read before it left are out of date when it comes back.
+  if (PLACE.view === 'gone') PLACE.version = -1;
+  const free = placeBoardHere() && !PLACE.pending && !PLACE.blocked;
+  if (free && placeLabelTaken()) {
+    relabelPlace();
+    return;
+  }
+  if (free && placeReadOutdated() && !PLACE.picked) {
+    readPlaceCandidates();
+    return;
+  }
+  if (PLACE.held && writeHold() !== PLACE.held) {
+    PLACE.held = '';
+    dialogSay($('twPlaceDialog'), '');
+  }
+  if (!PLACE.drawn || placeDataKey().some((value, i) => value !== PLACE.drawn[i])) {
+    drawPlaceDialog();
+    return;
+  }
+  const chosen = chosenPlace();
+  const held = PLACE.view !== 'ready' || !chosen || PLACE.pending || Boolean(PLACE.blocked);
+  const commit = $('twPlaceCommit');
+  commit.toggleAttribute('data-tw-hold', held);
+  commit.disabled = held || !workspaceCanEdit();
+  const hold = writeHold();
+  const verdict = chosen ? moveVerdictWords(chosen.verdict) : '';
+  const note = PLACE.pending ? '' : hold ? REFUSAL[hold] : held ? ''
+    : [verdict ? MOVE_WORDS.chosen(verdict) : '', placeOnline() ? PLACE_WORDS.online : PLACE_WORDS.rooms].filter(Boolean).join(' · ');
+  const line = $('twPlaceNote');
+  if (line.textContent !== note) line.textContent = note;
+  const words = PLACE.pending ? PLACE_WORDS.progress : PLACE.words;
+  const status = $('twPlaceStatus');
+  if (status.textContent !== words) status.textContent = words;
+  // The list is busy while the create is out; the status lines are not.
+  $('twPlaceDialog').querySelectorAll('.ux-choice-list[data-ux-submit]').forEach(list => {
+    if (PLACE.pending) list.setAttribute('aria-busy', 'true');
+    else list.removeAttribute('aria-busy');
+  });
+}
+
+/* The filter hides rows in place (no redraw). A chosen pattern it hides
+   gives way to the first one it shows, chosen by the dialog (not the user). */
+function applyPlaceFilter() {
+  const body = $('twPlaceBody');
+  if (!body) return;
+  let first = null;
+  body.querySelectorAll('input[name="twPlaceChoice"]').forEach(radio => {
+    const row = PLACE.rows.find(item => item.sig === radio.value);
+    const shown = Boolean(row) && placeMatches(row);
+    const label = radio.closest('.ux-choice');
+    if (label) label.hidden = !shown;
+    if (shown && !first) first = radio;
+  });
+  const chosen = body.querySelector('input[name="twPlaceChoice"]:checked');
+  if (!chosen || chosen.closest('[hidden]')) {
+    if (chosen) chosen.checked = false;
+    if (first) first.checked = true;
+    Object.assign(PLACE, { choice: first ? first.value : '', picked: false });
+  }
+  if (PLACE.view === 'ready') PLACE.words = placeListWords();
+  syncPlaceDialog();
+}
+
+/* A drop's time, taken once per open as the filter. No pattern includes
+   it: the filter is cleared and that is said. A filter the new list no
+   longer offers a value of is "any" for that part. */
+function placeTakeIncludes() {
+  const includes = PLACE.includes;
+  PLACE.includes = null;
+  if (includes) {
+    const asked = { day: String(includes.day || '').toUpperCase(), time: `${includes.start}-${includes.end}` };
+    const found = PLACE.rows.some(row => placeMatches(row, asked));
+    PLACE.filter = found ? asked : { day: '', time: '' };
+    PLACE.fallback = found ? null : asked;
+    return;
+  }
+  const { days, times } = PLACE.options;
+  PLACE.filter = {
+    day: days.includes(PLACE.filter.day) ? PLACE.filter.day : '',
+    time: times.some(t => t.key === PLACE.filter.time) ? PLACE.filter.time : '',
+  };
+}
+
+/* Opened from a list row (Enter, its "Place…") or a drop; `origin` names
+   where the keyboard goes back to at close (the row, by its key). Any open
+   dialog first, then a scenario with no board, then the gate's parts that
+   apply to a section not yet placed (published, loading, a planner job). */
+function openPlaceDialog(request, { origin = '', includes = null } = {}) {
+  if (anyDialogOpen()) return false;
+  if (!TW.boardId) {
+    notify.warning(PLACE_WORDS.noBoard);
+    return false;
+  }
+  const refusal = cardActionRefusal('place', request);
+  if (refusal) {
+    notify.warning(refusal.text);
+    return false;
+  }
+  const dialog = $('twPlaceDialog');
+  if (!dialog || !request || !window.UXControls?.dialog) return false;
+  Object.assign(PLACE, {
+    token: PLACE.token + 1, request: { ...request }, label: String(request.section_label || 'S1').trim().toUpperCase(), meetings: Number(request.required) || 1,
+    scenarioId: TW.scenarioId, boardId: TW.boardId, origin, includes,
+    state: 'loading', answer: null, failure: null, rows: [], options: null, filter: { day: '', time: '' }, fallback: null,
+    choice: '', picked: false, version: null, pending: false, blocked: '', held: '', view: '', words: '', drawn: null,
+  });
+  const alert = $('twPlaceAlert');
+  if (alert) { alert.textContent = ''; alert.hidden = true; }
+  // What it is about, for the words a write of another section says in it.
+  dialog.dataset.twAbout = placeAbout().key;
+  drawPlaceDialog();
+  if (!window.UXControls.dialog.open(dialog, { initialFocus: () => $('twPlaceBody'), returnFocus: () => resolveOrigin(origin) })) return false;
+  readPlaceCandidates();
+  return true;
+}
+
+/* Every pattern at once (limit past the total) with its verdict, drawn if
+   the answer is still this session's latest read. A new list is a new
+   choice, except `keep`:
+   a pattern the user chose, kept when the list still offers it (a label
+   taken meanwhile changes the section, not the user's mind). The keyboard
+   then goes from the body to the chosen row, unless the user has moved it. */
+async function readPlaceCandidates({ fresh = false, keep = '' } = {}) {
+  const session = PLACE.token;
+  const read = ++PLACE.read;
+  Object.assign(PLACE, { state: 'loading', answer: null, failure: null, rows: [], choice: '', picked: false, version: TW.dataVersion });
+  drawPlaceDialog();
+  const r = PLACE.request;
+  const label = PLACE.label;
+  const query = new URLSearchParams({ course_code: r.course_code, course_key: r.course_key, section_label: label, limit: '1000', verdict: '1' });
+  const answer = await previewRead(`planned|${PLACE.boardId}|${r.course_key}|${label}`,
+    `/ops/tw/boards/${PLACE.boardId}/planned-slot-candidates/?${query}`, { fresh });
+  if (session !== PLACE.token || read !== PLACE.read || !placeDialogOpen()) return;
+  if (answer.data) {
+    const rows = placeRows(answer.data);
+    const kept = Boolean(keep) && rows.some(row => row.sig === keep);
+    Object.assign(PLACE, {
+      state: 'ready', answer: answer.data, rows, options: placeOptions(rows),
+      meetings: Number(answer.data.request?.required_meetings_per_section) || PLACE.meetings, choice: kept ? keep : '', picked: kept,
+    });
+    placeTakeIncludes();
+  } else {
+    Object.assign(PLACE, { state: 'error', failure: answer });
+  }
+  drawPlaceDialog();
+  const body = $('twPlaceBody');
+  if (document.activeElement === body) body.querySelector('input[name="twPlaceChoice"]:checked')?.focus({ preventScroll: true });
+}
+
+/* The data changed since the patterns were read: read the board, then the
+   patterns (fresh), the choice made from the old ones dropped. A board gone
+   from view by then is read once it is back. */
+async function checkPlaceAgain() {
+  const session = PLACE.token;
+  Object.assign(PLACE, { state: 'loading', version: null, picked: false });
+  drawPlaceDialog();
+  if (TW.boardId) await selectBoard(TW.boardId);
+  if (session !== PLACE.token || !placeDialogOpen()) return;
+  if (!placeBoardHere()) {
+    PLACE.version = -1;
+    drawPlaceDialog();
+    return;
+  }
+  if (PLACE.blocked !== 'allPlaced') readPlaceCandidates({ fresh: true });
+}
+
+/* The label is not this dialog's any more (the budget names it placed, or
+   the server refused it as a duplicate): the next free label, said, its
+   patterns read (a section's teacher, and so the verdict, can differ by
+   label), the pattern the user chose kept if it is still offered. None
+   left: every section of the course is placed, and Commit holds. */
+function relabelPlace() {
+  const dialog = $('twPlaceDialog');
+  const was = PLACE.label;
+  const row = placeBudgetRow();
+  const next = row ? freeSectionLabels(row).find(label => label !== was) : '';
+  if (!next) {
+    PLACE.blocked = 'allPlaced';
+    dialogSay(dialog, PLACE_WORDS.allPlaced(isolatedText(PLACE.request.course_code)), 'warning');
+    drawPlaceDialog();
+    return;
+  }
+  PLACE.label = next;
+  dialog.dataset.twAbout = placeAbout().key;
+  dialogSay(dialog, PLACE_WORDS.duplicate(isolatedText(was), isolatedText(next)), 'warning');
+  readPlaceCandidates({ fresh: true, keep: PLACE.picked ? PLACE.choice : '' });
+}
+
+/* Place section. Nothing is sent when the open board is not the one the
+   dialog opened on (another scenario or board, or the board still loading),
+   or the label was taken meanwhile (the next one is offered). A refusal is said in the dialog: the server's "complete pattern"
+   reads the patterns again (the course needs another count), a duplicate
+   takes the next free label, and what asking again cannot change
+   (published, the board gone) holds Commit; a failure that does not say
+   whether the section was made reads the board, whose budget then stops a
+   second create of the same label. On success the dialog closes (the
+   keyboard back on the list, by the row's key), the board's tab stop moves
+   to the first new card, the board is read again, the new cards pulse, and
+   the report follows (contract D). Escape while the write is out closes the
+   dialog; the write still ends, and says how where the user is. */
+const PLACE_FINAL_REFUSALS = ['SCENARIO_PUBLISHED', 'NOT_FOUND'];
+async function commitPlace() {
+  const dialog = $('twPlaceDialog');
+  if (!placeDialogOpen() || PLACE.pending) return;
+  if (!placeBoardHere()) {
+    dialogSay(dialog, PLACE_WORDS.boardChanged);
+    drawPlaceDialog();
+    return;
+  }
+  if (!PLACE.blocked && placeLabelTaken()) {
+    relabelPlace();
+    return;
+  }
+  const chosen = chosenPlace();
+  if (!chosen || PLACE.view !== 'ready' || PLACE.blocked) return;
+  const session = PLACE.token;
+  const at = { scenarioId: TW.scenarioId, boardId: TW.boardId };
+  const request = PLACE.request;
+  const label = PLACE.label;
+  const about = placeAbout(label);
+  const body = plannedCreateBody(request, at.boardId, label, chosen.sorted);
+  // The keyboard goes to the chosen pattern before Commit turns off under it.
+  dialog.querySelector('input[name="twPlaceChoice"]:checked')?.focus({ preventScroll: true });
+  PLACE.pending = true;
+  dialogSay(dialog, '');
+  syncPlaceDialog();
+  const result = await commitPlannedCreate(body, { dialog });
+  const here = session === PLACE.token;
+  if (here) PLACE.pending = false;
+  if (result.code) {
+    await placeRefused(result, { dialog, here, session, about, request, label, at });
+    return;
+  }
+  if (here) window.UXControls.dialog.close(dialog, 'close');
+  const ids = result.rows.map(row => row.id);
+  if (ids.length) boardNav?.active(`placement:${ids[0]}`);
+  if (TW.scenarioId === at.scenarioId) await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+  highlightWorkspacePlacements(ids);
+  reportEdit(placedWords(request.course_code, label), ids, { dialog, about, hint: MOVE_WORDS.roomHint, data: result.data });
+}
+/* A create the server or the page refused, said where the user is (this
+   dialog, the one open by then, or a toast), named when that dialog is
+   about another section. */
+async function placeRefused(result, { dialog, here, session, about, request, label, at }) {
+  const { code } = result;
+  // A create the user left: Escape closes the dialog without starting a new
+  // session, so a closed dialog counts as left too. Its words go where the
+  // user is (dialogSay: the dialog open by then, named, or a toast), and
+  // nothing is read or relabelled for a dialog that is gone.
+  const left = !here || !placeDialogOpen();
+  if (code === 'FULL_SECTION_PATTERN_REQUIRED') {
+    // The course meets another number of times a week now: the list's rows
+    // and the patterns are read again.
+    loadBudget();
+    if (left) {
+      dialogSay(dialog, PLACE_WORDS.nothingPlaced, 'warning', about);
+      return;
+    }
+    await readPlaceCandidates({ fresh: true });
+    if (session !== PLACE.token) return;
+    if (PLACE.state === 'ready') dialogSay(dialog, PLACE_WORDS.needsPattern(PLACE.meetings), 'warning');
+    else if (PLACE.state === 'error') dialogSay(dialog, PLACE_WORDS.nothingPlaced, 'warning');
+    return;
+  }
+  if (code === 'PLACEMENT_DUPLICATE') {
+    await loadBudget();
+    if (left) {
+      dialogSay(dialog, PLACE_WORDS.boardChanged, 'warning', about);
+      return;
+    }
+    // The budget read may already have moved the dialog on (its sync).
+    if (session === PLACE.token && PLACE.label === label) relabelPlace();
+    return;
+  }
+  const known = {
+    SCENARIO_PUBLISHED: REFUSAL.published, SCENARIO_BUSY: REFUSAL.busy, NOT_FOUND: PLACE_WORDS.boardChanged,
+    VALIDATION_PLANNED_PATTERN: PLACE_WORDS.nothingPlaced, published: REFUSAL.published, job: REFUSAL.job, busy: REFUSAL.busy,
+  }[code];
+  // The section this session is about (a later one too, opened while the
+  // write was out): a refusal asking again cannot change holds Commit.
+  const same = placeDialogOpen() && PLACE.request?.course_key === request.course_key && PLACE.label === label && PLACE.boardId === at.boardId;
+  if (same && PLACE_FINAL_REFUSALS.includes(code)) PLACE.blocked = code;
+  // The page's own hold (dialogWrite's check): it ends by itself, and its
+  // words go with it.
+  if (['published', 'job', 'busy'].includes(code)) PLACE.held = code;
+  dialogSay(dialog, known || PLACE_WORDS.nothingPlaced, 'warning', about);
+  syncPlaceDialog();
+  if (!known && TW.scenarioId === at.scenarioId && TW.boardId === at.boardId) await selectBoard(at.boardId);
+}
+
+(function wirePlaceDialog() {
+  const dialog = $('twPlaceDialog');
+  if (!dialog) return;
+  // A <form method="dialog"> closes itself on submit: the page commits, and
+  // closes it once the section is placed.
+  $('twPlaceForm').addEventListener('submit', event => {
+    event.preventDefault();
+    commitPlace();
+  });
+  dialog.addEventListener('change', event => {
+    const target = event.target;
+    if (target.name === 'twPlaceChoice') {
+      Object.assign(PLACE, { choice: target.value, picked: true });
+      syncPlaceDialog();
+    } else if (target.id === 'twPlaceDay' || target.id === 'twPlaceTime') {
+      PLACE.filter = { ...PLACE.filter, [target.id === 'twPlaceDay' ? 'day' : 'time']: target.value };
+      PLACE.fallback = null;
+      applyPlaceFilter();
+    }
+  });
+  dialog.addEventListener('click', event => {
+    if (!event.target.closest) return;
+    if (event.target.closest('[data-tw-place-retry]')) readPlaceCandidates({ fresh: true });
+    else if (event.target.closest('[data-tw-place-recheck]')) checkPlaceAgain();
+  });
+  // "Place…" on a list row, for the pointer (the row itself is the
+  // keyboard's; a click anywhere else on it is a drag's).
+  $('twSectionList')?.addEventListener('click', event => {
+    const cell = event.target.closest?.('.tw-place-hint')?.closest('[role="gridcell"]');
+    if (cell) activateListRow(cell);
+  });
+})();
 
 /* ── "Mainly for programme" (Selection) ──
    The section's programme mark (#160 parity with split view; the words and

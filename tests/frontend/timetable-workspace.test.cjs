@@ -1848,7 +1848,7 @@ test('W5 the list is one grid per term with one tab stop; a placed course is rea
   const calls = [];
   h.w.chooseEnglishWorkspacePattern = item => calls.push(item.course_code);
   const english = h.d.querySelector('#twSectionList [data-focus-key="place:ENG101|S1"]');
-  assert.equal(english.querySelector('.tw-pattern-action').tabIndex, -1, 'the button is the pointer’s; the row is the keyboard’s');
+  assert.equal(english.querySelector('button'), null, 'no nested button: the row is the control, its Place… the pointer’s (5f)');
   english.focus();
   keyOn(h, 'Enter');
   await settle();
@@ -1993,85 +1993,11 @@ test('J1 a one-meeting drop names the course: its key and its name go with it', 
   assert.deepEqual([h.posts[0].course_key, h.posts[0].course_name], ['CS323::k', 'Compilers']);
 });
 
-test('J2 a drop of a course that meets several times a week sends nothing and says why, in both languages', async t => {
-  for (const arabic of [false, true]) {
-    const h = await dropHarness(t, { arabic });
-    await h.select();
-    await dropOn(h, plannedPayload({ required_meetings_per_section: 2 }));
-    assert.equal(h.posts.length, 0, 'no request');
-    const warning = h.notices.find(n => n.type === 'warning');
-    assert.equal(warning?.text, arabic
-      ? 'يُدرَّس \u2066CS323\u2069 مرتين أسبوعياً، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء. «عرض مقسّم» يضع نمطاً كاملاً.'
-      : '\u2066CS323\u2069 meets 2 times a week, and its meetings are placed together; a drop places one. Nothing was placed. Split view places a whole pattern.');
-  }
-  // Arabic counts: few and many.
-  const ar = await dropHarness(t, { arabic: true });
-  await ar.select();
-  await dropOn(ar, plannedPayload({ required_meetings_per_section: 3 }));
-  await dropOn(ar, plannedPayload({ required_meetings_per_section: 11 }));
-  const words = ar.notices.filter(n => n.type === 'warning').map(n => n.text);
-  assert.match(words[0], /CS323\u2069 3 مرات أسبوعياً،/);
-  assert.match(words[1], /CS323\u2069 11 مرةً أسبوعياً،/);
-});
-
-test('J3 the server’s "complete pattern" refusal reads the same, as a warning, never an error', async t => {
-  const h = await dropHarness(t, { refuse: 'CS323 needs a complete 3-meeting section pattern.' });
-  await h.select();
-  await dropOn(h, plannedPayload({}));  // an older budget row: no meeting count
-  assert.equal(h.posts.length, 1);
-  assert.equal(h.notices.filter(n => n.type === 'error').length, 0);
-  assert.match(h.notices.find(n => n.type === 'warning')?.text || '', /meets 3 times a week/);
-  // Another "complete pattern" message, with no count: none is invented; the
-  // budget is read again (the row came from an older one).
-  const other = await dropHarness(t, { refuse: 'A complete planned section pattern must use one meeting per day.' });
-  await other.select();
-  const budgets = other.seen.budget;
-  await dropOn(other, plannedPayload({}));
-  await settle();
-  const said = other.notices.find(n => n.type === 'warning')?.text || '';
-  assert.match(said, /is placed with its whole weekly pattern/);
-  assert.doesNotMatch(said, /times a week/);
-  assert.equal(other.seen.budget, budgets + 1, 'the budget is read again');
-  const ar = await dropHarness(t, { arabic: true, refuse: 'A complete planned section pattern must use one meeting per day.' });
-  await ar.select();
-  await dropOn(ar, plannedPayload({}));
-  assert.equal(ar.notices.find(n => n.type === 'warning')?.text,
-    'تُوضع \u2066CS323\u2069 بنمطها الأسبوعي كاملاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء. «عرض مقسّم» يضع نمطاً كاملاً.');
-});
-
 test('J5 any other refusal stays an error with the server’s words', async t => {
   const h = await dropHarness(t, { refuse: 'Pattern days are not on this board.', refuseCode: 'VALIDATION_PLANNED_PATTERN' });
   await h.select();
   await dropOn(h, plannedPayload({}));
   assert.deepEqual(h.notices.map(n => [n.type, n.text]), [['error', 'Pattern days are not on this board.']]);
-});
-
-test('J6 a row dragged from the list carries its meeting count: a multi-meeting drop sends nothing', async t => {
-  const row = { course_code: 'CS323', course_key: 'CS323::K', programme_term: 3, planned_sections: 1, used_sections: 0, remaining_sections: 1, total_demand: 70, required_meetings_per_section: 3, used_section_labels: [] };
-  const h = await dropHarness(t, { budget: () => [row] });
-  await h.select();
-  await wait(() => h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]'));
-  const data = {};
-  const dragstart = new h.w.Event('dragstart', { bubbles: true });
-  dragstart.dataTransfer = { setData: (type, value) => { data[type] = value; }, effectAllowed: '' };
-  h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').dispatchEvent(dragstart);
-  const payload = JSON.parse(data['text/plain']);
-  assert.deepEqual([payload.required_meetings_per_section, payload.course_key], [3, 'CS323::K']);
-  await dropOn(h, payload);
-  assert.equal(h.posts.length, 0);
-  // Enter on that row says the same, not "drag it".
-  h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').focus();
-  keyOn(h, 'Enter');
-  assert.equal(h.d.getElementById('twBoardStatus').textContent,
-    '\u2066CS323\u2069 meets 3 times a week, and its meetings are placed together; a drop places one. Split view places a whole pattern.',
-    'names the course; nothing was tried, so nothing "was placed"');
-  // Two meetings a week is already more than a drop places.
-  const two = await dropHarness(t, { budget: () => [{ ...row, required_meetings_per_section: 2 }] });
-  await two.select();
-  await wait(() => two.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]'));
-  two.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').focus();
-  keyOn(two, 'Enter');
-  assert.match(two.d.getElementById('twBoardStatus').textContent, /meets 2 times a week/);
 });
 
 test('J4 the list proposes the free section labels: with S1 and S3 placed, S2', async t => {
@@ -4728,4 +4654,1203 @@ test('M16 the pattern chooser gives the keyboard back where it was opened: a lis
   await wait(() => asked === 1 && !h.w.TW.englishPicker);
   await settle();
   assert.equal(h.d.activeElement?.dataset.focusKey, 'place:ENG101|S1', 'back on the list row drawn now');
+});
+
+/* ── Place… (design record §7.3, 5f) ──
+   A planned section placed with its whole weekly pattern from a dialog: the
+   patterns the server offers with their verdict (one read for all of them),
+   in the verdict's order, filtered on the page by a day and a time they must
+   include; the body names the course and sends every meeting; one Undo
+   removes them all. AI222 (Search) meets twice a week: S1 is placed, S2 and
+   S3 are not. The server's array order (the legacy one) differs from the
+   verdict's on purpose, and one pattern lists its Thursday before its
+   Tuesday (a verdict item's `meeting` is an index into that order). 5f
+   replaces 5b's refusal of a multi-meeting drop (J2, J3, J6 then). */
+const AI222 = { course_code: 'AI222', course_key: 'AI222::SEARCH', course_name: 'Search', department: 'AI', credit_hours: 3, programme_term: 7,
+  planned_sections: 3, used_sections: 1, used_section_labels: ['S1'], remaining_sections: 2, max_per_section: 35, total_demand: 70,
+  required_meetings_per_section: 2 };
+// The budget as the server answers it once these placements are made: a label
+// placed anywhere in the scenario is used.
+const placeBudget = (made = [], row = AI222) => {
+  const labels = [...new Set([...row.used_section_labels, ...made.filter(r => r.course_key === row.course_key).map(r => r.section)])];
+  return [{ ...row, used_sections: labels.length, used_section_labels: labels, remaining_sections: Math.max(0, row.planned_sections - labels.length) }];
+};
+const placeSlot = (day, start, end, kind = 'lect') => ({ kind, day, start, end, slot_idx: 0 });
+const pattern = (meetings, rank, verdict = verdictOf(), extra = {}) => ({ candidate_id: `pattern-${rank}`, kind: meetings[0].kind, is_pattern: true,
+  requires_full_section_pattern: true, required_meetings: meetings.length, day: meetings[0].day, start: meetings[0].start, end: meetings[0].end,
+  meetings, score: rank * 10, tone: 'clean', critical_count: 0, rank, verdict, verdict_rank: rank, ...extra });
+const PL_SOFT = vItem('softOverlap', 'warning', { source: 'students', meeting: 1, other: otherAt('AI555', 'S1', 'WED', '10:30', '11:45'), students: 12, blocked_students: 0 });
+const PL_TIME = vItem('time', 'critical', { source: 'students', meeting: 0, other: otherAt('AI777', 'S1', 'THU', '13:00', '14:15'), students: 25, blocked_students: 25 });
+const PATTERNS = [
+  pattern([placeSlot('MON', '10:30', '11:45'), placeSlot('WED', '10:30', '11:45')], 2, verdictOf([PL_SOFT])),
+  pattern([placeSlot('SUN', '09:00', '10:15'), placeSlot('TUE', '09:00', '10:15')], 1),
+  pattern([placeSlot('THU', '13:00', '14:15'), placeSlot('TUE', '13:00', '14:15')], 3, verdictOf([PL_TIME])),
+  pattern([placeSlot('SUN', '13:00', '14:15'), placeSlot('TUE', '13:00', '14:15')], 4),
+];
+const BEST = 'SUN@09:00-10:15|TUE@09:00-10:15';
+const SOFT = 'MON@10:30-11:45|WED@10:30-11:45';
+const CLASH = 'TUE@13:00-14:15|THU@13:00-14:15';
+const LAST = 'SUN@13:00-14:15|TUE@13:00-14:15';
+const patternsAnswer = (candidates = PATTERNS, request = {}) => ({ ok: true, board: { id: 2, label: 'Term 7', nominal_term: 7 },
+  request: { course_code: 'AI222', course_key: 'AI222::SEARCH', section_label: 'S2', required_meetings_per_section: 2, requires_full_section_pattern: true, ...request },
+  status: 'ready', summary: { total: candidates.length }, candidates });
+const ROOMS_NOTE = 'Rooms are chosen afterwards (R on a card). To change one meeting later, use Move….';
+const READY = { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] };
+// Unless a test says otherwise, a create makes one placement per meeting (ids
+// from 91), on the board from then on, and the budget counts its label.
+function placeHarness(t, { budget = made => placeBudget(made), rows = () => [at(10)], patterns = null, create = null, remove = null,
+  more = () => undefined, arabic = false, extra = {}, boards = [board] } = {}) {
+  const posts = [], reads = [], removes = [], seen = { budget: 0 };
+  let made = [];
+  let nextId = 90;
+  const making = (body, boardId = body.board_id) => body.meetings.map(m => at(++nextId, { course_code: body.course_code, course_key: body.course_key,
+    section: body.section_label, term_section_id: 500, board_id: boardId, day: m.day, start_time: m.start_time, end_time: m.end_time,
+    room: '', room_state: 'unset', needs_room: true }));
+  return harness(t, async (url, opts) => {
+    const own = await more(url, opts);
+    if (own !== undefined) return own;
+    if (url.includes('/planned-slot-candidates/')) { reads.push(url); return patterns ? patterns(reads.length, url) : patternsAnswer(); }
+    if (url === '/ops/tw/placements/create-planned/' && opts.method === 'POST') {
+      const body = JSON.parse(opts.body);
+      posts.push(body);
+      const tools = { make: (b, boardId) => { const rowsMade = making(b, boardId); made.push(...rowsMade); return rowsMade; } };
+      if (create) { const answer = await create(body, posts.length, tools); if (answer !== undefined) return answer; }
+      const rowsMade = tools.make(body);
+      return { ok: true, placement: rowsMade[0], placements: rowsMade, validation: { critical_count: 0 }, required_meetings: rowsMade.length };
+    }
+    const removing = /^\/ops\/tw\/placements\/(\d+)\/remove\/$/.exec(url);
+    if (removing && opts.method === 'POST') {
+      const id = Number(removing[1]);
+      removes.push(id);
+      if (remove) { const answer = await remove(id, removes.length); if (answer !== undefined) return answer; }
+      made = made.filter(row => row.id !== id);
+      return { ok: true, removed: id };
+    }
+    if (url.includes('/budget/')) { seen.budget++; return { budget: budget(made) }; }
+    if (url === '/ops/tw/boards/2/') return { placements: [...rows(), ...made.filter(row => row.board_id === 2)], slot_config: MOVE_COLUMNS };
+    if (url.startsWith('/ops/tw/boards/?')) return { boards };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    if (url.includes('/readiness/')) return { readiness: READY };
+    return undefined;
+  }, extra, arabic).then(h => {
+    h.w.Element.prototype.scrollIntoView = () => {};  // jsdom has none (a located card is scrolled to)
+    return Object.assign(h, { posts, reads, removes, seen, made: () => made });
+  });
+}
+const placeDialogEl = h => h.d.getElementById('twPlaceDialog');
+const placeRow = (h, label = 'S2', key = 'AI222::SEARCH') => h.d.querySelector(`#twSectionList [data-focus-key="place:${key}|${label}"]`);
+const placeRadios = h => [...h.d.querySelectorAll('#twPlaceBody input[name="twPlaceChoice"]')];
+const placeRadio = (h, sig) => placeRadios(h).find(radio => radio.value === sig);
+const placeShown = h => placeRadios(h).filter(radio => !radio.closest('[hidden]')).map(radio => radio.value);
+const placeChecked = h => placeRadios(h).find(radio => radio.checked)?.value || '';
+const placeNote = h => [h.d.getElementById('twPlaceCommit').disabled, h.d.getElementById('twPlaceNote').textContent];
+const placeStatus = h => h.d.getElementById('twPlaceStatus').textContent;
+const placeAlert = h => (h.d.getElementById('twPlaceAlert').hidden ? '' : h.d.getElementById('twPlaceAlert').textContent);
+const placeSaid = (h, radio, index) => h.d.getElementById(radio.getAttribute('aria-describedby').split(' ')[index]).textContent;
+const placeName = (h, radio) => h.d.getElementById(radio.getAttribute('aria-labelledby')).textContent;
+const placesSettled = h => wait(() => placeRadios(h).length > 0);
+const boardReads = h => h.requests.filter(r => r.url === '/ops/tw/boards/2/').length;
+// Enter on a list row, as the keyboard gives it.
+const placeByKey = async (h, label = 'S2', key = 'AI222::SEARCH') => {
+  await wait(() => placeRow(h, label, key));
+  placeRow(h, label, key).focus();
+  return keyOn(h, 'Enter');
+};
+// What a row hands a drag (its dragstart's payload).
+const dragPayloadOf = (h, label = 'S2', key = 'AI222::SEARCH') => {
+  const data = {};
+  const dragstart = new h.w.Event('dragstart', { bubbles: true });
+  dragstart.dataTransfer = { setData: (type, value) => { data[type] = value; }, effectAllowed: '' };
+  placeRow(h, label, key).dispatchEvent(dragstart);
+  return JSON.parse(data['text/plain']);
+};
+const dropAt = (h, payload, day, start) => h.w.onDrop({ preventDefault() {},
+  currentTarget: h.d.querySelector(`#twGrid [role="gridcell"][data-day="${day}"][data-start="${start}"]`),
+  dataTransfer: { getData: () => JSON.stringify(payload) } });
+const PLACE_REQUEST = { course_code: 'AI222', course_key: 'AI222::SEARCH', course_name: 'Search', section_label: 'S2', capacity: 35, required: 2, programme_term: 7 };
+const hhmm = minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+// n distinct two-meeting patterns, the first `clean` with no clash.
+const manyPatterns = (n, clean = 0) => Array.from({ length: n }, (_, i) => pattern(
+  [placeSlot('SUN', hhmm(420 + i), hhmm(495 + i)), placeSlot('TUE', hhmm(420 + i), hhmm(495 + i))], i + 1,
+  i < clean ? verdictOf() : verdictOf([PL_TIME])));
+
+test('PL1 Enter on a row: one read of every pattern with its verdict, best first; the chosen pattern is sent whole, the course named, no credit hours', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  assert.equal((await placeByKey(h)).defaultPrevented, true);
+  await placesSettled(h);
+  assert.equal(h.reads.length, 1);
+  const read = new URL(h.reads[0], 'http://localhost');
+  assert.equal(read.pathname, '/ops/tw/boards/2/planned-slot-candidates/');
+  assert.deepEqual(Object.fromEntries(read.searchParams), { course_code: 'AI222', course_key: 'AI222::SEARCH', section_label: 'S2', limit: '1000', verdict: '1' });
+  assert.equal(h.d.getElementById('twPlaceTitle').textContent, 'Place AI222 S2');
+  assert.equal(h.d.getElementById('twPlaceSub').textContent, 'Term 7 · 2 meetings a week · the whole weekly pattern');
+  // In the verdict's order, each a whole pattern by day, worded and toned by the verdict.
+  assert.deepEqual(placeRadios(h).map(radio => [radio.value, radio.closest('.ux-choice').dataset.tone, radio.dataset.focusKey]), [
+    [BEST, 'ok', `place-choice:${BEST}`], [SOFT, 'warning', `place-choice:${SOFT}`], [CLASH, 'critical', `place-choice:${CLASH}`], [LAST, 'ok', `place-choice:${LAST}`],
+  ]);
+  assert.deepEqual(placeRadios(h).map(radio => placeName(h, radio)), [
+    'Sunday 09:00–10:15, Tuesday 09:00–10:15', 'Monday 10:30–11:45, Wednesday 10:30–11:45',
+    'Tuesday 13:00–14:15, Thursday 13:00–14:15', 'Sunday 13:00–14:15, Tuesday 13:00–14:15',
+  ]);
+  assert.deepEqual(placeRadios(h).map(radio => placeSaid(h, radio, 0)),
+    ['No clash found', 'Lowers quality: Overlap students can route round', 'Blocks publishing: Time clash', 'No clash found']);
+  // An item is led by the meeting it belongs to: its index in the server's list.
+  assert.equal(placeSaid(h, placeRadio(h, SOFT), 1), 'Wed 10:30–11:45: Overlap students can route round: AI555 S1 · Wed 10:30–11:45 · 12 students need both');
+  assert.equal(placeSaid(h, placeRadio(h, CLASH), 1), 'Thu 13:00–14:15: Time clash: AI777 S1 · Thu 13:00–14:15 · 25 students need both');
+  assert.equal(h.d.querySelector('#twPlaceBody fieldset:last-of-type > legend').textContent, 'Complete weekly patterns, best first');
+  assert.ok(h.d.getElementById('twPlaceChoices').matches('.ux-choice-list[data-ux-submit]'));
+  assert.equal(placeStatus(h), '4 patterns, best first · 2 with no clash');
+  // The best pattern is chosen, the keyboard goes to it, and the note says
+  // what it brings and what comes afterwards.
+  assert.equal(placeChecked(h), BEST);
+  assert.equal(h.d.activeElement, placeRadio(h, BEST));
+  assert.deepEqual(placeNote(h), [false, `Chosen: No clash found · ${ROOMS_NOTE}`]);
+  assert.match(template, /id="twPlaceCommit"[^>]*>{% if LANGUAGE_CODE == 'ar' %}وضع الشعبة{% else %}Place section{% endif %}<\/button>/);
+  // The second best, chosen, is sent whole: every meeting, the course's key and name.
+  placeRadio(h, SOFT).click();
+  assert.deepEqual(placeNote(h), [false, `Chosen: Lowers quality: Overlap students can route round · ${ROOMS_NOTE}`]);
+  h.d.getElementById('twPlaceCommit').click();
+  await wait(() => h.posts.length === 1 && atRest(h) && !placeDialogEl(h).hasAttribute('open'));
+  assert.deepEqual(h.posts, [{ board_id: 2, course_code: 'AI222', course_key: 'AI222::SEARCH', course_name: 'Search', section_label: 'S2', capacity: 35,
+    meetings: [{ day: 'MON', start_time: '10:30', end_time: '11:45' }, { day: 'WED', start_time: '10:30', end_time: '11:45' }] }]);
+  assert.equal(h.reads.length, 1, 'nothing read again while placing');
+});
+
+test('PL2 a drop of a course that meets twice a week sends nothing and opens Place on the dropped time; a time no pattern includes clears the filter and says so', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  await wait(() => placeRow(h));
+  const payload = dragPayloadOf(h);
+  assert.deepEqual([payload.required_meetings_per_section, payload.course_key, payload.programme_term], [2, 'AI222::SEARCH', 7]);
+  await dropAt(h, payload, 'THU', '13:00');
+  await placesSettled(h);
+  assert.deepEqual([h.posts.length, placeDialogEl(h).hasAttribute('open'), h.notices.filter(n => n.type !== 'success')], [0, true, []]);
+  // The filter is the dropped time; only the patterns that include it show.
+  const day = h.d.getElementById('twPlaceDay'), time = h.d.getElementById('twPlaceTime');
+  assert.deepEqual([day.value, time.value], ['THU', '13:00-14:15']);
+  assert.deepEqual(placeShown(h), [CLASH]);
+  assert.equal(placeChecked(h), CLASH);
+  assert.equal(placeStatus(h), '1 of 4 include Thursday \u206613:00–14:15\u2069');
+  // Its words: the legend, the labels, "any" first, the days in week order, the times by start.
+  assert.equal(h.d.querySelector('#twPlaceBody fieldset > legend').textContent, 'Must include');
+  assert.deepEqual([...h.d.querySelectorAll('#twPlaceBody .fb-lbl')].map(label => [label.textContent, label.htmlFor]), [['Day', 'twPlaceDay'], ['Time', 'twPlaceTime']]);
+  assert.deepEqual([...day.options].map(o => [o.value, o.textContent]), [['', 'Any day'], ['SUN', 'Sunday'], ['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'], ['THU', 'Thursday']]);
+  assert.deepEqual([...time.options].map(o => [o.value, o.textContent]), [['', 'Any time'], ['09:00-10:15', '\u206609:00–10:15\u2069'], ['10:30-11:45', '\u206610:30–11:45\u2069'], ['13:00-14:15', '\u206613:00–14:15\u2069']]);
+  // Another day at that time: the chosen pattern hidden, the first shown is
+  // chosen (by the dialog); a day and time no pattern has together: none.
+  day.value = 'SUN';
+  day.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.deepEqual([placeShown(h), placeChecked(h), placeStatus(h)], [[LAST], LAST, '1 of 4 include Sunday \u206613:00–14:15\u2069']);
+  day.value = 'WED';
+  day.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.deepEqual([placeShown(h), placeChecked(h), placeStatus(h)], [[], '', '0 of 4 include Wednesday \u206613:00–14:15\u2069']);
+  assert.deepEqual(placeNote(h), [true, '']);
+  // A day alone: the patterns with a meeting that day.
+  time.value = '';
+  time.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.deepEqual([placeShown(h), placeChecked(h), placeStatus(h)], [[SOFT], SOFT, '1 of 4 include Wednesday']);
+  day.value = 'SUN';
+  day.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.deepEqual([placeShown(h), placeChecked(h), placeStatus(h)], [[BEST, LAST], BEST, '2 of 4 include Sunday']);
+  assert.deepEqual(placeNote(h), [false, `Chosen: No clash found · ${ROOMS_NOTE}`]);
+  // Escape: nothing sent; the keyboard back on the row.
+  keyOn(h, 'Escape');
+  assert.deepEqual([placeDialogEl(h).hasAttribute('open'), h.posts.length, h.d.activeElement], [false, 0, placeRow(h)]);
+  // Dropped where no pattern meets: every pattern, the filter cleared, and the fallback said.
+  await dropAt(h, payload, 'MON', '09:00');
+  await placesSettled(h);
+  assert.deepEqual([h.d.getElementById('twPlaceDay').value, h.d.getElementById('twPlaceTime').value], ['', '']);
+  assert.deepEqual(placeShown(h), [BEST, SOFT, CLASH, LAST]);
+  assert.equal(placeChecked(h), BEST);
+  assert.equal(placeStatus(h), 'No pattern includes Monday \u206609:00–10:15\u2069; showing every pattern.');
+  assert.equal(h.reads.length, 1, 'the second open takes the answer kept for this data');
+  // A filter chosen afterwards ends the fallback.
+  h.d.getElementById('twPlaceDay').value = 'MON';
+  h.d.getElementById('twPlaceDay').dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.deepEqual([placeShown(h), placeStatus(h)], [[SOFT], '1 of 4 include Monday']);
+  // A one-meeting drop the server answers "complete pattern" (an older budget
+  // row): the same, the budget read again, no error toast.
+  const o = await placeHarness(t, { create: () => ({ httpError: 400, error: { code: 'FULL_SECTION_PATTERN_REQUIRED', message: 'AI222 needs a complete 2-meeting section pattern.' } }) });
+  await o.select();
+  await wait(() => placeRow(o));
+  const budgets = o.seen.budget;
+  await dropAt(o, { ...dragPayloadOf(o), required_meetings_per_section: 1 }, 'THU', '13:00');
+  await placesSettled(o);
+  assert.deepEqual(o.posts.map(body => body.meetings), [[{ day: 'THU', start_time: '13:00', end_time: '14:15' }]], 'the drop’s one meeting, once');
+  assert.deepEqual([placeDialogEl(o).hasAttribute('open'), o.d.getElementById('twPlaceDay').value, o.d.getElementById('twPlaceTime').value], [true, 'THU', '13:00-14:15']);
+  assert.equal(o.seen.budget, budgets + 1, 'the budget is read again');
+  assert.deepEqual(o.notices.filter(n => n.type === 'error'), []);
+  assert.equal(o.d.getElementById('twPlaceSub').textContent, 'Term 7 · 2 meetings a week · the whole weekly pattern', 'the count the patterns were read for');
+  // The day and the time are one meeting's: Monday 09:00 and Wednesday 13:00
+  // do not include Monday 13:00.
+  const mixed = pattern([placeSlot('MON', '09:00', '10:15'), placeSlot('WED', '13:00', '14:15')], 1);
+  const m = await placeHarness(t, { patterns: () => patternsAnswer([mixed]) });
+  await m.select();
+  await wait(() => placeRow(m));
+  await dropAt(m, dragPayloadOf(m), 'MON', '13:00');
+  await placesSettled(m);
+  assert.deepEqual([placeShown(m), placeStatus(m)], [['MON@09:00-10:15|WED@13:00-14:15'], 'No pattern includes Monday \u206613:00–14:15\u2069; showing every pattern.']);
+});
+
+test('PL3 a pattern that blocks publishing is chosen like any other: no row is held, nothing asks to confirm, and the note states its verdict', async t => {
+  let asked = 0;
+  const h = await placeHarness(t);
+  h.w.dlg.confirm = async () => { asked++; return true; };
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  assert.deepEqual([placeRadios(h).filter(radio => radio.disabled).length, h.d.querySelectorAll('#twPlaceChoices .ux-choice-static').length], [0, 0]);
+  placeRadio(h, CLASH).click();
+  assert.deepEqual(placeNote(h), [false, `Chosen: Blocks publishing: Time clash · ${ROOMS_NOTE}`]);
+  h.d.getElementById('twPlaceForm').requestSubmit();
+  await wait(() => h.posts.length === 1 && atRest(h) && !placeDialogEl(h).hasAttribute('open'));
+  assert.deepEqual(h.posts[0].meetings, [{ day: 'TUE', start_time: '13:00', end_time: '14:15' }, { day: 'THU', start_time: '13:00', end_time: '14:15' }]);
+  assert.equal(asked, 0, 'never confirmed');
+});
+
+test('PL4 in Arabic: every time isolated in rows and options, counts in their forms; server words are text in text and in attributes', async t => {
+  const hostile = 'MON@08:00"><b>x</b>-09:15|WED@08:00-09:15';
+  const odd = pattern([placeSlot('MON', '08:00"><b>x</b>', '09:15'), placeSlot('WED', '08:00', '09:15')], 5,
+    verdictOf([vItem('instructorElsewhere', 'warning', { meeting: 0, other: otherAt('<img src=x>', 'S"1', 'MON', '08:00', '09:15', { board_id: 4, board_label: '"<i>T4</i>' }), teacher: 'Dr "Q"' })]));
+  const h = await placeHarness(t, { arabic: true, patterns: () => patternsAnswer([...PATTERNS, odd]), boards: [{ ...board, label: '"<u>المستوى 7</u>' }] });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  const dialog = placeDialogEl(h);
+  assert.equal(h.d.getElementById('twPlaceTitle').textContent, 'وضع AI222 S2');
+  assert.equal(h.d.getElementById('twPlaceSub').textContent, '"<u>المستوى 7</u> · لقاءان أسبوعياً · النمط الأسبوعي كاملاً');
+  assert.deepEqual([dialog.querySelector('img, b, i, u'), placeRadio(h, hostile)?.value], [null, hostile], 'server words never become markup');
+  assert.deepEqual(placeRadios(h).slice(0, 2).map(radio => h.d.getElementById(radio.getAttribute('aria-labelledby')).innerHTML), [
+    'الأحد <bdi dir="ltr">09:00–10:15</bdi>، الثلاثاء <bdi dir="ltr">09:00–10:15</bdi>',
+    'الاثنين <bdi dir="ltr">10:30–11:45</bdi>، الأربعاء <bdi dir="ltr">10:30–11:45</bdi>',
+  ]);
+  assert.equal(placeSaid(h, placeRadio(h, SOFT), 1), 'الأربعاء 10:30–11:45: تداخل يمكن تجاوزه: AI555 S1 · الأربعاء 10:30–11:45 · 12 طالباً يحتاجون كليهما');
+  assert.equal(placeSaid(h, placeRadio(h, hostile), 1), 'الاثنين 08:00"><b>x</b>–09:15: المدرّس يدرّس في لوحة أخرى في الوقت نفسه: Dr "Q" — <img src=x> S"1 ("<i>T4</i>) · الاثنين 08:00–09:15');
+  const leads = [...dialog.querySelectorAll('#twPlaceChoices .ux-choice-desc bdi[dir="ltr"]')].map(bdi => bdi.textContent);
+  assert.ok(leads.includes('10:30–11:45'), 'a line’s lead isolates its time');
+  assert.equal(h.d.querySelector('#twPlaceBody fieldset > legend').textContent, 'يشمل');
+  assert.deepEqual([...dialog.querySelectorAll('.fb-lbl')].map(label => label.textContent), ['اليوم', 'الوقت']);
+  assert.deepEqual([...h.d.getElementById('twPlaceDay').options].map(o => o.textContent), ['أي يوم', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس']);
+  assert.deepEqual([...h.d.getElementById('twPlaceTime').options].slice(0, 4).map(o => [o.value, o.textContent]),
+    [['', 'أي وقت'], ['08:00"><b>x</b>-09:15', '\u206608:00"><b>x</b>–09:15\u2069'], ['08:00-09:15', '\u206608:00–09:15\u2069'], ['09:00-10:15', '\u206609:00–10:15\u2069']]);
+  assert.equal(h.d.querySelector('#twPlaceBody fieldset:last-of-type > legend').textContent, 'الأنماط الأسبوعية الكاملة، الأفضل أولاً');
+  assert.equal(placeStatus(h), '5 أنماط، الأفضل أولاً · نمطان بلا تعارض');
+  assert.equal(h.d.getElementById('twPlaceNote').textContent,
+    'المختار: لا تعارض · تُختار القاعات بعد الوضع (R على البطاقة). ولتغيير لقاء واحد لاحقاً استخدم «نقل…».');
+  h.d.getElementById('twPlaceDay').value = 'THU';
+  h.d.getElementById('twPlaceDay').dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.equal(placeStatus(h), '1 من 5 تشمل الخميس');
+  // The list row: its meetings a week, in its form.
+  assert.match(placeRow(h).textContent, /لقاءان أسبوعياً/);
+  // Every count form, as the status line says it (CLDR: 190 is "many", as 11; 100 is "other").
+  const counts = async (n, clean) => {
+    const c = await placeHarness(t, { arabic: true, patterns: () => patternsAnswer(manyPatterns(n, clean)) });
+    await c.select();
+    await placeByKey(c);
+    await placesSettled(c);
+    return placeStatus(c);
+  };
+  assert.deepEqual([await counts(3, 0), await counts(11, 1), await counts(100, 11), await counts(190, 100), await counts(2, 3)], [
+    '3 أنماط، الأفضل أولاً · لا نمط بلا تعارض', '11 نمطاً، الأفضل أولاً · نمط واحد بلا تعارض',
+    '100 نمط، الأفضل أولاً · 11 نمطاً بلا تعارض', '190 نمطاً، الأفضل أولاً · 100 نمط بلا تعارض', 'نمطان، الأفضل أولاً · نمطان بلا تعارض',
+  ]);
+  const three = await placeHarness(t, { arabic: true, budget: () => [{ ...AI222, required_meetings_per_section: 3 }], patterns: () => patternsAnswer(PATTERNS, { required_meetings_per_section: 3 }) });
+  await three.select();
+  await wait(() => placeRow(three));
+  assert.match(placeRow(three).textContent, /3 لقاءات أسبوعياً/);
+  await placeByKey(three);
+  await placesSettled(three);
+  assert.equal(three.d.getElementById('twPlaceSub').textContent, 'Term 7 · 3 لقاءات أسبوعياً · النمط الأسبوعي كاملاً');
+  // In English, the row says it too.
+  const en = await placeHarness(t);
+  await en.select();
+  await wait(() => placeRow(en));
+  assert.deepEqual([...placeRow(en).querySelectorAll('.ux-meta')[0].children].map(part => part.textContent), ['AI', '3 cr', 'cap 35', '2 meetings a week']);
+});
+
+test('PL5 placed: the dialog closes, the keyboard is on the row now where the section was, the board’s stop on its first card, the new cards pulse, the report reads Issues', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  h.w.TW.redoStack.push({ type: 'room', placement_id: 10, old_room: 'X', new_room: 'Y' });
+  const toasts = h.notices.length;
+  keyOn(h, 'Enter');  // on the chosen pattern
+  await wait(() => h.posts.length === 1 && atRest(h) && h.notices.length > toasts);
+  assert.equal(placeDialogEl(h).hasAttribute('open'), false);
+  assert.equal(placeRow(h, 'S2'), null, 'its row is gone');
+  assert.equal(h.d.activeElement?.dataset.focusKey, 'place:AI222::SEARCH|S3', 'the row now at that place has the keyboard');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')].map(element => element.dataset.focusKey), ['placement:91']);
+  assert.deepEqual([card(h, 91), card(h, 92)].map(c => c?.classList.contains('highlight')), [true, true], 'the new cards pulse');
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning',
+    text: 'Placed \u2066AI222\u2069 \u2066S2\u2069. · Lowers quality: Room not assigned yet · Press R on the card to change its room.' }]);
+  // One entry undoes the section: the ids, the body sent and the meetings as the server stored them.
+  assert.deepEqual(plainOf(h.w.TW.undoStack), [{ type: 'section_create', placement_ids: [91, 92], board_id: 2, payload: h.posts[0], meetings: [
+    { id: 91, board_id: 2, term_section_id: 500, day: 'SUN', start_time: '09:00', end_time: '10:15', room: '', is_locked: false },
+    { id: 92, board_id: 2, term_section_id: 500, day: 'TUE', start_time: '09:00', end_time: '10:15', room: '', is_locked: false },
+  ] }]);
+  assert.equal(h.w.TW.redoStack.length, 0);
+  assert.equal(h.d.getElementById('twUndo').disabled, false);
+  // The course's last section: the row now at that place is the course's own
+  // placed line (5a keeps a complete course reachable).
+  const last = await placeHarness(t, { budget: made => [...placeBudget(made, { ...AI222, planned_sections: 2, remaining_sections: 1 }),
+    { course_code: 'CS323', course_key: 'CS323', programme_term: 7, planned_sections: 1, used_sections: 0, remaining_sections: 1, total_demand: 30 }] });
+  await last.select();
+  await placeByKey(last);
+  await placesSettled(last);
+  keyOn(last, 'Enter');
+  await wait(() => last.posts.length === 1 && atRest(last) && !placeDialogEl(last).hasAttribute('open'));
+  assert.equal(last.d.activeElement?.dataset.focusKey, 'place:AI222::SEARCH|complete');
+  // A one-meeting drop places through the same commit, undo entry and report (no hint: it read no verdict).
+  const one = await placeHarness(t, { budget: made => placeBudget(made, { ...AI222, required_meetings_per_section: 1 }) });
+  await one.select();
+  await wait(() => placeRow(one));
+  const calls = [];
+  const shared = one.w.commitPlannedCreate;
+  one.w.commitPlannedCreate = (...args) => { calls.push(plainOf(args)); return shared(...args); };
+  const before = one.notices.length;
+  await dropAt(one, dragPayloadOf(one), 'MON', '13:00');
+  assert.deepEqual(calls, [[{ board_id: 2, course_code: 'AI222', course_key: 'AI222::SEARCH', course_name: 'Search', section_label: 'S2', capacity: 35,
+    meetings: [{ day: 'MON', start_time: '13:00', end_time: '14:15' }] }]]);
+  assert.deepEqual(plainOf(one.w.TW.undoStack.at(-1)).placement_ids, [91]);
+  assert.deepEqual(one.notices.slice(before), [{ type: 'warning', text: 'Placed \u2066AI222\u2069 \u2066S2\u2069. · Lowers quality: Room not assigned yet' }]);
+});
+
+test('PL6 Undo removes every meeting, last first; a refused removal keeps what is left on the stack and reads the board; Redo creates them all again and remaps the ids', async t => {
+  let refuse = null;
+  const h = await placeHarness(t, { remove: (id, n) => (refuse ? refuse(id, n) : undefined) });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  keyOn(h, 'Enter');
+  await wait(() => h.posts.length === 1 && atRest(h) && !placeDialogEl(h).hasAttribute('open'));
+  await h.w.runHistoryAction(true);
+  assert.deepEqual(h.removes, [92, 91], 'every meeting, the last made first');
+  assert.deepEqual([h.w.TW.undoStack.length, h.w.TW.redoStack.length], [0, 1]);
+  assert.deepEqual([card(h, 91), card(h, 92)], [null, null]);
+  await h.w.runHistoryAction(false);
+  assert.equal(h.posts.length, 2);
+  assert.deepEqual(h.posts[1], h.posts[0], 'Redo creates it again, every meeting, by the same endpoint');
+  const redone = plainOf(h.w.TW.undoStack.at(-1));
+  assert.deepEqual([redone.type, redone.placement_ids, redone.meetings.map(m => m.id), h.w.TW.redoStack.length], ['section_create', [93, 94], [93, 94], 0]);
+  await h.w.runHistoryAction(true);
+  assert.deepEqual(h.removes.slice(2), [94, 93], 'the new ids');
+  // A refused removal in the middle: the entry stays with what is left, and
+  // the board shows what went.
+  h.w.TW.undoStack = [{ type: 'section_create', placement_ids: [95, 96, 97], board_id: 2, payload: h.posts[0], meetings: [] }];
+  h.w.TW.redoStack = [];
+  refuse = id => (id === 96 ? { httpError: 409, error: { code: 'PLACEMENT_LOCKED', message: 'Locked' } } : undefined);
+  const reads = boardReads(h);
+  await h.w.runHistoryAction(true);
+  assert.deepEqual(h.removes.slice(4), [97, 96]);
+  assert.deepEqual(plainOf(h.w.TW.undoStack), [{ type: 'section_create', placement_ids: [95, 96], board_id: 2, payload: h.posts[0], meetings: [] }]);
+  assert.equal(h.w.TW.redoStack.length, 0);
+  assert.equal(boardReads(h), reads + 1, 'the board is read again');
+  assert.deepEqual(h.notices.at(-1), { type: 'error', text: 'Locked' });
+  // Nothing removed: nothing to read.
+  const none = boardReads(h);
+  refuse = id => (id === 96 ? { httpError: 409, error: { code: 'PLACEMENT_LOCKED', message: 'Locked' } } : undefined);
+  await h.w.runHistoryAction(true);
+  assert.deepEqual([h.removes.slice(6), boardReads(h)], [[96], none]);
+  // Then it goes, and a meeting a removal took with it (a bundle) is not asked for again.
+  refuse = id => (id === 96 ? { ok: true, removed: 96, removed_placements: [{ id: 96 }, { id: 95 }] } : undefined);
+  await h.w.runHistoryAction(true);
+  assert.deepEqual(h.removes.slice(7), [96]);
+  assert.deepEqual([h.w.TW.undoStack.length, h.w.TW.redoStack.length], [0, 1]);
+});
+
+test('PL7 a refused create is said in the dialog: a duplicate takes the next free label and keeps the choice, "complete pattern" reads again, what asking again cannot change holds Commit', async t => {
+  const cases = [
+    ['SCENARIO_PUBLISHED', 400, 'This scenario is published and read-only.', true, false],
+    ['SCENARIO_BUSY', 409, BUSY_WORDS, false, false],
+    ['NOT_FOUND', 404, 'The board changed; nothing was placed.', true, false],
+    ['VALIDATION_PLANNED_PATTERN', 400, 'Nothing was placed.', false, false],
+    ['SERVER_ERROR', 500, 'Nothing was placed.', false, true],
+  ];
+  for (const [code, status, words, held, reads] of cases) {
+    const h = await placeHarness(t, { create: () => ({ httpError: status, error: { code, message: 'Refused' } }) });
+    await h.select();
+    await placeByKey(h);
+    await placesSettled(h);
+    const toasts = h.notices.length;
+    const boards = boardReads(h);
+    h.d.getElementById('twPlaceCommit').click();
+    await wait(() => placeAlert(h) && atRest(h));
+    await settle();
+    assert.deepEqual([placeAlert(h), h.d.getElementById('twPlaceAlert').dataset.tone], [words, 'warning'], code);
+    assert.equal(h.d.getElementById('twPlaceCommit').disabled, held, code);
+    assert.deepEqual([h.notices.slice(toasts), h.w.TW.undoStack.length, placeDialogEl(h).hasAttribute('open')], [[], 0, true], code);
+    assert.equal(boardReads(h), boards + (reads ? 1 : 0), `${code}: ${reads ? 'an unknown outcome reads the board' : 'a known refusal reads nothing'}`);
+  }
+  // A duplicate: the next free label, said; the chosen pattern kept and the
+  // keyboard on it; its patterns read for that label; placed under it.
+  let duplicate = true;
+  const d = await placeHarness(t, { create: (body, n, tools) => {
+    if (!duplicate) return undefined;
+    duplicate = false;
+    tools.make(body, 3);  // S2 placed meanwhile, on another board
+    return { httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate placement for this section/day/time' } };
+  } });
+  await d.select();
+  await placeByKey(d);
+  await placesSettled(d);
+  placeRadio(d, SOFT).click();
+  d.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(d) && atRest(d) && d.reads.length === 2 && placeRadios(d).length > 0);
+  assert.deepEqual([placeAlert(d), d.d.getElementById('twPlaceTitle').textContent], ['Section \u2066S2\u2069 was placed meanwhile; this is now \u2066S3\u2069.', 'Place AI222 S3']);
+  assert.equal(new URL(d.reads[1], 'http://localhost').searchParams.get('section_label'), 'S3');
+  assert.deepEqual([placeChecked(d), d.d.activeElement, placeDialogEl(d).hasAttribute('open')], [SOFT, placeRadio(d, SOFT), true]);
+  assert.deepEqual(placeNote(d), [false, `Chosen: Lowers quality: Overlap students can route round · ${ROOMS_NOTE}`]);
+  d.d.getElementById('twPlaceCommit').click();
+  await wait(() => d.posts.length === 2 && atRest(d) && !placeDialogEl(d).hasAttribute('open'));
+  assert.deepEqual([d.posts[1].section_label, d.posts[1].meetings[0]], ['S3', { day: 'MON', start_time: '10:30', end_time: '11:45' }]);
+  // A duplicate the budget does not show yet: the next label all the same.
+  const lag = await placeHarness(t, { create: (body, n) => (n === 1 ? { httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate' } } : undefined) });
+  await lag.select();
+  await placeByKey(lag);
+  await placesSettled(lag);
+  lag.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(lag) && atRest(lag) && placeRadios(lag).length > 0);
+  assert.deepEqual([placeAlert(lag), lag.d.getElementById('twPlaceTitle').textContent], ['Section \u2066S2\u2069 was placed meanwhile; this is now \u2066S3\u2069.', 'Place AI222 S3']);
+  // The board read again meanwhile (its budget names S2) moves the dialog on
+  // by itself; the duplicate's own budget read, landing later, does not move
+  // it a second time.
+  const four = { ...AI222, planned_sections: 4, remaining_sections: 3 };
+  let held = null;
+  let holdNext = false;
+  const twice = await placeHarness(t, {
+    budget: made => placeBudget(made, four),
+    create: (body, n, tools) => {
+      if (n > 1) return undefined;
+      tools.make(body, 3);
+      holdNext = true;
+      held = deferred();
+      return { httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate' } };
+    },
+    more: url => {
+      if (!holdNext || !url.includes('/budget/')) return undefined;
+      holdNext = false;
+      return held.promise;
+    },
+  });
+  await twice.select();
+  await placeByKey(twice);
+  await placesSettled(twice);
+  twice.d.getElementById('twPlaceCommit').click();
+  await wait(() => held && !holdNext);
+  await twice.w.selectBoard(2);
+  await wait(() => twice.reads.length === 2 && placeRadios(twice).length > 0);
+  assert.equal(twice.d.getElementById('twPlaceTitle').textContent, 'Place AI222 S3');
+  held.resolve({ budget: placeBudget(twice.made(), four) });
+  await wait(() => atRest(twice));
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual([twice.d.getElementById('twPlaceTitle').textContent, twice.reads.length], ['Place AI222 S3', 2]);
+  // Every other label taken meanwhile too: the budget, read again, says so.
+  const both = await placeHarness(t, { create: (body, n, tools) => {
+    tools.make(body, 3);
+    tools.make({ ...body, section_label: 'S3' }, 3);
+    return { httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate' } };
+  } });
+  await both.select();
+  await placeByKey(both);
+  await placesSettled(both);
+  both.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(both) && atRest(both));
+  await settle();
+  assert.deepEqual([placeAlert(both), placeNote(both)], ['Every section of \u2066AI222\u2069 is placed.', [true, '']]);
+  // No label left: every section is placed, and Commit holds.
+  const full = await placeHarness(t, {
+    budget: made => placeBudget(made, { ...AI222, planned_sections: 2, remaining_sections: 1 }),
+    create: (body, n, tools) => { tools.make(body, 3); return { httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate' } }; },
+  });
+  await full.select();
+  await placeByKey(full);
+  await placesSettled(full);
+  full.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(full) && atRest(full));
+  await settle();
+  assert.deepEqual([placeAlert(full), placeRadios(full).length, placeNote(full), placeStatus(full)], ['Every section of \u2066AI222\u2069 is placed.', 0, [true, ''], '']);
+  full.d.getElementById('twPlaceForm').requestSubmit();
+  await settle();
+  assert.equal(full.posts.length, 1);
+  // "Complete pattern": the course now meets another number of times a week;
+  // the patterns are read again (a fresh read) and the words say so.
+  const c = await placeHarness(t, {
+    create: () => ({ httpError: 400, error: { code: 'FULL_SECTION_PATTERN_REQUIRED', message: 'AI222 needs a complete 3-meeting section pattern.' } }),
+    patterns: n => (n === 1 ? patternsAnswer() : patternsAnswer(manyPatterns(2, 2).map(p => ({ ...p, meetings: [...p.meetings, placeSlot('THU', p.start, p.end)] })), { required_meetings_per_section: 3 })),
+  });
+  await c.select();
+  await placeByKey(c);
+  await placesSettled(c);
+  const budgets = c.seen.budget;
+  c.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(c) && atRest(c) && placeRadios(c).length > 0);
+  assert.deepEqual([c.reads.length, placeAlert(c)], [2, 'This course now needs 3 meetings a week; the patterns were ranked again.']);
+  assert.equal(c.d.getElementById('twPlaceSub').textContent, 'Term 7 · 3 meetings a week · the whole weekly pattern');
+  assert.ok(c.seen.budget > budgets, 'the list’s rows are read again');
+  assert.equal(c.d.getElementById('twPlaceCommit').disabled, false);
+  // A lost answer: "Nothing was placed.", and the board is read; this one did
+  // place, so the budget names S2 and the dialog moves on to S3.
+  const lost = await placeHarness(t, { create: (body, n, tools) => { if (n === 1) { tools.make(body); throw new TypeError('Failed to fetch'); } return undefined; } });
+  await lost.select();
+  await placeByKey(lost);
+  await placesSettled(lost);
+  lost.d.getElementById('twPlaceCommit').click();
+  await wait(() => /S3/.test(placeAlert(lost)) && atRest(lost) && placeRadios(lost).length > 0);
+  assert.deepEqual([placeAlert(lost), lost.w.TW.undoStack.length], ['Section \u2066S2\u2069 was placed meanwhile; this is now \u2066S3\u2069.', 0]);
+  const said = await placeHarness(t, { create: () => { throw new TypeError('Failed to fetch'); } });
+  await said.select();
+  await placeByKey(said);
+  await placesSettled(said);
+  said.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(said) && atRest(said));
+  assert.deepEqual([placeAlert(said), said.d.getElementById('twPlaceTitle').textContent, said.d.getElementById('twPlaceCommit').disabled], ['Nothing was placed.', 'Place AI222 S2', false]);
+});
+
+test('PL8 an English row has no nested button: Enter, or its Place…, opens its pattern chooser, never Place', async t => {
+  const english = { course_code: 'ENG101', course_key: 'ENG101', course_name: 'English', programme_term: 7, planned_sections: 1, used_sections: 0,
+    remaining_sections: 1, total_demand: 30, required_meetings_per_section: 4 };
+  const h = await placeHarness(t, { budget: made => [...placeBudget(made), english] });
+  await h.select();
+  await wait(() => placeRow(h, 'S1', 'ENG101'));
+  const row = placeRow(h, 'S1', 'ENG101');
+  assert.deepEqual([row.querySelector('button'), row.getAttribute('aria-haspopup'), row.querySelector('.tw-place-hint')?.textContent], [null, 'dialog', 'Place…']);
+  const calls = [];
+  h.w.chooseEnglishWorkspacePattern = item => { calls.push([item.course_code, item.type, item.section_label]); return Promise.resolve(null); };
+  await placeByKey(h, 'S1', 'ENG101');
+  placeRow(h, 'S1', 'ENG101').querySelector('.tw-place-hint').click();
+  await settle();
+  assert.deepEqual(calls, [['ENG101', 'create_planned', 'S1'], ['ENG101', 'create_planned', 'S1']]);
+  assert.deepEqual([placeDialogEl(h).hasAttribute('open'), h.reads.length], [false, 0]);
+});
+
+test('PL9 one read per section and data version: a reopen joins the read in flight or takes its answer; a write reads again', async t => {
+  const first = deferred();
+  const h = await placeHarness(t, { patterns: n => (n === 1 ? first.promise : patternsAnswer()), more: url => (url.endsWith('/lock/') ? { placement_id: 10, is_locked: true } : undefined) });
+  await h.select();
+  await placeByKey(h);
+  keyOn(h, 'Escape');
+  await placeByKey(h);
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(h.reads.length, 1, 'a reopen joins the read in flight');
+  first.resolve(patternsAnswer());
+  await placesSettled(h);
+  keyOn(h, 'Escape');
+  await placeByKey(h);
+  await placesSettled(h);
+  assert.equal(h.reads.length, 1, 'open, Esc, open: the answer is kept');
+  keyOn(h, 'Escape');
+  await h.w.toggleLock(10);
+  await placeByKey(h);
+  await placesSettled(h);
+  assert.equal(h.reads.length, 2, 'the data moved: read again');
+});
+
+test('PL10 the gate: an open dialog, no board, published, loading, a planner job — the first wins, said as a toast; the rows, their hint and the keys line', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  await wait(() => placeRow(h));
+  const boardId = h.w.TW.boardId;
+  Object.assign(h.w.TW, { englishPicker: true, boardId: null, loadedBoardId: 99, plannerJob: { job_id: 'job-1', status: 'running' } });
+  h.w.TW.scenario.status = 'published';
+  const ladder = [
+    ['open', null, () => { h.w.TW.englishPicker = false; }],
+    ['no board', 'Create a board first.', () => { h.w.TW.boardId = boardId; }],
+    ['published', 'This scenario is published and read-only.', () => { h.w.TW.scenario.status = 'draft'; }],
+    ['loading', 'The board is still loading.', () => { h.w.TW.loadedBoardId = boardId; }],
+    ['job', 'A planner job is running; edits wait until it ends.', () => { h.w.TW.plannerJob = null; }],
+  ];
+  for (const [name, words, lift] of ladder) {
+    const toasts = h.notices.length;
+    assert.equal(h.w.TW.keyActions.place({ ...PLACE_REQUEST }, { origin: 'place:AI222::SEARCH|S2' }), false, name);
+    assert.deepEqual(h.notices.slice(toasts), words ? [{ type: 'warning', text: words }] : [], name);
+    assert.deepEqual([placeDialogEl(h).hasAttribute('open'), h.reads.length], [false, 0], name);
+    lift();
+  }
+  assert.equal(h.w.TW.keyActions.place({ ...PLACE_REQUEST }, { origin: 'place:AI222::SEARCH|S2' }), true);
+  await placesSettled(h);
+  keyOn(h, 'Escape');
+  // A row that places: the row is the control; its hint is the pointer's
+  // (hidden from assistive technology), and opens Place too.
+  const row = placeRow(h);
+  assert.deepEqual([row.getAttribute('role'), row.getAttribute('aria-haspopup'), row.querySelector('button')], ['gridcell', 'dialog', null]);
+  const hint = row.querySelector('.tw-section-head > .tw-place-hint');
+  assert.deepEqual([hint.textContent, hint.getAttribute('aria-hidden')], ['Place…', 'true']);
+  assert.equal(row.querySelector('.tw-section-head > .code').innerHTML, 'AI222 <bdi>S2</bdi>');
+  hint.click();
+  assert.equal(placeDialogEl(h).hasAttribute('open'), true, 'its Place… opens the dialog');
+  await placesSettled(h);
+  keyOn(h, 'Escape');
+  // A placed course says so; a row of the unplaced list says how to place it.
+  const done = await placeHarness(t, { budget: () => [{ ...AI222, used_sections: 3, used_section_labels: ['S1', 'S2', 'S3'], remaining_sections: 0 }] });
+  await done.select();
+  await wait(() => done.d.querySelector('#twSectionList [data-focus-key="place:AI222::SEARCH|complete"]'));
+  done.d.querySelector('#twSectionList [data-focus-key="place:AI222::SEARCH|complete"]').focus();
+  keyOn(done, 'Enter');
+  assert.equal(done.d.getElementById('twBoardStatus').textContent, 'Every section of \u2066AI222\u2069 is placed.');
+  assert.equal(done.d.querySelector('#twSectionList .tw-place-hint'), null);
+  const loose = await placeHarness(t, { budget: () => [], more: url => (url.includes('/unplaced/') ? { unplaced: [{ term_section_id: 77, course_code: 'CS9', section: 'S1', meetings: [] }] } : undefined) });
+  await loose.select();
+  await wait(() => loose.d.querySelector('#twSectionList [data-focus-key="ts:77"]'));
+  loose.d.querySelector('#twSectionList [data-focus-key="ts:77"]').focus();
+  keyOn(loose, 'Enter');
+  assert.equal(loose.d.getElementById('twBoardStatus').textContent, 'Drag this section onto the board to place it; keyboard placement needs a section budget.');
+  assert.deepEqual([placeDialogEl(loose).hasAttribute('open'), loose.d.querySelector('#twSectionList .tw-place-hint')], [false, null]);
+  // The keys line says what Enter does, in both languages.
+  const keys = /<p id="twListKeys"[^>]*>{% if LANGUAGE_CODE == 'ar' %}([^{]*){% else %}([^{]*){% endif %}<\/p>/.exec(template);
+  assert.deepEqual([keys?.[1], keys?.[2]], ['الأسهم: الشعب · Page Up/Down: المستوى التالي · Enter: وضع الشعبة (تُفتح نافذة)',
+    'Arrows: sections · Page Up/Down: next term · Enter: place the section (opens a dialog)']);
+  const ar = await placeHarness(t, { arabic: true, budget: () => [], more: url => (url.includes('/unplaced/') ? { unplaced: [{ term_section_id: 77, course_code: 'CS9', section: 'S1', meetings: [] }] } : undefined) });
+  await ar.select();
+  await wait(() => ar.d.querySelector('#twSectionList [data-focus-key="ts:77"]'));
+  ar.d.querySelector('#twSectionList [data-focus-key="ts:77"]').focus();
+  keyOn(ar, 'Enter');
+  assert.equal(ar.d.getElementById('twBoardStatus').textContent, 'اسحب هذه الشعبة إلى الجدول لوضعها؛ الوضع بلوحة المفاتيح يحتاج إلى ميزانية شعب.');
+  const nob = await placeHarness(t, { arabic: true });
+  await nob.select();
+  nob.w.TW.boardId = null;
+  nob.w.TW.keyActions.place({ ...PLACE_REQUEST });
+  assert.deepEqual(nob.notices.at(-1), { type: 'warning', text: 'أنشئ لوحة أولاً.' });
+});
+
+test('PL11 data that moves under an open dialog: nothing chosen reads again by itself; a chosen pattern waits for Check again; an overtaken read is never drawn; a label taken meanwhile moves on', async t => {
+  const lockOk = url => (url.endsWith('/lock/') ? { placement_id: 10, is_locked: true } : undefined);
+  // Nothing chosen by the user: read again, the keyboard with the dialog's choice.
+  const h = await placeHarness(t, { more: lockOk });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  assert.equal(h.d.activeElement, placeRadio(h, BEST));
+  await h.w.toggleLock(10);
+  await wait(() => h.reads.length === 2 && placeRadios(h).length > 0);
+  assert.deepEqual([placeNote(h)[0], h.d.activeElement, placeStatus(h)], [false, placeRadio(h, BEST), '4 patterns, best first · 2 with no clash']);
+  // A pattern the user chose waits: stale, Commit held, nothing sent; Check
+  // again reads the board, then the patterns, and the choice starts again.
+  const c = await placeHarness(t, { more: lockOk });
+  await c.select();
+  await placeByKey(c);
+  await placesSettled(c);
+  placeRadio(c, SOFT).click();
+  await c.w.toggleLock(10);
+  assert.deepEqual([placeStatus(c), placeRadios(c).length, placeNote(c), c.reads.length],
+    ['The timetable changed since these patterns were read.', 0, [true, ''], 1]);
+  c.d.getElementById('twPlaceForm').requestSubmit();
+  await settle();
+  assert.deepEqual([c.posts.length, placeAlert(c)], [0, '']);
+  const boards = boardReads(c);
+  c.d.querySelector('#twPlaceBody [data-tw-place-recheck]').click();
+  await wait(() => c.reads.length === 2 && placeRadios(c).length > 0);
+  assert.equal(boardReads(c), boards + 1, 'the board, read again');
+  assert.deepEqual([placeChecked(c), placeNote(c)[0]], [BEST, false]);
+  // Check again drops the choice at once: a board gone from view by the time
+  // it is read is read again by itself once back.
+  let away = false;
+  const k = await placeHarness(t, { more: (url, opts) => {
+    if (url.endsWith('/lock/')) return lockOk(url);
+    if (away && url === '/ops/tw/boards/2/') { k.w.TW.scenarioId = 9; return undefined; }
+    return undefined;
+  } });
+  await k.select();
+  await placeByKey(k);
+  await placesSettled(k);
+  placeRadio(k, SOFT).click();
+  await k.w.toggleLock(10);
+  away = true;
+  k.d.querySelector('#twPlaceBody [data-tw-place-recheck]').click();
+  await wait(() => placeStatus(k) === 'The board changed; nothing was placed.' && atRest(k));
+  away = false;
+  k.w.TW.scenarioId = 1;
+  k.w.syncWorkspaceControls();
+  await wait(() => k.reads.length === 2 && placeRadios(k).length > 0);
+  assert.equal(placeChecked(k), BEST);
+  // A write out as the dialog opens: its read is overtaken as the write
+  // lands, read again at once, and the first answer is never drawn.
+  const lock = deferred();
+  const first = deferred();
+  const o = await placeHarness(t, { patterns: n => (n === 1 ? first.promise : patternsAnswer([PATTERNS[0]])), more: url => (url.endsWith('/lock/') ? lock.promise : undefined) });
+  await o.select();
+  const locking = o.w.toggleLock(10);
+  await settle();
+  await placeByKey(o);
+  await settle();
+  assert.equal(o.reads.length, 1);
+  lock.resolve({ placement_id: 10, is_locked: true });
+  await locking;
+  await wait(() => placeRadios(o).length > 0);
+  assert.equal(o.reads.length, 2, 'read again without waiting for the first answer');
+  first.resolve(patternsAnswer());
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual(placeRadios(o).map(radio => radio.value), [SOFT], 'the overtaken answer is not drawn');
+  // Another section took S2 meanwhile (the budget, read again, names it): the
+  // dialog moves to S3 by itself, and says so.
+  let taken = false;
+  const l = await placeHarness(t, { budget: made => placeBudget(made, taken ? { ...AI222, used_section_labels: ['S1', 'S2'] } : AI222) });
+  await l.select();
+  await placeByKey(l);
+  await placesSettled(l);
+  taken = true;
+  await l.w.selectBoard(2);
+  await wait(() => l.reads.length === 2 && placeRadios(l).length > 0);
+  assert.deepEqual([placeAlert(l), l.d.getElementById('twPlaceTitle').textContent, l.d.getElementById('twPlaceDialog').dataset.twAbout],
+    ['Section \u2066S2\u2069 was placed meanwhile; this is now \u2066S3\u2069.', 'Place AI222 S3', 'place:AI222::SEARCH|S3']);
+  // The scenario read again (a planner job ended): the board leaves and
+  // comes back; the patterns are read again once it is back.
+  let back = null;
+  const g = await placeHarness(t, { more: url => (back && url === '/ops/tw/boards/2/' ? back.promise : undefined) });
+  await g.select();
+  await placeByKey(g);
+  await placesSettled(g);
+  back = deferred();
+  const reloading = g.w.onScenarioChange();
+  await wait(() => placeStatus(g) === 'The board is still loading.');
+  assert.deepEqual([g.reads.length, placeNote(g), placeRadios(g).length], [1, [true, BUSY_WORDS], 0]);
+  back.resolve({ placements: [at(10)], slot_config: MOVE_COLUMNS });
+  back = null;
+  await reloading;
+  await wait(() => g.reads.length === 2 && placeRadios(g).length > 0);
+  assert.equal(placeDialogEl(g).hasAttribute('open'), true);
+});
+
+test('PL19 after a place the board’s stop is the new section’s first card, not merely the board’s first', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  placeRadio(h, SOFT).click();
+  placeRadio(h, SOFT).focus();
+  keyOn(h, 'Enter');
+  await wait(() => h.posts.length === 1 && atRest(h));
+  assert.equal(h.posts[0].meetings[0].day, 'MON');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')].map(element => element.dataset.focusKey), ['placement:91'],
+    'the Monday card, though the Sunday card comes first on the board');
+});
+
+test('PL18 a course code from the budget is text in the dialog title, never markup', async t => {
+  const code = 'AI<b>2"2';
+  const h = await placeHarness(t, { budget: made => placeBudget(made, { ...AI222, course_code: code }) });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  const title = h.d.getElementById('twPlaceTitle');
+  assert.equal(title.querySelector('b'), null);
+  assert.equal(title.textContent, `Place ${code} S2`);
+});
+
+test('PL12 a create the user left (Escape) ends where the user is: a toast with no dialog open; in Move’s dialog, named, when one is open by then; a refusal too', async t => {
+  const moves = url => (url.includes('/slot-candidates/') ? movesAnswer() : undefined);
+  for (const arabic of [false, true]) {
+    const landed = deferred();
+    const h = await placeHarness(t, { arabic, more: moves, create: async () => { await landed.promise; return undefined; } });
+    await h.select();
+    await placeByKey(h);
+    await placesSettled(h);
+    h.d.getElementById('twPlaceCommit').click();
+    await settle();
+    keyOn(h, 'Escape');
+    assert.deepEqual([placeDialogEl(h).hasAttribute('open'), h.d.activeElement], [false, placeRow(h)], 'Escape is never blocked by a commit');
+    moveByKey(h, 10);
+    await movesSettled(h);
+    const toasts = h.notices.length;
+    landed.resolve();
+    const line = h.d.getElementById('twMoveAlert');
+    await wait(() => !line.hidden && atRest(h));
+    assert.deepEqual([line.textContent, line.dataset.tone], arabic
+      ? ['\u2066AI222\u2069 \u2066S2\u2069: وُضعت \u2066AI222\u2069 \u2066S2\u2069. · يُضعف الجودة: لم تُحدَّد القاعة بعد · اضغط R على البطاقة لتغيير قاعتها.', 'warning']
+      : ['\u2066AI222\u2069 \u2066S2\u2069: Placed \u2066AI222\u2069 \u2066S2\u2069. · Lowers quality: Room not assigned yet · Press R on the card to change its room.', 'warning']);
+    assert.deepEqual(h.notices.slice(toasts), [], 'no toast behind the dialog');
+    assert.equal(h.w.TW.undoStack.at(-1).type, 'section_create');
+  }
+  // No dialog open by then: a toast.
+  const landed = deferred();
+  const n = await placeHarness(t, { create: async () => { await landed.promise; return undefined; } });
+  await n.select();
+  await placeByKey(n);
+  await placesSettled(n);
+  n.d.getElementById('twPlaceCommit').click();
+  await settle();
+  keyOn(n, 'Escape');
+  const before = n.notices.length;
+  landed.resolve();
+  await wait(() => n.notices.length > before && atRest(n));
+  assert.deepEqual(n.notices.slice(before), [{ type: 'warning', text: 'Placed \u2066AI222\u2069 \u2066S2\u2069. · Lowers quality: Room not assigned yet · Press R on the card to change its room.' }]);
+  // A refusal of a create the user left: a toast, as it would be anywhere.
+  const refused = deferred();
+  const r = await placeHarness(t, { create: () => refused.promise });
+  await r.select();
+  await placeByKey(r);
+  await placesSettled(r);
+  r.d.getElementById('twPlaceCommit').click();
+  await settle();
+  keyOn(r, 'Escape');
+  const quietly = r.notices.length;
+  refused.resolve({ httpError: 400, error: { code: 'SCENARIO_PUBLISHED', message: 'Published' } });
+  await wait(() => r.notices.length > quietly && atRest(r));
+  assert.deepEqual(r.notices.slice(quietly), [{ type: 'warning', text: 'This scenario is published and read-only.' }]);
+  assert.equal(r.w.TW.undoStack.length, 0);
+  // The two refusals Place answers by itself while open (a pattern of another
+  // length; a label placed meanwhile) say so where the user is once left,
+  // and read nothing for the closed dialog: no toast there, none missing.
+  for (const [code, words] of [
+    ['FULL_SECTION_PATTERN_REQUIRED', 'Nothing was placed.'],
+    ['PLACEMENT_DUPLICATE', 'The board changed; nothing was placed.'],
+  ]) {
+    // No dialog open by then: a toast.
+    const answer = deferred();
+    const g = await placeHarness(t, { create: () => answer.promise });
+    await g.select();
+    await placeByKey(g);
+    await placesSettled(g);
+    g.d.getElementById('twPlaceCommit').click();
+    await settle();
+    keyOn(g, 'Escape');
+    const said = g.notices.length;
+    const reads = g.requests.filter(row => row.url.includes('/planned-slot-candidates/')).length;
+    answer.resolve({ httpError: 409, error: { code, message: 'refused' } });
+    await wait(() => g.notices.length > said && atRest(g));
+    assert.deepEqual(g.notices.slice(said), [{ type: 'warning', text: words }], code);
+    assert.equal(g.requests.filter(row => row.url.includes('/planned-slot-candidates/')).length, reads, `${code}: nothing read for the closed dialog`);
+    assert.equal(g.w.TW.undoStack.length, 0);
+    // Move's dialog open by then: said there, named.
+    const late = deferred();
+    const m = await placeHarness(t, { more: moves, create: () => late.promise });
+    await m.select();
+    await placeByKey(m);
+    await placesSettled(m);
+    m.d.getElementById('twPlaceCommit').click();
+    await settle();
+    keyOn(m, 'Escape');
+    moveByKey(m, 10);
+    await movesSettled(m);
+    const toasts = m.notices.length;
+    late.resolve({ httpError: 409, error: { code, message: 'refused' } });
+    const line = m.d.getElementById('twMoveAlert');
+    await wait(() => !line.hidden && atRest(m));
+    assert.equal(line.textContent, `\u2066AI222\u2069 \u2066S2\u2069: ${words}`, code);
+    assert.deepEqual(m.notices.slice(toasts), [], `${code}: no toast behind Move's dialog`);
+  }
+  // Place open again by then: on another section, said there, named, and its
+  // own Commit not held; on the same section, held.
+  for (const [label, words, held] of [
+    ['S3', '\u2066AI222\u2069 \u2066S2\u2069: This scenario is published and read-only.', false],
+    ['S2', 'This scenario is published and read-only.', true],
+  ]) {
+    const later = deferred();
+    const a = await placeHarness(t, { create: (body, n) => (n === 1 ? later.promise : undefined) });
+    await a.select();
+    await placeByKey(a);
+    await placesSettled(a);
+    a.d.getElementById('twPlaceCommit').click();
+    await settle();
+    keyOn(a, 'Escape');
+    await placeByKey(a, label);
+    await placesSettled(a);
+    const toasts = a.notices.length;
+    later.resolve({ httpError: 400, error: { code: 'SCENARIO_PUBLISHED', message: 'Published' } });
+    await wait(() => placeAlert(a) && atRest(a));
+    await settle();
+    assert.deepEqual([placeAlert(a), a.d.getElementById('twPlaceTitle').textContent, a.notices.slice(toasts)], [words, `Place AI222 ${label}`, []], label);
+    assert.equal(a.d.getElementById('twPlaceCommit').disabled, held, label);
+  }
+});
+
+test('PL13 reads: ranking is said with the list busy and the keyboard on the body; a failure with Try again is not kept; a busy server; the board gone; no pattern; a course that meets once reads as times', async t => {
+  const reply = deferred();
+  const slow = await placeHarness(t, { patterns: () => reply.promise });
+  await slow.select();
+  await placeByKey(slow);
+  await settle();
+  assert.deepEqual([placeStatus(slow), slow.d.getElementById('twPlaceChoices').getAttribute('aria-busy'), placeNote(slow), slow.d.activeElement],
+    ['Ranking the patterns…', 'true', [true, ''], slow.d.getElementById('twPlaceBody')]);
+  const close = placeDialogEl(slow).querySelector('.ux-dialog-head [data-dialog-close]');
+  close.focus();
+  reply.resolve(patternsAnswer());
+  await placesSettled(slow);
+  assert.equal(slow.d.activeElement, close, 'an answer never takes the keyboard from where the user put it');
+  // A failure: said, Try again, Commit held, no toast; not kept.
+  const failing = await placeHarness(t, { patterns: n => (n === 1 ? { httpError: 500, error: { code: 'BOOM', message: 'Broken' } } : patternsAnswer()) });
+  await failing.select();
+  await placeByKey(failing);
+  await wait(() => failing.d.querySelector('#twPlaceBody [data-tw-place-retry]'));
+  assert.deepEqual([placeStatus(failing), placeNote(failing), failing.notices.filter(n => n.type === 'error')], ['The patterns could not be ranked.', [true, ''], []]);
+  assert.equal(failing.d.querySelector('#twPlaceBody [data-tw-place-retry]').textContent, 'Try again');
+  keyOn(failing, 'Escape');
+  await placeByKey(failing);
+  await placesSettled(failing);
+  assert.equal(failing.reads.length, 2, 'a failed read is not kept');
+  const retry = await placeHarness(t, { patterns: n => (n === 1 ? { httpError: 500, error: { code: 'BOOM', message: 'Broken' } } : patternsAnswer()) });
+  await retry.select();
+  await placeByKey(retry);
+  await wait(() => retry.d.querySelector('#twPlaceBody [data-tw-place-retry]'));
+  retry.d.querySelector('#twPlaceBody [data-tw-place-retry]').click();
+  await placesSettled(retry);
+  assert.deepEqual([retry.reads.length, placeStatus(retry)], [2, '4 patterns, best first · 2 with no clash']);
+  const busy = await placeHarness(t, { patterns: () => ({ httpError: 503, error: { code: 'MAINTENANCE', message: 'Down' } }) });
+  await busy.select();
+  await placeByKey(busy);
+  await wait(() => busy.d.querySelector('#twPlaceBody [data-tw-place-retry]'));
+  assert.equal(placeStatus(busy), 'The server is busy; try again in a moment.');
+  // The board is gone on the server: said, no Try again, Commit held.
+  const gone = await placeHarness(t, { patterns: () => ({ httpError: 404, error: { code: 'NOT_FOUND', message: 'Board not found' } }) });
+  await gone.select();
+  await placeByKey(gone);
+  await wait(() => placeStatus(gone) === 'The board changed; nothing was placed.');
+  assert.deepEqual([gone.d.querySelector('#twPlaceBody [data-tw-place-retry]'), placeNote(gone)], [null, [true, '']]);
+  // No pattern fits.
+  const empty = await placeHarness(t, { patterns: () => patternsAnswer([]) });
+  await empty.select();
+  await placeByKey(empty);
+  await wait(() => placeStatus(empty).startsWith('No complete'));
+  assert.deepEqual([placeStatus(empty), empty.d.querySelector('#twPlaceBody fieldset'), placeNote(empty)],
+    ["No complete pattern fits this board's teaching columns. Check Edit time slots… and blocked times.", null, [true, '']]);
+  // A course that meets once a week: its times, labs marked, in the list and the filter.
+  const once = { ...AI222, required_meetings_per_section: 1 };
+  const times = [
+    { kind: 'lect', day: 'MON', start: '09:00', end: '10:15', verdict: verdictOf(), verdict_rank: 2, score: 1 },
+    { kind: 'lab', day: 'TUE', start: '13:00', end: '15:30', verdict: verdictOf(), verdict_rank: 1, score: 2 },
+    { kind: 'lect', day: 'WED', start: '09:00', end: '10:15', verdict: verdictOf([vItem('time', 'critical', { other: otherAt('AI9', 'S1', 'WED', '09:00', '10:15'), students: 30, blocked_students: 30 })]), verdict_rank: 3, score: 3 },
+  ];
+  const o = await placeHarness(t, { budget: made => placeBudget(made, once), patterns: () => patternsAnswer(times, { required_meetings_per_section: 1, requires_full_section_pattern: false }) });
+  await o.select();
+  await placeByKey(o);
+  await placesSettled(o);
+  assert.equal(o.d.getElementById('twPlaceSub').textContent, 'Term 7 · one meeting a week');
+  assert.deepEqual(placeRadios(o).map(radio => [radio.value, placeName(o, radio)]),
+    [['TUE@13:00-15:30', 'Tuesday 13:00–15:30 · Lab'], ['MON@09:00-10:15', 'Monday 09:00–10:15'], ['WED@09:00-10:15', 'Wednesday 09:00–10:15']]);
+  assert.equal(placeSaid(o, placeRadio(o, 'WED@09:00-10:15'), 1), 'Time clash: AI9 S1 · Wed 09:00–10:15 · 30 students need both', 'no meeting index, no lead');
+  assert.equal(o.d.querySelector('#twPlaceBody fieldset:last-of-type > legend').textContent, 'Times, best first');
+  assert.equal(placeStatus(o), '3 times, best first · 2 with no clash');
+  assert.deepEqual([...o.d.getElementById('twPlaceTime').options].map(option => option.textContent), ['Any time', '\u206609:00–10:15\u2069', '\u206613:00–15:30\u2069 · Lab']);
+  o.d.getElementById('twPlaceCommit').click();
+  await wait(() => o.posts.length === 1 && atRest(o));
+  assert.deepEqual(o.posts[0].meetings, [{ day: 'TUE', start_time: '13:00', end_time: '15:30' }]);
+  const oar = await placeHarness(t, { arabic: true, budget: made => placeBudget(made, once), patterns: () => patternsAnswer(times, { required_meetings_per_section: 1 }) });
+  await oar.select();
+  await placeByKey(oar);
+  await placesSettled(oar);
+  assert.deepEqual([oar.d.getElementById('twPlaceSub').textContent, placeStatus(oar), oar.d.querySelector('#twPlaceBody fieldset:last-of-type > legend').textContent],
+    ['Term 7 · لقاء واحد أسبوعياً', '3 أوقات، الأفضل أولاً · وقتان بلا تعارض', 'الأوقات، الأفضل أولاً']);
+  assert.equal(placeName(oar, placeRadio(oar, 'TUE@13:00-15:30')), 'الثلاثاء 13:00–15:30 · معمل');
+  const timesReply = deferred();
+  const ranking = await placeHarness(t, { budget: made => placeBudget(made, once), patterns: () => timesReply.promise });
+  await ranking.select();
+  await placeByKey(ranking);
+  await settle();
+  assert.equal(placeStatus(ranking), 'Ranking the times…');
+  timesReply.resolve({ httpError: 500, error: { code: 'BOOM', message: 'Broken' } });
+  await wait(() => placeStatus(ranking) === 'The times could not be ranked.');
+});
+
+test('PL14 nothing is sent for a board the patterns were not read for: the scenario, the board and its load each stop the commit', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  const changes = [
+    ['another scenario', () => { h.w.TW.scenarioId = 9; }, () => { h.w.TW.scenarioId = 1; }],
+    ['another board', () => { h.w.TW.boardId = 3; }, () => { h.w.TW.boardId = 2; }],
+    ['the board loading', () => { h.w.TW.loadedBoardId = 3; }, () => { h.w.TW.loadedBoardId = 2; }],
+  ];
+  const alert = h.d.getElementById('twPlaceAlert');
+  for (const [name, change, undo] of changes) {
+    change();
+    h.d.getElementById('twPlaceForm').requestSubmit();
+    await settle();
+    assert.deepEqual([alert.textContent, alert.hidden, h.posts.length], ['The board changed; nothing was placed.', false, 0], name);
+    undo();
+    alert.textContent = '';
+    alert.hidden = true;
+    h.w.drawPlaceDialog();
+    await wait(() => placeNote(h)[0] === false);
+  }
+  h.d.getElementById('twPlaceForm').requestSubmit();
+  await wait(() => h.posts.length === 1);
+});
+
+test('PL15 committing: the keyboard is on the chosen pattern before Commit turns off; the list is busy, the status line says so, the note is quiet', async t => {
+  const answer = deferred();
+  let seen = null;
+  const h = await placeHarness(t, { create: () => answer.promise });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  placeRadio(h, SOFT).click();
+  const commit = h.d.getElementById('twPlaceCommit');
+  commit.focus();
+  const fetch = h.w.fetch;
+  h.w.fetch = async (url, opts) => {
+    if (opts?.method === 'POST') seen = [h.d.activeElement, commit.disabled];
+    return fetch(url, opts);
+  };
+  let atOff = null;
+  const original = Object.getOwnPropertyDescriptor(h.w.HTMLButtonElement.prototype, 'disabled');
+  Object.defineProperty(commit, 'disabled', {
+    configurable: true,
+    get() { return original.get.call(this); },
+    set(value) { if (value && !atOff) atOff = h.d.activeElement; original.set.call(this, value); },
+  });
+  commit.click();
+  await settle();
+  assert.equal(atOff, placeRadio(h, SOFT), 'the keyboard is on the chosen pattern when Commit turns off');
+  assert.deepEqual(seen, [placeRadio(h, SOFT), true]);
+  assert.equal(h.d.getElementById('twPlaceChoices').getAttribute('aria-busy'), 'true');
+  assert.deepEqual([placeStatus(h), h.d.getElementById('twPlaceStatus').closest('[aria-busy="true"]')], ['Placing the section…', null]);
+  assert.deepEqual(placeNote(h), [true, '']);
+  answer.resolve(undefined);
+  await wait(() => !placeDialogEl(h).hasAttribute('open') && atRest(h));
+});
+
+test('PL16 the course’s term when it is not the board’s is a note; a course online for this board says no room is booked; the note gives the first hold before the choice', async t => {
+  const h = await placeHarness(t, { budget: made => placeBudget(made, { ...AI222, programme_term: 5 }) });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  const note = h.d.querySelector('#twPlaceBody > .tw-place-note');
+  assert.deepEqual([note?.getAttribute('role'), note?.querySelector('.ux-tone-icon')?.dataset.tone, note?.textContent],
+    ['note', 'warning', 'This course is in term 5; this board is term 7.']);
+  const same = await placeHarness(t);
+  await same.select();
+  await placeByKey(same);
+  await placesSettled(same);
+  assert.equal(same.d.querySelector('#twPlaceBody .tw-place-note'), null, 'the board’s own term: no note');
+  const ar = await placeHarness(t, { arabic: true, budget: made => placeBudget(made, { ...AI222, programme_term: 5 }) });
+  await ar.select();
+  await placeByKey(ar);
+  await placesSettled(ar);
+  assert.equal(ar.d.querySelector('#twPlaceBody .tw-place-note').textContent, 'هذا المقرر في المستوى 5، وهذه اللوحة للمستوى 7.');
+  // Online for this board (its S1 here says so): no room is booked.
+  const online = await placeHarness(t, { rows: () => [at(10, { course_code: 'AI222', course_key: 'AI222::SEARCH', section: 'S1', is_online: true, needs_room: false })] });
+  await online.select();
+  await placeByKey(online);
+  await placesSettled(online);
+  assert.deepEqual(placeNote(online), [false, 'Chosen: No clash found · Online for this board: no room is booked.']);
+  const oar = await placeHarness(t, { arabic: true, rows: () => [at(10, { course_code: 'AI222', course_key: 'AI222::SEARCH', section: 'S1', is_online: true, needs_room: false })] });
+  await oar.select();
+  await placeByKey(oar);
+  await placesSettled(oar);
+  assert.equal(placeNote(oar)[1], 'المختار: لا تعارض · عن بُعد في هذه اللوحة: لا تُحجز قاعة.');
+  const other = await placeHarness(t, { rows: () => [at(10, { course_code: 'GS101', course_key: 'GS101', is_online: true, needs_room: false })] });
+  await other.select();
+  await placeByKey(other);
+  await placesSettled(other);
+  assert.deepEqual(placeNote(other), [false, `Chosen: No clash found · ${ROOMS_NOTE}`], 'another course online here says nothing of this one');
+  // The first hold, then the choice: busy, a planner job, published.
+  let refresh = null;
+  const n = await placeHarness(t, { more: url => (refresh && url === '/ops/tw/boards/2/' ? refresh.promise : undefined) });
+  await n.select();
+  await placeByKey(n);
+  await placesSettled(n);
+  refresh = deferred();
+  const refreshing = n.w.selectBoard(2);
+  await settle();
+  assert.deepEqual(placeNote(n), [true, BUSY_WORDS]);
+  n.w.dispatchEvent(new n.w.CustomEvent('tw:planner-job', { detail: { scenarioId: 1, job: { job_id: 'job-3', status: 'running' }, source: 'adapter' } }));
+  assert.deepEqual(placeNote(n), [true, 'A planner job is running; edits wait until it ends.']);
+  n.w.TW.scenario.status = 'published';
+  n.w.syncWorkspaceControls();
+  assert.deepEqual(placeNote(n), [true, 'This scenario is published and read-only.']);
+  // A commit asked for all the same is answered inside, and its words go
+  // when that hold ends.
+  const toasts = n.notices.length;
+  n.d.getElementById('twPlaceForm').requestSubmit();
+  await settle();
+  assert.deepEqual([placeAlert(n), n.posts.length, n.notices.slice(toasts)], ['This scenario is published and read-only.', 0, []]);
+  n.w.TW.scenario.status = 'draft';
+  n.w.TW.plannerJob = null;
+  refresh.resolve({ placements: [at(10)], slot_config: MOVE_COLUMNS });
+  refresh = null;
+  await refreshing;
+  assert.deepEqual([placeAlert(n), placeNote(n)], ['', [false, `Chosen: No clash found · ${ROOMS_NOTE}`]]);
+});
+
+test('PL17 the dialog’s other words in Arabic: ranking, failures, the fallback, placing, a label taken, every section placed, a new count, the board changed', async t => {
+  const ar = options => placeHarness(t, { arabic: true, ...options });
+  const open = async (h, label = 'S2') => { await h.select(); await placeByKey(h, label); };
+  // The row's hint, and ranking.
+  const reply = deferred();
+  const slow = await ar({ patterns: () => reply.promise, more: url => (url === '/ops/tw/x/' ? { ok: true } : undefined) });
+  await slow.select();
+  await wait(() => placeRow(slow));
+  assert.equal(placeRow(slow).querySelector('.tw-place-hint').textContent, 'وضع…');
+  await placeByKey(slow);
+  await settle();
+  assert.equal(placeStatus(slow), 'جارٍ ترتيب الأنماط…');
+  reply.resolve(patternsAnswer());
+  await placesSettled(slow);
+  // A write while a pattern is chosen: the list is out of date.
+  placeRadio(slow, SOFT).click();
+  await slow.w.twFetch('/ops/tw/x/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(placeStatus(slow), 'تغيّر الجدول منذ قراءة هذه الأنماط.');
+  assert.equal(slow.d.querySelector('#twPlaceBody [data-tw-place-recheck]').textContent, 'إعادة التحقق');
+  // A failure, and a course that meets once: its times.
+  const failing = await ar({ patterns: () => ({ httpError: 500, error: { code: 'BOOM', message: 'Broken' } }) });
+  await open(failing);
+  await wait(() => failing.d.querySelector('#twPlaceBody [data-tw-place-retry]'));
+  assert.deepEqual([placeStatus(failing), failing.d.querySelector('#twPlaceBody [data-tw-place-retry]').textContent], ['تعذّر ترتيب الأنماط.', 'إعادة المحاولة']);
+  const once = { ...AI222, required_meetings_per_section: 1 };
+  const timesSlow = deferred();
+  const t1 = await ar({ budget: made => placeBudget(made, once), patterns: () => timesSlow.promise });
+  await open(t1);
+  await settle();
+  assert.equal(placeStatus(t1), 'جارٍ ترتيب الأوقات…');
+  timesSlow.resolve({ httpError: 500, error: { code: 'BOOM', message: 'Broken' } });
+  await wait(() => placeStatus(t1) === 'تعذّر ترتيب الأوقات.');
+  // No pattern; the board gone on the server.
+  const empty = await ar({ patterns: () => patternsAnswer([]) });
+  await open(empty);
+  await wait(() => placeStatus(empty).startsWith('لا يوجد'));
+  assert.equal(placeStatus(empty), 'لا يوجد نمط كامل يناسب أعمدة التدريس في هذه اللوحة. راجع «تعديل الفترات الزمنية…» والأوقات المحجوبة.');
+  const gone = await ar({ patterns: () => ({ httpError: 404, error: { code: 'NOT_FOUND', message: 'Board not found' } }) });
+  await open(gone);
+  await wait(() => placeStatus(gone) === 'تغيّرت اللوحة؛ لم يُوضع شيء.');
+  // A drop where no pattern meets.
+  const drop = await ar();
+  await drop.select();
+  await wait(() => placeRow(drop));
+  await dropAt(drop, dragPayloadOf(drop), 'MON', '09:00');
+  await placesSettled(drop);
+  assert.equal(placeStatus(drop), 'لا يوجد نمط يشمل الاثنين \u206609:00–10:15\u2069؛ تُعرض كل الأنماط.');
+  // Placing, then a refusal that says nothing was placed.
+  const answer = deferred();
+  const placing = await ar({ create: () => answer.promise });
+  await open(placing);
+  await placesSettled(placing);
+  placing.d.getElementById('twPlaceCommit').click();
+  await settle();
+  assert.equal(placeStatus(placing), 'جارٍ وضع الشعبة…');
+  answer.resolve({ httpError: 400, error: { code: 'VALIDATION_PLANNED_PATTERN', message: 'Bad' } });
+  await wait(() => placeAlert(placing) && atRest(placing));
+  assert.equal(placeAlert(placing), 'لم يُوضع شيء.');
+  // A label taken meanwhile; then every section placed.
+  const dup = await ar({ create: (body, n, tools) => { tools.make(body, 3); return { httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate' } }; } });
+  await open(dup);
+  await placesSettled(dup);
+  dup.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(dup) && atRest(dup) && placeRadios(dup).length > 0);
+  assert.deepEqual([placeAlert(dup), dup.d.getElementById('twPlaceTitle').textContent], ['وُضعت الشعبة \u2066S2\u2069 في هذه الأثناء؛ هذه الآن \u2066S3\u2069.', 'وضع AI222 S3']);
+  dup.d.getElementById('twPlaceCommit').click();
+  await wait(() => /كل شعب/.test(placeAlert(dup)) && atRest(dup));
+  assert.equal(placeAlert(dup), 'وُضعت كل شعب \u2066AI222\u2069.');
+  // A new count, in its genitive form.
+  const count = await ar({
+    create: () => ({ httpError: 400, error: { code: 'FULL_SECTION_PATTERN_REQUIRED', message: 'AI222 needs a complete 3-meeting section pattern.' } }),
+    patterns: n => (n === 1 ? patternsAnswer() : patternsAnswer(PATTERNS, { required_meetings_per_section: n === 2 ? 3 : 2 })),
+  });
+  await open(count);
+  await placesSettled(count);
+  count.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(count) && atRest(count) && placeRadios(count).length > 0);
+  assert.equal(placeAlert(count), 'يحتاج هذا المقرر الآن إلى 3 لقاءات أسبوعياً؛ أُعيد ترتيب الأنماط.');
+  count.d.getElementById('twPlaceCommit').click();
+  await wait(() => placeAlert(count).includes('لقاءين') && atRest(count));
+  assert.equal(placeAlert(count), 'يحتاج هذا المقرر الآن إلى لقاءين أسبوعياً؛ أُعيد ترتيب الأنماط.');
+  // The board changed under the dialog.
+  const moved = await ar();
+  await open(moved);
+  await placesSettled(moved);
+  moved.w.TW.boardId = 3;
+  moved.d.getElementById('twPlaceForm').requestSubmit();
+  await settle();
+  assert.equal(placeAlert(moved), 'تغيّرت اللوحة؛ لم يُوضع شيء.');
 });

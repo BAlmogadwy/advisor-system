@@ -121,6 +121,10 @@ NEUTRAL_TEMPLATE_SITES = {
     ("static/js/page-timetable-workspace.js", "move"),
     ("static/js/page-timetable-workspace.js", "move-recheck"),
     ("static/js/page-timetable-workspace.js", "move-retry"),
+    # Place: the dialog's Check again and Try again (its × and Cancel are the
+    # template's data-dialog-close).
+    ("static/js/page-timetable-workspace.js", "place-recheck"),
+    ("static/js/page-timetable-workspace.js", "place-retry"),
     # Instructor management: the roster's Refresh, the dialog's ×, and each
     # row's Edit and Deactivate/Activate (built by the page script).
     ("core/templates/core/instructor_management.html", "imRefresh"),

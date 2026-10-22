@@ -23,6 +23,13 @@ themes and languages with their times left to right; a time chosen by its
 accessible name moves the meeting by its time alone, and the card, toned by
 what the move saved, keeps the keyboard; Undo moves it back; a time-locked
 meeting reads nothing.
+
+§7.3, 5f (PlaceDialogTests): Place… from the keyboard alone (Tab to the
+list, ↓ to AI222 S2, Enter, End, Home, Enter) places the section with both
+its meetings in one request, and the keyboard stays in the list; a drag onto
+Thursday 13:00 opens the dialog on that time and sends nothing; the dialog
+reads in both themes and languages, keeps its foot in view while its list
+scrolls, and paints every time left to right in Arabic.
 """
 
 from __future__ import annotations
@@ -1036,3 +1043,237 @@ class MoveDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
         self.assertFalse(page.evaluate("document.getElementById('twMoveDialog').open"))
         self.assertEqual(reads, [])
         self.assertEqual([*sent, *errors], [])
+
+
+# ── Place… (§7.3, 5f) ──
+# Text in the Place dialog under 11px.
+PLACE_SMALL_TEXT = SMALL_TEXT.replace("#twRoomDialog", "#twPlaceDialog")
+# With the list scrolled to its end, the title and the commit are on screen
+# and not covered; the dialog itself never scrolls (its body does).
+PLACE_FOOT_IN_VIEW = (
+    MOVE_FOOT_IN_VIEW.replace("twMoveDialog", "twPlaceDialog")
+    .replace("twMoveBody", "twPlaceBody")
+    .replace("twMoveCommit", "twPlaceCommit")
+    .replace("twMoveTitle", "twPlaceTitle")
+)
+# Every time in the dialog is isolated left to right, as a time; and painted
+# so: the start lies left of the end (an Arabic line would otherwise paint
+# "10:15–09:00").
+PLACE_LTR_TIMES = r"""() => {
+  const times = [...document.querySelectorAll('#twPlaceDialog bdi[dir="ltr"]')];
+  const rows = [...document.querySelectorAll('#twPlaceBody input[name="twPlaceChoice"]')];
+  const bad = times.filter(bdi => !/^\d\d:\d\d–\d\d:\d\d$/.test(bdi.textContent)).map(bdi => `not a time: ${bdi.textContent}`);
+  if (times.length < rows.length * 2) bad.push(`only ${times.length} isolated times for ${rows.length} two-meeting rows`);
+  rows.filter(radio => !document.getElementById(radio.getAttribute('aria-labelledby')).querySelector('bdi[dir="ltr"]'))
+    .forEach(radio => bad.push(`${radio.value}: its time is not isolated`));
+  const first = document.getElementById(rows[0].getAttribute('aria-labelledby')).querySelector('bdi[dir="ltr"]');
+  const text = first.firstChild;
+  const at = (from, to) => { const range = document.createRange(); range.setStart(text, from); range.setEnd(text, to); return range.getBoundingClientRect().left; };
+  if (!(at(0, 5) < at(6, 11))) bad.push(`"${text.textContent.slice(0, 5)}" is not left of "${text.textContent.slice(6, 11)}"`);
+  return bad;
+}"""
+SAY_IN_PLACE_ALERT = """tone => dialogSay(document.getElementById('twPlaceDialog'),
+  tone === 'success' ? placedWords('AI222', 'S2') : PLACE_WORDS.nothingPlaced, tone)"""
+PLACE_ALERT_IN_TONE = ALERT_IN_TONE.replace("twRoomAlert", "twPlaceAlert")
+CHOSEN_PLACE = "document.activeElement?.name === 'twPlaceChoice'"
+# The keyboard on AI222's S2 row in the list.
+ON_S2 = """(() => { const a = document.activeElement;
+  return Boolean(a && a.dataset.course === 'AI222' && /^place:.*\\|S2$/.test(a.dataset.focusKey || '')); })()"""
+
+
+class PlaceDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
+    """Place… (§7.3, 5f) in a real browser. These write, to pytest's
+    database. AI222 (two sections) has S1 placed on Monday and Wednesday
+    13:00, so its S2 is still to place, with two meetings a week."""
+
+    maxDiff = None
+
+    def _s2_placements(self):
+        from core.models import SectionPlacement
+
+        return SectionPlacement.objects.filter(
+            term_section__scenario=self.scenario,
+            term_section__course_code="AI222",
+            term_section__section="S2",
+        )
+
+    def _open_list(self, page) -> None:
+        # Below 1600px the list starts collapsed to its rail: [ opens it.
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        page.keyboard.press("BracketLeft")
+        page.wait_for_function("document.getElementById('twWorkspace').dataset.left === 'open'")
+        page.wait_for_function(
+            "document.querySelectorAll('#twSectionList [tabindex=\"0\"]').length === 1"
+        )
+
+    def test_pb1_the_keyboard_alone_places_ai222_s2_with_both_its_meetings(self) -> None:
+        import json
+
+        for language in ("en", "ar"):
+            self._s2_placements().delete()
+            page, sent, errors = self._load(language, "light", 1440, 790)
+            posts: list[tuple[str, str]] = []
+            page.on(
+                "request",
+                lambda r, posts=posts: posts.append((r.url, r.post_data))
+                if r.method == "POST"
+                else None,
+            )
+            self._open_list(page)
+            page.focus("#twSectionSearch")
+            page.keyboard.press("Tab")
+            self.assertTrue(
+                page.evaluate(
+                    "document.getElementById('twSectionList').contains(document.activeElement)"
+                ),
+                f"{language}: Tab reaches the list",
+            )
+            for _ in range(10):
+                if page.evaluate(ON_S2):
+                    break
+                page.keyboard.press("ArrowDown")
+            self.assertTrue(page.evaluate(ON_S2), f"{language}: ↓ reaches AI222 S2")
+            # Its "Place…" shows where the keyboard is.
+            self.assertEqual(
+                page.evaluate(
+                    "getComputedStyle(document.activeElement.querySelector('.tw-place-hint')).visibility"
+                ),
+                "visible",
+                language,
+            )
+            page.keyboard.press("Enter")
+            page.wait_for_function(CHOSEN_PLACE)
+            chosen = page.evaluate(
+                "[document.activeElement.checked, document.activeElement.value, document.getElementById('twPlaceDialog').open]"
+            )
+            self.assertEqual(chosen[0], True, f"{language}: the keyboard is on the chosen pattern")
+            self.assertTrue(chosen[2], language)
+            rows = page.evaluate(
+                "[...document.querySelectorAll('#twPlaceBody input[name=\"twPlaceChoice\"]')].filter(r => !r.closest('[hidden]')).map(r => r.value)"
+            )
+            self.assertGreater(len(rows), 2, language)
+            self.assertEqual(chosen[1], rows[0], f"{language}: the best pattern is chosen")
+            page.keyboard.press("End")
+            self.assertEqual(
+                page.evaluate("[document.activeElement.value, document.activeElement.checked]"),
+                [rows[-1], True],
+                f"{language}: End",
+            )
+            page.keyboard.press("Home")
+            self.assertEqual(
+                page.evaluate("[document.activeElement.value, document.activeElement.checked]"),
+                [rows[0], True],
+                f"{language}: Home",
+            )
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                """() => !document.getElementById('twPlaceDialog').open
+                  && document.querySelectorAll('.tw-card').length === 6
+                  && document.querySelector('.tw-workspace').dataset.busy === 'false'"""
+            )
+            creates = [body for url, body in posts if url.endswith("/placements/create-planned/")]
+            self.assertEqual(len(creates), 1, f"{language}: one POST")
+            body = json.loads(creates[0])
+            self.assertEqual(
+                [len(body["meetings"]), body["section_label"], body["course_code"]],
+                [2, "S2", "AI222"],
+                language,
+            )
+            self.assertEqual(
+                sorted((p.day, p.start_time) for p in self._s2_placements()),
+                sorted((m["day"], m["start_time"]) for m in body["meetings"]),
+                f"{language}: two S2 placements, at the pattern's times",
+            )
+            self.assertEqual(self._s2_placements().count(), 2, language)
+            self.assertTrue(
+                page.evaluate(
+                    "document.getElementById('twSectionList').contains(document.activeElement)"
+                ),
+                f"{language}: the keyboard stays in the list",
+            )
+            self.assertEqual(errors, [], language)
+            page.context.close()
+
+    def test_pb2_a_drag_onto_thursday_1300_opens_place_on_that_time_and_sends_nothing(self) -> None:
+        page, sent, errors = self._load("en", "light", 1920, 1080)
+        source = page.locator('#twSectionList [data-course="AI222"][data-focus-key$="|S2"]')
+        target = page.locator('#twGrid [role="gridcell"][data-day="THU"][data-start="13:00"]').first
+        source.scroll_into_view_if_needed()
+        source.drag_to(target)
+        page.wait_for_function(
+            "document.getElementById('twPlaceDialog').open"
+            " && document.querySelectorAll('#twPlaceBody input[name=\"twPlaceChoice\"]').length > 0"
+        )
+        self.assertEqual(
+            page.evaluate(
+                "[document.getElementById('twPlaceDay').value, document.getElementById('twPlaceTime').value]"
+            ),
+            ["THU", "13:00-14:15"],
+        )
+        shown = page.evaluate(
+            "[...document.querySelectorAll('#twPlaceBody input[name=\"twPlaceChoice\"]')].filter(r => !r.closest('[hidden]')).map(r => r.value)"
+        )
+        self.assertTrue(shown, "some pattern includes Thursday 13:00")
+        self.assertTrue(all("THU@13:00-14:15" in value for value in shown), shown)
+        page.keyboard.press("Escape")
+        page.wait_for_function("!document.getElementById('twPlaceDialog').open")
+        self.assertEqual(self._s2_placements().count(), 0)
+        self.assertEqual([*sent, *errors], [])
+
+    def test_pb3_the_place_dialog_reads_keeps_its_foot_and_paints_its_times_left_to_right(
+        self,
+    ) -> None:
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                for width, height in ((1366, 650), (1440, 790)):
+                    page, sent, errors = self._load(language, theme, width, height)
+                    self._open_list(page)
+                    page.focus("#twSectionSearch")
+                    page.keyboard.press("Tab")
+                    for _ in range(10):
+                        if page.evaluate(ON_S2):
+                            break
+                        page.keyboard.press("ArrowDown")
+                    page.keyboard.press("Enter")
+                    page.wait_for_function(CHOSEN_PLACE)
+                    found = page.evaluate(
+                        CONTRAST,
+                        [
+                            "#twPlaceDialog .ux-dialog-title",
+                            "#twPlaceDialog .ux-dialog-sub",
+                            "#twPlaceDialog .tw-dialog-status",
+                            "#twPlaceDialog .ux-field-label",
+                            "#twPlaceDialog .fb-lbl",
+                            "#twPlaceDialog select",
+                            "#twPlaceDialog .ux-choice-title",
+                            "#twPlaceDialog .ux-choice-desc",
+                            "#twPlaceDialog .tw-move-verdict",
+                            "#twPlaceDialog .ux-dialog-foot-note",
+                        ],
+                    )
+                    found += page.evaluate(PLACE_SMALL_TEXT)
+                    found += page.evaluate(PLACE_FOOT_IN_VIEW)
+                    if language == "ar":
+                        found += page.evaluate(PLACE_LTR_TIMES)
+                    # The alert line in each tone it takes: drawn here, since
+                    # nothing was refused.
+                    for tone in ("warning", "success"):
+                        page.evaluate(SAY_IN_PLACE_ALERT, tone)
+                        found += page.evaluate(CONTRAST, ["#twPlaceDialog #twPlaceAlert"])
+                        found += page.evaluate(PLACE_ALERT_IN_TONE, tone)
+                    # The course's term when it is not the board's: its note reads too.
+                    page.evaluate("PLACE.request.programme_term = 5; drawPlaceDialog()")
+                    found += page.evaluate(CONTRAST, ["#twPlaceDialog .tw-place-note"])
+                    found += page.evaluate(PLACE_SMALL_TEXT)
+                    # Escape gives the keyboard back to the row.
+                    page.keyboard.press("Escape")
+                    page.wait_for_function("!document.getElementById('twPlaceDialog').open")
+                    if not page.evaluate(ON_S2):
+                        found.append("Escape did not give the keyboard back to the row")
+                    if sent or errors:
+                        found += [*sent, *errors]
+                    if found:
+                        problems[f"{language} {theme} {width}x{height}"] = found
+                    page.context.close()
+        self.assertEqual(problems, {})

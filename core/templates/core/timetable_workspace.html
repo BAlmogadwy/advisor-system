@@ -12,7 +12,7 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
-  <link href="{% static 'css/timetable-workspace.css' %}?v=15" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=16" rel="stylesheet">
   <link href="{% static 'css/timetable-meeting-policy.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
@@ -226,7 +226,7 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
     <div class="ux-pane-body tw-section-list" id="twSectionList" tabindex="-1">
       <p class="tw-pane-empty">{% if LANGUAGE_CODE == 'ar' %}افتح سيناريو لعرض الشعب المطلوبة.{% else %}Open a scenario to see its required sections.{% endif %}</p>
     </div>
-    <p id="twListKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الشعب · Page Up/Down: المستوى التالي · Enter على صف الإنجليزية: اختيار نمطها الأسبوعي{% else %}Arrows: sections · Page Up/Down: next term · Enter on an English row: choose its weekly pattern{% endif %}</p>
+    <p id="twListKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الشعب · Page Up/Down: المستوى التالي · Enter: وضع الشعبة (تُفتح نافذة){% else %}Arrows: sections · Page Up/Down: next term · Enter: place the section (opens a dialog){% endif %}</p>
     <button class="tw-rail" type="button" data-pane-toggle="left" aria-controls="twLeft" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار الشعب المطلوبة{% else %}Show required sections{% endif %}">
       <span class="tw-rail-count tnum" id="twLeftRailCount"></span>
       <span class="tw-rail-label">{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Required sections{% endif %}</span>
@@ -383,6 +383,31 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
   </form>
 </dialog>
 
+{# ── Place: a planned section with its whole weekly pattern, the patterns in the order of the server's verdict (§7.3, 5f); the page draws its title, sub-line and body ── #}
+<dialog id="twPlaceDialog" class="ux-dialog ux-dialog-scroll" aria-labelledby="twPlaceTitle" aria-describedby="twPlaceSub">
+  <form method="dialog" id="twPlaceForm" novalidate>
+    <div class="ux-dialog-head">
+      <div>
+        <h2 class="ux-dialog-title" id="twPlaceTitle"></h2>
+        <p class="ux-dialog-sub" id="twPlaceSub"></p>
+      </div>
+      <button type="button" class="btn btn-sm btn-neutral btn-icon" data-dialog-close aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    {# What the list is doing (ranking, how many patterns and how many the filter keeps, a failure, data that changed, placing): in view above the scrolling body, and said (always in the page, empty and no height when there is nothing to say, so every change is announced). #}
+    <p id="twPlaceStatus" class="ux-choice-status tw-dialog-status" role="status" aria-live="polite"></p>
+    <div class="ux-dialog-body" id="twPlaceBody" tabindex="-1"></div>
+    {# A refusal of the commit, said inside the dialog (a toast behind a modal is never seen). #}
+    <p class="tw-dialog-alert" id="twPlaceAlert" role="alert" hidden></p>
+    <div class="ux-dialog-foot">
+      <p class="ux-dialog-foot-note" id="twPlaceNote"></p>
+      <button type="button" class="btn btn-sm btn-neutral" data-dialog-close>{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+      <button type="submit" class="btn btn-sm btn-primary" id="twPlaceCommit" data-tw-mutation data-tw-hold disabled aria-describedby="twPlaceNote">{% if LANGUAGE_CODE == 'ar' %}وضع الشعبة{% else %}Place section{% endif %}</button>
+    </div>
+  </form>
+</dialog>
+
 {% include "core/partials/pr8_async_job_card.html" %}
 
 {% endblock %}
@@ -400,6 +425,6 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-room-choice.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=55"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=56"></script>
 <script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}
