@@ -4657,11 +4657,16 @@ async function commitPlace() {
    about another section. */
 async function placeRefused(result, { dialog, here, session, about, request, label, at }) {
   const { code } = result;
+  // A create the user left: Escape closes the dialog without starting a new
+  // session, so a closed dialog counts as left too. Its words go where the
+  // user is (dialogSay: the dialog open by then, named, or a toast), and
+  // nothing is read or relabelled for a dialog that is gone.
+  const left = !here || !placeDialogOpen();
   if (code === 'FULL_SECTION_PATTERN_REQUIRED') {
     // The course meets another number of times a week now: the list's rows
     // and the patterns are read again.
     loadBudget();
-    if (!here) {
+    if (left) {
       dialogSay(dialog, PLACE_WORDS.nothingPlaced, 'warning', about);
       return;
     }
@@ -4673,7 +4678,7 @@ async function placeRefused(result, { dialog, here, session, about, request, lab
   }
   if (code === 'PLACEMENT_DUPLICATE') {
     await loadBudget();
-    if (!here) {
+    if (left) {
       dialogSay(dialog, PLACE_WORDS.boardChanged, 'warning', about);
       return;
     }

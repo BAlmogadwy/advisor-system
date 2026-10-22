@@ -918,6 +918,18 @@ findings changed the plan:
    scenario (today only the same board, day and start is a duplicate);
    name the courses online for each board in the board or budget payload;
    compress JSON answers (or leave the legacy fields out with `verdict=1`).
+   **After review (5f):** a create the user left (Escape closes the dialog
+   without a new session) counts as left for every refusal: "complete
+   pattern" says "Nothing was placed." and a label placed meanwhile says
+   "The board changed; nothing was placed.", where the user is (the dialog
+   open by then, named, or a toast), and nothing is read or relabelled for
+   the closed dialog (PL12). The title's course code is escaped (PL18).
+   Equivalents, kept as belt and braces: the board's stop set before the
+   board is read again (`highlightWorkspacePlacements` sets it to the first
+   new card after the read; PL19 pins the outcome), the list row's label
+   escape (labels are `S<n>` made on the page), the `ts:` check in
+   `activateListRow`, and the label check in `commitPlace` (every budget
+   sync relabels).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens

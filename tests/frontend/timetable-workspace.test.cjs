@@ -4985,6 +4985,31 @@ test('PL11 data that moves under an open dialog: nothing chosen reads again by i
   assert.equal(placeDialogEl(g).hasAttribute('open'), true);
 });
 
+test('PL19 after a place the board’s stop is the new section’s first card, not merely the board’s first', async t => {
+  const h = await placeHarness(t);
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  placeRadio(h, SOFT).click();
+  placeRadio(h, SOFT).focus();
+  keyOn(h, 'Enter');
+  await wait(() => h.posts.length === 1 && atRest(h));
+  assert.equal(h.posts[0].meetings[0].day, 'MON');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')].map(element => element.dataset.focusKey), ['placement:91'],
+    'the Monday card, though the Sunday card comes first on the board');
+});
+
+test('PL18 a course code from the budget is text in the dialog title, never markup', async t => {
+  const code = 'AI<b>2"2';
+  const h = await placeHarness(t, { budget: made => placeBudget(made, { ...AI222, course_code: code }) });
+  await h.select();
+  await placeByKey(h);
+  await placesSettled(h);
+  const title = h.d.getElementById('twPlaceTitle');
+  assert.equal(title.querySelector('b'), null);
+  assert.equal(title.textContent, `Place ${code} S2`);
+});
+
 test('PL12 a create the user left (Escape) ends where the user is: a toast with no dialog open; in Move’s dialog, named, when one is open by then; a refusal too', async t => {
   const moves = url => (url.includes('/slot-candidates/') ? movesAnswer() : undefined);
   for (const arabic of [false, true]) {
@@ -5036,6 +5061,47 @@ test('PL12 a create the user left (Escape) ends where the user is: a toast with 
   await wait(() => r.notices.length > quietly && atRest(r));
   assert.deepEqual(r.notices.slice(quietly), [{ type: 'warning', text: 'This scenario is published and read-only.' }]);
   assert.equal(r.w.TW.undoStack.length, 0);
+  // The two refusals Place answers by itself while open (a pattern of another
+  // length; a label placed meanwhile) say so where the user is once left,
+  // and read nothing for the closed dialog: no toast there, none missing.
+  for (const [code, words] of [
+    ['FULL_SECTION_PATTERN_REQUIRED', 'Nothing was placed.'],
+    ['PLACEMENT_DUPLICATE', 'The board changed; nothing was placed.'],
+  ]) {
+    // No dialog open by then: a toast.
+    const answer = deferred();
+    const g = await placeHarness(t, { create: () => answer.promise });
+    await g.select();
+    await placeByKey(g);
+    await placesSettled(g);
+    g.d.getElementById('twPlaceCommit').click();
+    await settle();
+    keyOn(g, 'Escape');
+    const said = g.notices.length;
+    const reads = g.requests.filter(row => row.url.includes('/planned-slot-candidates/')).length;
+    answer.resolve({ httpError: 409, error: { code, message: 'refused' } });
+    await wait(() => g.notices.length > said && atRest(g));
+    assert.deepEqual(g.notices.slice(said), [{ type: 'warning', text: words }], code);
+    assert.equal(g.requests.filter(row => row.url.includes('/planned-slot-candidates/')).length, reads, `${code}: nothing read for the closed dialog`);
+    assert.equal(g.w.TW.undoStack.length, 0);
+    // Move's dialog open by then: said there, named.
+    const late = deferred();
+    const m = await placeHarness(t, { more: moves, create: () => late.promise });
+    await m.select();
+    await placeByKey(m);
+    await placesSettled(m);
+    m.d.getElementById('twPlaceCommit').click();
+    await settle();
+    keyOn(m, 'Escape');
+    moveByKey(m, 10);
+    await movesSettled(m);
+    const toasts = m.notices.length;
+    late.resolve({ httpError: 409, error: { code, message: 'refused' } });
+    const line = m.d.getElementById('twMoveAlert');
+    await wait(() => !line.hidden && atRest(m));
+    assert.equal(line.textContent, `\u2066AI222\u2069 \u2066S2\u2069: ${words}`, code);
+    assert.deepEqual(m.notices.slice(toasts), [], `${code}: no toast behind Move's dialog`);
+  }
   // Place open again by then: on another section, said there, named, and its
   // own Commit not held; on the same section, held.
   for (const [label, words, held] of [
