@@ -414,6 +414,7 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
 
     Uses an explicit scenario's academic year and term, otherwise saved system
     defaults, so the frontend initializes its filters in the requested scope.
+    ``programme_choices`` lists the programme codes that have a degree plan.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -428,6 +429,7 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
         endpoint_map,
         is_async_job_ui_effective,
     )
+    from core.services.section_limits import known_programmes
 
     pr8_on = is_async_job_ui_effective()
     pr8_config = {
@@ -443,6 +445,9 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
     context = {
         **get_sidebar_context(request),
         **_workspace_page_scope(request),
+        # The programmes with a degree plan (ProgrammeRequirement), one
+        # DISTINCT query: the Generate dialog's chips, not student data.
+        "programme_choices": sorted(known_programmes()),
         "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED": pr8_on,
         "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED": getattr(
             _settings, "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", False
@@ -962,8 +967,15 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_scenario_readiness_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
-    """Return publish readiness without mutating the scenario."""
+    """Return publish readiness without mutating the scenario.
+
+    ``readiness`` is ``check_publish_readiness`` as is: the English
+    ``blockers`` / ``warnings`` and the parallel structured ``blocker_items`` /
+    ``warning_items``. One teacher map is read for the whole request (each
+    board's conflict check would otherwise recompute it).
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1208,11 +1220,14 @@ def tw_scenario_graph_sync_view(request: HttpRequest, scenario_id: int) -> JsonR
 @login_required(login_url="login")
 @require_POST
 @guard_manual_scenario_write
+@_one_teacher_request
 def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Publish (lock) a scenario, preventing further modifications.
 
-    Runs a readiness check first; if critical blockers exist the publish
-    is rejected with ``PUBLISH_BLOCKED`` and the list of blockers/warnings.
+    Runs a readiness check first; if any blocker exists the publish is
+    rejected with ``PUBLISH_BLOCKED``, a message that counts the blockers, and
+    ``details`` carrying the blockers/warnings (English strings) and the
+    structured ``blocker_items`` / ``warning_items``.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -1229,13 +1244,16 @@ def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResp
     readiness = check_publish_readiness(scenario_id)
 
     if not readiness["ready"]:
+        blocker_count = len(readiness["blockers"])
         return _err(
-            "Cannot publish: critical issues",
+            f"Cannot publish: {blocker_count} {'blocker' if blocker_count == 1 else 'blockers'}",
             code="PUBLISH_BLOCKED",
             status=400,
             details={
                 "blockers": readiness["blockers"],
                 "warnings": readiness["warnings"],
+                "blocker_items": readiness["blocker_items"],
+                "warning_items": readiness["warning_items"],
             },
         )
 

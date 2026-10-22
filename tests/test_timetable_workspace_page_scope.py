@@ -9,7 +9,7 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from core.models import TimetableScenario
+from core.models import ProgrammeRequirement, Student, TimetableScenario
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, ensure_role_groups
 
 pytestmark = pytest.mark.django_db
@@ -110,6 +110,35 @@ def test_requested_scope_values_do_not_break_the_rendered_javascript(path, year,
         check=False,
     )
     assert parsed.returncode == 0, parsed.stderr
+
+
+def test_workspace_page_lists_the_programmes_that_have_a_degree_plan(http):
+    # Each programme once however many plan rows it has, sorted, and read from
+    # the degree plans: a student's programme with no plan is not offered.
+    for program, code in [
+        ("DS2", "DS201"),
+        ("AI", "AI101"),
+        ("AI", "AI102"),
+        ("COE", "COE101"),
+        ("AI2", "AI101"),
+        ("cs ", "CS101"),
+    ]:
+        ProgrammeRequirement.objects.create(program=program, course_code=code)
+    Student.objects.create(student_id=9001, program="ZZ")
+
+    with CaptureQueriesContext(connection) as queries:
+        response = http.get("/timetable-workspace/")
+
+    assert response.status_code == 200
+    assert response.context["programme_choices"] == ["AI", "AI2", "COE", "CS", "DS2"]
+    assert sum("programme_requirements" in q["sql"] for q in queries) == 1
+
+
+def test_workspace_page_has_no_programme_choices_without_degree_plans(http):
+    response = http.get("/timetable-workspace/")
+
+    assert response.status_code == 200
+    assert response.context["programme_choices"] == []
 
 
 # A lock keeps a section's days and times; its room can still change.
