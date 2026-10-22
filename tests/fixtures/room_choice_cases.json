@@ -1,7 +1,8 @@
 {
-  "about": "Change room's rules, stated once for both implementations: TimetableRoomChoice (static/js/timetable-room-choice.js) and split view's roomCodeKey, roomIsOccupied and roomFitsSection (static/js/page-timetable-workspace-split.js). Each room is a candidate as preview_placement_room_candidates sends it; `target` overrides fields of the shared target for that case, `placement` (when present, even null) replaces the shared placement, and `facts` (when present) is the room's factsHtml in English and Arabic. A room that fits (type, gender, seats) can be chosen when it is free or when another section holds it at that time (owner ruling 2026-10-20), and a room that does not fit is a misfit even when it is held; the verdict reads occupied_by only, never the server's tone or `available`, and compares board ids as text. A room that fits, is free and has department_fit false (outside the board's programme rooms) is its own group, a warning worded as Issues word what it saves (Room unsuitable); a room in use keeps its clash's group and tone when it is also outside them, and its words add that. occupied_by is what the server sends: since PR #173 it leaves out the section's own same-slot copies (the ones a room change moves with the meeting); before it, those copies are listed as occupants. Misfit reasons name the type and the gender only: a room short of seats says so in its facts.",
+  "about": "Change room's rules, stated once for both implementations: TimetableRoomChoice (static/js/timetable-room-choice.js) and split view's roomCodeKey, roomIsOccupied and roomFitsSection (static/js/page-timetable-workspace-split.js). Each room is a candidate as preview_placement_room_candidates sends it; `target` overrides fields of the shared target for that case, `placement` (when present, even null) replaces the shared placement, and `facts` (when present) is the room's factsHtml in English and Arabic. A room that fits (type, gender, seats) can be chosen when it is free or when another section holds it at that time (owner ruling 2026-10-20), and a room that does not fit is a misfit even when it is held; the verdict reads occupied_by only, never the server's tone or `available`, and compares board ids as text. A room that fits, is free and has department_fit false (outside the board's programme rooms) is its own group, a warning worded as Issues word what it saves (Room unsuitable); a room in use keeps its clash's group and tone when it is also outside them, and its words add that. occupied_by is what the server sends: since PR #173 it leaves out the section's own same-slot copies (the ones a room change moves with the meeting); before it, those copies are listed as occupants. Misfit reasons name the type and the gender only: a room short of seats says so in its facts. A case with `audit_target` is an answer asked with ?audit=1 (5c-audit): its target carries `audit`, the shared audit_target with the case's fields over it, and its room the audit's answer (`audit`, as the server sends it; a room without one is judged by the legacy rule). Judged by the audit (target.audit.assessed exactly true and the room carrying `audit`), a room the audit refuses for gender or type (the owner's answer to Q1) is a misfit, with those reasons named from the audit's need; every other room can be chosen: in use (critical on this board, else a warning), flagged (a warning: the meeting's quality reasons after the save, undersized as Room too small and incompatible as Room unsuitable, missing left to the board) or free; its words are Issues' card for it once saved (the lead of its tone, the kinds in Issues' order), then why: the seats the audit needs when Room too small is among them, the programme rooms it is outside (this board's, else the others' by label), a board with no programme, and the room each copy that stays keeps. Its facts measure seats against the audit's need. `fits` and `occupied` stay the legacy rule (split view's answer), so an audit case may fit and be a misfit, or not fit and be chosen: the parity test pins that classic and split differ only on such cases.",
   "placement": {"id": 10, "board_id": 2},
   "target": {"day": "SUN", "start": "09:00", "end": "10:15", "required_type": "lecture", "required_gender": "M", "required_capacity": 30},
+  "audit_target": {"assessed": true, "save": "room_only", "required_type": "lecture", "required_capacity": 26, "capacity_source": "budget", "required_gender": "M", "boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}], "placement_ids": [10], "moving_placement_ids": [10], "kept": [], "current": null},
   "cases": [
     {
       "name": "a free room that fits",
@@ -264,6 +265,248 @@
       "room": null,
       "code_key": "", "fits": false, "occupied": false,
       "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "judged by the audit, a room it flags nothing for is free and fits; its seats are measured against the audit's need",
+      "audit_target": {},
+      "room": {"room_code": "R40", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": [], "programme_board_ids": [], "quality_reasons": []}},
+      "code_key": "R40", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 40 seats · 14 spare · Male (M)", "ar": "قاعة محاضرات · 40 مقعداً · 14 مقعداً فائضاً · طلاب (M)"}
+    },
+    {
+      "name": "a room short of the audit's seats can be chosen (the owner's answer to Q1): a warning, Room too small, with the seats it needs",
+      "audit_target": {},
+      "room": {"room_code": "R25", "room_type": "lecture", "capacity": 25, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": true, "reasons": ["capacity"], "programme_board_ids": [], "quality_reasons": ["undersized"]}},
+      "code_key": "R25", "fits": false, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room too small · needs 26 seats", "ar": "يُضعف الجودة: القاعة أصغر من المطلوب · يحتاج 26 مقعداً"},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 25 seats · 1 short · Male (M)", "ar": "قاعة محاضرات · 25 مقعداً · ينقصها مقعد واحد · طلاب (M)"}
+    },
+    {
+      "name": "a room the legacy seats refuse and the audit's accept is free and fits",
+      "audit_target": {},
+      "room": {"room_code": "R28", "room_type": "lecture", "capacity": 28, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": [], "programme_board_ids": [], "quality_reasons": []}},
+      "code_key": "R28", "fits": false, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 28 seats · 2 spare · Male (M)", "ar": "قاعة محاضرات · 28 مقعداً · مقعدان فائضان · طلاب (M)"}
+    },
+    {
+      "name": "a room the legacy seats offer and the audit finds too small is a warning that says so",
+      "target": {"required_capacity": 20},
+      "audit_target": {},
+      "room": {"room_code": "R24", "room_type": "lecture", "capacity": 24, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": true, "reasons": ["capacity"], "programme_board_ids": [], "quality_reasons": ["undersized"]}},
+      "code_key": "R24", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room too small · needs 26 seats", "ar": "يُضعف الجودة: القاعة أصغر من المطلوب · يحتاج 26 مقعداً"},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 24 seats · 2 short · Male (M)", "ar": "قاعة محاضرات · 24 مقعداً · ينقصها مقعدان · طلاب (M)"}
+    },
+    {
+      "name": "the wrong type by the audit's need is refused, and named from that need, not the legacy one",
+      "audit_target": {"required_type": "lab"},
+      "room": {"room_code": "R32", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["type"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R32", "fits": true, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a lab"], "ar": ["هذا اللقاء يحتاج إلى معمل"]}
+    },
+    {
+      "name": "the wrong gender by the audit's need is refused, and named from that need, not the legacy one",
+      "target": {"required_gender": null},
+      "audit_target": {},
+      "room": {"room_code": "R33", "room_type": "lecture", "capacity": 40, "section": "F", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["gender"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R33", "fits": true, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a Male (M) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة طلاب (M)"]}
+    },
+    {
+      "name": "a room with no gender fits by the legacy rule and is refused by the audit's",
+      "audit_target": {},
+      "room": {"room_code": "R34", "room_type": "lecture", "capacity": 40, "section": "", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["gender"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R34", "fits": true, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a Male (M) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة طلاب (M)"]},
+      "facts": {"en": "Lecture room · 40 seats · 14 spare", "ar": "قاعة محاضرات · 40 مقعداً · 14 مقعداً فائضاً"}
+    },
+    {
+      "name": "a room of the wrong type and gender by the audit names both, the lead once",
+      "audit_target": {},
+      "room": {"room_code": "R35", "room_type": "lab", "capacity": 40, "section": "F", "available": false, "tone": "block", "fits_type": false, "fits_gender": false, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["type", "gender"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R35", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a lecture room", "needs a Male (M) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة محاضرات", "إلى قاعة طلاب (M)"]}
+    },
+    {
+      "name": "a type the audit needs that is not a lecture room or a lab is named, isolated",
+      "audit_target": {"required_type": "studio"},
+      "room": {"room_code": "R36", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["type"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R36", "fits": true, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a room of type \u2066studio\u2069"], "ar": ["هذا اللقاء يحتاج إلى قاعة من نوع \u2066studio\u2069"]}
+    },
+    {
+      "name": "a room outside this board's programme rooms is a choosable warning, never the legacy outside group",
+      "audit_target": {},
+      "room": {"room_code": "R37", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "warn", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [2], "quality_reasons": ["incompatible"]}},
+      "code_key": "R37", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room with no department: in the pool by the legacy rule, outside it by the audit's",
+      "audit_target": {},
+      "room": {"room_code": "R38", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [2], "quality_reasons": ["incompatible"]}},
+      "code_key": "R38", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a shared meeting: a room outside another board's programme rooms names that board",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}]},
+      "room": {"room_code": "R39", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [3], "quality_reasons": ["incompatible"]}},
+      "code_key": "R39", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside the programme rooms of \u2066DS T3\u2069", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج \u2066DS T3\u2069"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "outside two other boards' programme rooms names both, a board id as text found all the same",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}, {"board_id": 5, "board_label": "CS T5", "programmes": ["CS"]}]},
+      "room": {"room_code": "R41", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [3, "5"], "quality_reasons": ["incompatible"]}},
+      "code_key": "R41", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside the programme rooms of \u2066DS T3\u2069, \u2066CS T5\u2069", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج \u2066DS T3\u2069، \u2066CS T5\u2069"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a board with no programme: every room is unsuitable, and the row says why",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 4, "board_label": "GEN T1", "programmes": []}]},
+      "room": {"room_code": "R42", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [4], "quality_reasons": ["incompatible"]}},
+      "code_key": "R42", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · \u2066GEN T1\u2069 has no programme", "ar": "يُضعف الجودة: القاعة غير مناسبة · ليس للوحة \u2066GEN T1\u2069 برنامج"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "outside this board's programme rooms and on a board with no programme: both said",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 4, "board_label": "GEN T1", "programmes": []}]},
+      "room": {"room_code": "R43", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [2, 4], "quality_reasons": ["incompatible"]}},
+      "code_key": "R43", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside this board's programme rooms · \u2066GEN T1\u2069 has no programme", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة · ليس للوحة \u2066GEN T1\u2069 برنامج"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "too small and outside the programme rooms: Issues' kinds in Issues' order, then the seats, then the pool",
+      "audit_target": {},
+      "room": {"room_code": "R20", "room_type": "lecture", "capacity": 20, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": false, "occupied_by": [], "audit": {"compatible": false, "undersized": true, "reasons": ["programme", "capacity"], "programme_board_ids": [2], "quality_reasons": ["undersized", "incompatible"]}},
+      "code_key": "R20", "fits": false, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room too small, Room unsuitable · needs 26 seats · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة أصغر من المطلوب, القاعة غير مناسبة · يحتاج 26 مقعداً · خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 20 seats · 6 short · Male (M)", "ar": "قاعة محاضرات · 20 مقعداً · ينقصها 6 مقاعد · طلاب (M)"}
+    },
+    {
+      "name": "held on this board, too small and outside: the clash first, critical, then the warnings",
+      "audit_target": {},
+      "room": {"room_code": "R44", "room_type": "lecture", "capacity": 20, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": false, "occupied_by": [{"placement_id": 21, "term_section_id": 121, "board_id": 2, "board_label": "Term 2", "section": "AI20-S1", "day": "SUN", "start": "09:00", "end": "10:15"}], "audit": {"compatible": false, "undersized": true, "reasons": ["programme", "capacity"], "programme_board_ids": [2], "quality_reasons": ["undersized", "incompatible"]}},
+      "code_key": "R44", "fits": false, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "critical", "en": "Blocks publishing: Room double-booked, Room too small, Room unsuitable · needs 26 seats · outside this board's programme rooms", "ar": "يمنع النشر: القاعة محجوزة مرتين, القاعة أصغر من المطلوب, القاعة غير مناسبة · يحتاج 26 مقعداً · خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "held only on another board and too small: Room too small before Room also booked on another board, as Issues order them",
+      "audit_target": {},
+      "room": {"room_code": "R45", "room_type": "lecture", "capacity": 25, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true, "occupied_by": [{"placement_id": 31, "term_section_id": 131, "board_id": 3, "board_label": "Term 3", "section": "CS30-S2", "day": "SUN", "start": "09:00", "end": "10:15"}], "audit": {"compatible": true, "undersized": true, "reasons": ["capacity"], "programme_board_ids": [], "quality_reasons": ["undersized"]}},
+      "code_key": "R45", "fits": false, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "warning", "en": "Lowers quality: Room too small, Room also booked on another board · needs 26 seats", "ar": "يُضعف الجودة: القاعة أصغر من المطلوب, القاعة محجوزة في لوحة أخرى · يحتاج 26 مقعداً"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "held on this board (its id as text), the audit flagging nothing: the critical clash alone",
+      "audit_target": {},
+      "room": {"room_code": "R46", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [{"placement_id": 21, "term_section_id": 121, "board_id": "2", "board_label": "Term 2", "section": "AI20-S1", "day": "SUN", "start": "09:00", "end": "10:15"}], "audit": {"compatible": true, "undersized": false, "reasons": [], "programme_board_ids": [], "quality_reasons": []}},
+      "code_key": "R46", "fits": true, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "critical", "en": "Blocks publishing: Room double-booked", "ar": "يمنع النشر: القاعة محجوزة مرتين"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "held, but refused for gender: a misfit, not a clash",
+      "audit_target": {},
+      "room": {"room_code": "R47", "room_type": "lecture", "capacity": 40, "section": "F", "available": false, "tone": "block", "fits_type": true, "fits_gender": false, "fits_capacity": true, "department_fit": true, "occupied_by": [{"placement_id": 21, "term_section_id": 121, "board_id": 2, "board_label": "Term 2", "section": "AI20-S1", "day": "SUN", "start": "09:00", "end": "10:15"}], "audit": {"compatible": false, "undersized": false, "reasons": ["gender"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R47", "fits": false, "occupied": true,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a Male (M) room"], "ar": ["هذا اللقاء يحتاج إلى قاعة طلاب (M)"]}
+    },
+    {
+      "name": "a copy of the class that stays in its room leaves the class split: unsuitable, and the row names where it stays",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}], "kept": [{"placement_id": 31, "board_id": 3, "board_label": "DS T3", "room": "R50"}]},
+      "room": {"room_code": "R60", "room_type": "lecture", "capacity": 60, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": ["split"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R60", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · the same class stays in \u2066R50\u2069 (\u2066DS T3\u2069)", "ar": "يُضعف الجودة: القاعة غير مناسبة · تبقى الشعبة نفسها في \u2066R50\u2069 (\u2066DS T3\u2069)"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "copies staying in one room on two boards are one room with both boards",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}, {"board_id": 5, "board_label": "CS T5", "programmes": ["CS"]}], "kept": [{"placement_id": 31, "board_id": 3, "board_label": "DS T3", "room": "R50"}, {"placement_id": 32, "board_id": 5, "board_label": "CS T5", "room": " r50 "}]},
+      "room": {"room_code": "R61", "room_type": "lecture", "capacity": 60, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": ["split"], "programme_board_ids": [], "quality_reasons": ["incompatible"]}},
+      "code_key": "R61", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · the same class stays in \u2066R50\u2069 (\u2066DS T3\u2069, \u2066CS T5\u2069)", "ar": "يُضعف الجودة: القاعة غير مناسبة · تبقى الشعبة نفسها في \u2066R50\u2069 (\u2066DS T3\u2069، \u2066CS T5\u2069)"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "the room a copy stays in is not named as staying elsewhere, nor a copy with no room (Issues read that from the board)",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}, {"board_id": 5, "board_label": "CS T5", "programmes": ["CS"]}], "kept": [{"placement_id": 31, "board_id": 3, "board_label": "DS T3", "room": "R50"}, {"placement_id": 32, "board_id": 5, "board_label": "CS T5", "room": "R70"}, {"placement_id": 33, "board_id": 3, "board_label": "DS T3", "room": "UNASSIGNED"}, {"placement_id": 34, "board_id": 3, "board_label": "DS T3", "room": ""}]},
+      "room": {"room_code": " r50 ", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": ["split", "unroomed_copy"], "programme_board_ids": [], "quality_reasons": ["missing", "incompatible"]}},
+      "code_key": "R50", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · the same class stays in \u2066R70\u2069 (\u2066CS T5\u2069)", "ar": "يُضعف الجودة: القاعة غير مناسبة · تبقى الشعبة نفسها في \u2066R70\u2069 (\u2066CS T5\u2069)"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a copy that stays in a small room makes the meeting too small: the seats it needs are said though this room alone has them",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}], "kept": [{"placement_id": 31, "board_id": 3, "board_label": "DS T3", "room": "R21"}]},
+      "room": {"room_code": "R62", "room_type": "lecture", "capacity": 60, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": ["split"], "programme_board_ids": [], "quality_reasons": ["undersized", "incompatible"]}},
+      "code_key": "R62", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room too small, Room unsuitable · needs 26 seats · the same class stays in \u2066R21\u2069 (\u2066DS T3\u2069)", "ar": "يُضعف الجودة: القاعة أصغر من المطلوب, القاعة غير مناسبة · يحتاج 26 مقعداً · تبقى الشعبة نفسها في \u2066R21\u2069 (\u2066DS T3\u2069)"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a copy with no room alone: Issues read it from the board, so the room is free and fits",
+      "audit_target": {"boards": [{"board_id": 2, "board_label": "AI T3", "programmes": ["AI"]}, {"board_id": 3, "board_label": "DS T3", "programmes": ["DS"]}], "kept": [{"placement_id": 31, "board_id": 3, "board_label": "DS T3", "room": ""}]},
+      "room": {"room_code": "R63", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": ["unroomed_copy"], "programme_board_ids": [], "quality_reasons": ["missing"]}},
+      "code_key": "R63", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "an answer whose audit did not judge the meeting is judged by the legacy rule: short of the legacy seats, a misfit",
+      "audit_target": {"assessed": false, "reason": "duplicate_room_codes"},
+      "room": {"room_code": "R26", "room_type": "lecture", "capacity": 25, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": true, "reasons": ["capacity"], "programme_board_ids": [], "quality_reasons": ["undersized"]}},
+      "code_key": "R26", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 25 seats · 5 short · Male (M)", "ar": "قاعة محاضرات · 25 مقعداً · ينقصها 5 مقاعد · طلاب (M)"}
+    },
+    {
+      "name": "an audit judged only when it says assessed exactly true",
+      "audit_target": {"assessed": "true"},
+      "room": {"room_code": "R27", "room_type": "lecture", "capacity": 28, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": false, "department_fit": true, "occupied_by": [], "audit": {"compatible": true, "undersized": false, "reasons": [], "programme_board_ids": [], "quality_reasons": []}},
+      "code_key": "R27", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room the answer gives no audit is judged by the legacy rule, its outside group included",
+      "audit_target": {},
+      "room": {"room_code": "R48", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "warn", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false, "occupied_by": []},
+      "code_key": "R48", "fits": true, "occupied": false,
+      "verdict": {"group": "outside", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a meeting whose board id comes as text is on the board the audit names by number: outside this board's programme rooms",
+      "placement": {"id": 10, "board_id": "2"},
+      "audit_target": {},
+      "room": {"room_code": "R49", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": [], "audit": {"compatible": false, "undersized": false, "reasons": ["programme"], "programme_board_ids": [2], "quality_reasons": ["incompatible"]}},
+      "code_key": "R49", "fits": true, "occupied": false,
+      "verdict": {"group": "flagged", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة"},
       "reasons": {"en": [], "ar": []}
     }
   ]
