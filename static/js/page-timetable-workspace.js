@@ -129,7 +129,11 @@ function activateListRow(cell) {
         : (IS_AR ? 'انتظر انتهاء العملية الحالية.' : 'Wait for the current operation to finish.'));
       return;
     }
-    Promise.resolve(cell._twEnglish()).finally(() => listNav?.restore());
+    // Back on the list after the chooser, unless the user went elsewhere.
+    Promise.resolve(cell._twEnglish()).finally(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || $('twSectionList').contains(active)) listNav?.restore();
+    });
     return;
   }
   announceBoard(IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.');

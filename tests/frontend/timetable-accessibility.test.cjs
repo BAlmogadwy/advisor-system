@@ -703,3 +703,36 @@ test('K3 the pane keys read the key typed first; only another script’s letter 
   assert.equal(h.doc.activeElement, h.doc.querySelector('#twLeft .tw-pane-collapse'));
   h.dom.window.close();
 });
+
+test('R11 roving: a pending key survives a redraw that misses it once; the keys line scrolls whatever has the keyboard, once', async () => {
+  const h = rovingFixture();
+  const grid = h.doc.getElementById('A');
+  h.nav.active('p:1', { focus: true });
+  h.nav.active('p:98');
+  h.nav.refresh();  // one miss
+  grid.querySelector('[data-focus-key="A:MON:570"]').innerHTML = '<div class="c" data-focus-key="p:98">late</div>';
+  h.nav.refresh();
+  assert.deepEqual(h.zeros(h.board), ['p:98'], 'still waiting after one miss');
+  // Keys line: one scroll when it appears; none for a later keyboard focus.
+  const hint = h.doc.createElement('p');
+  hint.hidden = true;
+  h.doc.body.appendChild(hint);
+  h.w.UXControls.roving(h.board, { hint });
+  h.doc.getElementById('outside').focus();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  h.doc.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  h.nav.element().focus();
+  h.press('ArrowRight');  // moved on within the frame
+  h.scrolled.length = 0;
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(h.scrolled, [h.focused()], 'the stop that has the keyboard now, once');
+  h.dom.window.close();
+});
+
+test('K4 the pane keys never take Shift with another script’s letter', () => {
+  const h = panesHarness();
+  const before = h.workspace.dataset.left;
+  h.press({ key: 'ج', code: 'BracketLeft', shiftKey: true });
+  assert.equal(h.workspace.dataset.left, before);
+  h.dom.window.close();
+});

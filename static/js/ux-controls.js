@@ -539,7 +539,9 @@
       if (self.pending) {
         stop = byKey(grid, self.pending);
         // A key named before it is drawn waits for the redraw that draws it,
-        // not for ever (a stale one would take the keyboard much later).
+        // not for ever (a stale one would take the keyboard much later). A
+        // page redraw usually refreshes twice (its own call, then the
+        // observer), so name the key just before the redraw that draws it.
         if (stop || ++self.misses > 1) { self.pending = ''; self.misses = 0; }
       }
       stop = stop || byKey(grid, self.key);
@@ -647,11 +649,12 @@
       if (stop) setActive(grid, stop);
       if (opt.hint && lastInputWasKeyboard && opt.hint.hidden) {
         opt.hint.hidden = false;
-        // The line takes room below its region: keep the stop in view.
-        const shown = stop || null;
-        if (shown && typeof shown.scrollIntoView === 'function') {
-          (window.requestAnimationFrame || setTimeout)(() => shown.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
-        }
+        // The line takes room below its region: keep in view whatever has the
+        // keyboard by then (it may have moved on within the frame).
+        (window.requestAnimationFrame || setTimeout)(() => {
+          const now = document.activeElement;
+          if (now && region.contains(now) && typeof now.scrollIntoView === 'function') now.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
       }
     });
     region.addEventListener('focusout', event => {

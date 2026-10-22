@@ -1786,3 +1786,19 @@ test('W10 Enter on an English row the page cannot act on says why; after the cho
   keyOn(h, 'Enter');
   assert.equal(h.d.getElementById('twBoardStatus').textContent, 'This scenario is published and read-only.');
 });
+
+test('W11 Enter on an English row of the unplaced list opens its pattern; the keyboard stays where the user put it', async t => {
+  const u = await listHarness(t, { budget: () => [], unplaced: () => [{ term_section_id: 77, course_code: 'ENG101', section: 'S1', meetings: [] }] });
+  await u.select();
+  await wait(() => u.d.querySelector('#twSectionList [data-focus-key="ts:77"]'));
+  let resolve;
+  const calls = [];
+  u.w.chooseEnglishWorkspacePattern = item => { calls.push(item.term_section_id); return new Promise(r => { resolve = r; }); };
+  u.d.querySelector('#twSectionList [data-focus-key="ts:77"]').focus();
+  keyOn(u, 'Enter');
+  assert.deepEqual(calls, [77]);
+  u.d.getElementById('twSearch').focus();  // the user moved on meanwhile
+  resolve(null);
+  await settle(); await settle();
+  assert.equal(u.d.activeElement.id, 'twSearch', 'not pulled back to the list');
+});
