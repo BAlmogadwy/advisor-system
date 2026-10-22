@@ -253,11 +253,18 @@ async function twFetch(url, opts = {}) {
   // the failure instead (true = handled: no toast). It hears of every
   // failure the server or the network gives, since a dialog keeps its
   // messages inside itself (a toast behind a modal is never seen): `body` is
-  // null when the answer is not JSON (a proxy's error page); status 0 means
-  // no answer could be read at all. It does not hear the local busy guard
-  // below, which warns and returns null before any request is made; a
-  // dialog's commit does not meet that guard, since its button carries
-  // data-tw-mutation and is off while the workspace is busy.
+  // null when a refusal is not JSON (a proxy's error page); status 0 means
+  // no answer could be read — the request failed, or a success came back
+  // that is not JSON (an expired session's login page).
+  // It does not hear the local busy guard below, which toasts and returns
+  // null before any request is made. Today's callers (publish, drop, the slot
+  // editor) use no dialog or the page's `dlg` ones, which sit under the
+  // toasts and leave them announced, so that toast is seen even when the
+  // slot editor reopens on it. A template <dialog> opened modal
+  // (UXControls.dialog) is in the top layer, over every toast: it keeps its
+  // commit off while the workspace is busy (data-tw-mutation, which
+  // syncWorkspaceControls turns off) and checks workspaceCanEdit() before it
+  // writes, or it gets null with nothing said inside it.
   // It is asked at most once. A handler that throws has not handled the
   // failure: the slip is logged, and the toast follows as if there were no
   // handler (the server's message; none for a quiet request).

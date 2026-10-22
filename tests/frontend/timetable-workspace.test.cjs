@@ -278,6 +278,31 @@ test('F5 a quiet request fails without a toast, whether refused or unanswered', 
   assert.equal(h.d.getElementById('twOptimise').disabled, false, 'every failed write lets go of the page');
 });
 
+test('F6 a write held by the busy guard never reaches the handler; a handler that answers nothing has not taken the failure', async t => {
+  const hang = deferred();
+  let fail = null;
+  const h = await harness(t, (url, opts) => {
+    if (url === '/ops/tw/placements/11/move/' && opts.method === 'POST') return hang.promise;
+    return url === MOVE_URL && opts.method === 'POST' && fail ? fail() : undefined;
+  });
+  await h.select();
+  const told = [], toasts = h.notices.length;
+  // Another write is in flight: the workspace is busy.
+  const first = h.w.twFetch('/ops/tw/placements/11/move/', { method: 'POST', body: '{}' });
+  const held = await h.w.twFetch(MOVE_URL, { method: 'POST', body: '{"room":"R2"}', _quiet: true, _onError: (body, status) => (told.push([body, status]), true) });
+  assert.equal(held, null);
+  assert.deepEqual(told, [], 'the busy guard is the page’s own: the handler is not asked');
+  assert.equal(h.requests.filter(row => row.url === MOVE_URL).length, 0, 'nothing was sent');
+  assert.deepEqual(h.notices.slice(toasts).map(n => n.type), ['warning'], 'the guard says why (a toast)');
+  hang.resolve({ placement: { id: 11 } });
+  await first;
+  // A handler that answers nothing (undefined) has not taken the failure.
+  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  assert.equal(await h.w.twFetch(MOVE_URL, { method: 'POST', body: '{}', _onError: (body, status) => { told.push([body?.error?.code, status]); } }), null);
+  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409]]);
+  assert.deepEqual(h.notices.slice(toasts + 1), [{ type: 'error', text: 'Owned elsewhere' }]);
+});
+
 test('older board responses cannot replace the currently selected board', async t => {
   const old = deferred(); let delay = false;
   const h = await harness(t, url => delay && url === '/ops/tw/boards/2/' ? old.promise : undefined);

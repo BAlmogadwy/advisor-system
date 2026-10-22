@@ -673,18 +673,34 @@ dialogWrite(dialog, url, body) -> Promise<{data} | {code}>
 **`twFetch` changes (PAGE:197-221)**, shipped in 5c:
 
 ```js
+// Asked at most once; a handler that throws has not handled the failure
+// (the slip is logged, and the toast follows as if there were no handler).
+const handled = (body, status) => {
+  if (asked || typeof _onError !== 'function') return false;
+  asked = true;
+  try { return Boolean(_onError(body, status)); } catch (slip) { console.error(…); return false; }
+};
 if (!response.ok) {
   let d = busyBody; if (!d) { try { d = await response.json(); } catch { d = null; } }
   const e = d?.error;
   if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
-  if (typeof _onError === 'function' && _onError(d, response.status)) return null;
+  if (handled(d, response.status)) return null;
   if (_quiet) return null;
   /* message as today */ notify.error(msg); return null;
 }
-/* catch (err): */ if (typeof _onError === 'function' && _onError(null, 0)) return null; if (!_quiet) notify.error(…)
+/* catch (err): a rejected fetch, or a 2xx whose body is not JSON */
+if (handled(null, 0)) return null; if (!_quiet) notify.error(…)
 ```
 
-The two existing `_onError` users (PAGE:1461, 3464) already read `body?.`, so a null body is safe for them.
+The local busy guard (a write while the workspace is busy) toasts and
+returns null before any request, and never reaches `_onError`. The existing
+`_onError` users (publish, drop, the slot editor) use no dialog or the
+page's `dlg` ones, which sit under the toast stack (z-index 2000 against
+3000) and hide only `main` from assistive technology, so that toast is
+seen; they read `body?.`, so a null body is safe for them. A template
+`<dialog>` opened modal is in the top layer, over every toast: its commit
+is `data-tw-mutation` (off while busy), and `dialogWrite` checks
+`workspaceCanEdit()` itself before it asks.
 
 ##### D. Report after an edit (5e; drag shares it)
 
