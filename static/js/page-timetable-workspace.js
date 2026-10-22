@@ -174,7 +174,8 @@ window.addEventListener('tw:planner-job', async event => {
 
 /* ── API ── */
 async function twFetch(url, opts = {}) {
-  const { _workspaceToken, _onError, ...requestOptions } = opts;
+  // `_quiet`: a background read whose failure only means "unknown" — no toast.
+  const { _workspaceToken, _onError, _quiet, ...requestOptions } = opts;
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && workspaceBusy() && (!TW_ACTIVITY.owner || _workspaceToken !== TW_ACTIVITY.owner)) {
     notify.warning(IS_AR ? 'الجدول قيد التحديث؛ انتظر انتهاء العملية.' : 'The timetable is being updated; wait for the operation to finish.');
@@ -203,6 +204,7 @@ async function twFetch(url, opts = {}) {
         // A caller that can say more than a toast (Publish lists the server's
         // blockers) takes the error body instead.
         if (typeof opts._onError === 'function' && opts._onError(d, response.status)) return null;
+        if (_quiet) return null;
         if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) {
           announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
         }
@@ -210,14 +212,14 @@ async function twFetch(url, opts = {}) {
         const seedLabel = runSeedText(e?.details || d);
         if (seedLabel) msg += ` · ${seedLabel}`;
       } catch {}
-      notify.error(msg);
+      if (!_quiet) notify.error(msg);
       return null;
     }
     const body = await response.json();
     if (writes) TW.dataVersion++;
     return body;
   } catch (err) {
-    notify.error(err.message || String(err));
+    if (!_quiet) notify.error(err.message || String(err));
     return null;
   } finally {
     if (writes) { TW_ACTIVITY.writes--; syncWorkspaceControls(); }
@@ -700,13 +702,18 @@ async function runGenerate(engine = 'classic', request = {}) {
     syncWorkspaceControls();
 
     // The new draft belongs to the year and term it was generated for: show
-    // that scope, and keep the other saved scenarios available.
+    // that scope, and the saved scenarios of THAT term beside it.
+    const scopeChanged = $('twYear').value.trim() !== year || $('twTerm').value.trim() !== term;
     $('twYear').value = year;
     $('twTerm').value = term;
     const sel = $('twScenario');
-    const option = document.createElement('option');
-    option.value = data.scenario.id; option.textContent = data.scenario.name;
-    sel.appendChild(option); sel.value = data.scenario.id;
+    if (scopeChanged) await refreshScenarioOptions(data.scenario.id);
+    if (![...(sel.options || [])].some(item => String(item.value) === String(data.scenario.id))) {
+      const option = document.createElement('option');
+      option.value = data.scenario.id; option.textContent = data.scenario.name;
+      sel.appendChild(option);
+    }
+    sel.value = data.scenario.id;
     window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob } }));
 
     // Render boards and sidebar
@@ -812,6 +819,24 @@ async function loadScenarios() {
   window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: null, job: null } }));
 }
 
+/* Re-read the scenario list for the current scope without closing what is open
+   (loadScenarios resets the workspace). */
+async function refreshScenarioOptions(selectedId) {
+  const year = $('twYear').value.trim();
+  const term = $('twTerm').value.trim();
+  const data = await twFetch(`/ops/tw/scenarios/?year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}`, { _quiet: true });
+  if (!data || year !== $('twYear').value.trim() || term !== $('twTerm').value.trim()) return;
+  const sel = $('twScenario');
+  sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
+  (data.scenarios || []).forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.status === 'published' ? `${s.name} · ${T.published}` : s.name;
+    sel.appendChild(opt);
+  });
+  if (selectedId != null) sel.value = String(selectedId);
+}
+
 let scenarioLoadRevision = 0;
 async function onScenarioChange() {
   scenarioListRevision++;
@@ -844,7 +869,10 @@ async function onScenarioChange() {
     TW.loadedBoardId = null;
     TW.selectedPlacementId = null;
     TW.placements = []; TW.conflicts = {}; TW.capacityData = null; TW.quality = null;
-    if (!sameScenario) { TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null; }
+    if (!sameScenario) {
+      TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null;
+      TW.sectionBudget = null; TW.unplacedSections = []; TW.boardStripShows = null;
+    }
     if (data.active_job) TW.plannerJob = data.active_job;
     else if (!TW_ACTIVITY.owner && ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) TW.plannerJob = null;
     window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob || null } }));
@@ -1244,24 +1272,53 @@ function readinessItemBoard(item) {
   return TW.boards.find(board => Number(board.nominal_term) === Number(term))?.id || null;
 }
 
-async function refreshPublishReadiness(force = false) {
+/* One readiness check per scenario and data version: callers arriving while it
+   runs share it (a board click no longer starts another full check). The
+   background refresh after an edit waits for edits to settle and fails quietly;
+   only Publish itself (force) reports a failure. */
+let readinessRequest = null;
+let readinessTimer = null;
+function scheduleReadinessRefresh() {
+  clearTimeout(readinessTimer);
+  readinessTimer = setTimeout(() => { refreshPublishReadiness(); }, 800);
+}
+function refreshPublishReadiness(force = false) {
   const scenarioId = TW.scenarioId;
-  if (!scenarioId || TW.scenario?.status === 'published') { TW.readiness = null; renderPublishState(); return null; }
-  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) return TW.readiness;
+  if (!scenarioId || TW.scenario?.status === 'published') {
+    TW.readiness = null; renderPublishState(); return Promise.resolve(null);
+  }
+  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) return Promise.resolve(TW.readiness);
   const version = TW.dataVersion;
+  if (readinessRequest && readinessRequest.scenarioId === scenarioId && readinessRequest.version === version) {
+    return readinessRequest.promise;
+  }
   TW.readinessLoading = true;
   renderPublishState();
-  try {
-    const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/readiness/`);
-    if (TW.scenarioId !== scenarioId) return null;
-    TW.readiness = data?.readiness || null;
-    TW.readinessVersion = version;
-    return TW.readiness;
-  } finally {
-    TW.readinessLoading = false;
-    renderPublishState();
-    renderWorkspaceQuality();
-  }
+  const promise = (async () => {
+    try {
+      const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/readiness/`, { _quiet: !force });
+      if (TW.scenarioId !== scenarioId) return null;
+      if (data?.readiness) { TW.readiness = data.readiness; TW.readinessVersion = version; }
+      return data?.readiness || null;
+    } finally {
+      if (readinessRequest?.promise === promise) readinessRequest = null;
+      TW.readinessLoading = Boolean(readinessRequest);
+      renderPublishState();
+      renderWorkspaceQuality();
+      renderBoardTabs();
+    }
+  })();
+  readinessRequest = { scenarioId, version, promise };
+  return promise;
+}
+
+/* The publish blockers the server places on one board (its critical clashes
+   are already counted from the board's own conflicts). A section not placed
+   anywhere belongs to the board of its programme term. */
+function boardReadinessBlockers(boardId) {
+  if (!TW.readiness || TW.readinessVersion !== TW.dataVersion) return [];
+  return readinessBlockers(TW.readiness)
+    .filter(item => item.code !== 'board_critical_conflicts' && readinessItemBoard(item) === boardId);
 }
 
 function readinessBlockers(readiness) {
@@ -1325,14 +1382,20 @@ async function showPublishBlockers(readiness) {
     title: IS_AR ? 'النشر غير متاح بعد' : 'Not ready to publish',
     body, kind: 'danger', confirmText: IS_AR ? 'حسناً' : 'OK',
   });
-  // "Open board" takes the user straight to the board a blocker is on.
+  wireReadinessLinks();
+  await shown;
+}
+
+/* "Open board" in a readiness list takes the user to that board. It closes the
+   dialog by CANCELLING it — the same list sits in the publish confirmation,
+   whose confirm button publishes. */
+function wireReadinessLinks() {
   setTimeout(() => {
-    document.querySelectorAll('.tw-readiness-go').forEach(button => button.addEventListener('click', () => {
-      document.querySelector('.dlg-backdrop .btn-confirm')?.click();
+    document.querySelectorAll('.dlg-backdrop .tw-readiness-go').forEach(button => button.addEventListener('click', () => {
+      document.querySelector('.dlg-backdrop .btn-cancel')?.click();
       selectBoard(Number(button.dataset.board));
     }));
   }, 0);
-  await shown;
 }
 
 async function publishScenario() {
@@ -1350,7 +1413,9 @@ async function publishScenario() {
     ? 'بعد النشر يصبح هذا السيناريو للقراءة فقط.'
     : 'Once published, this scenario becomes read-only.'}</p>
     ${warnings.length ? `<p class="tw-readiness-lead">${IS_AR ? 'تحذيرات لا تمنع النشر:' : 'Warnings that do not block publishing:'}</p>${readinessListHtml(warnings, 'warning')}` : ''}`;
-  const ok = await dlg.confirm({ title: T.publishConfirm, body, kind: 'warning', confirmText: T.publish });
+  const confirmed = dlg.confirm({ title: T.publishConfirm, body, kind: 'warning', confirmText: T.publish });
+  wireReadinessLinks();
+  const ok = await confirmed;
   if (!ok) return;
   if (!workspaceCanEdit() || TW.scenarioId !== scenarioId) return;
 
@@ -1396,6 +1461,7 @@ function resetWorkspace() {
   TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
   TW.quality = null; TW.undoStack = []; TW.redoStack = []; TW.selectedPlacementId = null;
   TW.readiness = null; TW.readinessVersion = -1; TW.qualityVersion = -1;
+  TW.sectionBudget = null; TW.unplacedSections = []; TW.boardStripShows = null;
   resetPlanLens();
   $('twBoardTabs').innerHTML = '';
   $('twSectionList').innerHTML = `<p class="tw-pane-empty">${IS_AR ? 'افتح سيناريو لعرض الشعب المطلوبة.' : 'Open a scenario to see its required sections.'}</p>`;
@@ -1417,6 +1483,17 @@ function boardSectionsLeft(board) {
     .reduce((sum, row) => sum + Math.max(0, Number(row.remaining_sections) || 0), 0);
 }
 
+/* Scroll a horizontal strip just enough to show one of its items. scrollLeft
+   moves the view right as it grows in either direction (in a right-to-left
+   strip it runs from a negative minimum up to 0), so the visual overflow is the
+   amount to move. */
+function revealInStrip(strip, item) {
+  const view = strip.getBoundingClientRect();
+  const box = item.getBoundingClientRect();
+  if (box.left < view.left) strip.scrollLeft -= view.left - box.left + 4;
+  else if (box.right > view.right) strip.scrollLeft += box.right - view.right + 4;
+}
+
 /* One board switcher: segmented buttons (not tabs — no arrow-key panels are
    promised). Each says what is wrong on its board — blocking issues, with the
    octagon — and how many sections are left; meetings and students are in its
@@ -1430,7 +1507,9 @@ function renderBoardTabs() {
     btn.className = 'ux-seg-item';
     const active = b.id === TW.boardId;
     if (active) btn.setAttribute('aria-current', 'true');
-    const critical = active ? ((TW.conflicts.summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
+    const clashes = active ? ((TW.conflicts.summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
+    const serverBlockers = boardReadinessBlockers(b.id).length;
+    const critical = clashes + serverBlockers;
     const left = boardSectionsLeft(b);
     const students = `${b.primary_count || 0}${b.visitor_count ? ` + ${b.visitor_count}` : ''}`;
     const meetings = active ? TW.placements.length : (b.placement_count || 0);
@@ -1438,7 +1517,8 @@ function renderBoardTabs() {
       IS_AR ? `${students} طالب` : `${students} students`,
       IS_AR ? `${meetings} لقاء` : `${meetings} meetings`,
     ];
-    if (critical) parts.push(IS_AR ? `${critical} مشاكل مانعة` : `${critical} blocking`);
+    if (clashes) parts.push(IS_AR ? `${clashes} تعارضات مانعة` : `${clashes} blocking ${clashes === 1 ? 'clash' : 'clashes'}`);
+    if (serverBlockers) parts.push(IS_AR ? `${serverBlockers} موانع نشر` : `${serverBlockers} publish ${serverBlockers === 1 ? 'blocker' : 'blockers'}`);
     if (left) parts.push(IS_AR ? `${left} شعب لم توضع` : `${left} sections to place`);
     btn.title = parts.join(' · ');
     btn.setAttribute('aria-label', `${b.label}: ${parts.join(', ')}`);
@@ -1447,7 +1527,13 @@ function renderBoardTabs() {
       + (left ? `<span class="ux-seg-meta">${IS_AR ? `${left} متبقية` : `${left} left`}</span>` : '');
     btn.addEventListener('click', () => selectBoard(b.id));
     wrap.appendChild(btn);
-    if (active) (window.requestAnimationFrame || setTimeout)(() => btn.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }));
+    if (active && TW.boardStripShows !== b.id) {
+      // Bring a newly chosen board into its strip by scrolling the STRIP only,
+      // once per choice: scrollIntoView also scrolled the page (where the page
+      // scrolls) on every re-render — every filter keystroke.
+      TW.boardStripShows = b.id;
+      (window.requestAnimationFrame || setTimeout)(() => revealInStrip(wrap, btn));
+    }
   });
 }
 
@@ -2244,7 +2330,7 @@ function renderRightPanel(tab) {
     const xConflictsEarly = activeBoardCrossBoardClashes();
     const roomShortages = activeBoardRoomShortages();
     const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length + roomShortages.length;
-    setIssuesCount(total, (TW.conflicts.summary || {}).critical || 0);
+    setIssuesCount(total, ((TW.conflicts.summary || {}).critical || 0) + boardReadinessBlockers(TW.boardId).length);
 
     if (total === 0) {
       body.innerHTML = `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${T.noIssues}</p>${TW.quality?.rooms?.assessed ? '' : `<small>${IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.'}</small>`}</div>`;
@@ -2275,7 +2361,8 @@ function renderRightPanel(tab) {
       });
     }
     if (roomShortages.length) {
-      html += heading(IS_AR ? 'اجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room', roomShortages.length, 'warning');
+      const roomsBlock = roomShortages.some(room => (room.reasons || []).some(reason => reason === 'missing' || reason === 'clash'));
+      html += heading(IS_AR ? 'اجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room', roomShortages.length, roomsBlock ? 'critical' : 'warning');
       roomShortages.forEach(room => {
         html += `<button type="button" class="tw-issue-row" data-ids='${JSON.stringify(room.placement_ids || [])}'><span class="tw-issue-dot warning"></span><span><span class="fw-semibold"><bdi>${esc(room.course_code || room.course_key || '')}</bdi> · <bdi>${esc(room.rooms?.join(', ') || (IS_AR ? 'بلا قاعة' : 'no room'))}</bdi></span><span class="tw-issue-detail d-block">${esc((room.reasons || []).join(', '))} · ${IS_AR ? 'السعة المطلوبة' : 'Required capacity'}: ${esc(room.required_capacity ?? '—')}</span></span></button>`;
       });
@@ -2694,7 +2781,7 @@ async function refreshWorkspaceQuality(force = false) {
   if (!scenarioId) { TW.quality = null; renderWorkspaceQuality(); return; }
   if (!force && TW.quality && TW.qualityVersion === TW.dataVersion) {
     renderWorkspaceQuality();
-    refreshPublishReadiness();
+    if (!TW.readiness || TW.readinessVersion !== TW.dataVersion) scheduleReadinessRefresh();
     return;
   }
   const version = TW.dataVersion;
@@ -2706,7 +2793,7 @@ async function refreshWorkspaceQuality(force = false) {
   renderWorkspaceQuality();
   const active = document.querySelector('.tw-right .tw-panel-tab.active');
   if (active) renderRightPanel(active.dataset.tab);
-  refreshPublishReadiness();
+  scheduleReadinessRefresh();
 }
 /* The stat strip. Two scopes (whole scenario / instructors), each number with
    its meaning in its label and its direction in its tone:
@@ -2756,7 +2843,10 @@ function renderWorkspaceQuality() {
   put('twQualityClashes', clashStudents, { tone: clashStudents > 0 ? 'critical' : clashStudents === 0 ? 'ok' : null, danger: clashStudents > 0,
     title: IS_AR ? 'طلاب في التعيين المُقيّم لديهم شعبتان في وقت واحد.' : 'Students whose evaluated seating puts them in two sections at once.' });
   const rooms = quality?.rooms;
-  put('twQualityRooms', rooms?.assessed ? rooms.shortages : null, { tone: rooms?.shortages > 0 ? 'warning' : rooms?.assessed ? 'ok' : null, danger: rooms?.shortages > 0,
+  // No room at all, or a double booking, stops publishing; a room that is merely
+  // too small or the wrong type lowers quality.
+  const roomsBlock = (rooms?.missing || 0) + (rooms?.clashes || 0) > 0;
+  put('twQualityRooms', rooms?.assessed ? rooms.shortages : null, { tone: roomsBlock ? 'critical' : rooms?.shortages > 0 ? 'warning' : rooms?.assessed ? 'ok' : null, danger: rooms?.shortages > 0,
     title: rooms?.assessed
       ? (IS_AR ? `بلا قاعة: ${number(rooms.missing)} · أصغر من اللازم: ${number(rooms.undersized)} · غير مناسبة: ${number(rooms.incompatible)} · تعارض: ${number(rooms.clashes)} من ${number(rooms.physical_meetings)} لقاء` : `No room ${number(rooms.missing)} · too small ${number(rooms.undersized)} · wrong type ${number(rooms.incompatible)} · double-booked ${number(rooms.clashes)} — of ${number(rooms.physical_meetings)} meetings`)
       : (IS_AR ? 'غير مُقيّم' : 'Not assessed') });
@@ -2937,8 +3027,11 @@ async function openSlotEditor() {
 
 /* ── Elective Mapping Dialog ── */
 $('twMapElectives').addEventListener('click', async () => {
-  const year = $('twYear').value.trim();
-  const term = $('twTerm').value.trim();
+  // The open scenario's term when there is one: the scope fields can have been
+  // moved on to prepare another term.
+  const open = (typeof TW !== 'undefined' && TW && TW.scenario) || {};
+  const year = String(open.academic_year || $('twYear').value).trim();
+  const term = String(open.term || $('twTerm').value).trim();
   if (!year || !term) {
     notify.error(IS_AR ? 'أدخل السنة والفصل أولا' : 'Enter the year and term first');
     return;

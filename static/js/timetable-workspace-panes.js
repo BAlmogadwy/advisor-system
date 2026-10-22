@@ -40,7 +40,6 @@
         pane.toggle.setAttribute('aria-pressed', String(open));
         pane.toggle.setAttribute('aria-label', open ? pane.hide : pane.show);
       }
-      if (pane.el) pane.el.setAttribute('aria-expanded', String(open));
     });
   }
 

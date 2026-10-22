@@ -27,6 +27,7 @@ function harness(name, arabic = false) {
     TW: { scenarioId: 1 }, S: { scenarioMeta: { name: 'Test' } },
     updateUndoRedoButtons: () => {}, onScenarioChange: async () => {},
     updateValidationBadge: () => {}, renderBoardsNav: () => {}, renderBoardTabs: () => {}, renderBudgetSidebar: () => {},
+    refreshScenarioOptions: async () => {},
     DEFAULT_YEAR: '1448', DEFAULT_TERM: '1', loadScenarios: async () => {},
     workspaceCanEdit: () => true, beginWorkspaceOperation: () => ({ scenarioId: 1 }),
     syncWorkspaceControls: () => {}, announcePlannerJob: () => {}, refreshWorkspaceQuality: async () => {},

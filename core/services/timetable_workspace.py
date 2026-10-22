@@ -4234,10 +4234,12 @@ def check_publish_readiness(scenario_id: int) -> dict:
 
     # One read of the scenario's placements serves both pattern checks below
     # and says which board a section sits on (the board of its first placement).
+    # Ordered, so "the board of its first placement" is the same board on every
+    # request (an unordered queryset may come back in any order on PostgreSQL).
     scenario_placements = list(
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
-            "term_section"
-        )
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .select_related("term_section")
+        .order_by("board__display_order", "board_id", "id")
     )
     board_by_id = {board.id: board for board in board_list}
     section_board_id: dict[tuple[str, str], int] = {}

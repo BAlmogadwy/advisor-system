@@ -500,3 +500,32 @@ def test_publish_reads_the_teacher_rows_once_for_all_boards(
 
     assert response.status_code == status, response.content
     assert _teacher_row_reads(ctx) == 1
+
+
+def test_a_section_on_two_boards_links_to_the_first_board_in_display_order(monkeypatch):
+    # "Open board" must take the user to the same board on every request. The
+    # section has a meeting on each board, created later-board first, and the
+    # pattern check is pinned to report it, so only the board choice is tested.
+    scenario = _scenario()
+    first = _board(scenario, "Term 2", 2, 1)
+    second = _board(scenario, "Term 4", 4, 2)
+    _plan(scenario, "CS401", planned=1, credit=4, term=4)
+    _place(second, "CS401", "S1", day="MON", start="09:00", end="10:15", room="LAB1")
+    _place(first, "CS401", "S1", day="TUE", start="09:00", end="10:15", room="LAB1")
+    monkeypatch.setattr(
+        "core.services.timetable_workspace.compute_incomplete_section_patterns",
+        lambda scenario_id: [
+            {
+                "course_key": "CS401",
+                "course_code": "CS401",
+                "section": "S1",
+                "placed_meetings": 2,
+                "expected_meetings": 3,
+                "missing_meetings": 1,
+            }
+        ],
+    )
+
+    items = check_publish_readiness(scenario.id)["blocker_items"]
+    pattern = [item for item in items if item["code"] == "incomplete_section_pattern"]
+    assert [item["board_id"] for item in pattern] == [first.id]

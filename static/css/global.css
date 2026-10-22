@@ -215,7 +215,7 @@
   --fs-sm:          0.72rem;   /* legacy alias: .pill (unchanged size) */
   --text-2xs:       max(11px, 0.6875rem);
   --text-xs:        max(12px, 0.75rem);
-  --text-sm:        0.8125rem;
+  --text-sm:        max(12.5px, 0.8125rem);
   --text-base:      0.875rem;
   --text-md:        1rem;
   --text-lg:        1.15rem;
@@ -885,7 +885,7 @@ html[data-theme="dark"] .theme-toggle:hover {
    The scale is the --text-* tokens in :root, nothing else:
      --text-2xs  ≥11px  micro labels only — chips, counts, kickers
      --text-xs   ≥12px  the least DATA may be — meta lines, table cells, captions
-     --text-sm    13px  dense UI — toolbars, inputs, list rows, issue titles
+     --text-sm   ≥12.5px dense UI — toolbars, inputs, list rows, issue titles (13px at 16px)
      --text-base  14px  body copy, panel text, dialogs
      --text-md    16px  page and panel titles
      --text-lg    18px  section titles
@@ -5316,7 +5316,7 @@ html[data-theme="dark"] .chip-toggle.active,
 html[data-theme="dark"] .et-chip.is-active,
 html[data-theme="dark"] .et-chip.active,
 html[data-theme="dark"] .chip-toggle:has(input:checked),
-html[data-theme="dark"] .et-chip:has(input:checked) { color: #fff; }
+html[data-theme="dark"] .et-chip:has(input:checked) { color: var(--btn-primary-ink); }  /* on the mint fill: white was 2.10:1 */
 
 /* Mobile tightening. */
 @media (max-width: 768px) {

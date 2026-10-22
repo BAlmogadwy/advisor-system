@@ -136,8 +136,11 @@ programme chips from the known programmes, M / F / Both (Both disabled for the
 new engine) and the engine choice; Generate is primary only there and in the
 empty state. Portfolio (a one-option select the server ignores) is removed.
 
-**Publish.** Readiness is fetched on scenario load and after each edit
-(debounced), never on board switches. Not ready: a neutral "Publish · N
+**Publish.** Readiness is fetched on scenario load and after each edit —
+debounced, one request per data version (callers share it), quiet when it
+fails — never on board switches. Board buttons and the Issues count include the
+server's blockers on that board (a room that is missing or double-booked blocks
+publishing, so it reads as critical, not as a warning). Not ready: a neutral "Publish · N
 blockers" opening the blocker list (bilingual, structured, each linked to its
 board). Ready: the filled primary; it confirms, lists warnings, and says the
 scenario becomes read-only. A refused publish shows the server's blockers.
@@ -184,8 +187,11 @@ global neutral buttons.
 
 **Job card.** Floats at the window's bottom end edge, so nothing in the page
 moves. Shown while a job runs and after it ends, until closed; hidden when
-idle. "Run in background" and "Run again" (the legacy full rebuild) ask for
-confirmation naming what gets replaced. `#twGenStatus` is a live region that
+idle. On this page it is a monitor (config `offerRebuild: false`): status,
+fields, Cancel, View result. The card's legacy single-strategy rebuild ("Run in
+background", and "Run again", which would repeat that rebuild whatever kind of
+run had failed) is not offered — Optimise ▾ Full rebuild is the rebuild here.
+Where a page does offer it, it asks first through the shared dialog. `#twGenStatus` is a live region that
 takes no room while empty and is where focus lands when a menu choice starts a
 job and disables its own trigger.
 

@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import subprocess
@@ -178,3 +179,15 @@ def test_split_drawer_lock_button_says_a_lock_keeps_days_and_times_not_the_room(
     # Only the Lock control carries it, and only in the page's own language.
     assert buttons["twsDrawerRemove"].get("title") != LOCK_HELP[language]
     assert LOCK_HELP["ar" if language == "en" else "en"] not in html
+
+
+def test_the_workspace_job_card_is_a_monitor_that_offers_no_legacy_rebuild(http, settings):
+    # Optimise ▾ Full rebuild is the workspace's rebuild; the card's own
+    # single-strategy one, and its "Run again", are not offered there.
+    settings.TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = True
+    settings.TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED = True
+    response = http.get("/timetable-workspace/")
+    assert response.status_code == 200
+    config = json.loads(response.context["pr8_config_json"])
+    assert config["offerRebuild"] is False
+    assert '"offerRebuild": false' in response.content.decode()

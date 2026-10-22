@@ -247,12 +247,14 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
   </div>
 
   <aside class="tw-right ux-pane" id="twRight" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
-    <div class="tw-panel-tabs ux-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
-      <button type="button" id="twTabIssues" class="tw-panel-tab ux-tab active" data-tab="issues" role="tab" aria-selected="true" aria-controls="twRightBody">{% if LANGUAGE_CODE == 'ar' %}المشاكل{% else %}Issues{% endif %} <span class="ux-tab-count" id="twIssuesCount"></span></button>
-      <button type="button" id="twTabSelection" class="tw-panel-tab ux-tab" data-tab="selection" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}التحديد{% else %}Selection{% endif %}</button>
-      <button type="button" id="twTabCapacity" class="tw-panel-tab ux-tab" data-tab="capacity" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</button>
-      <button type="button" id="twTabDemand" class="tw-panel-tab ux-tab" data-tab="demand" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}الطلب{% else %}Demand{% endif %}</button>
-      <button type="button" id="twTabMri" class="tw-panel-tab ux-tab" data-tab="mri" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">MRI</button>
+    <div class="tw-inspector-head">
+      <div class="tw-panel-tabs ux-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
+        <button type="button" id="twTabIssues" class="tw-panel-tab ux-tab active" data-tab="issues" role="tab" aria-selected="true" aria-controls="twRightBody">{% if LANGUAGE_CODE == 'ar' %}المشاكل{% else %}Issues{% endif %} <span class="ux-tab-count" id="twIssuesCount"></span></button>
+        <button type="button" id="twTabSelection" class="tw-panel-tab ux-tab" data-tab="selection" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}التحديد{% else %}Selection{% endif %}</button>
+        <button type="button" id="twTabCapacity" class="tw-panel-tab ux-tab" data-tab="capacity" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</button>
+        <button type="button" id="twTabDemand" class="tw-panel-tab ux-tab" data-tab="demand" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}الطلب{% else %}Demand{% endif %}</button>
+        <button type="button" id="twTabMri" class="tw-panel-tab ux-tab" data-tab="mri" role="tab" aria-selected="false" aria-controls="twRightBody" tabindex="-1">MRI</button>
+      </div>
       <button class="btn btn-sm btn-neutral btn-icon tw-pane-collapse" type="button" data-pane-toggle="right" aria-controls="twRight" aria-label="{% if LANGUAGE_CODE == 'ar' %}طي لوحة الفحص{% else %}Collapse the inspector{% endif %}">
         <svg class="i-flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
       </button>

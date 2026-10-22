@@ -8,11 +8,14 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 assert.ok(process.env.PR8_TEST_HTML, 'Run through pytest tests/test_pr8_frontend_interactions.py');
 const template = fs.readFileSync(process.env.PR8_TEST_HTML, 'utf8');
 const adapter = fs.readFileSync(path.join(__dirname, '../../core/static/core/js/pr8_async_job_adapter.js'), 'utf8');
+// The real shared dialog, loaded the way a page loads it: a classic script whose
+// top-level `const dlg` is a global binding and NOT a property of window.
+const dialogSource = fs.readFileSync(path.join(__dirname, '../../static/js/dialog.js'), 'utf8');
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
 const answer = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
-async function page(t, { scenarioId = 1, initial = null, snapshot = null, fetch = () => { throw new Error('Unexpected request'); }, standalone = false } = {}) {
+async function page(t, { scenarioId = 1, initial = null, snapshot = null, fetch = () => { throw new Error('Unexpected request'); }, standalone = false, config = {}, sharedDialog = false } = {}) {
   const errors = [];
   const console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error.message));
@@ -21,6 +24,17 @@ async function page(t, { scenarioId = 1, initial = null, snapshot = null, fetch 
   const { window } = dom;
   t.after(() => { window.close(); assert.deepEqual(errors, []); });
   window.document.getElementById('pr8-initial-job').textContent = JSON.stringify(initial);
+  if (Object.keys(config).length) {
+    const node = window.document.querySelector('[data-pr8-config]');
+    node.textContent = JSON.stringify({ ...JSON.parse(node.textContent), ...config });
+  }
+  if (sharedDialog) {
+    // jsdom paints nothing; the dialog only waits a frame to move focus.
+    window.requestAnimationFrame = callback => { Promise.resolve().then(() => callback(0)); return 0; };
+    vm.runInContext("function esc(value) { return String(value ?? '').replace(/[&<>\"']/g, c => '&#' + c.charCodeAt(0) + ';'); }", dom.getInternalVMContext());
+    vm.runInContext(dialogSource, dom.getInternalVMContext(), { filename: 'dialog.js' });
+    assert.equal(window.dlg, undefined, 'like a real page: dlg is a global binding, not window.dlg');
+  }
   if (standalone) {
     const config = window.document.querySelector('[data-pr8-config]');
     config.textContent = JSON.stringify({ ...JSON.parse(config.textContent), scenarioId });
@@ -281,4 +295,50 @@ test('server busy response adopts the existing run from another browser and reta
   assert.equal(p.message(), 'A planner is already running');
   assert.equal(p.timers.size, 1);
   assert.equal(jobs[0].jobId, 'other-browser');
+});
+
+test('the rebuild asks first through the real shared dialog, and sends nothing until confirmed', async t => {
+  const pending = deferred();
+  const p = await page(t, { fetch: () => pending.promise, sharedDialog: true });
+  p.button('submit').click(); await settle();
+  const dialog = p.window.document.querySelector('.dlg-backdrop');
+  assert.ok(dialog, 'the shared dialog opened');
+  assert.match(dialog.textContent, /Every unlocked placement/);
+  assert.equal(p.requests.length, 0, 'nothing is sent before the user agrees');
+  dialog.querySelector('.btn-confirm').click(); await settle();
+  assert.equal(p.requests.length, 1);
+  assert.deepEqual(p.requests[0].body, { scenario_id: 1, mode: 'full_rebuild' });
+  pending.resolve(answer({ job_id: 'confirmed', status: 'queued' }, 201)); await settle();
+});
+
+test('declining the shared dialog sends nothing', async t => {
+  const p = await page(t, { sharedDialog: true });
+  p.button('submit').click(); await settle();
+  p.window.document.querySelector('.dlg-backdrop .btn-cancel').click(); await settle();
+  assert.equal(p.requests.length, 0);
+});
+
+test('a monitor-only card never offers the legacy rebuild, not even after a failure', async t => {
+  const p = await page(t, { config: { offerRebuild: false } });
+  assert.equal(p.button('submit').hidden, true);
+  p.job('failed', 'failed-job', 1, { error_message: 'Solver failed' });
+  assert.equal(p.button('rerun').hidden, true);
+  assert.equal(p.button('submit').hidden, true);
+});
+
+test('the card stays out of the way while idle, shows a run, and closes when dismissed', async t => {
+  const p = await page(t);
+  assert.equal(p.card.hidden, true, 'idle: hidden');
+  p.job('running', 'run-1');
+  assert.equal(p.card.hidden, false, 'running: shown');
+  const dismiss = p.card.querySelector('[data-pr8-dismiss]');
+  assert.equal(dismiss.hidden, true, 'a running job cannot be dismissed');
+  assert.equal(p.button('cancel').hidden, false, 'its Cancel is there');
+  p.job('succeeded', 'run-1');
+  assert.equal(p.card.hidden, false, 'finished: still shown');
+  assert.equal(dismiss.hidden, false);
+  dismiss.click();
+  assert.equal(p.card.hidden, true, 'dismissed: hidden');
+  p.job('running', 'run-2');
+  assert.equal(p.card.hidden, false, 'the next run shows again');
 });

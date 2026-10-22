@@ -445,6 +445,9 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
         "csrfToken": _csrf(request) if pr8_on else "",
         "scenarioId": None,
         "mode": "full_rebuild",
+        # The workspace's card is a monitor: Optimise ▾ Full rebuild is the
+        # rebuild here, so the card's legacy one is not offered.
+        "offerRebuild": False,
     }
     context = {
         **get_sidebar_context(request),

@@ -318,9 +318,15 @@ html[data-theme="dark"] .tw-card.locked {
 .tw-workspace[aria-busy="true"] .tw-section-item { cursor: progress; }
 
 /* ── Inspector ──────────────────────────────────────────────────── */
-.tw-right .ux-tabs { padding-inline: 4px; }
+/* The tab strip and the collapse button share one row; the button is not a
+   tab, so it sits beside the tablist rather than inside it. */
+.tw-inspector-head {
+  display: flex; align-items: center; gap: 4px;
+  padding-inline: 4px 6px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.tw-inspector-head .ux-tabs { flex: 1 1 auto; min-width: 0; border-bottom: 0; }
 .tw-right .ux-tab { flex: 0 1 auto; padding-inline: 8px; }
-.tw-right .tw-pane-collapse { align-self: center; margin-inline-start: auto; }
 .tw-panel-body { padding: 8px 10px 18px; overflow-wrap: anywhere; }
 .tw-pane-empty, .tw-pane-note { margin: 12px 4px; color: var(--t3); font-size: var(--text-sm); }
 

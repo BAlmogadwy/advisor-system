@@ -215,3 +215,50 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
             self.assertEqual([r for r in sent if "/publish/" in r], [])
             self.assertEqual(errors, [])
             page.context.close()
+
+    def test_the_generate_dialog_reads_in_both_themes(self) -> None:
+        # A checked programme chip sits on the primary fill: its text must use
+        # the fill's ink (white on the dark theme's mint was 2.10:1).
+        problems: dict[str, list] = {}
+        for theme in ("light", "dark"):
+            page, sent, errors = self._load("en", theme, 1440, 790)
+            page.click("#twNewMenu")
+            page.click("#twGenerate")
+            page.wait_for_selector("#twGenerateDialog[open]")
+            found = page.evaluate(
+                CONTRAST,
+                [
+                    ".chip-toggle:has(input:checked)",
+                    ".ux-field-label",
+                    ".ux-choice-title",
+                    ".ux-choice-desc",
+                    ".ux-seg-item",
+                    ".ux-dialog-sub",
+                ],
+            )
+            # Closing the dialog returns the keyboard to the menu's trigger.
+            page.keyboard.press("Escape")
+            if page.evaluate("document.activeElement?.id") != "twNewMenu":
+                found.append(f"focus after closing: {page.evaluate('document.activeElement?.id')}")
+            if sent or errors:
+                found += [*sent, *errors]
+            if found:
+                problems[theme] = found
+            page.context.close()
+        self.assertEqual(problems, {})
+
+    def test_typing_in_a_filter_never_scrolls_the_page(self) -> None:
+        # Below 1025px wide the page scrolls instead of its panes. Re-rendering
+        # the board buttons on each keystroke once called scrollIntoView, which
+        # scrolled the page and threw the field the user was typing in off screen.
+        page, sent, errors = self._load("en", "light", 1000, 700)
+        page.evaluate("document.getElementById('twToggleLeft').click()")
+        field = page.locator("#twSectionSearch")
+        field.scroll_into_view_if_needed()
+        before = page.evaluate("document.getElementById('main-content').scrollTop")
+        field.click()
+        field.type("AI", delay=40)
+        page.wait_for_timeout(300)
+        after = page.evaluate("document.getElementById('main-content').scrollTop")
+        self.assertEqual(after, before)
+        self.assertEqual([*sent, *errors], [])

@@ -167,9 +167,21 @@
         if (match) { event.preventDefault(); match.focus(); }
       }
     });
-    // Choosing an item closes its menu; the page's own click handler runs too.
+    // Choosing an item hands focus back to the trigger FIRST (capture phase,
+    // before the page's own handler runs): a dialog the item opens then returns
+    // focus to the trigger when it closes, not to an item that is now hidden.
     menu.addEventListener('click', event => {
-      if (event.target.closest('[role="menuitem"]')) close(entry);
+      if (!event.target.closest('[role="menuitem"]')) return;
+      if (menu.contains(document.activeElement) && !trigger.disabled) trigger.focus({ preventScroll: true });
+    }, true);
+    // ... then closes the menu. If the choice disabled the trigger (a job
+    // started), focus goes to the page's announced status region instead.
+    menu.addEventListener('click', event => {
+      if (!event.target.closest('[role="menuitem"]')) return;
+      close(entry);
+      const lost = document.activeElement === trigger || document.activeElement === document.body
+        || menu.contains(document.activeElement);
+      if (trigger.disabled && lost) restoreFocus(entry);
     });
     anchor.addEventListener('focusout', event => {
       if (event.relatedTarget && !anchor.contains(event.relatedTarget)) close(entry);

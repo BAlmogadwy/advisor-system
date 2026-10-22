@@ -82,14 +82,18 @@
     var cancel = qs(state.card, '[data-pr8-action="cancel"]');
     var view = qs(state.card, '[data-pr8-action="view-result"]');
     var rerun = qs(state.card, '[data-pr8-action="rerun"]');
-    if (submit) submit.disabled = active || blocked || state.scenarioId == null;
+    // A monitor-only card (config `offerRebuild: false`) never offers the legacy
+    // single-strategy rebuild: the page has a better one of its own, and "Run
+    // again" would repeat that rebuild whatever kind of run had failed.
+    var offer = state.cfg.offerRebuild !== false;
+    if (submit) { submit.hidden = !offer; submit.disabled = active || blocked || state.scenarioId == null; }
     if (cancel) {
       cancel.hidden = !active;
       cancel.disabled = !!state.inFlight || state.externalPending || !!job.cancel_requested;
       cancel.textContent = job.cancel_requested ? say("Cancellation requested…", "تم طلب الإلغاء…") : say("Cancel", "إلغاء");
     }
     if (view) { view.hidden = job.status !== "succeeded"; view.disabled = !state.jobId; }
-    if (rerun) { rerun.hidden = !(job.status === "failed" || job.status === "cancelled"); rerun.disabled = blocked || state.scenarioId == null; }
+    if (rerun) { rerun.hidden = !offer || !(job.status === "failed" || job.status === "cancelled"); rerun.disabled = blocked || state.scenarioId == null; }
     var message = qs(state.card, "[data-pr8-message]");
     if (message) { message.textContent = state.message || ""; message.hidden = !state.message; }
     // The card is shown only with something to say: a run in progress, a run
@@ -184,10 +188,17 @@
     if (saved) acceptJob(state, saved, state.scenarioId, saved.job_id, false);
     paint(state);
   }
+  // The shared dialog (static/js/dialog.js) is a top-level `const dlg`: a global
+  // binding, NOT a property of window, so `window.dlg` is undefined on every
+  // real page. Resolve the binding itself.
+  function sharedDialog() {
+    /* global dlg */
+    var dialog = typeof dlg !== "undefined" ? dlg : null;
+    return dialog && typeof dialog.confirm === "function" ? dialog : null;
+  }
   // "Run in background" and "Run again" start the full rebuild, which replaces
   // every unlocked placement: where the page has the shared dialog, ask first.
-  function confirmSubmit() {
-    var dialog = window.dlg;
+  function confirmSubmit(dialog) {
     return Promise.resolve(dialog.confirm({
       title: say("Rebuild in the background?", "إعادة البناء في الخلفية؟"),
       body: say("Every unlocked placement in this scenario is replaced by a new build. Locked sections keep their days and times.",
@@ -262,11 +273,9 @@
       if (action === "submit" || action === "rerun") {
         // Without the shared dialog (a page that does not load it) the click
         // submits at once, as before; with it, after the user agrees.
-        if (window.dlg && typeof window.dlg.confirm === "function") {
-          confirmSubmit().then(function (ok) { if (ok) onSubmit(state); });
-        } else {
-          onSubmit(state);
-        }
+        var dialog = sharedDialog();
+        if (dialog) confirmSubmit(dialog).then(function (ok) { if (ok) onSubmit(state); });
+        else onSubmit(state);
       }
       else if (action === "cancel") onCancel(state);
       else if (action === "view-result" && state.jobId && (state.currentJob || {}).status === "succeeded") {
