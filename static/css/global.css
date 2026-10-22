@@ -2224,8 +2224,11 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 
 /* Status icons as masks (data URIs; nothing for the static manifest to rewrite).
    Octagon = blocks something; triangle = lowers quality; check = meets its
-   target; circle-i = context. The shape carries the meaning without colour. */
+   target; circle-i = context. The shape carries the meaning without colour.
+   Padlock = its time is locked; link = another scenario also places it. */
 :root {
+  --ux-icon-lock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E");
+  --ux-icon-shared: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5'/%3E%3C/svg%3E");
   --ux-icon-critical: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86'/%3E%3Cline x1='12' y1='8' x2='12' y2='12'/%3E%3Cline x1='12' y1='16' x2='12.01' y2='16'/%3E%3C/svg%3E");
   --ux-icon-warning: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'/%3E%3Cline x1='12' y1='9' x2='12' y2='13'/%3E%3Cline x1='12' y1='17' x2='12.01' y2='17'/%3E%3C/svg%3E");
   --ux-icon-ok: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
@@ -2242,6 +2245,33 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 .ux-tone-icon[data-tone="warning"]  { color: var(--sev-warning);  --ux-tone-icon: var(--ux-icon-warning); }
 .ux-tone-icon[data-tone="ok"]       { color: var(--sev-ok);       --ux-tone-icon: var(--ux-icon-ok); }
 .ux-tone-icon[data-tone="info"]     { color: var(--sev-info);     --ux-tone-icon: var(--ux-icon-info); }
+
+/* A state icon in the text colour: `<span class="ux-icon" data-icon="lock"
+   role="img" aria-label="…">`. Sized to its text by default. */
+.ux-icon {
+  display: inline-block; flex: none; width: 1em; height: 1em; vertical-align: -0.125em;
+  background: currentColor;
+  -webkit-mask: var(--ux-icon, var(--ux-icon-info)) center / contain no-repeat;
+          mask: var(--ux-icon, var(--ux-icon-info)) center / contain no-repeat;
+}
+.ux-icon[data-icon="lock"]   { --ux-icon: var(--ux-icon-lock); }
+.ux-icon[data-icon="shared"] { --ux-icon: var(--ux-icon-shared); }
+
+/* ── Legend: what a page's marks mean ───────────────────────
+   `<div class="ux-legend" role="note">` holding `.ux-legend-item`s, each a
+   swatch (or icon) and its words. One quiet line that wraps; it is read once
+   and then out of the way, so it sits after the content it explains. */
+.ux-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
+  margin: 0; padding: 8px 2px;
+  color: var(--t2); font-size: var(--text-xs); line-height: 1.4;
+}
+.ux-legend-title { color: var(--t2); font-weight: 700; }
+.ux-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.ux-legend-swatch {
+  flex: none; width: 16px; height: 12px; border-radius: 3px;
+  background: var(--surface-2); border: 1px solid var(--btn-neutral-border, var(--line));
+}
 
 /* ── Pane: a titled region that scrolls on its own ──────────── */
 .ux-pane {
@@ -4903,6 +4933,9 @@ html body .btn-export:hover {
   }
   .sidebar { border-inline-end: 1px solid currentColor; }
   .btn { border: 1px solid currentColor; }
+  /* Mask icons are painted by their background, which forced colours would
+     otherwise drop: draw them in the text colour. */
+  .ux-tone-icon, .ux-icon { forced-color-adjust: none; background: CanvasText; }
 }
 
 /* ============================================================

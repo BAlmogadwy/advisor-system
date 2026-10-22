@@ -292,6 +292,17 @@ findings changed the plan:
    selected = tint + `aria-current`, focus = the global ring, highlight = an
    animation; a legend after the last table; browser checks that a
    seven-character code is never truncated at 96 px in the wide font.
+   As built: selected is a neutral ring (`--t0`) with `aria-current`, the
+   course's other meetings a dashed echo; the lock and shared marks are global
+   `.ux-icon`s, the tone mark an announced image, and the legend a global
+   `.ux-legend` (its workspace swatches stay page-local); the room word never
+   shrinks — the teacher gives way and the marks go to their own line when
+   needed (three marks rarely fit beside a room in ~70px); "No room" is bold
+   in the card's own text colour (red text cannot reach 4.5:1 on every course
+   colour — the ring and the octagon carry the severity); the warning ring and
+   mark use a darker amber on light cards (3:1 on every course colour); the
+   course colour comes from the course key by hash, not from drawing order —
+   a guide to finding a course, not its identity (20 colours can repeat).
 4. **Inspector.** Global `.ux-disclosure` groups (critical / warning / info,
    info collapsed), rows as buttons, "This section's issues" at the top of
    Selection, teacher states, 0 versus unknown, Seated on demand (a Refresh,

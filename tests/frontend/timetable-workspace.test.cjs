@@ -895,3 +895,117 @@ test('while a switched board loads, the publish check’s room and blocked-time 
   await switching;
   assert.equal(flag(), '2', 'and now read from the board itself');
 });
+
+/* ── Card anatomy (design record §7.2, PR 3) ── */
+test('a card says code and section, its room in words, and its marks — never capacity', async t => {
+  const h = await modelHarness(t, { placements: [
+    at(10, { course_code: 'MATH101', available_capacity: 40, is_locked: true, room: 'UNASSIGNED', room_state: 'unassigned' }),
+    at(11, { day: 'MON', shared_with_other_scenario: true, teacher: { name: 'Dr Sara Ali', status: 'assigned' } }),
+    at(12, { day: 'TUE', teacher: { name: 'Stale name', status: 'tbd' }, meetings: [{ day: 'TUE', start_time: '09:00', end_time: '10:15', instructor: 'Stale name' }] }),
+  ] });
+  await h.select();
+  const c10 = card(h, 10), c11 = card(h, 11), c12 = card(h, 12);
+  assert.equal(c10.querySelector('.tw-card-code').textContent, 'MATH101');
+  assert.equal(c10.querySelector('.tw-card-room').dataset.roomState, 'unassigned');
+  assert.doesNotMatch(c10.textContent, /cap|40/, 'capacity is in Selection, not on the card');
+  assert.deepEqual([...c10.querySelectorAll('.tw-card-marks .ux-icon')].map(i => i.dataset.icon), ['lock']);
+  assert.match(c10.querySelector('[data-icon="lock"]').getAttribute('aria-label'), /Time locked/);
+  assert.deepEqual([...c11.querySelectorAll('.tw-card-marks .ux-icon')].map(i => i.dataset.icon), ['shared']);
+  assert.equal(c11.querySelector('.tw-card-teacher').textContent, 'Dr Sara Ali');
+  assert.equal(c12.querySelector('.tw-card-teacher'), null, 'a teacher still to be decided shows no stale name');
+  // The tone mark is an element on the meta line, set from the model in place.
+  const mark = c10.querySelector('.tw-card-tone');
+  assert.deepEqual([mark.hidden, mark.dataset.tone], [false, 'critical']);
+  assert.equal(c12.querySelector('.tw-card-tone').hidden, true);
+});
+
+test('selecting a card marks it for assistive technology and echoes its course elsewhere', async t => {
+  const h = await modelHarness(t, { placements: [
+    at(10, { course_key: 'CS163' }), at(11, { day: 'TUE', course_key: 'CS163', term_section_id: 110 }), at(12, { day: 'MON', course_key: 'CS999' }),
+  ] });
+  await h.select();
+  card(h, 10).click();
+  assert.equal(card(h, 10).getAttribute('aria-current'), 'true');
+  assert.ok(card(h, 11).classList.contains('is-same-course'));
+  assert.equal(card(h, 12).classList.contains('is-same-course'), false);
+  h.w.renderGrid();  // a redraw keeps both
+  assert.equal(card(h, 10).getAttribute('aria-current'), 'true');
+  assert.ok(card(h, 11).classList.contains('is-same-course'));
+  card(h, 12).click();
+  assert.equal(card(h, 10).hasAttribute('aria-current'), false);
+  assert.equal(card(h, 11).classList.contains('is-same-course'), false);
+});
+
+test('a course has one colour whatever was drawn first, and two courses sharing a code differ', async t => {
+  // Two fresh pages that meet the courses in different orders.
+  const one = await harness(t);
+  const two = await harness(t);
+  const first = one.w.courseColor('CS112::PROGRAMMING_I');
+  two.w.courseColor('AI10'); two.w.courseColor('ZZ999'); two.w.courseColor('MATH101');
+  assert.equal(two.w.courseColor('CS112::PROGRAMMING_I'), first);
+  assert.notEqual(one.w.courseColor('CS112::PROGRAMMING_II'), first);
+});
+
+test('a located card pulses and then lets go', async t => {
+  const h = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON' })] });
+  await h.select();
+  h.w.HTMLElement.prototype.scrollIntoView = () => {};  // jsdom has none
+  h.w.highlightWorkspacePlacements([10, 11]);
+  assert.equal(h.d.querySelectorAll('.tw-card.highlight').length, 2);
+  card(h, 10).dispatchEvent(new h.w.Event('animationend'));
+  assert.equal(card(h, 10).classList.contains('highlight'), false);
+  assert.ok(card(h, 11).classList.contains('highlight'), 'each card lets go on its own animation');
+});
+
+test('the legend says what the marks mean, in both languages, under a board that has cards', async t => {
+  for (const arabic of [false, true]) {
+    const h = await harness(t, url => url.includes('/conflicts/') ? quiet : undefined, {}, arabic);
+    await h.select();
+    const legend = h.d.getElementById('twLegend');
+    assert.ok(legend, 'drawn after the tables');
+    assert.equal(legend.getAttribute('role'), 'note');
+    assert.match(legend.textContent, arabic ? /يمنع النشر.*يُضعف الجودة.*الوقت مقفل/ : /Blocks publishing.*Lowers quality.*Time locked/);
+    assert.ok(legend.querySelector('.ux-icon[data-icon="lock"]') && legend.querySelector('.ux-icon[data-icon="shared"]'));
+  }
+});
+
+test('two courses sharing a code are told apart on the board: colour by key, name read in its own direction', async t => {
+  const placements = [
+    at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' }),
+    at(11, { day: 'MON', course_code: 'CS112', course_key: 'CS112::PROGRAMMING_II', course_name: 'Programming II', term_section_id: 120 }),
+  ];
+  // The plan lens is where the page learns that two courses share a code.
+  const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements, slot_config: scenario.slot_config }
+    : url.includes('/plan-lens/') ? { plan_lens: { plans: [], sections: {}, courses: { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} } } }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
+  await h.select();
+  const hue = id => card(h, id).style.getPropertyValue('--tw-card-hue');
+  assert.notEqual(hue(10), hue(11), 'the card colours by course key, not by code');
+  assert.equal(card(h, 10).querySelector('.tw-card-name').getAttribute('dir'), 'auto');
+});
+
+test('the tone mark is announced, with the reason', async t => {
+  const h = await modelHarness(t, { placements: [at(10, { room: 'UNASSIGNED', room_state: 'unassigned' })] });
+  await h.select();
+  const mark = card(h, 10).querySelector('.tw-card-tone');
+  assert.equal(mark.getAttribute('role'), 'img');
+  assert.equal(mark.getAttribute('aria-label'), 'Blocks publishing: No room');
+});
+
+test('a located card lets go without an animation too, and a second locate is never cut short', async t => {
+  const h = await modelHarness(t, { placements: [at(10)] });
+  await h.select();
+  h.w.HTMLElement.prototype.scrollIntoView = () => {};
+  // Fake timers for the locate only.
+  const timers = new Map(); let next = 1;
+  const realSet = h.w.setTimeout, realClear = h.w.clearTimeout;
+  h.w.setTimeout = (fn, ms) => { const id = next++; timers.set(id, fn); return id; };
+  h.w.clearTimeout = id => timers.delete(id);
+  h.w.highlightWorkspacePlacements([10]);
+  h.w.highlightWorkspacePlacements([10]);  // again, before the first ends
+  h.w.setTimeout = realSet; h.w.clearTimeout = realClear;
+  assert.equal(timers.size, 1, 'one timer per card: the first was replaced');
+  assert.ok(card(h, 10).classList.contains('highlight'));
+  [...timers.values()].forEach(fn => fn());  // no animationend (reduced motion)
+  assert.equal(card(h, 10).classList.contains('highlight'), false);
+});
