@@ -54,6 +54,7 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-slot-config.js'), 'utf8'));
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-section-teacher.js'), 'utf8'));
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-programme-mark.js'), 'utf8'));
+  w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-hotspots.js'), 'utf8'));
   // base.html loads the design system's controls (menus, tabs, disclosures) on every page.
   w.eval(fs.readFileSync(path.join(root, 'static/js/ux-controls.js'), 'utf8'));
   w.eval(source);
@@ -166,6 +167,27 @@ test('failed Undo and Redo retain original history and never create an inverse a
   h.w.TW.redoStack.push({ type: 'remove', placement_id: 10 });
   h.w.updateUndoRedoButtons(); h.d.getElementById('twRedo').click(); await wait(() => h.notices.length === 2);
   assert.equal(h.w.TW.redoStack.length, 1); assert.equal(h.w.TW.undoStack.length, 1);
+});
+
+test('the Optimise result names the courses that left students without a section, with their students', async t => {
+  const h = await harness(t);
+  await h.select();
+  let shown = '';
+  h.w.dlg = { confirm: async ({ body }) => { shown = body; return true; } };
+  h.w.runOptimiseRequest = async () => ({ ok: true, optimisation: {
+    mode: 'current', elapsed_seconds: 1,
+    baseline_score: [0, 15, 0, 2, 900, 0], final_score: [0, 15, 0, 2, 900, 0], best_score: [0, 15, 0, 2, 900, 0],
+    hotspot_courses: ['CS372::DATABASE_SYSTEMS', 'FE2::FREE_ELECTIVE_COURSE_II'],
+    hotspot_details: [
+      { course_key: 'CS372::DATABASE_SYSTEMS', course_code: 'CS372', course_name: 'Database Systems', students: 14 },
+      { course_key: 'FE2::FREE_ELECTIVE_COURSE_II', course_code: 'FE2', course_name: 'Free Elective Course II', students: 1 },
+    ],
+  } });
+  await h.w.runOptimiseV2('current');
+  const box = h.d.createElement('div');
+  box.innerHTML = shown;
+  assert.deepEqual([...box.querySelectorAll('.ux-hotspots-row')].map(row => row.textContent), ['CS372Database Systems14 students', 'FE2Free Elective Course II1 student']);
+  assert.ok(!shown.includes('::'), 'no raw course key is shown');
 });
 
 test('older board responses cannot replace the currently selected board', async t => {

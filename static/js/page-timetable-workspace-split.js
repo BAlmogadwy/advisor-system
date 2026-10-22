@@ -9179,12 +9179,8 @@ function showOptimiseResults(o, mode) {
         <div style="font-weight:700;color:${crossPrimaryAfter > 0 ? '#F06060' : 'var(--teal)'};font-size:20px">${crossPrimaryAfter}<span style="color:var(--t4);font-size:12px;font-weight:400">${crossPrimaryBefore !== crossPrimaryAfter ? `/${crossPrimaryBefore}` : ''}</span></div>
         ${hasCrossAffectedMetric ? `<div style="font-size:10px;color:var(--t4);margin-top:2px">${crossAfter} potential course-demand overlaps</div>` : ''}
       </div>` : '';
-  const hotspots = (o.hotspot_courses || []).length ? `
-    <div class="section-title" style="color:#F06060;margin-top:12px">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot courses'}</div>
-    <div style="display:flex;flex-wrap:wrap;gap:4px">${o.hotspot_courses.map(c =>
-      `<span style="padding:3px 9px;border-radius:999px;background:rgba(240,96,96,0.12);color:#F06060;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${esc(c)}</span>`
-    ).join('')}</div>
-  ` : '';
+  // Courses that left students without a section (shared with the classic page).
+  const hotspots = window.TimetableHotspots?.html(o, IS_AR) || '';
   const reservePressure = (o.reserve_heavy_sections || []).length ? `
     <div class="section-title" style="color:#F5B731;margin-top:12px">${IS_AR ? 'ضغط احتياطي' : 'Reserve pressure'}</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px">${o.reserve_heavy_sections.slice(0, 8).map(s =>
