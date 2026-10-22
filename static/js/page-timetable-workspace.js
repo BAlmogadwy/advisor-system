@@ -139,7 +139,7 @@ function activateListRow(cell) {
   // A course placed with its whole pattern cannot be dropped (5b): say so.
   const meetings = Number(cell.dataset.meetings) || 1;
   announceBoard(meetings > 1
-    ? multiMeetingDropWords(cell.dataset.course || '', meetings)
+    ? multiMeetingDropWords(cell.dataset.course || '', meetings, { dropped: false })
     : (IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.'));
 }
 
@@ -1334,17 +1334,19 @@ function freeSectionLabels(c) {
    placed with its whole pattern (the server refuses less). Until Place… (5f),
    split view's create places a whole pattern. `n` unknown (a refusal that
    does not say it): no count is invented. */
-function multiMeetingDropWords(code, n) {
+function multiMeetingDropWords(code, n, { dropped = true } = {}) {
   const what = `\u2066${code}\u2069`;
-  const where = IS_AR ? ' «العرض المقسّم» يضع نمطاً كاملاً.' : ' Split view places a whole pattern.';
+  // After a drop, nothing was placed; on Enter, nothing was tried.
+  const none = dropped ? (IS_AR ? ' لم يُوضع شيء.' : ' Nothing was placed.') : '';
+  const where = IS_AR ? ' «عرض مقسّم» يضع نمطاً كاملاً.' : ' Split view places a whole pattern.';
   if (!n) {
     return (IS_AR
-      ? `تُوضع ${what} بنمطها الأسبوعي كاملاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.`
-      : `${what} is placed with its whole weekly pattern; a drop places one meeting. Nothing was placed.`) + where;
+      ? `تُوضع ${what} بنمطها الأسبوعي كاملاً، والإفلات يضع لقاءً واحداً.`
+      : `${what} is placed with its whole weekly pattern; a drop places one meeting.`) + none + where;
   }
   return (IS_AR
-    ? `يُدرَّس ${what} ${pluralAr(n, { two: 'مرتين أسبوعياً', few: '{n} مرات أسبوعياً', many: '{n} مرةً أسبوعياً', other: '{n} مرة أسبوعياً' })}، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.`
-    : `${what} meets ${n} times a week, and its meetings are placed together; a drop places one. Nothing was placed.`) + where;
+    ? `يُدرَّس ${what} ${pluralAr(n, { two: 'مرتين أسبوعياً', few: '{n} مرات أسبوعياً', many: '{n} مرةً أسبوعياً', other: '{n} مرة أسبوعياً' })}، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً.`
+    : `${what} meets ${n} times a week, and its meetings are placed together; a drop places one.`) + none + where;
 }
 
 /* The list's grids: one per term (or one for the unplaced sections), each row

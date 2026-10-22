@@ -1843,7 +1843,7 @@ test('J2 a drop of a course that meets several times a week sends nothing and sa
     assert.equal(h.posts.length, 0, 'no request');
     const warning = h.notices.find(n => n.type === 'warning');
     assert.equal(warning?.text, arabic
-      ? 'يُدرَّس \u2066CS323\u2069 مرتين أسبوعياً، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء. «العرض المقسّم» يضع نمطاً كاملاً.'
+      ? 'يُدرَّس \u2066CS323\u2069 مرتين أسبوعياً، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء. «عرض مقسّم» يضع نمطاً كاملاً.'
       : '\u2066CS323\u2069 meets 2 times a week, and its meetings are placed together; a drop places one. Nothing was placed. Split view places a whole pattern.');
   }
   // Arabic counts: few and many.
@@ -1874,6 +1874,11 @@ test('J3 the server’s "complete pattern" refusal reads the same, as a warning,
   assert.match(said, /is placed with its whole weekly pattern/);
   assert.doesNotMatch(said, /times a week/);
   assert.equal(other.seen.budget, budgets + 1, 'the budget is read again');
+  const ar = await dropHarness(t, { arabic: true, refuse: 'A complete planned section pattern must use one meeting per day.' });
+  await ar.select();
+  await dropOn(ar, plannedPayload({}));
+  assert.equal(ar.notices.find(n => n.type === 'warning')?.text,
+    'تُوضع \u2066CS323\u2069 بنمطها الأسبوعي كاملاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء. «عرض مقسّم» يضع نمطاً كاملاً.');
 });
 
 test('J5 any other refusal stays an error with the server’s words', async t => {
@@ -1899,7 +1904,16 @@ test('J6 a row dragged from the list carries its meeting count: a multi-meeting 
   // Enter on that row says the same, not "drag it".
   h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').focus();
   keyOn(h, 'Enter');
-  assert.match(h.d.getElementById('twBoardStatus').textContent, /meets 3 times a week/);
+  assert.equal(h.d.getElementById('twBoardStatus').textContent,
+    '\u2066CS323\u2069 meets 3 times a week, and its meetings are placed together; a drop places one. Split view places a whole pattern.',
+    'names the course; nothing was tried, so nothing "was placed"');
+  // Two meetings a week is already more than a drop places.
+  const two = await dropHarness(t, { budget: () => [{ ...row, required_meetings_per_section: 2 }] });
+  await two.select();
+  await wait(() => two.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]'));
+  two.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').focus();
+  keyOn(two, 'Enter');
+  assert.match(two.d.getElementById('twBoardStatus').textContent, /meets 2 times a week/);
 });
 
 test('J4 the list proposes the free section labels: with S1 and S3 placed, S2', async t => {
