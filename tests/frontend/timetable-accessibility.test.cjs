@@ -190,3 +190,171 @@ test('the inspector tabs use roving focus and update the panel label, including 
   }
   h.dom.window.close();
 });
+
+/* ── Disclosure and redraw (global, ux-controls.js) ── */
+function bare(storage = true, setup = null) {
+  const dom = new JSDOM('<!doctype html><html><body><div id="region" tabindex="0"></div><button id="outside">x</button></body></html>', { runScripts: 'outside-only' });
+  if (!storage) {
+    Object.defineProperty(dom.window, 'sessionStorage', { get() { throw new dom.window.DOMException('blocked', 'SecurityError'); } });
+  }
+  if (setup) setup(dom.window);
+  dom.window.eval(source);
+  return { dom, doc: dom.window.document, UX: dom.window.UXControls, region: dom.window.document.getElementById('region') };
+}
+const group = (key, open, extra = '') => `<h3><button type="button" class="ux-disclosure-toggle" data-ux-disclosure="${key}" aria-expanded="${open}" aria-controls="r-${key}">`
+  + `<span class="ux-disclosure-label">${key}</span><span class="ux-disclosure-chevron"></span></button></h3><div id="r-${key}"${open ? '' : ' hidden'}>${extra}</div>`;
+
+test('a disclosure opens and closes from anywhere on its header and keeps the choice, with or without storage', () => {
+  for (const storage of [true, false]) {
+    const h = bare(storage);
+    const draw = () => h.UX.redraw(h.region, group('a', h.UX.disclosure.isOpen('a', true)));
+    draw();
+    const toggle = () => h.doc.querySelector('[data-ux-disclosure="a"]');
+    toggle().querySelector('.ux-disclosure-chevron').click();  // a click on a part of the header
+    assert.deepEqual([toggle().getAttribute('aria-expanded'), h.doc.getElementById('r-a').hidden], ['false', true], `storage ${storage}`);
+    assert.equal(h.UX.disclosure.isOpen('a', true), false, `the choice holds (storage ${storage})`);
+    draw();
+    assert.deepEqual([toggle().getAttribute('aria-expanded'), h.doc.getElementById('r-a').hidden], ['false', true], `redrawn closed (storage ${storage})`);
+    h.dom.window.close();
+  }
+});
+
+test('a redraw keeps the keyboard on the same control and leaves the same content alone', () => {
+  const h = bare();
+  const html = n => `${group('a', true, `<button data-focus-key="row-1">one</button><button id="named">${n}</button><button>keyless</button>`)}`;
+  assert.equal(h.UX.redraw(h.region, html(1)), true);
+  const first = h.doc.querySelector('[data-ux-disclosure="a"]');
+  first.focus();
+  assert.equal(h.UX.redraw(h.region, html(1)), false, 'the same content is not drawn again');
+  assert.equal(h.doc.querySelector('[data-ux-disclosure="a"]'), first, 'its nodes are left alone');
+  for (const [i, selector] of ['[data-ux-disclosure="a"]', '[data-focus-key="row-1"]', '#named'].entries()) {
+    h.doc.querySelector(selector).focus();
+    const before = h.doc.activeElement;
+    assert.equal(h.UX.redraw(h.region, html(`v${i}`)), true);
+    assert.notEqual(h.doc.activeElement, before, 'a new node');
+    assert.equal(h.doc.activeElement, h.doc.querySelector(selector), `focus back on ${selector}`);
+  }
+  // A control with no key, or one that is gone: the region keeps the keyboard.
+  [...h.region.querySelectorAll('button')].at(-1).focus();
+  h.UX.redraw(h.region, html('keyless'));
+  assert.equal(h.doc.activeElement, h.region);
+  h.doc.querySelector('#named').focus();
+  h.UX.redraw(h.region, '<p>empty</p>');
+  assert.equal(h.doc.activeElement, h.region);
+  // Focus elsewhere is never taken.
+  h.UX.redraw(h.region, html(2));
+  h.doc.getElementById('outside').focus();
+  h.UX.redraw(h.region, html(3));
+  assert.equal(h.doc.activeElement.id, 'outside');
+  // Content other code replaced, or added to, is drawn again even when the
+  // text to draw matches the last.
+  h.region.innerHTML = '<p>other</p><p>two</p>';
+  assert.equal(h.UX.redraw(h.region, html(3)), true, 'replaced, same node count');
+  h.region.appendChild(h.doc.createElement('p'));
+  assert.equal(h.UX.redraw(h.region, html(3)), true, 'added to');
+  assert.equal(h.region.querySelectorAll(':scope > p').length, 0);
+  h.dom.window.close();
+});
+
+test('a control disabled for a moment gets the keyboard back once it is enabled, unless the user moved on', () => {
+  const h = bare();
+  const html = disabled => `<select id="mark"${disabled ? ' disabled' : ''}><option>A</option></select><button id="other">o</button>`;
+  h.UX.redraw(h.region, html(false));
+  h.doc.getElementById('mark').focus();
+  h.UX.redraw(h.region, html(true));  // saving
+  assert.equal(h.doc.activeElement, h.region, 'held by the region meanwhile');
+  h.UX.redraw(h.region, html(true) + ' ');  // another redraw while it saves
+  assert.equal(h.doc.activeElement, h.region);
+  h.UX.redraw(h.region, html(false));  // saved
+  assert.equal(h.doc.activeElement, h.doc.getElementById('mark'));
+  // Moved on while it saved, inside the region or out of it: the control does
+  // not take the keyboard back.
+  for (const elsewhere of ['other', 'outside']) {
+    h.doc.getElementById('mark').focus();
+    h.UX.redraw(h.region, html(true));
+    assert.equal(h.doc.activeElement, h.region);
+    h.doc.getElementById(elsewhere).focus();
+    h.UX.redraw(h.region, html(false));
+    assert.equal(h.doc.activeElement, h.doc.getElementById(elsewhere), elsewhere);
+  }
+  h.dom.window.close();
+});
+
+test('a control switched off in place while it has the keyboard gets it back when switched on, unless the user moved on', async () => {
+  const h = bare();
+  h.UX.redraw(h.region, '<button data-focus-key="lock">Lock</button><button data-focus-key="other">Other</button>');
+  const lock = () => h.region.querySelector('[data-focus-key="lock"]');
+  // What Chromium does when a page disables the focused button: it lets go of
+  // it and reports focusout from the now disabled control, with nowhere to go
+  // (jsdom does neither, so the test plays it; a browser test runs the real one).
+  const switchOff = button => {
+    button.blur();
+    button.disabled = true;
+    button.dispatchEvent(new h.dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+  };
+  lock().focus();
+  switchOff(lock());
+  assert.equal(h.doc.activeElement, h.region, 'the region holds the keyboard');
+  lock().disabled = false;  // the write is done: switched on in place
+  await tick();
+  assert.equal(h.doc.activeElement, lock(), 'back on the control');
+  // Leaving for another control is the user's move, even if the control is
+  // switched off as it goes.
+  lock().focus();
+  lock().disabled = true;
+  lock().dispatchEvent(new h.dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: h.region.querySelector('[data-focus-key="other"]') }));
+  h.region.querySelector('[data-focus-key="other"]').focus();
+  lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement.dataset.focusKey, 'other');
+  lock().focus();
+  h.region.querySelector('[data-focus-key="other"]').focus();
+  lock().disabled = true; lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement.dataset.focusKey, 'other');
+  // Switched off, then the user went elsewhere before it came back.
+  lock().focus();
+  switchOff(lock());
+  h.doc.getElementById('outside').focus();
+  lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement.id, 'outside');
+  // ... and came back to the panel itself later: nothing is still waiting.
+  h.region.focus();
+  lock().disabled = true; lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement, h.region, 'no stale hand-back on a later switch');
+  h.UX.redraw(h.region, '<button data-focus-key="lock">Lock</button><button data-focus-key="other">Other!</button>');
+  assert.equal(h.doc.activeElement, h.region, 'nor on a later redraw');
+  h.dom.window.close();
+});
+
+test('a region taken off the page is let go, and watched again when it comes back', async () => {
+  // Count the observers the helper keeps watching.
+  let live = 0;
+  const h = bare(true, w => {
+    const Native = w.MutationObserver;
+    w.MutationObserver = class extends Native {
+      observe(...args) { live++; return super.observe(...args); }
+      disconnect() { live--; return super.disconnect(); }
+    };
+  });
+  const html = '<button data-focus-key="lock">Lock</button>';
+  h.UX.redraw(h.region, html);
+  const parent = h.region.parentNode;
+  h.region.remove();
+  h.doc.getElementById('outside').focus();  // the next focus anywhere lets the region go
+  assert.equal(live, 0, 'nothing watches a region off the page');
+  parent.prepend(h.region);
+  h.UX.redraw(h.region, html + ' ');
+  const lock = () => h.region.querySelector('[data-focus-key="lock"]');
+  lock().focus();
+  lock().blur();
+  lock().disabled = true;
+  lock().dispatchEvent(new h.dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+  assert.equal(h.doc.activeElement, h.region);
+  lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement, lock(), 'the hand-back still works after it came back');
+  h.dom.window.close();
+});

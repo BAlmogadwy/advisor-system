@@ -17,6 +17,12 @@
    TABS   `[role=tablist].ux-tabs` of `[role=tab]` buttons whose `.active` class
           marks the selected one: roving tabindex, ← → Home End (mirrored in
           Arabic), `aria-selected`, and the owned panel's `aria-labelledby`.
+   DISCLOSURE  `<button class="ux-disclosure-toggle" aria-expanded aria-controls="ID"
+          data-ux-disclosure="KEY">` opening and closing the region `#ID`
+          (its `hidden`). One delegated listener, so it survives a page that
+          redraws its markup; the choice is remembered for the session per KEY,
+          and a page drawing a group asks `UXControls.disclosure.isOpen(KEY,
+          fallback)` for its state.
 
    Generalised from the Timetable Workspace's own menu script, whose placement
    rules (preferred edge, flip, clamp, phone sheet, re-place on resize) were
@@ -229,6 +235,134 @@
     });
   }
 
+  // ── Disclosure ────────────────────────────────────────────────
+  // The choice is kept for the session; where storage is unavailable (a
+  // private window, blocked site data) it is kept for the page's life.
+  const DISCLOSURE_STORE = 'ux-disclosure:';
+  const disclosureChoices = new Map();
+  const disclosure = {
+    isOpen(key, fallback = true) {
+      try {
+        const saved = window.sessionStorage.getItem(DISCLOSURE_STORE + key);
+        if (saved === 'open') return true;
+        if (saved === 'closed') return false;
+      } catch (_) { /* a per-session convenience only */ }
+      return disclosureChoices.has(key) ? disclosureChoices.get(key) : fallback;
+    },
+    remember(key, open) {
+      disclosureChoices.set(key, open);
+      try { window.sessionStorage.setItem(DISCLOSURE_STORE + key, open ? 'open' : 'closed'); } catch (_) { /* as above */ }
+    },
+  };
+  document.addEventListener('click', event => {
+    const toggle = event.target.closest && event.target.closest('.ux-disclosure-toggle[aria-controls]');
+    if (!toggle) return;
+    const region = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (!region) return;
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', String(open));
+    region.hidden = !open;
+    if (toggle.dataset.uxDisclosure) disclosure.remember(toggle.dataset.uxDisclosure, open);
+  });
+
+  // ── Redraw: new content for a region, the keyboard kept in place ──
+  /* A page that draws a region from its data again and again (an inspector
+     panel after every answer from the server) calls
+     `UXControls.redraw(region, html)` rather than setting innerHTML:
+     - the same content leaves the nodes alone, so a screen reader keeps its
+       place and a click in progress still lands;
+     - new content gives focus back to the same control, matched by its
+       `data-focus-key`, its `data-ux-disclosure` or its id; when that
+       control is gone, or disabled for now (a save in progress), focus goes
+       to the region if it can take it, and the control gets it back on a
+       later redraw that shows it enabled, unless the user has moved on.
+     A control disabled in place while it has the keyboard (a page switching
+     its controls off while a write is in flight) drops focus to the page
+     before any redraw; the region takes it, and hands it back the moment the
+     control is enabled again — in place or by a redraw.
+     Returns whether it drew, so a page wires listeners only on new nodes.
+     Limits: focus only (not an input's value or caret); the region needs a
+     tabindex to hold the keyboard. */
+  const drawn = new WeakMap();
+  const focusKeyOf = element => (element.dataset.focusKey ? `focus:${element.dataset.focusKey}`
+    : element.dataset.uxDisclosure ? `disclosure:${element.dataset.uxDisclosure}`
+      : element.id ? `id:${element.id}` : '');
+  const findControl = (region, key) => [...region.querySelectorAll('[data-focus-key],[data-ux-disclosure],[id]')]
+    .find(element => focusKeyOf(element) === key);
+  function record(region) {
+    if (!drawn.has(region)) drawn.set(region, { html: null, first: null, count: -1, awaiting: '' });
+    return drawn.get(region);
+  }
+  const watched = new WeakSet();
+  function watch(region) {
+    if (watched.has(region)) return;
+    watched.add(region);
+    // Focus landing anywhere but the region (another control, another part
+    // of the page) means the user moved on: nothing waits for the keyboard any
+    // more. A window losing focus moves it nowhere, so the wait survives that.
+    // The listener lets go of a region taken off the page (a global helper
+    // may watch short-lived regions), which is then watched again if reused.
+    const onFocusin = event => {
+      if (!region.isConnected) {
+        document.removeEventListener('focusin', onFocusin);
+        observer.disconnect();
+        watched.delete(region);
+        return;
+      }
+      if (event.target !== region && drawn.has(region)) drawn.get(region).awaiting = '';
+    };
+    document.addEventListener('focusin', onFocusin);
+    region.addEventListener('focusout', event => {
+      const control = event.target;
+      // Only a control that lost the keyboard by being switched off is held
+      // (and only while nothing else has it: leaving for somewhere else is the
+      // user's move).
+      if (!control.disabled || !region.hasAttribute('tabindex')) return;
+      const key = focusKeyOf(control);
+      if (!key) return;
+      record(region).awaiting = key;
+      // Now if the browser has already let go of it, else once it has.
+      const hold = () => {
+        const active = document.activeElement;
+        if (!active || active === document.body) region.focus({ preventScroll: true });
+      };
+      hold();
+      setTimeout(hold, 0);
+    });
+    // Enabled again in place: the awaited control takes the keyboard back
+    // if the region still holds it.
+    const observer = new MutationObserver(() => {
+      const entry = drawn.get(region);
+      if (!entry || !entry.awaiting || document.activeElement !== region) return;
+      const control = findControl(region, entry.awaiting);
+      if (!control || control.disabled) return;
+      control.focus({ preventScroll: true });
+      if (document.activeElement === control) entry.awaiting = '';
+    });
+    observer.observe(region, { attributes: true, attributeFilter: ['disabled'], subtree: true });
+  }
+  function redraw(region, html) {
+    watch(region);
+    const last = drawn.get(region);
+    if (last && last.html === html && last.first === region.firstChild && last.count === region.childNodes.length) return false;
+    const active = document.activeElement;
+    const inside = Boolean(active) && active !== region && region.contains(active);
+    const key = inside ? focusKeyOf(active) : active === region && last ? last.awaiting : '';
+    region.innerHTML = html;
+    let awaiting = '';
+    if (inside || key) {
+      const control = key ? findControl(region, key) : null;
+      if (control && !control.disabled) control.focus({ preventScroll: true });
+      // Gone, or not focusable now (disabled, inside a closed group): the region.
+      if (!control || document.activeElement !== control) {
+        if (region.hasAttribute('tabindex') && document.activeElement !== region) region.focus({ preventScroll: true });
+        if (control) awaiting = key;
+      }
+    }
+    drawn.set(region, { html, first: region.firstChild, count: region.childNodes.length, awaiting });
+    return true;
+  }
+
   function wire(root) {
     const scope = root || document;
     scope.querySelectorAll('button[aria-haspopup="menu"][aria-controls]').forEach(wireMenu);
@@ -240,7 +374,7 @@
     entries.forEach(entry => { if (!entry.anchor.contains(event.target)) close(entry); });
   });
 
-  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)) };
+  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw };
   // base.html loads this at the end of <body>, so the page's markup is already
   // there: wire it now, and again once parsing ends for anything later (wiring
   // is idempotent per control).

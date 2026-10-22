@@ -51,6 +51,8 @@ async function harness(t, intercept = () => undefined) {
     return { ok: !body.httpError, status: body.httpError || 200, json: async () => body };
   };
   d.getElementById('twYear').value = '1448'; d.getElementById('twTerm').value = '1';
+  // The page loads the shared section-teacher rule before its own script.
+  w.eval(read('static/js/timetable-section-teacher.js'));
   w.eval(source); w.eval(accessibility); w.eval(adapter);
   await wait(() => d.getElementById('twScenario').options.length === 3);
   const select = async id => { d.getElementById('twScenario').value = String(id); await w.onScenarioChange(); };

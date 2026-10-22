@@ -373,17 +373,24 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-pane-empty, .tw-pane-note { margin: 12px 4px; color: var(--t3); font-size: var(--text-sm); }
 
 /* Issues */
+.tw-issue-group-head { margin: 0; font: inherit; }
+.tw-issue-group { margin-top: 4px; }
+.tw-issue-group + .tw-issue-group { margin-top: 8px; }
+/* Selection: the section's own issues, one line each. */
+.tw-sel-issues { list-style: none; margin: 0 0 10px; padding: 0; }
+.tw-sel-issues li { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; font-size: var(--text-sm); }
+.tw-sel-issues .ux-tone-icon { margin-top: 2px; }
+.tw-sel-hint { display: block; margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
+/* The group header is the global disclosure toggle; it spans its group. */
 .tw-issue-head {
-  display: flex; align-items: center; gap: 6px;
-  margin: 14px 2px 6px;
+  margin: 0 0 4px;
   color: var(--t1); font-size: var(--text-xs); font-weight: 700;
 }
-.tw-issue-head:first-child { margin-top: 4px; }
 .tw-issue-head[data-tone="critical"] { color: var(--sev-critical); }
 .tw-issue-head[data-tone="warning"]  { color: var(--sev-warning); }
 .tw-issue-head[data-tone="info"]     { color: var(--sev-info); }
 .tw-issue-count {
-  margin-inline-start: auto; padding: 0 7px;
+  padding: 0 7px;
   border-radius: var(--radius-pill);
   background: var(--surface-2); color: var(--t2);
   font-size: var(--text-2xs); font-weight: 700;

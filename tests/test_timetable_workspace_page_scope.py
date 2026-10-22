@@ -5,6 +5,7 @@ import subprocess
 from html.parser import HTMLParser
 
 import pytest
+from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.db import connection
 from django.test import Client
@@ -179,6 +180,51 @@ def test_split_drawer_lock_button_says_a_lock_keeps_days_and_times_not_the_room(
     # Only the Lock control carries it, and only in the page's own language.
     assert buttons["twsDrawerRemove"].get("title") != LOCK_HELP[language]
     assert LOCK_HELP["ar" if language == "en" else "en"] not in html
+
+
+def _shared_module_globals() -> dict[str, str]:
+    """Each shared timetable module's global, and the static file defining it."""
+    found = {}
+    for module in sorted((settings.BASE_DIR / "static" / "js").glob("timetable-*.js")):
+        for name in re.findall(
+            r"^\s*(?:window|globalThis)\.(Timetable[A-Z]\w*)\s*=",
+            module.read_text(encoding="utf-8"),
+            flags=re.M,
+        ):
+            found[name] = f"js/{module.name}"
+    return found
+
+
+@pytest.mark.parametrize(
+    "path, page_script",
+    [
+        ("/timetable-workspace/", "js/page-timetable-workspace.js"),
+        ("/timetable-workspace/split/", "js/page-timetable-workspace-split.js"),
+    ],
+)
+def test_each_page_loads_every_shared_module_it_uses_before_its_own_script(path, page_script, http):
+    # The jsdom harnesses load the modules themselves, so only the rendered
+    # page proves that the template does.
+    response = http.get(path)
+    assert response.status_code == 200
+    loaded = [
+        source.split("?")[0]
+        for source in re.findall(
+            rf'<script\b[^>]*\bsrc="{re.escape(settings.STATIC_URL)}([^"]+)"',
+            response.content.decode(),
+        )
+    ]
+    assert page_script in loaded, loaded
+    before = loaded[: loaded.index(page_script)]
+    text = (settings.BASE_DIR / "static" / page_script).read_text(encoding="utf-8")
+    used = {
+        name: module
+        for name, module in _shared_module_globals().items()
+        if re.search(rf"\b{name}\b", text)
+    }
+    assert "TimetableSectionTeacher" in used, sorted(used)
+    missing = {name: module for name, module in used.items() if module not in before}
+    assert missing == {}, f"{path} uses these before loading them: {missing}"
 
 
 def test_the_workspace_job_card_is_a_monitor_that_offers_no_legacy_rebuild(http, settings):

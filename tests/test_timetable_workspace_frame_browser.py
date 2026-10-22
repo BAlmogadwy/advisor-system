@@ -451,3 +451,63 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                     if found:
                         problems[f"{language} {theme} {width}"] = found
         self.assertEqual(problems, {})
+
+    def test_a_disclosure_chevron_points_the_way_its_group_opens(self) -> None:
+        """The global disclosure: open points down; closed points along the
+        reading direction, right in English and left in Arabic. Read from the
+        rendered transform and the sides the chevron draws, so the check holds
+        however the stylesheet draws it."""
+        seen = {}
+        for language in ("en", "ar"):
+            page, sent, errors = self._load(language, "light", 1440, 900)
+            seen[language] = page.evaluate(
+                """() => {
+                  const host = document.createElement('div');
+                  host.innerHTML = '<button type="button" class="ux-disclosure-toggle" aria-expanded="true"'
+                    + ' aria-controls="uxChevronProbe"><span class="ux-disclosure-label">Probe</span>'
+                    + '<span class="ux-disclosure-chevron"></span></button><div id="uxChevronProbe"></div>';
+                  document.querySelector('main, body').appendChild(host);
+                  const toggle = host.querySelector('button');
+                  const chevron = host.querySelector('.ux-disclosure-chevron');
+                  const way = () => {
+                    const style = getComputedStyle(chevron);
+                    const drawn = side => parseFloat(style[`border${side}Width`]) > 0;
+                    // The chevron's point: the corner where its two borders meet.
+                    const x = drawn('Right') ? 1 : drawn('Left') ? -1 : 0;
+                    const y = drawn('Bottom') ? 1 : drawn('Top') ? -1 : 0;
+                    const m = new DOMMatrix(style.transform === 'none' ? undefined : style.transform);
+                    const px = m.a * x + m.c * y, py = m.b * x + m.d * y;
+                    return Math.abs(py) > Math.abs(px) ? (py > 0 ? 'down' : 'up') : (px > 0 ? 'right' : 'left');
+                  };
+                  const open = way();
+                  toggle.click();  // the design system closes it
+                  const result = [open, toggle.getAttribute('aria-expanded'), way()];
+                  host.remove();
+                  return result;
+                }"""
+            )
+            self.assertEqual([*sent, *errors], [])
+        self.assertEqual(seen, {"en": ["down", "false", "right"], "ar": ["down", "false", "left"]})
+
+    def test_a_button_switched_off_while_it_has_the_keyboard_gets_it_back(self) -> None:
+        """The inspector's Lock, pressed from the keyboard: the page switches its
+        controls off while the write is in flight (the browser lets go of the
+        focused button) and draws the panel again; the keyboard ends on the
+        same control, now "Unlock time"."""
+        page, sent, errors = self._load("en", "light", 1440, 900)
+        page.click(".tw-card")
+        page.click("#twTabSelection")
+        lock = '#twRightBody [data-focus-key="lock"]'
+        page.focus(lock)
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            f"document.querySelector('{lock}')?.textContent.trim() === 'Unlock time'"
+            f" && !document.querySelector('{lock}').disabled"
+        )
+        page.wait_for_timeout(100)
+        self.assertEqual(
+            page.evaluate("document.activeElement.dataset.focusKey || document.activeElement.id"),
+            "lock",
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(any("/lock/" in request for request in sent), sent)

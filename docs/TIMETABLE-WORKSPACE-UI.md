@@ -99,6 +99,25 @@ padding-aware for `p-0`.
 - `.ux-stat-strip` / `.ux-stat-group` / `.ux-stat` (`data-tone`), one `<dl
   aria-labelledby>` per scope.
 - `.ux-meta` (· separated, empty parts vanish), `.ux-legend`.
+- `.ux-disclosure-toggle` (+ `-label`, which takes the free width, and
+  `-chevron`): a button that opens and closes the region it controls, from one
+  delegated listener in `ux-controls.js`; with `data-ux-disclosure="key"` the
+  choice is kept for the session (in memory where storage is unavailable).
+  The chevron points down when open and along the reading direction when
+  closed. (Section planning's `.sp-chev` predates it and is a candidate to
+  move onto it.)
+- `UXControls.redraw(region, html)`: draws a region again without losing the
+  keyboard — unchanged content keeps its nodes; changed content gives focus
+  back to the same control (`data-focus-key`, `data-ux-disclosure` or id), or
+  to the region while that control is gone or disabled, and returns it once
+  the control is enabled again unless the user moved on. A control switched
+  off in place while it has the keyboard (a write in flight disables the
+  page's mutation controls; Chromium then lets go of the focused one) is
+  held the same way: the region takes the keyboard and the control gets it
+  back when it is switched on again, in place or by a redraw. A page that
+  redraws a panel after every server answer uses it instead of `innerHTML`.
+  Limits: focus only, not an input's value or caret; the region needs a
+  `tabindex` to hold the keyboard.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.
@@ -307,6 +326,18 @@ findings changed the plan:
    info collapsed), rows as buttons, "This section's issues" at the top of
    Selection, teacher states, 0 versus unknown, Seated on demand (a Refresh,
    never a per-edit lens reload).
+   Built in two parts. **4a**: a global disclosure (`.ux-disclosure-toggle`,
+   one delegated listener in ux-controls.js, the choice kept per session and
+   key) for the Issues groups (context starts closed; counts stay visible);
+   Selection lists the section's own issues (critical and warning, each with
+   its subject), its teacher by the one-teacher rule — now one shared module,
+   `timetable-section-teacher.js`, for the workspace and split view (they
+   disagreed) — and a count of 0 as 0; the meetings list names no teacher (a
+   meeting row can carry a stale name), and neither does search. The panel is
+   drawn through the global `UXControls.redraw`, so the several redraws one
+   edit causes neither move the keyboard nor disturb a screen reader; an item
+   from before the last edit says so in Selection as in Issues. **4b**: the programme mark (#160
+   parity, from split view into a shared module) and Seated on demand.
 5. **Keyboard.** Grid semantics for the board (days × columns) with roving
    focus; the left list as one roving stop; `event.code` for `[` and `]`; a
    Move dialog with one ranked list whose verdict follows the server's
