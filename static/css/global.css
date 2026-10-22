@@ -2085,6 +2085,9 @@ html body .btn-split > .btn:focus-visible { position: relative; z-index: 1; }
 /* ── Segmented buttons (choose one of a few views) ───────────
    Buttons with `aria-current`, NOT a tablist: a tablist promises arrow-key tabs
    and owned panels. The track scrolls sideways when the items overflow. */
+/* An empty segmented control means nothing (no scenario open, boards still
+   loading): it takes no room. */
+.ux-seg:empty { display: none; }
 .ux-seg {
   display: flex; align-items: stretch; gap: 2px;
   min-width: 0; max-width: 100%;
