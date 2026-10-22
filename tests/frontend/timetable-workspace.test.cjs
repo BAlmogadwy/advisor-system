@@ -399,3 +399,72 @@ test('the Issues count follows the data while another inspector tab is open', as
   assert.ok(h.d.getElementById('twTabSelection').classList.contains('active'), 'Selection stayed open throughout');
   assert.deepEqual(h.errors, []);
 });
+
+// Between a board switch and that board's own conflicts, the previous board's
+// clashes are neither shown nor counted, and the tab never says "No issues".
+test('a board switch never counts the previous board’s clashes while its own load', async t => {
+  const second = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const pending = deferred();
+  const h = await harness(t, url => {
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, second] };
+    if (url === '/ops/tw/boards/2/conflicts/') return { summary: { critical: 1 }, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, section_a: 'CS323', section_b: 'FE2', overlap_count: 14 }] };
+    if (url === '/ops/tw/boards/3/') return { placements: [{ ...placement, id: 11 }], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/3/conflicts/') return pending.promise;
+    return undefined;
+  });
+  await h.select();
+  const counts = () => [h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twRightRailCount').textContent];
+  assert.deepEqual(counts(), ['2', '2']);
+  const switching = h.w.selectBoard(3);
+  await wait(() => h.w.TW.placements[0]?.id === 11);
+  // Something redraws inside the window: a readiness answer lands.
+  h.w.renderReadinessViews();
+  assert.deepEqual(counts(), ['', ''], 'board 2’s clash is not board 3’s');
+  const body = h.d.getElementById('twRightBody').textContent;
+  assert.match(body, /This board’s clashes have not loaded yet/);
+  assert.doesNotMatch(body, /No issues/);
+  assert.equal(h.d.querySelector('#twBoardTabs [data-board-id="3"] .ux-seg-flag'), null, 'nor board 2’s critical count on its button');
+  pending.resolve({ summary: { critical: 0 } });
+  await switching;
+  assert.match(h.d.getElementById('twRightBody').textContent, /No issues/);
+  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /not loaded/);
+  assert.deepEqual(h.errors, []);
+});
+
+test('a board whose conflicts fail to load never reads as having no issues', async t => {
+  const second = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const h = await harness(t, url => {
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, second] };
+    if (url === '/ops/tw/boards/3/') return { placements: [{ ...placement, id: 11 }], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/3/conflicts/') return { httpError: 500, error: { message: 'Conflicts failed' } };
+    return undefined;
+  });
+  await h.select();
+  await h.w.selectBoard(3);
+  const body = h.d.getElementById('twRightBody').textContent;
+  assert.match(body, /This board’s clashes have not loaded yet/);
+  assert.doesNotMatch(body, /No issues/);
+  assert.ok(h.notices.some(n => n.type === 'error'), 'the failure itself is reported');
+});
+
+// The server can refuse a Publish the last check allowed (the data changed in
+// between): its blockers then show everywhere the earlier answer did.
+test('a refused Publish redraws the board flags, the count and the open Issues tab', async t => {
+  const h = await harness(t, (url, opts) => {
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    if (url.endsWith('/publish/') && opts.method === 'POST') return { httpError: 409, error: { code: 'PUBLISH_BLOCKED', message: 'Blocked', details: {
+      blockers: ['x'], warnings: [], warning_items: [], blocker_items: [{ code: 'missing_required_section', board_id: null, count: 1,
+        params: { course_code: 'AI222', course_key: 'AI222', programme_term: 7, planned_sections: 2, used_sections: 1 } }] } } };
+    return undefined;
+  });
+  await h.select();
+  h.w.dlg = { confirm: async () => true };
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '2');
+  await h.w.publishScenario();
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '3');
+  assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'critical');
+  assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '1');
+  assert.match(h.d.getElementById('twRightBody').textContent, /Blocks publishing/);
+  assert.match(h.d.getElementById('twPublishLabel').textContent, /1 blocker/);
+});

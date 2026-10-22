@@ -52,6 +52,7 @@ const TW = {
   boards: [],
   placements: [],
   conflicts: {},
+  conflictsBoardId: null,
   unplacedSections: [],
   undoStack: [],
   redoStack: [],
@@ -870,7 +871,7 @@ async function onScenarioChange() {
     TW.boardId = null;
     TW.loadedBoardId = null;
     TW.selectedPlacementId = null;
-    TW.placements = []; TW.conflicts = {}; TW.capacityData = null; TW.quality = null;
+    TW.placements = []; TW.conflicts = {}; TW.conflictsBoardId = null; TW.capacityData = null; TW.quality = null;
     if (!sameScenario) {
       TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null;
       TW.sectionBudget = null; TW.unplacedSections = [];
@@ -1217,10 +1218,13 @@ async function loadConflicts() {
   if (TW.boardId !== boardId || TW.scenarioId !== scenarioId) return;
   if (data) {
     TW.conflicts = data;
-    const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
-    renderRightPanel((activeTab && activeTab.dataset.tab) || 'issues');
-    updateQuickStats();
+    TW.conflictsBoardId = boardId;
   }
+  // A failed load redraws too: the inspector then says this board's clashes
+  // are not loaded, instead of keeping the previous board's list.
+  const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+  renderRightPanel((activeTab && activeTab.dataset.tab) || 'issues');
+  updateQuickStats();
 }
 
 /* ── Publish ──
@@ -1309,17 +1313,22 @@ function refreshPublishReadiness(force = false) {
     } finally {
       if (readinessRequest?.promise === promise) readinessRequest = null;
       TW.readinessLoading = Boolean(readinessRequest);
-      renderPublishState();
-      renderWorkspaceQuality();
-      renderBoardTabs();
-      // The Issues tab lists the board's publish blockers: redraw it with the
-      // answer, or it shows the previous one (fixed blockers, missing new ones).
-      const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
-      if (activeTab?.dataset.tab === 'issues') renderRightPanel('issues');
+      renderReadinessViews();
     }
   })();
   if (!force) readinessRequest = { scenarioId, version, promise };
   return promise;
+}
+
+/* Everything that shows a readiness answer: Publish, the counts, the board
+   flags, and the Issues tab when it is open (it lists the board's blockers, so
+   without a redraw it shows the previous answer). */
+function renderReadinessViews() {
+  renderPublishState();
+  renderWorkspaceQuality();
+  renderBoardTabs();
+  const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+  if (activeTab?.dataset.tab === 'issues') renderRightPanel('issues');
 }
 
 /* The publish blockers the server places on one board (its critical clashes
@@ -1445,7 +1454,7 @@ async function publishScenario() {
   if (refused) {
     TW.readiness = { ready: false, ...refused };
     TW.readinessVersion = TW.dataVersion;
-    renderPublishState();
+    renderReadinessViews();
     await showPublishBlockers(TW.readiness);
     return;
   }
@@ -1471,7 +1480,7 @@ function exportScenario(mode) {
 
 /* ── Rendering ── */
 function resetWorkspace() {
-  TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
+  TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.conflictsBoardId = null; TW.capacityData = null;
   TW.quality = null; TW.undoStack = []; TW.redoStack = []; TW.selectedPlacementId = null;
   TW.readiness = null; TW.readinessVersion = -1; TW.qualityVersion = -1;
   TW.sectionBudget = null; TW.unplacedSections = [];
@@ -1523,7 +1532,7 @@ function renderBoardTabs() {
     btn.dataset.boardId = String(b.id);
     const active = b.id === TW.boardId;
     if (active) btn.setAttribute('aria-current', 'true');
-    const clashes = active ? ((TW.conflicts.summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
+    const clashes = active ? ((boardConflicts().summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
     const serverBlockers = boardReadinessBlockers(b.id).length;
     const critical = clashes + serverBlockers;
     const left = boardSectionsLeft(b);
@@ -1950,9 +1959,10 @@ function createPlacementCard(p) {
   if (p.is_locked) card.classList.add('locked');
 
   // Check if this placement has conflicts
-  const overlaps = (TW.conflicts.overlaps || []);
-  const instrClashes = (TW.conflicts.instructor_clashes || []);
-  const roomClashes = (TW.conflicts.room_clashes || []);
+  const conflicts = boardConflicts();
+  const overlaps = (conflicts.overlaps || []);
+  const instrClashes = (conflicts.instructor_clashes || []);
+  const roomClashes = (conflicts.room_clashes || []);
   const crossBoardClashes = activeBoardCrossBoardClashes();
   const placementId = String(p.id);
   const issueLabels = [];
@@ -2342,9 +2352,14 @@ function renderRightPanel(tab) {
   const body = $('twRightBody');
 
   if (tab === 'issues') {
-    const { serverBlockers, overlaps, iClashes, rClashes, crossBoard: xConflictsEarly, roomShortages, total, critical } = boardIssues();
+    const { serverBlockers, overlaps, iClashes, rClashes, crossBoard: xConflictsEarly, roomShortages, total, critical, conflictsKnown } = boardIssues();
     setIssuesCount(total, critical);
+    const notLoaded = conflictsKnown ? '' : `<p class="tw-issue-note">${IS_AR ? 'تعارضات هذه اللوحة لم تُحمَّل بعد.' : 'This board’s clashes have not loaded yet.'}</p>`;
 
+    if (total === 0 && !conflictsKnown) {
+      body.innerHTML = notLoaded;
+      return;
+    }
     if (total === 0) {
       body.innerHTML = `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${T.noIssues}</p>${TW.quality?.rooms?.assessed ? '' : `<small>${IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.'}</small>`}</div>`;
       return;
@@ -2352,7 +2367,7 @@ function renderRightPanel(tab) {
 
     // Severity first: what blocks publishing, then what lowers quality, then context.
     const heading = (text, count, tone) => `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(text)}</span><span class="tw-issue-count tnum">${count}</span></h3>`;
-    let html = '';
+    let html = notLoaded;
     // What the server says stops publishing on this board — a section placed on
     // no board, meetings on blocked times, an incomplete pattern — first.
     if (serverBlockers.length) {
@@ -2501,13 +2516,14 @@ function renderRightPanel(tab) {
 
 function renderMriPanel(body) {
   const activeBoard = TW.boards.find(b => b.id === TW.boardId) || {};
-  const overlaps = TW.conflicts.overlaps || [];
-  const iClashes = TW.conflicts.instructor_clashes || [];
-  const rClashes = TW.conflicts.room_clashes || [];
+  const conflicts = boardConflicts();
+  const overlaps = conflicts.overlaps || [];
+  const iClashes = conflicts.instructor_clashes || [];
+  const rClashes = conflicts.room_clashes || [];
   const crossBoard = activeBoardCrossBoardClashes();
   const roomShortages = activeBoardRoomShortages();
   const roomsAssessed = Boolean(TW.quality?.rooms?.assessed);
-  const impact = TW.conflicts.student_impact || {};
+  const impact = conflicts.student_impact || {};
   const capacity = TW.capacityData || {};
   const capTotals = capacity.totals || {};
   const capCourses = capacity.courses || [];
@@ -2696,7 +2712,7 @@ function isWarningOverlap(overlap) {
 // Sections stacked in one grid cell read as a clash unless the server reported
 // every stacked pair as a non-blocking overlap.
 function stackedPairsAllWarnings(placement, cellPlacements) {
-  const overlaps = TW.conflicts.overlaps || [];
+  const overlaps = boardConflicts().overlaps || [];
   const id = String(placement.id);
   return cellPlacements.every(other => {
     if (other === placement) return true;
@@ -2709,9 +2725,19 @@ function stackedPairsAllWarnings(placement, cellPlacements) {
   });
 }
 
+/* The loaded conflicts when they describe the current board, else none: between
+   a board switch and that board's own answer (or after a failed load) the
+   previous board's clashes are never shown or counted as this board's. */
+function boardConflicts() {
+  return TW.conflictsBoardId === TW.boardId ? (TW.conflicts || {}) : {};
+}
+function boardConflictsKnown() {
+  return Boolean(TW.boardId) && TW.conflictsBoardId === TW.boardId;
+}
+
 function activeBoardCrossBoardClashes() {
   const boardId = String(TW.boardId);
-  return (TW.conflicts.cross_board_conflicts || []).filter(c =>
+  return (boardConflicts().cross_board_conflicts || []).filter(c =>
     String(c.board_a_id) === boardId || String(c.board_b_id) === boardId
   );
 }
@@ -2964,7 +2990,8 @@ function renderDemandTable(body) {
 /* Everything the Issues tab lists for the current board, and its count. The tab
    and the counts read this one sum, so they can never disagree. */
 function boardIssues() {
-  const conflicts = TW.conflicts || {};
+  const conflicts = boardConflicts();
+  const conflictsKnown = boardConflictsKnown();
   const serverBlockers = boardReadinessBlockers(TW.boardId);
   const overlaps = conflicts.overlaps || [];
   const iClashes = conflicts.instructor_clashes || [];
@@ -2973,7 +3000,7 @@ function boardIssues() {
   const roomShortages = activeBoardRoomShortages();
   const total = serverBlockers.length + overlaps.length + iClashes.length + rClashes.length + crossBoard.length + roomShortages.length;
   const critical = ((conflicts.summary || {}).critical || 0) + serverBlockers.length;
-  return { serverBlockers, overlaps, iClashes, rClashes, crossBoard, roomShortages, total, critical };
+  return { serverBlockers, overlaps, iClashes, rClashes, crossBoard, roomShortages, total, critical, conflictsKnown };
 }
 
 /* The counts follow the data, whichever inspector tab is open: a card click

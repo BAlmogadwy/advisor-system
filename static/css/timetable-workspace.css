@@ -360,6 +360,7 @@ html[data-theme="dark"] .tw-card.locked {
 .tw-issue-row.tw-issue-static,
 .tw-issue-row.tw-issue-static:hover { background: var(--sev-critical-bg); cursor: default; }
 .tw-issue-detail { color: var(--t3); font-size: var(--text-xs); }
+.tw-issue-note { margin: 0 0 var(--space-2); padding: 6px 10px; font-size: var(--text-xs); color: var(--t3); }
 .tw-issue-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; }
 .tw-issue-dot.critical { background: var(--sev-critical); }
 .tw-issue-dot.warning  { background: var(--sev-warning); }
