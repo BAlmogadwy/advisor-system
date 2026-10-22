@@ -1219,9 +1219,14 @@ async function loadConflicts() {
   if (data) {
     TW.conflicts = data;
     TW.conflictsBoardId = boardId;
+  } else {
+    // A failed load leaves this board's clashes unknown: an edit may have
+    // changed them, so the earlier answer is not shown as current.
+    TW.conflicts = {};
+    TW.conflictsBoardId = null;
   }
   // A failed load redraws too: the inspector then says this board's clashes
-  // are not loaded, instead of keeping the previous board's list.
+  // are not loaded, instead of keeping an earlier or another board's list.
   const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
   renderRightPanel((activeTab && activeTab.dataset.tab) || 'issues');
   updateQuickStats();
@@ -1335,7 +1340,7 @@ function renderReadinessViews() {
    are already counted from the board's own conflicts). A section not placed
    anywhere belongs to the board of its programme term. */
 function boardReadinessBlockers(boardId) {
-  if (!TW.readiness) return [];
+  if (!TW.readiness || boardId == null) return [];
   return readinessBlockers(TW.readiness)
     .filter(item => item.code !== 'board_critical_conflicts' && readinessItemBoard(item) === boardId);
 }
@@ -2354,7 +2359,13 @@ function renderRightPanel(tab) {
   if (tab === 'issues') {
     const { serverBlockers, overlaps, iClashes, rClashes, crossBoard: xConflictsEarly, roomShortages, total, critical, conflictsKnown } = boardIssues();
     setIssuesCount(total, critical);
-    const notLoaded = conflictsKnown ? '' : `<p class="tw-issue-note">${IS_AR ? 'تعارضات هذه اللوحة لم تُحمَّل بعد.' : 'This board’s clashes have not loaded yet.'}</p>`;
+    // With no board open (a scenario with none yet), the tab has no board to
+    // speak for; the scenario's own blockers are on Publish.
+    if (!TW.boardId) {
+      body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'افتح لوحة لعرض مشاكلها.' : 'Open a board to see its issues.'}</p></div>`;
+      return;
+    }
+    const notLoaded = conflictsKnown ? '' : `<p class="tw-issue-note">${IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.'}</p>`;
 
     if (total === 0 && !conflictsKnown) {
       body.innerHTML = notLoaded;
@@ -2729,7 +2740,7 @@ function stackedPairsAllWarnings(placement, cellPlacements) {
    a board switch and that board's own answer (or after a failed load) the
    previous board's clashes are never shown or counted as this board's. */
 function boardConflicts() {
-  return TW.conflictsBoardId === TW.boardId ? (TW.conflicts || {}) : {};
+  return boardConflictsKnown() ? (TW.conflicts || {}) : {};
 }
 function boardConflictsKnown() {
   return Boolean(TW.boardId) && TW.conflictsBoardId === TW.boardId;

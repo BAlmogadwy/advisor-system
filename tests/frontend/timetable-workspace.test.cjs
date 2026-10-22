@@ -422,7 +422,7 @@ test('a board switch never counts the previous board’s clashes while its own l
   h.w.renderReadinessViews();
   assert.deepEqual(counts(), ['', ''], 'board 2’s clash is not board 3’s');
   const body = h.d.getElementById('twRightBody').textContent;
-  assert.match(body, /This board’s clashes have not loaded yet/);
+  assert.match(body, /This board’s clashes are not loaded/);
   assert.doesNotMatch(body, /No issues/);
   assert.equal(h.d.querySelector('#twBoardTabs [data-board-id="3"] .ux-seg-flag'), null, 'nor board 2’s critical count on its button');
   pending.resolve({ summary: { critical: 0 } });
@@ -443,7 +443,7 @@ test('a board whose conflicts fail to load never reads as having no issues', asy
   await h.select();
   await h.w.selectBoard(3);
   const body = h.d.getElementById('twRightBody').textContent;
-  assert.match(body, /This board’s clashes have not loaded yet/);
+  assert.match(body, /This board’s clashes are not loaded/);
   assert.doesNotMatch(body, /No issues/);
   assert.ok(h.notices.some(n => n.type === 'error'), 'the failure itself is reported');
 });
@@ -467,4 +467,43 @@ test('a refused Publish redraws the board flags, the count and the open Issues t
   assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '1');
   assert.match(h.d.getElementById('twRightBody').textContent, /Blocks publishing/);
   assert.match(h.d.getElementById('twPublishLabel').textContent, /1 blocker/);
+});
+
+// After an edit the board's conflicts are reloaded; if that fails, the earlier
+// clashes are not shown as current (the edit may have changed them).
+test('a failed conflicts refresh on the same board shows them as not loaded, not as current', async t => {
+  let fail = false;
+  const h = await harness(t, url => {
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    if (fail && url === '/ops/tw/boards/2/conflicts/') return { httpError: 500, error: { message: 'Conflicts failed' } };
+    return undefined;
+  });
+  await h.select();
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '2', 'its cross-board clash and its undersized room');
+  fail = true;
+  await h.w.selectBoard(2);
+  const body = h.d.getElementById('twRightBody').textContent;
+  assert.match(body, /This board’s clashes are not loaded/);
+  assert.doesNotMatch(body, /CS323 ↔ FE2/, 'the earlier clash is not listed as current');
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '1', 'the room, from the quality check, still counts');
+});
+
+// A scenario with no boards: its blockers ("no boards") are the scenario's, on
+// Publish; the Issues tab has no board to speak for and says so.
+test('a scenario with no boards keeps its blockers on Publish, not in a board’s Issues', async t => {
+  const h = await harness(t, url => {
+    if (url.includes('/readiness/')) return { readiness: { ready: false, blockers: ['x'], warnings: [], warning_items: [],
+      blocker_items: [{ code: 'no_boards', board_id: null, board_label: null, count: 0, params: {} }] } };
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [] };
+    return undefined;
+  });
+  await h.select();
+  assert.equal(h.w.TW.boardId, null);
+  await h.w.refreshPublishReadiness(true);
+  const body = h.d.getElementById('twRightBody').textContent;
+  assert.match(body, /Open a board to see its issues/);
+  assert.doesNotMatch(body, /not loaded|Blocks publishing/);
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '');
+  assert.match(h.d.getElementById('twPublishLabel').textContent, /1 blocker/);
+  assert.deepEqual(h.errors, []);
 });
