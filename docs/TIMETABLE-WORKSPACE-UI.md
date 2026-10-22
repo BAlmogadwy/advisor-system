@@ -104,8 +104,12 @@ padding-aware for `p-0`.
   delegated listener in `ux-controls.js`; with `data-ux-disclosure="key"` the
   choice is kept for the session (in memory where storage is unavailable).
   The chevron points down when open and along the reading direction when
-  closed. (Section planning's `.sp-chev` predates it and is a candidate to
-  move onto it.)
+  closed. After each toggle the button fires a bubbling `ux-disclosure`
+  event (`{open, key}`, key null without `data-ux-disclosure`): showing rows
+  changes no node, so a region whose keyboard depends on what is shown hears
+  it from the event. A toggle without the key keeps no choice (the board's
+  folds keep their own, per board and text). (Section planning's `.sp-chev`
+  predates it and is a candidate to move onto it.)
 - `UXControls.roving(region, options)` (and `UXControls.letterOf(event)`):
   the WAI-ARIA grid pattern for a region of `[role=grid] > [role=row] >
   [role=gridcell]` — one tab stop, arrows (mirrored in RTL; ↑/↓ also walk the
@@ -114,8 +118,12 @@ padding-aware for `p-0`.
   Latin letter typed, or the key's letter where it types another script's).
   It keeps the active stop (by `data-focus-key`) through any redraw and gives
   the keyboard back when it was in the region; a restore scrolls only after a
-  key. `.ux-grid-row` (display: contents) is a row on a CSS grid; a roving
-  cell takes an inset focus ring; `.ux-keys` is the keys line shown while the
+  key. It reads its stops again on a redraw (`childList`), on a
+  `ux-disclosure` event inside it, and when the page calls `nav.refresh()`
+  after hiding or showing rows itself — never on attributes (a tone, a dim),
+  so they never move the keyboard. A stop inside `[hidden]` is no stop, and a
+  stop's `tabindex` is the controller's alone. `.ux-grid-row` (display:
+  contents) is a row on a CSS grid; a roving cell takes an inset focus ring; `.ux-keys` is the keys line shown while the
   keyboard is in a region. `--ux-job-block` is the floating job card's height,
   for scroll padding.
 - `UXControls.redraw(region, html)`: draws a region again without losing the

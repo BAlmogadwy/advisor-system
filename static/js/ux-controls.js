@@ -22,7 +22,11 @@
           (its `hidden`). One delegated listener, so it survives a page that
           redraws its markup; the choice is remembered for the session per KEY,
           and a page drawing a group asks `UXControls.disclosure.isOpen(KEY,
-          fallback)` for its state.
+          fallback)` for its state. After each toggle the button fires a
+          bubbling `ux-disclosure` event ({open, key}; key null without
+          `data-ux-disclosure`), so a region whose keyboard map depends on what
+          is shown (a roving grid) can read it again. A toggle without
+          `data-ux-disclosure` keeps no choice (a page keeping its own).
    DIALOG `UXControls.dialog.open(dialog, {initialFocus, returnFocus})`,
           `.close(dialog, reason)` and `.isOpen(dialog)` for a template
           `<dialog>`: modal (or `[open]` plus `data-ux-dialog="fallback"`
@@ -275,6 +279,9 @@
     toggle.setAttribute('aria-expanded', String(open));
     region.hidden = !open;
     if (toggle.dataset.uxDisclosure) disclosure.remember(toggle.dataset.uxDisclosure, open);
+    // Showing or hiding a region changes no node, so nothing that watches the
+    // markup hears it: say it (a roving grid reads its stops again).
+    toggle.dispatchEvent(new CustomEvent('ux-disclosure', { bubbles: true, detail: { open, key: toggle.dataset.uxDisclosure || null } }));
   });
 
   // ── Redraw: new content for a region, the keyboard kept in place ──
@@ -425,6 +432,10 @@
        the keyboard was in the region and the redraw left it nowhere. A
        restore never scrolls unless the last input was a key.
      - hint: an element shown while the keyboard is in the region (its keys).
+     - What is shown can change without a redraw: a disclosure inside the
+       region (its `ux-disclosure` event) refreshes it; a page that hides or
+       shows rows itself calls `nav.refresh()`. Stops inside `hidden` are
+       never stops, and a stop's `tabindex` is the controller's alone.
      nav: active() / active(key, {focus}), element(key), refresh(), restore(),
      reset(). */
   let lastInputWasKeyboard = false;
@@ -684,6 +695,9 @@
     // R6: any redraw of the region (attributes are not watched: tones and the
     // selection never move the keyboard).
     new MutationObserver(() => { if (region.isConnected) refresh(); }).observe(region, { childList: true, subtree: true });
+    // A disclosure inside the region opened or closed rows: no node changed,
+    // but the stops did (a button just shown must not be a Tab stop of its own).
+    region.addEventListener('ux-disclosure', () => { if (region.isConnected) refresh(); });
     if (window.ResizeObserver) {
       new ResizeObserver(entries => {
         const box = entries[entries.length - 1].contentRect;

@@ -557,6 +557,56 @@ test('R6 roving: a list has Home and End over the whole list, leaves left and ri
   h.dom.window.close();
 });
 
+/* D1 (design record §7.2 item 6, 6c): showing or hiding rows changes no
+   node, so a region's roving hears it from the disclosure's event alone —
+   and only from that: an attribute changing (a tone, a dim) never makes it
+   read its stops again. */
+test('D1 a disclosure says it opened or shut with one bubbling event; a roving region reads its stops again on it, never on attributes', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <div id="board" tabindex="-1">
+      <div role="grid">
+        <div role="row"><div role="gridcell"><button type="button" class="ux-disclosure-toggle s" data-focus-key="fold" tabindex="-1" aria-expanded="false" aria-controls="rows">Fold</button></div></div>
+        <div role="rowgroup" id="rows" hidden>
+          <div role="row"><div role="gridcell"><button type="button" class="s" data-focus-key="in:1">one</button></div></div>
+        </div>
+      </div>
+    </div>
+    <button type="button" class="ux-disclosure-toggle" data-ux-disclosure="k" aria-expanded="true" aria-controls="kept">Kept</button><div id="kept"></div>
+  </body></html>`, { runScripts: 'outside-only' });
+  const w = dom.window, doc = w.document;
+  w.eval(source);
+  const events = [];
+  doc.addEventListener('ux-disclosure', event => events.push({ from: event.target.dataset.focusKey || event.target.dataset.uxDisclosure, bubbles: event.bubbles, ...event.detail }));
+  w.UXControls.roving(doc.getElementById('board'), { stop: '.s' });
+  const inner = doc.querySelector('[data-focus-key="in:1"]');
+  const toggle = doc.querySelector('[data-focus-key="fold"]');
+  assert.equal(inner.hasAttribute('data-ux-roving'), false, 'hidden: not a stop');
+  toggle.click();
+  assert.deepEqual(events, [{ from: 'fold', bubbles: true, open: true, key: null }], 'one event, from the toggle, bubbling');
+  // Read again at once, with no node changed: the button just shown is one
+  // of the region's stops, never a Tab stop of its own.
+  assert.deepEqual([inner.getAttribute('data-ux-roving'), inner.tabIndex], ['', -1]);
+  toggle.focus();
+  toggle.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  assert.equal(doc.activeElement, inner, '↓ goes into the rows just shown');
+  // An attribute is not a reason to read the stops again.
+  toggle.focus();
+  inner.removeAttribute('data-ux-roving');
+  inner.setAttribute('data-dim', 'filter');
+  inner.classList.add('critical');
+  inner.title = 'Blocks publishing';
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(inner.hasAttribute('data-ux-roving'), false, 'no refresh on attributes');
+  toggle.click();
+  assert.equal(inner.hasAttribute('data-ux-roving'), false, 'shut: not a stop');
+  assert.equal(events[1].open, false);
+  // A kept disclosure (its key remembered) says its key.
+  doc.querySelector('[data-ux-disclosure="k"]').click();
+  assert.deepEqual(events[2], { from: 'k', bubbles: true, open: false, key: 'k' });
+  assert.equal(events.length, 3);
+  dom.window.close();
+});
+
 test('R7 roving: restore gives the keyboard back to the active stop after the user was elsewhere', () => {
   const h = rovingFixture();
   h.nav.active('A:SUN:570', { focus: true });
