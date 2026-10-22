@@ -12,6 +12,7 @@ const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resol
 
 function moduleIn(lang = 'en') {
   const dom = new JSDOM(`<!doctype html><html lang="${lang}"><body></body></html>`, { runScripts: 'outside-only' });
+  dom.window.eval(read('static/js/shared-utils.js'));  // pluralAr, as base.html loads it
   dom.window.eval(read('static/js/timetable-slot-config.js'));
   return { dom, SC: dom.window.TimetableSlotConfig };
 }

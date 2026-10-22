@@ -1,0 +1,23 @@
+{
+  "about": "The grid's rule, stated once for both implementations: core/services/timetable_slot_config.is_on_grid (Python) and isPlacementOnGrid (static/js/page-timetable-workspace.js). A meeting is drawn when its day is a teaching day and its start is a column start of its kind (a lab runs more than 80 minutes); an English bundle has its own table.",
+  "lecture_slots": [
+    {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
+    {"label": "10:50-12:05", "start": "10:50", "end": "12:05"}
+  ],
+  "lab_slots": [
+    {"label": "Lab 1", "start": "09:00", "end": "10:40"},
+    {"label": "Lab 5", "start": "16:30", "end": "18:10"},
+    {"label": "Online 1", "start": "15:50", "end": "17:30", "online_only": true}
+  ],
+  "cases": [
+    {"name": "a lecture at a lecture column", "course": "CS101", "day": "SUN", "start": "10:50", "end": "12:05", "on_grid": true},
+    {"name": "a lecture where only a lab column starts", "course": "CS101", "day": "SUN", "start": "16:30", "end": "17:45", "on_grid": false},
+    {"name": "a lab at a lab column", "course": "CS101", "day": "MON", "start": "16:30", "end": "18:10", "on_grid": true},
+    {"name": "a lab where only a lecture column starts", "course": "CS101", "day": "MON", "start": "10:50", "end": "12:30", "on_grid": false},
+    {"name": "80 minutes is a lecture", "course": "CS101", "day": "TUE", "start": "10:50", "end": "12:10", "on_grid": true},
+    {"name": "81 minutes is a lab", "course": "CS101", "day": "TUE", "start": "10:50", "end": "12:11", "on_grid": false},
+    {"name": "an online meeting in its window", "course": "GS101", "day": "WED", "start": "15:50", "end": "17:30", "on_grid": true},
+    {"name": "not a teaching day", "course": "CS101", "day": "SAT", "start": "09:00", "end": "10:15", "on_grid": false},
+    {"name": "an English bundle is drawn in its own table", "course": "ENG101", "day": "SUN", "start": "13:00", "end": "16:00", "on_grid": true}
+  ]
+}

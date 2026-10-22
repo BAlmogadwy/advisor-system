@@ -151,7 +151,7 @@ function quality(arabic, coverage) {
     IS_AR: arabic, esc, Number, Boolean, $,
     // The strip also redraws the inspector's Issues count; that has its own
     // tests in timetable-workspace.test.cjs.
-    renderIssuesCount: () => {},
+    renderBoardIssueViews: () => {},
     TW: { scenarioId: 1, boardId: 2, placements: [], conflicts: { summary: { critical: 0 } }, quality: { instructor: { assessed: true, working_days: 2, idle_minutes: 15, ...(coverage ? { coverage } : {}) } } },
   });
   vm.runInContext(slice(workspace, '/* Timetable outcome helpers', '/* End timetable outcome helpers. */'), context);
