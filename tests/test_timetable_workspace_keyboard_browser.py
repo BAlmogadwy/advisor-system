@@ -329,6 +329,21 @@ FOOT_IN_VIEW = r"""() => {
   if (body.scrollTop === 0) bad.push('the list did not scroll');
   return bad;
 }"""
+# The page's own words and functions (top-level names of its script).
+SHOW_CLASH_NOTE = """() => { ROOM.answer.candidates[0].validation = { critical_count: 2, warning_count: 0, room_clashes: [] };
+  drawRoomDialog(); }"""
+SAY_IN_ALERT = """tone => dialogSay(document.getElementById('twRoomDialog'),
+  tone === 'success' ? ROOM_WORDS.assigned(isolatedText('R101')) : REFUSAL.external, tone)"""
+# The alert takes its tone's colour: a refusal a warning, a saved change a success.
+ALERT_IN_TONE = r"""tone => {
+  const alert = document.getElementById('twRoomAlert');
+  const probe = document.createElement('span');
+  probe.style.color = `var(--sev-${tone === 'success' ? 'ok' : tone})`;
+  alert.after(probe);
+  const same = getComputedStyle(probe).color === getComputedStyle(alert).color;
+  probe.remove();
+  return same && !alert.hidden ? [] : [`the ${tone} alert is not shown in its tone`];
+}"""
 
 
 class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
@@ -529,6 +544,16 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                     if (before, after) != (0, 1):
                         found.append(f"ArrowDown went from row {before} to row {after}")
                     found += page.evaluate(FOOT_IN_VIEW)
+                    # The time's own clashes and the alert line, in each tone it
+                    # takes: drawn here, since this meeting has no clash and
+                    # nothing was refused.
+                    page.evaluate(SHOW_CLASH_NOTE)
+                    for tone in ("warning", "success"):
+                        page.evaluate(SAY_IN_ALERT, tone)
+                        found += page.evaluate(
+                            CONTRAST, ["#twRoomDialog .tw-room-note", "#twRoomDialog #twRoomAlert"]
+                        )
+                        found += page.evaluate(ALERT_IN_TONE, tone)
                     if sent or errors:
                         found += [*sent, *errors]
                     if found:

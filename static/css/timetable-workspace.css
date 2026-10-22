@@ -529,8 +529,12 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 
 /* ── Change room dialog (design record §7.3, 5c) ────────────────── */
 /* A refusal of the commit sits between the scrolling body and the foot, so
-   it is in view wherever the list is scrolled. */
+   it is in view wherever the list is scrolled. It takes the tone of what it
+   says: a refusal is a warning, as its toast would be; a change saved while
+   another dialog was open (D17a) is a success, never read as a refusal. */
 .tw-dialog-alert { margin: 0 20px 10px; }
+.tw-dialog-alert[data-tone="warning"] { background: var(--sev-warning-bg); color: var(--sev-warning); }
+.tw-dialog-alert[data-tone="success"] { background: var(--sev-ok-bg); color: var(--sev-ok); }
 .tw-room-current { margin: 0; color: var(--t1); font-size: var(--text-sm); font-weight: 600; }
 /* The time's own clashes: whatever the room, they stay. */
 .tw-room-note {

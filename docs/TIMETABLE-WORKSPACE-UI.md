@@ -288,6 +288,8 @@ Stage 3 (to evaluate): a time-proportional week grid.
   because the page may redraw the opener while the dialog is open.
 - While such a dialog is open, what its work came to is said inside it (its
   `role=alert` line), never as a toast: a toast sits behind a modal, unseen.
+  Work the user left with Escape that ends while another such dialog is open
+  is said in that one.
   Its commit checks the page's edit hold itself before it writes
   (`dialogWrite`), since the page's busy guard answers with a toast.
 - Tests that pin a detail this design changes are updated in the same commit
@@ -517,6 +519,39 @@ findings changed the plan:
    the page cannot write while it is open; dropping both is caught), and
    `dialogWrite`'s `_onError` answering false (the request is quiet, so no
    toast follows either way, and the code is taken before the answer).
+   After review (round 1): a save the user left with Escape (D17a) ends
+   where the user is: in the alert line of the helper dialog open by then
+   (R again while the write was out, D3b; `dialogSay` looks for it), else as
+   a toast, never as a toast behind a modal; the line takes the tone of what
+   it says (`data-tone`: a refusal is a warning, a saved change a success),
+   and a refusal of the same meeting holds Assign there too. Rooms read
+   before the data moved are not kept on show: each read records the data
+   version it asked at (`ROOM.version`), and a write that lands while the
+   dialog is open, or a meeting that left the board (a scenario reload) and
+   came back, makes them out of date. While no row has been chosen from
+   them the dialog reads them again by itself: the list loads and comes back
+   (the States table's "comes back on by itself"; nothing the user did is
+   lost), the filter stays drawn while it loads so a keyboard in it stays
+   there, a read still out is overtaken and its late answer never drawn,
+   and nothing is read for a meeting off the board. Once a row has been
+   chosen from them, the stale state holds Assign until Check again (which
+   drops that choice), so a choice is never carried silently onto rooms
+   whose verdicts may have changed; a meeting gone when Check again has read
+   the board is read once it is back. Until the user chooses, the choice
+   follows the current room as the board has it (after the escaped save,
+   the saved room), and a keyboard on a row the dialog chose goes with it;
+   a keyboard the user put on a row stays there. The "busy", "job" or
+   "published" alert of a commit the page's own hold met goes when that
+   hold ends or turns into another. Undo keeps the raw old room
+   (`UNASSIGNED` included), now pinned. RC12–RC19 and RB3's note and alert
+   contrast (in both tones) pin these and the reviewer's survivors; 59
+   mutants run against the RC tests, all red but one, equivalent: a late
+   answer drawn into a closed dialog (the next open starts a new session
+   and draws everything again; nothing reads the closed dialog). Of the
+   others the reviewer called equivalent, the open guard (the seam 5e and 5f
+   call), Selection's sync after its draw (a gate that moved under the same
+   markup) and a current room that does not fit (never chosen; the note asks
+   for a room) are pinned now.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
@@ -603,7 +638,7 @@ This spec was written from four drafts (grid, move, place, room) and two critiqu
 | D16a | The shared gate runs first; "Finding patterns…" is announced before the fetch; focus follows the recreated rows. | | |
 | D16b | Accepted gaps, each a recorded follow-up: the chooser's counts without `pluralAr`, disabled reasons only in a `title`, focus returned to a stored node (POLICY:50, 69, 81). The page calls `boardNav.restore()` after the chooser resolves, which covers the stored node. | | |
 | D17 | **While a dialog is open, every message is shown inside it, never as a toast.** Toasts go into a body-level container (notify.js:6-13) that is inert behind a modal. | | Inline-errors findings |
-| D17a | **Escape during a commit closes the dialog.** The write finishes and its result arrives as a toast after the close. | | |
+| D17a | **Escape during a commit closes the dialog.** The write finishes and its result arrives as a toast after the close, or, when another helper dialog is open by then, in that dialog's alert line (D17). | | |
 | D17b | `twFetch` fixes: announce the planner job of `SCENARIO_BUSY` before `_onError` and `_quiet`; call `_onError(null, status)` when the body is not JSON; call `_onError(null, 0)` when fetch rejects. | Today `_onError` runs first (PAGE:204-208), a non-JSON body skips it (PAGE:212), and a rejection skips it (PAGE:219-221). | |
 | D18 | Before a commit button turns off, focus moves to the checked radio. | | Commit-focus findings (both critics) |
 | D18a | `aria-busy` goes only on `.ux-choice-list`. Status lines sit outside it. | | |
@@ -714,7 +749,9 @@ dialogWrite(dialog, url, body) -> Promise<{data} | {code}>
 
 `dialogSay(dialog, text, tone)`:
 - While `UXControls.dialog.isOpen(dialog)`: put the text in that dialog's `[role=alert]` line.
+- Otherwise, when another helper dialog is open (the user left this one during its commit and opened another): put the text in that one's line. Clearing (`''`) is only ever about the dialog itself.
 - Otherwise: `notify[tone](text)`.
+- The line takes the tone (`data-tone`), so a saved change never reads as a refusal.
 
 **`twFetch` changes (PAGE:197-221)**, shipped in 5c:
 
@@ -1486,7 +1523,7 @@ Rows:
 | Published or job | Held. |
 | A write in flight | Opens; Commit is held until it ends. |
 | Loading, empty, error | Its words below. |
-| Escape during a commit | The dialog closes; the result arrives as a toast (D17). |
+| Escape during a commit | The dialog closes; the result arrives as a toast, or in the dialog open by then (D17, D17a). |
 
 ##### Strings
 

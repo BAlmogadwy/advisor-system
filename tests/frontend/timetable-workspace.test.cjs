@@ -2205,8 +2205,10 @@ test('RC2 rooms are grouped by what choosing them does: free, held here (critica
 });
 
 test('RC3 Assign is held until another room is chosen, and off with the reason while the page is busy, then on by itself', async t => {
-  const lock = deferred();
-  const h = await roomHarness(t, { more: url => (url.endsWith('/lock/') ? lock.promise : undefined) });
+  // The board read again with nothing written: busy while it is out, and
+  // nothing the rooms were read from moved (a write is RC13's).
+  let refresh = null;
+  const h = await roomHarness(t, { more: url => (refresh && url === '/ops/tw/boards/2/' ? refresh.promise : undefined) });
   await h.select();
   roomByKey(h);
   await settled(h);
@@ -2214,22 +2216,44 @@ test('RC3 Assign is held until another room is chosen, and off with the reason w
   assert.equal(h.d.getElementById('twRoomAssign').hasAttribute('data-tw-hold'), true);
   roomRadio(h, 'R1').click();
   assert.deepEqual(roomNote(h), [false, '']);
-  // Another write in flight: off, saying why; on again by itself.
-  const locking = h.w.toggleLock(10);
+  // The user's keyboard on another row (Ctrl+arrow moves it without choosing).
+  roomRadio(h, 'LAB25').focus();
+  // The page busy: off, saying why; on again by itself.
+  refresh = deferred();
+  const refreshing = h.w.selectBoard(2);
   await settle();
   assert.deepEqual(roomNote(h), [true, 'Wait for the current operation to finish.']);
   // A commit asked for all the same is answered inside the dialog: the
   // page's own busy guard would toast behind it, where nobody sees it.
   const toasts = h.notices.length;
+  const alert = h.d.getElementById('twRoomAlert');
   h.d.getElementById('twRoomForm').requestSubmit();
   await settle();
   assert.equal(h.posts.length, 0);
-  assert.deepEqual([h.d.getElementById('twRoomAlert').textContent, h.d.getElementById('twRoomAlert').hidden], ['Wait for the current operation to finish.', false]);
+  assert.deepEqual([alert.textContent, alert.hidden, alert.dataset.tone], ['Wait for the current operation to finish.', false, 'warning']);
   assert.deepEqual(h.notices.slice(toasts), []);
-  lock.resolve({ placement_id: 10, is_locked: true });
-  await locking;
+  refresh.resolve({ placements: [roomRow()], slot_config: scenario.slot_config });
+  refresh = null;
+  await refreshing;
   assert.deepEqual(roomNote(h), [false, '']);
+  assert.deepEqual([alert.textContent, alert.hidden], ['', true], 'the hold’s words went with it');
   assert.equal(roomRadio(h, 'R1').checked, true, 'the choice survives the board read again');
+  assert.equal(h.d.activeElement, roomRadio(h, 'LAB25'), 'the keyboard stays where the user put it');
+  assert.equal(h.reads.length, 1, 'nothing was written: the rooms stand');
+  // A hold that turns into another (busy, then published): its words go,
+  // and the note says the one holding now.
+  refresh = deferred();
+  const again = h.w.selectBoard(2);
+  await settle();
+  h.d.getElementById('twRoomForm').requestSubmit();
+  await settle();
+  assert.deepEqual([alert.textContent, alert.hidden], ['Wait for the current operation to finish.', false]);
+  h.w.TW.scenario.status = 'published';
+  h.w.syncWorkspaceControls();
+  assert.deepEqual([alert.hidden, roomNote(h)], [true, [true, 'This scenario is published and read-only.']]);
+  refresh.resolve({ placements: [roomRow()], slot_config: scenario.slot_config });
+  refresh = null;
+  await again;
   // A room the list does not hold: nothing is chosen.
   const none = await roomHarness(t, { rows: () => [roomRow({ room: 'OLD9' })] });
   await none.select();
@@ -2464,6 +2488,12 @@ test('RC7 no rooms, none that fit, a cut list, a meeting online or with no room 
   await settled(moved);
   assert.equal(moved.requests.filter(r => r.url === '/ops/tw/boards/2/').length, boards + 1, 'the board, read again');
   assert.equal(moved.reads.length, 2);
+  // Its start or its end alone moved: stale too.
+  for (const target of [{ start: '09:30' }, { end: '10:45' }]) {
+    const shifted = await opened(() => roomsAnswer(ROOM_SET, { target }));
+    assert.match(body(shifted), /This meeting changed since its rooms were read\./, JSON.stringify(target));
+    assert.deepEqual([roomRadios(shifted).length, shifted.d.getElementById('twRoomAssign').disabled], [0, true]);
+  }
   // The meeting moves while the dialog is open, a room already chosen: the
   // board's answer makes the list stale, and nothing is sent.
   let day = 'SUN';
@@ -2494,6 +2524,21 @@ test('RC8 Undo and Redo send the room alone, back and forth', async t => {
   h.d.getElementById('twRedo').click();
   await wait(() => h.w.TW.undoStack.length === 1 && !h.d.getElementById('twUndo').disabled);
   assert.deepEqual(h.posts, [{ room: 'R2' }, { room: 'LAB25' }, { room: 'R2' }]);
+  // A meeting with no room yet: Undo sends the placer's marker back as it
+  // was, never the words a page shows for it ("No room", "بلا قاعة").
+  for (const arabic of [false, true]) {
+    const u = await roomHarness(t, { arabic, rows: () => [roomRow({ room: 'UNASSIGNED', room_state: 'unassigned' })] });
+    await u.select();
+    roomByKey(u);
+    await settled(u);
+    roomRadio(u, 'R2').click();
+    u.d.getElementById('twRoomAssign').click();
+    await wait(() => !u.d.getElementById('twUndo').disabled);
+    assert.equal(u.w.TW.undoStack.at(-1).old_room, 'UNASSIGNED');
+    u.d.getElementById('twUndo').click();
+    await wait(() => u.posts.length === 2 && !u.d.getElementById('twRedo').disabled);
+    assert.deepEqual(u.posts, [{ room: 'R2' }, { room: 'UNASSIGNED' }], arabic ? 'ar' : 'en');
+  }
 });
 
 test('RC9 in Arabic: the day with its time isolated, seats counted in the right form, and the placer’s marker never shown', async t => {
@@ -2599,4 +2644,423 @@ test('RC11 one read per meeting and data version: a reopen joins it, in flight o
   assert.equal(w.reads.length, 2, 'the data changed while it was out: read again');
   out.resolve(roomsAnswer());
   await settled(w);
+});
+
+/* ── Change room, review round 1: what the first tests left unpinned ── */
+const lockOk = url => (url.endsWith('/lock/') ? { placement_id: 10, is_locked: true } : undefined);
+// The second read and on hold a room the first did not: R6.
+const roomsThenR6 = n => roomsAnswer(n === 1 ? ROOM_SET : [...ROOM_SET, rc('R6')]);
+
+test('RC12 a save the user left (Escape, then R again) ends inside the dialog open by then, never as a toast behind it, and that dialog reads its rooms again', async t => {
+  // The reviewer's steps: R, a row, Enter with the move held; Escape; R
+  // again while it is out (D3b); then the move lands.
+  let room = 'LAB25';
+  const move = deferred();
+  const h = await roomHarness(t, {
+    rows: () => [roomRow({ room })],
+    rooms: roomsThenR6,
+    move: async body => {
+      await move.promise;
+      room = body.room;
+      return { ok: true, placement: roomRow({ room }), placements: [roomRow({ room })] };
+    },
+  });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  roomRadio(h, 'R1').click();
+  roomRadio(h, 'R1').focus();
+  keyOn(h, 'Enter');
+  await settle();
+  assert.deepEqual(h.posts, [{ room: 'R1' }]);
+  keyOn(h, 'Escape');
+  assert.equal(roomDialogEl(h).hasAttribute('open'), false);
+  roomByKey(h);
+  await settled(h);
+  assert.equal(h.reads.length, 1, 'the reopen takes the answer kept for this data');
+  assert.deepEqual(roomNote(h), [true, 'Wait for the current operation to finish.']);
+  const toasts = h.notices.length;
+  const alert = h.d.getElementById('twRoomAlert');
+  move.resolve();
+  await wait(() => !alert.hidden);
+  assert.deepEqual(h.notices.slice(toasts), [], 'no toast behind the dialog');
+  assert.deepEqual([alert.textContent, alert.dataset.tone], ['Room \u2066R1\u2069 assigned.', 'success']);
+  assert.equal(roomDialogEl(h).hasAttribute('open'), true);
+  assert.deepEqual(plainOf(h.w.TW.undoStack.at(-1)), { type: 'room', placement_id: 10, old_room: 'LAB25', new_room: 'R1' });
+  // The open dialog does not keep the list it read before the save: read
+  // again, the saved room is the current one, chosen, and Assign holds on it.
+  assert.equal(h.reads.length, 2);
+  assert.ok(roomRadio(h, 'R6'), 'the rooms as read after the save');
+  assert.equal(h.d.querySelector('#twRoomBody .tw-room-current').textContent, 'Current room: R1');
+  assert.deepEqual(roomRadios(h).filter(radio => radio.checked).map(radio => radio.value), ['R1']);
+  assert.deepEqual(roomNote(h), [true, 'This is the current room.']);
+  assert.equal(h.d.activeElement, roomRadio(h, 'R1'), 'the keyboard goes with the dialog’s own choice');
+  // Refused instead, while the dialog about the same meeting is open: said
+  // there, and Assign holds there too, whatever is chosen.
+  const refused = deferred();
+  const r = await roomHarness(t, { move: () => refused.promise });
+  await r.select();
+  roomByKey(r);
+  await settled(r);
+  roomRadio(r, 'R1').click();
+  r.d.getElementById('twRoomAssign').click();
+  await settle();
+  keyOn(r, 'Escape');
+  roomByKey(r);
+  await settled(r);
+  roomRadio(r, 'R2').click();
+  const before = r.notices.length;
+  refused.resolve({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  const line = r.d.getElementById('twRoomAlert');
+  await wait(() => !line.hidden);
+  await settle();
+  assert.deepEqual([line.textContent, line.dataset.tone], ["Another scenario owns this section's time and room; change it there.", 'warning']);
+  assert.deepEqual(r.notices.slice(before), []);
+  assert.equal(r.d.getElementById('twRoomAssign').disabled, true, 'asking again would change nothing');
+  assert.equal(r.w.TW.undoStack.length, 0);
+  // Opened on another meeting meanwhile: the words are said there, and its
+  // own Assign is not held by them.
+  const elsewhere = deferred();
+  const m = await roomHarness(t, { rows: () => [roomRow(), at(11, { board_id: 2 })], move: () => elsewhere.promise });
+  await m.select();
+  roomByKey(m);
+  await settled(m);
+  roomRadio(m, 'R2').click();
+  m.d.getElementById('twRoomAssign').click();
+  await settle();
+  keyOn(m, 'Escape');
+  roomByKey(m, 11);
+  await settled(m);
+  roomRadio(m, 'R2').click();
+  elsewhere.resolve({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  await wait(() => !m.d.getElementById('twRoomAlert').hidden);
+  await settle();
+  assert.equal(m.d.getElementById('twRoomTitle').textContent, 'Change room · AI11 S1');
+  assert.equal(m.d.getElementById('twRoomAlert').textContent, "Another scenario owns this section's time and room; change it there.");
+  assert.equal(m.d.getElementById('twRoomAssign').disabled, false, 'another meeting: asking is still the user’s');
+  // Whichever helper dialog is open by then takes the words (Move and Place
+  // join in 5e and 5f); clearing a closed dialog's line leaves another's be.
+  roomDialogEl(r).querySelector('.ux-dialog-foot [data-dialog-close]').click();
+  const other = r.d.createElement('dialog');
+  other.innerHTML = '<p role="alert" hidden></p><button type="button">OK</button>';
+  r.d.body.append(other);
+  assert.equal(r.w.UXControls.dialog.open(other), true);
+  const quiet = r.notices.length;
+  const otherLine = other.querySelector('[role="alert"]');
+  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success');
+  assert.deepEqual([otherLine.textContent, otherLine.hidden, otherLine.dataset.tone], ['Room \u2066R2\u2069 assigned.', false, 'success']);
+  r.w.dialogSay(roomDialogEl(r), '');
+  assert.equal(otherLine.hidden, false, 'clearing is the closed dialog’s own business');
+  r.w.UXControls.dialog.close(other);
+  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success');
+  assert.deepEqual(r.notices.slice(quiet), [{ type: 'success', text: 'Room \u2066R2\u2069 assigned.' }], 'no dialog open: a toast');
+});
+
+test('RC13 data that moves under an open dialog: a chosen room waits for Check again; nothing chosen reads again by itself; a read the write overtook is never drawn; a meeting back after a reload is read again', async t => {
+  // A write with no board read after it (as a programme mark's save): the
+  // data version alone makes the chosen list stale.
+  const h = await roomHarness(t, { rooms: roomsThenR6, more: lockOk });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  roomRadio(h, 'R1').click();
+  await h.w.twFetch('/ops/tw/placements/10/lock/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.match(h.d.getElementById('twRoomBody').textContent, /This meeting changed since its rooms were read\./);
+  assert.deepEqual([roomRadios(h).length, h.d.getElementById('twRoomAssign').disabled, h.reads.length], [0, true, 1]);
+  h.d.getElementById('twRoomForm').requestSubmit();
+  await settle();
+  assert.equal(h.posts.length, 0, 'nothing is sent from a list read before the data moved');
+  h.d.querySelector('#twRoomBody [data-tw-room-recheck]').click();
+  await wait(() => roomRadio(h, 'R6'));
+  assert.equal(h.reads.length, 2);
+  assert.deepEqual(roomNote(h), [true, 'This is the current room.'], 'chosen afresh: the current room');
+  // Nothing chosen: read again by itself, and the keyboard in the filter
+  // stays there (an answer never takes it).
+  const f = await roomHarness(t, { rooms: roomsThenR6, more: lockOk });
+  await f.select();
+  roomByKey(f);
+  await settled(f);
+  const field = f.d.getElementById('twRoomFilter');
+  field.focus();
+  field.value = 'b1';
+  field.dispatchEvent(new f.w.Event('input', { bubbles: true }));
+  await f.w.toggleLock(10);
+  await wait(() => roomRadio(f, 'R6'));
+  assert.equal(f.reads.length, 2);
+  assert.equal(f.d.activeElement, f.d.getElementById('twRoomFilter'), 'the keyboard stays in the filter');
+  assert.equal(f.d.getElementById('twRoomFilter').value, 'b1');
+  assert.deepEqual(roomNote(f), [true, 'This is the current room.']);
+  // A write out as the dialog opens (D3b): its read is overtaken as the
+  // write lands, read again at once, and the first answer is never drawn.
+  const lock = deferred();
+  const first = deferred();
+  const o = await roomHarness(t, {
+    rooms: n => (n === 1 ? first.promise : roomsAnswer([...ROOM_SET, rc('R6')])),
+    more: url => (url.endsWith('/lock/') ? lock.promise : undefined),
+  });
+  await o.select();
+  const locking = o.w.toggleLock(10);
+  await settle();
+  roomByKey(o);
+  await settle();
+  assert.equal(o.reads.length, 1);
+  lock.resolve({ placement_id: 10, is_locked: true });
+  await locking;
+  await wait(() => roomRadio(o, 'R6'));
+  assert.equal(o.reads.length, 2, 'read again without waiting for the first answer');
+  first.resolve(roomsAnswer(ROOM_SET.filter(row => row.room_code !== 'R1')));
+  for (let i = 0; i < 5; i++) await settle();
+  assert.ok(roomRadio(o, 'R1') && roomRadio(o, 'R6'), 'the overtaken answer is not drawn');
+  // The scenario read again (a planner job ended) with the dialog open: the
+  // meeting leaves the board and comes back, and its rooms are read again,
+  // once it is back (nothing is read for a meeting not on the board).
+  let back = null;
+  const g = await roomHarness(t, { rooms: roomsThenR6, more: url => (back && url === '/ops/tw/boards/2/' ? back.promise : undefined) });
+  await g.select();
+  roomByKey(g);
+  await settled(g);
+  back = deferred();
+  const reloading = g.w.onScenarioChange();
+  await wait(() => /This meeting is no longer on the board\./.test(g.d.getElementById('twRoomBody').textContent));
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(g.reads.length, 1, 'not while it is off the board');
+  back.resolve({ placements: [roomRow()], slot_config: scenario.slot_config });
+  back = null;
+  await reloading;
+  await wait(() => roomRadio(g, 'R6'));
+  assert.deepEqual([g.reads.length, roomDialogEl(g).hasAttribute('open')], [2, true]);
+  // A write that lands while the meeting is off the board reads nothing
+  // for it.
+  let present = true;
+  const held = deferred();
+  const v = await roomHarness(t, { rows: () => (present ? [roomRow()] : []), rooms: roomsThenR6, more: url => (url.endsWith('/lock/') ? held.promise : undefined) });
+  await v.select();
+  roomByKey(v);
+  await settled(v);
+  const locked = v.w.toggleLock(10);
+  await settle();
+  present = false;
+  await v.w.selectBoard(2);
+  assert.match(v.d.getElementById('twRoomBody').textContent, /This meeting is no longer on the board\./);
+  held.resolve({ placement_id: 10, is_locked: true });
+  await locked;
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(v.reads.length, 1, 'nothing is read for a meeting not on the board');
+  // Check again finds the meeting off the board: once it is back, its rooms
+  // are read (the choice made from the old ones went with them).
+  let shown = true;
+  const k = await roomHarness(t, { rows: () => (shown ? [roomRow()] : []), rooms: roomsThenR6, more: lockOk });
+  await k.select();
+  roomByKey(k);
+  await settled(k);
+  roomRadio(k, 'R1').click();
+  await k.w.twFetch('/ops/tw/placements/10/lock/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  shown = false;
+  k.d.querySelector('#twRoomBody [data-tw-room-recheck]').click();
+  await wait(() => /This meeting is no longer on the board\./.test(k.d.getElementById('twRoomBody').textContent)
+    && k.d.querySelector('.tw-workspace').dataset.busy === 'false');
+  shown = true;
+  await k.w.selectBoard(2);
+  await wait(() => roomRadio(k, 'R6'));
+  assert.deepEqual([k.reads.length, roomNote(k)], [2, [true, 'This is the current room.']]);
+  // Check again reads the board, then the rooms, once: a write landing while
+  // it reads the board is not a reason to read them twice.
+  let board = null;
+  const write = deferred();
+  const c = await roomHarness(t, {
+    rooms: n => roomsAnswer(ROOM_SET, { target: n === 1 ? { day: 'MON' } : {} }),
+    more: url => (url === '/ops/tw/x/' ? write.promise : board && url === '/ops/tw/boards/2/' ? board.promise : undefined),
+  });
+  await c.select();
+  roomByKey(c);
+  await wait(() => c.d.querySelector('#twRoomBody [data-tw-room-recheck]'));
+  const writing = c.w.twFetch('/ops/tw/x/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  board = deferred();
+  c.d.querySelector('#twRoomBody [data-tw-room-recheck]').click();
+  await settle();
+  write.resolve({ ok: true });
+  await writing;
+  board.resolve({ placements: [roomRow()], slot_config: scenario.slot_config });
+  board = null;
+  await settled(c);
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(c.reads.length, 2);
+});
+
+test('RC14 the gate’s first condition wins, the seam itself waits for an open dialog, Selection’s button follows the gate after any draw, and the keys line names R', async t => {
+  const h = await roomHarness(t);
+  await h.select();
+  // Every condition at once, then each lifted in turn: the next one speaks.
+  const p = { ...h.w.TW.placements[0], shared_with_other_scenario: true, is_locked: true, is_online: true, needs_room: false };
+  Object.assign(h.w.TW, { loadedBoardId: 99, plannerJob: { job_id: 'job-1', status: 'running' } });
+  h.w.TW.scenario.status = 'published';
+  const ladder = [
+    ['published', () => { h.w.TW.scenario.status = 'draft'; }],
+    ['loading', () => { h.w.TW.loadedBoardId = h.w.TW.boardId; }],
+    ['job', () => { h.w.TW.plannerJob = null; }],
+    ['external', () => { p.shared_with_other_scenario = false; }],
+    ['online', () => { p.is_online = false; }],
+    ['noRoom', () => { p.needs_room = true; }],
+  ];
+  for (const [code, lift] of ladder) {
+    assert.equal(h.w.cardActionRefusal('room', p).code, code);
+    lift();
+  }
+  assert.equal(h.w.cardActionRefusal('room', p), '', 'a time lock holds Move only');
+  assert.equal(h.w.cardActionRefusal('move', { ...p, shared_with_other_scenario: true }).code, 'external');
+  assert.equal(h.w.cardActionRefusal('move', p).code, 'locked');
+  h.w.syncWorkspaceControls();
+  // The seam (Move and Place join it) opens nothing while a dialog is open.
+  h.w.TW.englishPicker = true;
+  assert.equal(h.w.TW.keyActions.room(h.w.TW.placements[0], { origin: 'placement:10' }), false);
+  assert.deepEqual([roomDialogEl(h).hasAttribute('open'), h.reads.length], [false, 0]);
+  h.w.TW.englishPicker = false;
+  // Selection drawn again with the same markup keeps its nodes: the gate is
+  // put on them all the same (it moved since they were drawn).
+  card(h, 10).click();
+  const button = () => h.d.querySelector('#twRightBody [data-tw-action="room"]');
+  h.w.TW.plannerJob = { job_id: 'job-2', status: 'running' };
+  h.w.renderRightPanel('selection');
+  assert.equal(button().disabled, true);
+  h.w.TW.plannerJob = null;
+  h.w.syncWorkspaceControls();
+  const shown = button();
+  assert.equal(shown.disabled, false);
+  h.w.TW.plannerJob = { job_id: 'job-2', status: 'running' };
+  h.w.renderRightPanel('selection');
+  assert.equal(button(), shown, 'the same node');
+  assert.deepEqual([shown.disabled, h.d.getElementById('twSelActionNote').textContent], [true, 'A planner job is running; edits wait until it ends.']);
+  // The keys line says what R does, in both languages.
+  const keys = /<p id="twGridKeys"[^>]*>{% if LANGUAGE_CODE == 'ar' %}([^{]*){% else %}([^{]*){% endif %}<\/p>/.exec(template);
+  assert.ok(keys, 'the keys line, with its two languages');
+  assert.match(keys[1], / · R: تغيير القاعة$/);
+  assert.match(keys[2], / · R: change the room$/);
+});
+
+test('RC15 the filter finds a wing too, hides a group it empties, and leaves Escape to the dialog when it is empty', async t => {
+  const h = await roomHarness(t, { rooms: () => roomsAnswer([rc('R1'), rc('LAB25'), rc('R2', { wing: 'East' }), ...ROOM_SET.slice(3)]) });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  const field = h.d.getElementById('twRoomFilter');
+  const type = text => { field.focus(); field.value = text; field.dispatchEvent(new h.w.Event('input', { bubbles: true })); };
+  const shown = () => roomRadios(h).filter(radio => !radio.closest('[hidden]')).map(radio => radio.value);
+  const groups = () => [...h.d.querySelectorAll('#twRoomChoices fieldset')].map(set => [set.dataset.group, set.hidden]);
+  type('east');
+  assert.deepEqual(shown(), ['R2'], 'by wing');
+  assert.deepEqual(groups(), [['free', false], ['inUse', true]], 'a group the filter empties is hidden, legend and all');
+  type('r8');
+  assert.deepEqual(groups(), [['free', true], ['inUse', false]]);
+  type('');
+  assert.deepEqual(groups(), [['free', false], ['inUse', false]]);
+  // Escape in the empty filter closes the dialog, as it does anywhere in it.
+  const closes = [];
+  roomDialogEl(h).addEventListener('ux-dialog-close', event => closes.push(event.detail.reason));
+  assert.equal(h.d.activeElement, field);
+  keyOn(h, 'Escape');
+  assert.deepEqual([roomDialogEl(h).hasAttribute('open'), closes], [false, ['cancel']]);
+});
+
+test('RC16 reads: a failed one is not kept, a meeting gone is said so, and an answer never takes the keyboard from where the user put it', async t => {
+  // A failure, then Escape and R again: asked again, not the failure kept.
+  const failing = await roomHarness(t, { rooms: n => (n === 1 ? { httpError: 500, error: { code: 'BOOM', message: 'Broken' } } : roomsAnswer()) });
+  await failing.select();
+  roomByKey(failing);
+  await wait(() => failing.d.querySelector('#twRoomBody [data-tw-room-retry]'));
+  keyOn(failing, 'Escape');
+  roomByKey(failing);
+  await settled(failing);
+  assert.equal(failing.reads.length, 2);
+  // A failure shown when a write lands: read again by itself (the data moved).
+  const down = await roomHarness(t, { rooms: n => (n === 1 ? { httpError: 500, error: { code: 'BOOM', message: 'Broken' } } : roomsAnswer()), more: lockOk });
+  await down.select();
+  roomByKey(down);
+  await wait(() => down.d.querySelector('#twRoomBody [data-tw-room-retry]'));
+  await down.w.toggleLock(10);
+  await settled(down);
+  assert.equal(down.reads.length, 2);
+  // The server no longer has the meeting: said so, with no Retry.
+  const gone = await roomHarness(t, { rooms: () => ({ httpError: 404, error: { code: 'NOT_FOUND', message: 'Gone' } }) });
+  await gone.select();
+  roomByKey(gone);
+  await wait(() => !gone.d.querySelector('#twRoomBody [aria-busy]'));
+  assert.match(gone.d.getElementById('twRoomBody').textContent, /This meeting is no longer on the board\./);
+  assert.equal(gone.d.querySelector('#twRoomBody [data-tw-room-retry]'), null);
+  assert.equal(gone.d.getElementById('twRoomStatus').textContent, 'This meeting is no longer on the board.');
+  // The keyboard moved to Close while the rooms loaded: it stays there.
+  const reply = deferred();
+  const slow = await roomHarness(t, { rooms: () => reply.promise });
+  await slow.select();
+  roomByKey(slow);
+  await settle();
+  const close = roomDialogEl(slow).querySelector('.ux-dialog-head [data-dialog-close]');
+  close.focus();
+  reply.resolve(roomsAnswer());
+  await settled(slow);
+  assert.equal(slow.d.activeElement, close);
+});
+
+test('RC17 a refused save: published and gone hold Assign as another scenario’s section does; a busy server and any other refusal leave it to try again', async t => {
+  const cases = [
+    ['SCENARIO_PUBLISHED', 'This scenario is published and read-only.', true],
+    ['NOT_FOUND', 'This meeting is no longer on the board.', true],
+    ['SCENARIO_BUSY', 'Wait for the current operation to finish.', false],
+    ['ROOM_INVALID', 'The room was not changed.', false],
+  ];
+  for (const [code, words, held] of cases) {
+    const h = await roomHarness(t, { move: () => ({ httpError: 409, error: { code, message: 'Refused' } }) });
+    await h.select();
+    roomByKey(h);
+    await settled(h);
+    roomRadio(h, 'R1').click();
+    const toasts = h.notices.length;
+    h.d.getElementById('twRoomAssign').click();
+    const alert = h.d.getElementById('twRoomAlert');
+    await wait(() => !alert.hidden && h.d.querySelector('.tw-workspace').dataset.busy === 'false');
+    assert.deepEqual([alert.textContent, alert.dataset.tone], [words, 'warning'], code);
+    assert.equal(h.d.getElementById('twRoomAssign').disabled, held, code);
+    assert.deepEqual(h.notices.slice(toasts), [], code);
+  }
+});
+
+test('RC18 rows: a code the server lists twice is one row, the first; the placer’s marker is no room; a current room that does not fit is not chosen', async t => {
+  const notMale = { section: 'F', fits_gender: false, available: false, tone: 'block' };
+  const h = await roomHarness(t, { rooms: () => roomsAnswer([rc('R1'), rc(' r1', notMale), rc('R4', notMale), rc('r4'), rc('UNASSIGNED'), rc('LAB25')]) });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  assert.deepEqual(roomRadios(h).map(radio => radio.value), ['R1', 'LAB25']);
+  assert.deepEqual([...h.d.querySelectorAll('#twRoomMisfits .ux-choice-static .ux-choice-title bdi')].map(code => code.textContent), ['R4']);
+  assert.doesNotMatch(roomDialogEl(h).textContent, /UNASSIGNED/);
+  // The meeting sits in R5, a room too small for it: listed with its reason,
+  // never chosen, and the note asks for a room.
+  const small = await roomHarness(t, { rows: () => [roomRow({ room: 'R5' })] });
+  await small.select();
+  roomByKey(small);
+  await settled(small);
+  assert.equal(roomRadios(small).some(radio => radio.checked), false);
+  assert.deepEqual(roomNote(small), [true, 'Choose a room.']);
+});
+
+test('RC19 the note gives the first reason: published, a planner job, busy, then "Choose a room." and "This is the current room."', async t => {
+  for (const [current, words] of [['OLD9', 'Choose a room.'], ['LAB25', 'This is the current room.']]) {
+    let refresh = null;
+    const h = await roomHarness(t, { rows: () => [roomRow({ room: current })], more: url => (refresh && url === '/ops/tw/boards/2/' ? refresh.promise : undefined) });
+    await h.select();
+    roomByKey(h);
+    await settled(h);
+    assert.deepEqual(roomNote(h), [true, words], current);
+    refresh = deferred();
+    const refreshing = h.w.selectBoard(2);
+    await settle();
+    assert.deepEqual(roomNote(h), [true, 'Wait for the current operation to finish.'], current);
+    h.w.dispatchEvent(new h.w.CustomEvent('tw:planner-job', { detail: { scenarioId: 1, job: { job_id: 'job-3', status: 'running' }, source: 'adapter' } }));
+    assert.deepEqual(roomNote(h), [true, 'A planner job is running; edits wait until it ends.'], current);
+    h.w.TW.scenario.status = 'published';
+    h.w.syncWorkspaceControls();
+    assert.deepEqual(roomNote(h), [true, 'This scenario is published and read-only.'], current);
+    refresh.resolve({ placements: [roomRow({ room: current })], slot_config: scenario.slot_config });
+    refresh = null;
+    await refreshing;
+  }
 });

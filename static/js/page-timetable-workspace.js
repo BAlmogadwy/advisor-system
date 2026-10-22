@@ -244,12 +244,19 @@ async function dialogWrite(dialog, url, body) {
   return data ? { data } : { code: code || 'NETWORK' };
 }
 
-/* What a dialog's work came to: in its alert line while it is open, else a toast. */
+/* What a dialog's work came to: in its alert line while it is open. Once the
+   user has left it (Escape while its write was out, D17a), in the alert line
+   of the helper dialog open now, if any, since a toast behind a modal is
+   never seen (D17); else a toast. The line takes the tone, so a saved change
+   never reads as a refusal. Clearing is only ever about the dialog itself. */
 function dialogSay(dialog, text, tone = 'warning') {
-  const line = dialog?.querySelector('[role="alert"]');
-  if (line && window.UXControls?.dialog?.isOpen(dialog)) {
+  const shown = element => Boolean(element && window.UXControls?.dialog?.isOpen(element));
+  const open = shown(dialog) ? dialog : text ? [...document.querySelectorAll('dialog[open]')].find(shown) : null;
+  const line = open?.querySelector('[role="alert"]');
+  if (line) {
     line.textContent = text;
     line.hidden = !text;
+    line.dataset.tone = tone;
     return;
   }
   if (text) notify[tone](text);
@@ -2942,10 +2949,15 @@ const ROOM_WORDS = IS_AR ? {
 
 /* The dialog's session: the meeting it is about, what it read, what is
    chosen. Each open starts a new session (`token`) and each read a new
-   `read`, so a late answer or commit never lands in a later session. */
+   `read`, so a late answer or commit never lands in a later session.
+   `version` is the data version the rooms were asked at (null before they
+   are asked for, -1 once the meeting was off the board); `picked`, whether
+   the user has chosen a row of them; `held`, the page's own hold a commit
+   met, said in the alert line until it ends. */
 const ROOM = {
   token: 0, read: 0, placementId: null, scenarioId: null, boardId: null, origin: '', snapshot: null,
-  state: 'loading', answer: null, failure: null, choice: '', pending: false, blocked: '', filter: '', view: '', drawn: null,
+  state: 'loading', answer: null, failure: null, choice: '', picked: false, version: null, pending: false,
+  blocked: '', held: '', filter: '', view: '', drawn: null,
 };
 const roomDialogOpen = () => Boolean(window.UXControls?.dialog?.isOpen($('twRoomDialog')));
 
@@ -2955,7 +2967,11 @@ function roomPlacement() {
   if (TW.scenarioId !== ROOM.scenarioId || TW.boardId !== ROOM.boardId || TW.loadedBoardId !== ROOM.boardId) return null;
   return TW.placements.find(row => row.id === ROOM.placementId) || null;
 }
-const roomDataKey = () => [TW.scenarioId, TW.boardId, TW.loadedBoardId, TW.placements];
+const roomDataKey = () => [TW.scenarioId, TW.boardId, TW.loadedBoardId, TW.placements, TW.dataVersion];
+/* The rooms asked for (or answered) before the data last moved: a write
+   landed since (contract E's data version), or the meeting left the board
+   (a scenario reload, which moves no version: `version` is then -1). */
+const roomReadOutdated = () => ROOM.version != null && ROOM.version !== TW.dataVersion;
 
 function announceRoom(text) {
   const status = $('twRoomStatus');
@@ -3022,7 +3038,8 @@ function openRoomDialog(p, { origin = '' } = {}) {
   if (!dialog || !window.TimetableRoomChoice || !window.UXControls?.dialog || anyDialogOpen()) return false;
   Object.assign(ROOM, {
     token: ROOM.token + 1, placementId: p.id, scenarioId: TW.scenarioId, boardId: TW.boardId, origin, snapshot: p,
-    state: 'loading', answer: null, failure: null, choice: '', pending: false, blocked: '', filter: '', drawn: null,
+    state: 'loading', answer: null, failure: null, choice: '', picked: false, version: null, pending: false,
+    blocked: '', held: '', filter: '', drawn: null,
   });
   const alert = $('twRoomAlert');
   if (alert) { alert.textContent = ''; alert.hidden = true; }
@@ -3033,12 +3050,13 @@ function openRoomDialog(p, { origin = '' } = {}) {
 }
 
 /* The rooms at the meeting's own time (no slot is sent), drawn if the answer
-   is still this session's. The keyboard then goes from the body to the chosen
-   row, or the first one, unless the user has moved it. */
+   is still this session's and its latest read. The keyboard then goes from
+   the body to the chosen row, or the first one, unless the user has moved it
+   (a row it waited on while the list loaded comes back to it). */
 async function readRoomCandidates({ fresh = false } = {}) {
   const session = ROOM.token;
   const read = ++ROOM.read;
-  Object.assign(ROOM, { state: 'loading', answer: null, failure: null, choice: '' });
+  Object.assign(ROOM, { state: 'loading', answer: null, failure: null, choice: '', version: TW.dataVersion });
   announceRoom(ROOM_WORDS.loading);
   drawRoomDialog();
   const id = ROOM.placementId;
@@ -3046,7 +3064,6 @@ async function readRoomCandidates({ fresh = false } = {}) {
   if (session !== ROOM.token || read !== ROOM.read || !roomDialogOpen()) return;
   if (answer.data) {
     Object.assign(ROOM, { state: 'ready', answer: answer.data });
-    ROOM.choice = initialRoomChoice(answer.data);
   } else {
     Object.assign(ROOM, { state: 'error', failure: answer });
     announceRoom(roomFailureWords(answer));
@@ -3082,7 +3099,8 @@ function roomGroups(answer, p) {
 }
 
 /* The current room is chosen at first when it can be chosen (Assign holds
-   on it until another is chosen). */
+   on it until another is chosen); until the user chooses, the choice follows
+   the current room as the board has it. */
 function initialRoomChoice(answer) {
   const p = roomPlacement();
   if (!p) return '';
@@ -3093,13 +3111,15 @@ function initialRoomChoice(answer) {
   return row ? String(row.room.room_code).trim() : '';
 }
 
-/* What the dialog shows: the read, unless the meeting is gone, moved since
-   its rooms were read (stale), or needs no room after all (stale flags). */
+/* What the dialog shows: the read, unless the meeting is gone, the data
+   moved after a room was chosen from it or the meeting moved since its rooms
+   were read (stale), or it needs no room after all (stale flags). */
 function roomDialogView() {
   const live = roomPlacement();
   const p = live || ROOM.snapshot;
   if (!live) return { state: 'gone', p };
   if (ROOM.state !== 'ready') return { state: ROOM.state, p };
+  if (roomReadOutdated()) return { state: 'stale', p };
   const target = ROOM.answer?.target || {};
   if (target.is_online) return { state: 'online', p };
   if (target.no_room_required) return { state: 'noRoom', p };
@@ -3137,13 +3157,18 @@ function roomSubHtml(p) {
 /* The body, in order: the current room; the time's own clashes, which stay
    whatever the room; the filter; the rooms that can be chosen (free, then in
    use); the rooms that do not fit, closed unless nothing fits; and how many
-   the server left out. Every other state is one line (and its way on). */
+   the server left out. Every other state is one line (and its way on); the
+   filter stays while the rooms load, so the keyboard in it stays there when
+   they are read again. */
 function roomDialogHtml(view) {
   const W = ROOM_WORDS;
   const p = view.p;
   const line = (text, extra = '') => `<p class="ux-choice-status"${extra}>${esc(text)}</p>`;
+  const filter = `<div class="ux-field"><label class="ux-field-label" for="twRoomFilter">${esc(W.filter)}</label>`
+    + `<input type="search" id="twRoomFilter" class="tw-search" dir="auto" autocomplete="off" aria-controls="twRoomChoices"`
+    + ` placeholder="${esc(W.filterHint)}" value="${esc(ROOM.filter)}"></div>`;
   let html = `<p class="tw-room-current">${esc(W.current)} <bdi>${esc(placementRoomText(p) || W.notSet)}</bdi></p>`;
-  if (view.state === 'loading') return `${html}${line(W.loading)}<div class="ux-choice-list" id="twRoomChoices" aria-busy="true"></div>`;
+  if (view.state === 'loading') return `${html}${filter}${line(W.loading)}<div class="ux-choice-list" id="twRoomChoices" aria-busy="true"></div>`;
   if (view.state === 'gone') return html + line(W.gone);
   if (view.state === 'online' || view.state === 'noRoom') return html + line(REFUSAL[view.state]);
   if (view.state === 'stale') {
@@ -3190,9 +3215,7 @@ function roomDialogHtml(view) {
   const group = (key, legend, hint, rows) => `<fieldset class="ux-choice-list tw-room-group" data-ux-submit data-group="${key}"`
     + `${hint ? ` aria-describedby="twRoomHint-${key}"` : ''}><legend class="ux-field-label">${esc(legend)}</legend>`
     + `${hint ? `<p class="ux-field-hint" id="twRoomHint-${key}">${esc(hint)}</p>` : ''}${rows.map(row).join('')}</fieldset>`;
-  html += `<div class="ux-field"><label class="ux-field-label" for="twRoomFilter">${esc(W.filter)}</label>`
-    + `<input type="search" id="twRoomFilter" class="tw-search" dir="auto" autocomplete="off" aria-controls="twRoomChoices"`
-    + ` placeholder="${esc(W.filterHint)}" value="${esc(ROOM.filter)}"></div>`;
+  html += filter;
   html += '<div class="tw-room-choices" id="twRoomChoices">';
   if (!choosable) html += line(W.noneFit);
   if (groups.free.length) html += group('free', W.free(groups.free.length), '', groups.free);
@@ -3222,11 +3245,17 @@ function drawRoomDialog() {
   if (!body || ROOM.placementId == null) return;
   const view = roomDialogView();
   ROOM.view = view.state;
+  if (!ROOM.picked) ROOM.choice = initialRoomChoice(ROOM.answer);
   setRoomHead('twRoomTitle', `${esc(ROOM_WORDS.title)} · <bdi>${esc(view.p.course_code)}</bdi> <bdi>${esc(view.p.section)}</bdi>`);
   setRoomHead('twRoomSub', roomSubHtml(view.p));
   const html = roomDialogHtml(view);
   if (window.UXControls?.redraw) window.UXControls.redraw(body, html);
   else body.innerHTML = html;
+  // The keyboard on a row while the dialog (not the user) chooses goes with
+  // its choice.
+  if (!ROOM.picked && document.activeElement?.matches('#twRoomBody input[name="twRoomChoice"]')) {
+    body.querySelector('input[name="twRoomChoice"]:checked')?.focus({ preventScroll: true });
+  }
   ROOM.drawn = roomDataKey();
   applyRoomFilter();
   syncRoomDialog();
@@ -3239,6 +3268,23 @@ function drawRoomDialog() {
    off while the page cannot write (busy comes back on by itself). */
 function syncRoomDialog() {
   if (!roomDialogOpen()) return;
+  // Shown as gone (a scenario reload takes every meeting off the board for a
+  // moment): rooms read, or still to be read, before it left are out of date
+  // if it comes back.
+  if (ROOM.view === 'gone') ROOM.version = -1;
+  // Rooms asked for before the data last moved are asked for again at once
+  // while no row of them has been chosen (the list loads and comes back by
+  // itself) and the meeting is on the board; a choice made from them waits
+  // for Check again (stale). A commit always follows a choice.
+  if (roomReadOutdated() && !ROOM.picked && roomPlacement()) {
+    readRoomCandidates();
+    return;
+  }
+  // The page's own hold a commit met is said in the alert line until it ends.
+  if (ROOM.held && writeHold() !== ROOM.held) {
+    ROOM.held = '';
+    dialogSay($('twRoomDialog'), '');
+  }
   if (!ROOM.drawn || roomDataKey().some((value, i) => value !== ROOM.drawn[i])) {
     drawRoomDialog();
     return;
@@ -3289,10 +3335,11 @@ function applyRoomFilter() {
 }
 
 /* The meeting changed since its rooms were read: read the board, then its
-   rooms (fresh). */
+   rooms (fresh), the choice made from the old ones dropped. A meeting gone
+   from the board by then is read once it is back. */
 async function checkRoomAgain() {
   const session = ROOM.token;
-  ROOM.state = 'loading';
+  Object.assign(ROOM, { state: 'loading', version: null, picked: false });
   drawRoomDialog();
   if (TW.boardId) await selectBoard(TW.boardId);
   if (session !== ROOM.token || !roomDialogOpen()) return;
@@ -3322,7 +3369,9 @@ function roomAssignedWords(p, choice, chosenRow, data) {
    published, gone) holds Assign. On success the dialog closes, the board's
    tab stop moves to the card, the board is read again, and then the toast.
    Escape while the write is out closes the dialog; the write still ends,
-   and says how as a toast. */
+   and says how: as a toast, or in the dialog open by then (R again: a toast
+   would sit behind it), where a refusal of the same meeting holds Assign. */
+const ROOM_FINAL_REFUSALS = ['PLACEMENT_EXTERNALLY_OWNED', 'SCENARIO_PUBLISHED', 'NOT_FOUND'];
 async function commitRoom() {
   const dialog = $('twRoomDialog');
   const p = roomPlacement();
@@ -3346,9 +3395,13 @@ async function commitRoom() {
       PLACEMENT_EXTERNALLY_OWNED: REFUSAL.external, SCENARIO_PUBLISHED: REFUSAL.published, NOT_FOUND: ROOM_WORDS.gone,
       SCENARIO_BUSY: REFUSAL.busy, published: REFUSAL.published, job: REFUSAL.job, busy: REFUSAL.busy,
     }[result.code] || ROOM_WORDS.notChanged;
-    if (here && ['PLACEMENT_EXTERNALLY_OWNED', 'SCENARIO_PUBLISHED', 'NOT_FOUND'].includes(result.code)) ROOM.blocked = result.code;
-    if (here) dialogSay(dialog, words, 'warning');
-    else notify.warning(words);
+    // The meeting this session is about (a later one too, opened while the
+    // write was out): a refusal asking again cannot change holds Assign.
+    if (ROOM.placementId === p.id && ROOM_FINAL_REFUSALS.includes(result.code)) ROOM.blocked = result.code;
+    // The page's own hold (dialogWrite's check, answered before any await):
+    // it ends by itself, and its words go with it.
+    if (['published', 'job', 'busy'].includes(result.code)) ROOM.held = result.code;
+    dialogSay(dialog, words, 'warning');
     syncRoomDialog();
     return;
   }
@@ -3359,7 +3412,7 @@ async function commitRoom() {
   if (TW.scenarioId === scenarioAtStart) await selectBoard(TW.boardId);
   updateUndoRedoButtons();
   const said = roomAssignedWords(p, choice, chosenRow, result.data);
-  notify[said.tone](said.text);
+  dialogSay(dialog, said.text, said.tone);
 }
 
 (function wireRoomDialog() {
@@ -3373,7 +3426,7 @@ async function commitRoom() {
   });
   dialog.addEventListener('change', event => {
     if (event.target.name !== 'twRoomChoice') return;
-    ROOM.choice = event.target.value;
+    Object.assign(ROOM, { choice: event.target.value, picked: true });
     syncRoomDialog();
   });
   dialog.addEventListener('input', event => {
