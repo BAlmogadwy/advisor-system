@@ -2770,10 +2770,12 @@ async function refreshWorkspaceQuality(force = false) {
   if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) { renderWorkspaceQuality(); return; }
   TW.quality = data?.ok ? data : null;
   TW.qualityVersion = version;
+  // Schedule the publish check first: the panel then says "checking", not
+  // "not checked again", for the debounce before it runs.
+  scheduleReadinessRefresh();
   renderWorkspaceQuality();
   const active = document.querySelector('.tw-right .tw-panel-tab.active');
   if (active) renderRightPanel(active.dataset.tab);
-  scheduleReadinessRefresh();
 }
 /* The stat strip. Two scopes (whole scenario / instructors), each number with
    its meaning in its label and its direction in its tone:
