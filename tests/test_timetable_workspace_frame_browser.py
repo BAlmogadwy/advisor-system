@@ -488,3 +488,26 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
             )
             self.assertEqual([*sent, *errors], [])
         self.assertEqual(seen, {"en": ["down", "false", "right"], "ar": ["down", "false", "left"]})
+
+    def test_a_button_switched_off_while_it_has_the_keyboard_gets_it_back(self) -> None:
+        """The inspector's Lock, pressed from the keyboard: the page switches its
+        controls off while the write is in flight (the browser lets go of the
+        focused button) and draws the panel again; the keyboard ends on the
+        same control, now "Unlock time"."""
+        page, sent, errors = self._load("en", "light", 1440, 900)
+        page.click(".tw-card")
+        page.click("#twTabSelection")
+        lock = '#twRightBody [data-focus-key="lock"]'
+        page.focus(lock)
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            f"document.querySelector('{lock}')?.textContent.trim() === 'Unlock time'"
+            f" && !document.querySelector('{lock}').disabled"
+        )
+        page.wait_for_timeout(100)
+        self.assertEqual(
+            page.evaluate("document.activeElement.dataset.focusKey || document.activeElement.id"),
+            "lock",
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(any("/lock/" in request for request in sent), sent)

@@ -278,3 +278,45 @@ test('a control disabled for a moment gets the keyboard back once it is enabled,
   }
   h.dom.window.close();
 });
+
+test('a control switched off in place while it has the keyboard gets it back when switched on, unless the user moved on', async () => {
+  const h = bare();
+  h.UX.redraw(h.region, '<button data-focus-key="lock">Lock</button><button data-focus-key="other">Other</button>');
+  const lock = () => h.region.querySelector('[data-focus-key="lock"]');
+  // What Chromium does when a page disables the focused button: it lets go of
+  // it and reports focusout from the now disabled control, with nowhere to go
+  // (jsdom does neither, so the test plays it; a browser test runs the real one).
+  const switchOff = button => {
+    button.blur();
+    button.disabled = true;
+    button.dispatchEvent(new h.dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+  };
+  lock().focus();
+  switchOff(lock());
+  assert.equal(h.doc.activeElement, h.region, 'the region holds the keyboard');
+  lock().disabled = false;  // the write is done: switched on in place
+  await tick();
+  assert.equal(h.doc.activeElement, lock(), 'back on the control');
+  // Leaving for another control is the user's move, even if the control is
+  // switched off as it goes.
+  lock().focus();
+  lock().disabled = true;
+  lock().dispatchEvent(new h.dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: h.region.querySelector('[data-focus-key="other"]') }));
+  h.region.querySelector('[data-focus-key="other"]').focus();
+  lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement.dataset.focusKey, 'other');
+  lock().focus();
+  h.region.querySelector('[data-focus-key="other"]').focus();
+  lock().disabled = true; lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement.dataset.focusKey, 'other');
+  // Switched off, then the user went elsewhere before it came back.
+  lock().focus();
+  switchOff(lock());
+  h.doc.getElementById('outside').focus();
+  lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement.id, 'outside');
+  h.dom.window.close();
+});

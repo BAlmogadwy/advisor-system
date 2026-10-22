@@ -110,8 +110,14 @@ padding-aware for `p-0`.
   keyboard — unchanged content keeps its nodes; changed content gives focus
   back to the same control (`data-focus-key`, `data-ux-disclosure` or id), or
   to the region while that control is gone or disabled, and returns it once
-  the control is enabled again unless the user moved on. A page that redraws
-  a panel after every server answer uses it instead of `innerHTML`.
+  the control is enabled again unless the user moved on. A control switched
+  off in place while it has the keyboard (a write in flight disables the
+  page's mutation controls; Chromium then lets go of the focused one) is
+  held the same way: the region takes the keyboard and the control gets it
+  back when it is switched on again, in place or by a redraw. A page that
+  redraws a panel after every server answer uses it instead of `innerHTML`.
+  Limits: focus only, not an input's value or caret; the region needs a
+  `tabindex` to hold the keyboard.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.

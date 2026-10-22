@@ -276,12 +276,57 @@
        control is gone, or disabled for now (a save in progress), focus goes
        to the region if it can take it, and the control gets it back on a
        later redraw that shows it enabled, unless the user has moved on.
-     Returns whether it drew, so a page wires listeners only on new nodes. */
+     A control disabled in place while it has the keyboard (a page switching
+     its controls off while a write is in flight) drops focus to the page
+     before any redraw; the region takes it, and hands it back the moment the
+     control is enabled again — in place or by a redraw.
+     Returns whether it drew, so a page wires listeners only on new nodes.
+     Limits: focus only (not an input's value or caret); the region needs a
+     tabindex to hold the keyboard. */
   const drawn = new WeakMap();
   const focusKeyOf = element => (element.dataset.focusKey ? `focus:${element.dataset.focusKey}`
     : element.dataset.uxDisclosure ? `disclosure:${element.dataset.uxDisclosure}`
       : element.id ? `id:${element.id}` : '');
+  const findControl = (region, key) => [...region.querySelectorAll('[data-focus-key],[data-ux-disclosure],[id]')]
+    .find(element => focusKeyOf(element) === key);
+  function record(region) {
+    if (!drawn.has(region)) drawn.set(region, { html: null, first: null, count: -1, awaiting: '' });
+    return drawn.get(region);
+  }
+  const watched = new WeakSet();
+  function watch(region) {
+    if (watched.has(region)) return;
+    watched.add(region);
+    region.addEventListener('focusout', event => {
+      const control = event.target;
+      // Only a control that lost the keyboard by being switched off is held
+      // (and only while nothing else has it: leaving for somewhere else is the
+      // user's move).
+      if (!control.disabled || !region.hasAttribute('tabindex')) return;
+      const key = focusKeyOf(control);
+      if (!key) return;
+      record(region).awaiting = key;
+      // Now if the browser has already let go of it, else once it has.
+      const hold = () => {
+        const active = document.activeElement;
+        if (!active || active === document.body) region.focus({ preventScroll: true });
+      };
+      hold();
+      setTimeout(hold, 0);
+    });
+    // Enabled again in place: the awaited control takes the keyboard back
+    // if the region still holds it.
+    new MutationObserver(() => {
+      const entry = drawn.get(region);
+      if (!entry || !entry.awaiting || document.activeElement !== region) return;
+      const control = findControl(region, entry.awaiting);
+      if (!control || control.disabled) return;
+      control.focus({ preventScroll: true });
+      if (document.activeElement === control) entry.awaiting = '';
+    }).observe(region, { attributes: true, attributeFilter: ['disabled'], subtree: true });
+  }
   function redraw(region, html) {
+    watch(region);
     const last = drawn.get(region);
     if (last && last.html === html && last.first === region.firstChild && last.count === region.childNodes.length) return false;
     const active = document.activeElement;
@@ -290,9 +335,7 @@
     region.innerHTML = html;
     let awaiting = '';
     if (inside || key) {
-      const control = key
-        ? [...region.querySelectorAll('[data-focus-key],[data-ux-disclosure],[id]')].find(element => focusKeyOf(element) === key)
-        : null;
+      const control = key ? findControl(region, key) : null;
       if (control && !control.disabled) control.focus({ preventScroll: true });
       // Gone, or not focusable now (disabled, inside a closed group): the region.
       if (!control || document.activeElement !== control) {
