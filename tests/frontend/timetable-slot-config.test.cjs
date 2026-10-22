@@ -23,15 +23,30 @@ const LABS = [
   { label: 'Online 2', start: '17:40', end: '19:20', online_only: true },
 ];
 
-test('the editor text round-trips, with Windows line endings and spaced columns', () => {
+test('the editor text round-trips, with Windows line endings, spaced columns and spaced labels', () => {
   const { SC } = moduleIn();
   const text = SC.rowsToText(LABS.slice(0, 1));
   assert.equal(text, 'Lab 1\t09:00\t10:40');
-  assert.deepEqual(JSON.parse(JSON.stringify(SC.parseText('Lab 1\t09:00\t10:40\r\nLab 2   10:45   12:25\r\n13:00\t14:40\r\n\r\n'))), [
+  const parsed = SC.parseLines('Lab 1\t09:00\t10:40\r\nLab 2   10:45   12:25\r\n13:00\t14:40\r\nLab 4 14:45 16:25\r\n\r\n');
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed)), { rows: [
     { label: 'Lab 1', start: '09:00', end: '10:40' },
     { label: 'Lab 2', start: '10:45', end: '12:25' },
     { label: '13:00-14:40', start: '13:00', end: '14:40' },
-  ]);
+    { label: 'Lab 4', start: '14:45', end: '16:25' },
+  ], rejected: [] });
+});
+
+test('a line that cannot be read is named by its number, never dropped', () => {
+  const { SC } = moduleIn();
+  const { rows, rejected } = SC.parseLines('Lab 1\t09:00\t10:40\nevening labs\n\nLab 3\t13:00\t14:4');
+  assert.equal(rows.length, 1);
+  assert.deepEqual([...rejected], [2, 4]);
+  assert.equal(SC.rejectedText([], [2, 4]), 'Nothing was saved — these lines were not understood (label, start, end): Labs: line 2, 4');
+});
+
+test('Arabic counts take the form for 1, 2, 3–10 and 11+', () => {
+  const { SC } = moduleIn('ar');
+  assert.deepEqual([1, 2, 3, 10, 11, 100].map(n => SC.meetingsText(n)), ['لقاءً واحداً', 'لقاءين', '3 لقاءات', '10 لقاءات', '11 لقاءً', '100 لقاء']);
 });
 
 test('a manual move is never offered a policy column, nor an evening one unless it is in one', () => {
@@ -45,31 +60,70 @@ test('a wrong column is named in the user’s language', () => {
   const errors = [{ list: 'lab_slot_config', index: 2, field: 'start', message: 'must be a time as HH:MM' }];
   assert.equal(moduleIn('en').SC.errorsText(errors), 'The columns were not saved: Labs, line 3: start must be a time as HH:MM');
   assert.equal(moduleIn('ar').SC.errorsText(errors), 'لم تُحفظ الأعمدة: المعامل، السطر 3: البداية يجب أن تكون وقتاً بالصيغة HH:MM');
+  const tooMany = [{ list: 'slot_config', index: -1, field: 'list', message: 'has more than 40 columns' }];
+  assert.equal(moduleIn('ar').SC.errorsText(tooMany), 'لم تُحفظ الأعمدة: المحاضرات: فيها أكثر من 40 عموداً');
 });
 
 test('the hidden meetings are escaped, their times isolated, and the rest counted', () => {
   const { SC } = moduleIn('ar');
-  const html = SC.hiddenMeetingsHtml({ hidden_count: 3, hidden: [
+  const html = SC.confirmationHtml({ hidden_count: 3, hidden: [
     { board_label: 'Term <2>', course_code: 'CS112', section: 'S1', day: 'MON', start_time: '10:50', end_time: '12:05', is_locked: false },
   ] });
   assert.match(html, /<bdi>Term &lt;2&gt;<\/bdi>/);
   assert.match(html, /الاثنين <bdi dir="ltr">10:50–12:05<\/bdi>/);
-  assert.match(html, /و2 غيرها/);
-  assert.match(html, /يترك 3 من اللقاءات/);
+  assert.match(html, /ولقاءين غيرها/);
+  assert.match(html, /يترك 3 لقاءات خارج/);
+});
+
+test('a flagged column the change removes is named with what it was', () => {
+  const { SC } = moduleIn();
+  const html = SC.confirmationHtml({ hidden: [], hidden_count: 0, dropped_flags: [
+    { list: 'lab_slot_config', label: 'Online 3', start: '19:30', end: '21:10', flags: ['online_only'] },
+  ] });
+  assert.doesNotMatch(html, /outside the grid/);
+  assert.match(html, /Labs · <bdi>Online 3<\/bdi> <bdi dir="ltr">19:30–21:10<\/bdi> · online-only/);
+  assert.match(html, /automatic placers may put room-using classes in/);
 });
 
 test('save repeats once with the fingerprint, and stops when declined', async () => {
   const { SC } = moduleIn();
   const sent = [];
-  const hides = { code: 'SLOT_EDIT_HIDES_PLACEMENTS', details: { fingerprint: 'f1', hidden: [] } };
-  const send = async extra => { sent.push(extra); return extra.confirm_hidden ? { data: { ok: true }, error: null } : { data: null, error: hides }; };
+  const asks = { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', details: { fingerprint: 'f1', hidden: [] } };
+  const send = async extra => { sent.push(extra); return extra.confirm ? { data: { ok: true }, error: null } : { data: null, error: asks }; };
   // Objects made in the page's realm: compare their JSON.
   const plain = value => JSON.parse(JSON.stringify(value));
-  assert.deepEqual(await SC.save({ send, confirmHidden: async () => true, reportInvalid: assert.fail }), { ok: true });
-  assert.deepEqual(plain(sent), [{}, { confirm_hidden: 'f1' }]);
+  assert.deepEqual(await SC.save({ send, confirm: async () => true, report: assert.fail }), { ok: true });
+  assert.deepEqual(plain(sent), [{}, { confirm: 'f1' }]);
   sent.length = 0;
-  assert.equal(await SC.save({ send, confirmHidden: async () => false, reportInvalid: assert.fail }), null);
+  assert.equal(await SC.save({ send, confirm: async () => false, report: assert.fail }), null);
   assert.deepEqual(plain(sent), [{}]);
+});
+
+test('a list that keeps changing under the user is reported, never a silent stop', async () => {
+  const { SC } = moduleIn();
+  const reports = [];
+  const send = async () => ({ data: null, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', details: { fingerprint: 'moving' } } });
+  assert.equal(await SC.save({ send, confirm: async () => true, report: text => reports.push(text) }), null);
+  assert.deepEqual(reports, ['The timetable kept changing while you reviewed it; nothing was saved. Try again.']);
+});
+
+test('the MRI move pool offers the effective columns, never an evening one to a day meeting', () => {
+  const vm = require('node:vm');
+  const mri = read('static/js/page-timetable-mri.js');
+  const start = mri.indexOf('  function moveSlotPool(');
+  const body = mri.slice(start, mri.indexOf('\n  function ', start + 10));
+  const { SC } = moduleIn();
+  const toMinutes = value => { const [h, m] = String(value).split(':').map(Number); return h * 60 + m; };
+  const context = vm.createContext({
+    window: { TimetableSlotConfig: SC },
+    toMinutes,
+    durationMinutes: (a, b) => toMinutes(b) - toMinutes(a),
+    state: { boardDetails: new Map([[2, { slot_config: [], lab_slot_config: [], effective_slot_config: [], effective_lab_slot_config: LABS }]]) },
+  });
+  vm.runInContext(body, context);
+  const pool = placement => [...context.moveSlotPool({ board_id: 2, ...placement })].map(slot => slot.start);
+  assert.deepEqual(pool({ start_time: '09:00', end_time: '10:40' }), ['09:00']);
+  assert.deepEqual(pool({ start_time: '15:50', end_time: '17:30' }), ['09:00', '15:50', '17:40']);
 });
 
 /* ── The split view ── */
@@ -113,9 +167,9 @@ test('the split view offers a lab meeting the effective columns without evening 
 
 test('the split editor shows the effective columns and saves only after the hidden meetings are confirmed', async t => {
   const hidden = { hidden: [{ placement_id: 9, board_label: 'Term 2', course_code: 'AI201', section: 'S1', day: 'SUN', start_time: '09:00', end_time: '10:40', is_locked: false }], hidden_count: 1, fingerprint: 'fp9' };
-  const h = await split(t, body => body.confirm_hidden === 'fp9'
+  const h = await split(t, body => body.confirm === 'fp9'
     ? { ok: true, scenario: { ...h.S.scenarioMeta, lab_slot_config: body.lab_slot_config } }
-    : { httpError: 409, error: { code: 'SLOT_EDIT_HIDES_PLACEMENTS', message: 'x', details: hidden } });
+    : { httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: hidden } });
   const asked = [];
   h.w.dlg = { confirm: async ({ body }) => { asked.push(body); return true; } };
   h.w.openSlotEditorModal();
@@ -124,7 +178,7 @@ test('the split editor shows the effective columns and saves only after the hidd
   h.d.querySelector('#twsModalFooter button.primary').click();
   await settle(); await settle();
   assert.equal(h.posts.length, 2);
-  assert.equal(h.posts[1].confirm_hidden, 'fp9');
+  assert.equal(h.posts[1].confirm, 'fp9');
   assert.match(asked[0], /AI201 S1/);
   assert.ok(h.notices.some(n => n.kind === 'success'));
 });

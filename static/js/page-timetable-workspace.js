@@ -3022,63 +3022,82 @@ function setIssuesCount(total, critical) {
 }
 
 /* ── Slot Edit Modal ── */
-async function openSlotEditor() {
+/* The editor opens on the effective columns, or on the text the user had
+   typed when a save stopped (a decline, a line it could not read, a column
+   the server refused): their edits are never lost. */
+async function openSlotEditor(typed = null) {
   if (!TW.scenarioId || !TW.scenario) { notify.error(IS_AR ? 'اختر سيناريو أولا' : 'Select a scenario first'); return; }
   if (TW.scenario.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Cannot edit published scenario'); return; }
   const SC = window.TimetableSlotConfig;
   const lectureSlots = scenarioLectureSlots();
   const labSlots = scenarioLabSlots();
   const flagged = SC.flaggedColumnsText(labSlots) || SC.flaggedColumnsText(lectureSlots);
+  const lectureText = typed ? typed.lecture : SC.rowsToText(lectureSlots);
+  const labText = typed ? typed.lab : SC.rowsToText(labSlots);
 
   const result = await dlg.confirm({
     title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
     body: `<div class="fs-md text-t3 fw-semibold" style="margin-bottom:6px">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
       <div class="fs-sm text-t4" style="margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(SC.rowsToText(lectureSlots))}</textarea>
+      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(lectureText)}</textarea>
       <div class="fs-md text-teal fw-semibold" style="margin:10px 0 6px">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(SC.rowsToText(labSlots))}</textarea>
+      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>
       ${flagged ? `<p class="fs-sm text-t3" style="margin:8px 0 0">${esc(flagged)}</p>` : ''}`,
     confirmText: IS_AR ? 'حفظ' : 'Save Slots',
     kind: 'info',
   });
   if (!result) return;
 
-  const newSlots = SC.parseText(document.getElementById('twSlotInput')?.value);
-  const newLabSlots = SC.parseText(document.getElementById('twLabSlotInput')?.value);
-  if (newSlots.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return; }
+  const text = {
+    lecture: document.getElementById('twSlotInput')?.value ?? lectureText,
+    lab: document.getElementById('twLabSlotInput')?.value ?? labText,
+  };
+  const lectures = SC.parseLines(text.lecture);
+  const labs = SC.parseLines(text.lab);
+  if (lectures.rejected.length || labs.rejected.length) {
+    notify.error(SC.rejectedText(lectures.rejected, labs.rejected));
+    return openSlotEditor(text);
+  }
+  if (lectures.rows.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return openSlotEditor(text); }
   const scenarioId = TW.scenarioId;
 
+  let stopped = false;
   const data = await SC.save({
     send: async extra => {
       let error = null;
       const answer = await twFetch(`/ops/tw/scenarios/${scenarioId}/slots/update/`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ slot_config: newSlots, lab_slot_config: newLabSlots, ...extra }),
+        body: JSON.stringify({ slot_config: lectures.rows, lab_slot_config: labs.rows, ...extra }),
         _onError: body => {
           const code = body?.error?.code;
-          if (code !== 'SLOT_EDIT_HIDES_PLACEMENTS' && code !== 'VALIDATION_SLOTS') return false;
+          if (code !== 'SLOT_EDIT_NEEDS_CONFIRMATION' && code !== 'VALIDATION_SLOTS') return false;
           error = body.error;
           return true;
         },
       });
       return { data: answer, error };
     },
-    confirmHidden: details => {
-      const asked = dlg.confirm({
-        title: IS_AR ? 'لقاءات ستخرج من الشبكة' : 'Meetings would leave the grid',
-        body: SC.hiddenMeetingsHtml(details),
+    confirm: async details => {
+      const ok = await dlg.confirm({
+        title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
+        body: SC.confirmationHtml(details),
         kind: 'danger',
         confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
       });
-      return asked;
+      if (!ok) stopped = true;
+      return ok;
     },
-    reportInvalid: text => notify.error(text),
+    report: message => { stopped = true; notify.error(message); },
   });
-  if (!data || TW.scenarioId !== scenarioId) return;
+  if (TW.scenarioId !== scenarioId) return;
+  if (!data) {
+    if (stopped) return openSlotEditor(text);
+    return;
+  }
 
   TW.scenario = data.scenario;
-  notify.success(IS_AR ? 'تم تحديث الفترات' : `${newSlots.length} lecture + ${newLabSlots.length} lab slots saved`);
+  notify.success(IS_AR ? 'تم تحديث الفترات' : `${lectures.rows.length} lecture + ${labs.rows.length} lab slots saved`);
   renderGrid();
 }
 

@@ -19,8 +19,13 @@ a room at 18:30. So a save carries each flag over from the column it replaces
 A meeting is drawn on the grid when its day is a teaching day and its start is
 a column start of its kind: a lab when it runs more than 80 minutes, otherwise
 a lecture (``isLabPlacement`` in the workspace's script and ``_is_lab_p`` in the
-per-plan export use the same rule). A change of columns that would leave a
-drawn meeting off the grid must name those meetings and be confirmed.
+exports use the same rule). A meeting under a course meeting policy (the
+three-hour English bundles) is drawn in its own table built from the meetings
+themselves, so no column change ever hides it.
+
+A change of columns must be confirmed, by name, when it would leave drawn
+meetings off the grid, or when a flagged column (an online-only window)
+disappears: a moved online window is a plain column the engines may use.
 """
 
 from __future__ import annotations
@@ -93,7 +98,8 @@ def clean_slot_rows(rows: Any, list_name: str) -> tuple[list[dict], list[SlotErr
     Each column needs a start and an end as HH:MM, the start before the end,
     and a different start and end from every other column in its list. The
     label is optional (it defaults to "start-end"). Only the known flags are
-    kept, and only as booleans; anything else in a row is dropped.
+    kept, and only when they are real booleans; anything else in a row is
+    dropped.
     """
     errors: list[SlotError] = []
     if not isinstance(rows, list):
@@ -126,8 +132,10 @@ def clean_slot_rows(rows: Any, list_name: str) -> tuple[list[dict], list[SlotErr
         label = str(label).strip()[:MAX_LABEL_LENGTH] if label is not None else ""
         clean: dict[str, object] = {"label": label or f"{start}-{end}", "start": start, "end": end}
         for flag in SLOT_FLAGS:
-            if flag in row:
-                clean[flag] = bool(row[flag])
+            # Only a real boolean says something; "false", null and the like
+            # are not taken as a choice (they would clear a carried flag).
+            if isinstance(row.get(flag), bool):
+                clean[flag] = row[flag]
         cleaned.append(clean)
     return cleaned, errors
 
@@ -165,11 +173,23 @@ def is_lab_meeting(start_time: Any, end_time: Any) -> bool:
 
 
 def is_on_grid(
-    day: Any, start_time: Any, end_time: Any, lecture_slots: list[dict], lab_slots: list[dict]
+    day: Any,
+    start_time: Any,
+    end_time: Any,
+    lecture_slots: list[dict],
+    lab_slots: list[dict],
+    *,
+    policy_meeting: bool = False,
 ) -> bool:
-    """Whether the workspace draws this meeting: a teaching day and a column start of its kind."""
+    """Whether the workspace draws this meeting: a teaching day and a column start of its kind.
+
+    A ``policy_meeting`` (a course meeting policy, e.g. English) has its own
+    table built from its meetings: it is drawn whatever the columns.
+    """
     if str(day or "").upper()[:3] not in GRID_DAYS:
         return False
+    if policy_meeting:
+        return True
     start = _hhmm(start_time)
     columns = lab_slots if is_lab_meeting(start_time, end_time) else lecture_slots
     return start is not None and any(
@@ -184,18 +204,19 @@ def hidden_by_slot_change(
 
     Every board of the scenario counts. An empty new list means the defaults,
     as it does when saved. Meetings already off the grid are not listed: the
-    change does not hide them.
+    change does not hide them; nor are policy meetings, which are drawn in
+    their own table.
     """
     from core.models import SectionPlacement
+    from core.services.timetable_course_policy import get_course_meeting_policy
 
     old_lecture, old_lab = effective_lecture_slots(scenario), effective_lab_slots(scenario)
     new_lecture = new_lecture_slots or [
         dict(slot) for slot in DEFAULT_SLOTS if isinstance(slot, dict)
     ]
     new_lab = new_lab_slots or [dict(slot) for slot in DEFAULT_LAB_SLOTS if isinstance(slot, dict)]
-    placements = (
+    rows = (
         SectionPlacement.objects.filter(board__scenario=scenario)
-        .select_related("board", "term_section")
         .order_by(
             "board__display_order",
             "board_id",
@@ -205,33 +226,88 @@ def hidden_by_slot_change(
             "start_time",
             "id",
         )
+        .values(
+            "id",
+            "board_id",
+            "board__label",
+            "day",
+            "start_time",
+            "end_time",
+            "is_locked",
+            "term_section__course_code",
+            "term_section__course_key",
+            "term_section__course_number",
+            "term_section__section",
+        )
     )
+    policy_cache: dict[tuple, bool] = {}
     hidden: list[dict[str, object]] = []
-    for placement in placements:
-        args = (placement.day, placement.start_time, placement.end_time)
-        if is_on_grid(*args, old_lecture, old_lab) and not is_on_grid(*args, new_lecture, new_lab):
-            section = placement.term_section
+    for row in rows:
+        identity = (
+            row["term_section__course_code"],
+            row["term_section__course_key"],
+            row["term_section__course_number"],
+        )
+        if identity not in policy_cache:
+            policy_cache[identity] = get_course_meeting_policy(*identity) is not None
+        args = (row["day"], row["start_time"], row["end_time"])
+        kind = {"policy_meeting": policy_cache[identity]}
+        if is_on_grid(*args, old_lecture, old_lab, **kind) and not is_on_grid(
+            *args, new_lecture, new_lab, **kind
+        ):
             hidden.append(
                 {
-                    "placement_id": placement.id,
-                    "board_id": placement.board_id,
-                    "board_label": placement.board.label,
-                    "course_code": getattr(section, "course_code", "") or "",
-                    "section": getattr(section, "section", "") or "",
-                    "day": str(placement.day or "").upper()[:3],
-                    "start_time": _hhmm(placement.start_time) or str(placement.start_time),
-                    "end_time": _hhmm(placement.end_time) or str(placement.end_time),
-                    "is_locked": bool(placement.is_locked),
+                    "placement_id": row["id"],
+                    "board_id": row["board_id"],
+                    "board_label": row["board__label"] or "",
+                    "course_code": row["term_section__course_code"] or "",
+                    "section": row["term_section__section"] or "",
+                    "day": str(row["day"] or "").upper()[:3],
+                    "start_time": _hhmm(row["start_time"]) or str(row["start_time"]),
+                    "end_time": _hhmm(row["end_time"]) or str(row["end_time"]),
+                    "is_locked": bool(row["is_locked"]),
                 }
             )
     return hidden
 
 
-def hidden_fingerprint(hidden: list[dict[str, object]]) -> str:
-    """A short digest of exactly which meetings a change hides.
+def dropped_flagged_columns(
+    previous_rows: list[dict], new_rows: list[dict], list_name: str
+) -> list[dict[str, object]]:
+    """Flagged columns (online-only, policy) the new list no longer has.
+
+    A column is kept when a new column has its start and end. One that moves
+    loses its flag with it: an online window edited to another time becomes a
+    plain column the automatic placers may use, so it is confirmed by name.
+    """
+    kept = {(row["start"], row["end"]) for row in new_rows}
+    dropped: list[dict[str, object]] = []
+    for slot in previous_rows:
+        if not isinstance(slot, dict):
+            continue
+        flags = [flag for flag in SLOT_FLAGS if slot.get(flag)]
+        start, end = _hhmm(slot.get("start")), _hhmm(slot.get("end"))
+        if flags and (start, end) not in kept:
+            dropped.append(
+                {
+                    "list": list_name,
+                    "label": str(slot.get("label") or f"{start}-{end}"),
+                    "start": start,
+                    "end": end,
+                    "flags": flags,
+                }
+            )
+    return dropped
+
+
+def confirmation_fingerprint(
+    hidden: list[dict[str, object]], dropped: list[dict[str, object]]
+) -> str:
+    """A short digest of exactly what a change asks the user to accept.
 
     A confirmation names this digest, not a count: two different sets of the
     same size must not confirm each other.
     """
     ids = ",".join(str(pid) for pid in sorted(int(str(item["placement_id"])) for item in hidden))
-    return hashlib.sha256(ids.encode("ascii")).hexdigest()[:16]
+    columns = ",".join(sorted(f"{d['list']}:{d['start']}-{d['end']}" for d in dropped))
+    return hashlib.sha256(f"{ids}|{columns}".encode("ascii")).hexdigest()[:16]

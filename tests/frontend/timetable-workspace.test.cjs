@@ -550,18 +550,21 @@ const dialogs = (h, ...answers) => {
   const shown = [];
   h.w.dlg = { confirm: async ({ title, body }) => {
     shown.push({ title, body });
-    // The real dialog puts its body in the page: the editor reads its textareas.
+    // The real dialog puts its body in the page (one at a time): the editor
+    // reads its textareas. An answer may first type into it.
+    h.d.querySelectorAll('.stub-dialog').forEach(node => node.remove());
     h.d.body.insertAdjacentHTML('beforeend', `<div class="stub-dialog">${body}</div>`);
-    return answers.shift();
+    const answer = answers.shift();
+    return typeof answer === 'function' ? answer(h.d) : answer;
   } };
   return shown;
 };
 const HIDDEN = { hidden: [{ placement_id: 10, board_id: 2, board_label: 'Term 7', course_code: 'CS323', section: 'S1', day: 'SUN', start_time: '09:00', end_time: '10:15', is_locked: true }], hidden_count: 1, fingerprint: 'abc123' };
 
 test('a slot save that would hide meetings names them, and repeats only with that confirmation', async t => {
-  const h = await slotHarness(t, body => body.confirm_hidden === 'abc123'
+  const h = await slotHarness(t, body => body.confirm === 'abc123'
     ? { ok: true, scenario: { ...scenario, ...columns, slot_config: body.slot_config }, hidden_count: 1 }
-    : { httpError: 409, error: { code: 'SLOT_EDIT_HIDES_PLACEMENTS', message: 'x', details: HIDDEN } });
+    : { httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: HIDDEN } });
   await h.select();
   const shown = dialogs(h, true, true);
   await h.w.openSlotEditor();
@@ -569,27 +572,40 @@ test('a slot save that would hide meetings names them, and repeats only with tha
   assert.match(shown[0].body, /Online 1\t15:50\t17:30/);
   assert.match(shown[0].body, /The online-only columns \(15:50\) stay online-only/);
   assert.equal(h.posts.length, 2);
-  assert.equal(h.posts[0].confirm_hidden, undefined);
+  assert.equal(h.posts[0].confirm, undefined);
   assert.deepEqual(h.posts[0].lab_slot_config.map(row => row.start), ['09:00', '15:50']);
   assert.match(shown[1].body, /leaves 1 meeting outside the grid/);
   assert.match(shown[1].body, /Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Sun <bdi dir="ltr">09:00–10:15<\/bdi> · time locked/);
-  assert.equal(h.posts[1].confirm_hidden, 'abc123');
+  assert.equal(h.posts[1].confirm, 'abc123');
   assert.ok(h.notices.some(n => n.type === 'success'));
   assert.deepEqual(h.errors, []);
 });
 
-test('declining the hidden meetings sends nothing more, and an invalid column is named', async t => {
+test('a declined confirmation reopens the editor with the typed text, and sends nothing more', async t => {
+  const h = await slotHarness(t, () => ({ httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: HIDDEN } }));
+  await h.select();
+  const edited = '09:00-10:15\t09:00\t10:15\nLate\t16:00\t17:15';
+  const shown = dialogs(h, d => { d.getElementById('twSlotInput').value = edited; return true; }, false, false);
+  await h.w.openSlotEditor();
+  assert.equal(h.posts.length, 1, 'declined: no second request');
+  assert.equal(shown.length, 3, 'editor, confirmation, editor again');
+  assert.match(shown[2].body, /Late\t16:00\t17:15/, 'the user’s edit is still there');
+  assert.ok(!h.notices.some(n => n.type === 'success'));
+});
+
+test('a line the editor cannot read saves nothing and is named; a refused column is named', async t => {
   let invalid = false;
   const h = await slotHarness(t, () => invalid
     ? { httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'x', details: { errors: [{ list: 'slot_config', index: 0, field: 'end', message: 'must be after the start' }] } } }
-    : { httpError: 409, error: { code: 'SLOT_EDIT_HIDES_PLACEMENTS', message: 'x', details: HIDDEN } });
+    : { ok: true });
   await h.select();
-  dialogs(h, true, false);
+  const shown = dialogs(h, d => { d.getElementById('twLabSlotInput').value = 'Lab 1\t09:00\t10:40\nevening labs'; return true; }, false);
   await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 1, 'declined: no second request');
-  assert.ok(!h.notices.some(n => n.type === 'success'));
+  assert.equal(h.posts.length, 0, 'nothing is sent while a line is unread');
+  assert.ok(h.notices.some(n => n.type === 'error' && /Labs: line 2/.test(n.text)), JSON.stringify(h.notices));
+  assert.match(shown[1].body, /evening labs/, 'the editor reopens with the text');
   invalid = true;
-  dialogs(h, true);
+  dialogs(h, true, false);
   await h.w.openSlotEditor();
   assert.ok(h.notices.some(n => n.type === 'error' && n.text === 'The columns were not saved: Lectures, line 1: end must be after the start'), JSON.stringify(h.notices));
 });

@@ -1682,6 +1682,7 @@ _RAW_SLOT_READERS_ALLOWED = {
     "timetable_per_plan_export.py",  # draws, never places
     "group_availability.py",  # already filters at its one call site
     "timetable_cpsat_polisher.py",  # already filters
+    "timetable_slot_config.py",  # the effective columns: draws, edits, checks; never places
 }
 
 

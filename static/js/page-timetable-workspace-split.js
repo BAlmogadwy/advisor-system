@@ -7834,8 +7834,12 @@ function openSlotEditorModal() {
     buttons: [
       { label: IS_AR ? 'إلغاء' : 'Cancel' },
       { label: IS_AR ? 'حفظ' : 'Save', variant: 'primary', onClick: async () => {
-        const newLect = SC.parseText(document.getElementById('twsSlotLect').value);
-        const newLab = SC.parseText(document.getElementById('twsSlotLab').value);
+        // Returning false keeps the editor open with the user's text.
+        const lectures = SC.parseLines(document.getElementById('twsSlotLect').value);
+        const labs = SC.parseLines(document.getElementById('twsSlotLab').value);
+        if (lectures.rejected.length || labs.rejected.length) { notify.error(SC.rejectedText(lectures.rejected, labs.rejected)); return false; }
+        const newLect = lectures.rows;
+        const newLab = labs.rows;
         if (!newLect.length) { notify.error(IS_AR ? 'لم يتم تحليل أي فترة' : 'No valid lecture slots parsed'); return false; }
         const scenarioId = S.scenarioId;
         const data = await SC.save({
@@ -7846,18 +7850,18 @@ function openSlotEditorModal() {
               body: JSON.stringify({ slot_config: newLect, lab_slot_config: newLab, ...extra }),
             }, (message, errorBody) => {
               const code = errorBody?.error?.code;
-              if (code === 'SLOT_EDIT_HIDES_PLACEMENTS' || code === 'VALIDATION_SLOTS') error = errorBody.error;
+              if (code === 'SLOT_EDIT_NEEDS_CONFIRMATION' || code === 'VALIDATION_SLOTS') error = errorBody.error;
               else notify.error(message);
             });
             return { data: answer, error };
           },
-          confirmHidden: details => dlg.confirm({
-            title: IS_AR ? 'لقاءات ستخرج من الشبكة' : 'Meetings would leave the grid',
-            body: SC.hiddenMeetingsHtml(details),
+          confirm: details => dlg.confirm({
+            title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
+            body: SC.confirmationHtml(details),
             kind: 'danger',
             confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
           }),
-          reportInvalid: text => notify.error(text),
+          report: text => notify.error(text),
         });
         if (!data || S.scenarioId !== scenarioId) return false;
         S.scenarioMeta = data.scenario;

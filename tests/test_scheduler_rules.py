@@ -1902,6 +1902,25 @@ def test_every_placement_on_the_board_ends_up_with_a_column():
         assert start in covered, f"{start} has no column"
 
 
+def test_a_scenario_on_the_defaults_keeps_them_and_the_online_flags():
+    """A board's lab window on a scenario with no stored columns: the declared
+    grid is the defaults plus what is missing, online windows still flagged."""
+    from types import SimpleNamespace
+
+    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+    from scheduler.bridge import declared_grid_for
+
+    scenario = SimpleNamespace(slot_config=[], lab_slot_config=[])
+    board = _board_at(TimeWindow(645, 745), TimeWindow(1110, 1210))  # 10:45 lab, 18:30 online
+    lecture, lab, _, added_lab = declared_grid_for(scenario, board)
+
+    assert {row["start"] for row in DEFAULT_SLOTS} <= {row["start"] for row in lecture}
+    online = {row["start"] for row in DEFAULT_LAB_SLOTS if row.get("online_only")}
+    assert online and online == {row["start"] for row in lab if row.get("online_only")}
+    assert {row["start"] for row in DEFAULT_LAB_SLOTS} <= {row["start"] for row in lab}
+    assert added_lab == 1, "only 18:30 was missing"
+
+
 def test_existing_columns_are_never_removed():
     """Only ever adds. A scenario must not lose a column something else relies
     on just because this engine did not happen to use it."""

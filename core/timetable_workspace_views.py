@@ -153,10 +153,11 @@ from core.services.timetable_section_policy import (
 from core.services.timetable_slot_config import (
     carry_slot_flags,
     clean_slot_rows,
+    confirmation_fingerprint,
+    dropped_flagged_columns,
     effective_lab_slots,
     effective_lecture_slots,
     hidden_by_slot_change,
-    hidden_fingerprint,
 )
 from core.services.timetable_student_blockers import build_scenario_student_blockers
 from core.services.timetable_workspace import (
@@ -955,9 +956,10 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
       the editors send plain rows, and an online window that lost its flag
       would become a place an engine may book a room in the evening.
     - A change that would leave drawn meetings off the grid, on any board, is
-      a 409 ``SLOT_EDIT_HIDES_PLACEMENTS`` listing them with a ``fingerprint``;
-      it saves only when the request repeats that fingerprint as
-      ``confirm_hidden``.
+      a 409 ``SLOT_EDIT_NEEDS_CONFIRMATION`` listing them, and so is one that
+      removes a flagged column (an online-only window moved to another time
+      becomes a plain column); it saves only when the request repeats the
+      ``fingerprint`` of exactly that list as ``confirm``.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -998,16 +1000,23 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
         lab_slots = carry_slot_flags(lab_slots, effective_lab_slots(scenario))
 
     hidden = hidden_by_slot_change(scenario, slots, lab_slots)
-    if hidden:
-        fingerprint = hidden_fingerprint(hidden)
-        if payload.get("confirm_hidden") != fingerprint:
+    dropped = dropped_flagged_columns(effective_lecture_slots(scenario), slots, "slot_config")
+    if lab_given:
+        dropped += dropped_flagged_columns(
+            effective_lab_slots(scenario), lab_slots, "lab_slot_config"
+        )
+    if hidden or dropped:
+        fingerprint = confirmation_fingerprint(hidden, dropped)
+        if payload.get("confirm") != fingerprint:
             return _err(
-                f"This change would leave {len(hidden)} meeting(s) off the grid",
-                code="SLOT_EDIT_HIDES_PLACEMENTS",
+                f"This change would leave {len(hidden)} meeting(s) off the grid"
+                f" and remove {len(dropped)} flagged column(s)",
+                code="SLOT_EDIT_NEEDS_CONFIRMATION",
                 status=409,
                 details={
                     "hidden": hidden[:200],
                     "hidden_count": len(hidden),
+                    "dropped_flags": dropped,
                     "fingerprint": fingerprint,
                 },
             )
@@ -1028,6 +1037,7 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
             "slot_count": len(slots),
             "lab_slot_count": len(lab_slots) if lab_given else None,
             "hidden_count": len(hidden),
+            "dropped_flag_count": len(dropped),
         },
     )
     return _ok({"scenario": _scenario_to_dict(scenario), "hidden_count": len(hidden)})

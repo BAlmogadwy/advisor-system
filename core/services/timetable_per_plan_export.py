@@ -1510,6 +1510,9 @@ def _render_plan_term_sheet(
             note.value = "Outside this timetable's time slots: " + "; ".join(off_grid)
             note.font = Font(italic=True, size=8, color="C03030")
             note.alignment = Alignment(wrap_text=True, vertical="top")
+            # One line per ~120 characters across the merged width, so the list
+            # is read, not clipped.
+            ws.row_dimensions[row].height = 13 * max(1, -(-len(note.value) // 120))
             row += 1
         return row
 

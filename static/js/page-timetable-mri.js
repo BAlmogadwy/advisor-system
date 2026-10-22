@@ -1597,7 +1597,14 @@
   function moveSlotPool(placement) {
     const detail = state.boardDetails.get(placement.board_id) || {};
     const seen = new Set();
-    const allSlots = [...(detail.slot_config || []), ...(detail.lab_slot_config || [])]
+    // The columns the scenario uses (its own, or the defaults), and of those
+    // only what a manual move may offer: no policy column, and an evening
+    // (online-only) one only to a meeting already in one.
+    const columns = [
+      ...(detail.effective_slot_config || detail.slot_config || []),
+      ...(detail.effective_lab_slot_config || detail.lab_slot_config || []),
+    ];
+    const allSlots = window.TimetableSlotConfig.offeredColumns(columns, placement.start_time)
       .filter(slot => {
         if (!slot?.start || !slot?.end) return false;
         const key = `${slot.start}-${slot.end}`;

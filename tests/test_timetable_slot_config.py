@@ -5,8 +5,10 @@
   online window that loses its flag is a place an engine may book a room at
   18:30.
 - Every column is validated, and a bad one is named by list, line and field.
-- A change that would leave drawn meetings off the grid, on any board, is
-  refused with their list until the request confirms exactly that set.
+- A change that would leave drawn meetings off the grid, on any board, or
+  remove a flagged column (an online window moved to another time), is
+  refused with the list until the request confirms exactly that list.
+- English meetings are drawn in their own table: no column change hides them.
 - The pages draw the server's effective columns (their own defaults
   disagreed with the scheduler's), and the per-plan export lists an off-grid
   lecture instead of failing.
@@ -24,7 +26,7 @@ from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS, 
 from core.services.timetable_slot_config import (
     carry_slot_flags,
     clean_slot_rows,
-    hidden_fingerprint,
+    confirmation_fingerprint,
     is_on_grid,
 )
 
@@ -126,9 +128,32 @@ def test_the_grid_rule_is_a_teaching_day_and_a_column_start_of_the_meetings_kind
 
 
 def test_the_fingerprint_names_the_set_not_its_size() -> None:
-    a = hidden_fingerprint([{"placement_id": 1}, {"placement_id": 2}])
-    assert a == hidden_fingerprint([{"placement_id": 2}, {"placement_id": 1}])
-    assert a != hidden_fingerprint([{"placement_id": 1}, {"placement_id": 3}])
+    online = [{"list": "lab_slot_config", "start": "19:30", "end": "21:10"}]
+    a = confirmation_fingerprint([{"placement_id": 1}, {"placement_id": 2}], [])
+    assert a == confirmation_fingerprint([{"placement_id": 2}, {"placement_id": 1}], [])
+    assert a != confirmation_fingerprint([{"placement_id": 1}, {"placement_id": 3}], [])
+    assert a != confirmation_fingerprint([{"placement_id": 1}, {"placement_id": 2}], online)
+
+
+def test_only_a_real_boolean_sets_a_flag() -> None:
+    rows, _ = clean_slot_rows(
+        [
+            {"start": "15:50", "end": "17:30", "online_only": "false"},
+            {"start": "17:40", "end": "19:20", "online_only": None},
+            {"start": "19:30", "end": "21:10", "online_only": False},
+        ],
+        "lab_slot_config",
+    )
+    assert ["online_only" in row for row in rows] == [False, False, True]
+    previous = [dict(r, online_only=True) for r in rows]
+    carried = carry_slot_flags(rows, previous)
+    # "false" and null say nothing: the carried flag stays; a real False clears it.
+    assert [bool(r.get("online_only")) for r in carried] == [True, True, False]
+
+
+def test_a_policy_meeting_is_drawn_whatever_the_columns() -> None:
+    assert is_on_grid("SUN", "09:00", "12:00", LECTURES, [], policy_meeting=True)
+    assert not is_on_grid("SUN", "09:00", "12:00", LECTURES, []), "as a 180-minute lab it would be"
 
 
 # ── the endpoint ────────────────────────────────────────────────────────────
@@ -230,8 +255,9 @@ def test_a_change_that_hides_meetings_lists_them_and_saves_only_when_confirmed(h
     response = _save(http, scenario, without_1050)
     assert response.status_code == 409
     error = response.json()["error"]
-    assert error["code"] == "SLOT_EDIT_HIDES_PLACEMENTS"
+    assert error["code"] == "SLOT_EDIT_NEEDS_CONFIRMATION"
     assert error["details"]["hidden_count"] == 2
+    assert error["details"]["dropped_flags"] == []
     assert [
         (h["placement_id"], h["board_label"], h["is_locked"]) for h in error["details"]["hidden"]
     ] == [
@@ -241,10 +267,10 @@ def test_a_change_that_hides_meetings_lists_them_and_saves_only_when_confirmed(h
     scenario.refresh_from_db()
     assert scenario.slot_config == LECTURES, "nothing saved"
 
-    stale = _save(http, scenario, without_1050, confirm_hidden="0" * 16)
+    stale = _save(http, scenario, without_1050, confirm="0" * 16)
     assert stale.status_code == 409, "a confirmation of another set does not count"
 
-    confirmed = _save(http, scenario, without_1050, confirm_hidden=error["details"]["fingerprint"])
+    confirmed = _save(http, scenario, without_1050, confirm=error["details"]["fingerprint"])
     assert confirmed.status_code == 200, confirmed.content
     assert confirmed.json()["hidden_count"] == 2
     scenario.refresh_from_db()
@@ -261,6 +287,52 @@ def test_lab_columns_hide_labs_and_lecture_columns_hide_lectures(http) -> None:
     response = _save(http, scenario, _plain(LECTURES), _plain([LABS[0], LABS[2]]))
     assert response.status_code == 409
     assert [h["placement_id"] for h in response.json()["error"]["details"]["hidden"]] == [lab.id]
+
+
+@pytest.mark.django_db
+def test_english_meetings_are_never_reported_hidden(http) -> None:
+    scenario = _scenario(slot_config=[], lab_slot_config=[])
+    board = _board(scenario)
+    first = _place(board, "ENG101", "S1", "SUN", "09:00", "12:00")
+    for day in ("MON", "WED", "THU"):  # one section, four three-hour meetings
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=first.term_section,
+            day=day,
+            start_time="09:00",
+            end_time="12:00",
+        )
+    without_0900_lab = _plain([r for r in DEFAULT_LAB_SLOTS if r["start"] != "09:00"])
+    response = _save(http, scenario, _plain(DEFAULT_SLOTS), without_0900_lab)
+    assert response.status_code == 200, response.content
+    assert response.json()["hidden_count"] == 0
+
+
+@pytest.mark.django_db
+def test_moving_an_online_window_is_confirmed_by_name(http) -> None:
+    scenario = _scenario()
+    moved = [LABS[0], LABS[1], {"label": "Online 1", "start": "15:50", "end": "17:20"}]
+    response = _save(http, scenario, _plain(LECTURES), _plain(moved))
+    assert response.status_code == 409
+    details = response.json()["error"]["details"]
+    assert details["hidden"] == []
+    assert details["dropped_flags"] == [
+        {
+            "list": "lab_slot_config",
+            "label": "Online 1",
+            "start": "15:50",
+            "end": "17:30",
+            "flags": ["online_only"],
+        }
+    ]
+    confirmed = _save(
+        http, scenario, _plain(LECTURES), _plain(moved), confirm=details["fingerprint"]
+    )
+    assert confirmed.status_code == 200, confirmed.content
+    scenario.refresh_from_db()
+    assert not any(r.get("online_only") for r in scenario.lab_slot_config), (
+        "the moved window is a plain column now"
+    )
 
 
 @pytest.mark.django_db
@@ -316,3 +388,30 @@ def test_an_off_grid_lecture_is_listed_under_the_grid_not_a_failed_export(monkey
         and cell.value.startswith("Outside this timetable's time slots")
     ]
     assert notes and "CS112 S2" in notes[0] and "Monday 18:30-19:45" in notes[0]
+
+
+@pytest.mark.django_db
+def test_the_main_export_lists_an_off_grid_lecture_under_its_grid() -> None:
+    from openpyxl import load_workbook
+
+    from core.services.timetable_export import export_scenario_xlsx
+
+    scenario = _scenario()
+    board = _board(scenario)
+    _place(board, "CS112", "S1", "SUN", "09:00", "10:15")
+    _place(board, "CS112", "S2", "MON", "18:30", "19:45")
+    path = export_scenario_xlsx(scenario.id)
+    try:
+        notes = [
+            cell.value
+            for sheet in load_workbook(path).worksheets
+            for row in sheet.iter_rows(min_col=1, max_col=1)
+            for cell in row
+            if isinstance(cell.value, str)
+            and cell.value.startswith("Outside this timetable's time slots")
+        ]
+    finally:
+        import os
+
+        os.unlink(path)
+    assert notes and "CS112 S2 Monday 18:30-19:45" in notes[0]

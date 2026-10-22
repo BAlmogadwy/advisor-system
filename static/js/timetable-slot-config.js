@@ -1,16 +1,17 @@
 /* Timetable slot columns: editing them without losing data.
 
-   Shared by the Timetable Workspace and its split view. Both pages draw and
-   edit the scenario's EFFECTIVE columns (`effective_slot_config`,
+   Shared by the Timetable Workspace, its split view and the MRI page. They
+   draw and edit the scenario's EFFECTIVE columns (`effective_slot_config`,
    `effective_lab_slot_config`: its own, or the server's defaults) and never
    defaults of their own; the server keeps each column's flags (online-only
    evening windows) when a save names the same start and end.
 
    A save can come back with two answers this module handles:
    - VALIDATION_SLOTS: which column is wrong, in the user's language;
-   - SLOT_EDIT_HIDES_PLACEMENTS: the meetings the change would leave off the
-     grid. The user sees them by name and confirms, and the save is repeated
-     with the server's fingerprint of exactly that set. */
+   - SLOT_EDIT_NEEDS_CONFIRMATION: the meetings the change would leave off the
+     grid, and the flagged columns it would remove. The user sees them by name
+     and confirms, and the save is repeated with the server's fingerprint of
+     exactly that list. */
 (function () {
   'use strict';
   const AR = document.documentElement.lang === 'ar';
@@ -18,6 +19,16 @@
   const DAY = AR
     ? { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس' }
     : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu' };
+  const time = (start, end) => `<bdi dir="ltr">${escape(start)}–${escape(end)}</bdi>`;
+
+  /* "N meetings" in Arabic takes a different form for 1, 2, 3–10 and 11+. */
+  const arPlural = (n, forms) => {
+    const rule = (typeof Intl !== 'undefined' && Intl.PluralRules) ? new Intl.PluralRules('ar').select(n) : 'other';
+    return (forms[rule] || forms.other).replace('{n}', n);
+  };
+  const meetingsText = n => (AR
+    ? arPlural(n, { zero: 'لا لقاءات', one: 'لقاءً واحداً', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })
+    : `${n} ${n === 1 ? 'meeting' : 'meetings'}`);
 
   /* The columns as the editor's text: one per line, label TAB start TAB end. */
   function rowsToText(slots) {
@@ -25,29 +36,47 @@
   }
 
   /* The editor's text as columns. Tabs or runs of spaces separate the parts;
-     Windows line endings are fine. Flags are not typed: the server carries
-     them over from the column with the same start and end. */
-  function parseText(text) {
-    const out = [];
-    String(text || '').replace(/\r\n/g, '\n').trim().split('\n').filter(line => line.trim()).forEach(line => {
+     Windows line endings are fine. A line that cannot be read is returned by
+     its number, never dropped: an editor saves nothing while one remains (a
+     list emptied that way would quietly become the defaults). Flags are not
+     typed: the server carries them over from the column with the same start
+     and end. */
+  function parseLines(text) {
+    const rows = [];
+    const rejected = [];
+    String(text || '').replace(/\r\n/g, '\n').split('\n').forEach((line, index) => {
+      if (!line.trim()) return;
       const parts = line.split(/\t|\s{2,}/).map(part => part.trim()).filter(Boolean);
-      if (parts.length >= 3) out.push({ label: parts[0], start: parts[1], end: parts[2] });
-      else if (parts.length === 2) out.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
-      else {
-        const match = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
-        if (match) out.push({ label: match[1], start: match[2], end: match[3] });
+      const isTime = part => /^\d{1,2}:\d{2}$/.test(part);
+      if (parts.length >= 3 && isTime(parts[parts.length - 2]) && isTime(parts[parts.length - 1])) {
+        rows.push({ label: parts.slice(0, -2).join(' '), start: parts[parts.length - 2], end: parts[parts.length - 1] });
+      } else if (parts.length === 2 && isTime(parts[0]) && isTime(parts[1])) {
+        rows.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
+      } else {
+        const match = line.trim().match(/^(.+?)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+        if (match) rows.push({ label: match[1], start: match[2], end: match[3] });
+        else rejected.push(index + 1);
       }
     });
-    return out;
+    return { rows, rejected };
+  }
+  const parseText = text => parseLines(text).rows;
+
+  /* Lines an editor could not read, as one sentence. */
+  function rejectedText(lectureLines, labLines) {
+    const part = (lines, en, ar) => (lines.length ? (AR ? `${ar}: السطر ${lines.join('، ')}` : `${en}: line ${lines.join(', ')}`) : '');
+    const parts = [part(lectureLines, 'Lectures', 'المحاضرات'), part(labLines, 'Labs', 'المعامل')].filter(Boolean);
+    return AR
+      ? `لم يُحفظ شيء — لم تُفهم هذه الأسطر (الاسم ثم البداية ثم النهاية): ${parts.join('؛ ')}`
+      : `Nothing was saved — these lines were not understood (label, start, end): ${parts.join('; ')}`;
   }
 
   /* What a flagged column is, for the editor's hint. */
   function flaggedColumnsText(slots) {
     const online = (slots || []).filter(slot => slot.online_only).map(slot => slot.start);
     if (!online.length) return '';
-    const times = online.join('، ');
     return AR
-      ? `أعمدة «عن بُعد فقط» (${times}) تبقى كذلك ما دامت بالبداية والنهاية نفسيهما.`
+      ? `أعمدة «عن بُعد فقط» (${online.join('، ')}) تبقى كذلك ما دامت بالبداية والنهاية نفسيهما.`
       : `The online-only columns (${online.join(', ')}) stay online-only while they keep the same start and end.`;
   }
 
@@ -55,10 +84,15 @@
   const FIELD = AR
     ? { start: 'البداية', end: 'النهاية', row: 'السطر', list: 'القائمة' }
     : { start: 'start', end: 'end', row: 'row', list: 'list' };
-  const PROBLEM = AR
-    ? { 'must be a time as HH:MM': 'يجب أن تكون وقتاً بالصيغة HH:MM', 'must be after the start': 'يجب أن تكون بعد البداية',
-        'repeats another column': 'تكرر عموداً آخر', 'must be an object': 'غير صالح', 'must be an array': 'غير صالحة' }
-    : {};
+  const problemText = message => {
+    if (!AR) return message;
+    const tooMany = /^has more than (\d+) columns$/.exec(message);
+    if (tooMany) return `فيها أكثر من ${tooMany[1]} عموداً`;
+    return {
+      'must be a time as HH:MM': 'يجب أن تكون وقتاً بالصيغة HH:MM', 'must be after the start': 'يجب أن تكون بعد البداية',
+      'repeats another column': 'تكرر عموداً آخر', 'must be an object': 'غير صالح', 'must be an array': 'غير صالحة',
+    }[message] || message;
+  };
 
   /* A VALIDATION_SLOTS answer as one sentence per wrong column. */
   function errorsText(errors) {
@@ -66,49 +100,67 @@
       const where = error.index >= 0
         ? (AR ? `${LIST[error.list] || error.list}، السطر ${error.index + 1}` : `${LIST[error.list] || error.list}, line ${error.index + 1}`)
         : (LIST[error.list] || error.list);
-      const field = FIELD[error.field] || error.field;
-      return `${where}: ${field} ${PROBLEM[error.message] || error.message}`;
+      const field = error.field === 'list' ? '' : `${FIELD[error.field] || error.field} `;
+      return `${where}: ${field}${problemText(error.message)}`;
     });
     const head = AR ? 'لم تُحفظ الأعمدة:' : 'The columns were not saved:';
     return `${head} ${lines.join(AR ? '؛ ' : '; ')}`;
   }
 
-  /* The meetings a change would leave off the grid, for the confirm dialog. */
-  function hiddenMeetingsHtml(details) {
+  /* What the change asks the user to accept, for the confirm dialog: the
+     meetings it leaves off the grid, and the flagged columns it removes. */
+  function confirmationHtml(details) {
     const hidden = details.hidden || [];
     const count = details.hidden_count ?? hidden.length;
-    const lead = AR
-      ? `هذا التغيير يترك ${count} من اللقاءات خارج أعمدة الجدول. تبقى في الجدول وتُنشر، لكن لا يظهر أي منها في الشبكة حتى تعود أعمدة بأوقاتها:`
-      : `This change leaves ${count} ${count === 1 ? 'meeting' : 'meetings'} outside the grid's columns. They stay in the timetable and are still published, but none is drawn on the grid until a column has its time again:`;
-    const rows = hidden.map(item => {
-      const time = `<bdi dir="ltr">${escape(item.start_time)}–${escape(item.end_time)}</bdi>`;
-      const locked = item.is_locked ? (AR ? ' · الوقت مقفل' : ' · time locked') : '';
-      return `<li><bdi>${escape(item.board_label)}</bdi> · <bdi>${escape(item.course_code)} ${escape(item.section)}</bdi> · ${escape(DAY[item.day] || item.day)} ${time}${locked}</li>`;
-    }).join('');
-    const more = count > hidden.length
-      ? `<p class="tw-readiness-lead">${AR ? `و${count - hidden.length} غيرها.` : `And ${count - hidden.length} more.`}</p>` : '';
-    return `<p class="tw-readiness-lead">${lead}</p><ul class="tw-readiness-list">${rows}</ul>${more}`;
+    let html = '';
+    if (count) {
+      const lead = AR
+        ? `هذا التغيير يترك ${meetingsText(count)} خارج أعمدة الجدول. تبقى في الجدول وتُنشر، لكن لا يظهر أي منها في الشبكة حتى تعود أعمدة بأوقاتها:`
+        : `This change leaves ${meetingsText(count)} outside the grid's columns. They stay in the timetable and are still published, but none is drawn on the grid until a column has its time again:`;
+      const rows = hidden.map(item => {
+        const locked = item.is_locked ? (AR ? ' · الوقت مقفل' : ' · time locked') : '';
+        return `<li><bdi>${escape(item.board_label)}</bdi> · <bdi>${escape(item.course_code)} ${escape(item.section)}</bdi> · ${escape(DAY[item.day] || item.day)} ${time(item.start_time, item.end_time)}${locked}</li>`;
+      }).join('');
+      const more = count > hidden.length
+        ? `<p class="tw-readiness-lead">${AR ? `و${meetingsText(count - hidden.length)} غيرها.` : `And ${meetingsText(count - hidden.length)} more.`}</p>` : '';
+      html += `<p class="tw-readiness-lead">${lead}</p><ul class="tw-readiness-list">${rows}</ul>${more}`;
+    }
+    const dropped = details.dropped_flags || [];
+    if (dropped.length) {
+      const lead = AR
+        ? 'وهذه الأعمدة تفقد قيدها؛ العمود الذي لم يعد «عن بُعد فقط» يمكن أن يضع فيه المُجدول الآلي محاضرات تحتاج قاعة:'
+        : 'And these columns lose their rule; a column that is no longer online-only is one the automatic placers may put room-using classes in:';
+      const rows = dropped.map(column => {
+        const what = (column.flags || []).includes('online_only') ? (AR ? 'عن بُعد فقط' : 'online-only') : (AR ? 'عمود عرض للسياسة' : 'policy display column');
+        return `<li>${escape(LIST[column.list] || column.list)} · <bdi>${escape(column.label)}</bdi> ${time(column.start, column.end)} · ${what}</li>`;
+      }).join('');
+      html += `<p class="tw-readiness-lead">${lead}</p><ul class="tw-readiness-list">${rows}</ul>`;
+    }
+    return html;
   }
 
   /* Save the columns.
      send(extra) posts the body plus `extra` and resolves to {data, error}:
      data on success; error = the server's {code, details} for the two codes
      above (any other failure is reported by the page's own fetch helper and
-     resolves to {data: null}). confirmHidden(details) asks the user and
-     resolves to true to go on. reportInvalid(text) shows a validation error.
+     resolves to {data: null}). confirm(details) asks the user and resolves to
+     true to go on. report(text) shows why nothing was saved.
      Resolves to the saved answer, or null. */
-  async function save({ send, confirmHidden, reportInvalid }) {
+  async function save({ send, confirm, report }) {
     let extra = {};
-    // A second "hides" answer means the set changed while the user read the
-    // first (another edit landed): show the new set rather than saving blind.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Another answer after a confirmation means the list changed while the
+    // user read it (another edit landed): show the new list, a few times.
+    for (let attempt = 0; attempt < 4; attempt++) {
       const { data, error } = await send(extra);
       if (!error) return data || null;
-      if (error.code === 'VALIDATION_SLOTS') { reportInvalid(errorsText(error.details?.errors)); return null; }
-      if (error.code !== 'SLOT_EDIT_HIDES_PLACEMENTS') return null;
-      if (!(await confirmHidden(error.details || {}))) return null;
-      extra = { confirm_hidden: error.details?.fingerprint };
+      if (error.code === 'VALIDATION_SLOTS') { report(errorsText(error.details?.errors)); return null; }
+      if (error.code !== 'SLOT_EDIT_NEEDS_CONFIRMATION') return null;
+      if (!(await confirm(error.details || {}))) return null;
+      extra = { confirm: error.details?.fingerprint };
     }
+    report(AR
+      ? 'تغيّر الجدول أثناء المراجعة أكثر من مرة؛ لم يُحفظ شيء. أعد المحاولة.'
+      : 'The timetable kept changing while you reviewed it; nothing was saved. Try again.');
     return null;
   }
 
@@ -120,5 +172,8 @@
     return (slots || []).filter(slot => !slot.policy_only && (!slot.online_only || inOnline));
   }
 
-  window.TimetableSlotConfig = { rowsToText, parseText, flaggedColumnsText, errorsText, hiddenMeetingsHtml, save, offeredColumns };
+  window.TimetableSlotConfig = {
+    rowsToText, parseText, parseLines, rejectedText, flaggedColumnsText, errorsText,
+    confirmationHtml, save, offeredColumns, meetingsText,
+  };
 })();
