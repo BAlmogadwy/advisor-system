@@ -47,6 +47,7 @@ from core.models import (
 from core.services.timetable_autoplace import DEFAULT_SLOTS, get_meeting_pattern
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_slot_config import effective_lab_slots
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
 
 
@@ -495,6 +496,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     for slot in slot_config:
                         sk = f"{slot['start']}-{slot['end']}"
                         grid[day][sk] = {"text": "", "courses": [], "lab_time": ""}
+                # Lectures no column starts at (the columns were edited after
+                # they were placed): listed under the grid, never dropped.
+                off_grid: dict[str, None] = {}
 
                 for p in group_placements:
                     ts_placements = section_all_placements.get(p.term_section_id, [])
@@ -549,6 +553,11 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             cd["courses"].append(ts.course_code)
                             if is_lab:
                                 cd["lab_time"] = f"{pp.start_time}-{pp.end_time}"
+                        else:
+                            day_name = dict(zip(DAY_LABELS, DAY_NAMES, strict=True)).get(day, day)
+                            off_grid[
+                                f"{ts.course_code} {ts.section} {day_name} {pp.start_time}-{pp.end_time}"
+                            ] = None
 
                 # ── Write day rows (unified: lectures + labs in same grid) ──
                 from openpyxl.cell.rich_text import CellRichText, TextBlock
@@ -616,6 +625,16 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
                 # Outer border for this group's grid
                 _apply_outer_border(ws, grid_start_row, 1, row - 1, 1 + num_slots)
+                if off_grid:
+                    ws.merge_cells(
+                        start_row=row, start_column=1, end_row=row, end_column=1 + num_slots
+                    )
+                    note = ws.cell(row=row, column=1)
+                    note.value = "Outside this timetable's time slots: " + "; ".join(off_grid)
+                    note.font = Font(italic=True, size=8, color="C03030")
+                    note.alignment = Alignment(wrap_text=True, vertical="top")
+                    ws.row_dimensions[row].height = 13 * max(1, -(-len(note.value) // 120))
+                    row += 1
 
             # Conflicts below grid
             conflicts = detect_board_conflicts(board.id)
@@ -869,7 +888,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
     if all_rooms:
         lecture_slots = scenario.slot_config or DEFAULT_SLOTS
-        lab_slots = scenario.lab_slot_config or []
+        lab_slots = effective_lab_slots(scenario)
 
         room_hdr_fill = PatternFill(start_color="2E4053", end_color="2E4053", fill_type="solid")
         room_hdr_font = Font(name="Calibri", bold=True, color="FFFFFF", size=9)
@@ -900,7 +919,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
             # Build separate slot lists for lecture and lab rooms
             lecture_slots = scenario.slot_config or DEFAULT_SLOTS
-            lab_slots = scenario.lab_slot_config or []
+            lab_slots = effective_lab_slots(scenario)
             lec_slot_list = [{"start": s["start"], "end": s["end"]} for s in lecture_slots]
             lab_slot_list = [{"start": s["start"], "end": s["end"]} for s in lab_slots]
 
@@ -1153,7 +1172,7 @@ def _render_instructors_sheet(wb, scenario, fill_for, *, teachers=None) -> None:
     combined: list[dict] = [
         {"start": s["start"], "end": s["end"]} for s in (scenario.slot_config or DEFAULT_SLOTS)
     ]
-    combined += [{"start": s["start"], "end": s["end"]} for s in (scenario.lab_slot_config or [])]
+    combined += [{"start": s["start"], "end": s["end"]} for s in effective_lab_slots(scenario)]
     seen: set[str] = set()
     slots: list[dict] = []
     for s in sorted(combined, key=lambda x: x["start"]):

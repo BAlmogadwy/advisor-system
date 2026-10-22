@@ -62,6 +62,7 @@ from core.services.timetable_plan_lens import build_scenario_plan_lens
 
 DAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU"]
 DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
+DAY_NAME_BY_CODE = dict(zip(DAY_LABELS, DAY_NAMES, strict=True))
 
 COURSE_COLORS = [
     "D4E6F1",
@@ -1355,6 +1356,9 @@ def _render_plan_term_sheet(
     def _draw_grid(row: int, group_placements: list[SectionPlacement]) -> int:
         """Draw one group's day×slot grid from ``row``; return the next row."""
         grid_start_row = row
+        # Lectures no column starts at (the columns were edited after they
+        # were placed): listed under the grid, never dropped and never a 500.
+        off_grid: dict[str, None] = {}
         ws.cell(row=row, column=1).border = thin_border
         for s_idx, _slot in enumerate(slot_config):
             cell = ws.cell(row=row, column=2 + s_idx)
@@ -1405,6 +1409,12 @@ def _render_plan_term_sheet(
                             if slot["start"] == pp.start_time:
                                 slot_key = f"{slot['start']}-{slot['end']}"
                                 break
+                    if slot_key not in grid[day]:
+                        label = _section_cell_label(pp.term_section, duplicate_course_codes)
+                        off_grid[
+                            f"{label} {DAY_NAME_BY_CODE.get(day, day)} {pp.start_time}-{pp.end_time}"
+                        ] = None
+                        continue
 
                 ts = pp.term_section
                 code = _term_section_course_key(ts) or "?"
@@ -1494,6 +1504,16 @@ def _render_plan_term_sheet(
             row += 1
 
         apply_outer_border(ws, grid_start_row, 1, row - 1, 1 + num_slots)
+        if off_grid:
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
+            note = ws.cell(row=row, column=1)
+            note.value = "Outside this timetable's time slots: " + "; ".join(off_grid)
+            note.font = Font(italic=True, size=8, color="C03030")
+            note.alignment = Alignment(wrap_text=True, vertical="top")
+            # One line per ~120 characters across the merged width, so the list
+            # is read, not clipped.
+            ws.row_dimensions[row].height = 13 * max(1, -(-len(note.value) // 120))
+            row += 1
         return row
 
     # If no placements, we still draw the empty grid header so the sheet

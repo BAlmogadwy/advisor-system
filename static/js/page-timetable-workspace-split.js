@@ -34,22 +34,15 @@ const DAY_LABELS = IS_AR
   ? ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس']
   : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'];
 
-const DEFAULT_LECTURE_SLOTS = [
-  { label: '1', start: '09:00', end: '10:15' },
-  { label: '2a', start: '10:30', end: '11:45' },
-  { label: '2b', start: '10:50', end: '12:05' },
-  { label: '3', start: '13:00', end: '14:15' },
-  { label: '4a', start: '14:30', end: '15:45' },
-  { label: '4b', start: '14:45', end: '16:00' },
-  { label: '5', start: '16:00', end: '17:15' },
-];
-const DEFAULT_LAB_SLOTS = [
-  { label: 'L1', start: '09:00', end: '10:40' },
-  { label: 'L2', start: '10:45', end: '12:25' },
-  { label: 'L3', start: '13:00', end: '14:40' },
-  { label: 'L4', start: '14:45', end: '16:25' },
-  { label: 'L5', start: '16:30', end: '18:10' },
-];
+/* The columns a board's scenario really uses: the server's effective config
+   (its own, or the defaults). The page keeps no defaults of its own — its old
+   ones had neither the online windows nor the workspace's Lab 6. */
+function boardLectureSlots(data) {
+  return (data && (data.effective_slot_config || data.slot_config)) || [];
+}
+function boardLabSlots(data) {
+  return (data && (data.effective_lab_slot_config || data.lab_slot_config)) || [];
+}
 
 /* ── State ── */
 const S = {
@@ -312,13 +305,15 @@ async function api(url, opts = {}, onError = null) {
     const r = await fetch(url, o);
     if (!r.ok) {
       let msg = `${r.status}`;
+      let body = null;
       try {
-        const d = await r.json(); msg = d.error?.message || d.error || d.message || msg;
+        const d = await r.json(); body = d; msg = d.error?.message || d.error || d.message || msg;
         const seedLabel = runSeedText(d.error?.details || d);
         if (seedLabel) msg += ` · ${seedLabel}`;
       } catch {}
       console.error('api error', url, msg);
-      if (onError) onError(msg);
+      // The body and status too, for a caller that can say more than the message.
+      if (onError) onError(msg, body, r.status);
       return null;
     }
     return await r.json();
@@ -906,9 +901,12 @@ function isPlacementProtected(placement) {
 
 function slotPoolForPlacement(boardData, placement) {
   const kind = slotKindForPlacement(placement);
-  const base = kind === 'lab'
-    ? ((boardData.lab_slot_config && boardData.lab_slot_config.length) ? boardData.lab_slot_config : DEFAULT_LAB_SLOTS)
-    : ((boardData.slot_config && boardData.slot_config.length) ? boardData.slot_config : DEFAULT_LECTURE_SLOTS);
+  // Never a policy column, and an evening (online-only) one only to a meeting
+  // already in one: a room-consuming class is never offered 18:30.
+  const base = window.TimetableSlotConfig.offeredColumns(
+    kind === 'lab' ? boardLabSlots(boardData) : boardLectureSlots(boardData),
+    placement.start_time,
+  );
   const duration = durationMinutes(placement.start_time, placement.end_time);
   const matching = base.filter(slot => Math.abs(durationMinutes(slot.start, slot.end) - duration) <= 5);
   return matching.length ? matching : base;
@@ -2848,8 +2846,8 @@ function renderPane(idx) {
   const data = p.boardData;
   const board = S.boards.find(b => b.id === p.boardId) || { label: '—' };
 
-  const slots = (data.slot_config && data.slot_config.length) ? data.slot_config : DEFAULT_LECTURE_SLOTS;
-  const labSlots = (data.lab_slot_config && data.lab_slot_config.length) ? data.lab_slot_config : DEFAULT_LAB_SLOTS;
+  const slots = boardLectureSlots(data);
+  const labSlots = boardLabSlots(data);
   const allPlacements = data.placements || [];
   const lensPlacements = allPlacements.filter(itemMatchesPlanLens);
   const placements = lensPlacements.filter(itemMatchesSplitSearch);
@@ -7807,42 +7805,26 @@ async function openNewBoardModal() {
 }
 
 /* ── Slot editor ─────────────────────────────────────────────────── */
-function _parseSlotLines(text) {
-  const out = [];
-  // Normalise line endings — Windows CRLF would otherwise leave a trailing
-  // \r on each line and the regex-driven branch would silently fail.
-  String(text || '').replace(/\r\n/g, '\n').trim().split('\n').filter(l => l.trim()).forEach(line => {
-    const parts = line.split(/\t|\s{2,}/).map(s => s.trim()).filter(Boolean);
-    if (parts.length >= 3) out.push({ label: parts[0], start: parts[1], end: parts[2] });
-    else if (parts.length === 2) out.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
-    else {
-      const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
-      if (m) out.push({ label: m[1], start: m[2], end: m[3] });
-    }
-  });
-  return out;
-}
 function openSlotEditorModal() {
   if (!S.scenarioId || !S.scenarioMeta) { notify.error(IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'); return; }
   if (S.scenarioMeta.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return; }
-  const slots = S.scenarioMeta.slot_config || [];
-  const labSlots = S.scenarioMeta.lab_slot_config || [];
-  const slotsText = slots.length ? slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
-    : '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n10:50-12:05\t10:50\t12:05\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n14:45-16:00\t14:45\t16:00\n16:00-17:15\t16:00\t17:15';
-  const labText = labSlots.length ? labSlots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
-    : 'Lab 1\t09:00\t10:40\nLab 2\t10:45\t12:25\nLab 3\t13:00\t14:40\nLab 4\t14:45\t16:25\nLab 5\t16:30\t18:10\nLab 6\t18:10\t19:50';
+  const SC = window.TimetableSlotConfig;
+  const lectureSlots = boardLectureSlots(S.scenarioMeta);
+  const labSlots = boardLabSlots(S.scenarioMeta);
+  const flagged = SC.flaggedColumnsText(labSlots) || SC.flaggedColumnsText(lectureSlots);
 
   const body = `
     <div class="tws-form-grid">
       <div class="full">
         <label for="twsSlotLect">${IS_AR ? '📚 فترات المحاضرات (75 دقيقة)' : '📚 Lecture slots (75 min)'}</label>
-        <textarea id="twsSlotLect" rows="6">${esc(slotsText)}</textarea>
+        <textarea id="twsSlotLect" rows="6" dir="ltr">${esc(SC.rowsToText(lectureSlots))}</textarea>
       </div>
       <div class="full">
         <label for="twsSlotLab">${IS_AR ? '🔬 فترات المعامل (100 دقيقة)' : '🔬 Lab slots (100 min)'}</label>
-        <textarea id="twsSlotLab" rows="6">${esc(labText)}</textarea>
+        <textarea id="twsSlotLab" rows="6" dir="ltr">${esc(SC.rowsToText(labSlots))}</textarea>
       </div>
       <div class="hint">${IS_AR ? 'كل سطر: الاسم [Tab] البداية [Tab] النهاية — مثال: 09:00-10:15[Tab]09:00[Tab]10:15' : 'One per line: label [Tab] start [Tab] end — e.g. 09:00-10:15[Tab]09:00[Tab]10:15'}</div>
+      ${flagged ? `<div class="hint">${esc(flagged)}</div>` : ''}
     </div>
   `;
   openModal({
@@ -7852,19 +7834,41 @@ function openSlotEditorModal() {
     buttons: [
       { label: IS_AR ? 'إلغاء' : 'Cancel' },
       { label: IS_AR ? 'حفظ' : 'Save', variant: 'primary', onClick: async () => {
-        const newLect = _parseSlotLines(document.getElementById('twsSlotLect').value);
-        const newLab = _parseSlotLines(document.getElementById('twsSlotLab').value);
+        // Returning false keeps the editor open with the user's text.
+        const lectures = SC.parseLines(document.getElementById('twsSlotLect').value);
+        const labs = SC.parseLines(document.getElementById('twsSlotLab').value);
+        if (lectures.rejected.length || labs.rejected.length) { notify.error(SC.rejectedText(lectures.rejected, labs.rejected)); return false; }
+        const newLect = lectures.rows;
+        const newLab = labs.rows;
         if (!newLect.length) { notify.error(IS_AR ? 'لم يتم تحليل أي فترة' : 'No valid lecture slots parsed'); return false; }
-        const data = await api(`/ops/tw/scenarios/${S.scenarioId}/slots/update/`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slot_config: newLect, lab_slot_config: newLab }),
+        const scenarioId = S.scenarioId;
+        const data = await SC.save({
+          send: async extra => {
+            let error = null;
+            const answer = await api(`/ops/tw/scenarios/${scenarioId}/slots/update/`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ slot_config: newLect, lab_slot_config: newLab, ...extra }),
+            }, (message, errorBody) => {
+              const code = errorBody?.error?.code;
+              if (code === 'SLOT_EDIT_NEEDS_CONFIRMATION' || code === 'VALIDATION_SLOTS') error = errorBody.error;
+              else notify.error(message);
+            });
+            return { data: answer, error };
+          },
+          confirm: details => dlg.confirm({
+            title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
+            body: SC.confirmationHtml(details),
+            kind: 'danger',
+            confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
+          }),
+          report: text => notify.error(text),
         });
-        if (!data) return false;
+        if (!data || S.scenarioId !== scenarioId) return false;
         S.scenarioMeta = data.scenario;
         notify.success(IS_AR
           ? `تم الحفظ — ${newLect.length} محاضرة · ${newLab.length} معمل`
           : `Saved — ${newLect.length} lecture + ${newLab.length} lab slots`);
-        // Board data has its own slot_config copy; reload each pane
+        // Board data has its own copy of the columns; reload each pane
         for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
       } },
     ],

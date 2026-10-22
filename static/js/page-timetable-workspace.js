@@ -1039,7 +1039,13 @@ async function selectBoard(boardId) {
     persistWorkspaceScenario(TW.scenarioId, boardId);
 
     TW.placements = data.placements || [];
-    TW.scenario = { ...TW.scenario, slot_config: data.slot_config };
+    // The board carries the scenario's columns; take the ones it has (an
+    // undefined field must not wipe a known one).
+    const columns = {};
+    ['slot_config', 'lab_slot_config', 'effective_slot_config', 'effective_lab_slot_config'].forEach(key => {
+      if (data[key] !== undefined) columns[key] = data[key];
+    });
+    TW.scenario = { ...TW.scenario, ...columns };
 
     renderBoardTabs();
     await loadConflicts();   // load conflicts BEFORE rendering grid so colors are correct
@@ -1569,39 +1575,18 @@ function renderBoardTabs() {
   });
 }
 
+/* The columns the scenario really uses: the server's effective config (its
+   own, or the defaults). The page keeps no defaults of its own — it used to
+   draw Lab 6 and no online windows where the scheduler had the opposite. */
+function scenarioLectureSlots() {
+  return (TW.scenario && (TW.scenario.effective_slot_config || TW.scenario.slot_config)) || [];
+}
+function scenarioLabSlots() {
+  return (TW.scenario && (TW.scenario.effective_lab_slot_config || TW.scenario.lab_slot_config)) || [];
+}
+
 function renderGrid() {
-  const gridEl = $('twGrid');
-  const slots = (TW.scenario && TW.scenario.slot_config) || [];
-  const labSlots = (TW.scenario && TW.scenario.lab_slot_config) || [];
-
-  if (slots.length === 0) {
-    // Default lecture slots (75 min each)
-    const defaults = [
-      {label:'09:00-10:15', start:'09:00', end:'10:15'},
-      {label:'10:30-11:45', start:'10:30', end:'11:45'},
-      {label:'10:50-12:05', start:'10:50', end:'12:05'},
-      {label:'13:00-14:15', start:'13:00', end:'14:15'},
-      {label:'14:30-15:45', start:'14:30', end:'15:45'},
-      {label:'14:45-16:00', start:'14:45', end:'16:00'},
-      {label:'16:00-17:15', start:'16:00', end:'17:15'},
-    ];
-    if (TW.scenario) TW.scenario.slot_config = defaults;
-  }
-  if (labSlots.length === 0) {
-    const defaultLabs = [
-      {label:'Lab 1', start:'09:00', end:'10:40'},
-      {label:'Lab 2', start:'10:45', end:'12:25'},
-      {label:'Lab 3', start:'13:00', end:'14:40'},
-      {label:'Lab 4', start:'14:45', end:'16:25'},
-      {label:'Lab 5', start:'16:30', end:'18:10'},
-      {label:'Lab 6', start:'18:10', end:'19:50'},
-    ];
-    if (TW.scenario) TW.scenario.lab_slot_config = defaultLabs;
-  }
-
-  const finalSlots = (TW.scenario && TW.scenario.slot_config) || slots;
-  const finalLabSlots = (TW.scenario && TW.scenario.lab_slot_config) || labSlots;
-  renderGridWithSlots(finalSlots, finalLabSlots);
+  renderGridWithSlots(scenarioLectureSlots(), scenarioLabSlots());
 }
 
 // 20 distinct pastel colors matching XLSX export
@@ -3037,77 +3022,79 @@ function setIssuesCount(total, critical) {
 }
 
 /* ── Slot Edit Modal ── */
-async function openSlotEditor() {
+/* The editor opens on the effective columns, or on the text the user had
+   typed when a save stopped (a decline, a line it could not read, a column
+   the server refused): their edits are never lost. */
+async function openSlotEditor(typed = null) {
   if (!TW.scenarioId || !TW.scenario) { notify.error(IS_AR ? 'اختر سيناريو أولا' : 'Select a scenario first'); return; }
   if (TW.scenario.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Cannot edit published scenario'); return; }
-
-  const slots = TW.scenario.slot_config || [];
-  const labSlots = TW.scenario.lab_slot_config || [];
-  const slotsText = slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
-    || '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n10:50-12:05\t10:50\t12:05\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n14:45-16:00\t14:45\t16:00\n16:00-17:15\t16:00\t17:15';
-  const labText = labSlots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
-    || 'Lab 1\t09:00\t10:40\nLab 2\t10:45\t12:25\nLab 3\t13:00\t14:40\nLab 4\t14:45\t16:25\nLab 5\t16:30\t18:10\nLab 6\t18:10\t19:50';
+  const SC = window.TimetableSlotConfig;
+  const lectureSlots = scenarioLectureSlots();
+  const labSlots = scenarioLabSlots();
+  const flagged = SC.flaggedColumnsText(labSlots) || SC.flaggedColumnsText(lectureSlots);
+  const lectureText = typed ? typed.lecture : SC.rowsToText(lectureSlots);
+  const labText = typed ? typed.lab : SC.rowsToText(labSlots);
 
   const result = await dlg.confirm({
     title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
     body: `<div class="fs-md text-t3 fw-semibold" style="margin-bottom:6px">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
       <div class="fs-sm text-t4" style="margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(slotsText)}</textarea>
+      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(lectureText)}</textarea>
       <div class="fs-md text-teal fw-semibold" style="margin:10px 0 6px">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>`,
+      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>
+      ${flagged ? `<p class="fs-sm text-t3" style="margin:8px 0 0">${esc(flagged)}</p>` : ''}`,
     confirmText: IS_AR ? 'حفظ' : 'Save Slots',
     kind: 'info',
   });
-
   if (!result) return;
 
-  // Parse the textarea
-  const textarea = document.getElementById('twSlotInput');
-  if (!textarea) return;
-  const lines = textarea.value.trim().split('\n').filter(l => l.trim());
-  const newSlots = [];
-  for (const line of lines) {
-    const parts = line.split('\t').map(s => s.trim());
-    if (parts.length >= 3) {
-      newSlots.push({ label: parts[0], start: parts[1], end: parts[2] });
-    } else if (parts.length === 2) {
-      newSlots.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
-    } else {
-      // Try splitting by space or dash
-      const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
-      if (m) newSlots.push({ label: m[1], start: m[2], end: m[3] });
-    }
+  const text = {
+    lecture: document.getElementById('twSlotInput')?.value ?? lectureText,
+    lab: document.getElementById('twLabSlotInput')?.value ?? labText,
+  };
+  const lectures = SC.parseLines(text.lecture);
+  const labs = SC.parseLines(text.lab);
+  if (lectures.rejected.length || labs.rejected.length) {
+    notify.error(SC.rejectedText(lectures.rejected, labs.rejected));
+    return openSlotEditor(text);
   }
+  if (lectures.rows.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return openSlotEditor(text); }
+  const scenarioId = TW.scenarioId;
 
-  if (newSlots.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return; }
-
-  // Parse lab slots textarea
-  const labTextarea = document.getElementById('twLabSlotInput');
-  const newLabSlots = [];
-  if (labTextarea) {
-    const labLines = labTextarea.value.trim().split('\n').filter(l => l.trim());
-    for (const line of labLines) {
-      const parts = line.split('\t').map(s => s.trim());
-      if (parts.length >= 3) {
-        newLabSlots.push({ label: parts[0], start: parts[1], end: parts[2] });
-      } else if (parts.length === 2) {
-        newLabSlots.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
-      } else {
-        const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
-        if (m) newLabSlots.push({ label: m[1], start: m[2], end: m[3] });
-      }
-    }
-  }
-
-  const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/slots/update/`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ slot_config: newSlots, lab_slot_config: newLabSlots }),
+  const data = await SC.save({
+    send: async extra => {
+      let error = null;
+      const answer = await twFetch(`/ops/tw/scenarios/${scenarioId}/slots/update/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ slot_config: lectures.rows, lab_slot_config: labs.rows, ...extra }),
+        _onError: body => {
+          const code = body?.error?.code;
+          if (code !== 'SLOT_EDIT_NEEDS_CONFIRMATION' && code !== 'VALIDATION_SLOTS') return false;
+          error = body.error;
+          return true;
+        },
+      });
+      return { data: answer, error };
+    },
+    confirm: async details => {
+      const ok = await dlg.confirm({
+        title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
+        body: SC.confirmationHtml(details),
+        kind: 'danger',
+        confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
+      });
+      return ok;
+    },
+    report: message => notify.error(message),
   });
-  if (!data) return;
+  if (TW.scenarioId !== scenarioId) return;
+  // Nothing saved — declined, refused, busy or offline: the typed text comes
+  // back, so it can be adjusted or tried again.
+  if (!data) return openSlotEditor(text);
 
   TW.scenario = data.scenario;
-  notify.success(IS_AR ? 'تم تحديث الفترات' : `${newSlots.length} lecture + ${newLabSlots.length} lab slots saved`);
+  notify.success(IS_AR ? 'تم تحديث الفترات' : `${lectures.rows.length} lecture + ${labs.rows.length} lab slots saved`);
   renderGrid();
 }
 

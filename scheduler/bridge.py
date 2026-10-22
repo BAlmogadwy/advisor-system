@@ -36,7 +36,12 @@ from django.db import transaction
 
 from scheduler.domain.calendar import parse_hhmm
 from scheduler.instructors import assign_instructors
-from scheduler.intake import DEFAULT_LECTURE_STARTS, build_snapshot
+from scheduler.intake import (
+    DEFAULT_LAB_STARTS,
+    DEFAULT_LECTURE_STARTS,
+    DEFAULT_ONLINE_STARTS,
+    build_snapshot,
+)
 from scheduler.rooms import assign_rooms_exact, room_shortfall
 from scheduler.seating import seat_students
 from scheduler.solve import (
@@ -179,6 +184,42 @@ def grid_columns_for(
     lecture_columns, lecture_added = merge(lecture_config, short_windows)
     lab_columns, lab_added = merge(lab_config, long_windows)
     return lecture_columns, lab_columns, lecture_added, lab_added
+
+
+def declared_grid_for(
+    scenario, board, *, lecture_section_ids: frozenset[str] = frozenset()
+) -> tuple[list, list, int, int]:
+    """``grid_columns_for`` over the columns the scenario USES.
+
+    On a scenario still on the defaults, merging into its empty stored lists
+    kept only this board's windows: the default columns went, and with them
+    the online windows' ``online_only`` flag that keeps every automatic placer
+    out of the evening. Starting from the declared defaults only ever adds.
+
+    The defaults are this subsystem's own declaration (``scheduler.intake``,
+    the same times as the shared config), so nothing here imports the old
+    engine.
+    """
+
+    def columns(starts: dict[str, int], label, **flags) -> list[dict]:
+        return [
+            {
+                "label": label(index, start, _hhmm(parse_hhmm(start) + minutes)),
+                "start": start,
+                "end": _hhmm(parse_hhmm(start) + minutes),
+                **flags,
+            }
+            for index, (start, minutes) in enumerate(starts.items(), start=1)
+        ]
+
+    lecture = list(scenario.slot_config or []) or columns(
+        DEFAULT_LECTURE_STARTS, lambda _i, start, end: f"{start}-{end}"
+    )
+    lab = list(scenario.lab_slot_config or []) or (
+        columns(DEFAULT_LAB_STARTS, lambda i, _s, _e: f"Lab {i}")
+        + columns(DEFAULT_ONLINE_STARTS, lambda i, _s, _e: f"Online {i}", online_only=True)
+    )
+    return grid_columns_for(board, lecture, lab, lecture_section_ids=lecture_section_ids)
 
 
 def choose_board(
@@ -532,10 +573,10 @@ def build_into_scenario(
     #
     # Retain ordinary duration-based column families, with explicit lecture
     # columns for the institutional 180-minute English bundles.
-    new_lecture, new_lab, added_lecture, added_lab = grid_columns_for(
+    #
+    new_lecture, new_lab, added_lecture, added_lab = declared_grid_for(
+        scenario,
         board,
-        scenario.slot_config,
-        scenario.lab_slot_config,
         lecture_section_ids=frozenset(
             s.id for s in snapshot.sections if offerings[s.offering_id].meeting_policy is not None
         ),
