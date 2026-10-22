@@ -33,6 +33,7 @@ scoped to extend it, not inline parsing changes.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import NamedTuple
 
 from django.conf import settings
 
@@ -248,19 +249,30 @@ def section_instructor_resolver(programs, gender: str) -> Callable[[object, obje
     ``programmes_serving_course``). Empty when ``gender`` is empty: the
     assignment model is gender-scoped.
     """
+    return _course_instructor_links(programs, gender)[0]
+
+
+def _course_instructor_links(
+    programs, gender: str
+) -> tuple[Callable[[object, object], set[int]], dict[int, str]]:
+    """:func:`section_instructor_resolver` and the linked instructors' names, by
+    id, read in the same query (the active-instructor filter joins them
+    already). Two queries with a gender, none without."""
     from core.models import CourseInstructor
 
     if not gender:
-        return lambda _course_key, _display_code: set()
+        return (lambda _course_key, _display_code: set()), {}
     programs = [p for p in programs if p]
     serving = programmes_serving_course(programs)
 
     # (program, normalised course_code) -> {instructor_id}
     by_course: dict[tuple[str, str], set[int]] = {}
-    for prog, code, instructor_id in CourseInstructor.objects.filter(
+    names: dict[int, str] = {}
+    for prog, code, instructor_id, full_name in CourseInstructor.objects.filter(
         program__in=programs, section=gender, instructor__is_active=True
-    ).values_list("program", "course_code", "instructor_id"):
+    ).values_list("program", "course_code", "instructor_id", "instructor__full_name"):
         by_course.setdefault((prog, (code or "").strip().upper()), set()).add(instructor_id)
+        names[instructor_id] = full_name
 
     def resolve(course_key: object, display_code: object) -> set[int]:
         norm = str(display_code or "").strip().upper()
@@ -269,7 +281,7 @@ def section_instructor_resolver(programs, gender: str) -> Callable[[object, obje
             ids |= by_course.get((prog, norm), set())
         return ids
 
-    return resolve
+    return resolve, names
 
 
 def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
@@ -288,7 +300,6 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     links, or a frozen section with no known teacher, stays absent. The map
     also covers the teacher-frozen sections placed on the scenario's boards.
     """
-    from core.models import TermSection
     from core.services.timetable_flags import is_one_teacher_active
 
     if is_one_teacher_active():
@@ -296,11 +307,40 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
 
         return load_assignment(scenario.id).pr4_map()
 
+    return linked_section_instructor_ids(scenario).ids
+
+
+class LinkedSectionInstructors(NamedTuple):
+    """:func:`linked_section_instructor_ids`'s answer."""
+
+    #: ``{"course_key|section" -> {instructor_id, ...}}``, every teacher linked
+    #: to a section's course: :func:`build_section_instructor_ids`'s map with
+    #: one teacher per section off.
+    ids: dict[str, set[int]]
+    #: The resolver it was read with (:func:`section_instructor_resolver`).
+    resolve: Callable[[object, object], set[int]]
+    #: Every linked instructor's name, by id.
+    names: dict[int, str]
+
+
+def linked_section_instructor_ids(scenario) -> LinkedSectionInstructors:
+    """:func:`build_section_instructor_ids` with one teacher per section off --
+    every teacher linked to a section's course -- with the resolver it read
+    them with and their names.
+
+    ``resolve(course_key, display_code)`` is who a section of a course not
+    created yet will be charged with once it is (the map has only the
+    scenario's ``TermSection`` rows): the slot verdict's planned section.
+    Three queries with a gender (programme requirements, course links with
+    their instructors' names, sections), none without.
+    """
+    from core.models import TermSection
+
     out: dict[str, set[int]] = {}
     gender = getattr(scenario, "gender", "")
+    resolve, names = _course_instructor_links(list(getattr(scenario, "programs", []) or []), gender)
     if not gender:
-        return out
-    resolve = section_instructor_resolver(list(getattr(scenario, "programs", []) or []), gender)
+        return LinkedSectionInstructors(out, resolve, names)
 
     for course_key, course_code, course_number, section in TermSection.objects.filter(
         scenario=scenario
@@ -308,7 +348,7 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
         ids = resolve(course_key, course_display_code(course_key, course_code, course_number))
         if ids:
             out[f"{course_key}|{section}"] = ids
-    return out
+    return LinkedSectionInstructors(out, resolve, names)
 
 
 def build_instructor_schedule(board_id: int) -> dict[str, set[tuple[str, int]]]:

@@ -29,6 +29,7 @@ def test_timetable_outcome_frontend_regressions() -> None:
             "tests/frontend/timetable-programme-preference.test.cjs",
             "tests/frontend/timetable-slot-config.test.cjs",
             "tests/frontend/timetable-room-choice.test.cjs",
+            "tests/frontend/timetable-hotspots.test.cjs",
         ],
         cwd=root,
         capture_output=True,

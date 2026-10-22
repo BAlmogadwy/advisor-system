@@ -624,6 +624,76 @@ findings changed the plan:
    fit as the audit does, the dialog may under-report those: a room it calls
    "Free and fits" can still be listed as unsuitable or too small once
    saved.
+   **As built, 5d (one slot verdict, server):** both previews take
+   `include_verdict` (`verdict=1`) and the move preview `offer_manual`
+   (`offer=manual`, through `offered_move_columns` next to
+   `effective_lecture_slots`). Without them the JSON is byte-identical, key
+   order included, to an oracle recorded from `a5d8f96` before the change
+   (`tests/fixtures/tw_slot_verdict_legacy.json`, with each request's query
+   count, which every teacher mode keeps). The verdict adds no query, except
+   three with the links on and one teacher per section off (see Teachers).
+   Settled where the spec was silent:
+   `source` names the check (the legacy evidence kind of the same check,
+   else `cross_board_instructor`, `blocked_slot` or `h15_effect`), not a
+   legacy evidence row: an item is judged by the verdict's own rules;
+   `students` counts the distinct students the items name (an effect's are
+   always among them); a one-meeting planned candidate's items have
+   `meeting: null`; `verdict_rank` ranks the candidates returned (Place asks
+   for all of them, D15); an English (policy) section's move preview is the
+   planned preview, so its verdict has no effects, there is no
+   `current_verdict`, and `offer_manual` does not apply. That is a place
+   verdict: the section's move also leaves its old pattern, which can turn
+   untouched overlaps critical, so it must not be shown for a policy move
+   until it has the effects (5e sends policy sections to the pattern
+   chooser; the function's docstring says so). Beyond the spec: the moving
+   section's own copy at the candidate's very slot (same day, start and end)
+   on another board is the same class (5c's rule, now `_same_class`, shared
+   with room candidates), so the verdict never reports it as a room or
+   teacher clash (the legacy evidence still does).
+   **Teachers (review rounds 1 and 2):** the verdict's `instructor` and
+   `instructorElsewhere` items judge who teaches a section by the publish
+   check's keys, `_publish_teacher_keys`, extracted from
+   `detect_board_conflicts`, which uses it too, over the map the publish
+   check reads (`_VerdictTeachers`): the one-teacher map's teacher when the
+   map has the section (one to be decided charges nobody, its row's name
+   never counting), else its linked teachers (one teacher per section off),
+   else its meeting row's name; a teacher id never matches a name. With one
+   teacher per section (production) the map is the `pr4_map` of the
+   assignment the preview already loads, built only for a verdict: no
+   query. With the links off there is no map and the rows' names decide.
+   With the links on and one teacher per section off (the local default,
+   where the department works; owner decision, review round 2) the verdict
+   reads every teacher linked to a section's course with
+   `linked_section_instructor_ids`, the code `build_section_instructor_ids`
+   runs in that mode: three queries (programme requirements; course links,
+   with their teachers' names from the join the active-teacher filter
+   already makes; sections), once per request and only with `verdict=1`.
+   Its resolver charges a planned section not created yet as the publish
+   check will once it is. V10 pins the cost: without `verdict=1` every mode
+   runs the oracle's query count; with it, the oracle's with the links off
+   and in one-teacher mode, and exactly three more with the links on and one
+   teacher per section off. The legacy fields keep the legacy test
+   (`_section_teacher_matcher`, which also matches a charged teacher's name
+   with a row's name), so the oracle still holds. In
+   one-teacher mode the verdict judges with the map in force now: a section
+   the map leaves to its layout-aware closure can be given another teacher
+   once the edit is saved, and a planned section is judged with the teacher
+   it has before it is placed (creating it may name one,
+   `name_new_section`). Shared rather than copied: H15's "0 if a clash-free
+   pair exists, else shared" is `_h15_blocked_students` and who teaches is
+   `_publish_teacher_keys` (`detect_board_conflicts` uses both), the
+   section masks are built by `_section_masks_by_course` (behind
+   `_placed_section_masks`), and both previews take the cross-board student
+   rule (a warning at the threshold, info below) from
+   `_cross_board_student_item` and their teachers from `_VerdictTeachers`.
+   Known divergence on the publish side (a follow-up):
+   `detect_cross_board_conflicts` counts every same-course pair across
+   boards that overlaps in time, a shared section's own copies and
+   different sections of one course alike, each with "shared" = the
+   course's whole demand (the course's students met with themselves), so
+   the publish check can warn (`cross_board_conflicts`) where the verdict,
+   like the legacy preview, counts no students between sections of one
+   course.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
@@ -1501,7 +1571,7 @@ response.current_verdict        // slot preview only: the current slot, direct i
 | V7 | `verdict_rank` puts an ok candidate with a worse score above a critical one; the `candidates` order is unchanged. | Ranked by score; list reordered |
 | V8 | Ten overlaps give counts of 10, 8 items and `more` = 2. | Counting after the cap |
 | V9 | `offer=manual` offers evening columns only to a meeting already in one; the default is unchanged; policy columns never. | Always on; never on |
-| V10 | Without `verdict=1`, the full JSON equals an oracle captured from `7116f53` on the fixture. Query counts are equal in both modes (`django_assert_num_queries`). Both views keep `@preview_lane`. | Any legacy drift; an extra query |
+| V10 | Without `verdict=1`, the full JSON equals an oracle captured from the base commit before the change (as built: `a5d8f96`), in every teacher mode. Query counts (`django_assert_num_queries`): legacy equals the oracle in every mode; `verdict=1` adds 0 queries, except +3 exactly with the instructor links on and one teacher per section off (see As built). Both views keep `@preview_lane`. | Any legacy drift; an extra query |
 | V11 (parity) | For three candidates, POST the move and compare `detect_board_conflicts` critical and warning pairs involving the placement or the effect pairs, plus `check_publish_readiness` blocker codes, with the verdict's items. | Any rule drift |
 | V12 | Planned: H15 per pattern; the `meeting` index (a clash on the 2nd meeting gives `meeting == 1`); a blocked meeting flagged; cross-board instructor → `instructorElsewhere`. | Per-cell H15; index always 0; blocked excluded |
 | V13 | Memo: patching `_time_mask` with `wraps`, a cell no placement uses is computed exactly once across every pattern that uses it. The planned JSON without verdict equals the oracle. | Memo removed; memo key without `slot_kind` |

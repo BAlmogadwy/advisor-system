@@ -116,15 +116,31 @@ def evaluate_generated_timetable_candidate(
     )
 
 
-def extract_hotspot_courses(states: dict[str, StudentAssignmentState]) -> list[str]:
+def hotspot_course_counts(states: dict[str, StudentAssignmentState]) -> list[tuple[str, int]]:
+    """Each course some students got no section of because every section
+    clashes with their other courses (``all_clash``), or the ones that do not
+    clash are full or held in reserve (``mixed_blockers``), with how many
+    students: the most first, then by course."""
     course_failures: dict[str, int] = defaultdict(int)
     for state in states.values():
         for course_code, unres_reason in state.unresolved_courses.items():
             if unres_reason.reason in ("all_clash", "mixed_blockers"):
                 course_failures[course_code] += 1
-    return [
-        course for course, _count in sorted(course_failures.items(), key=lambda x: (-x[1], x[0]))
-    ]
+    return sorted(course_failures.items(), key=lambda x: (-x[1], x[0]))
+
+
+def extract_hotspot_courses(states: dict[str, StudentAssignmentState]) -> list[str]:
+    return [course for course, _count in hotspot_course_counts(states)]
+
+
+def hotspot_result_fields(evaluation: TimetableEvaluationResult, limit: int = 10) -> dict:
+    """An optimise result's hotspot fields: the engine's first ``limit``
+    courses (``hotspot_courses``, as the search uses them) and how many
+    students each leaves without a section (``hotspot_students``), counted
+    from the same assignment."""
+    counts = dict(hotspot_course_counts(evaluation.assignment_states))
+    top = list(evaluation.hotspot_courses[:limit])
+    return {"hotspot_courses": top, "hotspot_students": {c: counts.get(c, 0) for c in top}}
 
 
 def extract_capacity_pressure_courses(
