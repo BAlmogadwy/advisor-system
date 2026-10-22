@@ -267,7 +267,10 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
     def test_the_chosen_board_stays_in_view_in_a_long_board_strip(self) -> None:
         # Coming back from MRI or Split view to the last of many boards: the
         # strip scrolls (never the page) to show it, and keeps it shown when
-        # later answers widen the buttons before it ("N left", flags).
+        # later answers widen the buttons before it ("N left", flags). And at
+        # every desktop width, in the wide font, no control of the bar is cut
+        # off: from 1201px the bar is one row (the strip gives way; it used to
+        # wrap at 1366 and 1440), below it the bar may wrap but never clips.
         from core.models import DeliveryBoard
 
         last = None
@@ -280,51 +283,105 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                 display_order=term,
             )
         self.path = f"/timetable-workspace/?scenario={self.scenario.id}&board={last.id}"
-        for language, width in (("en", 1440), ("ar", 1440), ("en", 1366), ("ar", 1366)):
-            context = self.browser.new_context(
-                locale="ar" if language == "ar" else "en-US",
-                extra_http_headers={"Accept-Language": language},
-                viewport={"width": width, "height": 900},
-            )
-            context.add_cookies(
-                [
-                    {
-                        "name": settings.SESSION_COOKIE_NAME,
-                        "value": self.session,
-                        "url": self.live_server_url,
-                    },
-                    {
-                        "name": settings.LANGUAGE_COOKIE_NAME,
-                        "value": language,
-                        "url": self.live_server_url,
-                    },
-                ]
-            )
-            page = context.new_page()
-            page.goto(f"{self.live_server_url}{self.path}")
-            page.wait_for_function(
-                f"document.querySelector('#twBoardTabs [aria-current=\"true\"]')?.dataset.boardId === '{last.id}'"
-                " && /\\d/.test(document.getElementById('twPublishLabel').textContent)"
-            )
-            page.wait_for_timeout(600)
-            seen = page.evaluate(
-                """() => {
-                  const strip = document.getElementById('twBoardTabs').getBoundingClientRect();
-                  const chosen = document.querySelector('#twBoardTabs [aria-current="true"]').getBoundingClientRect();
-                  return { overflow: document.getElementById('twBoardTabs').scrollWidth > strip.width + 1,
-                           inside: chosen.left >= strip.left - 1 && chosen.right <= strip.right + 1,
-                           pageScroll: document.getElementById('main-content').scrollTop,
-                           barHeight: Math.round(document.getElementById('twCmdBar').getBoundingClientRect().height) };
-                }"""
-            )
-            # Many boards: the strip scrolls, the bar stays one row (it wrapped:
-            # one row is about 47px, two about 85px).
-            self.assertLessEqual(
-                seen["barHeight"], 56, f"{language} {width}: the board bar wrapped"
-            )
-            self.assertTrue(
-                seen["overflow"], f"{language} {width}: the strip should overflow in this test"
-            )
-            self.assertTrue(seen["inside"], f"{language} {width}: the chosen board is out of view")
-            self.assertEqual(seen["pageScroll"], 0)
-            context.close()
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            for width in (1025, 1100, 1201, 1366, 1440):
+                context = self.browser.new_context(
+                    locale="ar" if language == "ar" else "en-US",
+                    extra_http_headers={"Accept-Language": language},
+                    viewport={"width": width, "height": 900},
+                )
+                context.add_cookies(
+                    [
+                        {
+                            "name": settings.SESSION_COOKIE_NAME,
+                            "value": self.session,
+                            "url": self.live_server_url,
+                        },
+                        {
+                            "name": settings.LANGUAGE_COOKIE_NAME,
+                            "value": language,
+                            "url": self.live_server_url,
+                        },
+                    ]
+                )
+                context.add_init_script(WIDE_FONT)
+                page = context.new_page()
+                page.goto(f"{self.live_server_url}{self.path}")
+                page.wait_for_function(
+                    f"document.querySelector('#twBoardTabs [aria-current=\"true\"]')?.dataset.boardId === '{last.id}'"
+                    " && /\d/.test(document.getElementById('twPublishLabel').textContent)"
+                )
+                # A long filter count, as when every meeting matches.
+                page.evaluate(
+                    "document.getElementById('twSearchCount').textContent = '1234 of 1234'"
+                )
+                page.wait_for_timeout(600)
+                found = page.evaluate(
+                    """(oneRow) => {
+                      const bad = [];
+                      const bar = document.getElementById('twCmdBar');
+                      const main = document.getElementById('main-content').getBoundingClientRect();
+                      const strip = document.getElementById('twBoardTabs');
+                      const chosen = strip.querySelector('[aria-current="true"]').getBoundingClientRect();
+                      const s = strip.getBoundingClientRect();
+                      // As much of the chosen board as the strip can show: a board
+                      // wider than a narrow strip cannot be wholly inside it, and
+                      // the strip's own padding (3px each side) is never covered.
+                      const seen = Math.min(chosen.right, s.right) - Math.max(chosen.left, s.left);
+                      if (seen < Math.min(chosen.width, s.width - 8)) bad.push(`chosen board out of view (${Math.round(seen)}px of ${Math.round(chosen.width)}px seen; strip ${Math.round(s.width)}px)`);
+                      if (bar.scrollWidth > bar.clientWidth + 1) bad.push(`bar overflows ${bar.scrollWidth - bar.clientWidth}px`);
+                      const shown = [...bar.children].filter(el => el.getClientRects().length);
+                      for (const el of shown) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width && (r.left < main.left - 1 || r.right > main.right + 1)) bad.push(`${el.id || el.className} cut off`);
+                      }
+                      const rows = new Set(shown.filter(el => el.getBoundingClientRect().height > 20)
+                        .map(el => { const r = el.getBoundingClientRect(); return Math.round((r.top + r.height / 2) / 4); }));
+                      if (oneRow && rows.size > 1) bad.push(`${rows.size} rows`);
+                      if (document.getElementById('main-content').scrollTop) bad.push('the page scrolled');
+                      return bad;
+                    }""",
+                    width >= 1201,
+                )
+                if found:
+                    problems[f"{language} {width}"] = found
+                context.close()
+        self.assertEqual(problems, {})
+
+    def test_every_column_of_a_wide_table_is_drawn(self) -> None:
+        """Eight lab windows (five labs, three online) need 824px; at 1366 and
+        1440 the board is narrower. The board scrolls sideways (never the
+        page), the day column stays, and no column is cut off."""
+        from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS
+
+        self.scenario.lab_slot_config = [dict(slot) for slot in DEFAULT_LAB_SLOTS]
+        self.scenario.save(update_fields=["lab_slot_config"])
+        self.assertEqual(len(DEFAULT_LAB_SLOTS), 8)
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            for width, height in ((1366, 650), (1440, 790)):
+                page, sent, errors = self._load(language, "light", width, height)
+                found = page.evaluate(
+                    """() => {
+                      const bad = [];
+                      const lab = document.querySelector('.tw-lab-grid');
+                      if (!lab) return ['no lab table'];
+                      const box = lab.getBoundingClientRect();
+                      const heads = [...lab.querySelectorAll('.tw-grid-header')];
+                      if (heads.length !== 9) bad.push(`${heads.length} lab headers`);
+                      for (const h of heads) {
+                        const r = h.getBoundingClientRect();
+                        if (r.left < box.left - 1 || r.right > box.right + 1) bad.push(`column cut: ${h.textContent.trim().slice(0, 14)}`);
+                        if (r.width < 95.5 && h.querySelector('.tw-slot-time')) bad.push(`column ${Math.round(r.width)}px`);
+                      }
+                      const centre = document.querySelector('.tw-centre');
+                      if (box.width > centre.clientWidth && centre.scrollWidth <= centre.clientWidth) bad.push('the board cannot scroll to it');
+                      if (document.documentElement.scrollWidth > innerWidth + 0.5) bad.push('the page scrolls sideways');
+                      return bad;
+                    }"""
+                )
+                found += [*sent, *errors]
+                if found:
+                    problems[f"{language} {width}"] = found
+        self.assertEqual(problems, {})

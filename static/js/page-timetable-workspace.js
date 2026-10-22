@@ -500,6 +500,15 @@ async function showSchedulerOutcome(jobId) {
 
   // Board bar
   $('twNewBoard').addEventListener('click', createBoardPrompt);
+  // The strip changes width without a render (a window resize, a longer
+  // filter count beside it): keep the chosen board in view.
+  if (window.ResizeObserver) {
+    const strip = $('twBoardTabs');
+    new ResizeObserver(() => {
+      const current = strip.querySelector('[aria-current="true"]');
+      if (current) revealInStrip(strip, current);
+    }).observe(strip);
+  }
   $('twSearch')?.addEventListener('input', debounce(() => {
     renderGrid();
     renderBudgetSidebar();
