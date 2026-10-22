@@ -5,7 +5,8 @@ preview (``/planned-slot-candidates/``) say, per candidate, what the publish
 check would say once the edit is saved: H15 for same-board students (with a
 move's effect on overlaps it does not touch), blocked times flagged, a
 same-board room clash critical, cross-board students a warning at the
-threshold and info below, a teacher on another board a warning. Without it
+threshold and info below, a teacher on another board a warning, every teacher
+judged as the publish check judges it (review round 1). Without it
 both answers are byte for byte what they were: the oracle
 (``tests/fixtures/tw_slot_verdict_legacy.json``) was recorded from the code
 before this change by ``tests/record_tw_slot_verdict_legacy.py``.
@@ -24,7 +25,15 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 
 from core import timetable_workspace_views as views
-from core.models import DeliveryBoard, SectionPlacement, TimetableScenario
+from core.models import (
+    DeliveryBoard,
+    Instructor,
+    ScenarioSectionBudget,
+    SectionInstructor,
+    SectionPlacement,
+    TermSectionMeeting,
+    TimetableScenario,
+)
 from core.services import timetable_workspace as tws
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.request_lanes import LANE_MARKER
@@ -32,12 +41,22 @@ from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
 from core.services.timetable_slot_config import offered_move_columns
 from core.services.timetable_workspace import (
     check_publish_readiness,
+    create_planned_section_placements,
     detect_board_conflicts,
     detect_cross_board_conflicts,
     preview_placement_slot_candidates,
     preview_planned_section_slot_candidates,
 )
-from tests.one_teacher_support import FLAG_ON, place, scenario, section
+from tests.one_teacher_support import (
+    FLAG_ON,
+    budget,
+    instructor,
+    link,
+    place,
+    requirement,
+    scenario,
+    section,
+)
 from tests.tw_slot_verdict_support import (
     build_rich_fixture,
     demand,
@@ -176,6 +195,43 @@ def test_v2_cross_board_students_warn_at_the_threshold_and_inform_below(flags) -
     assert _at(preview, "WED", "10:30")["tone"] == "avoid"
 
 
+def test_v2_a_planned_meeting_follows_the_same_cross_board_rule(flags) -> None:
+    """AI777 (planned, one meeting a week) shares 20 students with AI555 and 19
+    with AI556, both on the other board."""
+    rich = build_rich_fixture()
+    preview = preview_planned_section_slot_candidates(
+        rich.b1.id, course_code="AI777", course_key=rich.p, include_verdict=True
+    )
+
+    at_20 = _at(preview, "WED", "10:30")["verdict"]
+    at_19 = _at(preview, "THU", "10:30")["verdict"]
+
+    assert [(i["students"], *_named(i)) for i in at_20["items"]] == [
+        (20, "crossBoard", "warning", "cross_board_students", "AI555-S1", "Term 4", "WED", "10:30")
+    ]
+    assert (at_20["severity"], at_20["counts"]) == (
+        "warning",
+        {"critical": 0, "warning": 1, "info": 0},
+    )
+    assert [(i["students"], *_named(i)) for i in at_19["items"]] == [
+        (
+            19,
+            "crossBoardMinor",
+            "info",
+            "cross_board_students",
+            "AI556-S1",
+            "Term 4",
+            "THU",
+            "10:30",
+        )
+    ]
+    assert (at_19["severity"], at_19["counts"]) == (
+        "info",
+        {"critical": 0, "warning": 0, "info": 1},
+    )
+    assert _at(preview, "WED", "10:30")["tone"] == "avoid"  # legacy: 20 shared is critical
+
+
 # ── V3: same-board students follow H15 for the moved section's week ───────
 
 
@@ -253,6 +309,38 @@ def test_v3_the_sections_other_meetings_are_part_of_its_week(flags) -> None:
         ("time", "critical", "students", "AI202-S1", "Term 2", "MON", "13:00"),
     ]
     assert preview["current_verdict"]["items"] == []
+
+
+def test_v3_a_copy_on_another_board_stays_in_the_sections_week(flags, http) -> None:
+    """K-S1 is shared: one meeting, SUN 09:00, on both boards. Moving b1's copy
+    to MON 13:00 leaves b2's at SUN 09:00, so the section then meets on Sunday
+    AND Monday: C-S1 (MON 13:00) and C-S2 (SUN 09:00, b1) both clash with it,
+    no clash-free pair is left, and the overlap blocks -- as the publish check
+    says once the move is saved."""
+    sc, b1 = _scenario()
+    b2 = _second_board(sc)
+    k_s1 = section(sc, "AI101", "S1")
+    place(b1, k_s1, [("SUN", "09:00", "10:15")], room="R1")
+    place(b2, k_s1, [("SUN", "09:00", "10:15")], room="R1")
+    place(b1, section(sc, "AI202", "S1"), [("MON", "13:00", "14:15")], room="R2")
+    place(b1, section(sc, "AI202", "S2"), [("SUN", "09:00", "10:15")], room="R3")
+    demand(sc, "AI101", range(1, T + 1))
+    demand(sc, "AI202", range(1, T + 1))
+    moving = SectionPlacement.objects.get(board=b1, term_section=k_s1)
+
+    preview = preview_placement_slot_candidates(moving.id, include_verdict=True)
+    [item] = _at(preview, "MON", "13:00")["verdict"]["items"]
+
+    assert _named(item) == ("time", "critical", "students", "AI202-S1", "Term 2", "MON", "13:00")
+    assert (item["students"], item["blocked_students"]) == (T, T)
+    response = http.post(
+        f"/ops/tw/placements/{moving.id}/move/",
+        json.dumps({"day": "MON", "start_time": "13:00", "end_time": "14:15"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 200, response.content
+    [overlap] = detect_board_conflicts(b1.id)["overlaps"]
+    assert (overlap["severity"], overlap["blocked_students"]) == ("critical", T)
 
 
 # ── V4: a move's H15 effect on overlaps it does not touch ─────────────────
@@ -452,6 +540,69 @@ def test_v8_ten_overlaps_are_counted_eight_listed_and_two_more(flags) -> None:
     assert verdict["students"] == 10
 
 
+def test_v8_items_are_ordered_by_severity_then_kind_then_students(flags) -> None:
+    """Every item is found in the opposite order: on this board a room clash
+    (AI110) before a teacher clash (AI111); on the other board AI112's room
+    before its teacher, then 20, 25 and 3 shared students. The dialog shows
+    the first items, so the order is the spec's: severity, kind, students."""
+    sc, b1 = _scenario()
+    b2 = _second_board(sc)
+    mover = section(sc, "AI100", "S1")
+    place(b1, mover, [("SUN", "09:00", "10:15")], room="R1", instructor_name="Dr A")
+    monday = [("MON", "13:00", "14:15")]
+    place(b1, section(sc, "AI110", "S1"), monday, room="R1")
+    place(b1, section(sc, "AI111", "S1"), monday, room="R7", instructor_name="Dr A")
+    place(b2, section(sc, "AI112", "S1"), monday, room="R1", instructor_name="Dr A")
+    for code, room, students in (("AI113", "R8", 20), ("AI114", "R9", 25), ("AI115", "R6", 3)):
+        place(b2, section(sc, code, "S1"), monday, room=room)
+        demand(sc, code, range(1, students + 1))
+    demand(sc, "AI100", range(1, 31))
+
+    verdict = _at(
+        preview_placement_slot_candidates(placement_of(mover, "SUN").id, include_verdict=True),
+        "MON",
+        "13:00",
+    )["verdict"]
+
+    assert [(*_named(i)[:2], _named(i)[3], i["students"]) for i in verdict["items"]] == [
+        ("instructor", "critical", "AI111-S1", None),
+        ("room", "critical", "AI110-S1", None),
+        ("instructorElsewhere", "warning", "AI112-S1", None),
+        ("roomElsewhere", "warning", "AI112-S1", None),
+        ("crossBoard", "warning", "AI114-S1", 25),
+        ("crossBoard", "warning", "AI113-S1", 20),
+        ("crossBoardMinor", "info", "AI115-S1", 3),
+    ]
+    assert (verdict["counts"], verdict["more"]) == ({"critical": 2, "warning": 4, "info": 1}, 0)
+
+
+def test_v7_fewer_warnings_rank_first_whatever_the_legacy_score(flags) -> None:
+    """MON 13:00 holds the room twice on the other board (two warnings, a low
+    legacy score); TUE 13:00 meets T students' other course there (one
+    warning, which the legacy score counts as critical). Same severity, no
+    critical: the warning count decides, before the score."""
+    sc, b1 = _scenario()
+    b2 = _second_board(sc)
+    mover = section(sc, "AI100", "S1")
+    place(b1, mover, [("SUN", "09:00", "10:15")], room="R1")
+    place(b2, section(sc, "AI120", "S1"), [("MON", "13:00", "14:15")], room="R1")
+    place(b2, section(sc, "AI121", "S1"), [("MON", "13:00", "14:15")], room="R1")
+    place(b2, section(sc, "AI122", "S1"), [("TUE", "13:00", "14:15")], room="R5")
+    demand(sc, "AI100", range(1, T + 1))
+    demand(sc, "AI122", range(1, T + 1))
+
+    preview = preview_placement_slot_candidates(placement_of(mover, "SUN").id, include_verdict=True)
+    two, one = _at(preview, "MON", "13:00"), _at(preview, "TUE", "13:00")
+
+    assert [_named(i)[0] for i in two["verdict"]["items"]] == ["roomElsewhere", "roomElsewhere"]
+    assert [_named(i)[0] for i in one["verdict"]["items"]] == ["crossBoard"]
+    for candidate, warnings in ((two, 2), (one, 1)):
+        assert candidate["verdict"]["severity"] == "warning"
+        assert candidate["verdict"]["counts"] == {"critical": 0, "warning": warnings, "info": 0}
+    assert two["score"] < one["score"]
+    assert one["verdict_rank"] < two["verdict_rank"]
+
+
 # ── V9: the columns a manual move is offered ──────────────────────────────
 
 _ONLINE_LABS = [
@@ -547,6 +698,25 @@ def test_v10_without_verdict_the_json_is_the_recorded_oracle(
 def test_v10_both_views_keep_the_preview_lane() -> None:
     assert getattr(views.tw_placement_slot_candidates_view, LANE_MARKER, False) is True
     assert getattr(views.tw_board_planned_slot_candidates_view, LANE_MARKER, False) is True
+
+
+@pytest.mark.parametrize("value", ["0", "true", "yes", ""])
+def test_v10_only_verdict_1_turns_the_verdict_on(value, flags, http) -> None:
+    """``verdict=1`` and nothing else, in both views (as ``offer=manual``)."""
+    moving = _blocked_board()
+    move = f"/ops/tw/placements/{moving.id}/slot-candidates/"
+    place_ = (
+        f"/ops/tw/boards/{moving.board_id}/planned-slot-candidates/"
+        "?course_code=AI101&section_label=S2"
+    )
+
+    for off in (http.get(f"{move}?verdict={value}"), http.get(f"{place_}&verdict={value}")):
+        body = off.json()
+        assert body["candidates"]
+        assert not [c for c in body["candidates"] if "verdict" in c or "verdict_rank" in c]
+        assert "current_verdict" not in body
+    for on in (http.get(f"{move}?verdict=1"), http.get(f"{place_}&verdict=1")):
+        assert all("verdict" in c for c in on.json()["candidates"])
 
 
 # ── V11: parity with the publish check after a real move ──────────────────
@@ -672,6 +842,257 @@ def test_v11_the_verdict_matches_the_publish_check_after_the_move(
         ]
 
 
+# ── V11 for teachers: the publish check's teachers, names disagreeing ─────
+
+
+def _teacher_mode(settings, mode: str) -> None:
+    """``links_off``: names alone; ``links_on``: every linked teacher charged
+    (one teacher per section off, the local default); ``one_teacher_on``: the
+    one-teacher map, as in production."""
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = mode != "links_off"
+    settings.TIMETABLE_ONE_TEACHER_PER_SECTION = mode == "one_teacher_on"
+
+
+def _teacher_board():
+    """Sections whose meeting rows name someone other than their teacher.
+
+    Board ``Term 2``: K-S1 (AI201, moving, SUN 09:00) is pinned to Dr A and its
+    row says Dr B. AI202-S1 (MON 13:00) is pinned to Dr A, its row saying Dr Z;
+    AI203-S1 (TUE 13:00) and AI204-S1 (WED 13:00) have no links, their rows
+    saying Dr A and Dr B. N-S1 (AI208, no links, THU 09:00) also moves; its row
+    says Dr Q, as does AI207-S3 (MON 10:30), which the map leaves to be decided
+    (Dr A, AI207's one teacher, may hold two of its four sections: S1 and S2).
+    Board ``Term 4``: AI205-S1 (THU 13:00) pinned to Dr A, its row saying Dr C;
+    AI206-S1 (SUN 13:00), no links, Dr B.
+    """
+    names = {
+        "AI201": "MOVER",
+        "AI202": "PINNED",
+        "AI203": "NAMED A",
+        "AI204": "NAMED B",
+        "AI205": "PINNED ELSEWHERE",
+        "AI206": "NAMED ELSEWHERE",
+        "AI207": "FOUR SECTIONS",
+        "AI208": "SECOND MOVER",
+    }
+    keys = {code: requirement("AI", code, name) for code, name in names.items()}
+    sc, b1 = _scenario()
+    b2 = _second_board(sc)
+    dr_a, dr_b = instructor("Dr A"), instructor("Dr B")
+    for code in ("AI201", "AI202", "AI205", "AI207"):
+        link("AI", code, dr_a)
+    link("AI", "AI201", dr_b, role="co")
+    for code, key in keys.items():
+        budget(sc, key, 4 if code == "AI207" else 1)
+    for code in ("AI201", "AI202", "AI205"):
+        _pin(sc, keys[code], "S1", "Dr A")
+
+    def put(board, code, label, day, start, room, name):
+        end = {"09:00": "10:15", "10:30": "11:45", "13:00": "14:15"}[start]
+        ts = section(sc, keys[code], label)
+        place(board, ts, [(day, start, end)], room=room, instructor_name=name)
+        return ts
+
+    mover = put(b1, "AI201", "S1", "SUN", "09:00", "R1", "Dr B")
+    put(b1, "AI202", "S1", "MON", "13:00", "R2", "Dr Z")
+    put(b1, "AI203", "S1", "TUE", "13:00", "R3", "Dr A")
+    put(b1, "AI204", "S1", "WED", "13:00", "R4", "Dr B")
+    second = put(b1, "AI208", "S1", "THU", "09:00", "R8", "Dr Q")
+    put(b1, "AI207", "S1", "WED", "09:00", "R5", "Dr A")
+    put(b1, "AI207", "S2", "TUE", "09:00", "R6", "Dr A")
+    put(b1, "AI207", "S3", "MON", "10:30", "R7", "Dr Q")
+    put(b2, "AI205", "S1", "THU", "13:00", "R9", "Dr C")
+    put(b2, "AI206", "S1", "SUN", "13:00", "R10", "Dr B")
+    return sc, {"K": placement_of(mover, "SUN"), "N": placement_of(second, "THU")}
+
+
+#: (mover, day, start) -> the verdict's teacher items, per mode.
+_TEACHER_ITEMS = {
+    "links_off": {
+        ("K", "WED", "13:00"): [("instructor", "AI204-S1@Term 2", "Dr B")],
+        ("K", "SUN", "13:00"): [("instructorElsewhere", "AI206-S1@Term 4", "Dr B")],
+        ("N", "MON", "10:30"): [("instructor", "AI207-S3@Term 2", "Dr Q")],
+    },
+    "one_teacher_on": {
+        ("K", "MON", "13:00"): [("instructor", "AI202-S1@Term 2", "Dr A")],
+        ("K", "THU", "13:00"): [("instructorElsewhere", "AI205-S1@Term 4", "Dr A")],
+    },
+}
+
+
+def _teacher_items(verdict: dict) -> list[tuple]:
+    return [
+        (
+            item["issue_kind"],
+            f"{item['other']['course_code']}-{item['other']['section']}"
+            f"@{item['other']['board_label']}",
+            item["teacher"],
+        )
+        for item in verdict["items"]
+        if item["issue_kind"] in {"instructor", "instructorElsewhere"}
+    ]
+
+
+def _published_teacher_clashes(sc, moving_id: int) -> set[str]:
+    return {
+        _pair_label(board.label, clash, moving_id)
+        for board in DeliveryBoard.objects.filter(scenario=sc)
+        for clash in detect_board_conflicts(board.id)["instructor_clashes"]
+        if moving_id in clash["ids"]
+    }
+
+
+@pytest.mark.parametrize("mode", ["links_off", "one_teacher_on"])
+@pytest.mark.parametrize(
+    ("mover", "day", "start"),
+    [
+        ("K", "MON", "13:00"),  # one teacher by id; the rows name others
+        ("K", "TUE", "13:00"),  # the row names K's teacher; it has no links
+        ("K", "WED", "13:00"),  # the row names what K's row names
+        ("K", "THU", "13:00"),  # one teacher by id, on the other board
+        ("K", "SUN", "13:00"),  # K's row's name, on the other board
+        ("N", "MON", "10:30"),  # a section to be decided, its row naming N's
+    ],
+)
+def test_v11_the_verdicts_teachers_are_the_publish_checks(
+    mode, mover, day, start, flags, http
+) -> None:
+    _teacher_mode(flags, mode)
+    sc, movers = _teacher_board()
+    moving = movers[mover]
+    end = {"10:30": "11:45", "13:00": "14:15"}[start]
+
+    preview = http.get(f"/ops/tw/placements/{moving.id}/slot-candidates/?verdict=1").json()
+    candidate = _at(preview, day, start)
+    expected = _TEACHER_ITEMS[mode].get((mover, day, start), [])
+    assert _teacher_items(candidate["verdict"]) == expected
+    if mode == "one_teacher_on" and (mover, day) == ("K", "TUE"):
+        # The legacy test still matches K's teacher's name with the row's:
+        # its fields are what they were; the verdict follows the publish check.
+        assert [e["kind"] for e in candidate["evidence"]] == ["instructor"]
+
+    response = http.post(
+        f"/ops/tw/placements/{moving.id}/move/",
+        json.dumps({"day": day, "start_time": start, "end_time": end}),
+        content_type="application/json",
+    )
+    assert response.status_code == 200, response.content
+    assert _published_teacher_clashes(sc, moving.id) == {
+        label for kind, label, _teacher in expected if kind == "instructor"
+    }
+
+
+def test_with_the_links_on_and_one_teacher_off_the_names_decide(flags, http) -> None:
+    """The one known gap (see "Slot verdict" in the service). With the links on
+    and one teacher per section off (the local default) the publish check
+    charges every teacher linked to a course (``build_section_instructor_ids``,
+    queries of its own); neither preview loads the links, so the verdict
+    judges by the rows' names. Here: K (Dr A and Dr B linked) and AI202-S1 (Dr
+    A linked) clash for the publish check at MON 13:00; the verdict, reading
+    the rows (Dr B, Dr Z), sees none, and sees K's row name at WED 13:00."""
+    _teacher_mode(flags, "links_on")
+    sc, movers = _teacher_board()
+    moving = movers["K"]
+    preview = http.get(f"/ops/tw/placements/{moving.id}/slot-candidates/?verdict=1").json()
+
+    assert _teacher_items(_at(preview, "MON", "13:00")["verdict"]) == []
+    assert _teacher_items(_at(preview, "WED", "13:00")["verdict"]) == [
+        ("instructor", "AI204-S1@Term 2", "Dr B")
+    ]
+    response = http.post(
+        f"/ops/tw/placements/{moving.id}/move/",
+        json.dumps({"day": "MON", "start_time": "13:00", "end_time": "14:15"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 200, response.content
+    assert _published_teacher_clashes(sc, moving.id) == {"AI202-S1@Term 2"}
+
+
+#: day -> the planned AI209-S1's teacher items at 13:00, per mode.
+_PLANNED_TEACHER_ITEMS = {
+    "links_off": {},
+    "one_teacher_on": {
+        "MON": [("instructor", "AI202-S1@Term 2", "Dr A")],
+        "THU": [("instructorElsewhere", "AI205-S1@Term 4", "Dr A")],
+    },
+}
+
+
+@pytest.mark.parametrize("mode", ["links_off", "one_teacher_on"])
+@pytest.mark.parametrize("day", ["MON", "TUE", "THU"])
+def test_v12_a_planned_sections_teachers_are_the_publish_checks(mode, day, flags) -> None:
+    """AI209-S1, not placed yet, is pinned to Dr A and has no meeting row. On
+    the board of ``_teacher_board`` it shares Dr A with AI202-S1 (MON) and,
+    on the other board, AI205-S1 (THU), by id; AI203-S1's row names Dr A
+    (TUE), which the publish check never matches with a charged teacher. Once
+    placed, the publish check says what the verdict said."""
+    _teacher_mode(flags, mode)
+    sc, _movers = _teacher_board()
+    planned = requirement("AI", "AI209", "PLANNED")
+    link("AI", "AI209", Instructor.objects.get(full_name="Dr A"))
+    budget(sc, planned, 1)
+    _pin(sc, planned, "S1", "Dr A")
+    board = DeliveryBoard.objects.get(scenario=sc, label="Term 2")
+
+    preview = preview_planned_section_slot_candidates(
+        board.id, course_code="AI209", course_key=planned, section_label="S1", include_verdict=True
+    )
+    candidate = _at(preview, day, "13:00")
+    expected = _PLANNED_TEACHER_ITEMS[mode].get(day, [])
+    assert _teacher_items(candidate["verdict"]) == expected
+    if mode == "one_teacher_on" and day == "TUE":
+        # The legacy test matches Dr A's name with AI203-S1's row.
+        assert [e["kind"] for e in candidate["evidence"]] == ["instructor"]
+
+    created = create_planned_section_placements(
+        board.id,
+        course_code="AI209",
+        course_key=planned,
+        course_name="PLANNED",
+        section_label="S1",
+        capacity=30,
+        meetings=[{"day": day, "start_time": "13:00", "end_time": "14:15", "room": "R20"}],
+    )
+    [placement] = created["placements"]
+    assert _published_teacher_clashes(sc, placement.id) == {
+        label for kind, label, _teacher in expected if kind == "instructor"
+    }
+
+
+def test_a_teacher_clash_with_a_shared_section_is_one_item(flags) -> None:
+    """S (Dr A) is shared: MON 13:00 on both boards. K's meeting (Dr A) at MON
+    13:00 clashes with S on this board; S's copy on the other board is that
+    same class, not a second clash. The planned preview's verdict (an unplaced
+    K section whose row also says Dr A) says the same."""
+    sc, b1 = _scenario()
+    b2 = _second_board(sc)
+    mover = section(sc, "AI100", "S1")
+    place(b1, mover, [("SUN", "09:00", "10:15")], room="R1", instructor_name="Dr A")
+    shared = section(sc, "AI130", "S1")
+    place(b1, shared, [("MON", "13:00", "14:15")], room="R5", instructor_name="Dr A")
+    place(b2, shared, [("MON", "13:00", "14:15")], room="R5", instructor_name="Dr A")
+    planned = section(sc, "AI100", "S2")
+    TermSectionMeeting.objects.create(
+        term_section=planned, day="SUN", start_time="13:00", end_time="14:15", instructor="Dr A"
+    )
+
+    move = preview_placement_slot_candidates(placement_of(mover, "SUN").id, include_verdict=True)
+    place_ = preview_planned_section_slot_candidates(
+        b1.id, course_code="AI100", section_label="S2", include_verdict=True
+    )
+
+    for preview in (move, place_):
+        assert _teacher_items(_at(preview, "MON", "13:00")["verdict"]) == [
+            ("instructor", "AI130-S1@Term 2", "Dr A")
+        ]
+    # At another time the copy alone is the teacher on another board.
+    SectionPlacement.objects.filter(board=b2, term_section=shared).update(day="TUE")
+    move = preview_placement_slot_candidates(placement_of(mover, "SUN").id, include_verdict=True)
+    assert _teacher_items(_at(move, "TUE", "13:00")["verdict"]) == [
+        ("instructorElsewhere", "AI130-S1@Term 4", "Dr A")
+    ]
+
+
 # ── V12: planned previews ─────────────────────────────────────────────────
 
 
@@ -759,10 +1180,34 @@ def test_v12_planned_items_carry_their_meeting_index_and_never_a_room(flags) -> 
     assert not [i for i in items if i["source"] == "h15_effect"]
 
 
+def _pin(sc, course_key: str, label: str, name: str) -> None:
+    """The department fixes ``name`` as the section's one teacher."""
+    SectionInstructor.objects.create(
+        scenario=sc,
+        course_key=course_key,
+        section=label,
+        instructor=Instructor.objects.get(full_name=name),
+        source="department",
+    )
+
+
 @pytest.mark.parametrize("one_teacher", [False, True], ids=["one_teacher_off", "one_teacher_on"])
 def test_v12_a_planned_teacher_on_another_board_is_a_warning(one_teacher, flags) -> None:
     flags.TIMETABLE_ONE_TEACHER_PER_SECTION = one_teacher
     rich = build_rich_fixture()
+    if one_teacher:
+        # K-S3 is one of the course's sections, pinned to Dr A, whom the map
+        # charges with AI666-S1 too: one teacher, by id, whatever K-S3's row
+        # says (Dr B).
+        ScenarioSectionBudget.objects.filter(scenario=rich.sc, course_key=rich.k).update(
+            planned_sections=3
+        )
+        _pin(rich.sc, rich.k, "S3", "Dr A")
+        TermSectionMeeting.objects.filter(
+            term_section__scenario=rich.sc,
+            term_section__course_key=rich.k,
+            term_section__section="S3",
+        ).update(instructor="Dr B")
     preview = preview_planned_section_slot_candidates(
         rich.b1.id, course_code="AI111", course_key=rich.k, section_label="S3", include_verdict=True
     )
@@ -865,7 +1310,8 @@ def test_a_copy_of_the_section_at_that_very_slot_is_the_same_class(flags) -> Non
     """K-S1's Sunday meeting moves to MON 13:00, where its copy on the other
     board already sits (in R1, with Dr A): one class, so no room or teacher
     clash with itself. Its copy at THU 13:30 is at another time, so another
-    class; so is another section (MON 10:30)."""
+    class; so is its copy that starts at TUE 13:00 but ends at 14:40, and
+    another section (MON 10:30)."""
     sc, b1 = _scenario()
     b2 = _second_board(sc)
     k_s1 = section(sc, "AI101", "S1")
@@ -873,7 +1319,7 @@ def test_a_copy_of_the_section_at_that_very_slot_is_the_same_class(flags) -> Non
     place(
         b2,
         k_s1,
-        [("MON", "13:00", "14:15"), ("THU", "13:30", "14:45")],
+        [("MON", "13:00", "14:15"), ("THU", "13:30", "14:45"), ("TUE", "13:00", "14:40")],
         room="R1",
         instructor_name="Dr A",
     )
@@ -890,7 +1336,11 @@ def test_a_copy_of_the_section_at_that_very_slot_is_the_same_class(flags) -> Non
     assert copy["verdict"]["items"] == []
     assert copy["verdict"]["own_section_meeting"] is False  # the copy is on another board
     assert [e["kind"] for e in copy["evidence"]] == ["cross_board_room"]  # legacy unchanged
-    for day, start, clashing in (("MON", "10:30", "AI303-S1"), ("THU", "13:00", "AI101-S1")):
+    for day, start, clashing in (
+        ("MON", "10:30", "AI303-S1"),
+        ("THU", "13:00", "AI101-S1"),
+        ("TUE", "13:00", "AI101-S1"),
+    ):
         verdict = _at(preview, day, start)["verdict"]
         assert sorted(_named(i)[:4] for i in verdict["items"]) == [
             ("instructorElsewhere", "warning", "cross_board_instructor", clashing),

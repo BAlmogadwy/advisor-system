@@ -444,22 +444,57 @@ findings changed the plan:
    order included, to an oracle recorded from `a5d8f96` before the change
    (`tests/fixtures/tw_slot_verdict_legacy.json`, with each request's query
    count; the verdict adds no query). Settled where the spec was silent:
-   `source` is the legacy evidence kind, else `cross_board_instructor`,
-   `blocked_slot` or `h15_effect`; `students` counts the distinct students
-   the items name (an effect's are always among them); a one-meeting planned
-   candidate's items have `meeting: null`; `verdict_rank` ranks the
-   candidates returned (Place asks for all of them, D15); an English
-   (policy) section's move preview is the planned preview, so its verdict
-   has no effects, there is no `current_verdict`, and `offer_manual` does not
-   apply. Beyond the spec: the moving section's own copy at the candidate's
-   very slot on another board is the same class (5c's rule, now
-   `_same_class`, shared with room candidates), so the verdict never reports
-   it as a room or teacher clash (the legacy evidence still does). Shared
-   rather than copied: H15's "0 if a clash-free pair exists, else shared" is
-   `_h15_blocked_students` (`detect_board_conflicts` uses it too), the
+   `source` names the check (the legacy evidence kind of the same check,
+   else `cross_board_instructor`, `blocked_slot` or `h15_effect`), not a
+   legacy evidence row: an item is judged by the verdict's own rules;
+   `students` counts the distinct students the items name (an effect's are
+   always among them); a one-meeting planned candidate's items have
+   `meeting: null`; `verdict_rank` ranks the candidates returned (Place asks
+   for all of them, D15); an English (policy) section's move preview is the
+   planned preview, so its verdict has no effects, there is no
+   `current_verdict`, and `offer_manual` does not apply. That is a place
+   verdict: the section's move also leaves its old pattern, which can turn
+   untouched overlaps critical, so it must not be shown for a policy move
+   until it has the effects (5e sends policy sections to the pattern
+   chooser; the function's docstring says so). Beyond the spec: the moving
+   section's own copy at the candidate's very slot (same day, start and end)
+   on another board is the same class (5c's rule, now `_same_class`, shared
+   with room candidates), so the verdict never reports it as a room or
+   teacher clash (the legacy evidence still does).
+   **Teachers (review round 1):** the verdict's `instructor` and
+   `instructorElsewhere` items judge who teaches a section by the publish
+   check's keys, `_publish_teacher_keys`, extracted from
+   `detect_board_conflicts`, which uses it too: the one-teacher map's
+   teacher when the map has the section (one to be decided charges nobody,
+   its row's name never counting), else its linked teachers (one teacher per
+   section off), else its meeting row's name; a teacher id never matches a
+   name. The one-teacher map comes from the
+   assignment the preview already loads, so this adds no query. The legacy
+   fields keep the legacy test (`_section_teacher_matcher`, which also
+   matches a charged teacher's name with a row's name), so the oracle still
+   holds. One known gap, left for the owner: with the links on and one
+   teacher per section off (the local default; production runs one teacher
+   per section) the publish check charges every linked teacher
+   (`build_section_instructor_ids`: three queries of its own, programme
+   requirements, course links, sections), which neither preview loads; the
+   verdict may not add a query, so there it reads the rows' names (pinned by
+   `test_with_the_links_on_and_one_teacher_off_the_names_decide`). In
+   one-teacher mode the verdict judges with the map in force now: a section
+   the map leaves to its layout-aware closure can be given another teacher
+   once the edit is saved, and a planned section is judged with the teacher
+   it has before it is placed (creating it may name one,
+   `name_new_section`). Shared rather than copied: H15's "0 if a clash-free
+   pair exists, else shared" is `_h15_blocked_students` and who teaches is
+   `_publish_teacher_keys` (`detect_board_conflicts` uses both), the
    section masks are built by `_section_masks_by_course` (behind
-   `_placed_section_masks`), and the planned preview's teacher-on-another-board
-   rule is `_other_board_teacher_clash`, which the move verdict reuses.
+   `_placed_section_masks`), and both previews take the cross-board student
+   rule (a warning at the threshold, info below) from
+   `_cross_board_student_item` and their teachers from `_VerdictTeachers`.
+   Known divergence on the publish side (a follow-up):
+   `detect_cross_board_conflicts` counts a shared section's own copies on two
+   boards as a cross-board pair sharing every student of the course, so the
+   publish check can warn (`cross_board_conflicts`) where the verdict, like
+   the legacy preview, rightly does not.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
