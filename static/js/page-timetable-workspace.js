@@ -251,17 +251,27 @@ async function twFetch(url, opts = {}) {
   // data version, so every answer read before it stays current.
   // `_onError(body, status)`: a caller that can say more than a toast takes
   // the failure instead (true = handled: no toast). It hears of every
-  // failure, since a dialog keeps its messages inside itself (a toast behind
-  // a modal is never seen): `body` is null when the answer is not JSON (a
-  // proxy's error page); status 0 means no answer could be read at all.
-  // It is asked once: a handler that throws is not asked again as if the
-  // network had failed, which would bury the refusal it was given.
+  // failure the server or the network gives, since a dialog keeps its
+  // messages inside itself (a toast behind a modal is never seen): `body` is
+  // null when the answer is not JSON (a proxy's error page); status 0 means
+  // no answer could be read at all. It does not hear the local busy guard
+  // below, which warns and returns null before any request is made; a
+  // dialog's commit does not meet that guard, since its button carries
+  // data-tw-mutation and is off while the workspace is busy.
+  // It is asked at most once. A handler that throws has not handled the
+  // failure: the slip is logged, and the toast follows as if there were no
+  // handler (the server's message; none for a quiet request).
   const { _workspaceToken, _onError, _quiet, _changed, ...requestOptions } = opts;
   let asked = false;
   const handled = (body, status) => {
     if (asked || typeof _onError !== 'function') return false;
     asked = true;
-    return Boolean(_onError(body, status));
+    try {
+      return Boolean(_onError(body, status));
+    } catch (slip) {
+      console.error('[twFetch] the _onError handler threw', slip);
+      return false;
+    }
   };
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && workspaceBusy() && (!TW_ACTIVITY.owner || _workspaceToken !== TW_ACTIVITY.owner)) {
@@ -308,7 +318,11 @@ async function twFetch(url, opts = {}) {
     if (writes && (typeof _changed !== 'function' || _changed(body))) TW.dataVersion++;
     return body;
   } catch (err) {
-    // No answer could be read: the handler is told so (status 0, no body).
+    // No answer could be read: fetch rejected (offline, the connection
+    // dropped), or a 2xx came back whose body is not JSON. fetch follows a
+    // redirect, so a session that expired mid-request lands here with the
+    // login page's HTML under a 200. Either way there is no refusal to hand
+    // over, and _onError(null, 0) is the intended answer.
     if (handled(null, 0)) return null;
     if (!_quiet) notify.error(err.message || String(err));
     return null;

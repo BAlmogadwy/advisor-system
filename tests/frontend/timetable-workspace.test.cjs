@@ -172,8 +172,9 @@ test('failed Undo and Redo retain original history and never create an inverse a
 
 /* ── Failed requests reach the caller (design record §7.3.2 C, 5c) ──
    A dialog keeps its messages inside itself (a toast behind a modal is never
-   seen), so twFetch hands every failure to the caller's handler, and still
-   announces a planner job that holds the scenario whoever takes the refusal. */
+   seen), so twFetch hands every failure the server or the network gives to
+   the caller's handler, and still announces a planner job that holds the
+   scenario whoever takes the refusal. */
 const MOVE_URL = '/ops/tw/placements/10/move/';
 const ROOMS_URL = '/ops/tw/placements/10/room-candidates/';
 
@@ -222,18 +223,30 @@ test('F2 an answer that is not JSON, or no answer, reaches the handler with no b
   assert.equal(h.d.getElementById('twOptimise').disabled, false, 'every failed write lets go of the page');
 });
 
-test('F3 a handler is asked once: one that throws is not asked again as if the network had failed', async t => {
-  const h = await harness(t, (url, opts) => (url === MOVE_URL && opts.method === 'POST'
-    ? { httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } } : undefined));
+test('F3 a handler that throws has not taken the failure: it is asked once, and the usual toast follows', async t => {
+  let fail = null;
+  const h = await harness(t, (url, opts) => (url === MOVE_URL && opts.method === 'POST' && fail ? fail() : undefined));
   await h.select();
-  const told = [];
-  const answer = await h.w.twFetch(MOVE_URL, {
-    method: 'POST', body: '{"room":"R2"}', _quiet: true,
-    _onError: (body, status) => { told.push([body?.error?.code, status]); throw new Error('a handler bug'); },
+  const slips = [], told = [], toasts = h.notices.length;
+  h.w.console.error = (...args) => slips.push(args.find(arg => arg instanceof Error)?.message);
+  const post = quiet => h.w.twFetch(MOVE_URL, {
+    method: 'POST', body: '{"room":"R2"}', _quiet: quiet,
+    _onError: (body, status) => { told.push([body?.error?.code ?? null, status]); throw new Error('a handler bug'); },
   });
-  assert.equal(answer, null);
-  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409]], 'the server’s refusal is the last word the handler heard');
-  assert.equal(h.d.getElementById('twOptimise').disabled, false);
+  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  assert.equal(await post(false), null);
+  fail = () => { throw new TypeError('Failed to fetch'); };
+  assert.equal(await post(false), null, 'a handler that throws on a lost answer still lets twFetch answer null');
+  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409], [null, 0]], 'each failure is told once, never again as a network failure');
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: 'Owned elsewhere' }, { type: 'error', text: 'Failed to fetch' }],
+    'the server’s message (or the network’s), never the handler’s exception');
+  assert.deepEqual(slips, ['a handler bug', 'a handler bug'], 'the slip is not lost: it is logged');
+  // A quiet request stays quiet when its handler throws.
+  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  assert.equal(await post(true), null);
+  assert.equal(told.length, 3);
+  assert.equal(h.notices.length, toasts + 2);
+  assert.equal(h.d.getElementById('twOptimise').disabled, false, 'every failed write lets go of the page');
 });
 
 test('F4 a read refused with 503 that is not the busy lane hands the handler the body the retry loop already read', async t => {
@@ -246,6 +259,23 @@ test('F4 a read refused with 503 that is not the busy lane hands the handler the
   assert.equal(answer, null);
   assert.deepEqual(told, [['MAINTENANCE', 503]]);
   assert.equal(h.requests.filter(row => row.url === ROOMS_URL).length, 1, 'not the busy lane: asked once');
+});
+
+test('F5 a quiet request fails without a toast, whether refused or unanswered', async t => {
+  let fail = null;
+  const h = await harness(t, (url, opts) => (url === MOVE_URL && opts.method === 'POST' && fail ? fail() : undefined));
+  await h.select();
+  const toasts = h.notices.length;
+  const post = extra => h.w.twFetch(MOVE_URL, { method: 'POST', body: '{"room":"R2"}', _quiet: true, ...extra });
+  const refusal = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  const offline = () => { throw new TypeError('Failed to fetch'); };
+  for (const answer of [refusal, offline]) {
+    fail = answer;
+    assert.equal(await post({}), null, `${answer.name}: no handler`);
+    assert.equal(await post({ _onError: () => false }), null, `${answer.name}: a handler that declines`);
+  }
+  assert.deepEqual(h.notices.slice(toasts), [], 'no toast for a quiet request');
+  assert.equal(h.d.getElementById('twOptimise').disabled, false, 'every failed write lets go of the page');
 });
 
 test('older board responses cannot replace the currently selected board', async t => {
