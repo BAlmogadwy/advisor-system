@@ -6,8 +6,9 @@ check would say once the edit is saved: H15 for same-board students (with a
 move's effect on overlaps it does not touch), blocked times flagged, a
 same-board room clash critical, cross-board students a warning at the
 threshold and info below, a teacher on another board a warning, every teacher
-judged as the publish check judges it (review round 1). Without it
-both answers are byte for byte what they were: the oracle
+judged as the publish check judges it, in every teacher mode (review rounds 1
+and 2). Without it both answers are byte for byte what they were, with the
+same queries: the oracle
 (``tests/fixtures/tw_slot_verdict_legacy.json``) was recorded from the code
 before this change by ``tests/record_tw_slot_verdict_legacy.py``.
 
@@ -37,6 +38,7 @@ from core.models import (
 from core.services import timetable_workspace as tws
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.request_lanes import LANE_MARKER
+from core.services.section_teacher_assignment import TeacherAssignment
 from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
 from core.services.timetable_slot_config import offered_move_columns
 from core.services.timetable_workspace import (
@@ -46,6 +48,7 @@ from core.services.timetable_workspace import (
     detect_cross_board_conflicts,
     preview_placement_slot_candidates,
     preview_planned_section_slot_candidates,
+    validate_placement,
 )
 from tests.one_teacher_support import (
     FLAG_ON,
@@ -672,16 +675,30 @@ def test_v9_offered_move_columns_mirrors_the_pages_rule(meeting_start, starts) -
     assert all(not slot.get("policy_only") for slot in offered)
 
 
-# ── V10: the legacy answer is unchanged; the verdict costs no query ───────
+# ── V10: the legacy answer is unchanged; the verdict's cost is pinned ─────
+
+#: The oracle each teacher mode answers as. The previews read the links only
+#: through one teacher per section, so with the links off they answer as with
+#: the links on and one teacher per section off (the oracle's one_teacher_off).
+_ORACLE_MODE = {
+    "links_off": "one_teacher_off",
+    "links_on": "one_teacher_off",
+    "one_teacher_on": "one_teacher_on",
+}
+#: The queries ``verdict=1`` adds to a preview request: the course links, as the
+#: publish check reads them, with the links on and one teacher per section off
+#: (linked_section_instructor_ids: programme requirements, course links with
+#: their teachers' names, sections); none in the other modes.
+_VERDICT_QUERIES = {"links_off": 0, "links_on": 3, "one_teacher_on": 0}
 
 
-@pytest.mark.parametrize("mode", ["one_teacher_off", "one_teacher_on"])
+@pytest.mark.parametrize("mode", ["links_off", "links_on", "one_teacher_on"])
 def test_v10_without_verdict_the_json_is_the_recorded_oracle(
     mode, flags, http, django_assert_num_queries
 ) -> None:
-    flags.TIMETABLE_ONE_TEACHER_PER_SECTION = mode == "one_teacher_on"
+    _teacher_mode(flags, mode)
     rich = build_rich_fixture()
-    oracle = ORACLE[mode]
+    oracle = ORACLE[_ORACLE_MODE[mode]]
     for name, url in legacy_requests(rich).items():
         with django_assert_num_queries(oracle["queries"][name]):
             response = http.get(url)
@@ -689,10 +706,38 @@ def test_v10_without_verdict_the_json_is_the_recorded_oracle(
         got = normalise_ids(json.loads(response.content), rich.ids())
         # Byte for byte, key order included.
         assert json.dumps(got, ensure_ascii=False) == json.dumps(oracle[name], ensure_ascii=False)
-        with django_assert_num_queries(oracle["queries"][name]):
+        # Exactly: one query more or fewer fails.
+        with django_assert_num_queries(oracle["queries"][name] + _VERDICT_QUERIES[mode]):
             with_verdict = http.get(f"{url}{'&' if '?' in url else '?'}verdict=1")
         body = with_verdict.json()
         assert body["candidates"] and all("verdict" in c for c in body["candidates"])
+
+
+def test_v10_the_one_teacher_publish_map_is_built_only_for_a_verdict(flags, http) -> None:
+    """With one teacher per section the verdict reads the map the publish check
+    reads (``pr4_map``) from the assignment the preview has loaded; the legacy
+    answers and the placement check never build it."""
+    flags.TIMETABLE_ONE_TEACHER_PER_SECTION = True
+    rich = build_rich_fixture()
+    requests = legacy_requests(rich).values()
+    with mock.patch.object(
+        TeacherAssignment, "pr4_map", autospec=True, side_effect=TeacherAssignment.pr4_map
+    ) as built:
+        for url in requests:
+            assert http.get(url).status_code == 200
+        validate_placement(
+            board_id=rich.b1.id,
+            day="MON",
+            start_time="13:00",
+            end_time="14:15",
+            room="R101",
+            term_section_id=rich.k_s1.id,
+            exclude_placement_id=rich.moving.id,
+        )
+        assert built.call_count == 0
+        for url in requests:
+            assert http.get(f"{url}{'&' if '?' in url else '?'}verdict=1").status_code == 200
+        assert built.call_count == len(requests)
 
 
 def test_v10_both_views_keep_the_preview_lane() -> None:
@@ -856,14 +901,17 @@ def _teacher_mode(settings, mode: str) -> None:
 def _teacher_board():
     """Sections whose meeting rows name someone other than their teacher.
 
-    Board ``Term 2``: K-S1 (AI201, moving, SUN 09:00) is pinned to Dr A and its
-    row says Dr B. AI202-S1 (MON 13:00) is pinned to Dr A, its row saying Dr Z;
-    AI203-S1 (TUE 13:00) and AI204-S1 (WED 13:00) have no links, their rows
-    saying Dr A and Dr B. N-S1 (AI208, no links, THU 09:00) also moves; its row
-    says Dr Q, as does AI207-S3 (MON 10:30), which the map leaves to be decided
-    (Dr A, AI207's one teacher, may hold two of its four sections: S1 and S2).
-    Board ``Term 4``: AI205-S1 (THU 13:00) pinned to Dr A, its row saying Dr C;
-    AI206-S1 (SUN 13:00), no links, Dr B.
+    Board ``Term 2``: K-S1 (AI201, moving, SUN 09:00) is pinned to Dr A, its
+    course linked to Dr A and Dr B (co), and its row says Dr B. AI202-S1 (MON
+    13:00) is pinned to Dr A, its row saying Dr Z; AI203-S1 (TUE 13:00) and
+    AI204-S1 (WED 13:00) have no links, their rows saying Dr A and Dr B.
+    AI210-S1 (TUE 10:30) is linked to Dr B alone, its row saying Dr Y. N-S1
+    (AI208, no links, THU 09:00) also moves; its row says Dr Q, as does
+    AI207-S3 (MON 10:30), which the map leaves to be decided (Dr A, AI207's
+    one teacher, may hold two of its four sections: S1 and S2). Board ``Term
+    4``: AI205-S1 (THU 13:00) pinned to Dr A, its row saying Dr C; AI206-S1
+    (SUN 13:00), no links, Dr B. AI201, AI202, AI205 and AI207 are linked to
+    Dr A.
     """
     names = {
         "AI201": "MOVER",
@@ -874,6 +922,7 @@ def _teacher_board():
         "AI206": "NAMED ELSEWHERE",
         "AI207": "FOUR SECTIONS",
         "AI208": "SECOND MOVER",
+        "AI210": "CO-TEACHER",
     }
     keys = {code: requirement("AI", code, name) for code, name in names.items()}
     sc, b1 = _scenario()
@@ -882,6 +931,7 @@ def _teacher_board():
     for code in ("AI201", "AI202", "AI205", "AI207"):
         link("AI", code, dr_a)
     link("AI", "AI201", dr_b, role="co")
+    link("AI", "AI210", dr_b)
     for code, key in keys.items():
         budget(sc, key, 4 if code == "AI207" else 1)
     for code in ("AI201", "AI202", "AI205"):
@@ -901,6 +951,7 @@ def _teacher_board():
     put(b1, "AI207", "S1", "WED", "09:00", "R5", "Dr A")
     put(b1, "AI207", "S2", "TUE", "09:00", "R6", "Dr A")
     put(b1, "AI207", "S3", "MON", "10:30", "R7", "Dr Q")
+    put(b1, "AI210", "S1", "TUE", "10:30", "R11", "Dr Y")
     put(b2, "AI205", "S1", "THU", "13:00", "R9", "Dr C")
     put(b2, "AI206", "S1", "SUN", "13:00", "R10", "Dr B")
     return sc, {"K": placement_of(mover, "SUN"), "N": placement_of(second, "THU")}
@@ -912,6 +963,13 @@ _TEACHER_ITEMS = {
         ("K", "WED", "13:00"): [("instructor", "AI204-S1@Term 2", "Dr B")],
         ("K", "SUN", "13:00"): [("instructorElsewhere", "AI206-S1@Term 4", "Dr B")],
         ("N", "MON", "10:30"): [("instructor", "AI207-S3@Term 2", "Dr Q")],
+    },
+    # Every linked teacher, by id, named as linked; a row's name counts only
+    # for a section with no links, and never matches a linked teacher.
+    "links_on": {
+        ("K", "MON", "13:00"): [("instructor", "AI202-S1@Term 2", "Dr A")],
+        ("K", "TUE", "10:30"): [("instructor", "AI210-S1@Term 2", "Dr B")],
+        ("K", "THU", "13:00"): [("instructorElsewhere", "AI205-S1@Term 4", "Dr A")],
     },
     "one_teacher_on": {
         ("K", "MON", "13:00"): [("instructor", "AI202-S1@Term 2", "Dr A")],
@@ -942,7 +1000,7 @@ def _published_teacher_clashes(sc, moving_id: int) -> set[str]:
     }
 
 
-@pytest.mark.parametrize("mode", ["links_off", "one_teacher_on"])
+@pytest.mark.parametrize("mode", ["links_off", "links_on", "one_teacher_on"])
 @pytest.mark.parametrize(
     ("mover", "day", "start"),
     [
@@ -951,12 +1009,17 @@ def _published_teacher_clashes(sc, moving_id: int) -> set[str]:
         ("K", "WED", "13:00"),  # the row names what K's row names
         ("K", "THU", "13:00"),  # one teacher by id, on the other board
         ("K", "SUN", "13:00"),  # K's row's name, on the other board
+        ("K", "TUE", "10:30"),  # K's co-teacher's link; the rows name others
         ("N", "MON", "10:30"),  # a section to be decided, its row naming N's
     ],
 )
 def test_v11_the_verdicts_teachers_are_the_publish_checks(
     mode, mover, day, start, flags, http
 ) -> None:
+    """The verdict's teacher items, then the publish check's clashes once the
+    move is saved, in each teacher mode: the same pairs. ``links_on`` (one
+    teacher per section off, the local default) charges every linked teacher,
+    as ``build_section_instructor_ids`` does for the publish check."""
     _teacher_mode(flags, mode)
     sc, movers = _teacher_board()
     moving = movers[mover]
@@ -966,7 +1029,7 @@ def test_v11_the_verdicts_teachers_are_the_publish_checks(
     candidate = _at(preview, day, start)
     expected = _TEACHER_ITEMS[mode].get((mover, day, start), [])
     assert _teacher_items(candidate["verdict"]) == expected
-    if mode == "one_teacher_on" and (mover, day) == ("K", "TUE"):
+    if mode == "one_teacher_on" and (mover, day, start) == ("K", "TUE", "13:00"):
         # The legacy test still matches K's teacher's name with the row's:
         # its fields are what they were; the verdict follows the publish check.
         assert [e["kind"] for e in candidate["evidence"]] == ["instructor"]
@@ -982,35 +1045,13 @@ def test_v11_the_verdicts_teachers_are_the_publish_checks(
     }
 
 
-def test_with_the_links_on_and_one_teacher_off_the_names_decide(flags, http) -> None:
-    """The one known gap (see "Slot verdict" in the service). With the links on
-    and one teacher per section off (the local default) the publish check
-    charges every teacher linked to a course (``build_section_instructor_ids``,
-    queries of its own); neither preview loads the links, so the verdict
-    judges by the rows' names. Here: K (Dr A and Dr B linked) and AI202-S1 (Dr
-    A linked) clash for the publish check at MON 13:00; the verdict, reading
-    the rows (Dr B, Dr Z), sees none, and sees K's row name at WED 13:00."""
-    _teacher_mode(flags, "links_on")
-    sc, movers = _teacher_board()
-    moving = movers["K"]
-    preview = http.get(f"/ops/tw/placements/{moving.id}/slot-candidates/?verdict=1").json()
-
-    assert _teacher_items(_at(preview, "MON", "13:00")["verdict"]) == []
-    assert _teacher_items(_at(preview, "WED", "13:00")["verdict"]) == [
-        ("instructor", "AI204-S1@Term 2", "Dr B")
-    ]
-    response = http.post(
-        f"/ops/tw/placements/{moving.id}/move/",
-        json.dumps({"day": "MON", "start_time": "13:00", "end_time": "14:15"}),
-        content_type="application/json",
-    )
-    assert response.status_code == 200, response.content
-    assert _published_teacher_clashes(sc, moving.id) == {"AI202-S1@Term 2"}
-
-
 #: day -> the planned AI209-S1's teacher items at 13:00, per mode.
 _PLANNED_TEACHER_ITEMS = {
     "links_off": {},
+    "links_on": {
+        "MON": [("instructor", "AI202-S1@Term 2", "Dr A")],
+        "THU": [("instructorElsewhere", "AI205-S1@Term 4", "Dr A")],
+    },
     "one_teacher_on": {
         "MON": [("instructor", "AI202-S1@Term 2", "Dr A")],
         "THU": [("instructorElsewhere", "AI205-S1@Term 4", "Dr A")],
@@ -1018,14 +1059,17 @@ _PLANNED_TEACHER_ITEMS = {
 }
 
 
-@pytest.mark.parametrize("mode", ["links_off", "one_teacher_on"])
+@pytest.mark.parametrize("mode", ["links_off", "links_on", "one_teacher_on"])
 @pytest.mark.parametrize("day", ["MON", "TUE", "THU"])
 def test_v12_a_planned_sections_teachers_are_the_publish_checks(mode, day, flags) -> None:
-    """AI209-S1, not placed yet, is pinned to Dr A and has no meeting row. On
-    the board of ``_teacher_board`` it shares Dr A with AI202-S1 (MON) and,
-    on the other board, AI205-S1 (THU), by id; AI203-S1's row names Dr A
-    (TUE), which the publish check never matches with a charged teacher. Once
-    placed, the publish check says what the verdict said."""
+    """AI209-S1, not created yet, is linked and pinned to Dr A and has no
+    meeting row. On the board of ``_teacher_board`` it shares Dr A with
+    AI202-S1 (MON) and, on the other board, AI205-S1 (THU), by id; AI203-S1's
+    row names Dr A (TUE), which the publish check never matches with a charged
+    or linked teacher. With the links on and one teacher per section off the
+    publish check charges it with its course's linked teachers once it is
+    created; the verdict reads them before. Once placed, the publish check
+    says what the verdict said."""
     _teacher_mode(flags, mode)
     sc, _movers = _teacher_board()
     planned = requirement("AI", "AI209", "PLANNED")
@@ -1191,11 +1235,14 @@ def _pin(sc, course_key: str, label: str, name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("one_teacher", [False, True], ids=["one_teacher_off", "one_teacher_on"])
-def test_v12_a_planned_teacher_on_another_board_is_a_warning(one_teacher, flags) -> None:
-    flags.TIMETABLE_ONE_TEACHER_PER_SECTION = one_teacher
+@pytest.mark.parametrize("mode", ["links_off", "links_on", "one_teacher_on"])
+def test_v12_a_planned_teacher_on_another_board_is_a_warning(mode, flags) -> None:
+    """K-S3 and AI666-S1 share Dr A: by their rows' names with the links off,
+    by their courses' links (AI111: Dr A and Dr B; AI666: Dr A) with the links
+    on, and by the one-teacher map with one teacher per section."""
+    _teacher_mode(flags, mode)
     rich = build_rich_fixture()
-    if one_teacher:
+    if mode == "one_teacher_on":
         # K-S3 is one of the course's sections, pinned to Dr A, whom the map
         # charges with AI666-S1 too: one teacher, by id, whatever K-S3's row
         # says (Dr B).

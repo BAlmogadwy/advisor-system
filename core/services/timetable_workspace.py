@@ -742,8 +742,9 @@ class _SectionTeachers:
 
     teacher_of: Callable[..., tuple[int | None, str] | None]
     same_teacher: Callable[..., bool]
-    #: The map the publish check reads (``build_section_instructor_ids``).
-    link_map: dict[str, set[int]]
+    #: The map the publish check reads (``build_section_instructor_ids``):
+    #: built only for a slot verdict (``with_link_map``), else None.
+    link_map: dict[str, set[int]] | None
     #: Each charged teacher's name, by id.
     names: dict[int, str]
 
@@ -765,10 +766,12 @@ def _section_teacher_matcher(scenario_id: int):
     return teachers.teacher_of, teachers.same_teacher
 
 
-def _load_section_teachers(scenario_id: int) -> _SectionTeachers:
+def _load_section_teachers(scenario_id: int, *, with_link_map: bool = False) -> _SectionTeachers:
     """The one-teacher map in force, read once, as :func:`_section_teacher_matcher`
-    gives it and as the publish check reads it (``pr4_map``), with the charged
-    teachers' names: one assignment, one query for the names."""
+    gives it, with the charged teachers' names: one assignment, one query for
+    the names. ``with_link_map`` (a slot verdict) adds the map as the publish
+    check reads it (``pr4_map``, built from the same assignment, no query);
+    the legacy paths never build it."""
     from core.models import Instructor
     from core.services.section_teacher_assignment import CHARGED, STATUS_TBD, load_assignment
 
@@ -807,7 +810,8 @@ def _load_section_teachers(scenario_id: int) -> _SectionTeachers:
         right = ((b[1] if b is not None else b_name) or "").strip().upper()
         return bool(left and right and left == right)
 
-    return _SectionTeachers(teacher_of, same_teacher, assignment.pr4_map(), names)
+    link_map = assignment.pr4_map() if with_link_map else None
+    return _SectionTeachers(teacher_of, same_teacher, link_map, names)
 
 
 class _PlacementTimeCheck:
@@ -1105,10 +1109,9 @@ def validate_placement(
 #   - a same-course overlap, a blocked time, a same-board room clash: critical
 #     (each blocks publishing);
 #   - a same-board teacher clash: critical, the teachers judged by the publish
-#     check's keys (_publish_teacher_keys). One gap: with the links on and one
-#     teacher per section off, the publish check also charges every teacher
-#     linked to a course (build_section_instructor_ids); neither preview loads
-#     those links and the verdict adds no query, so there the names decide;
+#     check's keys (_publish_teacher_keys) from the publish check's own map
+#     (_VerdictTeachers): the one-teacher map, or, with the links on and one
+#     teacher per section off, every teacher linked to a course;
 #   - cross-board students: a warning at the threshold, where the publish check
 #     warns (cross_board_conflicts), and info below it, as Issues lists them;
 #   - a teacher or room also booked on another board: a warning, the teacher by
@@ -1116,9 +1119,13 @@ def validate_placement(
 #     so the verdict must not invent a blocker).
 # The legacy fields (tone, counts, evidence, rank) keep their own older rules
 # and order, the legacy teacher test included (_section_teacher_matcher, or the
-# names). The verdict is built only when a caller asks (include_verdict), from
-# data the preview has already loaded: no query of its own, and the other
-# callers (safe moves, repair, the move outcome) never pay for it.
+# names). The verdict is built only when a caller asks (include_verdict), so
+# the legacy answers and the other callers (safe moves, repair, the move
+# outcome) never pay for it. It is built from data the preview has already
+# loaded, with one exception: with the links on and one teacher per section
+# off (the local default) it reads the course links as the publish check does
+# (linked_section_instructor_ids, three queries, once per request). With one
+# teacher per section (production) or the links off it adds no query.
 
 _VERDICT_SEVERITIES = ("critical", "warning", "info")
 _VERDICT_SEVERITY_RANK = {"ok": 0, "info": 1, "warning": 2, "critical": 3}
@@ -1329,27 +1336,52 @@ def _cross_board_student_item(shared: int, other: dict | None) -> dict:
 @dataclass(frozen=True)
 class _VerdictTeachers:
     """The slot verdict's teachers: the publish check's keys
-    (:func:`_publish_teacher_keys`), from what a preview has already loaded.
+    (:func:`_publish_teacher_keys`) over the map the publish check reads
+    (:func:`detect_board_conflicts`, ``build_section_instructor_ids``):
 
-    With one teacher per section the map is the request's own
-    (:func:`_load_section_teachers`), the one the publish check reads; with the
-    links flag off there is no map and the names decide, as there. With the
-    links on and one teacher per section off the publish check charges every
-    teacher linked to a course (``build_section_instructor_ids``, which reads
-    the links with queries of its own); no preview loads them, so the names
-    decide here: the one case where the verdict's teachers can differ from the
-    publish check's.
+    - one teacher per section (production): the one-teacher map, from the
+      assignment the preview already loads (:func:`_load_section_teachers`
+      with ``with_link_map``); no query;
+    - the links on and one teacher per section off (the local default): every
+      teacher linked to a section's course, read by
+      ``linked_section_instructor_ids``, the code ``build_section_instructor_ids``
+      runs in that mode, with the teachers' names from the same query: three
+      queries, once per request, only for a verdict;
+    - the links off: no map; the meeting rows' names decide, as there.
     """
 
     link_map: Mapping[str, set[int]]
     by_presence: bool
+    #: The charged or linked teachers' names, by id.
     names: Mapping[int, str]
+    #: The links on and one teacher per section off: who a section not created
+    #: yet will be charged with once it is, ``resolve(course_key, display_code)``
+    #: (the map has only the scenario's sections). None in the other modes.
+    resolve: Callable[[object, object], set[int]] | None = None
 
     @classmethod
-    def of(cls, section_teachers: _SectionTeachers | None) -> _VerdictTeachers:
-        if section_teachers is None:
-            return cls({}, False, {})
-        return cls(section_teachers.link_map, True, section_teachers.names)
+    def none(cls) -> _VerdictTeachers:
+        """No verdict asked for: nothing read."""
+        return cls({}, False, {})
+
+    @classmethod
+    def load(
+        cls, scenario: TimetableScenario, section_teachers: _SectionTeachers | None
+    ) -> _VerdictTeachers:
+        """One request's verdict teachers. ``section_teachers`` is the request's
+        one-teacher map, loaded (``with_link_map``) when that rule is on."""
+        from core.services.timetable_pr4_instructor import (
+            is_instructor_links_enabled,
+            linked_section_instructor_ids,
+        )
+
+        if section_teachers is not None:
+            assert section_teachers.link_map is not None  # loaded with_link_map
+            return cls(section_teachers.link_map, True, section_teachers.names)
+        if is_instructor_links_enabled():
+            linked = linked_section_instructor_ids(scenario)
+            return cls(linked.ids, False, linked.names, linked.resolve)
+        return cls.none()
 
     def keys(self, course_key: str, section: str, instructor: str) -> tuple:
         """A section's keys, ``instructor`` being its first meeting row's name."""
@@ -1357,9 +1389,19 @@ class _VerdictTeachers:
             self.link_map, self.by_presence, course_key, section, instructor
         )
 
+    def new_section_keys(self, course_key: str, section: str, display_code: str) -> tuple:
+        """The keys of a section not created yet (no meeting row, so no name),
+        as the publish check will charge it once it is: with the links on and
+        one teacher per section off, its course's linked teachers; otherwise
+        by the map (the one-teacher map has every budgeted section)."""
+        if self.resolve is not None:
+            return tuple(self.resolve(course_key, display_code))
+        return self.keys(course_key, section, "")
+
     def clash(self, mine: tuple, theirs: tuple, their_name: str) -> tuple[bool, str]:
         """Whether two sections share a teacher, and the teacher's name: the
-        charged teacher's, or ``their_name`` as written when the names match."""
+        charged or linked teacher's, or ``their_name`` as written when the
+        names match."""
         for key in theirs:
             if key in mine:
                 return True, (self.names.get(key, "") if isinstance(key, int) else their_name)
@@ -1532,7 +1574,7 @@ def preview_placement_slot_candidates(
     teacher_of = same_teacher = new_teacher = None
     section_teachers = None
     if is_one_teacher_active():
-        section_teachers = _load_section_teachers(scenario.id)
+        section_teachers = _load_section_teachers(scenario.id, with_link_map=include_verdict)
         teacher_of, same_teacher = section_teachers.teacher_of, section_teachers.same_teacher
         new_teacher = teacher_of(
             placement.term_section_id, f"{course_key}_{placement.term_section.section}"
@@ -1549,8 +1591,10 @@ def preview_placement_slot_candidates(
             return set()
         return moving_students & course_students.get(normalize_code(other_code), set())
 
-    # The slot verdict's inputs, from the placements already loaded (no query;
-    # O(placements) once per request, and only with include_verdict).
+    # The slot verdict's inputs, only with include_verdict: from the placements
+    # already loaded (no query; O(placements) once per request), and its
+    # teachers (_VerdictTeachers: three queries with the links on and one
+    # teacher per section off, none otherwise).
     blocked_slots: set[tuple[str, str]] = set()
     section_masks: dict[str, dict[int, int]] = {}
     course_masks: dict[str, list[int]] = {}
@@ -1561,11 +1605,12 @@ def preview_placement_slot_candidates(
     # HARD_OVERLAP_THRESHOLD students need both, and a clash-free pair of their
     # sections exists now.
     effect_courses: dict[str, tuple[set[int], list[int]]] = {}
-    verdict_teachers = _VerdictTeachers.of(section_teachers)
+    verdict_teachers = _VerdictTeachers.none()
     own_teachers: tuple = ()  # who the publish check charges with this section
     if include_verdict:
         from core.services.timetable_validation import blocked_slot_keys
 
+        verdict_teachers = _VerdictTeachers.load(scenario, section_teachers)
         own_teachers = verdict_teachers.keys(
             course_key,
             placement.term_section.section,
@@ -2145,7 +2190,7 @@ def preview_planned_section_slot_candidates(
     teacher_of = same_teacher = new_teacher = None
     section_teachers = None
     if is_one_teacher_active():
-        section_teachers = _load_section_teachers(scenario.id)
+        section_teachers = _load_section_teachers(scenario.id, with_link_map=include_verdict)
         teacher_of, same_teacher = section_teachers.teacher_of, section_teachers.same_teacher
         new_teacher = teacher_of(
             existing_section.id if existing_section else None,
@@ -2184,26 +2229,34 @@ def preview_planned_section_slot_candidates(
             return set()
         return planned_students & course_students.get(normalize_code(other_code), set())
 
-    # The slot verdict's inputs, from the placements already loaded (no query;
-    # only with include_verdict): the blocked times and every placed course's
+    # The slot verdict's inputs, only with include_verdict: from the placements
+    # already loaded (no query), the blocked times and every placed course's
     # section masks, this course's being the existing sections the new one
-    # joins.
+    # joins; and its teachers (_VerdictTeachers: three queries with the links
+    # on and one teacher per section off, none otherwise).
     blocked_slots: set[tuple[str, str]] = set()
     course_masks: dict[str, list[int]] = {}
-    verdict_teachers = _VerdictTeachers.of(section_teachers)
+    verdict_teachers = _VerdictTeachers.none()
     # Who the publish check charges with the section: the one it has now (with
     # one teacher per section, creating it may name another: name_new_section).
     own_teachers: tuple = ()
     if include_verdict:
+        from core.services.course_identity import course_display_code
         from core.services.timetable_validation import blocked_slot_keys
 
-        own_teachers = verdict_teachers.keys(
-            (existing_section.course_key or existing_section.course_code)
-            if existing_section
-            else key,
-            existing_section.section if existing_section else section,
-            existing_meetings[0].instructor if existing_meetings else "",
-        )
+        verdict_teachers = _VerdictTeachers.load(scenario, section_teachers)
+        if existing_section is not None:
+            own_teachers = verdict_teachers.keys(
+                existing_section.course_key or existing_section.course_code,
+                existing_section.section,
+                existing_meetings[0].instructor if existing_meetings else "",
+            )
+        else:
+            # Not created yet: create_planned_section_placements stores ``code``
+            # as its course code and number, and writes no teacher's name.
+            own_teachers = verdict_teachers.new_section_keys(
+                key, section, course_display_code(key, code, code)
+            )
         blocked_slots = blocked_slot_keys(scenario.blocked_slots)
         course_masks = _nonzero_course_masks(
             _section_masks_by_course(

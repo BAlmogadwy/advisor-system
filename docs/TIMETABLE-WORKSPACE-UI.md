@@ -443,7 +443,9 @@ findings changed the plan:
    `effective_lecture_slots`). Without them the JSON is byte-identical, key
    order included, to an oracle recorded from `a5d8f96` before the change
    (`tests/fixtures/tw_slot_verdict_legacy.json`, with each request's query
-   count; the verdict adds no query). Settled where the spec was silent:
+   count, which every teacher mode keeps). The verdict adds no query, except
+   three with the links on and one teacher per section off (see Teachers).
+   Settled where the spec was silent:
    `source` names the check (the legacy evidence kind of the same check,
    else `cross_board_instructor`, `blocked_slot` or `h15_effect`), not a
    legacy evidence row: an item is judged by the verdict's own rules;
@@ -461,24 +463,31 @@ findings changed the plan:
    on another board is the same class (5c's rule, now `_same_class`, shared
    with room candidates), so the verdict never reports it as a room or
    teacher clash (the legacy evidence still does).
-   **Teachers (review round 1):** the verdict's `instructor` and
+   **Teachers (review rounds 1 and 2):** the verdict's `instructor` and
    `instructorElsewhere` items judge who teaches a section by the publish
    check's keys, `_publish_teacher_keys`, extracted from
-   `detect_board_conflicts`, which uses it too: the one-teacher map's
-   teacher when the map has the section (one to be decided charges nobody,
-   its row's name never counting), else its linked teachers (one teacher per
-   section off), else its meeting row's name; a teacher id never matches a
-   name. The one-teacher map comes from the
-   assignment the preview already loads, so this adds no query. The legacy
-   fields keep the legacy test (`_section_teacher_matcher`, which also
-   matches a charged teacher's name with a row's name), so the oracle still
-   holds. One known gap, left for the owner: with the links on and one
-   teacher per section off (the local default; production runs one teacher
-   per section) the publish check charges every linked teacher
-   (`build_section_instructor_ids`: three queries of its own, programme
-   requirements, course links, sections), which neither preview loads; the
-   verdict may not add a query, so there it reads the rows' names (pinned by
-   `test_with_the_links_on_and_one_teacher_off_the_names_decide`). In
+   `detect_board_conflicts`, which uses it too, over the map the publish
+   check reads (`_VerdictTeachers`): the one-teacher map's teacher when the
+   map has the section (one to be decided charges nobody, its row's name
+   never counting), else its linked teachers (one teacher per section off),
+   else its meeting row's name; a teacher id never matches a name. With one
+   teacher per section (production) the map is the `pr4_map` of the
+   assignment the preview already loads, built only for a verdict: no
+   query. With the links off there is no map and the rows' names decide.
+   With the links on and one teacher per section off (the local default,
+   where the department works; owner decision, review round 2) the verdict
+   reads every teacher linked to a section's course with
+   `linked_section_instructor_ids`, the code `build_section_instructor_ids`
+   runs in that mode: three queries (programme requirements; course links,
+   with their teachers' names from the join the active-teacher filter
+   already makes; sections), once per request and only with `verdict=1`.
+   Its resolver charges a planned section not created yet as the publish
+   check will once it is. V10 pins the cost: without `verdict=1` every mode
+   runs the oracle's query count; with it, the oracle's with the links off
+   and in one-teacher mode, and exactly three more with the links on and one
+   teacher per section off. The legacy fields keep the legacy test
+   (`_section_teacher_matcher`, which also matches a charged teacher's name
+   with a row's name), so the oracle still holds. In
    one-teacher mode the verdict judges with the map in force now: a section
    the map leaves to its layout-aware closure can be given another teacher
    once the edit is saved, and a planned section is judged with the teacher
@@ -491,10 +500,13 @@ findings changed the plan:
    rule (a warning at the threshold, info below) from
    `_cross_board_student_item` and their teachers from `_VerdictTeachers`.
    Known divergence on the publish side (a follow-up):
-   `detect_cross_board_conflicts` counts a shared section's own copies on two
-   boards as a cross-board pair sharing every student of the course, so the
-   publish check can warn (`cross_board_conflicts`) where the verdict, like
-   the legacy preview, rightly does not.
+   `detect_cross_board_conflicts` counts every same-course pair across
+   boards that overlaps in time, a shared section's own copies and
+   different sections of one course alike, each with "shared" = the
+   course's whole demand (the course's students met with themselves), so
+   the publish check can warn (`cross_board_conflicts`) where the verdict,
+   like the legacy preview, counts no students between sections of one
+   course.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
