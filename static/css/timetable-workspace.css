@@ -394,6 +394,36 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-workspace[data-busy="true"] .tw-card,
 .tw-workspace[data-busy="true"] .tw-section-item { cursor: progress; }
 
+/* ── The filter's view (design record §7.2 item 6, 6c) ──────────────
+   Dimmed (outside the filter or the programme lens): the course hue mixed
+   down, the theme's secondary ink and a lighter code — never opacity, never
+   dashed (the same-course echo is the dashed outline). The severity ring,
+   the marks, the selection, the echo and the focus ring all stay. */
+.tw-card[data-dim] { background: color-mix(in srgb, var(--tw-card-hue) 30%, var(--surface)); color: var(--t2); }
+.tw-card[data-dim] .cc { color: var(--t2); font-weight: 500; }
+.tw-card[data-dim] .ci, .tw-card[data-dim] .tw-card-name { color: var(--t2); }
+html[data-theme="dark"] .tw-card[data-dim] { background: color-mix(in srgb, var(--tw-card-hue) 6%, var(--surface)); color: var(--t2); }
+html[data-theme="dark"] .tw-card[data-dim] .cc { color: var(--t2); }
+@media (forced-colors: active) {
+  .tw-card[data-dim] { border: 1px dotted GrayText; }
+  /* A toned card keeps its severity weight; dotted still says dimmed. */
+  .tw-card.critical[data-dim], .tw-card.warning[data-dim] { border: 2px dotted CanvasText; }
+}
+.tw-legend .ux-legend-swatch[data-swatch="dim"] { background: color-mix(in srgb, #d4e6f1 30%, var(--surface)); }
+html[data-theme="dark"] .tw-legend .ux-legend-swatch[data-swatch="dim"] { background: color-mix(in srgb, #d4e6f1 6%, var(--surface)); }
+/* A table the filter's text matches nothing in: one row across it, the
+   global disclosure toggle, which opens its rows (they sit in a
+   `display: contents` rowgroup, so the grid lays them out as before). */
+.tw-fold-body { display: contents; }
+.tw-fold-cell { grid-column: 1 / -1; padding: 4px 8px; background: var(--surface); }
+.tw-fold-toggle { width: 100%; justify-content: flex-start; gap: 8px; font-size: var(--text-xs); }
+.tw-fold-tones { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
+.tw-fold-tone { display: inline-flex; align-items: center; gap: 3px; }
+.tw-fold-tone .ux-tone-icon { width: 12px; height: 12px; }
+.tw-fold-tone[data-tone="warning"] .ux-tone-icon { color: var(--tw-warning-ink); }
+.tw-fold-toggle { --tw-warning-ink: #9a3b06; }
+html[data-theme="dark"] .tw-fold-toggle { --tw-warning-ink: var(--sev-warning); }
+
 /* ── Inspector ──────────────────────────────────────────────────── */
 /* The tab strip and the collapse button share one row; the button is not a
    tab, so it sits beside the tablist rather than inside it. */

@@ -281,7 +281,8 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
                   toned.focus();
                   const focused = getComputedStyle(toned).boxShadow.includes(critical);
                   toned.blur();
-                  const cell = document.querySelector('#twGrid [role="gridcell"]:not(:has(.tw-card))');
+                  // A day cell (a table's first gridcell is its fold, hidden while unfiltered).
+                  const cell = document.querySelector('#twGrid .tw-cell[role="gridcell"]:not(:has(.tw-card))');
                   cell.focus();
                   const inset = getComputedStyle(cell).outlineOffset;
                   probe.remove();

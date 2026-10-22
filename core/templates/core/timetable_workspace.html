@@ -12,7 +12,7 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
-  <link href="{% static 'css/timetable-workspace.css' %}?v=16" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=17" rel="stylesheet">
   <link href="{% static 'css/timetable-meeting-policy.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
@@ -140,8 +140,10 @@
     <div class="fb-search fb-sm">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <label class="visually-hidden" for="twSearch">{% if LANGUAGE_CODE == 'ar' %}تصفية الجدول{% else %}Filter the timetable{% endif %}</label>
-      <input type="search" id="twSearch" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}مقرر، قاعة، مدرس أو برنامج{% else %}Course, room, teacher or programme{% endif %}" aria-describedby="twSearchCount">
+      <input type="search" id="twSearch" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}مقرر، قاعة، مدرس أو برنامج{% else %}Course, room, teacher or programme{% endif %}" aria-describedby="twSearchNote">
       <span class="tw-search-count tnum" id="twSearchCount" aria-live="polite"></span>
+      {# The count in words, with the tables folded for no match (written by the page). #}
+      <span class="visually-hidden" id="twSearchNote"></span>
     </div>
   </div>
   <button class="btn btn-sm btn-neutral btn-icon" id="twUndo" type="button" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Undo{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Undo{% endif %}">
@@ -247,6 +249,9 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
     </div>
     <p id="twGridKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الأوقات والأيام والشعب في الوقت نفسه · Page Up/Down: الجدول التالي · Enter: التحديد · Esc: إلغاء التحديد · M: النقل · R: تغيير القاعة{% else %}Arrows: times, days and the sections at one time · Page Up/Down: next table · Enter: select · Esc: clear the selection · M: move · R: change the room{% endif %}</p>
     <p id="twBoardStatus" class="visually-hidden" role="status" aria-live="polite"></p>
+    {# Why a card is dimmed, named by its aria-describedby; outside #twGrid, so writing them never touches the board. #}
+    <span id="twDimNoteFilter" class="visually-hidden"></span>
+    <span id="twDimNoteLens" class="visually-hidden"></span>
   </div>
 
   <aside class="tw-right ux-pane" id="twRight" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
@@ -425,6 +430,6 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-room-choice.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=56"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=57"></script>
 <script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}

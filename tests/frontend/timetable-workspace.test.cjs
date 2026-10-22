@@ -1027,10 +1027,12 @@ test('rooms are words everywhere, and those are the words the filter finds', asy
   assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /No room|UNASSIGNED/);
   const search = h.d.getElementById('twSearch');
   const find = async text => { search.value = text; search.dispatchEvent(new h.w.Event('input')); await settle(); };
+  // The filter dims what does not match (6c): every card stays on the board.
+  const dims = () => [10, 11, 12].map(id => card(h, id).dataset.dim || '');
   await find('no room');
-  assert.ok(card(h, 10), 'the meeting with no room matches what its card says');
+  assert.deepEqual(dims(), ['', 'filter', 'filter'], 'the meeting with no room matches what its card says');
   await find('unassigned');
-  assert.equal(card(h, 10), null, 'the placer’s marker is not something the user can see, nor find');
+  assert.deepEqual(dims(), ['filter', 'filter', 'filter'], 'the placer’s marker is not something the user can see, nor find');
 });
 
 test('while a switched board loads, the publish check’s room and blocked-time items stand in for it', async t => {
@@ -1284,12 +1286,402 @@ test('search finds a section by the teacher its card names, never by a stale mee
   await h.select();
   const search = h.d.getElementById('twSearch');
   const find = async text => { search.value = text; search.dispatchEvent(new h.w.Event('input')); await settle(); };
+  // The filter dims what does not match (6c): every card stays on the board.
+  const dims = () => [10, 11].map(id => card(h, id).dataset.dim || '');
   await find('dr rule');
-  assert.ok(card(h, 10));
+  assert.deepEqual(dims(), ['', 'filter']);
   await find('stale name');
-  assert.equal(card(h, 10), null, 'the stale name is not on the card, so it finds nothing');
+  assert.deepEqual(dims(), ['filter', 'filter'], 'the stale name is not on the card, so it finds nothing');
   await find('dr meeting');
-  assert.ok(card(h, 11), 'a section the rule leaves to its meetings keeps that name');
+  assert.deepEqual(dims(), ['filter', ''], 'a section the rule leaves to its meetings keeps that name');
+});
+
+/* ── The filter's view: folds and dims in place (design record §7.2 item 6, 6c) ──
+   Every meeting stays drawn. A table the text matches nothing in folds to one
+   row (its toggle, the table's one keyboard stop); the other cards the text
+   misses are dimmed, by attributes only, so typing never draws the board
+   again. Programme tokens (the interim lens) dim and never fold. */
+const VIEW_LABS = [{ label: 'L1', start: '10:30', end: '12:10' }];
+function viewHarness(t, { placements, labs = VIEW_LABS, lens = null, q = noRooms, arabic = false, other = null } = {}) {
+  return harness(t, url => {
+    if (url === '/ops/tw/boards/2/') return { placements, slot_config: scenario.slot_config, lab_slot_config: labs };
+    if (other && url.startsWith('/ops/tw/boards/?')) return { boards: [board, { ...board, id: 3, label: 'Term 8', nominal_term: 8 }] };
+    if (other && url === '/ops/tw/boards/3/') return { placements: other, slot_config: scenario.slot_config, lab_slot_config: labs };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return q;
+    if (url.includes('/plan-lens/') && lens) return { plan_lens: lens };
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    return undefined;
+  }, {}, arabic);
+}
+// S1: two lectures; S2: a lecture and a lab. With labs on, each group has a lab table.
+const viewRows = () => [
+  at(10, { course_code: 'CS101' }),
+  at(11, { course_code: 'MATH1', day: 'MON' }),
+  at(12, { course_code: 'PHYS1', section: 'S2', term_section_id: 212 }),
+  at(13, { course_code: 'CS102', section: 'S2', term_section_id: 213, start_time: '10:30', end_time: '12:10' }),
+];
+const findText = async (h, text) => {
+  const search = h.d.getElementById('twSearch');
+  search.value = text;
+  search.dispatchEvent(new h.w.Event('input'));
+  await settle();
+};
+function foldOf(h, group, kind) {
+  const table = h.d.querySelector(`#twGrid [role="grid"][data-group="${group}"][data-kind="${kind}"]`);
+  const fold = table.querySelector(':scope > .tw-fold-row');
+  const body = table.querySelector(':scope > .tw-fold-body');
+  const toggle = fold.querySelector('.tw-fold-toggle');
+  const state = [fold.hidden ? 'row hidden' : 'row shown', toggle.getAttribute('aria-expanded'), body.hidden ? 'rows hidden' : 'rows shown'];
+  return { table, fold, body, toggle, state, label: toggle.querySelector('.ux-disclosure-label').textContent };
+}
+const NO_FOLD = ['row hidden', 'true', 'rows shown'];
+const FOLDED = ['row shown', 'false', 'rows hidden'];
+const OPENED = ['row shown', 'true', 'rows shown'];
+const DAYS5 = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
+const dimsOf = (h, ids) => ids.map(id => card(h, id).dataset.dim || '');
+const boardNavOf = h => h.w.UXControls.roving(h.d.getElementById('twGrid'));
+
+test('FL1 the text folds each table it matches nothing in and dims the rest of the open ones; every meeting stays drawn', async t => {
+  const h = await viewHarness(t, { placements: viewRows() });
+  await h.select();
+  const tables = [['S1', 'lecture'], ['S1', 'lab'], ['S2', 'lecture'], ['S2', 'lab']];
+  assert.deepEqual(tables.map(([g, k]) => foldOf(h, g, k).state), Array(4).fill(NO_FOLD), 'no text: nothing folds');
+  assert.equal(h.d.querySelectorAll('#twGrid [data-dim]').length, 0);
+  assert.equal(h.d.getElementById('twLegendDim').hidden, true);
+  await findText(h, 'cs1');
+  assert.deepEqual(tables.map(([g, k]) => foldOf(h, g, k).state), [NO_FOLD, FOLDED, FOLDED, NO_FOLD],
+    'folded per table: a table with no match (an empty one too), never its whole group');
+  assert.equal(foldOf(h, 'S1', 'lab').label, 'Labs · no match · 0 meetings');
+  assert.equal(foldOf(h, 'S2', 'lecture').label, 'Lectures · no match · 1 meeting');
+  assert.equal(foldOf(h, 'S2', 'lecture').toggle.getAttribute('aria-controls'), foldOf(h, 'S2', 'lecture').body.id);
+  assert.equal(foldOf(h, 'S2', 'lecture').fold.firstElementChild.getAttribute('aria-colspan'), '2', 'the day column and the one slot');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')].map(c => c.dataset.placementId).sort(), ['10', '11', '12', '13'], 'nothing removed');
+  assert.deepEqual(dimsOf(h, [10, 11, 12, 13]), ['', 'filter', 'filter', '']);
+  assert.equal(card(h, 11).getAttribute('aria-describedby'), 'twDimNoteFilter');
+  assert.equal(card(h, 10).hasAttribute('aria-describedby'), false);
+  assert.equal(h.d.getElementById('twDimNoteFilter').textContent, 'Outside the filter');
+  assert.ok(!h.d.getElementById('twGrid').contains(h.d.getElementById('twDimNoteFilter')), 'the notes are outside the board');
+  assert.equal(card(h, 11).title, 'Outside the filter', 'its title says why');
+  assert.equal(h.d.getElementById('twLegendDim').hidden, false);
+  assert.equal(h.d.getElementById('twLegendDim').textContent, 'Dimmed: outside the filter');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-group-meta')].map(m => m.textContent), ['2 courses · 1 match', '2 courses · 1 match']);
+  const input = h.d.getElementById('twSearch');
+  assert.equal(h.d.getElementById('twSearchCount').textContent, '2 of 4');
+  assert.equal(input.title, '2 of 4 meetings match; tables folded for no match: 2.');
+  assert.equal(h.d.getElementById('twSearchNote').textContent, input.title);
+  assert.equal(input.getAttribute('aria-describedby'), 'twSearchNote');
+  // Drawn again with the text on (as after an edit): every meeting, the same view.
+  h.w.renderGrid();
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')].map(c => c.dataset.placementId).sort(), ['10', '11', '12', '13'], 'a redraw removes nothing either');
+  assert.deepEqual(tables.map(([g, k]) => foldOf(h, g, k).state), [NO_FOLD, FOLDED, FOLDED, NO_FOLD]);
+  assert.deepEqual(dimsOf(h, [10, 11, 12, 13]), ['', 'filter', 'filter', '']);
+  await findText(h, '');
+  assert.deepEqual(tables.map(([g, k]) => foldOf(h, g, k).state), Array(4).fill(NO_FOLD), 'cleared: nothing folds');
+  assert.equal(h.d.querySelectorAll('#twGrid [data-dim], #twGrid .tw-card[aria-describedby]').length, 0);
+  assert.equal(h.d.getElementById('twLegendDim').hidden, true);
+  assert.deepEqual([h.d.getElementById('twSearchCount').textContent, input.title, h.d.getElementById('twSearchNote').textContent], ['', '', '']);
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-group-meta')].map(m => m.textContent), ['2 courses', '2 courses']);
+  assert.deepEqual(h.errors, []);
+  // A board with nothing on it: its empty tables fold too.
+  const empty = await viewHarness(t, { placements: [] });
+  await empty.select();
+  await findText(empty, 'cs1');
+  assert.deepEqual([foldOf(empty, '-', 'lecture').state, foldOf(empty, '-', 'lab').state], [FOLDED, FOLDED]);
+  empty.w.renderGrid();
+  assert.deepEqual([foldOf(empty, '-', 'lecture').state, foldOf(empty, '-', 'lab').state], [FOLDED, FOLDED], 'and when drawn again');
+  assert.equal(foldOf(empty, '-', 'lecture').label, 'Lectures · no match · 0 meetings');
+  assert.equal(empty.d.getElementById('twSearch').title, '0 of 0 meetings match; tables folded for no match: 2.');
+});
+
+test('FL2 typing keeps the same card nodes and the keyboard on a focused card; the board is never drawn again', async t => {
+  const h = await viewHarness(t, { placements: viewRows() });
+  await findText(h, 'cs1');  // before any scenario is open: nothing to fold, nothing thrown
+  assert.equal(h.d.getElementById('twSearchCount').textContent, '0 of 0');
+  await findText(h, '');
+  await h.select();
+  const nodes = [...h.d.querySelectorAll('#twGrid .tw-card')];
+  card(h, 11).focus();
+  const observer = new h.w.MutationObserver(() => {});
+  observer.observe(h.d.getElementById('twGrid'), { childList: true, subtree: true });
+  for (const text of ['c', 'cs', 'cs1', 'math', 'zzz', '']) {
+    await findText(h, text);
+    assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')], nodes, `"${text}": the same cards`);
+    assert.equal(h.d.activeElement, card(h, 11), `"${text}": the keyboard stays`);
+  }
+  assert.deepEqual(observer.takeRecords(), [], 'no node of the board added or removed');
+});
+
+test('FL3 a fold counts its toned meetings with the icon and the words; a later warning updates the count in place', async t => {
+  const rows = [...viewRows(), at(14, { course_code: 'BIO1', section: 'S2', term_section_id: 214, day: 'TUE' })];
+  rows[2] = { ...rows[2], course_key: 'PHYS1', room: 'UNASSIGNED', room_state: 'unassigned' };  // PHYS1: no room, critical
+  const h = await viewHarness(t, { placements: rows });
+  await h.select();
+  await findText(h, 'cs1');
+  assert.equal(card(h, 12).title, 'Blocks publishing: No room | PHYS1 | Outside the filter', 'the tone, the identity, then why it is dimmed');
+  assert.ok(card(h, 12).classList.contains('critical'), 'a dimmed card keeps its tone');
+  const fold = () => foldOf(h, 'S2', 'lecture');
+  assert.deepEqual(fold().state, FOLDED);
+  const tone = name => fold().fold.querySelector(`.tw-fold-tone[data-tone="${name}"]`);
+  assert.deepEqual([tone('critical').hidden, tone('critical').querySelector('.tw-fold-n').textContent], [false, '1']);
+  assert.ok(tone('critical').querySelector('.ux-tone-icon[data-tone="critical"][aria-hidden="true"]'));
+  assert.equal(tone('warning').hidden, true, 'no warning in it');
+  assert.equal(fold().toggle.textContent.replace(/\s+/g, ' ').trim(), 'Lectures · no match · 2 meetingsBlocks publishing: 1Lowers quality: 0');
+  // A later answer (the quality's rooms) warns about BIO1: counted in place.
+  const nav = boardNavOf(h);
+  let refreshes = 0;
+  const refresh = nav.refresh;
+  nav.refresh = () => { refreshes++; refresh(); };
+  t.after(() => { nav.refresh = refresh; });
+  const observer = new h.w.MutationObserver(() => {});
+  observer.observe(h.d.getElementById('twGrid'), { childList: true, subtree: true });
+  // The count is a live region: the same words are not written again.
+  const live = new h.w.MutationObserver(() => {});
+  live.observe(h.d.getElementById('twSearchCount'), { childList: true, characterData: true, subtree: true });
+  const row = fold().fold;
+  h.w.TW.quality = { ...noRooms, rooms: { assessed: true, shortages: 1, details: [{ course_code: 'BIO1', placement_ids: [14], rooms: ['R1'], reasons: ['undersized'], required_capacity: 30 }] } };
+  h.w.renderBoardIssueViews();
+  assert.deepEqual([tone('warning').hidden, tone('warning').querySelector('.tw-fold-n').textContent], [false, '1']);
+  assert.equal(tone('critical').querySelector('.tw-fold-n').textContent, '1');
+  assert.equal(fold().fold, row, 'the same row');
+  assert.deepEqual(observer.takeRecords(), [], 'counts written in place, no node added or removed');
+  assert.equal(refreshes, 0, 'tones never make the board read its stops again');
+  h.w.applyCardTones();
+  assert.equal(refreshes, 0);
+  assert.equal(h.d.getElementById('twSearchCount').textContent, '2 of 5');
+  assert.deepEqual(live.takeRecords(), [], 'the count was not read out again');
+});
+
+test('FL4 a fold the user opens stays open through tone redraws and a redraw; new text folds it again', async t => {
+  const h = await viewHarness(t, { placements: viewRows() });
+  await h.select();
+  await findText(h, 'cs1');
+  const fold4 = () => foldOf(h, 'S2', 'lecture');
+  const title = () => h.d.getElementById('twSearch').title;
+  assert.equal(title(), '2 of 4 meetings match; tables folded for no match: 2.');
+  fold4().toggle.click();
+  assert.deepEqual(fold4().state, OPENED);
+  assert.deepEqual([...h.w.TW.foldOpen], ['S2|lecture']);
+  assert.equal(title(), '2 of 4 meetings match; tables folded for no match: 1.', 'opened: no longer folded');
+  h.w.applyCardTones();
+  assert.deepEqual(fold4().state, OPENED, 'a tone redraw keeps it open');
+  h.w.renderGrid();
+  assert.deepEqual(fold4().state, OPENED, 'the same table and text, drawn again: still open');
+  await findText(h, 'cs10');
+  assert.deepEqual(fold4().state, FOLDED, 'new text: folded again');
+  await findText(h, 'cs1');
+  assert.deepEqual(fold4().state, FOLDED, 'and the memory is gone with the old text');
+  // Opened, then shut by the user: shut it stays.
+  fold4().toggle.click();
+  fold4().toggle.click();
+  assert.deepEqual(fold4().state, FOLDED);
+  h.w.applyCardTones();
+  assert.deepEqual(fold4().state, FOLDED);
+  assert.deepEqual([...h.w.TW.foldOpen], []);
+  // The memory is the board's: another board with the same tables starts folded.
+  const b = await viewHarness(t, { placements: viewRows(), other: viewRows() });
+  await b.select();
+  await findText(b, 'cs1');
+  foldOf(b, 'S2', 'lecture').toggle.click();
+  await b.w.selectBoard(3);
+  assert.deepEqual(foldOf(b, 'S2', 'lecture').state, FOLDED, 'another board: folded');
+  await b.w.selectBoard(2);
+  assert.deepEqual(foldOf(b, 'S2', 'lecture').state, FOLDED, 'and back: the memory went with the board');
+});
+
+test('FL5 locating a meeting inside a fold opens it, pulses the card and gives the board’s stop to it', async t => {
+  const rows = viewRows();
+  rows[2] = { ...rows[2], room: 'UNASSIGNED', room_state: 'unassigned' };  // PHYS1: no room, critical
+  const h = await viewHarness(t, { placements: rows });
+  await h.select();
+  await findText(h, 'cs1');
+  assert.deepEqual(foldOf(h, 'S2', 'lecture').state, FOLDED);
+  h.w.renderRightPanel('issues');
+  const row = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')].find(r => r.querySelector('.tw-issue-kind').textContent.startsWith('No room'));
+  const events = [];
+  h.d.addEventListener('ux-disclosure', event => events.push([event.target.dataset.foldKey, event.detail.open]));
+  row.focus();
+  row.click();
+  await settle();
+  assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED);
+  assert.deepEqual(events, [['S2|lecture', true]], 'opened as a click on its toggle would: one event');
+  assert.deepEqual([...h.w.TW.foldOpen], ['S2|lecture']);
+  assert.ok(card(h, 12).classList.contains('highlight'));
+  assert.equal(card(h, 12).tabIndex, 0, 'the board’s one stop');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')], [card(h, 12)]);
+  assert.equal(h.d.activeElement, row, 'the keyboard stays where it was');
+  assert.equal(h.w.openFoldOf(card(h, 10)), false, 'a card outside a fold: nothing to open');
+});
+
+test('FL6 the text filter finds what cards show, never the lens’s own words', async t => {
+  const lens = { plans: ['AI'], courses: {}, sections: { 110: { owner: 'UNALLOCATED', owner_label: 'Unallocated', role: 'core', filter_plans: ['AI'] } } };
+  const h = await viewHarness(t, { lens, labs: [], placements: [
+    at(10, { course_code: 'CS101', room: 'UNASSIGNED', room_state: 'unassigned', teacher: { name: 'Dr Rule', status: 'pinned' } }),
+  ] });
+  await h.select();
+  for (const text of ['unallocated', 'core', 'Unallocated']) {
+    await findText(h, text);
+    assert.deepEqual(dimsOf(h, [10]), ['filter'], text);
+    assert.deepEqual(foldOf(h, 'S1', 'lecture').state, FOLDED, text);
+  }
+  for (const text of ['no room', 'dr rule', 'cs101 sun']) {
+    await findText(h, text);
+    assert.deepEqual(dimsOf(h, [10]), [''], text);
+    assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, text);
+  }
+});
+
+test('FL7 the keyboard: ↓ or PageDown reaches a folded table’s toggle; Enter opens it; ↓ goes into it; a toggle is never a Tab stop of its own', async t => {
+  const h = await viewHarness(t, { labs: [], placements: [
+    at(10, { course_code: 'CS101' }),
+    at(12, { course_code: 'PHYS1', section: 'S2', term_section_id: 212 }),
+  ] });
+  await h.select();
+  await findText(h, 'cs1');
+  const fold = () => foldOf(h, 'S2', 'lecture');
+  const toggles = () => [...h.d.querySelectorAll('#twGrid .tw-fold-toggle')];
+  assert.ok(toggles().every(toggle => toggle.tabIndex === -1), 'drawn out of the tab order');
+  boardNavOf(h).active('placement:10', { focus: true });
+  for (let i = 0; i < 4; i++) keyOn(h, 'ArrowDown');
+  assert.equal(h.d.activeElement.dataset.focusKey, 'cell:S1:lecture|THU|09:00');
+  keyOn(h, 'ArrowDown');
+  assert.equal(h.d.activeElement, fold().toggle, '↓ from the last day reaches the next table’s fold');
+  assert.deepEqual(toggles().map(toggle => toggle.tabIndex), [-1, 0], 'one stop: the active toggle; the hidden one is not a stop');
+  keyOn(h, 'PageUp');
+  assert.equal(h.d.activeElement, card(h, 10));
+  keyOn(h, 'PageDown');
+  assert.equal(h.d.activeElement, fold().toggle, 'PageDown too');
+  const enter = keyOn(h, 'Enter');
+  assert.equal(enter.defaultPrevented, false, 'Enter is the button’s own');
+  fold().toggle.click();  // what the browser does with that Enter
+  assert.deepEqual(fold().state, OPENED);
+  // A cell's stop is its card, or the cell when it holds none.
+  const stops = [...fold().body.querySelectorAll('.tw-cell')].map(cell => cell.querySelector('.tw-card') || cell);
+  assert.equal(stops.length, 5);
+  assert.ok(stops.every(stop => stop.hasAttribute('data-ux-roving') && stop.tabIndex === -1), 'its rows are stops now, read again at once');
+  keyOn(h, 'ArrowDown');
+  assert.equal(h.d.activeElement, card(h, 12), '↓ goes into the table');
+  keyOn(h, 'ArrowUp');
+  assert.equal(h.d.activeElement, fold().toggle, '↑ back to its fold, which can shut it again');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')], [fold().toggle]);
+  fold().toggle.click();
+  assert.deepEqual(fold().state, FOLDED);
+  assert.ok(stops.every(stop => !stop.hasAttribute('data-ux-roving')), 'shut: its rows are not stops');
+  assert.deepEqual(toggles().map(toggle => toggle.tabIndex), [-1, 0]);
+  // The text cleared while the stop is a fold toggle: the board's one stop
+  // moves to something shown (Tab must still reach the board).
+  h.d.getElementById('twSearch').focus();
+  await findText(h, '');
+  const zero = [...h.d.querySelectorAll('#twGrid [tabindex="0"]')];
+  assert.equal(zero.length, 1);
+  assert.equal(zero[0].closest('[hidden]'), null, 'a stop that is shown');
+  assert.ok(toggles().every(toggle => toggle.tabIndex === -1 || toggle.closest('[hidden]')), 'no toggle is a Tab stop of its own');
+});
+
+test('FL8 a dimmed card is an ordinary card: it drags, Enter selects it, M and R act on it', async t => {
+  const h = await viewHarness(t, { placements: viewRows() });
+  await h.select();
+  await findText(h, 'cs1');
+  assert.equal(card(h, 11).dataset.dim, 'filter');
+  assert.equal(card(h, 11).draggable, true);
+  const acted = [];
+  h.w.TW.keyActions.move = p => acted.push(['move', p.id]);
+  h.w.TW.keyActions.room = p => acted.push(['room', p.id]);
+  boardNavOf(h).active('placement:11', { focus: true });
+  keyOn(h, 'Enter');
+  assert.equal(h.w.TW.selectedPlacementId, 11);
+  keyOn(h, 'm');
+  keyOn(h, 'r');
+  assert.deepEqual(acted, [['move', 11], ['room', 11]]);
+  assert.equal(card(h, 11).classList.contains('is-selected'), true, 'selected and still dimmed');
+  assert.equal(card(h, 11).dataset.dim, 'filter');
+});
+
+test('FL9 the count, its title and the folds count meetings by the language’s plural (1, 2, 3, 11)', async t => {
+  const forms = {
+    en: { 1: ['1 meeting matches', '1 meeting'], 2: ['2 meetings match', '2 meetings'], 3: ['3 meetings match', '3 meetings'], 11: ['11 meetings match', '11 meetings'] },
+    ar: { 1: ['لقاء واحد', 'لقاء واحد'], 2: ['لقاءين', 'لقاءان'], 3: ['3 لقاءات', '3 لقاءات'], 11: ['11 لقاءً', '11 لقاءً'] },
+  };
+  for (const arabic of [false, true]) {
+    for (const n of [1, 2, 3, 11]) {
+      const rows = Array.from({ length: n }, (_, i) => at(10 + i, { course_code: `X${i}Y`, day: DAYS5[i % 5] }));
+      const h = await viewHarness(t, { placements: rows, labs: [], arabic });
+      await h.select();
+      const [ofTotal, nominative] = forms[arabic ? 'ar' : 'en'][n];
+      await findText(h, 'x0y');
+      const input = h.d.getElementById('twSearch');
+      assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? `1 من ${n}` : `1 of ${n}`);
+      assert.equal(input.title, arabic ? `المطابق للتصفية: 1 من ${ofTotal}.` : `1 of ${n} ${ofTotal.replace(/^\d+ /, '')}.`);
+      await findText(h, 'qqq');
+      assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? `0 من ${n}` : `0 of ${n}`, 'nothing matches');
+      assert.equal(foldOf(h, 'S1', 'lecture').label, arabic ? `المحاضرات · لا شيء مطابق · ${nominative}` : `Lectures · no match · ${nominative}`);
+      assert.equal(input.title, arabic
+        ? `المطابق للتصفية: 0 من ${ofTotal}؛ الجداول المطويّة لعدم وجود مطابق: 1.`
+        : `0 of ${n} ${ofTotal.replace(/^\d+ /, '')}; tables folded for no match: 1.`);
+      if (arabic) {
+        assert.equal(h.d.getElementById('twDimNoteFilter').textContent, 'خارج التصفية');
+        assert.equal(h.d.getElementById('twLegendDim').textContent, 'باهتة: خارج التصفية');
+        assert.equal(card(h, 10).title, 'خارج التصفية');
+      }
+    }
+  }
+  // A group heading's matches, in Arabic.
+  const matches = { 0: 'لا شيء مطابق', 1: 'مطابقة واحدة', 2: 'مطابقتان', 3: '3 مطابقات', 11: '11 مطابقةً' };
+  const courses = { 1: 'مقرر واحد', 2: 'مقرران', 3: '3 مقررات', 11: '11 مقرراً' };
+  for (const n of [1, 2, 3, 11]) {
+    const rows = [...Array.from({ length: n }, (_, i) => at(10 + i, { course_code: `X${i}Y`, day: DAYS5[i % 5] })),
+      at(40, { course_code: 'ZED', section: 'S2', term_section_id: 240 })];
+    const h = await viewHarness(t, { placements: rows, labs: [], arabic: true });
+    await h.select();
+    await findText(h, 'x');
+    assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-group-meta')].map(m => m.textContent), [`${courses[n]} · ${matches[n]}`, `${courses[1]} · ${matches[0]}`]);
+  }
+});
+
+test('FL10 a programme token (the interim lens) dims, by the union of the programmes, and never folds; SHARED narrows', async t => {
+  const lens = { plans: ['AI', 'AI2'], courses: {}, sections: {
+    110: { filter_plans: ['AI'] },
+    111: { filter_plans: ['AI2'], shared: true },
+    112: { filter_plans: ['AI2'] },
+  } };
+  for (const arabic of [false, true]) {
+    const h = await viewHarness(t, { lens, labs: [], arabic, placements: [
+      at(10, { course_code: 'CS101', term_section_id: 110 }),
+      at(11, { course_code: 'MATH1', term_section_id: 111, day: 'MON' }),
+      at(12, { course_code: 'PHYS1', term_section_id: 112, day: 'TUE' }),
+      at(20, { course_code: 'BIO1', section: 'S2', term_section_id: 220 }),  // in no programme: its table is all dimmed
+    ] });
+    await h.select();
+    await findText(h, 'ai2');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', '', 'lens']);
+    assert.deepEqual([foldOf(h, 'S1', 'lecture').state, foldOf(h, 'S2', 'lecture').state], [NO_FOLD, NO_FOLD], 'the lens never folds');
+    assert.equal(card(h, 10).getAttribute('aria-describedby'), 'twDimNoteLens');
+    const note = arabic ? 'خارج تصفية البرامج: \u2066AI2\u2069' : 'Outside the programme filter: \u2066AI2\u2069';
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, note);
+    assert.equal(card(h, 10).title, note);
+    assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? '2 من 4' : '2 of 4');
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? 'المطابق للتصفية: 2 من 4 لقاءات؛ تصفية البرامج: \u2066AI2\u2069.' : '2 of 4 meetings match; programme filter: \u2066AI2\u2069.',
+      'the count’s words say the programme filter');
+    await findText(h, 'ai ai2');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['', '', '', 'lens'], 'several programmes: a union');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
+      ? 'خارج تصفية البرامج: \u2066AI\u2069، \u2066AI2\u2069' : 'Outside the programme filter: \u2066AI\u2069, \u2066AI2\u2069');
+    await findText(h, 'shared ai2');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED: the shared sections of the programmes');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
+      ? 'خارج تصفية البرامج: \u2066AI2\u2069، الشعب المشتركة' : 'Outside the programme filter: \u2066AI2\u2069, shared sections');
+    await findText(h, 'shared');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED alone: every shared section');
+    // A programme and text: the text folds, the programme only dims.
+    await findText(h, 'ai2 math');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['filter lens', '', 'filter', 'filter lens']);
+    assert.equal(card(h, 10).getAttribute('aria-describedby'), 'twDimNoteFilter twDimNoteLens');
+    assert.deepEqual([foldOf(h, 'S1', 'lecture').state, foldOf(h, 'S2', 'lecture').state], [NO_FOLD, FOLDED]);
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? 'المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1؛ تصفية البرامج: \u2066AI2\u2069.'
+      : '1 of 4 meetings match; tables folded for no match: 1; programme filter: \u2066AI2\u2069.');
+  }
 });
 
 /* ── Programme mark in Selection (PR 4b) ── */
@@ -1537,11 +1929,13 @@ test('a programme search filters anew when the lens is read again', async t => {
   search.value = 'AI2';
   search.dispatchEvent(new h.w.Event('input'));
   await settle();
-  assert.equal(card(h, 10), null, 'not an AI2 section yet');
+  const node = card(h, 10);
+  assert.equal(node.dataset.dim, 'lens', 'not an AI2 section yet: dimmed by the lens (6c), still on the board');
   plans = ['AI', 'AI2'];
   h.w.TW.dataVersion++;
   await h.w.refreshPlanLens();
-  assert.ok(card(h, 10), 'the new lens puts it in AI2');
+  assert.equal(card(h, 10), node, 'a new lens dims anew in place: the same card');
+  assert.equal(node.dataset.dim, undefined, 'the new lens puts it in AI2');
 });
 
 test('a lens that cannot be read offers Refresh and is not left loading', async t => {
@@ -1752,12 +2146,18 @@ test('W1 the board is a grid: named tables, a header row, day row headers, cells
   const grids = [...h.d.querySelectorAll('#twGrid [role="grid"]')];
   assert.deepEqual(grids.map(g => g.getAttribute('aria-label')), ['Lectures']);
   assert.equal(grids[0].getAttribute('aria-describedby'), 'twGridKeys');
-  const header = grids[0].querySelector('[role="row"]');
+  // Its first row is its fold (6c), hidden with no filter; the header and the
+  // day rows are in the rowgroup the fold controls.
+  const fold = grids[0].firstElementChild;
+  assert.deepEqual([fold.className, fold.getAttribute('role'), fold.hidden], ['ux-grid-row tw-fold-row', 'row', true]);
+  const body = grids[0].querySelector(':scope > [role="rowgroup"]');
+  assert.equal(fold.querySelector('.tw-fold-toggle').getAttribute('aria-controls'), body.id);
+  const header = body.querySelector('[role="row"]');
   const columns = [...header.querySelectorAll('[role="columnheader"]')];
   assert.equal(columns[0].textContent, 'Day');
   assert.equal(strip(columns[1].getAttribute('aria-label')), 'Slot 1, 09:00–10:15');
   assert.deepEqual([...grids[0].querySelectorAll('[role="rowheader"]')].map(r => r.getAttribute('aria-label')), ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday']);
-  const cells = [...grids[0].querySelectorAll('[role="gridcell"]')];
+  const cells = [...body.querySelectorAll('[role="gridcell"]')];
   assert.equal(cells.length, 5);
   assert.ok(cells.every(cell => cell.dataset.uxCol === '540'));
   const c = card(h, 10);
@@ -1770,7 +2170,7 @@ test('W1 the board is a grid: named tables, a header row, day row headers, cells
     [['Section S1 · Lectures', 'twGridKeys'], ['Section S2 · Lectures', null]]);
   two.w.renderGrid();  // drawn again: still only the first
   assert.deepEqual([...two.d.querySelectorAll('#twGrid [role="grid"]')].map(g => g.getAttribute('aria-describedby')), ['twGridKeys', null]);
-  const firstCells = [...two.d.querySelectorAll('#twGrid [role="grid"]')].map(g => g.querySelector('[role="gridcell"]').dataset.focusKey);
+  const firstCells = [...two.d.querySelectorAll('#twGrid [role="grid"]')].map(g => g.querySelector('.tw-cell[role="gridcell"]').dataset.focusKey);
   assert.deepEqual(firstCells, ['cell:S1:lecture|SUN|09:00', 'cell:S2:lecture|SUN|09:00'], 'a cell key names its group');
   // A card names its own day and time.
   assert.match(c.querySelector('.visually-hidden').textContent, /^Sunday \u206609:00–10:15\u2069$/);

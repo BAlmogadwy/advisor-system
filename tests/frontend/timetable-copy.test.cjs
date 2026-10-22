@@ -19,6 +19,8 @@ async function harness(t, split, intercept = () => undefined, arabic = false) {
   w.addEventListener('error', event => errors.push(event.error));
   t.after(() => { w.close(); assert.deepEqual(errors, []); });
   Object.assign(w, { LANGUAGE_CODE: arabic ? 'ar' : 'en', djCsrfToken: 'test', INITIAL_SCENARIO: '', INITIAL_BOARD: '', DEFAULT_YEAR: '1448', DEFAULT_TERM: '1' });
+  // base.html loads shared-utils (esc, pluralAr) on every page.
+  w.eval(read('static/js/shared-utils.js'));
   w.esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   w._injectCsrf = value => value;
   w.debounce = fn => fn;

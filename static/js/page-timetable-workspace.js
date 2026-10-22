@@ -60,6 +60,11 @@ const TW = {
     sections: {},
     loaded: false,
   },
+  // The tables the user opened while the filter folds them ({group}|{kind}):
+  // page memory for one board and one text, never stored (design record
+  // §7.2 item 6, 6c). `foldScope` is the board and text it holds for.
+  foldOpen: new Set(),
+  foldScope: '',
   // Every successful write bumps this. Scenario-wide reads (quality, publish
   // readiness) are cached against it, so switching boards never recomputes them.
   dataVersion: 0,
@@ -76,9 +81,11 @@ const TW = {
    its room (5c; this map is the only listener that reads M or R). The keys
    line under each shows while
    the keyboard is there; what a key did is said in #twBoardStatus, outside
-   both panes (a collapsed inspector would silence its own status line). */
+   both panes (a collapsed inspector would silence its own status line).
+   A table the filter folds is one stop, its fold toggle (6c): Enter (the
+   button's own) opens it, and ↓ goes on into the table. */
 const boardNav = window.UXControls?.roving?.($('twGrid'), {
-  stop: '.tw-card',
+  stop: '.tw-card, .tw-fold-toggle',
   hint: $('twGridKeys'),
   initial: () => (TW.selectedPlacementId ? `placement:${TW.selectedPlacementId}` : ''),
   activate: stop => { if (stop.matches('.tw-card')) selectCardFromKeyboard(stop); },
@@ -798,11 +805,21 @@ async function showSchedulerOutcome(jobId) {
       if (current) revealInStrip(strip, current);
     }).observe(strip);
   }
+  // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
+  // place (applyGridView, which also writes the count), never redraws it, so
+  // a drag or a focused card survives typing.
   $('twSearch')?.addEventListener('input', debounce(() => {
-    renderGrid();
+    applyGridView();
     renderBudgetSidebar();
-    updateSearchStatus();
   }, 120));
+  // A fold the user opens or shuts stays so for this board and text, and the
+  // count's words say how many tables are still folded.
+  $('twGrid').addEventListener('ux-disclosure', event => {
+    const key = event.target.closest?.('.tw-fold-toggle')?.dataset.foldKey;
+    if (!key) return;
+    if (event.detail?.open) TW.foldOpen.add(key); else TW.foldOpen.delete(key);
+    updateSearchStatus();
+  });
   $('twSectionSearch').addEventListener('input', debounce(renderBudgetSidebar, 200));
 
   // Inspector tabs
@@ -2067,13 +2084,13 @@ function loadPlanLens() {
   return promise;
 }
 
-/* A search by programme ("AI2") reads the lens: a new lens filters anew. */
+/* A search by programme ("AI2") reads the lens: a new lens dims anew, in
+   place (the board is not drawn again). */
 function reapplyPlanSearch() {
   const tokens = [...workspaceSearchTokens(), ...sectionBudgetSearch().split(/\s+/)];
   if (!tokens.some(token => planTokenFromSearch(token))) return;
-  renderGrid();
+  applyGridView();
   renderBudgetSidebar();
-  updateSearchStatus();
 }
 
 /* The lens on request: Selection says it is loading, then shows the answer,
@@ -2155,11 +2172,10 @@ function sectionBudgetSearch() {
   return local || activeWorkspaceSearch();
 }
 
-function placementSearchText(p) {
-  const lens = sectionLensForPlacement(p);
-  const lensBits = lens
-    ? [lens.owner, lens.owner_label, lens.role, ...(lens.filter_plans || [])].filter(Boolean).join(' ')
-    : '';
+/* What the text filter reads of a meeting: what its card and Selection show
+   (E7) — never the lens's own words (owner, role, allocation), which no card
+   shows ("UNALLOCATED" or "core" finds nothing). */
+function placementText(p) {
   // The words the user sees ("No room", "Online"), never the placer's marker;
   // the teacher as the card names it (a meeting row can carry a stale name).
   const meetingBits = (p.meetings || [])
@@ -2177,18 +2193,49 @@ function placementSearchText(p) {
     placementRoomText(p),
     window.TimetableSectionTeacher.teacherOf(p).name,
     meetingBits,
-    lensBits,
   ].filter(Boolean).join(' ').toUpperCase();
 }
 
-function placementMatchesWorkspaceSearch(p) {
-  const tokens = workspaceSearchTokens();
-  if (!tokens.length) return true;
-  const text = placementSearchText(p);
-  return tokens.every(token => {
-    const planToken = planTokenFromSearch(token);
-    return planToken ? itemMatchesPlanToken(p, planToken) : text.includes(token);
+/* The filter's tokens (contract D): `programmes` and `shared` are the lens's
+   (a programme the lens knows, and SHARED), the rest is `text`. Until 6d the
+   programmes are the plans of the lens this page holds. */
+function filterQuery() {
+  const query = { programmes: [], shared: false, text: [] };
+  workspaceSearchTokens().forEach(token => {
+    const plan = planTokenFromSearch(token);
+    if (plan === 'SHARED') query.shared = true;
+    else if (plan) { if (!query.programmes.includes(plan)) query.programmes.push(plan); }
+    else query.text.push(token);
   });
+  return query;
+}
+const filterActive = query => Boolean(query.text.length || query.programmes.length || query.shared);
+
+/* Every text token is in what the meeting shows. */
+function textMatch(p, query = filterQuery()) {
+  if (!query.text.length) return true;
+  const text = placementText(p);
+  return query.text.every(token => text.includes(token));
+}
+
+/* The lens: null with no programme or SHARED token; otherwise whether the
+   meeting is in the union of the programmes (SHARED narrowing it to shared
+   sections; SHARED alone, every shared section). The lens only dims, never
+   folds (§7.1 #5). Interim (6c): the allocation rule of today's token,
+   itemMatchesPlanToken; 6d dims by the per-plan export's roles instead. */
+function inLens(p, query = filterQuery()) {
+  if (!query.programmes.length && !query.shared) return null;
+  if (query.shared && !itemMatchesPlanToken(p, 'SHARED')) return false;
+  return !query.programmes.length || query.programmes.some(plan => itemMatchesPlanToken(p, plan));
+}
+
+/* Why a meeting is dimmed: 'filter' (the text), 'lens' (the programmes), both
+   or neither. A dimmed card is an ordinary card (it drags, Enter, M, R). */
+function placementDims(p, query = filterQuery()) {
+  const dims = [];
+  if (!textMatch(p, query)) dims.push('filter');
+  if (inLens(p, query) === false) dims.push('lens');
+  return dims;
 }
 
 function budgetMatchesSearch(c, search) {
@@ -2214,29 +2261,172 @@ function budgetMatchesSearch(c, search) {
   });
 }
 
+/* Words beside the filter (E21): the count is the meetings not dimmed of
+   all the board's meetings; its title and the field's description add the
+   tables folded for no match and the programme filter. */
+function searchCountWords(shown, total, folded, programmes = []) {
+  if (IS_AR) {
+    const of = pluralAr(total, { zero: '0 لقاء', one: 'لقاء واحد', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' });
+    return `المطابق للتصفية: ${shown} من ${of}${folded ? `؛ الجداول المطويّة لعدم وجود مطابق: ${folded}` : ''}`
+      + `${programmes.length ? `؛ تصفية البرامج: ${programmes.join('، ')}` : ''}.`;
+  }
+  return `${shown} of ${total} ${total === 1 ? 'meeting matches' : 'meetings match'}${folded ? `; tables folded for no match: ${folded}` : ''}`
+    + `${programmes.length ? `; programme filter: ${programmes.join(', ')}` : ''}.`;
+}
+/* Text and attributes written only when they change: a live region is not
+   read again, and the board's roving never hears a change it need not. */
+function setText(element, text) {
+  if (element && element.textContent !== text) element.textContent = text;
+}
+function setAttr(element, name, value) {
+  if (value == null || value === '') {
+    if (element.hasAttribute(name)) element.removeAttribute(name);
+  } else if (element.getAttribute(name) !== value) {
+    element.setAttribute(name, value);
+  }
+}
+
 function updateSearchStatus() {
   const input = $('twSearch');
   if (!input) return;
-  const count = $('twSearchCount');
-  const scope = $('twExportScope');
   const q = activeWorkspaceSearch();
   const plan = planTokenFromSearch(q);
-  if (scope) {
-    scope.textContent = !q
-      ? (IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term')
-      : plan
-        ? (IS_AR ? `برنامج ${plan} فقط` : `Programme ${plan} only`)
-        : (IS_AR ? `ما يطابق «${q}» فقط` : `Only what matches "${q}"`);
-  }
+  setText($('twExportScope'), !q
+    ? (IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term')
+    : plan
+      ? (IS_AR ? `برنامج ${plan} فقط` : `Programme ${plan} only`)
+      : (IS_AR ? `ما يطابق «${q}» فقط` : `Only what matches "${q}"`));
   if (!q) {
-    input.title = '';
-    if (count) count.textContent = '';
+    setAttr(input, 'title', '');
+    setText($('twSearchCount'), '');
+    setText($('twSearchNote'), '');
     return;
   }
-  const matched = TW.placements.filter(placementMatchesWorkspaceSearch).length;
-  const text = IS_AR ? `${matched} من ${TW.placements.length}` : `${matched} of ${TW.placements.length}`;
-  input.title = IS_AR ? `${text} لقاء مطابق` : `${text} meetings match`;
-  if (count) count.textContent = text;
+  const query = filterQuery();
+  const total = TW.placements.length;
+  const shown = TW.placements.filter(p => !placementDims(p, query).length).length;
+  // Folded now: a table with no match the user has not opened.
+  const folded = document.querySelectorAll('#twGrid .tw-fold-row:not([hidden]) .tw-fold-toggle[aria-expanded="false"]').length;
+  const sentence = searchCountWords(shown, total, folded, lensParts(query));
+  setAttr(input, 'title', sentence);
+  setText($('twSearchNote'), sentence);
+  setText($('twSearchCount'), IS_AR ? `${shown} من ${total}` : `${shown} of ${total}`);
+}
+
+/* What a table holds, in words (its fold, and its name for assistive technology). */
+const TABLE_WORDS = {
+  lecture: IS_AR ? 'المحاضرات' : 'Lectures',
+  english: IS_AR ? 'الإنجليزية' : 'English',
+  lab: IS_AR ? 'المعامل' : 'Labs',
+};
+/* "{n} meetings", nominative. */
+const meetingsCount = n => (IS_AR
+  ? pluralAr(n, { zero: 'لا لقاءات', one: 'لقاء واحد', two: 'لقاءان', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })
+  : `${n} ${n === 1 ? 'meeting' : 'meetings'}`);
+const matchesCount = n => (IS_AR
+  ? pluralAr(n, { zero: 'لا شيء مطابق', one: 'مطابقة واحدة', two: 'مطابقتان', few: '{n} مطابقات', many: '{n} مطابقةً', other: '{n} مطابقة' })
+  : `${n} ${n === 1 ? 'match' : 'matches'}`);
+const foldLabel = (kind, n) => `${TABLE_WORDS[kind] || ''} · ${IS_AR ? 'لا شيء مطابق' : 'no match'} · ${meetingsCount(n)}`;
+
+/* A dimmed card's reason: one shared note each (outside #twGrid, so writing
+   it never touches the board), named by the card's aria-describedby. */
+const DIM_NOTE_IDS = { filter: 'twDimNoteFilter', lens: 'twDimNoteLens' };
+/* The lens's tokens in words: each programme isolated, then shared sections. */
+const lensParts = query => [...query.programmes.map(isolatedText), ...(query.shared ? [IS_AR ? 'الشعب المشتركة' : 'shared sections'] : [])];
+function dimNotes(query) {
+  const parts = lensParts(query);
+  return {
+    filter: IS_AR ? 'خارج التصفية' : 'Outside the filter',
+    lens: !parts.length ? ''
+      : IS_AR ? `خارج تصفية البرامج: ${parts.join('، ')}` : `Outside the programme filter: ${parts.join(', ')}`,
+  };
+}
+
+/* The filter and the lens over the drawn board, in place (contract D). It
+   runs after a draw, a filter change, a tone change and a lens change, and
+   writes attributes and text only — never the board's nodes — so a drag, a
+   focused card and the keyboard's stop survive it:
+   - each card's dim (`data-dim` filter and/or lens, its notes in
+     `aria-describedby`, their words in its title);
+   - each table the text matches nothing in folds: its fold row shows (the
+     table's one stop) and its rows hide, unless the user opened it for this
+     board and text (TW.foldOpen); the fold's tone counts;
+   - each group heading's matches, the legend's dim line and the count.
+   Roving reads its stops again only when a table folded or opened. */
+function applyGridView() {
+  const grid = $('twGrid');
+  const query = filterQuery();
+  const active = filterActive(query);
+  const scope = `${TW.loadedBoardId ?? ''}|${query.text.join(' ')}`;
+  if (scope !== TW.foldScope) {
+    TW.foldScope = scope;
+    TW.foldOpen.clear();
+  }
+  const byId = new Map(TW.placements.map(p => [String(p.id), p]));
+  const { byPlacement } = buildBoardIssues();
+  const notes = dimNotes(query);
+  setText($('twDimNoteFilter'), notes.filter);
+  setText($('twDimNoteLens'), notes.lens);
+  const shownInGroup = new Map();
+  let moved = false;
+  let dimmed = false;
+  grid.querySelectorAll('[role="grid"]').forEach(table => {
+    const group = table.dataset.group || '-';
+    const tones = { critical: 0, warning: 0 };
+    let matched = 0;
+    table.querySelectorAll('.tw-card[data-placement-id]').forEach(card => {
+      const id = card.dataset.placementId;
+      const p = byId.get(id);
+      const dims = p && active ? placementDims(p, query) : [];
+      if (!dims.includes('filter')) matched++;
+      if (!dims.length) shownInGroup.set(group, (shownInGroup.get(group) || 0) + 1);
+      if (dims.length) dimmed = true;
+      setAttr(card, 'data-dim', dims.join(' '));
+      setAttr(card, 'aria-describedby', dims.map(dim => DIM_NOTE_IDS[dim]).join(' '));
+      const title = [card._twToneReason || '', card.dataset.identity || '', ...dims.map(dim => notes[dim])].filter(Boolean).join(' | ');
+      if (card.title !== title) card.title = title;
+      const tone = byPlacement.get(id)?.tone;
+      if (tone in tones) tones[tone]++;
+    });
+    const fold = [...table.children].find(element => element.classList.contains('tw-fold-row'));
+    const body = [...table.children].find(element => element.classList.contains('tw-fold-body'));
+    const toggle = fold?.querySelector('.tw-fold-toggle');
+    if (!fold || !body || !toggle) return;
+    const noMatch = query.text.length > 0 && matched === 0;
+    const open = !noMatch || TW.foldOpen.has(toggle.dataset.foldKey);
+    if (fold.hidden !== !noMatch) { fold.hidden = !noMatch; moved = true; }
+    if (body.hidden !== !open) { body.hidden = !open; moved = true; }
+    setAttr(toggle, 'aria-expanded', String(open));
+    fold.querySelectorAll('.tw-fold-tone').forEach(mark => {
+      const n = tones[mark.dataset.tone] || 0;
+      if (mark.hidden !== !n) mark.hidden = !n;
+      const count = mark.querySelector('.tw-fold-n')?.firstChild;
+      if (count && count.nodeValue !== String(n)) count.nodeValue = String(n);
+    });
+  });
+  grid.querySelectorAll('.tw-group-head[data-group]').forEach(head => {
+    const meta = head.querySelector('.tw-group-meta')?.firstChild;
+    const text = `${head.dataset.what || ''}${active ? ` · ${matchesCount(shownInGroup.get(head.dataset.group) || 0)}` : ''}`;
+    if (meta && meta.nodeValue !== text) meta.nodeValue = text;
+  });
+  const legend = $('twLegendDim');
+  if (legend && legend.hidden !== !dimmed) legend.hidden = !dimmed;
+  if (moved) boardNav?.refresh();
+  updateSearchStatus();
+}
+
+/* A located card inside a folded table: the fold opens first (as a click on
+   its toggle would, remembered for this board and text), so the card can be
+   seen and the keyboard's stop can be set on it. */
+function openFoldOf(card) {
+  const body = card?.closest('.tw-fold-body');
+  if (!body || !body.hidden) return false;
+  const toggle = body.closest('[role="grid"]')?.querySelector('.tw-fold-toggle');
+  body.hidden = false;
+  if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  if (toggle?.dataset.foldKey) TW.foldOpen.add(toggle.dataset.foldKey);
+  (toggle || body).dispatchEvent(new CustomEvent('ux-disclosure', { bubbles: true, detail: { open: true, key: null } }));
+  return true;
 }
 
 function renderGridWithSlots(slots, labSlots) {
@@ -2247,15 +2437,13 @@ function renderGridWithSlots(slots, labSlots) {
   gridEl.innerHTML = '';
 
   labSlots = labSlots || [];
-  const search = activeWorkspaceSearch();
-  const visiblePlacements = search
-    ? TW.placements.filter(placementMatchesWorkspaceSearch)
-    : TW.placements;
-  updateSearchStatus();
+  // Every meeting is drawn: the filter folds and dims in place
+  // (applyGridView), so typing never draws the board again.
+  const placements = TW.placements;
 
   // ── Split placements into student groups by section label ──
   const bySec = {};
-  visiblePlacements.forEach(p => {
+  placements.forEach(p => {
     const sec = p.section || 'S1';
     if (!bySec[sec]) bySec[sec] = [];
     bySec[sec].push(p);
@@ -2276,6 +2464,7 @@ function renderGridWithSlots(slots, labSlots) {
 
   // Only the board's first table points at the keys line.
   TW.gridKeysDescribed = false;
+  TW.gridTables = 0;
   // If no placements, show empty grid
   if (numGroups === 0) {
     _renderSingleGrid(gridEl, slots, [], 'tw-grid-table', null, 'lecture');
@@ -2283,6 +2472,7 @@ function renderGridWithSlots(slots, labSlots) {
       gridEl.appendChild(gridSubheading(IS_AR ? 'المعامل (100 دقيقة)' : 'Labs (100 min)', 'lab'));
       _renderSingleGrid(gridEl, labSlots, [], 'tw-grid-table tw-lab-grid', null, 'lab');
     }
+    applyCardTones();
     boardNav?.refresh();
     return;
   }
@@ -2290,21 +2480,25 @@ function renderGridWithSlots(slots, labSlots) {
   groupKeys.forEach((secKey, gi) => {
     const groupPlacements = bySec[secKey];
     const tsIds = new Set(groupPlacements.map(p => p.term_section_id));
-    const allForGroup = visiblePlacements.filter(p => tsIds.has(p.term_section_id));
+    const allForGroup = placements.filter(p => tsIds.has(p.term_section_id));
 
     // Separate lecture and lab placements
     const lecturePlacements = allForGroup.filter(p => !isLabPlacement(p));
     const labPlacements = allForGroup.filter(p => isLabPlacement(p));
 
-    // Group header: the section label it really is, and what it holds.
+    // Group header: the section label it really is, and what it holds (the
+    // filter's matches are added in place, by applyGridView).
     if (numGroups > 1) {
       const courses = new Set(groupPlacements.map(p => p.course_code));
       const hdr = document.createElement('h3');
       hdr.className = 'tw-group-head';
       hdr.id = `twGroup-${gi}`;
-      const what = IS_AR ? `${courses.size} مقررات` : `${courses.size} ${courses.size === 1 ? 'course' : 'courses'}`;
-      const matches = search ? (IS_AR ? ` · ${groupPlacements.length} مطابقة` : ` · ${groupPlacements.length} matches`) : '';
-      hdr.innerHTML = `<span class="tw-group-name">${IS_AR ? 'الشعبة' : 'Section'} <bdi>${esc(secKey)}</bdi></span><span class="tw-group-meta">${what}${matches}</span>`;
+      hdr.dataset.group = secKey;
+      const what = IS_AR
+        ? pluralAr(courses.size, { one: 'مقرر واحد', two: 'مقرران', few: '{n} مقررات', many: '{n} مقرراً', other: '{n} مقرر' })
+        : `${courses.size} ${courses.size === 1 ? 'course' : 'courses'}`;
+      hdr.dataset.what = what;
+      hdr.innerHTML = `<span class="tw-group-name">${IS_AR ? 'الشعبة' : 'Section'} <bdi>${esc(secKey)}</bdi></span><span class="tw-group-meta">${esc(what)}</span>`;
       gridEl.appendChild(hdr);
     }
 
@@ -2331,7 +2525,8 @@ function renderGridWithSlots(slots, labSlots) {
     }
   });
   if (TW.placements.length) gridEl.insertAdjacentHTML('beforeend', boardLegendHtml());
-  // New cards take their tones and the selection at once, not at the next redraw.
+  // New cards take their tones, the filter's view and the selection at once,
+  // not at the next redraw.
   markSelection();
   applyCardTones();
   boardNav?.refresh();
@@ -2340,7 +2535,7 @@ function renderGridWithSlots(slots, labSlots) {
 /* A table's name for assistive technology: what it holds, and its section
    group when the board has several. */
 function gridLabel(secKey, kind) {
-  const what = { lecture: IS_AR ? 'المحاضرات' : 'Lectures', english: IS_AR ? 'الإنجليزية' : 'English', lab: IS_AR ? 'المعامل' : 'Labs' }[kind] || '';
+  const what = TABLE_WORDS[kind] || '';
   return secKey && TW.cardsShowSection === false ? `${IS_AR ? 'الشعبة' : 'Section'} ${secKey} · ${what}` : what;
 }
 const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
@@ -2355,7 +2550,10 @@ function gridSubheading(text, kind) {
 
 /* One table of the board: an ARIA grid (design record §7.3, 5a) whose rows
    are `.ux-grid-row` (display: contents) on the CSS grid. The keyboard moves
-   over its cards, and over the empty cells, with UXControls.roving. */
+   over its cards, and over the empty cells, with UXControls.roving.
+   Its first row is its fold (§7.2 item 6, 6c; contract D), hidden until the
+   filter's text matches nothing in the table; the header, day rows follow in
+   a `display: contents` rowgroup the fold hides. */
 function _renderSingleGrid(container, slots, placements, className, secKey, kind = 'lecture') {
   // Transposed: columns = time slots, rows = days. The column count is the one
   // layout fact the stylesheet cannot know; everything else is in its classes.
@@ -2369,11 +2567,48 @@ function _renderSingleGrid(container, slots, placements, className, secKey, kind
     table.setAttribute('aria-describedby', 'twGridKeys');
     TW.gridKeysDescribed = true;
   }
+  const group = secKey || '-';
+  table.dataset.group = group;
+  table.dataset.kind = kind;
+  // The fold: one gridcell holding the global disclosure toggle (a roving
+  // stop, so never a Tab stop of its own), then its tone counts, each a
+  // count beside its icon with the words for assistive technology; the
+  // counts are written in place by applyGridView.
+  TW.gridTables = (TW.gridTables || 0) + 1;
+  const bodyId = `twFoldBody-${TW.gridTables}`;
+  const fold = document.createElement('div');
+  fold.className = 'ux-grid-row tw-fold-row';
+  fold.setAttribute('role', 'row');
+  fold.hidden = true;
+  const foldCell = document.createElement('div');
+  foldCell.className = 'tw-fold-cell';
+  foldCell.setAttribute('role', 'gridcell');
+  // It spans the table: the day column and every slot.
+  foldCell.setAttribute('aria-colspan', String(numSlots + 1));
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'ux-disclosure-toggle tw-fold-toggle';
+  toggle.tabIndex = -1;
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.setAttribute('aria-controls', bodyId);
+  toggle.dataset.foldKey = `${group}|${kind}`;
+  toggle.dataset.focusKey = `fold:${group}|${kind}`;
+  toggle.innerHTML = '<span class="ux-disclosure-label"></span><span class="tw-fold-tones">'
+    + ['critical', 'warning'].map(tone => `<span class="tw-fold-tone" data-tone="${tone}" hidden><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span class="visually-hidden">${TONE_LEAD[tone]}: </span><span class="tw-fold-n">0</span></span>`).join('')
+    + '</span><span class="ux-disclosure-chevron" aria-hidden="true"></span>';
+  foldCell.appendChild(toggle);
+  fold.appendChild(foldCell);
+  table.appendChild(fold);
+  const body = document.createElement('div');
+  body.className = 'tw-fold-body';
+  body.setAttribute('role', 'rowgroup');
+  body.id = bodyId;
+  table.appendChild(body);
   const row = () => {
     const element = document.createElement('div');
     element.className = 'ux-grid-row';
     element.setAttribute('role', 'row');
-    table.appendChild(element);
+    body.appendChild(element);
     return element;
   };
 
@@ -2445,6 +2680,8 @@ function _renderSingleGrid(container, slots, placements, className, secKey, kind
     });
   });
 
+  // What the fold says it holds: the meetings drawn in this table.
+  toggle.querySelector('.ux-disclosure-label').textContent = foldLabel(kind, body.querySelectorAll('.tw-card').length);
   container.appendChild(table);
 }
 
@@ -2559,6 +2796,8 @@ function boardLegendHtml() {
     + item(icon('icon', 'shared'), IS_AR ? 'يملكها سيناريو آخر' : 'Another scenario owns it')
     + item(swatch('selected'), IS_AR ? 'الشعبة المحددة' : 'The selected section')
     + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه الأخرى' : 'The same course’s other meetings')
+    // Shown by applyGridView while the filter dims a card.
+    + `<span class="ux-legend-item" id="twLegendDim" hidden>${swatch('dim')}<span>${IS_AR ? 'باهتة: خارج التصفية' : 'Dimmed: outside the filter'}</span></span>`
     + `<span class="ux-legend-item">${IS_AR ? 'اللون يساعد على إيجاد المقرر' : 'Colour helps find a course'}</span>`
     + `</div>`;
 }
@@ -5315,6 +5554,8 @@ function highlightWorkspacePlacements(ids) {
   (ids || []).forEach(id => {
     const card = document.querySelector(`.tw-card[data-placement-id="${id}"]`);
     if (card) {
+      // A card in a table the filter folded: its fold opens first.
+      openFoldOf(card);
       // A pulse already running restarts (the class alone would not), and
       // one timer per card, so an earlier call cannot cut a later pulse short.
       void card.offsetWidth;
@@ -5765,7 +6006,8 @@ function issueCountOf(model) {
 }
 
 /* Tone every card from the model, in place: a check that answers later never
-   rebuilds the grid (a drag or a focused card survives it). */
+   rebuilds the grid (a drag or a focused card survives it). The filter's view
+   follows (applyGridView: titles, dims and the folds' tone counts). */
 function applyCardTones() {
   const { byPlacement } = buildBoardIssues();
   document.querySelectorAll('#twGrid .tw-card[data-placement-id]').forEach(card => {
@@ -5784,8 +6026,10 @@ function applyCardTones() {
         mark.removeAttribute('aria-label');
       }
     }
-    card.title = [reason, card.dataset.identity || ''].filter(Boolean).join(' | ');
+    // The title leads with it (applyGridView writes the title).
+    card._twToneReason = reason;
   });
+  applyGridView();
 }
 
 /* The counts and the card tones follow the data, whichever inspector tab is
