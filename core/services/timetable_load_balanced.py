@@ -32,6 +32,7 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.course_identity import course_display_code
+from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
@@ -472,7 +473,9 @@ def rebalance_and_persist_board(
     if locks_on:
         locked_ts_ids |= locked_physical_section_ids(board.scenario_id)
 
-    auto = SectionPlacement.objects.filter(board=board, term_section__source_tag="tw_auto")
+    auto = SectionPlacement.objects.filter(
+        board=board, term_section__source_tag=AUTO_SECTION_SOURCE_TAG
+    )
     if locked_ts_ids:
         auto = auto.exclude(term_section_id__in=locked_ts_ids)
     ts_ids = set(auto.values_list("term_section_id", flat=True))

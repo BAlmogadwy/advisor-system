@@ -808,7 +808,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     from core.services.timetable_validation import is_lock_enforcement_enabled
 
     auto_placements = SectionPlacement.objects.filter(
-        board=board, term_section__source_tag="tw_auto"
+        board=board, term_section__source_tag=AUTO_SECTION_SOURCE_TAG
     )
     if is_lock_enforcement_enabled():
         locked_sections = locked_physical_section_ids(board.scenario_id)

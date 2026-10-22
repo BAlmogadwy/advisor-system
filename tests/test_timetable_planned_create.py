@@ -261,10 +261,13 @@ def test_a_section_placed_by_another_scenarios_board_keeps_its_rows():
     assert _meeting_rows(term_section) == _rows(PATTERN_A + PATTERN_B)
 
 
-def test_an_engine_made_section_with_no_placement_is_replaced():
+@pytest.mark.parametrize("tag", ["tw_auto", "tw_scheduler"])
+def test_an_engine_made_section_with_no_placement_is_replaced(tag):
     sc, board, _other, key = _workspace()
-    engine_made = section(sc, key, "S2")  # what the engines write: tw_auto
+    engine_made = section(sc, key, "S2")  # what autoplace and the solver write: tw_auto
     assert engine_made.source_tag == AUTO_SECTION_SOURCE_TAG == "tw_auto"
+    engine_made.source_tag = tag  # or the scheduler's
+    engine_made.save(update_fields=["source_tag"])
     for day, start, end in PATTERN_A:
         TermSectionMeeting.objects.create(
             term_section=engine_made, day=day, start_time=start, end_time=end
@@ -326,7 +329,7 @@ def test_a_section_owned_by_another_scenario_or_by_none_is_never_touched():
         )
 
     for ts in sections.values():
-        tws._drop_stale_planned_meetings(ts, sc.id)
+        tws._drop_stale_workspace_meetings(ts, sc.id)
 
     assert _meeting_rows(sections["AI501"]) == [("SUN", "08:00", "09:15")]  # another scenario's
     assert _meeting_rows(sections["AI502"]) == [("SUN", "08:00", "09:15")]  # nobody's
@@ -419,3 +422,16 @@ def test_natural_key_is_one_function_whichever_module_it_is_taken_from():
         "PHYS103 (1)",
         "PHYS103 (2)",
     ]
+
+
+def test_the_scheduler_keeps_the_tag_the_workspace_names_for_it():
+    # The clean-room scheduler imports nothing of the workspace: its bridge keeps
+    # its own value, and this keeps the two the same.
+    from core.services.section_source_tags import (
+        SCHEDULER_SECTION_SOURCE_TAG,
+        WORKSPACE_SECTION_SOURCE_TAGS,
+    )
+    from scheduler import bridge
+
+    assert bridge.SOURCE_TAG == SCHEDULER_SECTION_SOURCE_TAG
+    assert SCHEDULER_SECTION_SOURCE_TAG in WORKSPACE_SECTION_SOURCE_TAGS

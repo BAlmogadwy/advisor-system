@@ -1984,7 +1984,7 @@ def _normalise_planned_meeting_rows(rows: list[dict]) -> list[dict[str, str]]:
     return meetings
 
 
-def _drop_stale_planned_meetings(term_section: TermSection, scenario_id: int) -> None:
+def _drop_stale_workspace_meetings(term_section: TermSection, scenario_id: int) -> None:
     """Clear the meeting rows an earlier section of this label left behind.
 
     Removing a placement from the board leaves the section and its
@@ -2076,7 +2076,7 @@ def create_planned_section_placements(
             },
         )
         if not _created:
-            _drop_stale_planned_meetings(term_section, board.scenario_id)
+            _drop_stale_workspace_meetings(term_section, board.scenario_id)
         placements: list[SectionPlacement] = []
         validations = []
         if policy:
