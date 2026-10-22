@@ -2160,7 +2160,8 @@ test('RC1 a locked meeting changes room by its room alone: no slot is read, {roo
   await h.select();
   assert.equal(roomByKey(h).defaultPrevented, true);
   await settled(h);
-  assert.deepEqual(h.reads, ['/ops/tw/placements/10/room-candidates/'], 'the server’s own time: no slot parameters');
+  // 5c-audit: the rooms are asked with the quality audit's answer (C6).
+  assert.deepEqual(h.reads, ['/ops/tw/placements/10/room-candidates/?audit=1'], 'the server’s own time: no slot parameters');
   assert.equal(h.d.getElementById('twRoomTitle').textContent, 'Change room · CS323 S1');
   assert.equal(h.d.getElementById('twRoomSub').textContent,
     "Sunday 09:00–10:15 · this meeting only; the section's other meetings keep their rooms. · Time locked; its room can change");
@@ -3244,6 +3245,433 @@ test('RC21 a room in use and outside the programme rooms keeps its clash, says b
   assert.deepEqual(roomRadios(only).map(radio => radio.value), ['R7']);
   assert.doesNotMatch(only.d.getElementById('twRoomBody').textContent, /No room fits this meeting\./);
   assert.equal(only.d.getElementById('twRoomMisfits').hidden, true);
+});
+
+/* ── Change room by the audit (5c-audit client): the legacy snapshot ──
+   An answer without `audit` (a server before 5c-audit) is drawn and saved
+   exactly as before the audit client: the dialog's title, sub-line, body
+   (markup, byte for byte), note and the report of each save, in English and
+   Arabic, recorded in tests/fixtures/room_dialog_legacy.json at 5892a12,
+   before any client change. ROOM_DIALOG_LEGACY_RECORD=1 writes the file
+   instead of comparing (only ever on that commit). */
+const LEGACY_DIALOG = path.join(root, 'tests/fixtures/room_dialog_legacy.json');
+const timedRoom = room => ({ ...room, validation: { ...room.validation, critical_count: 2 } });
+const copyChanged = body => ({ ok: true, placement: roomRow({ room: body.room }), placements: [roomRow({ room: body.room }), roomRow({ id: 31, board_id: 3, room: body.room })] });
+const LEGACY_DIALOG_CASES = [
+  { name: 'every group, the time keeping 2 clashes', rooms: () => ROOM_SET.map(timedRoom), saves: ['R1', 'R7', 'R9', 'R8'] },
+  { name: 'every group, in Arabic', arabic: true, rooms: () => ROOM_SET, saves: ['R2', 'R7', 'R9', 'R8'] },
+  { name: 'in use and outside the programme rooms, a copy changed with it', move: copyChanged,
+    rooms: () => [rc('R1'), rc('LAB25'), rc('R12', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(3)] }),
+      rc('R13', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(2)] })], saves: ['R12', 'R13', 'R1'] },
+  { name: 'in Arabic, in use and outside, a copy changed with it', arabic: true, move: copyChanged,
+    rooms: () => [rc('R1'), rc('LAB25'), rc('R12', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(3)] })], saves: ['R12', 'R1'] },
+  { name: 'only misfits, a cut list', rooms: () => ROOM_SET.filter(r => ['R3', 'R4', 'R5'].includes(r.room_code)), summary: { total: 75 }, saves: [] },
+  { name: 'no room yet, in Arabic, seats counted and no need', arabic: true, row: { room: 'UNASSIGNED', room_state: 'unassigned' }, target: { required_capacity: null },
+    rooms: () => [rc('R1', { capacity: 3, validation: { critical_count: 1 } }), rc('R2', { capacity: 11 }), rc('R6', { capacity: 1 })], saves: ['R2'] },
+  { name: 'the current room outside the programme rooms', row: { room: 'R7' }, rooms: () => ROOM_SET, saves: ['R1'] },
+  { name: 'the current room a misfit', row: { room: 'R5' }, rooms: () => ROOM_SET, saves: ['R2'] },
+];
+// One case drawn (and, given a code, that room saved): what the dialog says.
+async function legacyDialog(t, c, { save = '', wrap = answer => answer, quality: q = null } = {}) {
+  const h = await roomHarness(t, {
+    arabic: Boolean(c.arabic), move: c.move || null, rows: () => [roomRow(c.row || {})],
+    rooms: () => wrap(roomsAnswer(c.rooms(), { target: c.target || {}, summary: c.summary || {} })),
+    more: url => (q && url.includes('/quality/') ? q : undefined),
+  });
+  await h.select();
+  roomByKey(h);
+  await wait(() => !h.d.querySelector('#twRoomBody [aria-busy]'));
+  const drawn = { title: h.d.getElementById('twRoomTitle').innerHTML, sub: h.d.getElementById('twRoomSub').innerHTML,
+    body: h.d.getElementById('twRoomBody').innerHTML, note: roomNote(h) };
+  if (!save) return { h, drawn };
+  roomRadio(h, save).click();
+  h.d.getElementById('twRoomAssign').click();
+  await wait(() => h.notices.length > 0 && !roomDialogEl(h).hasAttribute('open'));
+  return { h, drawn, report: h.notices.at(-1) };
+}
+// `saves` says which cases also save each of their rooms (every one by default).
+async function legacyDialogs(t, { wrap, quality: q, saves = () => true } = {}) {
+  const out = {};
+  for (const c of LEGACY_DIALOG_CASES) {
+    const { drawn } = await legacyDialog(t, c, { wrap, quality: q });
+    const reports = {};
+    if (saves(c)) for (const code of c.saves) reports[code] = (await legacyDialog(t, c, { save: code, wrap, quality: q })).report;
+    out[c.name] = { ...drawn, reports };
+  }
+  return out;
+}
+
+test('RC22 an answer without the audit is drawn and saved byte for byte as before the audit client', async t => {
+  const produced = plainOf(await legacyDialogs(t));
+  if (process.env.ROOM_DIALOG_LEGACY_RECORD === '1') {
+    // Isolates written as escapes, so the file shows them.
+    const json = JSON.stringify(produced, null, 1).replace(/[\u2066\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16)}`);
+    fs.writeFileSync(LEGACY_DIALOG, `${json}\n`);
+    return;
+  }
+  const recorded = JSON.parse(fs.readFileSync(LEGACY_DIALOG, 'utf8'));
+  assert.deepEqual(Object.keys(produced), Object.keys(recorded));
+  for (const name of Object.keys(recorded)) assert.deepEqual(produced[name], recorded[name], name);
+});
+
+/* ── Change room judged by the quality audit (5c-audit client) ──
+   The rooms are read with ?audit=1. An answer that carries the audit's
+   answer for the meeting is judged by it (D20c as amended): before a save
+   the dialog says the rows Issues will list after it; a room short of the
+   audit's seats is a choosable warning, the wrong gender or type refused
+   (the owner's answer to Q1). CS323 S1 needs 26 seats by the audit (30 by
+   the legacy rule); it sits in LAB25, 25 seats. */
+const AUDIT_TARGET = { assessed: true, save: 'room_only', required_type: 'lecture', required_capacity: 26, capacity_source: 'budget', required_gender: 'M',
+  boards: [{ board_id: 2, board_label: 'Term 7', programmes: ['AI'] }], placement_ids: [10], moving_placement_ids: [10], kept: [], current: null };
+const judged = (reasons = [], qualityReasons = [], extra = {}) => ({
+  compatible: !reasons.some(reason => ['type', 'gender', 'programme'].includes(reason)), undersized: reasons.includes('capacity'),
+  reasons, programme_board_ids: [], quality_reasons: qualityReasons, ...extra });
+const SHORT = { available: false, tone: 'block', fits_capacity: false };
+// In the server's order, with the legacy fields as the server sends them.
+const AUDIT_SET = [
+  rc('R1', { audit: judged() }),
+  rc('LAB25', { ...SHORT, capacity: 25, audit: judged(['capacity'], ['undersized']) }),
+  rc('R2', { ...SHORT, capacity: 28, building: 'North', audit: judged() }),
+  rc('R9', { available: false, tone: 'block', occupied_by: [heldOn(2)], audit: judged() }),
+  rc('R8', { ...SHORT, capacity: 24, occupied_by: [heldOn(3)], audit: judged(['capacity'], ['undersized']) }),
+  rc('R7', { tone: 'warn', department_fit: false, audit: judged(['programme'], ['incompatible'], { programme_board_ids: [2] }) }),
+  rc('R5', { ...SHORT, capacity: 20, department_fit: false, audit: judged(['programme', 'capacity'], ['undersized', 'incompatible'], { programme_board_ids: [2] }) }),
+  rc('R3', { available: false, tone: 'block', fits_type: false, room_type: 'lab', audit: judged(['type'], ['incompatible']) }),
+  rc('R4', { available: false, tone: 'block', fits_gender: false, section: 'F', audit: judged(['gender'], ['incompatible']) }),
+  rc('R6', { section: '', audit: judged(['gender'], ['incompatible']) }),
+];
+const auditAnswer = (candidates = AUDIT_SET, audit = {}, extra = {}) => roomsAnswer(candidates, { target: { audit: { ...AUDIT_TARGET, ...audit } }, ...extra });
+const radioWords = (h, code, index = 0) => h.d.getElementById(roomRadio(h, code).getAttribute('aria-describedby').split(' ')[index]).textContent;
+const roomGroupsDrawn = h => [...h.d.querySelectorAll('#twRoomChoices fieldset')].map(set => set.dataset.group);
+const LAB25_SHORT = judged(['capacity'], ['undersized']);
+
+test('RC23 judged by the audit: free, lowering quality (a choosable warning, too small or unsuitable), in use, or refused for gender or type; worded as Issues will list them', async t => {
+  const words = {
+    en: {
+      legends: ['Free and fits (2)', 'Free, but lowers quality (3)', 'Fits, but in use at this time (2)'],
+      hint: 'Choosing one saves the warning on its row, which Issues then shows.',
+      verdicts: {
+        R1: 'Free and fits', R2: 'Free and fits',
+        LAB25: 'Lowers quality: Room too small · needs 26 seats',
+        R7: "Lowers quality: Room unsuitable · outside this board's programme rooms",
+        R5: "Lowers quality: Room too small, Room unsuitable · needs 26 seats · outside this board's programme rooms",
+        R9: 'Blocks publishing: Room double-booked',
+        R8: 'Lowers quality: Room too small, Room also booked on another board · needs 26 seats',
+      },
+      facts: { R2: /^Lecture room · 28 seats · 2 spare/, LAB25: /^Lecture room · 25 seats · 1 short/ },
+      misfits: [['R3', 'This meeting needs a lecture room'], ['R4', 'This meeting needs a Male (M) room'], ['R6', 'This meeting needs a Male (M) room']],
+      current: 'Current room: LAB25 · Lowers quality: Room too small · needs 26 seats',
+      note: 'This is the current room.',
+    },
+    ar: {
+      legends: ['متاحة ومناسبة (2)', 'متاحة لكنها تُضعف الجودة (3)', 'مناسبة لكنها مستخدمة في هذا الوقت (2)'],
+      hint: 'اختيار إحداها يحفظ التحذير المذكور في سطرها، ويظهر بعدها في «المشاكل».',
+      verdicts: {
+        R1: 'متاحة ومناسبة', R2: 'متاحة ومناسبة',
+        LAB25: 'يُضعف الجودة: القاعة أصغر من المطلوب · يحتاج 26 مقعداً',
+        R7: 'يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة',
+        R5: 'يُضعف الجودة: القاعة أصغر من المطلوب, القاعة غير مناسبة · يحتاج 26 مقعداً · خارج قاعات برامج هذه اللوحة',
+        R9: 'يمنع النشر: القاعة محجوزة مرتين',
+        R8: 'يُضعف الجودة: القاعة أصغر من المطلوب, القاعة محجوزة في لوحة أخرى · يحتاج 26 مقعداً',
+      },
+      facts: { R2: /^قاعة محاضرات · 28 مقعداً · مقعدان فائضان/, LAB25: /^قاعة محاضرات · 25 مقعداً · ينقصها مقعد واحد/ },
+      misfits: [['R3', 'هذا اللقاء يحتاج إلى قاعة محاضرات'], ['R4', 'هذا اللقاء يحتاج إلى قاعة طلاب (M)'], ['R6', 'هذا اللقاء يحتاج إلى قاعة طلاب (M)']],
+      current: 'القاعة الحالية: LAB25 · يُضعف الجودة: القاعة أصغر من المطلوب · يحتاج 26 مقعداً',
+      note: 'هذه هي القاعة الحالية.',
+    },
+  };
+  for (const [language, W] of Object.entries(words)) {
+    const h = await roomHarness(t, { arabic: language === 'ar', rooms: () => auditAnswer(AUDIT_SET, { current: LAB25_SHORT }) });
+    await h.select();
+    roomByKey(h);
+    await settled(h);
+    // Rooms the legacy seats refuse (R2, LAB25, R8, R5) can be chosen; a room
+    // with no gender (R6), which they offer, cannot. No "outside" group.
+    assert.deepEqual(roomRadios(h).map(r => [r.value, r.closest('.ux-choice').dataset.tone, r.closest('fieldset').dataset.group]), [
+      ['R1', 'ok', 'free'], ['R2', 'ok', 'free'], ['LAB25', 'warning', 'flagged'], ['R7', 'warning', 'flagged'], ['R5', 'warning', 'flagged'],
+      ['R9', 'critical', 'inUse'], ['R8', 'warning', 'inUse']], language);
+    assert.deepEqual(roomRadios(h).map(r => r.closest('.ux-choice').querySelector('.ux-tone-icon').dataset.tone),
+      ['ok', 'ok', 'warning', 'warning', 'warning', 'critical', 'warning'], language);
+    assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices legend')].map(l => l.textContent), W.legends, language);
+    assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(set => set.getAttribute('aria-describedby')), [null, 'twRoomHint-flagged', 'twRoomHint-inUse']);
+    assert.equal(h.d.getElementById('twRoomHint-flagged').textContent, W.hint, language);
+    assert.ok(h.d.querySelector('fieldset[data-group="flagged"]').matches('.ux-choice-list[data-ux-submit]'), 'its rows submit on Enter, as the other groups do');
+    for (const [code, said] of Object.entries(W.verdicts)) assert.equal(radioWords(h, code), said, `${language} ${code}`);
+    // Seats against the audit's need, not the legacy one.
+    for (const [code, facts] of Object.entries(W.facts)) assert.match(radioWords(h, code, 1), facts, `${language} ${code}`);
+    assert.equal(strip(radioWords(h, 'R8', 2)), language === 'ar' ? 'تستخدمها CS103-S1 (Term 3) في 09:00–10:15' : 'Used by CS103-S1 (Term 3) at 09:00–10:15');
+    // Refused: rows with their reasons, never radios.
+    const misfits = [...h.d.querySelectorAll('#twRoomMisfits .ux-choice-static')];
+    assert.deepEqual(misfits.map(row => [row.querySelector('bdi').textContent, row.querySelector('.ux-choice-desc').textContent]), W.misfits, language);
+    assert.equal(h.d.querySelectorAll('#twRoomMisfits input').length, 0);
+    // The current room, short of the audit's seats, is chosen at first (C9),
+    // and its line says what Issues say of it now.
+    assert.equal(roomRadio(h, 'LAB25').checked, true, language);
+    assert.deepEqual(roomNote(h), [true, W.note], language);
+    assert.equal(h.d.querySelector('#twRoomBody .tw-room-current').textContent, W.current, language);
+    assert.equal(h.d.querySelector('#twRoomBody .tw-room-current .tw-room-verdict').dataset.tone, 'warning');
+    assert.deepEqual(h.errors, []);
+  }
+});
+
+test('RC24 judged by the audit, a saved room is reported by the rows Issues will list: a warning naming them, after any clash; none, a success', async t => {
+  const withCopy = body => ({ ok: true, placement: roomRow({ room: body.room }), placements: [roomRow({ room: body.room }), roomRow({ id: 31, board_id: 3, room: body.room })] });
+  const saves = {
+    en: [
+      ['R7', null, { type: 'warning', text: 'Room \u2066R7\u2069 assigned; Issues will show “Room unsuitable”.' }],
+      ['R5', null, { type: 'warning', text: 'Room \u2066R5\u2069 assigned; Issues will show “Room too small”, “Room unsuitable”.' }],
+      ['R8', null, { type: 'warning', text: 'Room \u2066R8\u2069 assigned; \u2066CS103-S1\u2069 also uses it at this time. Issues will also show “Room too small”.' }],
+      ['R9', null, { type: 'warning', text: 'Room \u2066R9\u2069 assigned; \u2066CS102-S1\u2069 also uses it at this time.' }],
+      ['R2', null, { type: 'success', text: 'Room \u2066R2\u2069 assigned.' }],
+      ['R7', withCopy, { type: 'warning', text: 'Room \u2066R7\u2069 assigned; Issues will show “Room unsuitable”. It also changed on 1 other board.' }],
+    ],
+    ar: [
+      ['R5', null, { type: 'warning', text: 'عُيّنت القاعة \u2066R5\u2069، وستعرض «المشاكل»: «القاعة أصغر من المطلوب»، «القاعة غير مناسبة».' }],
+      ['R8', null, { type: 'warning', text: 'عُيّنت القاعة \u2066R8\u2069، ويستخدمها في هذا الوقت أيضاً: \u2066CS103-S1\u2069. وستعرض «المشاكل» أيضاً: «القاعة أصغر من المطلوب».' }],
+      ['R1', null, { type: 'success', text: 'عُيّنت القاعة \u2066R1\u2069.' }],
+    ],
+  };
+  for (const [language, rows] of Object.entries(saves)) {
+    for (const [code, move, report] of rows) {
+      const h = await roomHarness(t, { arabic: language === 'ar', move, rooms: () => auditAnswer() });
+      await h.select();
+      roomByKey(h);
+      await settled(h);
+      roomRadio(h, code).click();
+      assert.deepEqual(roomNote(h), [false, ''], `${language} ${code}`);
+      h.d.getElementById('twRoomAssign').click();
+      await wait(() => h.notices.length > 0 && !roomDialogEl(h).hasAttribute('open'));
+      // A room the legacy seats refused (R2, R5, R8) is sent as any other.
+      assert.deepEqual(h.posts, [{ room: code }], `${language} ${code}`);
+      assert.deepEqual(h.notices.at(-1), report, `${language} ${code}`);
+    }
+  }
+  // A save the user left (Escape, then R again, D3b) is reported by what its
+  // row was judged against, whatever the list open by then is judged by.
+  let room = 'LAB25';
+  const landing = deferred();
+  const h = await roomHarness(t, {
+    rows: () => [roomRow({ room })],
+    rooms: () => auditAnswer(),
+    move: async body => {
+      await landing.promise;
+      room = body.room;
+      return { ok: true, placement: roomRow({ room }), placements: [roomRow({ room })] };
+    },
+  });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  roomRadio(h, 'R5').click();
+  h.d.getElementById('twRoomAssign').click();
+  await settle();
+  keyOn(h, 'Escape');
+  h.w.TW.quality = { ...quality, rooms: { assessed: false, shortages: 0, details: [] } };
+  roomByKey(h);
+  await settled(h);
+  assert.deepEqual([h.reads.length, roomGroupsDrawn(h)], [1, ['free', 'outside', 'inUse']], 'the reopened list, judged by the legacy rule');
+  const alert = h.d.getElementById('twRoomAlert');
+  landing.resolve();
+  await wait(() => !alert.hidden);
+  assert.deepEqual([alert.textContent, alert.dataset.tone], ['Room \u2066R5\u2069 assigned; Issues will show “Room too small”, “Room unsuitable”.', 'warning']);
+});
+
+test('RC25 judged by the audit, a row says what Issues’ card says once the room is saved: the same lead, kinds and order, and the seats Issues’ row says', async t => {
+  const target = { ...ROOM_TARGET, audit: { ...AUDIT_TARGET } };
+  const cases = [];
+  for (const reasons of [[], ['undersized'], ['incompatible'], ['undersized', 'incompatible']]) {
+    for (const use of ['', 'here', 'elsewhere']) cases.push({ reasons, use });
+  }
+  for (const arabic of [false, true]) {
+    for (const { reasons, use } of cases) {
+      const name = `${arabic ? 'ar' : 'en'} ${reasons.join('+') || 'none'} ${use || 'free'}`;
+      // Issues after the save: the quality check's reasons ("clash" when the
+      // room is in use at that time), and the board's clash when it is this
+      // board's. Placement 11 holds R1 at the same time on this board.
+      const h = await modelHarness(t, {
+        arabic,
+        placements: use === 'here' ? [at(10), at(11)] : [at(10), at(11, { day: 'MON' })],
+        conflicts: use === 'here' ? { ...quiet, summary: { critical: 1, warning: 0 }, room_clashes: [{ ids: [10, 11], room: 'R1', sections: ['AI10-S1', 'AI11-S1'] }] } : quiet,
+        q: { ...quality, rooms: { assessed: true, shortages: 1, details: [{ course_code: 'AI10', placement_ids: [10], rooms: ['R1'], reasons: use ? [...reasons, 'clash'] : reasons, required_capacity: 26 }] } },
+      });
+      await h.select();
+      const mark = card(h, 10).querySelector('.tw-card-tone');
+      const room = rc('R1', { occupied_by: use === 'here' ? [heldOn(2)] : use === 'elsewhere' ? [heldOn(3)] : [], audit: judged([], reasons) });
+      const verdict = h.w.TimetableRoomChoice.verdict(room, { id: 10, board_id: 2 }, target);
+      const [head, ...details] = verdict.words.split(' · ');
+      if (!reasons.length && !use) {
+        assert.deepEqual([mark.hidden, verdict.group, verdict.tone], [true, 'free', 'ok'], name);
+        continue;
+      }
+      assert.equal(head, mark.getAttribute('aria-label'), name);
+      assert.equal(verdict.tone, tone(h, 10), name);
+      // "Room too small": the seats it needs, as Issues' row says them.
+      if (reasons.includes('undersized')) {
+        h.w.renderRightPanel('issues');
+        const small = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')]
+          .find(row => row.querySelector('.tw-issue-kind').textContent === h.w.TimetableRoomChoice.words(arabic).kinds.roomSmall);
+        assert.equal(details[0], small.querySelector('.tw-issue-detail').textContent, name);
+      } else {
+        assert.deepEqual(details, [], name);
+      }
+    }
+  }
+});
+
+test('RC26 when the quality check cannot judge the rooms, or the audit did not judge the meeting: the legacy rule as before, with a note that says so; the judgement is the read’s', async t => {
+  // Every room carries an audit answer that would re-sort it.
+  const withAudit = audit => answer => ({ ...answer, target: { ...answer.target, audit },
+    candidates: answer.candidates.map(room => ({ ...room, audit: judged(['gender', 'capacity'], ['undersized', 'incompatible']) })) });
+  const unjudged = { ...quality, rooms: { assessed: false, shortages: 0, details: [] } };
+  const recorded = JSON.parse(fs.readFileSync(LEGACY_DIALOG, 'utf8'));
+  const notes = {
+    en: '<p class="tw-room-note" data-tone="info">The quality check cannot judge rooms for this meeting; rooms are grouped by type, gender and seats only.</p>',
+    ar: '<p class="tw-room-note" data-tone="info">لا يستطيع فحص الجودة الحكم على قاعات هذا اللقاء؛ صُنّفت القاعات حسب النوع والجنس والمقاعد فقط.</p>',
+  };
+  // The reports of every room of the first case (each kind of report, each
+  // judged by the legacy rule); the drawing of every case.
+  const first = c => c === LEGACY_DIALOG_CASES[0];
+  for (const [how, wrap, q, saves] of [
+    ['the quality check cannot judge the scenario’s rooms', withAudit({ ...AUDIT_TARGET, current: judged(['gender'], ['incompatible']) }), unjudged, first],
+    ['the audit did not judge the meeting', withAudit({ assessed: false, reason: 'duplicate_room_codes' }), null, first],
+  ]) {
+    const produced = plainOf(await legacyDialogs(t, { wrap, quality: q, saves }));
+    for (const c of LEGACY_DIALOG_CASES) {
+      const { body, reports, ...rest } = produced[c.name];
+      const want = recorded[c.name];
+      const note = notes[c.arabic ? 'ar' : 'en'];
+      assert.equal(body.split(note).length, 2, `${how}: ${c.name}: the note, once`);
+      assert.equal(body.replace(note, ''), want.body, `${how}: ${c.name}`);
+      assert.ok(body.indexOf(note) < body.indexOf('id="twRoomFilter"'), `${how}: ${c.name}: above the rooms`);
+      assert.deepEqual(rest, { title: want.title, sub: want.sub, note: want.note }, `${how}: ${c.name}`);
+      if (saves(c)) assert.deepEqual(reports, want.reports, `${how}: ${c.name}`);
+    }
+  }
+  // The judgement is fixed when the rooms arrive: a quality check answering
+  // later re-sorts nothing in the open list; the next open judges again.
+  const h = await roomHarness(t, { rooms: () => auditAnswer() });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  assert.deepEqual(roomGroupsDrawn(h), ['free', 'flagged', 'inUse']);
+  roomRadio(h, 'R2').click();
+  h.w.TW.quality = unjudged;
+  h.w.drawRoomDialog();
+  assert.deepEqual([roomGroupsDrawn(h), roomRadio(h, 'R2').checked, roomNote(h)], [['free', 'flagged', 'inUse'], true, [false, '']], 'the open list is the one the room was chosen from');
+  keyOn(h, 'Escape');
+  roomByKey(h);
+  await settled(h);
+  assert.equal(h.reads.length, 1, 'the kept answer');
+  assert.deepEqual(roomGroupsDrawn(h), ['free', 'outside', 'inUse'], 'judged again: the legacy rule');
+  assert.ok(h.d.getElementById('twRoomBody').innerHTML.includes(notes.en));
+  assert.equal(h.d.querySelector('#twRoomBody .tw-room-current').textContent, 'Current room: LAB25', 'no audit words on the current room');
+});
+
+test('RC27 the audit’s notes about the meeting: a copy staying in its room, a board with no programme, seats assumed; each code isolated and every label escaped', async t => {
+  const label = '<img src=x onerror="alert(1)">\'"';
+  const kept = [{ placement_id: 31, board_id: 3, board_label: label, room: 'R50' }];
+  const boards = [{ board_id: 2, board_label: 'Term 7', programmes: ['AI'] }, { board_id: 3, board_label: label, programmes: [] }];
+  const rooms = [rc('R1', { audit: judged(['programme', 'split'], ['incompatible'], { programme_board_ids: [3] }) }), rc('R50', { audit: judged(['programme'], ['incompatible'], { programme_board_ids: [3] }) }), rc('LAB25', { audit: judged() })];
+  const h = await roomHarness(t, { rooms: () => auditAnswer(rooms, { kept, boards, capacity_source: 'default', required_capacity: 40,
+    current: judged(['split'], ['incompatible']) }) });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  const notes = [...h.d.querySelectorAll('#twRoomBody .tw-room-note')];
+  assert.deepEqual(notes.map(note => [note.dataset.tone, note.textContent]), [
+    ['warning', `The same class stays in \u2066R50\u2069 (\u2066${label}\u2069): any other room leaves it split, which Issues shows as “Room unsuitable”.`],
+    ['warning', `\u2066${label}\u2069 has no programme, so Issues shows every room as “Room unsuitable”.`],
+    ['info', 'This course has no budget row, so the quality check assumes 40 seats.'],
+  ]);
+  // Before the filter, after the time's own clashes; the rows say it too.
+  const body = h.d.getElementById('twRoomBody');
+  assert.ok(body.innerHTML.indexOf('tw-room-note') < body.innerHTML.indexOf('id="twRoomFilter"'));
+  assert.equal(radioWords(h, 'R1'), `Lowers quality: Room unsuitable · \u2066${label}\u2069 has no programme · the same class stays in \u2066R50\u2069 (\u2066${label}\u2069)`);
+  assert.equal(radioWords(h, 'R50'), `Lowers quality: Room unsuitable · \u2066${label}\u2069 has no programme`);
+  assert.equal(h.d.querySelector('#twRoomBody .tw-room-current').textContent,
+    `Current room: LAB25 · Lowers quality: Room unsuitable · the same class stays in \u2066R50\u2069 (\u2066${label}\u2069)`);
+  // Markup from the answer is text, in every place it is drawn.
+  assert.equal(h.d.querySelectorAll('#twRoomDialog img').length, 0);
+  assert.equal(roomDialogEl(h).querySelectorAll('[onerror]').length, 0);
+  // Notes only where the audit has something to say of the meeting.
+  const plain = await roomHarness(t, { rooms: () => auditAnswer() });
+  await plain.select();
+  roomByKey(plain);
+  await settled(plain);
+  assert.equal(plain.d.querySelectorAll('#twRoomBody .tw-room-note').length, 0);
+  // Arabic, with the time's own clash first.
+  const ar = await roomHarness(t, { arabic: true, rooms: () => auditAnswer(rooms.map(timedRoom), {
+    kept: [{ ...kept[0], board_label: 'DS T3' }], boards: [boards[0], { ...boards[1], board_label: 'DS T3', programmes: ['DS'] }], capacity_source: 'default', required_capacity: 11 }) });
+  await ar.select();
+  roomByKey(ar);
+  await settled(ar);
+  assert.deepEqual([...ar.d.querySelectorAll('#twRoomBody .tw-room-note')].map(note => note.textContent), [
+    'أيّاً كانت القاعة، يبقى في وقته تعارضان.',
+    'تبقى الشعبة نفسها في \u2066R50\u2069 (\u2066DS T3\u2069)؛ وأي قاعة أخرى تتركها مقسّمة، فتعرضها «المشاكل» «القاعة غير مناسبة».',
+    'لا يوجد صف ميزانية لهذا المقرر، لذا يفترض فحص الجودة 11 مقعداً.',
+  ]);
+  // No rooms on record: that alone, no note about the meeting.
+  const empty = await roomHarness(t, { rooms: () => auditAnswer([], { kept, boards, capacity_source: 'default', required_capacity: 40 }) });
+  await empty.select();
+  roomByKey(empty);
+  await wait(() => !empty.d.querySelector('#twRoomBody [aria-busy]'));
+  assert.match(empty.d.getElementById('twRoomBody').textContent, /No rooms are on record\./);
+  assert.equal(empty.d.querySelectorAll('#twRoomBody .tw-room-note').length, 0);
+  // A list cut by the server counts the rows it lists.
+  const cut = await roomHarness(t, { rooms: () => auditAnswer(Array.from({ length: 62 }, (_, i) => rc(`X${i}`, { audit: judged() })), {}, { summary: { total: 70 } }) });
+  await cut.select();
+  roomByKey(cut);
+  await settled(cut);
+  assert.match(cut.d.getElementById('twRoomBody').textContent, /Showing the best 62 of 70 rooms\./);
+});
+
+test('RC28 a current room the audit refuses is not chosen; its line says why Issues list it; and a meeting with no room has no audit words', async t => {
+  // While the rooms load, the line is the room alone, as before the audit.
+  const slow = deferred();
+  const loading = await roomHarness(t, { rooms: () => slow.promise });
+  await loading.select();
+  roomByKey(loading);
+  await settle();
+  assert.equal(loading.d.querySelector('#twRoomBody .tw-room-current').outerHTML, '<p class="tw-room-current">Current room: <bdi>LAB25</bdi></p>');
+  slow.resolve(auditAnswer(AUDIT_SET, { current: LAB25_SHORT }));
+  await settled(loading);
+  const rows = [roomRow({ room: 'R3' })];
+  const h = await roomHarness(t, { rows: () => rows, rooms: () => auditAnswer(AUDIT_SET, { current: judged(['type'], ['incompatible']) }) });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  assert.equal(roomRadios(h).some(radio => radio.checked), false);
+  assert.deepEqual(roomNote(h), [true, 'Choose a room.']);
+  assert.equal(h.d.querySelector('#twRoomBody .tw-room-current').textContent, 'Current room: R3 · Lowers quality: Room unsuitable · This meeting needs a lecture room');
+  // In use on this board now: critical, the clash first.
+  const held = await roomHarness(t, { rows: () => [roomRow({ room: 'R9' })], rooms: () => auditAnswer(AUDIT_SET, { current: judged() }) });
+  await held.select();
+  roomByKey(held);
+  await settled(held);
+  assert.equal(roomRadio(held, 'R9').checked, true, 'a current room in use can be chosen, so it is');
+  assert.equal(held.d.querySelector('#twRoomBody .tw-room-current').textContent, 'Current room: R9 · Blocks publishing: Room double-booked');
+  assert.equal(held.d.querySelector('#twRoomBody .tw-room-current .tw-room-verdict').dataset.tone, 'critical');
+  // Free and fitting: the line is the room alone.
+  const fine = await roomHarness(t, { rows: () => [roomRow({ room: 'R1' })], rooms: () => auditAnswer(AUDIT_SET, { current: judged() }) });
+  await fine.select();
+  roomByKey(fine);
+  await settled(fine);
+  assert.equal(fine.d.querySelector('#twRoomBody .tw-room-current').innerHTML, 'Current room: <bdi>R1</bdi>');
+  // Rooms that lower quality can be chosen: a list of only those and misfits
+  // is not "none fit", and its misfits stay closed.
+  const only = await roomHarness(t, { rows: () => [roomRow({ room: 'R3' })], rooms: () => auditAnswer(AUDIT_SET.filter(room => ['R7', 'R3'].includes(room.room_code))) });
+  await only.select();
+  roomByKey(only);
+  await settled(only);
+  assert.deepEqual(roomRadios(only).map(radio => radio.value), ['R7']);
+  assert.doesNotMatch(only.d.getElementById('twRoomBody').textContent, /No room fits this meeting\./);
+  assert.equal(only.d.getElementById('twRoomMisfits').hidden, true);
+  // No room yet: the audit has no current room.
+  const none = await roomHarness(t, { rows: () => [roomRow({ room: 'UNASSIGNED', room_state: 'unassigned' })], rooms: () => auditAnswer() });
+  await none.select();
+  roomByKey(none);
+  await settled(none);
+  assert.equal(none.d.querySelector('#twRoomBody .tw-room-current').textContent, 'Current room: No room');
 });
 
 /* ── Move: M, Selection's Move… and the dialog (design record §7.3, 5e) ──

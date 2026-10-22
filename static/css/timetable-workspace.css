@@ -542,6 +542,12 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
   border-inline-start: 3px solid var(--sev-critical);
   color: var(--t1); font-size: var(--text-xs);
 }
+/* The quality audit's notes about the meeting (5c-audit): a warning where
+   Issues will flag every room or every other one (a copy left in its room,
+   a board with no programme); context otherwise (seats assumed, the quality
+   check unable to judge the rooms). */
+.tw-room-note[data-tone="warning"] { border-inline-start-color: var(--sev-warning); }
+.tw-room-note[data-tone="info"] { border-inline-start-color: var(--sev-info); }
 .tw-room-choices,
 .tw-room-misfits { display: grid; gap: 12px; min-width: 0; }
 .tw-room-group > legend { margin-bottom: 6px; }

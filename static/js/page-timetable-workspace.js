@@ -2971,7 +2971,14 @@ $('twRedo').addEventListener('click', () => runHistoryAction(false));
    the board's programme rooms saves a "Room unsuitable" warning, and the
    dialog says so before and after. A room that does not fit is listed with
    its reason and cannot be chosen. Which room is which, and its words, are
-   TimetableRoomChoice's, shared with split view. */
+   TimetableRoomChoice's, shared with split view.
+   Since 5c-audit the rooms are read with ?audit=1: an answer that carries
+   the quality audit's answer for the meeting is judged by it (D20c as
+   amended): the dialog then says, before a save, the rows Issues will list
+   after it; a room short of the audit's seats is a choosable warning, and
+   the wrong gender or type is refused (the owner's answer to Q1). Without
+   it, or when the quality check cannot judge the scenario's rooms, the
+   legacy rule holds exactly as before (the latter with a note). */
 const isolatedText = text => `\u2066${text}\u2069`;
 const ROOM_WORDS = IS_AR ? {
   change: 'تغيير…', choose: 'اختيار…', changeLabel: 'تغيير القاعة', chooseLabel: 'اختيار قاعة',
@@ -2982,11 +2989,14 @@ const ROOM_WORDS = IS_AR ? {
   timeClashes: n => `أيّاً كانت القاعة، يبقى في وقته ${pluralAr(n, { one: 'تعارض واحد', two: 'تعارضان', few: '{n} تعارضات', many: '{n} تعارضاً', other: '{n} تعارض' })}.`,
   filter: 'تصفية القاعات', filterHint: 'رمز القاعة أو المبنى', noMatch: 'لا توجد قاعة تطابق التصفية.',
   free: n => `متاحة ومناسبة (${n})`,
+  flagged: n => `متاحة لكنها تُضعف الجودة (${n})`,
   outside: n => `متاحة لكنها خارج قاعات برامج هذه اللوحة (${n})`,
   inUse: n => `مناسبة لكنها مستخدمة في هذا الوقت (${n})`,
   misfits: n => `قاعات غير مناسبة (${n})`,
+  flaggedHint: 'اختيار إحداها يحفظ التحذير المذكور في سطرها، ويظهر بعدها في «المشاكل».',
   outsideHint: 'اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل».',
   inUseHint: 'اختيار إحداها يحفظ تعارض قاعة يظهر بعدها في «المشاكل».',
+  unassessedNote: 'لا يستطيع فحص الجودة الحكم على قاعات هذا اللقاء؛ صُنّفت القاعات حسب النوع والجنس والمقاعد فقط.',
   usedBy: (who, board, when) => `تستخدمها ${who} (${board}) في ${when}`,
   more: n => pluralAr(n, { one: 'وشعبة أخرى', two: 'وشعبتان أخريان', few: 'و{n} شعب أخرى', many: 'و{n} شعبةً أخرى', other: 'و{n} شعبة أخرى' }),
   moreJoin: '؛ ', listJoin: '، ',
@@ -3001,6 +3011,9 @@ const ROOM_WORDS = IS_AR ? {
   assignedInUse: (c, who) => `عُيّنت القاعة ${c}، ويستخدمها في هذا الوقت أيضاً: ${who}.`,
   assignedOutside: c => `عُيّنت القاعة ${c}، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة.`,
   outsideToo: 'وستعرضها «المشاكل» أيضاً غير مناسبة لبرامج هذه اللوحة.',
+  assignedFlagged: (c, k) => `عُيّنت القاعة ${c}، وستعرض «المشاكل»: ${k}.`,
+  flaggedToo: k => `وستعرض «المشاكل» أيضاً: ${k}.`,
+  kindList: kinds => kinds.map(kind => `«${kind}»`).join('، '),
   alsoChanged: n => `وتغيّرت أيضاً في ${pluralAr(n, { one: 'لوحة أخرى', two: 'لوحتين أخريين', few: '{n} لوحات أخرى', many: '{n} لوحةً أخرى', other: '{n} لوحة أخرى' })}.`,
   gone: 'لم يعد هذا اللقاء في اللوحة.', notChanged: 'لم تتغيّر القاعة.',
 } : {
@@ -3012,11 +3025,14 @@ const ROOM_WORDS = IS_AR ? {
   timeClashes: n => `Whatever the room, its time keeps ${n === 1 ? '1 clash' : `${n} clashes`}.`,
   filter: 'Filter rooms', filterHint: 'Room code or building', noMatch: 'No room matches the filter.',
   free: n => `Free and fits (${n})`,
+  flagged: n => `Free, but lowers quality (${n})`,
   outside: n => `Free, but outside this board's programme rooms (${n})`,
   inUse: n => `Fits, but in use at this time (${n})`,
   misfits: n => `Rooms that do not fit (${n})`,
+  flaggedHint: 'Choosing one saves the warning on its row, which Issues then shows.',
   outsideHint: 'Choosing one saves a “Room unsuitable” warning, which Issues then shows.',
   inUseHint: 'Choosing one saves a room clash, which Issues then shows.',
+  unassessedNote: 'The quality check cannot judge rooms for this meeting; rooms are grouped by type, gender and seats only.',
   usedBy: (who, board, when) => `Used by ${who} (${board}) at ${when}`,
   more: n => (n === 1 ? 'and 1 more' : `and ${n} more`),
   moreJoin: '; ', listJoin: ', ',
@@ -3031,6 +3047,9 @@ const ROOM_WORDS = IS_AR ? {
   assignedInUse: (c, who, n) => `Room ${c} assigned; ${who} also ${n === 1 ? 'uses' : 'use'} it at this time.`,
   assignedOutside: c => `Room ${c} assigned; Issues will show it as unsuitable for this board's programmes.`,
   outsideToo: "Issues will also show it as unsuitable for this board's programmes.",
+  assignedFlagged: (c, k) => `Room ${c} assigned; Issues will show ${k}.`,
+  flaggedToo: k => `Issues will also show ${k}.`,
+  kindList: kinds => kinds.map(kind => `“${kind}”`).join(', '),
   alsoChanged: n => `It also changed on ${n === 1 ? '1 other board' : `${n} other boards`}.`,
   gone: 'This meeting is no longer on the board.', notChanged: 'The room was not changed.',
 };
@@ -3041,10 +3060,14 @@ const ROOM_WORDS = IS_AR ? {
    `version` is the data version the rooms were asked at (null before they
    are asked for, -1 once the meeting was off the board); `picked`, whether
    the user has chosen a row of them; `held`, the page's own hold a commit
-   met, said in the alert line until it ends. */
+   met, said in the alert line until it ends. `target` is what the rooms
+   are judged against and `unassessed` whether to say the quality check
+   cannot judge them (roomJudgement), both fixed when the answer arrives, so
+   a quality check answering later never re-sorts a list a room was chosen
+   from. */
 const ROOM = {
   token: 0, read: 0, placementId: null, scenarioId: null, boardId: null, origin: '', snapshot: null,
-  state: 'loading', answer: null, failure: null, choice: '', picked: false, version: null, pending: false,
+  state: 'loading', answer: null, target: null, unassessed: false, failure: null, choice: '', picked: false, version: null, pending: false,
   blocked: '', held: '', filter: '', view: '', drawn: null,
 };
 const roomDialogOpen = () => Boolean(window.UXControls?.dialog?.isOpen($('twRoomDialog')));
@@ -3126,7 +3149,7 @@ function openRoomDialog(p, { origin = '' } = {}) {
   if (!dialog || !window.TimetableRoomChoice || !window.UXControls?.dialog || anyDialogOpen()) return false;
   Object.assign(ROOM, {
     token: ROOM.token + 1, placementId: p.id, scenarioId: TW.scenarioId, boardId: TW.boardId, origin, snapshot: p,
-    state: 'loading', answer: null, failure: null, choice: '', picked: false, version: null, pending: false,
+    state: 'loading', answer: null, target: null, unassessed: false, failure: null, choice: '', picked: false, version: null, pending: false,
     blocked: '', held: '', filter: '', drawn: null,
   });
   const alert = $('twRoomAlert');
@@ -3139,21 +3162,40 @@ function openRoomDialog(p, { origin = '' } = {}) {
   return true;
 }
 
-/* The rooms at the meeting's own time (no slot is sent), drawn if the answer
+/* How an answer's rooms are judged (5c-audit): by the quality audit when
+   the answer carries its answer for the meeting (target.audit.assessed) and
+   the quality check has not said it cannot judge the scenario's rooms
+   (TW.quality.rooms.assessed false, a fault in another meeting the answer
+   cannot see); else by the legacy rule, with a target that carries no
+   audit. `unassessed`: the answer asked the audit and it does not apply,
+   which the dialog says; an answer that never asked (a server before
+   5c-audit) is drawn exactly as before. */
+function roomJudgement(answer) {
+  const target = answer?.target || {};
+  const audit = target.audit;
+  if (audit === undefined) return { target, unassessed: false };
+  if (audit?.assessed === true && TW.quality?.rooms?.assessed !== false) return { target, unassessed: false };
+  const legacy = { ...target };
+  delete legacy.audit;
+  return { target: legacy, unassessed: true };
+}
+
+/* The rooms at the meeting's own time (no slot is sent), with what the
+   quality audit will say of each once saved (?audit=1), drawn if the answer
    is still this session's and its latest read. The keyboard then goes from
    the body to the chosen row, or the first one, unless the user has moved it
    (a row it waited on while the list loaded comes back to it). */
 async function readRoomCandidates({ fresh = false } = {}) {
   const session = ROOM.token;
   const read = ++ROOM.read;
-  Object.assign(ROOM, { state: 'loading', answer: null, failure: null, choice: '', version: TW.dataVersion });
+  Object.assign(ROOM, { state: 'loading', answer: null, target: null, unassessed: false, failure: null, choice: '', version: TW.dataVersion });
   announceRoom(ROOM_WORDS.loading);
   drawRoomDialog();
   const id = ROOM.placementId;
-  const answer = await previewRead(`room|${id}`, `/ops/tw/placements/${id}/room-candidates/`, { fresh });
+  const answer = await previewRead(`room|${id}`, `/ops/tw/placements/${id}/room-candidates/?audit=1`, { fresh });
   if (session !== ROOM.token || read !== ROOM.read || !roomDialogOpen()) return;
   if (answer.data) {
-    Object.assign(ROOM, { state: 'ready', answer: answer.data });
+    Object.assign(ROOM, { state: 'ready', answer: answer.data, ...roomJudgement(answer.data) });
   } else {
     Object.assign(ROOM, { state: 'error', failure: answer });
     announceRoom(roomFailureWords(answer));
@@ -3171,19 +3213,22 @@ function roomFailureWords(failure) {
   return failure?.code === 'SERVER_BUSY' || failure?.status === 503 ? ROOM_WORDS.serverBusy : ROOM_WORDS.failed;
 }
 
-/* The rooms in their groups, in the server's order: free, free but outside
-   the board's programme rooms, in use at this time, and those that do not
-   fit. A code listed twice (an M and an F room) is one row, the first; the
-   placer's UNASSIGNED marker is not a room. */
-function roomGroups(answer, p) {
+/* The rooms in their groups, in the server's order, judged against `target`
+   (roomJudgement): free; free but lowering quality (judged by the audit:
+   too small, unsuitable or leaving the class split, as Issues will list
+   it); free but outside the board's programme rooms (the legacy rule's
+   only such group); in use at this time; and those that do not fit. A code
+   listed twice (an M and an F room) is one row, the first; the placer's
+   UNASSIGNED marker is not a room. */
+function roomGroups(answer, target, p) {
   const RC = window.TimetableRoomChoice;
-  const groups = { free: [], outside: [], inUse: [], misfit: [] };
+  const groups = { free: [], flagged: [], outside: [], inUse: [], misfit: [] };
   const seen = new Set();
   (answer?.candidates || []).forEach(room => {
     const key = RC.codeKey(room?.room_code);
     if (!key || key === 'UNASSIGNED' || seen.has(key)) return;
     seen.add(key);
-    const verdict = RC.verdict(room, p);
+    const verdict = RC.verdict(room, p, target);
     groups[verdict.group].push({ room, verdict });
   });
   return groups;
@@ -3192,13 +3237,13 @@ function roomGroups(answer, p) {
 /* The current room is chosen at first when it can be chosen (Assign holds
    on it until another is chosen); until the user chooses, the choice follows
    the current room as the board has it. */
-function initialRoomChoice(answer) {
+function initialRoomChoice(answer, target) {
   const p = roomPlacement();
   if (!p) return '';
   const RC = window.TimetableRoomChoice;
   const current = RC.codeKey(p.room);
-  const { free, outside, inUse } = roomGroups(answer, p);
-  const row = [...free, ...outside, ...inUse].find(item => RC.codeKey(item.room.room_code) === current);
+  const { free, flagged, outside, inUse } = roomGroups(answer, target, p);
+  const row = [...free, ...flagged, ...outside, ...inUse].find(item => RC.codeKey(item.room.room_code) === current);
   return row ? String(row.room.room_code).trim() : '';
 }
 
@@ -3245,11 +3290,14 @@ function roomSubHtml(p) {
   return parts.join(' · ');
 }
 
-/* The body, in order: the current room; the time's own clashes, which stay
-   whatever the room; the filter; the rooms that can be chosen (free, then
-   free but outside the board's programme rooms, then in use), each group
-   that saves an issue saying which; the rooms that do not fit, closed unless
-   nothing fits; and how many the server left out. Every other state is one
+/* The body, in order: the current room (judged by the audit, with what
+   Issues say of it now); the time's own clashes, which stay whatever the
+   room; the audit's notes about the meeting, or that the quality check
+   cannot judge its rooms; the filter; the rooms that can be chosen (free,
+   then free but lowering quality, or, by the legacy rule, free but outside
+   the board's programme rooms, then in use), each group that saves an
+   issue saying which; the rooms that do not fit, closed unless nothing
+   fits; and how many the server left out. Every other state is one
    line (and its way on); the filter stays while the rooms load, so the
    keyboard in it stays there when they are read again. */
 function roomDialogHtml(view) {
@@ -3259,7 +3307,10 @@ function roomDialogHtml(view) {
   const filter = `<div class="ux-field"><label class="ux-field-label" for="twRoomFilter">${esc(W.filter)}</label>`
     + `<input type="search" id="twRoomFilter" class="tw-search" dir="auto" autocomplete="off" aria-controls="twRoomChoices"`
     + ` placeholder="${esc(W.filterHint)}" value="${esc(ROOM.filter)}"></div>`;
-  let html = `<p class="tw-room-current">${esc(W.current)} <bdi>${esc(placementRoomText(p) || W.notSet)}</bdi></p>`;
+  // The current room; judged by the audit, what Issues say of it now.
+  const current = now => `<p class="tw-room-current">${esc(W.current)} <bdi>${esc(placementRoomText(p) || W.notSet)}</bdi>`
+    + `${now ? ` <span class="tw-room-verdict" data-tone="${now.tone}">· ${esc(now.words)}</span>` : ''}</p>`;
+  let html = current(null);
   if (view.state === 'loading') return `${html}${filter}${line(W.loading)}<div class="ux-choice-list" id="twRoomChoices" aria-busy="true"></div>`;
   if (view.state === 'gone') return html + line(W.gone);
   if (view.state === 'online' || view.state === 'noRoom') return html + line(REFUSAL[view.state]);
@@ -3273,13 +3324,20 @@ function roomDialogHtml(view) {
   }
   const RC = window.TimetableRoomChoice;
   const answer = ROOM.answer || {};
-  const target = answer.target || {};
-  const groups = roomGroups(answer, p);
+  const target = ROOM.target || {};
+  const groups = roomGroups(answer, target, p);
+  const currentRow = (answer.candidates || []).find(room => RC.codeKey(room?.room_code) === RC.codeKey(p.room));
+  html = current(RC.currentVerdict(target, p, currentRow));
   // Student and teacher clashes belong to the time: no room changes them.
   const clashes = Number(answer.candidates?.[0]?.validation?.critical_count) || 0;
   if (clashes > 0) html += `<p class="tw-room-note">${esc(W.timeClashes(clashes))}</p>`;
-  const choosable = groups.free.length + groups.outside.length + groups.inUse.length;
+  const choosable = groups.free.length + groups.flagged.length + groups.outside.length + groups.inUse.length;
   if (!choosable && !groups.misfit.length) return html + line(W.empty);
+  // What the audit says of the meeting (a copy staying in its room, a board
+  // with no programme, seats assumed), or that the quality check cannot
+  // judge its rooms.
+  RC.auditNotes(target, IS_AR).forEach(note => { html += `<p class="tw-room-note" data-tone="${note.tone}">${esc(note.text)}</p>`; });
+  if (ROOM.unassessed) html += `<p class="tw-room-note" data-tone="info">${esc(W.unassessedNote)}</p>`;
   const chosen = RC.codeKey(ROOM.choice);
   const filterText = room => [room.room_code, room.building, room.wing].map(value => String(value ?? '').trim()).join(' ').toUpperCase();
   let index = 0;
@@ -3311,6 +3369,7 @@ function roomDialogHtml(view) {
   html += '<div class="tw-room-choices" id="twRoomChoices">';
   if (!choosable) html += line(W.noneFit);
   if (groups.free.length) html += group('free', W.free(groups.free.length), '', groups.free);
+  if (groups.flagged.length) html += group('flagged', W.flagged(groups.flagged.length), W.flaggedHint, groups.flagged);
   if (groups.outside.length) html += group('outside', W.outside(groups.outside.length), W.outsideHint, groups.outside);
   if (groups.inUse.length) html += group('inUse', W.inUse(groups.inUse.length), W.inUseHint, groups.inUse);
   html += `${line(W.noMatch, ' id="twRoomNoMatch" hidden')}</div>`;
@@ -3338,7 +3397,7 @@ function drawRoomDialog() {
   if (!body || ROOM.placementId == null) return;
   const view = roomDialogView();
   ROOM.view = view.state;
-  if (!ROOM.picked) ROOM.choice = initialRoomChoice(ROOM.answer);
+  if (!ROOM.picked) ROOM.choice = initialRoomChoice(ROOM.answer, ROOM.target);
   setDialogHead('twRoomTitle', `${esc(ROOM_WORDS.title)} · <bdi>${esc(view.p.course_code)}</bdi> <bdi>${esc(view.p.section)}</bdi>`);
   setDialogHead('twRoomSub', roomSubHtml(view.p));
   const html = roomDialogHtml(view);
@@ -3448,24 +3507,36 @@ async function checkRoomAgain() {
 }
 
 /* What a saved change came to, read after the board: the room, who else uses
-   it at this time (a clash is saved, not refused), whether Issues will list
-   it as unsuitable (outside the board's programme rooms), and the other
-   boards where the same class changed with it. Either issue makes it a
-   warning, as the row's verdict said. */
-function roomAssignedWords(p, choice, chosenRow, data) {
+   it at this time (a clash is saved, not refused), the rows Issues will list
+   for it (judged by the audit: "Room too small", "Room unsuitable", by
+   their names; by the legacy rule: unsuitable, outside the board's
+   programme rooms), and the other boards where the same class changed with
+   it. Any of them makes it a warning, as the row's verdict said. `target`
+   is what the row was judged against. */
+function roomAssignedWords(p, choice, chosenRow, data, target) {
   const changed = (data?.placements || []).map(row => String(row.id));
   const others = changed.filter(id => id !== String(p.id)).length;
   const users = [...new Set((chosenRow?.occupied_by || [])
     .filter(entry => !changed.includes(String(entry.placement_id)))
     .map(entry => String(entry.section || '').trim()).filter(Boolean))];
-  const outside = window.TimetableRoomChoice.outsidePool(chosenRow);
+  const RC = window.TimetableRoomChoice;
   const room = isolatedText(choice);
-  let text = users.length
-    ? ROOM_WORDS.assignedInUse(room, users.map(isolatedText).join(ROOM_WORDS.listJoin), users.length)
-    : outside ? ROOM_WORDS.assignedOutside(room) : ROOM_WORDS.assigned(room);
-  if (users.length && outside) text += ` ${ROOM_WORDS.outsideToo}`;
+  const inUse = users.length ? ROOM_WORDS.assignedInUse(room, users.map(isolatedText).join(ROOM_WORDS.listJoin), users.length) : '';
+  let text;
+  let flagged;
+  if (RC.auditOf(chosenRow, target)) {
+    const kinds = RC.issueKinds(chosenRow, target).map(issueKindLabel);
+    const list = ROOM_WORDS.kindList(kinds);
+    flagged = kinds.length > 0;
+    text = inUse || (flagged ? ROOM_WORDS.assignedFlagged(room, list) : ROOM_WORDS.assigned(room));
+    if (inUse && flagged) text += ` ${ROOM_WORDS.flaggedToo(list)}`;
+  } else {
+    flagged = RC.outsidePool(chosenRow);
+    text = inUse || (flagged ? ROOM_WORDS.assignedOutside(room) : ROOM_WORDS.assigned(room));
+    if (inUse && flagged) text += ` ${ROOM_WORDS.outsideToo}`;
+  }
   if (others) text += ` ${ROOM_WORDS.alsoChanged(others)}`;
-  return { text, tone: users.length || outside ? 'warning' : 'success' };
+  return { text, tone: users.length || flagged ? 'warning' : 'success' };
 }
 
 /* Assign: the room alone is sent (the lock holds). A refusal stays in the
@@ -3485,6 +3556,7 @@ async function commitRoom() {
   const choice = ROOM.choice;
   if (!RC.codeKey(choice) || RC.codeKey(choice) === RC.codeKey(p.room)) return;
   const chosenRow = (ROOM.answer?.candidates || []).find(room => RC.codeKey(room.room_code) === RC.codeKey(choice));
+  const judgedBy = ROOM.target;
   const session = ROOM.token;
   const scenarioAtStart = TW.scenarioId;
   const oldRoom = p.room ?? '';
@@ -3517,7 +3589,7 @@ async function commitRoom() {
   boardNav?.active(`placement:${p.id}`);
   if (TW.scenarioId === scenarioAtStart) await selectBoard(TW.boardId);
   updateUndoRedoButtons();
-  const said = roomAssignedWords(p, choice, chosenRow, result.data);
+  const said = roomAssignedWords(p, choice, chosenRow, result.data, judgedBy);
   dialogSay(dialog, said.text, said.tone, about);
 }
 
