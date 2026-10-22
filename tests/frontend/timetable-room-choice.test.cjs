@@ -58,11 +58,18 @@ test('each room in the case table fits, is in use and reads as the table says, i
   const shapes = {
     'a board id as text': c => typeof c.placement?.board_id === 'string' || c.room?.occupied_by?.some(e => typeof e.board_id === 'string'),
     'no board on either side': c => c.occupied && c.verdict.tone === 'warning' && 'placement' in c && c.placement?.board_id == null,
-    'a need in another case': c => c.target?.required_type && c.target.required_type !== c.target.required_type.trim().toLowerCase() && c.reasons.en.length === 2,
-    'a room type and gender in another case': c => c.facts && c.room.room_type !== c.room.room_type.trim().toLowerCase() && c.room.section !== c.room.section.trim().toUpperCase(),
+    'a need in another case': c => c.target?.required_type && c.target.required_type !== c.target.required_type.trim().toLowerCase()
+      && c.target.required_gender && c.target.required_gender !== c.target.required_gender.trim().toUpperCase() && c.reasons.en.length === 2,
+    'a room type and gender in another case': c => c.facts && String(c.room.room_type ?? '') !== String(c.room.room_type ?? '').trim().toLowerCase()
+      && String(c.room.section ?? '') !== String(c.room.section ?? '').trim().toUpperCase(),
     'a room without seats': c => c.facts && c.room.capacity === null,
     'a meeting without a seat need': c => c.facts && c.target?.required_capacity === null,
-    'a $ in the room list': c => c.facts && /\$[&`'$]/.test(`${c.target?.required_type}${c.room.building}${c.room.wing}${c.room.floor}`),
+    'a $ in the room list': c => c.facts && c.reasons.en.length > 0
+      && [c.target?.required_type, c.room.building, c.room.wing, c.room.floor].every(value => /\$[&`'$]/.test(String(value ?? ''))),
+    'a padded place, a blank one and floor 0': c => c.facts && /^\s.*\S\s*$/.test(String(c.room.building ?? ''))
+      && typeof c.room.wing === 'string' && c.room.wing.length > 0 && !c.room.wing.trim() && c.room.floor === 0,
+    'a misfit whose needs are not named': c => !c.fits && c.room.fits_type === false && c.room.fits_gender === false
+      && c.target && c.target.required_type === null && c.target.required_gender === null && c.reasons.en.length === 0,
   };
   for (const [shape, holds] of Object.entries(shapes)) assert.ok(table.cases.some(holds), shape);
 });

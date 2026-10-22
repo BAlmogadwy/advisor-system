@@ -222,6 +222,22 @@
       "facts": {"en": "Lecture room · 40 seats · 10 spare · Male (M) · Building <bdi>B$&amp;x</bdi> · Wing <bdi>W$`y</bdi> · Floor <bdi>F$&#39;z$$</bdi>", "ar": "قاعة محاضرات · 40 مقعداً · 10 مقاعد فائضة · طلاب (M) · المبنى <bdi>B$&amp;x</bdi> · الجناح <bdi>W$`y</bdi> · الطابق <bdi>F$&#39;z$$</bdi>"}
     },
     {
+      "name": "a building, wing or floor with spaces is trimmed, a blank one left out, and floor 0 kept",
+      "room": {"room_code": "R28", "room_type": "lecture", "capacity": 40, "section": "M", "building": "  B2 ", "wing": "   ", "floor": 0, "available": true, "tone": "clean", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R28", "fits": true, "occupied": false,
+      "verdict": {"group": "free", "tone": "ok", "en": "Free and fits", "ar": "متاحة ومناسبة"},
+      "reasons": {"en": [], "ar": []},
+      "facts": {"en": "Lecture room · 40 seats · 10 spare · Male (M) · Building <bdi>B2</bdi> · Floor <bdi>0</bdi>", "ar": "قاعة محاضرات · 40 مقعداً · 10 مقاعد فائضة · طلاب (M) · المبنى <bdi>B2</bdi> · الطابق <bdi>0</bdi>"}
+    },
+    {
+      "name": "a misfit whose meeting names no type or gender gets no invented reason",
+      "target": {"required_type": null, "required_gender": null},
+      "room": {"room_code": "R29", "room_type": "lab", "capacity": 40, "section": "F", "available": false, "tone": "block", "fits_type": false, "fits_gender": false, "fits_capacity": true, "department_fit": true, "occupied_by": []},
+      "code_key": "R29", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
       "name": "flags the answer leaves out count as fitting; a code is matched without case or spaces",
       "room": {"room_code": " lab 2b ", "available": true},
       "code_key": "LAB 2B", "fits": true, "occupied": false,

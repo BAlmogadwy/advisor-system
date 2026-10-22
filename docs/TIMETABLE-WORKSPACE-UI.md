@@ -1074,7 +1074,7 @@ Docs: §3.3 adds `UXControls.dialog`, `.ux-dialog-scroll`, `.ux-choice-list` / `
   | Condition | Group | Tone | Words |
   |---|---|---|---|
   | not `fits` | misfit | — | — |
-  | an `occupied_by` entry has `board_id === p.board_id` | inUse | critical | `TONE_LEAD.critical` + `ISSUE_KINDS.room` |
+  | an `occupied_by` entry is on `p`'s board (ids compared as text, so `2` and `"2"` are one board; a missing id is never this board) | inUse | critical | `TONE_LEAD.critical` + `ISSUE_KINDS.room` |
   | other `occupied_by` entries | inUse | warning | warning lead + `roomElsewhere` |
   | `department_fit === false` | free | info | "For context: outside this board's programme rooms" |
   | otherwise | free | ok | "Free and fits" |
