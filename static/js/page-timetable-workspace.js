@@ -254,8 +254,7 @@ async function dialogWrite(dialog, url, body) {
    as that dialog's own. The line takes the tone, so a saved change never
    reads as a refusal. Clearing is only ever about the dialog itself. */
 function dialogSay(dialog, text, tone = 'warning', about = null) {
-  const shown = element => Boolean(element && window.UXControls?.dialog?.isOpen(element));
-  const open = shown(dialog) ? dialog : text ? [...document.querySelectorAll('dialog[open]')].find(shown) : null;
+  const open = sayingDialog(dialog, text);
   const line = open?.querySelector('[role="alert"]');
   if (line) {
     line.textContent = text && about && open.dataset.twAbout !== about.key ? `${about.name}: ${text}` : text;
@@ -264,6 +263,13 @@ function dialogSay(dialog, text, tone = 'warning', about = null) {
     return;
   }
   if (text) notify[tone](text);
+}
+/* The helper dialog whose alert line would carry `text` (dialogSay's
+   choice), or null when it would be a toast. */
+function sayingDialog(dialog, text) {
+  const shown = element => Boolean(element && window.UXControls?.dialog?.isOpen(element));
+  const open = shown(dialog) ? dialog : text ? [...document.querySelectorAll('dialog[open]')].find(shown) : null;
+  return open?.querySelector('[role="alert"]') ? open : null;
 }
 
 /* Preview reads (contract E): one request in flight per key, which a second
@@ -2697,13 +2703,76 @@ function onDragLeave(e) {
 // board-scoped and free-text-instructor keyed, so a cross-board instructor
 // double-booking is invisible to it. Scoped to the section just touched.
 function notifyInstructorClashBackstop(data) {
+  const words = instructorBackstopWords(data);
+  if (words) notify.warning(words);
+}
+function instructorBackstopWords(data) {
   const b = (data && data.instructor_clash_backstop) || {};
-  if (!b.checked) return;
+  if (!b.checked) return '';
   const rows = b.involving_this_section || [];
-  if (!rows.length) return;
-  notify.warning(IS_AR
+  if (!rows.length) return '';
+  return IS_AR
     ? `تعارض للمحاضر: ${rows.length} حصة متداخلة عبر اللوحات`
-    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`);
+    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`;
+}
+
+/* ── After an edit (design record §7.3.2 D, 5e) ──
+   What a move left behind, read from the board's one issue model once the
+   board has been read again (selectBoard), so the report says what the card's
+   ring and Issues say: the edit's words, then the worst lead and the kinds of
+   every fresh critical or warning row about these placements (a row from a
+   check older than the edit is not counted; info never is). Drag and the
+   Move dialog share it. A dialog's report goes where dialogSay puts words —
+   the alert line of the helper dialog open by then, named when that dialog
+   is about another meeting — and the instructor backstop with it (a toast
+   behind a modal is never seen); otherwise each is a toast, as before. */
+function editReport(verbWords, ids, hint = '') {
+  const wanted = (ids || []).map(String);
+  const rows = buildBoardIssues().rows.filter(row => !row.pending && row.tone !== 'info' && row.ids.some(id => wanted.includes(id)));
+  const worst = rows.some(row => row.tone === 'critical') ? 'critical' : rows.length ? 'warning' : '';
+  let text = verbWords;
+  if (worst) text += ` · ${TONE_LEAD[worst]}: ${[...new Set(rows.map(row => row.kind))].map(issueKindLabel).join(', ')}`;
+  if (hint) text += ` · ${hint}`;
+  return { text, tone: worst ? 'warning' : 'success' };
+}
+function reportEdit(verbWords, ids, { dialog = null, about = null, hint = '', data = null } = {}) {
+  const said = editReport(verbWords, ids, hint);
+  const backstop = instructorBackstopWords(data);
+  if (dialog && sayingDialog(dialog, said.text)) {
+    dialogSay(dialog, backstop ? `${said.text} · ${backstop}` : said.text, backstop ? 'warning' : said.tone, about);
+    return;
+  }
+  notify[said.tone](said.text);
+  if (backstop) notify.warning(backstop);
+}
+/* "Moved to Monday 13:00–14:15." — the time isolated (plain text). */
+function movedWords(day, start, end) {
+  const name = (IS_AR ? DAY_LABELS : DAY_NAMES_EN)[DAYS.indexOf(String(day || '').toUpperCase())] || day || '';
+  return IS_AR ? `نُقلت إلى ${name} ${isolatedText(`${start}–${end}`)}.` : `Moved to ${name} ${isolatedText(`${start}–${end}`)}.`;
+}
+
+/* One move of one meeting, for drag and the Move dialog alike: the body is
+   exactly {day, start_time, end_time} (no room: the meeting keeps its room),
+   and a saved move is undone by the same entry whichever sent it, holding
+   the raw times the board had before. With a dialog the failure is its own
+   {code} (dialogWrite: nothing toasted); without one twFetch says it, as a
+   drop always did. */
+async function commitPlacementMove(id, { day, start_time, end_time }, { dialog = null } = {}) {
+  const before = TW.placements.find(row => row.id === id);
+  const url = `/ops/tw/placements/${id}/move/`;
+  const body = { day, start_time, end_time };
+  let result;
+  if (dialog) result = await dialogWrite(dialog, url, body);
+  else {
+    const data = await twFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    result = data ? { data } : { code: 'FAILED' };
+  }
+  if (result.code) return result;
+  TW.undoStack.push({ type: 'move', placement_id: id,
+    old_day: before ? before.day : '', old_start: before ? before.start_time : '', old_end: before ? before.end_time : '',
+    new_day: day, new_start: start_time, new_end: end_time });
+  TW.redoStack = [];
+  return result;
 }
 
 async function onDrop(e) {
@@ -2800,29 +2869,15 @@ async function onDrop(e) {
     }
     notifyInstructorClashBackstop(data);
   } else if (payload.type === 'move') {
-    // Find old position before move
-    const oldP = TW.placements.find(x => x.id === payload.placement_id);
-    const oldDay = oldP ? oldP.day : '';
-    const oldStart = oldP ? oldP.start_time : '';
-    const oldEnd = oldP ? oldP.end_time : '';
-
-    const data = await twFetch(`/ops/tw/placements/${payload.placement_id}/move/`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ day, start_time: startTime, end_time: endTime }),
-    });
-    if (!data) return;
-    TW.undoStack.push({ type: 'move', placement_id: payload.placement_id,
-      old_day: oldDay, old_start: oldStart, old_end: oldEnd,
-      new_day: day, new_start: startTime, new_end: endTime });
-    TW.redoStack = [];
-    const v = data.validation || {};
-    if (v.critical_count > 0) {
-      notify.warning(IS_AR ? 'تم النقل مع تعارضات' : `Moved with ${v.critical_count} conflict(s)`);
-    } else {
-      notify.success(IS_AR ? 'تم النقل' : 'Moved');
-    }
-    notifyInstructorClashBackstop(data);
+    // One write and one report for every move of a meeting (5e): one body,
+    // one undo shape, and a report read from the board once it has been
+    // read again.
+    const moved = await commitPlacementMove(payload.placement_id, { day, start_time: startTime, end_time: endTime });
+    if (moved.code || TW.scenarioId !== scenarioAtStart) return;
+    await selectBoard(TW.boardId);
+    updateUndoRedoButtons();
+    reportEdit(movedWords(day, startTime, endTime), [payload.placement_id], { data: moved.data });
+    return;
   }
 
   // Refresh board
