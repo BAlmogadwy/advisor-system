@@ -1641,7 +1641,10 @@ rows refused for seats the audit accepts.
   could hide a choosable room. `summary` is unchanged. This settles F6 for the
   dialog.
 - Cost: one query (the class's copies), plus the gender of each other board
-  in the meeting (two queries at most each); nothing grows with the room count.
+  in the meeting (two queries at most each), plus, for a policy course that
+  uses a shared room, the budget read the request skips (its room type is
+  fixed; no policy uses a shared room today); nothing grows with the room
+  count.
   Measured on the QA copy (this machine), within the 10% budget:
   - scenario 665's four sample placements, best of 31: +0.7 to +1.6 ms
     (+2% to +6%) on 19 to 31 ms, with one teacher per section off and on;

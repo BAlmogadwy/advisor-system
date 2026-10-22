@@ -377,6 +377,42 @@ def test_s3_a_kept_copy_in_a_small_room_is_not_the_chosen_room_s_shortage(
     assert checked == len(support.ROOMS)
 
 
+def _payload_for(slot):
+    """The move's payload for a room: the room alone, or with ``slot``."""
+    if slot is None:
+        return lambda code: {"room": code}
+    day, start, end = slot
+    return lambda code: {"day": day, "start_time": start, "end_time": end, "room": code}
+
+
+@pytest.mark.parametrize(
+    "subject, slot",
+    [
+        (("AI312", "AI"), None),
+        (("AI312", "DS"), None),
+        (("AI312", "AI"), ("TUE", "13:00", "14:15")),
+    ],
+    ids=["AI@own", "DS@own", "AI->TUE 13:00"],
+)
+def test_s3_a_copy_at_another_time_of_the_same_day_is_another_meeting(
+    subject, slot, teacher_off, scenario, client
+):
+    """AI312's copies are one section on one day at two times (AI 08:00, DS
+    09:30): two meetings. At its own slot, or moved to a third time of that
+    day, a copy is its meeting alone: the other copy is not in the need, not
+    kept, splits nothing and adds no board."""
+    placement = support.placement_of(*subject)
+    answer = _answer(client, *subject, slot=slot)
+    target = answer["target"]["audit"]
+    assert target["save"] == ("room_only" if slot is None else "slot_change")
+    assert target["placement_ids"] == target["moving_placement_ids"] == [placement.id]
+    assert target["kept"] == []
+    assert [board["board_id"] for board in target["boards"]] == [placement.board_id]
+    assert not any("split" in c["audit"]["reasons"] for c in answer["candidates"])
+    checked = _check_parity(scenario, client, placement, answer, _payload_for(slot))
+    assert checked == len(support.ROOMS)
+
+
 def test_s13_unroomed_and_unassigned_copies_move_together(teacher_off, scenario, client):
     """ "" and UNASSIGNED are both "no room": a save moves both copies."""
     SectionPlacement.objects.filter(term_section__course_code="AI304", board__label="AI T3").update(
@@ -418,6 +454,32 @@ def test_s4_the_meeting_joined_and_the_new_duration_decide(teacher_off, scenario
     lecture = _answer(client, "AI309", "AI", slot=("MON", "16:00", "17:15"))["target"]["audit"]
     assert _answer(client, "AI309", "AI")["target"]["audit"]["required_type"] == "lab"
     assert lecture["required_type"] == "lecture"
+    # Cut to 75 minutes by its end alone: a time change, and a lecture.
+    shorter = _answer(client, "AI309", "AI", slot=("MON", "11:00", "12:15"))["target"]["audit"]
+    assert (shorter["save"], shorter["required_type"]) == ("slot_change", "lecture")
+
+
+@pytest.mark.parametrize(
+    "slot",
+    [
+        ("SUN", "09:30", "11:20"),  # the end alone
+        ("SUN", "09:00", "10:45"),  # the start alone
+        ("MON", "09:30", "10:45"),  # the day alone
+    ],
+    ids=["end", "start", "day"],
+)
+def test_s4_one_part_of_the_slot_changed_is_a_slot_change(slot, teacher_off, scenario, client):
+    """The move view reads a change to any one of day, start and end as a time
+    change (``time_changed``): AI302's AI copy (SUN 09:30-10:45, its DS copy
+    in the same room) leaves the DS copy's meeting and moves alone."""
+    placement = support.placement_of("AI302", "AI")
+    answer = _answer(client, "AI302", "AI", slot=slot)
+    target = answer["target"]["audit"]
+    assert target["save"] == "slot_change"
+    assert target["placement_ids"] == target["moving_placement_ids"] == [placement.id]
+    assert target["kept"] == []
+    checked = _check_parity(scenario, client, placement, answer, _payload_for(slot))
+    assert checked == len(support.ROOMS)
 
 
 # ── S5: the current room ──────────────────────────────────────────────────
@@ -586,6 +648,10 @@ def test_s7_a_policy_course_in_a_shared_room_reads_its_budget(
     assert (target["required_capacity"], target["capacity_source"]) == (26, "budget")
     assert target["required_capacity"] == demand.required_capacity
     assert _by_code(answer)["L25"]["audit"]["reasons"] == ["capacity"]
+    # The flag's cost here: the copies, and the budget the request skipped.
+    off, _ = support.get_json(client, support.room_candidates_url(placement))
+    on, _ = support.get_json(client, support.room_candidates_url(placement, None, "audit=1"))
+    assert on == off + 2
 
 
 # ── S8: meetings the audit cannot judge ───────────────────────────────────
