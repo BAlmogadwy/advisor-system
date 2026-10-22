@@ -3992,6 +3992,23 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
 # ── Publish Readiness ───────────────────────────────────────────
 
 
+def _readiness_item(
+    code: str,
+    board: DeliveryBoard | None = None,
+    *,
+    count: int | None = None,
+    **params: object,
+) -> dict:
+    """One structured publish blocker/warning (see ``check_publish_readiness``)."""
+    return {
+        "code": code,
+        "board_id": board.id if board is not None else None,
+        "board_label": board.label if board is not None else None,
+        "count": count,
+        "params": params,
+    }
+
+
 def check_publish_readiness(scenario_id: int) -> dict:
     """Determine whether a scenario can be published (finalised).
 
@@ -4003,30 +4020,104 @@ def check_publish_readiness(scenario_id: int) -> dict:
           sections -- H15 -- or instructor double-bookings).
         - A board has a placement sitting on an institutionally **blocked**
           slot (legality — the timetable must not occupy a reserved cell).
+        - A board has room clashes while rooms are assigned, or sections that
+          still need a shared room and have none.
+        - A planned section is not placed yet, a placed section lacks some of
+          its course's meetings, or an English-pattern section breaks its
+          pattern policy.
 
     Warnings (advisory, do not block):
         - A board has room-clash warnings, or cross-course overlaps every
           affected student can route round through sibling sections.
+        - Cross-board overlaps that share at least ``HARD_OVERLAP_THRESHOLD``
+          students.
 
     Parameters:
         scenario_id: PK of the ``Scenario``.
 
     Returns:
-        ``{"ready": bool, "blockers": [...], "warnings": [...]}``
+        ``{"ready": bool, "blockers": [...], "warnings": [...],
+        "blocker_items": [...], "warning_items": [...]}``.
+
+        ``blockers`` / ``warnings`` are the English display strings. The
+        ``*_items`` lists are parallel to them (one item per string, same
+        order) so a client can word each one in any language and link it to
+        its board. Every item is::
+
+            {"code": str, "board_id": int | None, "board_label": str | None,
+             "count": int | None, "params": {...}}
+
+        ``count`` is the headline number the English string leads with;
+        ``params`` holds everything else the string names. ``board_id`` /
+        ``board_label`` are set when the item belongs to one board, else None.
+
+        Blocker codes (``code``: board / count / params):
+
+        ``no_boards``
+            no board / none / {}. Returned alone: nothing else can be checked.
+        ``board_no_placements``
+            board / none / {}.
+        ``board_critical_conflicts``
+            board / critical conflicts on the board / {}.
+        ``board_blocked_slot_placements``
+            board / placements on institutionally blocked slots /
+            ``slots``: sorted unique ``"DAY HH:MM"`` labels they occupy.
+        ``board_room_conflicts``
+            board / room clashes on the board / {}.
+        ``board_sections_without_rooms``
+            board / placements still ``UNASSIGNED`` that need a shared room / {}.
+        ``missing_required_section``
+            no board / sections still to place (planned minus used) /
+            ``course_code``, ``course_key``, ``programme_term``,
+            ``planned_sections``, ``used_sections``.
+        ``incomplete_section_pattern``
+            board of the section's first placement / meetings missing /
+            ``course_code``, ``course_key``, ``section``, ``placed_meetings``,
+            ``expected_meetings``.
+        ``invalid_section_pattern``
+            board of the section's first placement / none /
+            ``course_code``, ``section``, ``detail`` (the policy's English text).
+
+        Warning codes:
+
+        ``board_warnings``
+            board / conflict warnings on the board / {}.
+        ``cross_board_conflicts``
+            no board / cross-board pairs at or over the threshold /
+            ``threshold``: ``HARD_OVERLAP_THRESHOLD`` (shared students).
     """
     from django.db.models import Q
 
     from core.models import TimetableScenario
     from core.services.timetable_validation import blocked_slot_keys
 
-    boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
+    board_list = list(DeliveryBoard.objects.filter(scenario_id=scenario_id))
     blockers: list[str] = []
     warnings: list[str] = []
+    blocker_items: list[dict] = []
+    warning_items: list[dict] = []
     online_lookup = OnlineCourseLookup()
 
-    if boards.count() == 0:
-        blockers.append("No boards in this scenario")
-        return {"ready": False, "blockers": blockers, "warnings": warnings}
+    def block(text: str, item: dict) -> None:
+        blockers.append(text)
+        blocker_items.append(item)
+
+    def warn(text: str, item: dict) -> None:
+        warnings.append(text)
+        warning_items.append(item)
+
+    def outcome() -> dict:
+        return {
+            "ready": len(blockers) == 0,
+            "blockers": blockers,
+            "warnings": warnings,
+            "blocker_items": blocker_items,
+            "warning_items": warning_items,
+        }
+
+    if not board_list:
+        block("No boards in this scenario", _readiness_item("no_boards"))
+        return outcome()
 
     _scenario = TimetableScenario.objects.filter(id=scenario_id).first()
     blocked_set = blocked_slot_keys(_scenario.blocked_slots) if _scenario else set()
@@ -4034,24 +4125,41 @@ def check_publish_readiness(scenario_id: int) -> dict:
     for _day, _start in blocked_set:
         blocked_q |= Q(day=_day, start_time=_start)
 
-    for board in boards:
+    for board in board_list:
         placed = SectionPlacement.objects.filter(board=board).count()
         if placed == 0:
-            blockers.append(f"Board '{board.label}' has no placements")
+            block(
+                f"Board '{board.label}' has no placements",
+                _readiness_item("board_no_placements", board),
+            )
             continue
 
         conflicts = detect_board_conflicts(board.id)
         if conflicts["summary"]["critical"] > 0:
-            blockers.append(
-                f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts"
+            block(
+                f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts",
+                _readiness_item(
+                    "board_critical_conflicts", board, count=conflicts["summary"]["critical"]
+                ),
             )
 
         # Legality: no placement may occupy an institutionally blocked slot.
         if blocked_set:
-            on_blocked = SectionPlacement.objects.filter(board=board).filter(blocked_q).count()
+            on_blocked_slots = list(
+                SectionPlacement.objects.filter(board=board)
+                .filter(blocked_q)
+                .values_list("day", "start_time")
+            )
+            on_blocked = len(on_blocked_slots)
             if on_blocked:
-                blockers.append(
-                    f"Board '{board.label}': {on_blocked} placement(s) on blocked slots"
+                block(
+                    f"Board '{board.label}': {on_blocked} placement(s) on blocked slots",
+                    _readiness_item(
+                        "board_blocked_slot_placements",
+                        board,
+                        count=on_blocked,
+                        slots=sorted({f"{day} {start}" for day, start in on_blocked_slots}),
+                    ),
                 )
 
         # Room clashes: block publish when rooms are actively assigned
@@ -4064,7 +4172,10 @@ def check_publish_readiness(scenario_id: int) -> dict:
         has_rooms = offline_placements.exclude(room="").exclude(room="UNASSIGNED").exists()
 
         if room_clashes > 0 and has_rooms:
-            blockers.append(f"Board '{board.label}': {room_clashes} room conflicts")
+            block(
+                f"Board '{board.label}': {room_clashes} room conflicts",
+                _readiness_item("board_room_conflicts", board, count=room_clashes),
+            )
 
         # Unassigned rooms when rooms are expected
         unassigned_rooms = sum(
@@ -4074,10 +4185,16 @@ def check_publish_readiness(scenario_id: int) -> dict:
             or section_policy(row.term_section).uses_shared_room
         )
         if unassigned_rooms > 0:
-            blockers.append(f"Board '{board.label}': {unassigned_rooms} sections without rooms")
+            block(
+                f"Board '{board.label}': {unassigned_rooms} sections without rooms",
+                _readiness_item("board_sections_without_rooms", board, count=unassigned_rooms),
+            )
 
         if conflicts["summary"]["warning"] > 0 and not (room_clashes > 0 and has_rooms):
-            warnings.append(f"Board '{board.label}': {conflicts['summary']['warning']} warnings")
+            warn(
+                f"Board '{board.label}': {conflicts['summary']['warning']} warnings",
+                _readiness_item("board_warnings", board, count=conflicts["summary"]["warning"]),
+            )
 
     # Cross-board conflicts: high-overlap pairs are warnings
     from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
@@ -4087,25 +4204,67 @@ def check_publish_readiness(scenario_id: int) -> dict:
         c for c in cross_conflicts if c["overlap_count"] >= HARD_OVERLAP_THRESHOLD
     ]
     if high_overlap_cross:
-        warnings.append(
-            f"{len(high_overlap_cross)} cross-board conflicts with {HARD_OVERLAP_THRESHOLD}+ shared students"
+        warn(
+            f"{len(high_overlap_cross)} cross-board conflicts with {HARD_OVERLAP_THRESHOLD}+ shared students",
+            _readiness_item(
+                "cross_board_conflicts",
+                count=len(high_overlap_cross),
+                threshold=HARD_OVERLAP_THRESHOLD,
+            ),
         )
 
     missing_sections = [
         item for item in compute_scenario_budget(scenario_id) if item["remaining_sections"] > 0
     ]
     for item in missing_sections:
-        blockers.append(
+        block(
             "Missing required section: "
             f"{item['course_code']} needs {item['remaining_sections']} more "
-            f"(planned {item['planned_sections']}, used {item['used_sections']})"
+            f"(planned {item['planned_sections']}, used {item['used_sections']})",
+            _readiness_item(
+                "missing_required_section",
+                count=item["remaining_sections"],
+                course_code=item["course_code"],
+                course_key=item["course_key"],
+                programme_term=item["programme_term"],
+                planned_sections=item["planned_sections"],
+                used_sections=item["used_sections"],
+            ),
+        )
+
+    # One read of the scenario's placements serves both pattern checks below
+    # and says which board a section sits on (the board of its first placement).
+    # Ordered, so "the board of its first placement" is the same board on every
+    # request (an unordered queryset may come back in any order on PostgreSQL).
+    scenario_placements = list(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .select_related("term_section")
+        .order_by("board__display_order", "board_id", "id")
+    )
+    board_by_id = {board.id: board for board in board_list}
+    section_board_id: dict[tuple[str, str], int] = {}
+    for placement in scenario_placements:
+        ts = placement.term_section
+        section_board_id.setdefault(
+            (ts.course_key or ts.course_code, ts.section), placement.board_id
         )
 
     for issue in compute_incomplete_section_patterns(scenario_id):
-        blockers.append(
+        home_id = section_board_id.get((issue["course_key"], issue["section"]))
+        block(
             "Incomplete section pattern: "
             f"{issue['course_code']}-{issue['section']} has "
-            f"{issue['placed_meetings']}/{issue['expected_meetings']} meetings"
+            f"{issue['placed_meetings']}/{issue['expected_meetings']} meetings",
+            _readiness_item(
+                "incomplete_section_pattern",
+                board_by_id.get(home_id) if home_id is not None else None,
+                count=issue["missing_meetings"],
+                course_code=issue["course_code"],
+                course_key=issue["course_key"],
+                section=issue["section"],
+                placed_meetings=issue["placed_meetings"],
+                expected_meetings=issue["expected_meetings"],
+            ),
         )
 
     from core.services.timetable_section_policy import (
@@ -4115,9 +4274,7 @@ def check_publish_readiness(scenario_id: int) -> dict:
 
     policy_sections = {}
     policy_rows = defaultdict(list)
-    for placement in SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
-        "term_section"
-    ):
+    for placement in scenario_placements:
         policy = section_policy(placement.term_section)
         if policy:
             policy_sections[placement.term_section_id] = (placement.term_section, policy)
@@ -4139,12 +4296,15 @@ def check_publish_readiness(scenario_id: int) -> dict:
                     policy, list(TermSectionMeeting.objects.filter(term_section=section))
                 )
         except (SectionPolicyError, ValueError, TypeError) as exc:
-            blockers.append(
-                f"Invalid English section pattern {section.course_code}-{section.section}: {exc}"
+            block(
+                f"Invalid English section pattern {section.course_code}-{section.section}: {exc}",
+                _readiness_item(
+                    "invalid_section_pattern",
+                    board_by_id.get(policy_rows[section_id][0].board_id),
+                    course_code=section.course_code,
+                    section=section.section,
+                    detail=str(exc),
+                ),
             )
 
-    return {
-        "ready": len(blockers) == 0,
-        "blockers": blockers,
-        "warnings": warnings,
-    }
+    return outcome()

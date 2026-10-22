@@ -1,35 +1,33 @@
 """The workspace's toolbar menus open whole, beside the buttons that opened them.
 
-Three menus hang off the timetable workspace's toolbars: Generate (in the
-generate bar) and Optimise and Export (in the sticky command bar). Two defects
-hid them. On wide screens the Generate menu opened beneath the sticky command
-bar, because the generate bar's glass blur makes it a stacking context that
-traps the menu's own z-index. On tablets a fixed alignment cut Optimise or
-Export off at the edge of the content, depending on how the command bar
-wrapped; on phones every menu, a fixed sheet with `top: auto`, opened over the
-buttons that opened it.
+Five menus hang off the timetable workspace's toolbars, all driven by the
+design system's menu controller (static/js/ux-controls.js): New and the
+scenario's actions, Optimise and Export in the page header, and "Open in" in
+the board bar. Earlier defects this guards against: a menu opened beneath the
+next bar because its own bar's glass blur is a stacking context (the header's
+menus must paint over the board bar); a fixed alignment cut a menu off at the
+edge of the content, depending on how its bar wrapped; on phones a fixed sheet
+opened over the buttons that opened it.
 
-This loads the real page with a draft scenario (so all three menus are live),
-opens each menu with the mouse, and checks what the user sees: every item
-whole and on top at its corners and centre, the menu inside the visible
-content (the viewport cut by every clipping ancestor) and fully on screen,
-just under its own buttons (never over them, never detached from them), and
-level with them; on a phone, a sheet 12px inside each edge of its bar; and
-the page never scrolled sideways. Escape then closes it, returns focus to its
-button and, on a wide screen, puts the generate bar back in its layer. The
-Generate menu is also opened from the keyboard. Widths: a wide desktop, the
-tablet widths where a fixed alignment failed (Export at 870px in English,
-Optimise at 800px in Arabic), the phone breakpoint, a phone and a short
-phone; English and Arabic; a wide font, as a CI machine without the design's
-fonts renders the page.
+This loads the real page with a draft scenario (so every menu is live), opens
+each menu with the mouse, and checks what the user sees: every item whole and
+on top at its corners and centre, the menu inside the visible content (the
+viewport cut by every clipping ancestor) and fully on screen, just under its
+own buttons (never over them, never detached from them), and level with them;
+on a phone, a sheet 12px inside each edge of its toolbar; and the page never
+scrolled sideways. Escape then closes it and returns focus to its button. The
+New menu is also opened from the keyboard. Widths: a wide desktop, the tablet
+widths where a fixed alignment once failed, the phone breakpoint, a phone and a
+short phone; English and Arabic; a wide font, as a CI machine without the
+design's fonts renders the page.
 
 A phone turned from landscape to portrait crosses the phone breakpoint, and a
-wide-screen placement once outlived it (the Arabic Generate sheet hung 146px
-off the page and dragged it sideways). So each menu is also opened on the
-landscape layout and reopened after the turn, and kept open across the turn
-and back. Scrolled past an open menu, the page stays put while the address
-bar shows or the menu's bar grows: only opening a menu scrolls to it. Opening
-a menu sends nothing that could change data, and nothing leaves the machine
+wide-screen placement once outlived it (the Arabic sheet hung 146px off the
+page and dragged it sideways). So each menu is also opened on the landscape
+layout and reopened after the turn, and kept open across the turn and back.
+Scrolled past an open menu, the page stays put while the address bar shows or
+the page's status line grows: only opening a menu scrolls to it. Opening a
+menu sends nothing that could change data, and nothing leaves the machine
 (tests/browser_isolation.py).
 """
 
@@ -63,15 +61,17 @@ VIEWPORTS = (
     (390, 844),
     (320, 640),
 )
-PHONE_MAX_WIDTH = 640
+# (Phones, at or under 640px, show each menu as a sheet across its toolbar.)
 # A phone on its side and upright, either side of the phone breakpoint.
 LANDSCAPE = (844, 390)
 PORTRAIT = (390, 844)
 
 MENUS = (
-    ("Generate", "twGenerateMenu", "twGenerateDropdown", "twGenerateGroup"),
+    ("New", "twNewMenu", "twNewDropdown", "twNewGroup"),
+    ("Scenario actions", "twMoreMenu", "twMoreDropdown", "twMoreGroup"),
     ("Optimise", "twOptimiseMenu", "twOptimiseDropdown", "twOptimiseGroup"),
     ("Export", "twExportMenu", "twExportDropdown", "twExportGroup"),
+    ("Open in", "twOpenMenu", "twOpenDropdown", "twOpenGroup"),
 )
 
 # What is wrong with the open menu, as a list of short findings.
@@ -94,7 +94,7 @@ SEEN = r"""([trigger, menuId, groupId]) => {
   else if (r.top - buttons.bottom > 12) bad.push(`detached ${px(r.top - buttons.bottom)}px below its buttons`);
   if (r.right < buttons.left || r.left > buttons.right) bad.push('not level with its buttons');
   if (matchMedia('(max-width: 640px)').matches) {
-    const bar = menu.closest('#twGenBar, .tw-cmd-bar').getBoundingClientRect();
+    const bar = menu.closest('.ux-toolbar').getBoundingClientRect();
     if (Math.abs(r.left - bar.left - 12) > 1 || Math.abs(bar.right - r.right - 12) > 1) {
       bad.push(`not a sheet across its bar: ${px(r.left)}-${px(r.right)}, bar ${px(bar.left)}-${px(bar.right)}`);
     }
@@ -119,7 +119,7 @@ SEEN = r"""([trigger, menuId, groupId]) => {
 # for ten frames: after a resize a bar goes on rewrapping for several frames.
 SETTLED = r"""async () => {
   const boxes = () => JSON.stringify([...document.querySelectorAll(
-    '#twGenBar, #twCmdBar, #twGenerateGroup, #twOptimiseGroup, #twExportGroup, [role="menu"]'
+    '.tw-header, #twCmdBar, .btn-split, .ux-menu-anchor, [role="menu"]'
   )].map(e => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }));
   let last = boxes(), still = 0;
   for (let frame = 0; frame < 300 && still < 10; frame++) {
@@ -130,17 +130,17 @@ SETTLED = r"""async () => {
   }
 }"""
 
-# Scrolls the page until the open Generate menu is above the fold; false when
-# the page is too short for that.
-SCROLL_PAST_GENERATE = r"""() => {
+# Scrolls the page until the open New menu is above the fold; false when the
+# page is too short for that.
+SCROLL_PAST_NEW = r"""() => {
   const main = document.getElementById('main-content');
-  const menu = document.getElementById('twGenerateDropdown');
+  const menu = document.getElementById('twNewDropdown');
   main.scrollTop += menu.getBoundingClientRect().bottom - main.getBoundingClientRect().top + 20;
   return menu.getBoundingClientRect().bottom < main.getBoundingClientRect().top;
 }"""
 # Whether the page still shows what the user scrolled to, past the menu.
-STILL_PAST_GENERATE = r"""() => {
-  const menu = document.getElementById('twGenerateDropdown').getBoundingClientRect();
+STILL_PAST_NEW = r"""() => {
+  const menu = document.getElementById('twNewDropdown').getBoundingClientRect();
   const view = document.getElementById('main-content').getBoundingClientRect();
   return menu.bottom < view.top ? [] : [`page pulled back to the menu (${Math.round(menu.top)}-${Math.round(menu.bottom)})`];
 }"""
@@ -148,7 +148,6 @@ STILL_PAST_GENERATE = r"""() => {
 AFTER_ESCAPE = r"""(trigger) => ({
   open: document.getElementById(trigger).getAttribute('aria-expanded') === 'true',
   focus: document.activeElement?.id || document.activeElement?.tagName,
-  barLayer: getComputedStyle(document.getElementById('twGenBar')).zIndex,
 })"""
 
 
@@ -230,36 +229,25 @@ class ToolbarMenusBrowserTests(StaticLiveServerTestCase):
         for language in ("en", "ar"):
             for width, height in VIEWPORTS:
                 page, sent, errors = self._load(language, width, height)
-                phone = width <= PHONE_MAX_WIDTH
                 for name, trigger, menu, group in MENUS:
                     where = f"{name} {language} {width}x{height}"
                     page.click(f"#{trigger}")
                     found = page.evaluate(SEEN, [trigger, menu, group])
-                    if name == "Generate" and not phone:
-                        layer = page.evaluate(AFTER_ESCAPE, trigger)["barLayer"]
-                        if layer in ("auto", "0"):
-                            found.append(f"generate bar not raised while open ({layer})")
                     page.keyboard.press("Escape")
                     closed = page.evaluate(AFTER_ESCAPE, trigger)
                     if closed["open"]:
                         found.append("Escape did not close it")
                     if closed["focus"] != trigger:
                         found.append(f"Escape left focus on {closed['focus']}")
-                    if not phone and closed["barLayer"] != "auto":
-                        found.append(
-                            f"generate bar still raised after closing ({closed['barLayer']})"
-                        )
                     if found:
                         problems[where] = found
-                # The keyboard reaches the Generate menu too, and opens it whole.
-                page.focus("#twGenerateMenu")
+                # The keyboard reaches the New menu too, and opens it whole.
+                page.focus("#twNewMenu")
                 page.keyboard.press("ArrowDown")
-                where = f"Generate by keyboard {language} {width}x{height}"
-                found = page.evaluate(
-                    SEEN, ["twGenerateMenu", "twGenerateDropdown", "twGenerateGroup"]
-                )
-                if page.evaluate("document.activeElement?.dataset.engine") != "classic":
-                    found.append("ArrowDown did not focus the first engine")
+                where = f"New by keyboard {language} {width}x{height}"
+                found = page.evaluate(SEEN, ["twNewMenu", "twNewDropdown", "twNewGroup"])
+                if page.evaluate("document.activeElement?.id") != "twGenerate":
+                    found.append("ArrowDown did not focus Generate timetable")
                 page.keyboard.press("Escape")
                 if found:
                     problems[where] = found
@@ -304,35 +292,31 @@ class ToolbarMenusBrowserTests(StaticLiveServerTestCase):
             # scrolls (and shortens it), and the generate bar's status line
             # grows, which re-places the menu. Only opening a menu scrolls.
             self._turn(page, *PORTRAIT)
-            page.click("#twGenerateMenu")
-            if not page.evaluate(SCROLL_PAST_GENERATE):
-                problems[f"page {language}"] = ["too short to scroll past the Generate menu"]
+            page.click("#twNewMenu")
+            if not page.evaluate(SCROLL_PAST_NEW):
+                problems[f"page {language}"] = ["too short to scroll past the New menu"]
             self._turn(page, PORTRAIT[0], PORTRAIT[1] - 56)
-            found = page.evaluate(STILL_PAST_GENERATE)
+            found = page.evaluate(STILL_PAST_NEW)
             if found:
-                problems[f"Generate {language} open, address bar shown"] = found
+                problems[f"New {language} open, address bar shown"] = found
             page.evaluate(
                 "document.getElementById('twGenStatus').textContent = 'Saved. '.repeat(40)"
             )
             page.evaluate(SETTLED)
-            found = page.evaluate(STILL_PAST_GENERATE)
+            found = page.evaluate(STILL_PAST_NEW)
             if found:
-                problems[f"Generate {language} open, status line grown"] = found
+                problems[f"New {language} open, status line grown"] = found
             # Something above the buttons inside the bar moves them without
             # resizing their group: the bar is watched too, so the sheet
             # follows them, and re-placing it still leaves the page alone.
-            page.evaluate(
-                "document.getElementById('twGenBar').firstElementChild.style.marginTop = '48px'"
-            )
+            page.evaluate("document.querySelector('.tw-header').style.paddingTop = '48px'")
             page.evaluate(SETTLED)
-            found = page.evaluate(STILL_PAST_GENERATE)
+            found = page.evaluate(STILL_PAST_NEW)
             page.evaluate("document.getElementById('main-content').scrollTop = 0")
             page.evaluate(SETTLED)
-            found += page.evaluate(
-                SEEN, ["twGenerateMenu", "twGenerateDropdown", "twGenerateGroup"]
-            )
+            found += page.evaluate(SEEN, ["twNewMenu", "twNewDropdown", "twNewGroup"])
             if found:
-                problems[f"Generate {language} open, buttons moved down"] = found
+                problems[f"New {language} open, buttons moved down"] = found
             page.keyboard.press("Escape")
             if sent or errors:
                 problems[f"page {language} turned"] = [*sent, *errors]

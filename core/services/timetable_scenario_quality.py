@@ -24,6 +24,7 @@ from core.services.timetable_optimizer_v2 import (
 )
 from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
 from core.services.timetable_secondary_recovery import soft_unresolved_count
+from core.services.timetable_student_assignment import decode_score
 
 logger = logging.getLogger(__name__)
 
@@ -76,20 +77,65 @@ def _rooms(scenario_id: int) -> dict[str, Any]:
     }
 
 
-def _assignment_clashes(evaluation: TimetableEvaluationResult, sections: list[SectionState]) -> int:
-    """Count student/section pairs, not course-demand or duplicate meeting rows."""
+def _assignment_clash_counts(
+    evaluation: TimetableEvaluationResult, sections: list[SectionState]
+) -> tuple[int, int]:
+    """``(pairs, students)`` of the seated clashes, in one pass.
+
+    ``pairs`` counts (student, pair of that student's seated sections that
+    overlap): a student seated in three mutually overlapping sections adds 3,
+    and a student in two overlapping sections adds 1. Never course-demand or
+    duplicate meeting rows. ``students`` counts the unique students with at
+    least one such pair.
+    """
     by_id = {section.section_id: section for section in sections}
-    return sum(
-        any(
-            left.day == right.day
-            and left.start_min < right.end_min
-            and right.start_min < left.end_min
-            for left in by_id[a].meetings
-            for right in by_id[b].meetings
+    pairs = students = 0
+    for state in evaluation.assignment_states.values():
+        student_pairs = sum(
+            any(
+                left.day == right.day
+                and left.start_min < right.end_min
+                and right.start_min < left.end_min
+                for left in by_id[a].meetings
+                for right in by_id[b].meetings
+            )
+            for a, b in combinations(sorted(state.section_ids), 2)
         )
-        for state in evaluation.assignment_states.values()
-        for a, b in combinations(sorted(state.section_ids), 2)
-    )
+        pairs += student_pairs
+        students += student_pairs > 0
+    return pairs, students
+
+
+def _seat_tiers(evaluation: TimetableEvaluationResult) -> dict[str, Any]:
+    """The seating outcome by tier, decoded from the evaluation's own score.
+
+    Tiered score: ``high_risk`` counts STUDENTS, the rest count REQUESTS
+    (a student's wanted course left unseated).
+
+    - ``high_risk``: high-risk students with at least one unseated required
+      (T1 or T2) course. High-risk = ``RiskTier.A``, a student with a failed
+      course or a retake in progress (``StudentCourse`` failed, or studying
+      with a failing grade) -- the ones the engine seats first. Any unseated
+      T2 course counts here, tolerated or not.
+    - ``required``: unseated T1 (specialised major) requests plus T2 (shared
+      foundation) requests beyond the per-course tolerance.
+    - ``flexible``: unseated T3 (gen-ed, free electives) requests plus T2
+      requests within the tolerance.
+    - ``total``: ``required`` + ``flexible``.
+
+    Legacy score (tiering off): only the ``total`` unseated requests exist.
+    """
+    score = decode_score(evaluation.lexicographic_score)
+    if score["layout"] == "tiered":
+        return {
+            "assessed": True,
+            "layout": "tiered",
+            "high_risk": int(score["highrisk_unresolved"]),
+            "required": int(score["t1_unresolved"]) + int(score["t2_unresolved_over_tol"]),
+            "flexible": int(score["soft_unresolved"]),
+            "total": int(score["unresolved_courses"]),
+        }
+    return {"assessed": True, "layout": "legacy", "total": int(score["unresolved_courses"])}
 
 
 def build_scenario_quality(scenario_id: int) -> dict[str, Any]:
@@ -127,8 +173,17 @@ def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
             "assessed": False,
             "details": [],
         },
+        "seats": {
+            "assessed": False,
+            "layout": None,
+            "high_risk": None,
+            "required": None,
+            "flexible": None,
+            "total": None,
+        },
         "assigned_student_clashes": {
             "count": None,
+            "students": None,
             "assessed": False,
             "source": "canonical_assignment_evaluation",
         },
@@ -174,6 +229,7 @@ def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
         profiles = build_student_profiles_for_scenario(scenario_id)
         if not profiles:
             result["soft_seats"]["reason"] = "no_student_demand"
+            result["seats"]["reason"] = "no_student_demand"
             result["assigned_student_clashes"]["reason"] = "no_student_demand"
             return result
         tiers = (
@@ -189,13 +245,21 @@ def _build_scenario_quality(scenario_id: int) -> dict[str, Any]:
             section_instructor_ids=instructor_ids,
             course_tiers=tiers,
         )
-        result["soft_seats"].update(unresolved=soft_unresolved_count(evaluation), assessed=True)
+        # Everything is read off the one evaluation before any of it is stored,
+        # so a failure leaves all three parts unknown together.
+        unresolved = soft_unresolved_count(evaluation)
+        seats = _seat_tiers(evaluation)
+        clash_pairs, clash_students = _assignment_clash_counts(evaluation, sections)
+        result["soft_seats"].update(unresolved=unresolved, assessed=True)
+        result["seats"] = seats
         result["assigned_student_clashes"].update(
-            count=_assignment_clashes(evaluation, sections),
+            count=clash_pairs,
+            students=clash_students,
             assessed=True,
         )
     except Exception:
         logger.exception("Could not assess saved student seating for scenario %s", scenario_id)
         result["soft_seats"]["reason"] = "assessment_failed"
+        result["seats"]["reason"] = "assessment_failed"
         result["assigned_student_clashes"]["reason"] = "assessment_failed"
     return result

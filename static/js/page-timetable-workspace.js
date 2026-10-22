@@ -32,12 +32,12 @@ const T = {
   roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
   crossBoardClash: IS_AR ? 'تداخل محتمل في الطلب عبر اللوحات' : 'Potential cross-board demand overlap',
   lockHelp: IS_AR ? 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.' : "Keeps this section's days and times; its room can still change.",
+  publish: IS_AR ? 'نشر' : 'Publish',
+  checking: IS_AR ? 'جارٍ التحقق…' : 'Checking…',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 'djCsrfToken';
 const $ = id => document.getElementById(id);
-const DEFAULT_YEAR = 'defaultYear';
-const DEFAULT_TERM = 'defaultTerm';
 
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
 const DAY_LABELS = IS_AR
@@ -52,6 +52,7 @@ const TW = {
   boards: [],
   placements: [],
   conflicts: {},
+  conflictsBoardId: null,
   unplacedSections: [],
   undoStack: [],
   redoStack: [],
@@ -66,6 +67,12 @@ const TW = {
     sections: {},
     loaded: false,
   },
+  // Every successful write bumps this. Scenario-wide reads (quality, publish
+  // readiness) are cached against it, so switching boards never recomputes them.
+  dataVersion: 0,
+  qualityVersion: -1,
+  readiness: null,
+  readinessVersion: -1,
 };
 
 // Expose workspace state for the PR8 async-job UI adapter (reads
@@ -92,22 +99,36 @@ function syncWorkspaceControls() {
   TW.busy = busy;
   const editable = workspaceCanEdit();
   if ($('twCopyScenario')) $('twCopyScenario').disabled = !TW.scenarioId || !TW.scenario || busy;
-  ['twGenerate', 'twGenerateMenu', 'twMapElectives', 'twNewScenario', 'twScenario',
-    'twYear', 'twTerm', 'twProgram', 'twSection', 'twStrategy'].forEach(id => {
+  ['twGenerate', 'twGenerateRun', 'twEmptyGenerate', 'twMapElectives', 'twNewScenario', 'twScenario',
+    'twYear', 'twTerm'].forEach(id => {
     if ($(id)) $(id).disabled = busy;
   });
-  ['twNewBoard', 'twSlotEdit', 'twOptimise', 'twOptimiseMenu', 'twPublish'].forEach(id => {
+  ['twNewBoard', 'twSlotEdit', 'twOptimise', 'twOptimiseMenu'].forEach(id => {
     if ($(id)) $(id).disabled = !editable;
   });
   if ($('twUndo')) $('twUndo').disabled = !editable || !TW.undoStack.length;
   if ($('twRedo')) $('twRedo').disabled = !editable || !TW.redoStack.length;
-  document.querySelectorAll('.tw-gen-item').forEach(el => { el.disabled = busy; });
   document.querySelectorAll('.tw-opt-item, [data-tw-mutation]').forEach(el => { el.disabled = !editable; });
   document.querySelectorAll('[data-tw-draggable]').forEach(el => { el.draggable = editable && !el.classList.contains('locked'); });
   document.querySelector('.tw-workspace')?.setAttribute('aria-busy', String(busy));
-  if ($('twGraphPage')) $('twGraphPage').href = '/timetable-workspace/graph/'
-    + (TW.scenarioId ? `?scenario=${encodeURIComponent(TW.scenarioId)}` : '');
+  updateOpenLinks();
+  renderPublishState();
   window.dispatchEvent(new CustomEvent('tw:planner-busy', { detail: { busy } }));
+}
+
+/* The other views of this timetable are real links, so they open in a new tab
+   on a middle click, and each carries the scenario (and board) being looked at. */
+function workspaceViewHref(path, withBoard = true) {
+  const params = new URLSearchParams();
+  if (TW.scenarioId) params.set('scenario', String(TW.scenarioId));
+  if (withBoard && TW.boardId) params.set('board', String(TW.boardId));
+  const query = params.toString();
+  return path + (query ? `?${query}` : '');
+}
+function updateOpenLinks() {
+  if ($('twMriPage')) $('twMriPage').href = workspaceViewHref('/timetable-workspace/mri/');
+  if ($('twGraphPage')) $('twGraphPage').href = workspaceViewHref('/timetable-workspace/graph/', false);
+  if ($('twSplitPage')) $('twSplitPage').href = workspaceViewHref('/timetable-workspace/split/');
 }
 function beginWorkspaceOperation(kind) {
   if (workspaceBusy()) {
@@ -154,7 +175,8 @@ window.addEventListener('tw:planner-job', async event => {
 
 /* ── API ── */
 async function twFetch(url, opts = {}) {
-  const { _workspaceToken, ...requestOptions } = opts;
+  // `_quiet`: a background read whose failure only means "unknown" — no toast.
+  const { _workspaceToken, _onError, _quiet, ...requestOptions } = opts;
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && workspaceBusy() && (!TW_ACTIVITY.owner || _workspaceToken !== TW_ACTIVITY.owner)) {
     notify.warning(IS_AR ? 'الجدول قيد التحديث؛ انتظر انتهاء العملية.' : 'The timetable is being updated; wait for the operation to finish.');
@@ -180,6 +202,10 @@ async function twFetch(url, opts = {}) {
       try {
         const d = busyBody || await response.json();
         const e = d.error;
+        // A caller that can say more than a toast (Publish lists the server's
+        // blockers) takes the error body instead.
+        if (typeof opts._onError === 'function' && opts._onError(d, response.status)) return null;
+        if (_quiet) return null;
         if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) {
           announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
         }
@@ -187,12 +213,14 @@ async function twFetch(url, opts = {}) {
         const seedLabel = runSeedText(e?.details || d);
         if (seedLabel) msg += ` · ${seedLabel}`;
       } catch {}
-      notify.error(msg);
+      if (!_quiet) notify.error(msg);
       return null;
     }
-    return await response.json();
+    const body = await response.json();
+    if (writes) TW.dataVersion++;
+    return body;
   } catch (err) {
-    notify.error(err.message || String(err));
+    if (!_quiet) notify.error(err.message || String(err));
     return null;
   } finally {
     if (writes) { TW_ACTIVITY.writes--; syncWorkspaceControls(); }
@@ -274,7 +302,7 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel, token) {
     const job = await pollPlannerJob(sub.job_id, (j, ms) => {
       const secs = Math.round((ms || 0) / 1000);
       const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
-      btn.innerHTML = `&#x23F3; ${modeLabel}${detail}`;
+      btn.textContent = `${modeLabel}${detail}`;
     }, { scenarioId });
     if (job.status === 'succeeded') {
       const res = await twFetch(`/planner-jobs/${sub.job_id}/result/`);
@@ -438,82 +466,40 @@ async function showSchedulerOutcome(jobId) {
   (r.warnings || []).forEach(warning => notify.warning(warning));
 }
 
-/* Which placement engine the plain Generate button uses. The dropdown beside it
-   picks explicitly; this is what a bare click means. */
-const TW_ENGINE = 'classic';
-
-/* ── Init ── */
+/* ── Init ──
+   Menus open, close, place themselves and take the keyboard through the design
+   system's ux-controls.js; this script only answers their items. */
 (function init() {
-  // Events — Generate bar
-  $('twGenerate').addEventListener('click', () => runGenerate(TW_ENGINE));
-
-  // Engine picker. The two engines share the whole pipeline except placement:
-  // both build the same scenario scaffold, same students, same section budgets.
-  const genMenu = $('twGenerateMenu');
-  const genDrop = $('twGenerateDropdown');
-  if (genMenu && genDrop) {
-    genMenu.addEventListener('click', (e) => {
-      e.stopPropagation();
-      genDrop.style.display = genDrop.style.display === 'none' ? 'block' : 'none';
-    });
-    document.addEventListener('click', () => { genDrop.style.display = 'none'; });
-    genDrop.querySelectorAll('.tw-gen-item').forEach((item) => {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        genDrop.style.display = 'none';
-        runGenerate(item.dataset.engine || 'classic');
-      });
-    });
-  }
-
-  // Events — Workspace command bar
-  $('twScenario').addEventListener('change', onScenarioChange);
+  // New ▾ / empty state: generating is a dialog with its own year and term, so
+  // preparing next term never clears the scenario that is open.
+  $('twGenerate').addEventListener('click', openGenerateDialog);
+  $('twEmptyGenerate')?.addEventListener('click', openGenerateDialog);
+  wireGenerateDialog();
   $('twNewScenario').addEventListener('click', createScenarioPrompt);
+
+  // ⋯ scenario actions
   $('twCopyScenario')?.addEventListener('click', copyScenarioPrompt);
-  $('twNewBoard').addEventListener('click', createBoardPrompt);
   $('twSlotEdit').addEventListener('click', openSlotEditor);
-  // Export: main button follows the active Plan Lens/search filter.
-  $('twExport').addEventListener('click', () => exportScenario('per-plan'));
-  $('twExportMenu').addEventListener('click', (e) => {
-    e.stopPropagation();
-    const dd = $('twExportDropdown');
-    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-  });
-  document.querySelectorAll('.tw-export-item').forEach(item => {
-    item.addEventListener('mouseenter', () => { item.style.background = 'var(--brand-soft)'; });
-    item.addEventListener('mouseleave', () => { item.style.background = ''; });
-    item.addEventListener('click', () => {
-      $('twExportDropdown').style.display = 'none';
-      exportScenario(item.dataset.mode);
-    });
-  });
-  // Optimise: main button = "current" mode, dropdown items = specific mode
+
+  // Scenario picker and its scope
+  $('twScenario').addEventListener('change', onScenarioChange);
+  ['twYear', 'twTerm'].forEach(id => $(id).addEventListener('change', loadScenarios));
+
+  // Optimise: the main button improves the current timetable; Full rebuild
+  // replaces every unlocked placement, so it asks first.
   $('twOptimise').addEventListener('click', () => runOptimiseV2('current'));
-  $('twOptimiseMenu').addEventListener('click', (e) => {
-    e.stopPropagation();
-    const dd = $('twOptimiseDropdown');
-    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-  });
   document.querySelectorAll('.tw-opt-item').forEach(item => {
-    item.addEventListener('mouseenter', () => { item.style.background = 'var(--brand-soft)'; });
-    item.addEventListener('mouseleave', () => { item.style.background = ''; });
-    item.addEventListener('click', () => {
-      $('twOptimiseDropdown').style.display = 'none';
-      runOptimiseV2(item.dataset.mode);
-    });
+    item.addEventListener('click', () => runOptimiseMode(item.dataset.mode));
   });
-  // Close dropdowns on outside click
-  document.addEventListener('click', (e) => {
-    if (!$('twOptimiseGroup').contains(e.target)) {
-      $('twOptimiseDropdown').style.display = 'none';
-    }
-    if (!$('twExportGroup').contains(e.target)) {
-      $('twExportDropdown').style.display = 'none';
-    }
+  // Export: the main button follows the active filter / programme lens.
+  $('twExport').addEventListener('click', () => exportScenario('per-plan'));
+  document.querySelectorAll('.tw-export-item').forEach(item => {
+    item.addEventListener('click', () => exportScenario(item.dataset.mode));
   });
   $('twPublish').addEventListener('click', publishScenario);
-  $('twMriPage').addEventListener('click', openFullMriPage);
-  $('twGraphPage').addEventListener('click', openGraphTwinPage);
+
+  // Board bar
+  $('twNewBoard').addEventListener('click', createBoardPrompt);
   $('twSearch')?.addEventListener('input', debounce(() => {
     renderGrid();
     renderBudgetSidebar();
@@ -521,12 +507,7 @@ const TW_ENGINE = 'classic';
   }, 120));
   $('twSectionSearch').addEventListener('input', debounce(renderBudgetSidebar, 200));
 
-  // Bottom panel toggle
-  $('twBottomHandle').addEventListener('click', () => {
-    $('twBottom').classList.toggle('open');
-  });
-
-  // Right panel tabs
+  // Inspector tabs
   document.querySelectorAll('.tw-right .tw-panel-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tw-right .tw-panel-tab').forEach(t => t.classList.remove('active'));
@@ -535,14 +516,110 @@ const TW_ENGINE = 'classic';
     });
   });
 
-  // Keep the scenario selector in sync whenever the registrar edits Year/Sem
-  // without needing to click Generate.
-  ['twYear', 'twTerm'].forEach(id => $(id).addEventListener('change', loadScenarios));
-
   // Prime the selector on first paint using the default year/term so it is
   // never empty when the page loads.
   loadScenarios().then(restoreWorkspaceContext);
 })();
+
+async function runOptimiseMode(mode) {
+  if (mode === 'full') {
+    const ok = await dlg.confirm({
+      title: IS_AR ? 'إعادة بناء كاملة؟' : 'Rebuild the whole scenario?',
+      body: IS_AR
+        ? 'تُستبدل كل الشعب غير المقفلة في كل لوحات هذا السيناريو بنتيجة جديدة (7 استراتيجيات وبحث محلي). الشعب المقفلة تبقى في أوقاتها. قد يستغرق ذلك عدة دقائق.'
+        : 'Every unlocked placement on every board of this scenario is replaced by a new result (7 strategies plus local search). Locked sections keep their days and times. This can take several minutes.',
+      kind: 'warning',
+      confirmText: IS_AR ? 'إعادة البناء' : 'Rebuild',
+    });
+    if (!ok) return;
+  }
+  runOptimiseV2(mode);
+}
+
+/* ── Generate dialog ── */
+function generateDialogValues() {
+  const programmes = [...document.querySelectorAll('input[name="twGenProgramme"]:checked')]
+    .map(box => box.value.trim().toUpperCase()).filter(Boolean);
+  return {
+    year: ($('twGenYear')?.value || '').trim(),
+    term: ($('twGenTerm')?.value || '').trim(),
+    programs: programmes,
+    section: (document.querySelector('input[name="twGenSection"]:checked')?.value || '').toUpperCase(),
+    engine: document.querySelector('input[name="twGenEngine"]:checked')?.value || 'classic',
+  };
+}
+function generateDialogError(message) {
+  const error = $('twGenError');
+  if (!error) return;
+  error.textContent = message || '';
+  error.hidden = !message;
+}
+/* The new engine builds one section (M or F) at a time: "Both" is not offered
+   with it, rather than refused after the click. */
+function syncGenerateDialog() {
+  const engine = document.querySelector('input[name="twGenEngine"]:checked')?.value || 'classic';
+  const both = document.querySelector('input[name="twGenSection"][value=""]');
+  if (!both) return;
+  both.disabled = engine === 'scheduler';
+  if (both.disabled && both.checked) {
+    const male = document.querySelector('input[name="twGenSection"][value="M"]');
+    if (male) male.checked = true;
+  }
+}
+function openGenerateDialog() {
+  if (workspaceBusy()) {
+    notify.warning(IS_AR ? 'انتظر انتهاء العملية الحالية.' : 'Wait for the current operation to finish.');
+    return;
+  }
+  const dialog = $('twGenerateDialog');
+  if (!dialog) return;
+  $('twGenYear').value = $('twYear').value.trim();
+  $('twGenTerm').value = $('twTerm').value.trim();
+  // Start from what is open: its programmes and its section.
+  const programs = (TW.scenario?.programs || []).map(code => String(code).trim().toUpperCase());
+  if (programs.length) {
+    document.querySelectorAll('input[name="twGenProgramme"]').forEach(box => {
+      box.checked = programs.includes(box.value.trim().toUpperCase());
+    });
+  }
+  const gender = String(TW.scenario?.gender || '').trim().toUpperCase();
+  const genderRadio = document.querySelector(`input[name="twGenSection"][value="${gender === 'M' || gender === 'F' ? gender : ''}"]`);
+  if (genderRadio) genderRadio.checked = true;
+  syncGenerateDialog();
+  generateDialogError('');
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+}
+function closeGenerateDialog() {
+  const dialog = $('twGenerateDialog');
+  if (!dialog) return;
+  if (typeof dialog.close === 'function') dialog.close();
+  else dialog.removeAttribute('open');
+}
+function wireGenerateDialog() {
+  const dialog = $('twGenerateDialog');
+  if (!dialog) return;
+  dialog.querySelectorAll('[data-dialog-close]').forEach(button => button.addEventListener('click', closeGenerateDialog));
+  dialog.querySelectorAll('input[name="twGenEngine"]').forEach(radio => radio.addEventListener('change', syncGenerateDialog));
+  $('twGenerateForm')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const request = generateDialogValues();
+    if (!request.year || !request.term) {
+      generateDialogError(IS_AR ? 'أدخل السنة والفصل.' : 'Enter the year and the term.');
+      return;
+    }
+    if (!request.programs.length) {
+      generateDialogError(IS_AR ? 'اختر برنامجاً واحداً على الأقل.' : 'Choose at least one programme.');
+      return;
+    }
+    if (request.engine === 'scheduler' && !request.section) {
+      generateDialogError(IS_AR ? 'المحرك الجديد يبني شعبة واحدة: اختر M أو F.' : 'The new engine builds one section at a time: choose M or F.');
+      return;
+    }
+    closeGenerateDialog();
+    runGenerate(request.engine, request);
+  });
+}
 
 /* MRI/Graph/Split handoffs carry the saved scenario and board in the URL. */
 async function restoreWorkspaceContext() {
@@ -559,13 +636,12 @@ async function restoreWorkspaceContext() {
 }
 
 /* ── Generate Workspace ── */
-async function runGenerate(engine = 'classic') {
+async function runGenerate(engine = 'classic', request = {}) {
   if ($('twGenerate').disabled) return;
-  const year = $('twYear').value.trim();
-  const term = $('twTerm').value.trim();
-  const program = $('twProgram').value.trim().toUpperCase();
-  const section = $('twSection').value.trim().toUpperCase() || null;
-  const strategy = $('twStrategy').value || 'compact';
+  const year = String(request.year || '').trim();
+  const term = String(request.term || '').trim();
+  const program = (request.programs || []).join(',').toUpperCase();
+  const section = String(request.section || '').trim().toUpperCase() || null;
 
   if (!year || !term || !program) {
     notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, and program');
@@ -588,7 +664,9 @@ async function runGenerate(engine = 'classic') {
         semester: parseInt(term),
         program: program,
         section: section,
-        strategy: strategy,
+        // The one portfolio this generator has; the server reads it only when
+        // it places sections itself, which a deferred build does not.
+        strategy: 'compact',
         engine: engine,     // 'classic' = the original placer, 'scheduler' = the new engine
         defer_build: true,  // place sections via an async job (won't block the request)
       }),
@@ -610,7 +688,9 @@ async function runGenerate(engine = 'classic') {
     TW.loadedBoardId = null;
     TW.selectedPlacementId = null;
     TW.undoStack = []; TW.redoStack = [];
-    TW.quality = null;
+    TW.quality = null; TW.qualityVersion = -1;
+    // The new scenario's readiness is unknown: never show the previous one's.
+    TW.readiness = null; TW.readinessVersion = -1;
     TW.plannerJob = null;
     if (data.build_job_id) announcePlannerJob({ job_id: data.build_job_id, status: 'queued' }, token.scenarioId, data.build_job_id);
 
@@ -619,29 +699,27 @@ async function runGenerate(engine = 'classic') {
       ? `${ss.classified || 0} طالب | خطة: ${ss.on_plan || 0} | متقاطع: ${ss.cross_term || 0} | ${TW.boards.length} لوحات`
       : `${ss.classified || 0} students | On-plan: ${ss.on_plan || 0} | Cross-term: ${ss.cross_term || 0} | ${TW.boards.length} boards`;
 
-    // Show workspace command bar
-    $('twCmdBar').style.display = 'flex';
     updateValidationBadge();
-    $('twPublish').disabled = false;
-    $('twNewBoard').style.display = '';
-    $('twSlotEdit').style.display = '';
-    $('twNewBoard').classList.remove('d-none');
-    $('twSlotEdit').classList.remove('d-none');
-    $('twExportGroup').style.display = '';
     $('twExport').disabled = false;
     $('twExportMenu').disabled = false;
-    $('twOptimiseGroup').style.display = '';
     syncWorkspaceControls();
 
-    // Keep other saved scenarios available after the build finishes.
+    // The new draft belongs to the year and term it was generated for: show
+    // that scope, and the saved scenarios of THAT term beside it.
+    const scopeChanged = $('twYear').value.trim() !== year || $('twTerm').value.trim() !== term;
+    $('twYear').value = year;
+    $('twTerm').value = term;
     const sel = $('twScenario');
-    const option = document.createElement('option');
-    option.value = data.scenario.id; option.textContent = data.scenario.name;
-    sel.appendChild(option); sel.value = data.scenario.id;
+    if (scopeChanged) await refreshScenarioOptions(data.scenario.id);
+    if (![...(sel.options || [])].some(item => String(item.value) === String(data.scenario.id))) {
+      const option = document.createElement('option');
+      option.value = data.scenario.id; option.textContent = data.scenario.name;
+      sel.appendChild(option);
+    }
+    sel.value = data.scenario.id;
     window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob } }));
 
     // Render boards and sidebar
-    renderBoardsNav();
     renderBoardTabs();
     renderBudgetSidebar();
 
@@ -730,7 +808,8 @@ async function loadScenarios() {
   sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
   (data.scenarios || []).forEach(s => {
     const opt = document.createElement('option');
-    opt.value = s.id; opt.textContent = `${s.name} (${s.status})`;
+    opt.value = s.id;
+    opt.textContent = s.status === 'published' ? `${s.name} · ${T.published}` : s.name;
     sel.appendChild(opt);
   });
 
@@ -741,6 +820,24 @@ async function loadScenarios() {
   TW.plannerJob = null;
   resetWorkspace();
   window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: null, job: null } }));
+}
+
+/* Re-read the scenario list for the current scope without closing what is open
+   (loadScenarios resets the workspace). */
+async function refreshScenarioOptions(selectedId) {
+  const year = $('twYear').value.trim();
+  const term = $('twTerm').value.trim();
+  const data = await twFetch(`/ops/tw/scenarios/?year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}`, { _quiet: true });
+  if (!data || year !== $('twYear').value.trim() || term !== $('twTerm').value.trim()) return;
+  const sel = $('twScenario');
+  sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
+  (data.scenarios || []).forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.status === 'published' ? `${s.name} · ${T.published}` : s.name;
+    sel.appendChild(opt);
+  });
+  if (selectedId != null) sel.value = String(selectedId);
 }
 
 let scenarioLoadRevision = 0;
@@ -774,28 +871,23 @@ async function onScenarioChange() {
     TW.boardId = null;
     TW.loadedBoardId = null;
     TW.selectedPlacementId = null;
-    TW.placements = []; TW.conflicts = {}; TW.capacityData = null; TW.quality = null;
-    if (!sameScenario) { TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null; }
+    TW.placements = []; TW.conflicts = {}; TW.conflictsBoardId = null; TW.capacityData = null; TW.quality = null;
+    if (!sameScenario) {
+      TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null;
+      TW.sectionBudget = null; TW.unplacedSections = [];
+    }
     if (data.active_job) TW.plannerJob = data.active_job;
     else if (!TW_ACTIVITY.owner && ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) TW.plannerJob = null;
     window.dispatchEvent(new CustomEvent('tw:scenario-selected', { detail: { scenarioId: TW.scenarioId, job: TW.plannerJob || null } }));
     if (data.active_job) announcePlannerJob(data.active_job, TW.scenarioId, data.active_job.job_id);
     const search = $('twSearch');
-    if (search) {
-      search.value = '';
-      search.title = 'Search timetable';
-    }
+    if (search) search.value = '';
+    updateSearchStatus();
+    TW.readiness = null; TW.readinessVersion = -1; TW.qualityVersion = -1;
 
     updateValidationBadge();
-    $('twPublish').disabled = data.scenario.status === 'published';
-    $('twNewBoard').style.display = '';
-    $('twSlotEdit').style.display = data.scenario.status === 'published' ? 'none' : '';
-    $('twExportGroup').style.display = '';
     $('twExport').disabled = false;
     $('twExportMenu').disabled = false;
-    $('twOptimiseGroup').style.display = '';
-    $('twNewBoard').classList.remove('d-none');
-    $('twSlotEdit').classList.remove('d-none');
     syncWorkspaceControls();
 
     await loadPlanLens();
@@ -825,7 +917,6 @@ function clearCopyWorkspaceBoards() {
   resetWorkspace();
   $('twGrid').innerHTML = '';
   $('twRightBody').innerHTML = '';
-  $('twDrawer')?.remove();
 }
 async function copyScenarioPrompt() {
   if (!TW.scenarioId || !TW.scenario || workspaceBusy() || copyScenarioPromptOpen) return;
@@ -917,7 +1008,6 @@ async function loadBoards(preferredBoard = TW.boardId) {
   if (!data || TW.scenarioId !== scenarioId) return false;
 
   TW.boards = data.boards || [];
-  renderBoardsNav();
   renderBoardTabs();
 
   if (TW.boards.length > 0) {
@@ -940,7 +1030,7 @@ async function selectBoard(boardId) {
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
     if (!data) {
       TW.boardId = TW.loadedBoardId || null;
-      renderBoardsNav(); renderBoardTabs();
+      renderBoardTabs();
       if (!TW.boardId) { $('twGrid').classList.add('d-none'); $('twEmptyState').style.display = ''; }
       return;
     }
@@ -951,12 +1041,10 @@ async function selectBoard(boardId) {
     TW.placements = data.placements || [];
     TW.scenario = { ...TW.scenario, slot_config: data.slot_config };
 
-    renderBoardsNav();
     renderBoardTabs();
     await loadConflicts();   // load conflicts BEFORE rendering grid so colors are correct
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
     renderGrid();
-    renderBoardStrip();
     await loadCapacity();
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
     await loadBudget();
@@ -1020,7 +1108,10 @@ function renderBudgetSidebar() {
   const search = sectionBudgetSearch();
 
   if (budget.length === 0) {
-    list.innerHTML = `<div class="text-t4 fs-md" style="padding:12px">${IS_AR ? 'اضغط "توليد" أولاً' : 'Click "Generate" first'}</div>`;
+    list.innerHTML = `<p class="tw-pane-empty">${TW.scenarioId
+      ? (IS_AR ? 'لا توجد ميزانية شعب لهذا السيناريو.' : 'This scenario has no section budget.')
+      : (IS_AR ? 'افتح سيناريو لعرض الشعب المطلوبة.' : 'Open a scenario to see its required sections.')}</p>`;
+    setLeftCount(0);
     return;
   }
 
@@ -1045,11 +1136,11 @@ function renderBudgetSidebar() {
 
   const sortedTerms = Object.keys(byTerm).map(Number).sort((a, b) => a - b);
 
+  let leftToPlace = 0;
   sortedTerms.forEach(t => {
     // Term header
-    const hdr = document.createElement('div');
-    hdr.style.cssText = 'font-size:.68rem;font-weight:700;color:var(--t4);text-transform:uppercase;letter-spacing:.04em;padding:6px 4px 2px;margin-top:4px;';
-    if (t === activeTerm) hdr.style.color = 'var(--teal)';
+    const hdr = document.createElement('h3');
+    hdr.className = 'tw-term-head' + (t === activeTerm ? ' is-active' : '');
     hdr.textContent = `${IS_AR ? 'المستوى' : 'Term'} ${t}`;
     list.appendChild(hdr);
 
@@ -1061,15 +1152,15 @@ function renderBudgetSidebar() {
 
       // One card per remaining section
       const count = Math.max(remaining, 0);
+      leftToPlace += count;
       if (count === 0 && used > 0) {
-        // Show a grayed-out summary for fully used courses
+        // A course whose sections are all placed: a quiet, readable line (it was
+        // faded to 40% opacity, which no one could read).
         const div = document.createElement('div');
-        div.className = 'tw-section-item';
-        div.style.opacity = '0.4';
-        div.style.cursor = 'default';
+        div.className = 'tw-section-item is-complete';
         div.innerHTML = `
-          <span class="code">${esc(c.course_code)}</span>
-          <span class="meta">${used}/${planned} ${IS_AR ? 'مستخدمة' : 'used'} | ${IS_AR ? 'طلاب' : 'demand'}: ${c.total_demand}</span>
+          <span class="code"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span>${esc(c.course_code)}</span>
+          <span class="meta ux-meta"><span>${IS_AR ? `${used}/${planned} موضوعة` : `${used}/${planned} placed`}</span><span>${IS_AR ? `${c.total_demand} طالب` : `demand ${c.total_demand}`}</span></span>
         `;
         list.appendChild(div);
         return;
@@ -1083,8 +1174,8 @@ function renderBudgetSidebar() {
         div.dataset.twDraggable = 'true';
         div.innerHTML = `
           <span class="code">${esc(c.course_code)} ${secLabel}</span>
-          <span class="meta">${esc(c.department || '')} | ${c.credit_hours || '?'}cr | ${IS_AR ? 'سعة' : 'cap'}: ${c.max_per_section || '?'}</span>
-          <span class="meta">${IS_AR ? 'الميزانية' : 'budget'}: ${used}/${planned} | ${IS_AR ? 'طلاب' : 'demand'}: ${c.total_demand}</span>
+          <span class="meta ux-meta">${[c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`].filter(Boolean).map(part => `<span>${esc(part)}</span>`).join('')}</span>
+          <span class="meta ux-meta"><span>${IS_AR ? `${used}/${planned} موضوعة` : `${used}/${planned} placed`}</span><span>${IS_AR ? `${c.total_demand} طالب` : `demand ${c.total_demand}`}</span></span>
         `;
         div.addEventListener('dragstart', (e) => {
           if (!workspaceCanEdit()) { e.preventDefault(); return; }
@@ -1113,6 +1204,9 @@ function renderBudgetSidebar() {
       }
     });
   });
+  setLeftCount(leftToPlace);
+  renderBoardTabs();
+  renderWorkspaceQuality();
 }
 
 /* ── Conflicts ── */
@@ -1124,66 +1218,257 @@ async function loadConflicts() {
   if (TW.boardId !== boardId || TW.scenarioId !== scenarioId) return;
   if (data) {
     TW.conflicts = data;
-    const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
-    renderRightPanel((activeTab && activeTab.dataset.tab) || 'issues');
-    updateQuickStats();
+    TW.conflictsBoardId = boardId;
+  } else {
+    // A failed load leaves this board's clashes unknown: an edit may have
+    // changed them, so the earlier answer is not shown as current.
+    TW.conflicts = {};
+    TW.conflictsBoardId = null;
   }
+  // A failed load redraws too: the inspector then says this board's clashes
+  // are not loaded, instead of keeping an earlier or another board's list.
+  const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+  renderRightPanel((activeTab && activeTab.dataset.tab) || 'issues');
+  updateQuickStats();
 }
 
-/* ── Publish ── */
+/* ── Publish ──
+   Publishing is the server's decision (check_publish_readiness): it blocks on
+   more than this page's critical count — unroomed meetings, room clashes,
+   missing sections, patterns. Readiness is read on scenario load and after each
+   edit (cached against TW.dataVersion), so the button says before any click
+   whether the scenario can be published, and a refusal lists the reasons. */
+// Bilingual wording for every blocker/warning code the server returns
+// (core/services/timetable_workspace.py, check_publish_readiness, whose
+// docstring lists the vocabulary). An unknown code falls back to the server's
+// English sentence, so a new server-side check is never shown blank.
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const READINESS_ITEM_TEXT = {
+  no_boards: () => IS_AR ? 'السيناريو بلا لوحات.' : 'The scenario has no boards.',
+  board_no_placements: p => IS_AR ? `اللوحة «${p.board_label}» بلا شعب موضوعة.` : `Board “${p.board_label}” has no sections placed.`,
+  board_critical_conflicts: p => IS_AR ? `اللوحة «${p.board_label}»: ${p.count} تعارضات مانعة.` : `Board “${p.board_label}”: ${plural(p.count, 'blocking clash', 'blocking clashes')}.`,
+  board_blocked_slot_placements: p => {
+    const slots = (p.slots || []).join('، ');
+    return IS_AR ? `اللوحة «${p.board_label}»: ${p.count} لقاءات في أوقات محجوبة${slots ? ` (${slots})` : ''}.`
+      : `Board “${p.board_label}”: ${plural(p.count, 'meeting', 'meetings')} on blocked times${slots ? ` (${(p.slots || []).join(', ')})` : ''}.`;
+  },
+  board_room_conflicts: p => IS_AR ? `اللوحة «${p.board_label}»: ${p.count} قاعات محجوزة مرتين.` : `Board “${p.board_label}”: ${plural(p.count, 'room double-booked', 'rooms double-booked')}.`,
+  board_sections_without_rooms: p => IS_AR ? `اللوحة «${p.board_label}»: ${p.count} لقاءات بلا قاعة.` : `Board “${p.board_label}”: ${plural(p.count, 'meeting', 'meetings')} without a room.`,
+  missing_required_section: p => IS_AR
+    ? `${p.course_code}: ${p.count} من ${p.planned_sections} شعب لم توضع (المستوى ${p.programme_term}).`
+    : `${p.course_code}: ${p.count} of ${p.planned_sections} sections not placed (term ${p.programme_term}).`,
+  incomplete_section_pattern: p => IS_AR
+    ? `${p.course_code} ${p.section}: ${p.placed_meetings} من ${p.expected_meetings} لقاءات موضوعة.`
+    : `${p.course_code} ${p.section}: ${p.placed_meetings} of ${p.expected_meetings} meetings placed.`,
+  invalid_section_pattern: p => IS_AR
+    ? `${p.course_code} ${p.section}: نمط اللقاءات غير مسموح${p.detail ? ` (${p.detail})` : ''}.`
+    : `${p.course_code} ${p.section}: meeting pattern not allowed${p.detail ? ` (${p.detail})` : ''}.`,
+  board_warnings: p => IS_AR ? `اللوحة «${p.board_label}»: ${p.count} تحذيرات.` : `Board “${p.board_label}”: ${plural(p.count, 'warning', 'warnings')}.`,
+  cross_board_conflicts: p => IS_AR
+    ? `${p.count} تداخلات بين اللوحات يشترك فيها ${p.threshold} طالباً أو أكثر.`
+    : `${plural(p.count, 'cross-board overlap', 'cross-board overlaps')} shared by ${p.threshold} or more students.`,
+};
+function readinessItemText(item) {
+  if (!item) return '';
+  const params = { ...(item.params || {}), board_label: item.board_label || '', count: item.count };
+  const render = READINESS_ITEM_TEXT[item.code];
+  return render ? render(params) : (item.message || item.code || '');
+}
+/* The board a readiness item is about: its own, or for a section not yet
+   placed anywhere, the board of its programme term. */
+function readinessItemBoard(item) {
+  if (item?.board_id) return item.board_id;
+  const term = item?.params?.programme_term;
+  if (term == null) return null;
+  return TW.boards.find(board => Number(board.nominal_term) === Number(term))?.id || null;
+}
+
+/* One readiness check per scenario and data version: callers arriving while it
+   runs share it (a board click no longer starts another full check). The
+   background refresh after an edit waits for edits to settle and fails quietly;
+   only Publish itself (force) reports a failure. */
+let readinessRequest = null;
+let readinessTimer = null;
+function scheduleReadinessRefresh() {
+  clearTimeout(readinessTimer);
+  readinessTimer = setTimeout(() => { refreshPublishReadiness(); }, 800);
+}
+function refreshPublishReadiness(force = false) {
+  const scenarioId = TW.scenarioId;
+  if (!scenarioId || TW.scenario?.status === 'published') {
+    TW.readiness = null; renderPublishState(); return Promise.resolve(null);
+  }
+  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) return Promise.resolve(TW.readiness);
+  const version = TW.dataVersion;
+  // Background callers share one request per version. Publish (force) asks on
+  // its own and reports a failure: joining a quiet request would make a failed
+  // check a silent click.
+  if (!force && readinessRequest && readinessRequest.scenarioId === scenarioId && readinessRequest.version === version) {
+    return readinessRequest.promise;
+  }
+  TW.readinessLoading = true;
+  renderPublishState();
+  const promise = (async () => {
+    try {
+      const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/readiness/`, { _quiet: !force });
+      if (TW.scenarioId !== scenarioId) return null;
+      // An answer about older data never replaces one about newer data.
+      if (data?.readiness && version >= TW.readinessVersion) { TW.readiness = data.readiness; TW.readinessVersion = version; }
+      return data?.readiness || null;
+    } finally {
+      if (readinessRequest?.promise === promise) readinessRequest = null;
+      TW.readinessLoading = Boolean(readinessRequest);
+      renderReadinessViews();
+    }
+  })();
+  if (!force) readinessRequest = { scenarioId, version, promise };
+  return promise;
+}
+
+/* Everything that shows a readiness answer: Publish, the counts, the board
+   flags, and the Issues tab when it is open (it lists the board's blockers, so
+   without a redraw it shows the previous answer). */
+function renderReadinessViews() {
+  renderPublishState();
+  renderWorkspaceQuality();
+  renderBoardTabs();
+  const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+  if (activeTab?.dataset.tab === 'issues') renderRightPanel('issues');
+}
+
+/* The publish blockers the server places on one board (its critical clashes
+   are already counted from the board's own conflicts). A section not placed
+   anywhere belongs to the board of its programme term. */
+function boardReadinessBlockers(boardId) {
+  if (!TW.readiness || boardId == null) return [];
+  return readinessBlockers(TW.readiness)
+    .filter(item => item.code !== 'board_critical_conflicts' && readinessItemBoard(item) === boardId);
+}
+
+function readinessBlockers(readiness) {
+  if (!readiness) return [];
+  if (Array.isArray(readiness.blocker_items) && readiness.blocker_items.length) return readiness.blocker_items;
+  return (readiness.blockers || []).map(text => ({ code: '', message: text }));
+}
+function readinessWarnings(readiness) {
+  if (!readiness) return [];
+  if (Array.isArray(readiness.warning_items) && readiness.warning_items.length) return readiness.warning_items;
+  return (readiness.warnings || []).map(text => ({ code: '', message: text }));
+}
+
+/* Publish is the one primary action, and only when the server says the
+   scenario is ready. Blocked, it is a neutral button that names the count and
+   opens the reasons. */
+function renderPublishState() {
+  const button = $('twPublish');
+  if (!button) return;
+  const label = $('twPublishLabel');
+  const icon = $('twPublishIcon');
+  const published = TW.scenario?.status === 'published';
+  const blockers = readinessBlockers(TW.readiness).length;
+  // The label keeps the last known count while a newer check runs; the button
+  // becomes the primary only on an answer about the current data.
+  const known = Boolean(TW.readiness);
+  const fresh = known && TW.readinessVersion === TW.dataVersion;
+  button.disabled = !workspaceCanEdit() || published;
+  const ready = fresh && blockers === 0 && !published;
+  button.classList.toggle('btn-primary', ready);
+  button.classList.toggle('btn-neutral', !ready);
+  if (icon) icon.hidden = !(known && blockers > 0);
+  let text = T.publish;
+  if (published) text = T.published;
+  else if (known && blockers > 0) text = IS_AR ? `نشر · ${blockers} موانع` : `Publish · ${blockers} ${blockers === 1 ? 'blocker' : 'blockers'}`;
+  if (label) label.textContent = text;
+  button.title = published
+    ? (IS_AR ? 'هذا السيناريو منشور ولا يمكن تعديله.' : 'This scenario is published and read-only.')
+    : TW.readinessLoading ? T.checking
+    : known && blockers > 0 ? (IS_AR ? 'اعرض ما يمنع النشر' : 'See what blocks publishing')
+    : (IS_AR ? 'نشر السيناريو: يصبح للقراءة فقط' : 'Publish the scenario: it becomes read-only');
+}
+
+function readinessListHtml(items, tone) {
+  if (!items.length) return '';
+  return `<ul class="tw-readiness-list" data-tone="${tone}">${items.map(item => `<li>
+    <span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span>
+    <span>${esc(readinessItemText(item))}</span>
+    ${(() => { const board = readinessItemBoard(item);
+      return board && board !== TW.boardId && TW.boards.some(row => row.id === board)
+        ? `<button type="button" class="btn btn-sm btn-neutral tw-readiness-go" data-board="${board}">${IS_AR ? 'افتح اللوحة' : 'Open board'}</button>` : ''; })()}
+  </li>`).join('')}</ul>`;
+}
+
+async function showPublishBlockers(readiness) {
+  const blockers = readinessBlockers(readiness);
+  const warnings = readinessWarnings(readiness);
+  const body = `<p class="tw-readiness-lead">${IS_AR
+    ? 'لا يمكن نشر هذا السيناريو حتى تُحل هذه المشاكل:'
+    : 'This scenario cannot be published until these are resolved:'}</p>
+    ${readinessListHtml(blockers, 'critical')}
+    ${warnings.length ? `<p class="tw-readiness-lead">${IS_AR ? 'تحذيرات لا تمنع النشر:' : 'Warnings that do not block publishing:'}</p>${readinessListHtml(warnings, 'warning')}` : ''}`;
+  const shown = dlg.confirm({
+    title: IS_AR ? 'النشر غير متاح بعد' : 'Not ready to publish',
+    body, kind: 'danger', confirmText: IS_AR ? 'حسناً' : 'OK',
+  });
+  wireReadinessLinks();
+  await shown;
+}
+
+/* "Open board" in a readiness list takes the user to that board. It closes the
+   dialog by CANCELLING it — the same list sits in the publish confirmation,
+   whose confirm button publishes. */
+function wireReadinessLinks() {
+  setTimeout(() => {
+    document.querySelectorAll('.dlg-backdrop .tw-readiness-go').forEach(button => button.addEventListener('click', () => {
+      document.querySelector('.dlg-backdrop .btn-cancel')?.click();
+      selectBoard(Number(button.dataset.board));
+    }));
+  }, 0);
+}
+
 async function publishScenario() {
   if (!workspaceCanEdit()) return;
   const scenarioId = TW.scenarioId;
   if (!TW.scenarioId) return;
 
-  // Gather readiness summary across all boards
-  let totalCritical = 0, totalWarning = 0, totalAffected = 0, totalBlocked = 0, boardCount = TW.boards.length;
-  TW.boards.forEach(b => { totalCritical += (b.critical || 0); totalWarning += (b.warning || 0); });
-  const si = TW.conflicts.student_impact || {};
-  totalAffected = si.affected_count || 0;
-  totalBlocked = si.blocked_count || 0;
+  const readiness = await refreshPublishReadiness(true);
+  if (TW.scenarioId !== scenarioId) return;
+  if (!readiness) return;  // twFetch already said why
+  if (readinessBlockers(readiness).length) { await showPublishBlockers(readiness); return; }
 
-  let summaryHtml = `<div style="font-size:.82rem;margin-bottom:12px">`;
-  summaryHtml += `<div class="d-flex mb-2" style="gap:16px">`;
-  summaryHtml += `<div><strong>${boardCount}</strong> ${IS_AR ? 'لوحات' : 'boards'}</div>`;
-  summaryHtml += `<div style="color:${totalCritical > 0 ? 'var(--danger)' : 'var(--teal)'}"><strong>${totalCritical}</strong> ${IS_AR ? 'حرجة' : 'critical'}</div>`;
-  summaryHtml += `<div style="color:${totalWarning > 0 ? 'var(--amber)' : 'var(--teal)'}"><strong>${totalWarning}</strong> ${IS_AR ? 'تحذيرات' : 'warnings'}</div>`;
-  summaryHtml += `</div>`;
-  if (totalAffected > 0) {
-    summaryHtml += `<div class="text-danger">${IS_AR ? 'طلاب متأثرون' : 'Affected students'}: <strong>${totalAffected}</strong> (${IS_AR ? 'محجوبون' : 'blocked'}: <strong>${totalBlocked}</strong>)</div>`;
-  }
-  if (totalCritical > 0) {
-    summaryHtml += `<div class="mt-2 text-danger fw-semibold" style="padding:8px; background:rgba(192,48,48,.08); border-radius:var(--radius-sm)">${IS_AR ? 'لا يمكن النشر: توجد مشاكل حرجة' : 'Cannot publish: critical issues exist'}</div>`;
-  }
-  summaryHtml += `</div>`;
-
-  if (totalCritical > 0) {
-    await dlg.confirm({ title: IS_AR ? 'النشر محجوب' : 'Publish Blocked', body: summaryHtml, kind: 'danger', confirmText: IS_AR ? 'حسنا' : 'OK' });
-    return;
-  }
-
-  const ok = await dlg.confirm({ title: T.publishConfirm, body: summaryHtml, kind: 'warning', confirmText: IS_AR ? 'نشر' : 'Publish' });
+  const warnings = readinessWarnings(readiness);
+  const body = `<p class="tw-readiness-lead">${IS_AR
+    ? 'بعد النشر يصبح هذا السيناريو للقراءة فقط.'
+    : 'Once published, this scenario becomes read-only.'}</p>
+    ${warnings.length ? `<p class="tw-readiness-lead">${IS_AR ? 'تحذيرات لا تمنع النشر:' : 'Warnings that do not block publishing:'}</p>${readinessListHtml(warnings, 'warning')}` : ''}`;
+  const confirmed = dlg.confirm({ title: T.publishConfirm, body, kind: 'warning', confirmText: T.publish });
+  wireReadinessLinks();
+  const ok = await confirmed;
   if (!ok) return;
   if (!workspaceCanEdit() || TW.scenarioId !== scenarioId) return;
 
+  let refused = null;
   const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/publish/`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    _onError: body => {
+      const error = body?.error;
+      if (error?.code !== 'PUBLISH_BLOCKED') return false;
+      refused = error.details || {};
+      return true;
+    },
   });
+  if (refused) {
+    TW.readiness = { ready: false, ...refused };
+    TW.readinessVersion = TW.dataVersion;
+    renderReadinessViews();
+    await showPublishBlockers(TW.readiness);
+    return;
+  }
   if (!data) return;
   notify.success(T.published_ok);
   TW.scenario = data.scenario;
+  TW.readiness = null;
   updateValidationBadge();
-  $('twPublish').disabled = true;
-  $('twSlotEdit').style.display = 'none';
   syncWorkspaceControls();
-}
-
-function openGraphTwinPage(event) {
-  if (event && (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0)) return;
-  if (event) event.preventDefault();
-  const params = new URLSearchParams();
-  if (TW.scenarioId) params.set('scenario', TW.scenarioId);
-  window.location.href = `/timetable-workspace/graph/${params.toString() ? '?' + params.toString() : ''}`;
 }
 
 function exportScenario(mode) {
@@ -1198,96 +1483,90 @@ function exportScenario(mode) {
   window.open(url, '_blank');
 }
 
-function openFullMriPage() {
-  const params = new URLSearchParams();
-  if (TW.scenarioId) params.set('scenario', TW.scenarioId);
-  if (TW.boardId) params.set('board', TW.boardId);
-  window.location.href = `/timetable-workspace/mri/${params.toString() ? '?' + params.toString() : ''}`;
-}
-
 /* ── Rendering ── */
 function resetWorkspace() {
-  TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
+  TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.conflictsBoardId = null; TW.capacityData = null;
   TW.quality = null; TW.undoStack = []; TW.redoStack = []; TW.selectedPlacementId = null;
+  TW.readiness = null; TW.readinessVersion = -1; TW.qualityVersion = -1;
+  TW.sectionBudget = null; TW.unplacedSections = [];
   resetPlanLens();
   $('twBoardTabs').innerHTML = '';
-  $('twBoardsNav').innerHTML = '';
-  $('twSectionList').innerHTML = '';
+  $('twSectionList').innerHTML = `<p class="tw-pane-empty">${IS_AR ? 'افتح سيناريو لعرض الشعب المطلوبة.' : 'Open a scenario to see its required sections.'}</p>`;
   $('twGrid').classList.add('d-none');
   $('twGrid').style.display = '';
   $('twEmptyState').style.display = '';
-  $('twBoardStrip').style.display = 'none';
-  $('twNewBoard').style.display = 'none';
-  $('twSlotEdit').style.display = 'none';
-  $('twExportGroup').style.display = 'none';
   $('twExport').disabled = true;
   $('twExportMenu').disabled = true;
-  $('twOptimiseGroup').style.display = 'none';
-  updateQuickStats();
+  updateValidationBadge();
   renderWorkspaceQuality();
   syncWorkspaceControls();
 }
 
-function renderBoardsNav() {
-  const nav = $('twBoardsNav');
-  nav.innerHTML = '';
-  TW.boards.forEach(b => {
-    const div = document.createElement('div');
-    div.className = 'tw-board-item' + (b.id === TW.boardId ? ' active' : '');
-    const critical = b.critical || 0;
-    const primary = b.primary_count || 0;
-    const visitor = b.visitor_count || 0;
-    div.innerHTML = `
-      <div class="flex-fill">
-        <div>${esc(b.label)}</div>
-        <div class="text-t4" style="font-size:.65rem">${primary}${visitor > 0 ? '+' + visitor : ''} ${IS_AR ? 'طالب' : 'students'}</div>
-      </div>
-      <span class="tw-board-chip">${b.placement_count || 0}</span>
-      ${critical > 0 ? `<span class="tw-board-chip danger">${critical}</span>` : ''}`;
-    div.addEventListener('click', () => selectBoard(b.id));
-    nav.appendChild(div);
-  });
+/* Sections still to place on a board: the budget rows of its nominal term. */
+function boardSectionsLeft(board) {
+  if (!board || !TW.sectionBudget?.length) return null;
+  return TW.sectionBudget
+    .filter(row => Number(row.programme_term) === Number(board.nominal_term))
+    .reduce((sum, row) => sum + Math.max(0, Number(row.remaining_sections) || 0), 0);
 }
 
+/* Scroll a horizontal strip just enough to show one of its items. scrollLeft
+   moves the view right as it grows in either direction (in a right-to-left
+   strip it runs from a negative minimum up to 0), so the visual overflow is the
+   amount to move. */
+function revealInStrip(strip, item) {
+  const view = strip.getBoundingClientRect();
+  const box = item.getBoundingClientRect();
+  if (box.left < view.left) strip.scrollLeft -= view.left - box.left + 4;
+  else if (box.right > view.right) strip.scrollLeft += box.right - view.right + 4;
+}
+
+/* One board switcher: segmented buttons (not tabs — no arrow-key panels are
+   promised). Each says what is wrong on its board — blocking issues, with the
+   octagon — and how many sections are left; meetings and students are in its
+   name and tooltip. */
 function renderBoardTabs() {
   const wrap = $('twBoardTabs');
+  // A re-render replaces the buttons: keep the keyboard on the same board.
+  const focusedBoard = wrap.contains(document.activeElement) ? document.activeElement.dataset.boardId : null;
   wrap.innerHTML = '';
   TW.boards.forEach(b => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'tw-btn' + (b.id === TW.boardId ? ' tw-btn-primary' : '');
-    btn.textContent = b.label;
+    btn.className = 'ux-seg-item';
+    btn.dataset.boardId = String(b.id);
+    const active = b.id === TW.boardId;
+    if (active) btn.setAttribute('aria-current', 'true');
+    const clashes = active ? ((boardConflicts().summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
+    const serverBlockers = boardReadinessBlockers(b.id).length;
+    const critical = clashes + serverBlockers;
+    const left = boardSectionsLeft(b);
+    const students = `${b.primary_count || 0}${b.visitor_count ? ` + ${b.visitor_count}` : ''}`;
+    const meetings = active ? TW.placements.length : (b.placement_count || 0);
+    const parts = [
+      IS_AR ? `${students} طالب` : `${students} students`,
+      IS_AR ? `${meetings} لقاء` : `${meetings} meetings`,
+    ];
+    if (clashes) parts.push(IS_AR ? `${clashes} تعارضات مانعة` : `${clashes} blocking ${clashes === 1 ? 'clash' : 'clashes'}`);
+    if (serverBlockers) parts.push(IS_AR ? `${serverBlockers} موانع نشر` : `${serverBlockers} publish ${serverBlockers === 1 ? 'blocker' : 'blockers'}`);
+    if (left) parts.push(IS_AR ? `${left} شعب لم توضع` : `${left} sections to place`);
+    btn.title = parts.join(' · ');
+    btn.setAttribute('aria-label', `${b.label}: ${parts.join(', ')}`);
+    btn.innerHTML = `<bdi>${esc(b.label)}</bdi>`
+      + (critical ? `<span class="ux-seg-flag" data-tone="critical"><span class="ux-tone-icon" data-tone="critical" aria-hidden="true"></span>${critical}</span>` : '')
+      + (left ? `<span class="ux-seg-meta">${IS_AR ? `${left} متبقية` : `${left} left`}</span>` : '');
     btn.addEventListener('click', () => selectBoard(b.id));
     wrap.appendChild(btn);
   });
-}
-
-function renderBoardStrip() {
-  const strip = $('twBoardStrip');
-  strip.style.display = 'flex';
-  const placed = TW.placements.length;
-  const s = TW.conflicts.summary || {};
-  const overlapRows = TW.conflicts.overlaps || [];
-  const warningOverlaps = overlapRows.filter(isWarningOverlap).length;
-  const criticalOverlaps = overlapRows.length - warningOverlaps;
-  const instrC = (TW.conflicts.instructor_clashes || []).length;
-  const roomC = (TW.conflicts.room_clashes || []).length;
-  const si = TW.conflicts.student_impact || {};
-  const affected = si.affected_count || 0;
-  const crossBoard = activeBoardCrossBoardClashes().length;
-  // Get student counts from board detail
-  const activeBoard = TW.boards.find(b => b.id === TW.boardId);
-  const primary = activeBoard ? (activeBoard.primary_count || 0) : 0;
-  const visitor = activeBoard ? (activeBoard.visitor_count || 0) : 0;
-  strip.innerHTML = `
-    <div class="tw-metric"><div class="num">${primary}${visitor > 0 ? '<span class="fs-xs text-t4">+' + visitor + '</span>' : ''}</div><div class="lbl">${IS_AR ? 'طلاب' : 'Students'}</div></div>
-    <div class="tw-metric"><div class="num">${placed}</div><div class="lbl">${T.placed}</div></div>
-    <div class="tw-metric"><div class="num${criticalOverlaps > 0 ? ' danger' : ''}">${criticalOverlaps}</div><div class="lbl">${T.overlap}</div></div>
-    <div class="tw-metric"><div class="num${warningOverlaps > 0 ? ' text-warning' : ''}">${warningOverlaps}</div><div class="lbl">${T.overlapWarning}</div></div>
-    <div class="tw-metric"><div class="num${instrC > 0 ? ' danger' : ''}">${instrC}</div><div class="lbl">${T.instrClash}</div></div>
-    <div class="tw-metric"><div class="num${roomC > 0 ? ' danger' : ''}">${roomC}</div><div class="lbl">${T.roomClash}</div></div>
-    <div class="tw-metric"><div class="num${crossBoard > 0 ? ' danger' : ''}">${crossBoard}</div><div class="lbl">${T.crossBoardClash}</div></div>
-  `;
+  if (focusedBoard) wrap.querySelector(`[data-board-id="${focusedBoard}"]`)?.focus({ preventScroll: true });
+  // Keep the chosen board in view by scrolling the STRIP only (scrollIntoView
+  // also scrolled the page, on every keystroke). It runs after every render,
+  // because later renders widen the buttons before it ("N left", flags), and it
+  // re-reads the current button: this one may be gone by the next frame.
+  (window.requestAnimationFrame || setTimeout)(() => {
+    const current = wrap.querySelector('[aria-current="true"]');
+    if (current) revealInStrip(wrap, current);
+  });
 }
 
 function renderGrid() {
@@ -1486,13 +1765,26 @@ function budgetMatchesSearch(c, search) {
 function updateSearchStatus() {
   const input = $('twSearch');
   if (!input) return;
+  const count = $('twSearchCount');
+  const scope = $('twExportScope');
   const q = activeWorkspaceSearch();
+  const plan = planTokenFromSearch(q);
+  if (scope) {
+    scope.textContent = !q
+      ? (IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term')
+      : plan
+        ? (IS_AR ? `برنامج ${plan} فقط` : `Programme ${plan} only`)
+        : (IS_AR ? `ما يطابق «${q}» فقط` : `Only what matches "${q}"`);
+  }
   if (!q) {
-    input.title = IS_AR ? 'Search timetable' : 'Search timetable';
+    input.title = '';
+    if (count) count.textContent = '';
     return;
   }
   const matched = TW.placements.filter(placementMatchesWorkspaceSearch).length;
-  input.title = `${matched}/${TW.placements.length} timetable matches`;
+  const text = IS_AR ? `${matched} من ${TW.placements.length}` : `${matched} of ${TW.placements.length}`;
+  input.title = IS_AR ? `${text} لقاء مطابق` : `${text} meetings match`;
+  if (count) count.textContent = text;
 }
 
 function renderGridWithSlots(slots, labSlots) {
@@ -1516,8 +1808,12 @@ function renderGridWithSlots(slots, labSlots) {
     if (!bySec[sec]) bySec[sec] = [];
     bySec[sec].push(p);
   });
-  const groupKeys = Object.keys(bySec).sort();
+  // Natural order (S2 before S10), and the group is named by its real label.
+  const groupKeys = Object.keys(bySec).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const numGroups = groupKeys.length;
+  // Under a "Section S2" heading every card is S2: the card names its course
+  // only. A board with a single group has no heading, so its cards keep it.
+  TW.cardsShowSection = numGroups <= 1;
 
   // Helper: classify a placement as lab (100-min) based on duration
   function isLabPlacement(p) {
@@ -1528,12 +1824,9 @@ function renderGridWithSlots(slots, labSlots) {
 
   // If no placements, show empty grid
   if (numGroups === 0) {
-    _renderSingleGrid(gridEl, slots, [], 'tw-grid-inner', null);
+    _renderSingleGrid(gridEl, slots, [], 'tw-grid-table', null);
     if (labSlots.length) {
-      const labHdr = document.createElement('div');
-      labHdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:var(--teal);padding:10px 0 4px;border-top:2px dashed var(--line);margin-top:6px;';
-      labHdr.textContent = IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Labs (100 min)';
-      gridEl.appendChild(labHdr);
+      gridEl.appendChild(gridSubheading(IS_AR ? 'المعامل (100 دقيقة)' : 'Labs (100 min)', 'lab'));
       _renderSingleGrid(gridEl, labSlots, [], 'tw-grid-table tw-lab-grid', null);
     }
     return;
@@ -1548,14 +1841,15 @@ function renderGridWithSlots(slots, labSlots) {
     const lecturePlacements = allForGroup.filter(p => !isLabPlacement(p));
     const labPlacements = allForGroup.filter(p => isLabPlacement(p));
 
-    // Group header
+    // Group header: the section label it really is, and what it holds.
     if (numGroups > 1) {
       const courses = new Set(groupPlacements.map(p => p.course_code));
-      const hdr = document.createElement('div');
-      hdr.style.cssText = 'text-align:center;font-size:.82rem;font-weight:700;color:var(--royal);padding:8px 0 4px;';
-      hdr.textContent = search
-        ? `Group ${gi+1} — ${courses.size} courses (${groupPlacements.length} matches)`
-        : `Group ${gi+1} — ${courses.size} courses`;
+      const hdr = document.createElement('h3');
+      hdr.className = 'tw-group-head';
+      hdr.id = `twGroup-${gi}`;
+      const what = IS_AR ? `${courses.size} مقررات` : `${courses.size} ${courses.size === 1 ? 'course' : 'courses'}`;
+      const matches = search ? (IS_AR ? ` · ${groupPlacements.length} مطابقة` : ` · ${groupPlacements.length} matches`) : '';
+      hdr.innerHTML = `<span class="tw-group-name">${IS_AR ? 'الشعبة' : 'Section'} <bdi>${esc(secKey)}</bdi></span><span class="tw-group-meta">${what}${matches}</span>`;
       gridEl.appendChild(hdr);
     }
 
@@ -1574,10 +1868,7 @@ function renderGridWithSlots(slots, labSlots) {
 
     // Lab grid (if any lab slots exist)
     if (labSlots.length) {
-      const labHdr = document.createElement('div');
-      labHdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:var(--teal);padding:6px 0 2px;border-top:2px dashed var(--line);margin-top:2px;';
-      labHdr.textContent = IS_AR ? '🔬 معامل' : '🔬 Labs';
-      gridEl.appendChild(labHdr);
+      gridEl.appendChild(gridSubheading(IS_AR ? 'المعامل' : 'Labs', 'lab'));
       const labInner = document.createElement('div');
       labInner.className = 'tw-grid-inner';
       _renderSingleGrid(labInner, labSlots, labPlacements, 'tw-grid-table tw-lab-grid', secKey);
@@ -1586,34 +1877,29 @@ function renderGridWithSlots(slots, labSlots) {
   });
 }
 
+function gridSubheading(text, kind) {
+  const heading = document.createElement('div');
+  heading.className = `tw-subhead tw-subhead-${kind}`;
+  heading.textContent = text;
+  return heading;
+}
+
 function _renderSingleGrid(container, slots, placements, className, secKey) {
-  // Transposed: columns = time slots, rows = days
+  // Transposed: columns = time slots, rows = days. The column count is the one
+  // layout fact the stylesheet cannot know; everything else is in its classes.
   const numSlots = slots.length;
   const table = document.createElement('div');
   table.className = className;
-  table.style.cssText = `display:grid;grid-template-columns:90px repeat(${numSlots},1fr);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--card);margin-bottom:8px;`;
+  table.style.setProperty('--tw-slots', String(numSlots));
 
-  // Row 1: Slot numbers
+  // One sticky header row: the slot's number above its times.
   const corner = document.createElement('div');
-  corner.className = 'tw-grid-header';
+  corner.className = 'tw-grid-header tw-grid-corner';
   table.appendChild(corner);
   slots.forEach((s, i) => {
     const hdr = document.createElement('div');
     hdr.className = 'tw-grid-header';
-    hdr.textContent = i + 1;
-    table.appendChild(hdr);
-  });
-
-  // Row 2: Time ranges
-  const corner2 = document.createElement('div');
-  corner2.className = 'tw-grid-header';
-  corner2.style.fontSize = '.65rem';
-  table.appendChild(corner2);
-  slots.forEach(s => {
-    const hdr = document.createElement('div');
-    hdr.className = 'tw-grid-header';
-    hdr.style.fontSize = '.65rem';
-    hdr.textContent = `${s.start}-${s.end}`;
+    hdr.innerHTML = `<span class="tw-slot-no">${i + 1}</span><bdi class="tw-slot-time">${esc(s.start)}–${esc(s.end)}</bdi>`;
     table.appendChild(hdr);
   });
 
@@ -1672,13 +1958,16 @@ function createPlacementCard(p) {
   card.draggable = workspaceCanEdit() && !p.is_locked;
   card.dataset.twDraggable = 'true';
   card.dataset.placementId = p.id;
-  card.style.background = courseColor(p.course_code);
+  // The course's hue, not a fill: light mode shows the pastel, dark mode mixes
+  // it into the card surface so the board is not a wall of light tiles.
+  card.style.setProperty('--tw-card-hue', courseColor(p.course_code));
   if (p.is_locked) card.classList.add('locked');
 
   // Check if this placement has conflicts
-  const overlaps = (TW.conflicts.overlaps || []);
-  const instrClashes = (TW.conflicts.instructor_clashes || []);
-  const roomClashes = (TW.conflicts.room_clashes || []);
+  const conflicts = boardConflicts();
+  const overlaps = (conflicts.overlaps || []);
+  const instrClashes = (conflicts.instructor_clashes || []);
+  const roomClashes = (conflicts.room_clashes || []);
   const crossBoardClashes = activeBoardCrossBoardClashes();
   const placementId = String(p.id);
   const issueLabels = [];
@@ -1717,10 +2006,20 @@ function createPlacementCard(p) {
   if (identityTitle) {
     card.title = [card.title, identityTitle].filter(Boolean).join(' | ');
   }
+  // The second line is a meta list: only the parts that exist, separated by
+  // the stylesheet (no stray pipes when the instructor is unknown).
+  const english = globalThis.TimetableMeetingPolicy?.isEnglish(p);
+  const room = english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : p.room;
+  const meta = [
+    room,
+    p.available_capacity ? (IS_AR ? `سعة ${p.available_capacity}` : `cap ${p.available_capacity}`) : '',
+    instructor,
+  ].filter(Boolean).map(part => `<bdi>${esc(part)}</bdi>`).join('');
   card.innerHTML = `
-    <div class="cc">${esc(p.course_code)} ${esc(p.section)}</div>
-    ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))}</div>` : ''}
-    <div class="ci">${showCourseName ? esc(courseName) : esc(instructor)}${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? ' | ' + esc(TimetableMeetingPolicy.roomLabel(p, IS_AR)) : p.room ? ' | ' + esc(p.room) : ''}${p.available_capacity ? ' | ' + p.available_capacity : ''}</div>
+    <div class="cc">${esc(p.course_code)}${TW.cardsShowSection === false ? '' : ` <bdi>${esc(p.section)}</bdi>`}</div>
+    ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))}</div>` : ''}
+    ${showCourseName ? `<div class="tw-card-name">${esc(courseName)}</div>` : ''}
+    ${meta ? `<div class="ci ux-meta">${meta}</div>` : ''}
   `;
 
   card.addEventListener('dragstart', (e) => {
@@ -1729,18 +2028,19 @@ function createPlacementCard(p) {
     e.dataTransfer.effectAllowed = 'move';
   });
 
+  // A click selects the section and shows everything about it in the
+  // inspector (which also opens if it was collapsed).
   card.addEventListener('click', () => {
     TW.selectedPlacementId = p.id;
-    renderRightPanel('selection');
+    document.querySelectorAll('.tw-card.is-selected').forEach(other => other.classList.remove('is-selected'));
+    card.classList.add('is-selected');
     document.querySelectorAll('.tw-right .tw-panel-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.tab === 'selection');
     });
+    renderRightPanel('selection');
+    window.dispatchEvent(new CustomEvent('tw:pane-request', { detail: { pane: 'right', open: true } }));
   });
-
-  card.addEventListener('dblclick', (e) => {
-    e.stopPropagation();
-    openSectionDrawer(p.id);
-  });
+  if (TW.selectedPlacementId === p.id) card.classList.add('is-selected');
 
   return card;
 }
@@ -1762,7 +2062,8 @@ function renderUnplacedList() {
   }
 
   if (!items.length) {
-    list.innerHTML = `<p class="text-t4 fs-md" style="padding:12px">${IS_AR ? 'لا توجد شعب متاحة تطابق البحث.' : 'No available sections match the filter.'}</p>`;
+    list.innerHTML = `<p class="tw-pane-empty">${IS_AR ? 'لا توجد شعب متاحة تطابق البحث.' : 'No available sections match the filter.'}</p>`;
+    setLeftCount(0);
     return;
   }
 
@@ -1775,7 +2076,7 @@ function renderUnplacedList() {
     const meetingInfo = (s.meetings || []).map(m => `${m.day} ${m.start_time}-${m.end_time}`).join(', ');
     div.innerHTML = `
       <span class="code">${esc(s.course_code)} ${esc(s.section)}</span>
-      <span class="meta">${esc(instructor)}${s.available_capacity ? ' | Cap: ' + s.available_capacity : ''}</span>
+      <span class="meta ux-meta">${[instructor, s.available_capacity ? (IS_AR ? `سعة ${s.available_capacity}` : `cap ${s.available_capacity}`) : ''].filter(Boolean).map(part => `<span>${esc(part)}</span>`).join('')}</span>
       <span class="meta">${esc(meetingInfo)}</span>
     `;
     if (globalThis.TimetableMeetingPolicy?.isEnglish(s)) {
@@ -1805,11 +2106,20 @@ function renderUnplacedList() {
   });
   if (items.length > visibleLimit) {
     const more = document.createElement('button');
-    more.type = 'button'; more.className = 'tw-btn';
+    more.type = 'button'; more.className = 'btn btn-sm btn-neutral tw-show-more';
     more.textContent = IS_AR ? `عرض المزيد (${visibleLimit}/${items.length})` : `Show more (${visibleLimit}/${items.length})`;
     more.addEventListener('click', () => { TW.unplacedVisibleLimit = visibleLimit + 100; renderUnplacedList(); });
     list.appendChild(more);
   }
+  setLeftCount(items.length);
+}
+
+/* The left pane's count: what is still to be placed. Shown in its header and
+   on its collapsed rail, so a hidden list never hides unfinished work. */
+function setLeftCount(count) {
+  const text = Number.isFinite(count) && count > 0 ? count.toLocaleString() : '';
+  if ($('twLeftCount')) $('twLeftCount').textContent = text;
+  if ($('twLeftRailCount')) $('twLeftRailCount').textContent = text;
 }
 
 /* Fixed English patterns are chosen as one section action. */
@@ -2047,71 +2357,89 @@ function renderRightPanel(tab) {
   const body = $('twRightBody');
 
   if (tab === 'issues') {
-    const overlaps = TW.conflicts.overlaps || [];
-    const iClashes = TW.conflicts.instructor_clashes || [];
-    const rClashes = TW.conflicts.room_clashes || [];
-    const xConflictsEarly = activeBoardCrossBoardClashes();
-    const roomShortages = activeBoardRoomShortages();
-    const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length + roomShortages.length;
+    const { serverBlockers, overlaps, iClashes, rClashes, crossBoard: xConflictsEarly, roomShortages, total, critical, conflictsKnown } = boardIssues();
+    setIssuesCount(total, critical);
+    // With no board open (a scenario with none yet), the tab has no board to
+    // speak for; the scenario's own blockers are on Publish.
+    if (!TW.boardId) {
+      body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'افتح لوحة لعرض مشاكلها.' : 'Open a board to see its issues.'}</p></div>`;
+      return;
+    }
+    const notLoaded = conflictsKnown ? '' : `<p class="tw-issue-note">${IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.'}</p>`;
 
+    if (total === 0 && !conflictsKnown) {
+      body.innerHTML = notLoaded;
+      return;
+    }
     if (total === 0) {
-      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${T.noIssues}</p><small>${TW.quality?.rooms?.assessed ? '' : (IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.')}</small></div>`;
+      body.innerHTML = `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${T.noIssues}</p>${TW.quality?.rooms?.assessed ? '' : `<small>${IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.'}</small>`}</div>`;
       return;
     }
 
-    let html = '';
-    if (roomShortages.length) {
-      html += `<h4 class="fs-xs text-danger">${IS_AR ? 'اجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room'} (${roomShortages.length})</h4>`;
-      roomShortages.forEach(room => {
-          html += `<button type="button" class="tw-issue-row tw-btn" data-ids='${JSON.stringify(room.placement_ids || [])}'><span class="tw-issue-dot warning"></span><span>${esc(room.course_code || room.course_key || '')} · ${esc(room.rooms?.join(', ') || 'UNASSIGNED')}<small class="d-block text-t4">${esc((room.reasons || []).join(', '))} · ${IS_AR ? 'السعة المطلوبة' : 'Required capacity'}: ${esc(room.required_capacity ?? '—')}</small></span></button>`;
+    // Severity first: what blocks publishing, then what lowers quality, then context.
+    const heading = (text, count, tone) => `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(text)}</span><span class="tw-issue-count tnum">${count}</span></h3>`;
+    let html = notLoaded;
+    // What the server says stops publishing on this board — a section placed on
+    // no board, meetings on blocked times, an incomplete pattern — first.
+    if (serverBlockers.length) {
+      html += heading(IS_AR ? 'يمنع النشر' : 'Blocks publishing', serverBlockers.length, 'critical');
+      serverBlockers.forEach(item => {
+        html += `<div class="tw-issue-row tw-issue-static"><span class="tw-issue-dot critical"></span><div>${esc(readinessItemText(item))}</div></div>`;
       });
     }
     const overlapRow = (o, dot) => `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
           <span class="tw-issue-dot ${dot}"></span>
-          <div><div class="fw-semibold">${esc((o.sections || []).join(' / '))}</div><div class="fs-xs text-t4">${esc(o.detail || '')}</div></div>
+          <div><div class="fw-semibold"><bdi>${esc((o.sections || []).join(' / '))}</bdi></div><div class="tw-issue-detail"><bdi>${esc(o.detail || '')}</bdi></div></div>
         </div>`;
     const criticalOverlaps = overlaps.filter(o => !isWarningOverlap(o));
     const warningOverlaps = overlaps.filter(isWarningOverlap);
     if (criticalOverlaps.length) {
-      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.overlap} (${criticalOverlaps.length})</div>`;
+      html += heading(T.overlap, criticalOverlaps.length, 'critical');
       criticalOverlaps.forEach(o => { html += overlapRow(o, 'critical'); });
     }
     if (iClashes.length) {
-      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.instrClash} (${iClashes.length})</div>`;
+      html += heading(T.instrClash, iClashes.length, 'critical');
       iClashes.forEach(c => {
         const secs = (c.sections || []).join(' / ');
         html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
           <span class="tw-issue-dot critical"></span>
-          <div><div class="fw-semibold">${esc(c.instructor || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
+          <div><div class="fw-semibold"><bdi>${esc(c.instructor || '')}</bdi> &mdash; <bdi>${esc(secs)}</bdi></div><div class="tw-issue-detail"><bdi>${esc(c.detail || '')}</bdi></div></div>
         </div>`;
       });
     }
+    if (roomShortages.length) {
+      const roomsBlock = roomShortages.some(room => (room.reasons || []).some(reason => reason === 'missing' || reason === 'clash'));
+      html += heading(IS_AR ? 'اجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room', roomShortages.length, roomsBlock ? 'critical' : 'warning');
+      roomShortages.forEach(room => {
+        html += `<button type="button" class="tw-issue-row" data-ids='${JSON.stringify(room.placement_ids || [])}'><span class="tw-issue-dot warning"></span><span><span class="fw-semibold"><bdi>${esc(room.course_code || room.course_key || '')}</bdi> · <bdi>${esc(room.rooms?.join(', ') || (IS_AR ? 'بلا قاعة' : 'no room'))}</bdi></span><span class="tw-issue-detail d-block">${esc((room.reasons || []).join(', '))} · ${IS_AR ? 'السعة المطلوبة' : 'Required capacity'}: ${esc(room.required_capacity ?? '—')}</span></span></button>`;
+      });
+    }
     if (warningOverlaps.length) {
-      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--amber); margin:8px 0 4px; letter-spacing:.04em">${T.overlapWarning} (${warningOverlaps.length})</div>`;
+      html += heading(T.overlapWarning, warningOverlaps.length, 'warning');
       warningOverlaps.forEach(o => { html += overlapRow(o, 'warning'); });
     }
     if (rClashes.length) {
-      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--amber); margin:8px 0 4px; letter-spacing:.04em">${T.roomClash} (${rClashes.length})</div>`;
+      html += heading(T.roomClash, rClashes.length, 'warning');
       rClashes.forEach(c => {
         const secs = (c.sections || []).join(' / ');
         html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
           <span class="tw-issue-dot warning"></span>
-          <div><div class="fw-semibold">${esc(c.room || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
+          <div><div class="fw-semibold"><bdi>${esc(c.room || '')}</bdi> &mdash; <bdi>${esc(secs)}</bdi></div><div class="tw-issue-detail"><bdi>${esc(c.detail || '')}</bdi></div></div>
         </div>`;
       });
     }
     // Cross-board clashes
     const xConflicts = activeBoardCrossBoardClashes();
     if (xConflicts.length) {
-      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--royal); margin:8px 0 4px; letter-spacing:.04em">${T.crossBoardClash} (${xConflicts.length})</div>`;
+      html += heading(T.crossBoardClash, xConflicts.length, 'info');
       xConflicts.forEach(c => {
         const ids = c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean);
         const targetBoard = c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id;
         html += `<div class="tw-issue-row u-cursor-pointer" data-ids='${JSON.stringify(ids)}' data-board-target="${targetBoard}">
           <span class="tw-issue-dot info"></span>
           <div>
-            <div class="fw-semibold">${esc(c.section_a)} &harr; ${esc(c.section_b)}</div>
-            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب يطلبون المقررين المتداخلين' : 'students requesting both overlapping courses'} | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
+            <div class="fw-semibold"><bdi>${esc(c.section_a)}</bdi> &harr; <bdi>${esc(c.section_b)}</bdi></div>
+            <div class="tw-issue-detail">${c.overlap_count} ${IS_AR ? 'طلاب يطلبون المقررين المتداخلين' : 'students requesting both overlapping courses'} · <bdi>${esc(c.board_a_label)}</bdi> &harr; <bdi>${esc(c.board_b_label)}</bdi></div>
           </div>
         </div>`;
       });
@@ -2134,26 +2462,38 @@ function renderRightPanel(tab) {
     });
   } else if (tab === 'selection') {
     if (!TW.selectedPlacementId) {
-      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${IS_AR ? 'اختر شعبة' : 'Click a section to inspect'}</p></div>`;
+      body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'اختر شعبة في الجدول لعرض تفاصيلها.' : 'Click a section on the grid to inspect it.'}</p></div>`;
       return;
     }
     const p = TW.placements.find(x => x.id === TW.selectedPlacementId);
     if (!p) { body.innerHTML = ''; return; }
-    const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '-';
+    const english = globalThis.TimetableMeetingPolicy?.isEnglish(p);
+    const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
+    const dayLabel = code => DAY_LABELS[DAYS.indexOf(code)] || code || '—';
+    const field = (label, value) => `<div class="tw-sel-field"><dt>${label}</dt><dd>${value}</dd></div>`;
+    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi>${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : (m.room || '—'))}</bdi>${m.instructor ? `<bdi>${esc(m.instructor)}</bdi>` : ''}</li>`).join('');
+    const editable = workspaceCanEdit();
     body.innerHTML = `
-      <div class="tw-sel-field"><span class="label">Course</span><span class="value">${esc(p.course_code)}</span></div>
-      <div class="tw-sel-field"><span class="label">Section</span><span class="value">${esc(p.section)}</span></div>
-      ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
-      <div class="tw-sel-field"><span class="label">Day</span><span class="value">${esc(p.day)}</span></div>
-      <div class="tw-sel-field"><span class="label">Time</span><span class="value">${esc(p.start_time)} - ${esc(p.end_time)}</span></div>
-      <div class="tw-sel-field"><span class="label">Room</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR, '-') || p.room || '-')}</span></div>
-      <div class="tw-sel-field"><span class="label">Instructor</span><span class="value">${esc(instructor)}</span></div>
-      <div class="tw-sel-field"><span class="label">Capacity</span><span class="value">${p.available_capacity || '-'}</span></div>
-      <div class="tw-sel-field"><span class="label">Locked</span><span class="value">${p.is_locked ? 'Yes' : 'No'}</span></div>
-      <div class="d-flex" style="margin-top:12px; gap:6px">
-        <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
-        <button class="tw-btn text-danger" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
+      <div class="tw-sel-head">
+        <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
+        ${p.course_name ? `<div class="tw-sel-sub">${esc(compactCourseName(p.course_name))}</div>` : ''}
+        ${p.is_locked ? `<span class="pill-status pill-b">${IS_AR ? 'مقفلة' : 'Locked'}</span>` : ''}
       </div>
+      ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${editable ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
+      <dl class="tw-sel-fields">
+        ${field(IS_AR ? 'اليوم' : 'Day', esc(dayLabel(p.day)))}
+        ${field(IS_AR ? 'الوقت' : 'Time', `<bdi>${esc(p.start_time)}–${esc(p.end_time)}</bdi>`)}
+        ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR, '—') || p.room || '—')}</bdi>`)}
+        ${field(IS_AR ? 'المدرس' : 'Instructor', instructor ? `<bdi>${esc(instructor)}</bdi>` : '—')}
+        ${field(IS_AR ? 'السعة' : 'Capacity', p.available_capacity ? esc(p.available_capacity) : '—')}
+        ${field(IS_AR ? 'المسجلون' : 'Registered', p.registered_count ? esc(p.registered_count) : '—')}
+      </dl>
+      ${meetings ? `<h3 class="tw-sel-subhead">${IS_AR ? 'جميع لقاءات الشعبة' : 'All meetings of this section'}</h3><ul class="tw-sel-meetings">${meetings}</ul>` : ''}
+      <div class="tw-sel-actions">
+        <button type="button" class="btn btn-sm btn-neutral" data-tw-mutation ${editable ? '' : 'disabled'} title="${esc(T.lockHelp)}" aria-pressed="${p.is_locked ? 'true' : 'false'}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل الوقت' : 'Lock time')}</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" data-tw-mutation ${editable ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة من الجدول' : 'Remove from timetable'}</button>
+      </div>
+      <p class="tw-sel-help">${esc(T.lockHelp)}</p>
     `;
   } else if (tab === 'capacity') {
     const courses = (TW.capacityData && TW.capacityData.courses) || [];
@@ -2162,26 +2502,24 @@ function renderRightPanel(tab) {
       return;
     }
     const t = (TW.capacityData && TW.capacityData.totals) || {};
-    let html = `<div class="d-flex flex-wrap" style="gap:12px; margin-bottom:10px">
-      <div class="tw-metric" style="text-align:left"><div class="num" style="font-size:1rem">${t.demand || 0}</div><div class="lbl">${IS_AR ? 'الطلب' : 'Demand'}</div></div>
-      <div class="tw-metric" style="text-align:left"><div class="num" style="font-size:1rem">${t.raw_capacity || 0}</div><div class="lbl">${IS_AR ? 'السعة' : 'Raw Cap.'}</div></div>
-      <div class="tw-metric" style="text-align:left"><div class="num${(t.deficit||0) > 0 ? ' danger' : ''}" style="font-size:1rem">${t.deficit || 0}</div><div class="lbl">${IS_AR ? 'العجز' : 'Deficit'}</div></div>
-    </div>`;
-    courses.slice(0, 30).forEach(c => {
+    let html = `<dl class="tw-cap-totals">
+      <div><dt>${IS_AR ? 'الطلب' : 'Demand'}</dt><dd class="tnum">${(t.demand || 0).toLocaleString()}</dd></div>
+      <div><dt>${IS_AR ? 'السعة' : 'Seats'}</dt><dd class="tnum">${(t.raw_capacity || 0).toLocaleString()}</dd></div>
+      <div${(t.deficit || 0) > 0 ? ' data-tone="critical"' : ''}><dt>${IS_AR ? 'العجز' : 'Short'}</dt><dd class="tnum">${(t.deficit || 0).toLocaleString()}</dd></div>
+    </dl>`;
+    // Most constrained first: the courses short of seats lead.
+    const ordered = [...courses].sort((a, b) => (b.deficit || 0) - (a.deficit || 0) || (b.demand || 0) - (a.demand || 0));
+    ordered.slice(0, 30).forEach(c => {
       const pct = c.demand > 0 ? Math.min(100, Math.round((c.raw_capacity / c.demand) * 100)) : 100;
-      const barColor = c.deficit > 0 ? 'var(--danger)' : 'var(--teal)';
-      html += `<div style="margin-bottom:6px">
-        <div class="d-flex justify-content-between fs-12">
-          <span class="fw-semibold">${esc(c.course_code)}</span>
-          <span class="text-t4">${c.demand} / ${c.raw_capacity}${c.deficit > 0 ? ' <span class="text-danger fw-bold">-' + c.deficit + '</span>' : ''}</span>
-        </div>
-        <div style="height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:2px">
-          <div style="height:100%;width:${pct}%;background:${barColor};border-radius:2px"></div>
-        </div>
+      html += `<div class="tw-cap-row"${c.deficit > 0 ? ' data-tone="critical"' : ''}>
+        <div class="tw-cap-line"><bdi class="fw-semibold">${esc(c.course_code)}</bdi><span class="tnum">${c.raw_capacity} / ${c.demand}${c.deficit > 0 ? ` <strong>−${c.deficit}</strong>` : ''}</span></div>
+        <div class="tw-cap-bar"><i style="width:${pct}%"></i></div>
       </div>`;
     });
-    if (courses.length > 30) html += `<p class="fs-xs text-t4">${IS_AR ? 'وأكثر...' : `+${courses.length - 30} more...`}</p>`;
+    if (courses.length > 30) html += `<p class="tw-pane-note">${IS_AR ? `${courses.length - 30} مقرراً آخر في تبويب الطلب.` : `${courses.length - 30} more courses in the Demand tab.`}</p>`;
     body.innerHTML = html;
+  } else if (tab === 'demand') {
+    renderDemandTable(body);
   } else if (tab === 'mri') {
     renderMriPanel(body);
   }
@@ -2189,13 +2527,14 @@ function renderRightPanel(tab) {
 
 function renderMriPanel(body) {
   const activeBoard = TW.boards.find(b => b.id === TW.boardId) || {};
-  const overlaps = TW.conflicts.overlaps || [];
-  const iClashes = TW.conflicts.instructor_clashes || [];
-  const rClashes = TW.conflicts.room_clashes || [];
+  const conflicts = boardConflicts();
+  const overlaps = conflicts.overlaps || [];
+  const iClashes = conflicts.instructor_clashes || [];
+  const rClashes = conflicts.room_clashes || [];
   const crossBoard = activeBoardCrossBoardClashes();
   const roomShortages = activeBoardRoomShortages();
   const roomsAssessed = Boolean(TW.quality?.rooms?.assessed);
-  const impact = TW.conflicts.student_impact || {};
+  const impact = conflicts.student_impact || {};
   const capacity = TW.capacityData || {};
   const capTotals = capacity.totals || {};
   const capCourses = capacity.courses || [];
@@ -2384,7 +2723,7 @@ function isWarningOverlap(overlap) {
 // Sections stacked in one grid cell read as a clash unless the server reported
 // every stacked pair as a non-blocking overlap.
 function stackedPairsAllWarnings(placement, cellPlacements) {
-  const overlaps = TW.conflicts.overlaps || [];
+  const overlaps = boardConflicts().overlaps || [];
   const id = String(placement.id);
   return cellPlacements.every(other => {
     if (other === placement) return true;
@@ -2397,9 +2736,19 @@ function stackedPairsAllWarnings(placement, cellPlacements) {
   });
 }
 
+/* The loaded conflicts when they describe the current board, else none: between
+   a board switch and that board's own answer (or after a failed load) the
+   previous board's clashes are never shown or counted as this board's. */
+function boardConflicts() {
+  return boardConflictsKnown() ? (TW.conflicts || {}) : {};
+}
+function boardConflictsKnown() {
+  return Boolean(TW.boardId) && TW.conflictsBoardId === TW.boardId;
+}
+
 function activeBoardCrossBoardClashes() {
   const boardId = String(TW.boardId);
-  return (TW.conflicts.cross_board_conflicts || []).filter(c =>
+  return (boardConflicts().cross_board_conflicts || []).filter(c =>
     String(c.board_a_id) === boardId || String(c.board_b_id) === boardId
   );
 }
@@ -2467,71 +2816,133 @@ async function removePlacement(pid) {
 /* ── Helpers ── */
 function updateValidationBadge() {
   const badge = $('twValidationBadge');
+  if (!badge) return;
+  badge.hidden = !TW.scenario;
   if (!TW.scenario) return;
-  if (TW.scenario.status === 'published') {
-    badge.className = 'tw-badge tw-badge-ok';
-    badge.textContent = T.published;
-  } else {
-    badge.className = 'tw-badge tw-badge-draft';
-    badge.textContent = T.draft;
-  }
+  const published = TW.scenario.status === 'published';
+  badge.className = `pill-status ${published ? 'pill-g' : 'pill-a'}`;
+  badge.textContent = published ? T.published : T.draft;
 }
 
 function updateQuickStats() {
-  $('qsPlaced').textContent = TW.placements.length;
-  const critical = (TW.conflicts.summary || {}).critical || 0;
-  $('qsConflicts').textContent = critical;
   renderWorkspaceQuality();
+  renderBoardTabs();
 }
 
 let qualityLoadRevision = 0;
-async function refreshWorkspaceQuality() {
+/* The scenario's quality is a full seating evaluation — the heaviest read this
+   page makes. It is scenario-wide, so a board switch reuses it; only a write
+   (TW.dataVersion) or a reload makes it stale. */
+async function refreshWorkspaceQuality(force = false) {
   const scenarioId = TW.scenarioId;
   const revision = ++qualityLoadRevision;
   if (!scenarioId) { TW.quality = null; renderWorkspaceQuality(); return; }
+  if (!force && TW.quality && TW.qualityVersion === TW.dataVersion) {
+    renderWorkspaceQuality();
+    if (!TW.readiness || TW.readinessVersion !== TW.dataVersion) scheduleReadinessRefresh();
+    return;
+  }
+  const version = TW.dataVersion;
   if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
   const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
   if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) return;
   TW.quality = data?.ok ? data : null;
+  TW.qualityVersion = version;
   renderWorkspaceQuality();
   const active = document.querySelector('.tw-right .tw-panel-tab.active');
   if (active) renderRightPanel(active.dataset.tab);
+  scheduleReadinessRefresh();
 }
+/* The stat strip. Two scopes (whole scenario / instructors), each number with
+   its meaning in its label and its direction in its tone:
+   critical blocks something, warning lowers quality, ok meets its target.
+   "—" is unknown and says why in its tooltip — never a coloured 0.
+   The Issues count is drawn with it: every input of that count (the board's
+   conflicts and placements, the quality, the readiness answer, a reset)
+   redraws the strip. */
 function renderWorkspaceQuality() {
+  renderIssuesCount();
   const quality = TW.quality;
-  const put = (id, value, danger = false) => {
+  const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  const put = (id, value, { tone = null, title = '', danger = false } = {}) => {
     const el = $(id);
     if (!el) return;
-    el.textContent = Number.isFinite(value) ? value.toLocaleString() : '—';
+    el.textContent = number(value);
+    // `.danger` stays on the value: it is what a screen-level check (and the
+    // one-teacher tests) read; the row's data-tone draws the bar and the icon.
     el.classList.toggle('danger', Boolean(danger));
+    const row = el.parentElement;
+    if (row && row.dataset) {
+      const finalTone = !Number.isFinite(value) ? 'unknown' : tone;
+      if (finalTone) row.dataset.tone = finalTone; else delete row.dataset.tone;
+      if (title) row.title = title;
+    }
   };
-  const issues = TW.conflicts.summary?.critical;
-  put('twQualityPlaced', TW.boardId ? TW.placements.length : null);
-  put('twQualityConflicts', TW.boardId ? issues : null, issues > 0);
-  put('twQualityInstructorDays', quality?.instructor?.assessed ? quality.instructor.working_days : null);
-  put('twQualityInstructorIdle', quality?.instructor?.assessed ? quality.instructor.idle_minutes : null);
-  put('twQualityUnplaced', quality?.soft_seats?.assessed ? quality.soft_seats.unresolved : null, quality?.soft_seats?.unresolved > 0);
-  put('twQualityRooms', quality?.rooms?.assessed ? quality.rooms.shortages : null, quality?.rooms?.shortages > 0);
+  const lowerIsBetter = IS_AR ? 'الأقل أفضل' : 'Lower is better';
+
+  const seats = quality?.seats;
+  const tiered = seats?.assessed && seats.layout === 'tiered';
+  const highRiskRow = $('twStatHighRiskRow');
+  const requiredRow = $('twStatRequiredRow');
+  if (highRiskRow) highRiskRow.hidden = Boolean(seats?.assessed) && !tiered;
+  if (requiredRow) requiredRow.hidden = Boolean(seats?.assessed) && !tiered;
+  put('twQualityHighRisk', tiered ? seats.high_risk : null, { tone: tiered ? (seats.high_risk > 0 ? 'critical' : 'ok') : null, danger: tiered && seats.high_risk > 0,
+    title: IS_AR ? 'طلاب معرضون للخطر (رسوب سابق أو إعادة مقرر) بلا مقعد في مقرر تخصص أو مقرر مشترك. الأولوية الأولى.' : 'At-risk students (a failed course on record, or retaking one) left without a seat in a major or foundation course. The first priority.' });
+  put('twQualityRequired', tiered ? seats.required : null, { tone: tiered ? (seats.required > 0 ? 'critical' : 'ok') : null, danger: tiered && seats.required > 0,
+    title: IS_AR ? 'طلبات مقررات التخصص والمقررات المشتركة فوق الحد المسموح دون مقعد.' : 'Requests for major courses, and shared foundations beyond their tolerance, left without a seat.' });
+  // Flexible (soft) requests: gen-ed, electives and foundations within tolerance.
+  // With the tiered objective off this one number is every unseated request.
+  const flexibleLabel = $('twStatFlexibleRow')?.querySelector?.('dt');
+  if (flexibleLabel) flexibleLabel.textContent = seats?.assessed && !tiered
+    ? (IS_AR ? 'بلا مقعد' : 'Unseated')
+    : (IS_AR ? 'مرنة بلا مقعد' : 'Flexible unseated');
+  const flexible = tiered ? seats.flexible : seats?.assessed ? seats.total
+    : quality?.soft_seats?.assessed ? quality.soft_seats.unresolved : null;
+  put('twQualityUnplaced', flexible, { tone: flexible > 0 ? 'warning' : flexible === 0 ? 'ok' : null, danger: flexible > 0,
+    title: IS_AR ? 'مقررات عامة واختيارية ومقررات مشتركة ضمن الحد المسموح دون مقعد.' : 'Gen-ed, elective and shared-foundation requests (within tolerance) left without a seat.' });
+  const clashes = quality?.assigned_student_clashes;
+  const clashStudents = clashes?.assessed ? (clashes.students ?? clashes.count) : null;
+  put('twQualityClashes', clashStudents, { tone: clashStudents > 0 ? 'critical' : clashStudents === 0 ? 'ok' : null, danger: clashStudents > 0,
+    title: IS_AR ? 'طلاب في التعيين المُقيّم لديهم شعبتان في وقت واحد.' : 'Students whose evaluated seating puts them in two sections at once.' });
+  const rooms = quality?.rooms;
+  // No room at all, or a double booking, stops publishing; a room that is merely
+  // too small or the wrong type lowers quality.
+  const roomsBlock = (rooms?.missing || 0) + (rooms?.clashes || 0) > 0;
+  put('twQualityRooms', rooms?.assessed ? rooms.shortages : null, { tone: roomsBlock ? 'critical' : rooms?.shortages > 0 ? 'warning' : rooms?.assessed ? 'ok' : null, danger: rooms?.shortages > 0,
+    title: rooms?.assessed
+      ? (IS_AR ? `بلا قاعة: ${number(rooms.missing)} · أصغر من اللازم: ${number(rooms.undersized)} · غير مناسبة: ${number(rooms.incompatible)} · تعارض: ${number(rooms.clashes)} من ${number(rooms.physical_meetings)} لقاء` : `No room ${number(rooms.missing)} · too small ${number(rooms.undersized)} · wrong type ${number(rooms.incompatible)} · double-booked ${number(rooms.clashes)} — of ${number(rooms.physical_meetings)} meetings`)
+      : (IS_AR ? 'غير مُقيّم' : 'Not assessed') });
+
+  // Instructors: days and idle cover only the instructors the data knows.
+  const instructor = quality?.instructor;
+  const counted = instructor?.assessed ? instructor.instructors : null;
+  if ($('twStatInstructorCount')) $('twStatInstructorCount').textContent = Number.isFinite(counted)
+    ? (IS_AR ? `· ${counted.toLocaleString()} محسوب` : `· ${counted.toLocaleString()} counted`) : '';
+  const noData = instructor?.assessed && counted === 0;
+  const noDataTitle = IS_AR ? 'لا توجد بيانات مدرسين لهذا السيناريو.' : 'No instructor data for this scenario.';
+  put('twQualityInstructorDays', instructor?.assessed && !noData ? instructor.working_days : null,
+    { title: noData ? noDataTitle : `${IS_AR ? 'مجموع أيام الحضور لكل مدرس. يُحتفظ بيوم راحة واحد على الأقل.' : 'Each instructor’s days on campus, summed. At least one day off is kept.'} ${lowerIsBetter}.` });
+  put('twQualityInstructorIdle', instructor?.assessed && !noData ? instructor.idle_minutes : null,
+    { title: noData ? noDataTitle : `${IS_AR ? 'دقائق الانتظار بين محاضرات المدرس في اليوم نفسه.' : 'Minutes an instructor waits between classes on the same day.'} ${lowerIsBetter}.` });
   // One teacher per section: shown only when the quality endpoint reports it;
-  // red when a section lacks a teacher for more than the D10 limit's reasons.
-  const coverage = quality?.instructor?.coverage;
+  // a warning when more sections lack a teacher than the D10 limit explains.
+  const coverage = instructor?.coverage;
   const coverageRow = $('twQualityTeacherCoverageRow');
   if (coverageRow) coverageRow.hidden = !coverage;
   const coverageCell = $('twQualityTeacherCoverage');
   if (coverage && coverageCell) {
+    const over = (coverage.tbd || 0) > (coverage.tbd_d10_floor || 0);
     coverageCell.textContent = `${(coverage.assigned || 0).toLocaleString()} / ${((coverage.assigned || 0) + (coverage.tbd || 0)).toLocaleString()}`;
     coverageCell.title = teacherCoverageText(coverage);
-    coverageCell.classList.toggle('danger', (coverage.tbd || 0) > (coverage.tbd_d10_floor || 0));
+    coverageCell.classList.toggle('danger', over);
+    if (coverageRow?.dataset) coverageRow.dataset.tone = over ? 'warning' : 'ok';
   }
+
   const status = $('twQualityStatus');
   if (!status) return;
   if (!TW.scenarioId) { status.textContent = IS_AR ? 'اختر سيناريو لعرض جودة الجدول.' : 'Select a scenario to view timetable quality.'; return; }
   if (!quality) { status.textContent = IS_AR ? 'التقييم غير متاح؛ — تعني غير معروف.' : 'Assessment unavailable; — means unknown.'; return; }
-  const clashes = quality.assigned_student_clashes;
-  const seating = clashes?.assessed
-    ? `${IS_AR ? 'تعارضات التعيين المُقيّم' : 'Evaluated seating clashes'}: ${clashes.count}.`
-    : (IS_AR ? 'تعيين الطلاب غير مُقيّم؛ عدد التعارضات غير معروف.' : 'Student seating not assessed; clash count unknown.');
-  status.textContent = (IS_AR ? 'المقاييس للسيناريو كاملاً؛ الاجتماعات والمشاكل الحرجة للوحة الحالية. ' : 'Scenario totals; meetings and critical issues refer to the selected board. ') + seating;
+  status.textContent = IS_AR ? 'تم تحديث مؤشرات الجودة.' : 'Quality figures updated.';
 }
 function activeBoardRoomShortages() {
   const ids = new Set(TW.placements.map(placement => String(placement.id)));
@@ -2551,143 +2962,78 @@ async function loadCapacity() {
     TW.capacityData = data;
     // If capacity tab is active, re-render
     const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
-    if (activeTab && (activeTab.dataset.tab === 'capacity' || activeTab.dataset.tab === 'mri')) {
+    if (activeTab && ['capacity', 'demand', 'mri'].includes(activeTab.dataset.tab)) {
       renderRightPanel(activeTab.dataset.tab);
     }
-    // Also update bottom demand tab if open
-    const activeBottom = document.querySelector('.tw-bottom .tw-panel-tab.active');
-    if (activeBottom && activeBottom.dataset.tab === 'demand') renderBottomPanel('demand');
   }
 }
 
-/* ── Bottom Panel ── */
-function renderBottomPanel(tab) {
-  const body = $('twBottomBody');
-
-  if (tab === 'demand') {
-    const courses = (TW.capacityData && TW.capacityData.courses) || [];
-    if (courses.length === 0) {
-      body.innerHTML = `<p class="text-t4" style="font-size:.8rem; padding:12px">${IS_AR ? 'لا توجد بيانات' : 'No capacity data yet'}</p>`;
-      return;
-    }
-    let html = `<table class="w-100 fs-12" style="border-collapse:collapse">
-      <thead><tr style="border-bottom:2px solid var(--line);text-align:left">
-        <th style="padding:6px 8px">${IS_AR ? 'المقرر' : 'Course'}</th>
-        <th style="padding:6px 8px">${IS_AR ? 'الطلب' : 'Demand'}</th>
-        <th style="padding:6px 8px">${IS_AR ? 'السعة' : 'Raw Cap.'}</th>
-        <th style="padding:6px 8px">${IS_AR ? 'الشعب' : 'Sections'}</th>
-        <th style="padding:6px 8px">${IS_AR ? 'العجز' : 'Deficit'}</th>
-      </tr></thead><tbody>`;
-    courses.forEach(c => {
-      const defStyle = c.deficit > 0 ? 'color:var(--danger);font-weight:700' : '';
-      html += `<tr style="border-bottom:1px solid var(--line)">
-        <td class="fw-semibold" style="padding:4px 8px">${esc(c.course_code)}</td>
-        <td style="padding:4px 8px">${c.demand}</td>
-        <td style="padding:4px 8px">${c.raw_capacity}</td>
-        <td style="padding:4px 8px">${c.placed_sections}</td>
-        <td style="padding:4px 8px;${defStyle}">${c.deficit > 0 ? '-' + c.deficit : '0'}</td>
-      </tr>`;
-    });
-    const t = (TW.capacityData && TW.capacityData.totals) || {};
-    html += `</tbody><tfoot><tr class="fw-bold" style="border-top:2px solid var(--line)">
-      <td style="padding:6px 8px">${IS_AR ? 'الإجمالي' : 'Total'}</td>
-      <td style="padding:6px 8px">${t.demand || 0}</td>
-      <td style="padding:6px 8px">${t.raw_capacity || 0}</td>
-      <td style="padding:6px 8px">${t.course_count || 0}</td>
-      <td style="padding:6px 8px;${(t.deficit||0) > 0 ? 'color:var(--danger)' : ''}">${(t.deficit||0) > 0 ? '-' + t.deficit : '0'}</td>
-    </tr></tfoot></table>`;
-    body.innerHTML = html;
-
-  } else if (tab === 'resources') {
-    const iClashes = TW.conflicts.instructor_clashes || [];
-    const rClashes = TW.conflicts.room_clashes || [];
-    if (iClashes.length === 0 && rClashes.length === 0) {
-      body.innerHTML = `<p class="text-t4" style="font-size:.8rem; padding:12px">${IS_AR ? 'لا توجد تعارضات موارد' : 'No resource conflicts'}</p>`;
-      return;
-    }
-    let html = '';
-    if (iClashes.length) {
-      html += `<div class="fs-sm fw-bold text-danger text-caps" style="margin:8px 8px 4px">${T.instrClash} (${iClashes.length})</div>`;
-      html += `<table class="w-100 fs-12" style="border-collapse:collapse"><tbody>`;
-      iClashes.forEach(c => {
-        html += `<tr style="border-bottom:1px solid var(--line)">
-          <td class="fw-semibold" style="padding:4px 8px">${esc(c.instructor)}</td>
-          <td style="padding:4px 8px">${(c.sections||[]).join(', ')}</td>
-          <td class="text-t4" style="padding:4px 8px">${esc(c.detail)}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-    if (rClashes.length) {
-      html += `<div class="fs-sm fw-bold text-caps" style="color:var(--amber); margin:8px 8px 4px">${T.roomClash} (${rClashes.length})</div>`;
-      html += `<table class="w-100 fs-12" style="border-collapse:collapse"><tbody>`;
-      rClashes.forEach(c => {
-        html += `<tr style="border-bottom:1px solid var(--line)">
-          <td class="fw-semibold" style="padding:4px 8px">${esc(c.room)}</td>
-          <td style="padding:4px 8px">${(c.sections||[]).join(', ')}</td>
-          <td class="text-t4" style="padding:4px 8px">${esc(c.detail)}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-    body.innerHTML = html;
+/* ── Demand tab: every course's demand against this board's seats ── */
+function renderDemandTable(body) {
+  const courses = (TW.capacityData && TW.capacityData.courses) || [];
+  if (courses.length === 0) {
+    body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'لا توجد بيانات طلب بعد.' : 'No demand data yet.'}</p></div>`;
+    return;
   }
+  const t = (TW.capacityData && TW.capacityData.totals) || {};
+  const rows = courses.map(c => `<tr${c.deficit > 0 ? ' data-tone="critical"' : ''}>
+      <th scope="row"><bdi>${esc(c.course_code)}</bdi></th>
+      <td>${c.demand}</td><td>${c.raw_capacity}</td><td>${c.placed_sections}</td>
+      <td>${c.deficit > 0 ? `−${c.deficit}` : '0'}</td>
+    </tr>`).join('');
+  body.innerHTML = `<table class="tw-table tnum">
+    <thead><tr>
+      <th scope="col">${IS_AR ? 'المقرر' : 'Course'}</th>
+      <th scope="col">${IS_AR ? 'الطلب' : 'Demand'}</th>
+      <th scope="col">${IS_AR ? 'المقاعد' : 'Seats'}</th>
+      <th scope="col">${IS_AR ? 'الشعب' : 'Sections'}</th>
+      <th scope="col">${IS_AR ? 'العجز' : 'Short'}</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr${(t.deficit || 0) > 0 ? ' data-tone="critical"' : ''}>
+      <th scope="row">${IS_AR ? 'الإجمالي' : 'Total'}</th>
+      <td>${t.demand || 0}</td><td>${t.raw_capacity || 0}</td><td>${t.course_count || 0}</td>
+      <td>${(t.deficit || 0) > 0 ? `−${t.deficit}` : '0'}</td>
+    </tr></tfoot>
+  </table>`;
 }
 
-// Wire bottom panel tabs
-document.querySelectorAll('.tw-bottom .tw-panel-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tw-bottom .tw-panel-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    $('twBottom').classList.add('open');
-    renderBottomPanel(tab.dataset.tab);
-  });
-});
+/* Everything the Issues tab lists for the current board, and its count. The tab
+   and the counts read this one sum, so they can never disagree. */
+function boardIssues() {
+  const conflicts = boardConflicts();
+  const conflictsKnown = boardConflictsKnown();
+  const serverBlockers = boardReadinessBlockers(TW.boardId);
+  const overlaps = conflicts.overlaps || [];
+  const iClashes = conflicts.instructor_clashes || [];
+  const rClashes = conflicts.room_clashes || [];
+  const crossBoard = activeBoardCrossBoardClashes();
+  const roomShortages = activeBoardRoomShortages();
+  const total = serverBlockers.length + overlaps.length + iClashes.length + rClashes.length + crossBoard.length + roomShortages.length;
+  const critical = ((conflicts.summary || {}).critical || 0) + serverBlockers.length;
+  return { serverBlockers, overlaps, iClashes, rClashes, crossBoard, roomShortages, total, critical, conflictsKnown };
+}
 
-/* ── Section Detail Drawer ── */
-function openSectionDrawer(placementId) {
-  const p = TW.placements.find(x => x.id === placementId);
-  if (!p) return;
+/* The counts follow the data, whichever inspector tab is open: a card click
+   opens Selection, and the rail of a collapsed inspector exists to say how
+   much is wrong. */
+function renderIssuesCount() {
+  const { total, critical } = boardIssues();
+  setIssuesCount(total, critical);
+}
 
-  // Remove existing drawer
-  const old = document.getElementById('twDrawer');
-  if (old) old.remove();
-
-  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '-';
-  const meetingsHtml = (p.meetings || []).map(m =>
-    `<div class="fs-12" style="padding:2px 0">${esc(m.day)} ${esc(m.start_time)}-${esc(m.end_time)} | ${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '-')} | ${esc(m.instructor || '-')}</div>`
-  ).join('');
-
-  const drawer = document.createElement('div');
-  drawer.id = 'twDrawer';
-  drawer.style.cssText = 'position:fixed;top:0;right:0;width:380px;height:100vh;background:var(--card);border-left:1px solid var(--line);box-shadow:var(--shadow-lift);z-index:200;overflow-y:auto;padding:20px;transition:transform .2s var(--ease);';
-  drawer.innerHTML = `
-    <div class="d-flex justify-content-between align-items-center" style="margin-bottom:16px">
-      <h3 style="margin:0;font-size:.95rem;color:var(--ink)">${IS_AR ? 'تفاصيل الشعبة' : 'Section Detail'}</h3>
-      <button class="u-cursor-pointer text-t4" onclick="document.getElementById('twDrawer').remove()" style="background:none; border:none; font-size:1.2rem">&times;</button>
-    </div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name)}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section)}</span></div>
-    ${globalThis.TimetableMeetingPolicy?.isEnglish(p) ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} - ${esc(p.end_time)}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR, '-') || p.room || '-')}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '-'}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value">${p.registered_count || '-'}</span></div>
-    <div class="tw-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
-    <div style="margin-top:12px"><strong class="fs-md text-t3">${IS_AR ? 'جميع اللقاءات' : 'All Meetings'}</strong>${meetingsHtml || '<div class="fs-12 text-t4">-</div>'}</div>
-    <div class="d-flex" style="margin-top:16px; gap:8px">
-      <button class="tw-btn" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
-      <button class="tw-btn text-danger" data-tw-mutation ${workspaceCanEdit() ? '' : 'disabled'} onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
-    </div>
-  `;
-  document.body.appendChild(drawer);
-
-  // Close on Escape
-  const closeOnEsc = (e) => { if (e.key === 'Escape') { drawer.remove(); document.removeEventListener('keydown', closeOnEsc); } };
-  document.addEventListener('keydown', closeOnEsc);
+/* The Issues tab's count, and the inspector rail's, so a collapsed inspector
+   still says how much is wrong. */
+function setIssuesCount(total, critical) {
+  const text = total > 0 ? total.toLocaleString() : '';
+  const badge = $('twIssuesCount');
+  if (badge) {
+    badge.textContent = text;
+    if (critical > 0) badge.dataset.tone = 'critical';
+    else if (total > 0) badge.dataset.tone = 'warning';
+    else delete badge.dataset.tone;
+  }
+  if ($('twRightRailCount')) $('twRightRailCount').textContent = text;
 }
 
 /* ── Slot Edit Modal ── */
@@ -2767,14 +3113,17 @@ async function openSlotEditor() {
 
 /* ── Elective Mapping Dialog ── */
 $('twMapElectives').addEventListener('click', async () => {
-  const year = $('twYear').value.trim();
-  const term = $('twTerm').value.trim();
-  const programme = $('twProgram').value.trim().toUpperCase().split(',')[0].trim();
-
-  if (!year || !term || !programme) {
-    notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج أولا' : 'Enter Year, Term, and Program first');
+  // The open scenario's term when there is one: the scope fields can have been
+  // moved on to prepare another term.
+  const open = (typeof TW !== 'undefined' && TW && TW.scenario) || {};
+  const year = String(open.academic_year || $('twYear').value).trim();
+  const term = String(open.term || $('twTerm').value).trim();
+  if (!year || !term) {
+    notify.error(IS_AR ? 'أدخل السنة والفصل أولا' : 'Enter the year and term first');
     return;
   }
+  const programme = await electiveMappingProgramme();
+  if (!programme) return;
 
   // Load catalogue + current mappings + actual placeholders in parallel
   let catalogue = [], currentMappings = [], placeholderCodes = [];
@@ -2884,6 +3233,24 @@ $('twMapElectives').addEventListener('click', async () => {
   }
 });
 
+/* A mapping belongs to one programme in one term: the open scenario's
+   programme when it has one; otherwise the user names it. */
+async function electiveMappingProgramme() {
+  const scenarioProgrammes = ((TW && TW.scenario && TW.scenario.programs) || [])
+    .map(code => String(code).trim().toUpperCase()).filter(Boolean);
+  if (scenarioProgrammes.length === 1) return scenarioProgrammes[0];
+  const known = scenarioProgrammes.length ? scenarioProgrammes
+    : [...document.querySelectorAll('input[name="twGenProgramme"]')].map(box => box.value.trim().toUpperCase()).filter(Boolean);
+  const typed = await dlg.confirm({
+    title: IS_AR ? 'ربط المقررات الاختيارية' : 'Elective mapping',
+    inputLabel: IS_AR ? 'لأي برنامج؟' : 'For which programme?',
+    inputPlaceholder: known.join(', '),
+    confirmText: IS_AR ? 'متابعة' : 'Continue',
+  });
+  if (!typed || typed === true) return '';
+  return String(typed).trim().toUpperCase().split(',')[0].trim();
+}
+
 /* ── V2 Optimiser ── */
 async function runOptimiseV2(mode = 'current') {
   if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
@@ -2898,11 +3265,13 @@ async function runOptimiseV2(mode = 'current') {
   const scenarioAtStart = TW.scenarioId;
   const btn = $('twOptimise');
   const menuBtn = $('twOptimiseMenu');
+  const label = $('twOptimiseLabel') || btn;
   btn.disabled = true;
   menuBtn.disabled = true;
-  const origHtml = btn.innerHTML;
-  const modeLabel = mode === 'full' ? (IS_AR ? 'إعادة بناء...' : 'Rebuilding...') : (IS_AR ? 'جارٍ التحسين...' : 'Optimising...');
-  btn.innerHTML = `&#x23F3; ${modeLabel}`;
+  const origLabel = label.textContent;
+  const modeLabel = mode === 'full' ? (IS_AR ? 'إعادة بناء…' : 'Rebuilding…') : (IS_AR ? 'جارٍ التحسين…' : 'Optimising…');
+  btn.classList.add('is-working');
+  label.textContent = modeLabel;
 
   // Build request payload based on mode
   const payload = { mode };
@@ -2916,7 +3285,7 @@ async function runOptimiseV2(mode = 'current') {
   payload.cpsat_time_limit = 60;
 
   try {
-    const data = await runOptimiseRequest(mode, payload, btn, modeLabel, token);
+    const data = await runOptimiseRequest(mode, payload, label, modeLabel, token);
 
     if (TW.scenarioId !== scenarioAtStart) {
       notify.warning(IS_AR
@@ -3160,7 +3529,8 @@ async function runOptimiseV2(mode = 'current') {
   } catch (e) {
     notify.error(e.message || String(e));
   } finally {
-    btn.innerHTML = origHtml;
+    label.textContent = origLabel;
+    btn.classList.remove('is-working');
 
     // Refresh unconditionally, not just on the success path. An optimise run
     // persists BEFORE its regression gate decides whether to keep the result, so
@@ -3175,7 +3545,6 @@ async function runOptimiseV2(mode = 'current') {
       updateUndoRedoButtons();
       try {
         await onScenarioChange();
-        $('twCmdBar').style.display = 'flex';
       } catch (_) { /* refresh is best-effort */ }
     }
 
@@ -3188,19 +3557,4 @@ async function runOptimiseV2(mode = 'current') {
     finishWorkspaceOperation(token);
   }
 }
-
-/* ── Fullscreen: redirect to split-pane workspace ── */
-(function(){
-  const btn = document.getElementById('twFullscreen');
-  if(!btn) return;
-  // When clicked, navigate to /timetable-workspace/split/ preserving the
-  // active scenario and board so the split view opens pre-loaded.
-  btn.addEventListener('click', function(e){
-    e.preventDefault();
-    const params = new URLSearchParams();
-    if (TW.scenarioId) params.set('scenario', String(TW.scenarioId));
-    if (TW.boardId) params.set('board', String(TW.boardId));
-    const q = params.toString();
-    window.location.href = '/timetable-workspace/split/' + (q ? '?' + q : '');
-  });
-})();
+/* End V2 optimiser. */

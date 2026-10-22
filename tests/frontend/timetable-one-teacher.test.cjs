@@ -147,6 +147,9 @@ function quality(arabic, coverage) {
   };
   const context = vm.createContext({
     IS_AR: arabic, esc, Number, Boolean, $,
+    // The strip also redraws the inspector's Issues count; that has its own
+    // tests in timetable-workspace.test.cjs.
+    renderIssuesCount: () => {},
     TW: { scenarioId: 1, boardId: 2, placements: [], conflicts: { summary: { critical: 0 } }, quality: { instructor: { assessed: true, working_days: 2, idle_minutes: 15, ...(coverage ? { coverage } : {}) } } },
   });
   vm.runInContext(slice(workspace, '/* Timetable outcome helpers', '/* End timetable outcome helpers. */'), context);
@@ -172,30 +175,24 @@ test('the quality grid hides the coverage row without the rule', () => {
   assert.equal(q.cell.textContent, '');
 });
 
-test('the quality grid template carries the coverage row after instructor idle, hidden', () => {
+test('the quality strip template carries the coverage stat, hidden until the rule reports it', () => {
   const html = read('core/templates/core/timetable_workspace.html');
-  const idle = html.indexOf('id="twQualityInstructorIdle"');
-  const row = html.indexOf('<div id="twQualityTeacherCoverageRow" hidden>');
-  assert.ok(idle > 0 && row > idle, 'coverage row after the idle cell');
+  assert.match(html, /<div class="ux-stat" id="twQualityTeacherCoverageRow" hidden>/);
   assert.match(html, /<dd id="twQualityTeacherCoverage">/);
 });
 
-test('the wide quality grid has one column per shown cell, with or without the coverage cell', () => {
-  // jsdom lays out no grid, so pair the stylesheet's column counts with the
-  // real markup's cells: six without the rule, seven (one row) with it.
-  const css = read('static/css/timetable-workspace.css');
-  const columns = body => Number(/grid-template-columns:\s*repeat\((\d+),/.exec(body)[1]);
-  const base = columns(/\n\.tw-quality-metrics\s*{([^}]*)}/.exec(css)[1]);
-  const [, selector, wide] = /@media \(min-width: 1101px\) {\s*(\.tw-quality-metrics:has\([^{]+\))\s*{([^}]*)}/.exec(css);
+test('the coverage stat is the first of the instructors group, before its days and idle time', () => {
+  // The strip wraps its stats rather than counting grid columns, so the
+  // contract is where the cell sits: in the instructors' own labelled list.
   const html = read('core/templates/core/timetable_workspace.html')
     .replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html);
-  const grid = dom.window.document.querySelector('.tw-quality-metrics');
-  const shown = () => [...grid.children].filter(cell => !cell.hidden).length;
-  assert.equal(grid.matches(selector), false, 'rule off: the six-column grid applies');
-  assert.equal(shown(), base);
-  dom.window.document.getElementById('twQualityTeacherCoverageRow').hidden = false;
-  assert.equal(grid.matches(selector), true, 'rule on: the wide grid widens');
-  assert.equal(shown(), columns(wide));
+  const doc = dom.window.document;
+  const row = doc.getElementById('twQualityTeacherCoverageRow');
+  const list = row.closest('dl');
+  assert.equal(list.getAttribute('aria-labelledby'), 'twStatInstructorScope');
+  assert.deepEqual([...list.children].map(cell => cell.querySelector('dd').id),
+    ['twQualityTeacherCoverage', 'twQualityInstructorDays', 'twQualityInstructorIdle']);
+  assert.equal(row.hidden, true);
   dom.window.close();
 });

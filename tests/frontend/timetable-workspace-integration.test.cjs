@@ -10,7 +10,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const strip = html => html.replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
 const source = read('static/js/page-timetable-workspace.js');
 const adapter = read('core/static/core/js/pr8_async_job_adapter.js');
-const accessibility = read('static/js/timetable-workspace-accessibility.js');
+const accessibility = read('static/js/ux-controls.js');
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
 const wait = async condition => { for (let i = 0; i < 100; i++) { if (condition()) return; await settle(); } assert.fail('UI did not settle'); };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -63,7 +63,11 @@ test('adapter submission owns all workspace mutations before the job ID arrives'
   const pending = deferred();
   const h = await harness(t, url => url === '/planner-jobs/' ? pending.promise : undefined);
   await h.select(1);
-  h.button('submit').click(); h.button('submit').click();
+  // "Run in background" replaces unlocked placements, so the card asks first.
+  const asked = [];
+  h.w.dlg.confirm = async options => { asked.push(options.title); return true; };
+  h.button('submit').click(); h.button('submit').click(); await settle();
+  assert.equal(asked.length, 2);
   assert.equal(h.requests.filter(request => request.url === '/planner-jobs/').length, 1);
   for (const id of ['twGenerate', 'twOptimise', 'twPublish', 'twScenario']) assert.equal(h.d.getElementById(id).disabled, true, id);
   pending.resolve({ job_id: 'card-job', status: 'queued' }); await settle();
@@ -103,13 +107,22 @@ test('loading a different scenario must guard both old-board edits and adapter s
   assert.equal(h.button('submit').disabled, false);
 });
 
-test('menus, bottom panel and read-only selection remain usable while a planner owns the board', async t => {
+test('declining the rebuild confirmation submits nothing', async t => {
+  const h = await harness(t); await h.select(1);
+  h.w.dlg.confirm = async () => false;
+  h.button('submit').click(); await settle();
+  assert.equal(h.requests.filter(request => request.url === '/planner-jobs/').length, 0);
+  assert.equal(h.d.getElementById('twGenerate').disabled, false);
+});
+
+test('menus, inspector tabs and read-only selection remain usable while a planner owns the board', async t => {
   const h = await harness(t); await h.select(1);
   h.emit('tw:planner-job', { scenarioId: 1, source: 'workspace', job: { job_id: 'job-1', status: 'running' } });
-  const handle = h.d.getElementById('twBottomHandle');
-  handle.click(); assert.equal(handle.getAttribute('aria-expanded'), 'true');
-  assert.equal(h.d.getElementById('twBottomContent').hidden, false);
-  handle.click(); assert.equal(h.d.getElementById('twBottomContent').hidden, true);
+  // The course-demand table (formerly the bottom panel) is an inspector tab.
+  h.d.getElementById('twTabDemand').click();
+  assert.equal(h.d.getElementById('twTabDemand').getAttribute('aria-selected'), 'true');
+  assert.equal(h.d.getElementById('twRightBody').getAttribute('aria-labelledby'), 'twTabDemand');
+  h.d.getElementById('twTabIssues').click();
   const menu = h.d.getElementById('twExportMenu');
   menu.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   assert.equal(menu.getAttribute('aria-expanded'), 'true');
@@ -193,6 +206,7 @@ test('late old-job events cannot split root and card ownership of a newer active
 test('server busy response from another browser restores shared monitoring without retrying the write', async t => {
   const h = await harness(t, url => url === '/planner-jobs/' ? { httpError: 409, error: { code: 'SCENARIO_BUSY',
     message: 'A planner is already running', details: { scenario_id: 1, active_job: { job_id: 'remote-job', scenario_id: 1, status: 'running' } } } } : undefined);
+  h.w.dlg.confirm = async () => true;
   await h.select(1); h.button('submit').click(); await settle();
   assert.equal(h.w.TW.plannerJob.job_id, 'remote-job');
   assert.equal(h.d.querySelector('[data-pr8-card]').dataset.jobId, 'remote-job');

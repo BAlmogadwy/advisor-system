@@ -12,6 +12,7 @@ from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
 from core.models import (
+    Course,
     CourseInstructor,
     DeliveryBoard,
     Instructor,
@@ -22,11 +23,22 @@ from core.models import (
     ScenarioStudentCourseRequest,
     SectionPlacement,
     Student,
+    StudentCourse,
     TermSection,
     TimetableScenario,
 )
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
-from core.services.timetable_scenario_quality import build_scenario_quality
+from core.services.timetable_assignment_models import (
+    SectionMeeting,
+    SectionState,
+    StudentAssignmentState,
+    TimetableEvaluationResult,
+)
+from core.services.timetable_scenario_quality import (
+    _assignment_clash_counts,
+    _seat_tiers,
+    build_scenario_quality,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -196,6 +208,16 @@ def test_canonical_soft_seats_distinguish_demand_overlap_from_assigned_clashes(s
     assert quality["soft_seats"]["unresolved"] == 1
     assert quality["assigned_student_clashes"]["assessed"]
     assert quality["assigned_student_clashes"]["count"] == 0
+    assert quality["assigned_student_clashes"]["students"] == 0
+    # The student has no failed course; the unseated request is the free elective.
+    assert quality["seats"] == {
+        "assessed": True,
+        "layout": "tiered",
+        "high_risk": 0,
+        "required": 0,
+        "flexible": 1,
+        "total": 1,
+    }
 
 
 def test_failed_assessment_is_unknown_with_other_metrics_retained(scenario, monkeypatch):
@@ -208,6 +230,167 @@ def test_failed_assessment_is_unknown_with_other_metrics_retained(scenario, monk
     assert quality["rooms"]["assessed"] and quality["instructor"]["assessed"]
     assert quality["soft_seats"]["unresolved"] is None
     assert quality["soft_seats"]["reason"] == "assessment_failed"
+
+
+# ── seat tiers and the students behind the clash count ──────────────────
+
+UNKNOWN_SEATS = {
+    "assessed": False,
+    "layout": None,
+    "high_risk": None,
+    "required": None,
+    "flexible": None,
+    "total": None,
+}
+
+
+def _evaluation(score, states=None):
+    return TimetableEvaluationResult(
+        candidate_id="quality-test",
+        lexicographic_score=score,
+        assignment_states=states or {},
+        unresolved_student_ids=[],
+        hotspot_courses=[],
+        capacity_pressure_courses=[],
+        reserve_heavy_sections=[],
+    )
+
+
+def test_seat_tiers_read_each_position_of_a_tiered_score():
+    # Distinct values: a swapped position cannot cancel out.
+    # (high-risk, clash, T1, T2 over tolerance, cost, soft, reserve, spread, idle)
+    seats = _seat_tiers(_evaluation((2, 9, 3, 4, 500, 5, 8, 7, 6)))
+
+    assert seats == {
+        "assessed": True,
+        "layout": "tiered",
+        "high_risk": 2,
+        "required": 7,  # T1 (3) + T2 over tolerance (4)
+        "flexible": 5,  # T3 + T2 within tolerance, the soft count
+        "total": 12,
+    }
+
+
+def test_seat_tiers_of_a_legacy_score_are_one_total():
+    # (tier A students, blocked students, unassigned courses, clashes, gap, reserve)
+    seats = _seat_tiers(_evaluation((1, 2, 6, 0, 100, 0)))
+
+    assert seats == {"assessed": True, "layout": "legacy", "total": 6}
+
+
+def _wants(student_id, codes, scenario):
+    Student.objects.create(
+        student_id=student_id, registration_no=str(student_id), name="S", program="AI"
+    )
+    for code in codes:
+        ScenarioStudentCourseRequest.objects.create(
+            scenario=scenario, student_id=student_id, course_key=code, course_code=code
+        )
+
+
+def test_tiered_seats_split_required_flexible_and_count_high_risk_students(scenario, settings):
+    settings.TIMETABLE_TIERED_OBJECTIVE_ENABLED = True
+    # Three courses at one hour: each student can hold one. AI101/AI102 are
+    # specialised (T1, required), FE2 is a free elective (T3, flexible).
+    for code in ("AI101", "AI102", "FE2"):
+        place(scenario, code)
+    _wants(7001, ("AI101", "AI102", "FE2"), scenario)
+    _wants(7002, ("AI101", "AI102", "FE2"), scenario)
+    # 7001 failed a course (a retake student is high-risk); 7002 did not.
+    failed = Course.objects.create(course_code="AI090")
+    StudentCourse.objects.create(student_id=7001, course=failed, status="failed")
+
+    quality = build_scenario_quality(scenario.id)
+
+    # Each of the two students keeps one seat, so loses one T1 and the T3.
+    assert quality["seats"] == {
+        "assessed": True,
+        "layout": "tiered",
+        "high_risk": 1,  # students, not requests: only 7001
+        "required": 2,
+        "flexible": 2,
+        "total": 4,
+    }
+    assert quality["soft_seats"]["unresolved"] == quality["seats"]["flexible"]
+
+
+def test_legacy_seats_report_only_the_total(scenario, settings):
+    settings.TIMETABLE_TIERED_OBJECTIVE_ENABLED = False
+    place(scenario, "AI101")
+    place(scenario, "FE2")
+    _wants(7001, ("AI101", "FE2"), scenario)
+
+    quality = build_scenario_quality(scenario.id)
+
+    assert quality["seats"] == {"assessed": True, "layout": "legacy", "total": 1}
+
+
+def test_seats_and_clash_students_are_unknown_not_zero_without_demand(scenario):
+    place(scenario, "AI101")
+
+    quality = build_scenario_quality(scenario.id)
+
+    assert quality["seats"] == {**UNKNOWN_SEATS, "reason": "no_student_demand"}
+    clashes = quality["assigned_student_clashes"]
+    assert (clashes["count"], clashes["students"], clashes["assessed"]) == (None, None, False)
+    assert clashes["reason"] == "no_student_demand"
+
+
+def test_a_failed_assessment_leaves_seats_and_clash_students_unknown(scenario, monkeypatch):
+    place(scenario, "AI101")
+    monkeypatch.setattr(
+        "core.services.timetable_scenario_quality.build_student_profiles_for_scenario",
+        Mock(side_effect=ValueError("bad demand")),
+    )
+
+    quality = build_scenario_quality(scenario.id)
+
+    assert quality["seats"] == {**UNKNOWN_SEATS, "reason": "assessment_failed"}
+    assert quality["assigned_student_clashes"]["students"] is None
+    assert quality["assigned_student_clashes"]["count"] is None
+
+
+def _section_state(section_id, day, start, end):
+    return SectionState(
+        section_id=section_id,
+        course_code=section_id,
+        meetings=[SectionMeeting(day=day, start_min=start, end_min=end)],
+        max_capacity=40,
+        reserve_capacity=0,
+    )
+
+
+def test_clash_counts_are_pairs_and_unique_students():
+    # A, B and C overlap one another on day 0; D is on another day.
+    sections = [
+        _section_state("A", 0, 540, 615),
+        _section_state("B", 0, 560, 640),
+        _section_state("C", 0, 600, 660),
+        _section_state("D", 1, 540, 615),
+    ]
+    states = {
+        "s1": StudentAssignmentState(student_id="s1", section_ids={"A", "B", "C"}),  # 3 pairs
+        "s2": StudentAssignmentState(student_id="s2", section_ids={"A", "D"}),  # none
+        "s3": StudentAssignmentState(student_id="s3", section_ids={"A", "B"}),  # 1 pair
+        "s4": StudentAssignmentState(student_id="s4", section_ids=set()),
+    }
+
+    pairs, students = _assignment_clash_counts(_evaluation((0,) * 6, states), sections)
+
+    assert (pairs, students) == (4, 2)
+
+
+def test_quality_reports_count_and_students_under_their_own_keys(scenario, monkeypatch):
+    place(scenario, "AI101")
+    _wants(7001, ("AI101",), scenario)
+    monkeypatch.setattr(
+        "core.services.timetable_scenario_quality._assignment_clash_counts",
+        lambda evaluation, sections: (7, 3),
+    )
+
+    clashes = build_scenario_quality(scenario.id)["assigned_student_clashes"]
+
+    assert (clashes["count"], clashes["students"], clashes["assessed"]) == (7, 3, True)
 
 
 def test_quality_endpoint_role_method_and_missing_scenario(http, scenario):

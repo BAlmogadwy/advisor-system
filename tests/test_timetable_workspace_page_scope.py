@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from core.models import TimetableScenario
+from core.models import ProgrammeRequirement, Student, TimetableScenario
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, ensure_role_groups
 
 pytestmark = pytest.mark.django_db
@@ -112,6 +113,35 @@ def test_requested_scope_values_do_not_break_the_rendered_javascript(path, year,
     assert parsed.returncode == 0, parsed.stderr
 
 
+def test_workspace_page_lists_the_programmes_that_have_a_degree_plan(http):
+    # Each programme once however many plan rows it has, sorted, and read from
+    # the degree plans: a student's programme with no plan is not offered.
+    for program, code in [
+        ("DS2", "DS201"),
+        ("AI", "AI101"),
+        ("AI", "AI102"),
+        ("COE", "COE101"),
+        ("AI2", "AI101"),
+        ("cs ", "CS101"),
+    ]:
+        ProgrammeRequirement.objects.create(program=program, course_code=code)
+    Student.objects.create(student_id=9001, program="ZZ")
+
+    with CaptureQueriesContext(connection) as queries:
+        response = http.get("/timetable-workspace/")
+
+    assert response.status_code == 200
+    assert response.context["programme_choices"] == ["AI", "AI2", "COE", "CS", "DS2"]
+    assert sum("programme_requirements" in q["sql"] for q in queries) == 1
+
+
+def test_workspace_page_has_no_programme_choices_without_degree_plans(http):
+    response = http.get("/timetable-workspace/")
+
+    assert response.status_code == 200
+    assert response.context["programme_choices"] == []
+
+
 # A lock keeps a section's days and times; its room can still change.
 LOCK_HELP = {
     "en": "Keeps this section's days and times; its room can still change.",
@@ -149,3 +179,15 @@ def test_split_drawer_lock_button_says_a_lock_keeps_days_and_times_not_the_room(
     # Only the Lock control carries it, and only in the page's own language.
     assert buttons["twsDrawerRemove"].get("title") != LOCK_HELP[language]
     assert LOCK_HELP["ar" if language == "en" else "en"] not in html
+
+
+def test_the_workspace_job_card_is_a_monitor_that_offers_no_legacy_rebuild(http, settings):
+    # Optimise ▾ Full rebuild is the workspace's rebuild; the card's own
+    # single-strategy one, and its "Run again", are not offered there.
+    settings.TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = True
+    settings.TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED = True
+    response = http.get("/timetable-workspace/")
+    assert response.status_code == 200
+    config = json.loads(response.context["pr8_config_json"])
+    assert config["offerRebuild"] is False
+    assert '"offerRebuild": false' in response.content.decode()

@@ -10,20 +10,27 @@ Context:
 
 Emits nothing when the PR8 flag is off, keeping the scenario page byte-identical
 to pre-PR8. Hidden controls are toggled client-side by the adapter based on status.
+
+Styled by the design system's `.ux-job` (global.css): it floats at the window's
+end edge, so it never pushes the page, and it is hidden while there is no run to
+show (the adapter shows it for an active run and for a finished one until the
+user closes it). It holds the page's only Cancel for a running job.
 {% endcomment %}
 {% if TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED %}
-<section class="pr8-async-job-card" data-pr8-card aria-live="polite">
-  <header class="pr8-async-job-card__header">
+<section class="pr8-async-job-card ux-job" data-pr8-card data-status="{{ pr8_job.status|default:'idle' }}" aria-labelledby="pr8JobTitle"{% if not pr8_job %} hidden{% endif %}>
+  <header class="pr8-async-job-card__header ux-job-head">
+    <span class="pr8-async-job-card__title ux-job-title" id="pr8JobTitle">{% if LANGUAGE_CODE == 'ar' %}تشغيل المخطط{% else %}Planner run{% endif %}</span>
     <span
-      class="pr8-status-pill status-{{ pr8_job.status|default:'idle' }}"
-      data-pr8-status
+      class="pr8-status-pill pill-status pill-n status-{{ pr8_job.status|default:'idle' }}"
+      data-pr8-status role="status" aria-live="polite"
     >{{ pr8_job.status|default:'idle' }}</span>
-    <span class="pr8-async-job-card__title">{% if LANGUAGE_CODE == 'ar' %}تشغيل المخطط{% else %}Planner run{% endif %}</span>
+    <button type="button" class="btn btn-sm btn-neutral btn-icon" data-pr8-dismiss hidden aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
   </header>
 
-  <dl class="pr8-async-job-card__fields">
+  <dl class="pr8-async-job-card__fields ux-job-fields">
     <dt>{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}</dt><dd data-pr8-field="scenario">-</dd>
-    <dt>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</dt><dd data-pr8-field="output_scenario">-</dd>
     <dt>{% if LANGUAGE_CODE == 'ar' %}وقت الإرسال{% else %}Submitted{% endif %}</dt><dd data-pr8-field="submitted_at">{{ pr8_job.submitted_at|default:'-' }}</dd>
     <dt>{% if LANGUAGE_CODE == 'ar' %}وقت البدء{% else %}Started{% endif %}</dt><dd data-pr8-field="started_at">{{ pr8_job.started_at|default:'-' }}</dd>
     <dt>{% if LANGUAGE_CODE == 'ar' %}وقت الانتهاء{% else %}Finished{% endif %}</dt><dd data-pr8-field="finished_at">{{ pr8_job.finished_at|default:'-' }}</dd>
@@ -32,19 +39,19 @@ to pre-PR8. Hidden controls are toggled client-side by the adapter based on stat
     <dd data-pr8-error-row data-pr8-field="error_message"{% if not pr8_job.error_message %} hidden{% endif %}>{{ pr8_job.error_message|default:'-' }}</dd>
   </dl>
 
-  <p data-pr8-message role="status" hidden></p>
+  <p class="ux-job-message" data-pr8-message role="status" hidden></p>
 
-  <div class="pr8-async-job-card__controls">
-    <button type="button" data-pr8-action="submit"{% if pr8_job.status == 'queued' or pr8_job.status == 'running' %} disabled{% endif %}>
+  <div class="pr8-async-job-card__controls ux-job-actions">
+    <button type="button" class="btn btn-sm btn-neutral" data-pr8-action="submit"{% if pr8_job.status == 'queued' or pr8_job.status == 'running' %} disabled{% endif %}>
       {% if LANGUAGE_CODE == 'ar' %}تشغيل في الخلفية{% else %}Run in background{% endif %}
     </button>
-    <button type="button" data-pr8-action="cancel"{% if pr8_job.status != 'queued' and pr8_job.status != 'running' %} hidden{% endif %}>
+    <button type="button" class="btn btn-sm btn-outline-danger" data-pr8-action="cancel"{% if pr8_job.status != 'queued' and pr8_job.status != 'running' %} hidden{% endif %}>
       {% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}
     </button>
-    <button type="button" data-pr8-action="view-result"{% if pr8_job.status != 'succeeded' %} hidden{% endif %}>
+    <button type="button" class="btn btn-sm btn-neutral" data-pr8-action="view-result"{% if pr8_job.status != 'succeeded' %} hidden{% endif %}>
       {% if LANGUAGE_CODE == 'ar' %}عرض النتيجة{% else %}View result{% endif %}
     </button>
-    <button type="button" data-pr8-action="rerun"{% if pr8_job.status != 'failed' and pr8_job.status != 'cancelled' %} hidden{% endif %}>
+    <button type="button" class="btn btn-sm btn-neutral" data-pr8-action="rerun"{% if pr8_job.status != 'failed' and pr8_job.status != 'cancelled' %} hidden{% endif %}>
       {% if LANGUAGE_CODE == 'ar' %}تشغيل مجددًا{% else %}Run again{% endif %}
     </button>
   </div>
@@ -53,6 +60,6 @@ to pre-PR8. Hidden controls are toggled client-side by the adapter based on stat
     {{ pr8_config_json|default:'{"pollIntervalMs": 2000}'|safe }}
   </script>
   {{ pr8_job|json_script:"pr8-initial-job" }}
-  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=5" defer></script>
+  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=6" defer></script>
 </section>
 {% endif %}

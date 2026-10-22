@@ -1,3 +1,8 @@
+/* The design system's menu and tab behaviour (static/js/ux-controls.js) on the
+ * real Timetable Workspace markup: every menu opens, navigates, closes and
+ * restores focus from the keyboard; only one is open at a time; the inspector's
+ * tabs rove. The page script only answers menu items; the shared script owns
+ * their state. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -5,30 +10,32 @@ const { test } = require('node:test');
 const { JSDOM } = require('jsdom');
 
 const root = path.join(__dirname, '../..');
-const source = fs.readFileSync(path.join(root, 'static/js/timetable-workspace-accessibility.js'), 'utf8');
+const source = fs.readFileSync(path.join(root, 'static/js/ux-controls.js'), 'utf8');
 const template = fs.readFileSync(path.join(root, 'core/templates/core/timetable_workspace.html'), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const MENUS = ['twNewMenu', 'twMoreMenu', 'twOptimiseMenu', 'twExportMenu', 'twOpenMenu'];
 
 function harness() {
-  // Exercise the real markup while removing server template tags and scripts.
-  const html = template.replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
+  // Exercise the real markup while removing server template tags and scripts;
+  // keep the English copy only, as a rendered English page has it.
+  const html = template.replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/{% if LANGUAGE_CODE == 'ar' %}[\s\S]*?{% else %}/g, '')
+    .replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only' });
   const { window } = dom;
   const doc = window.document;
   const activations = [];
-  for (const [triggerId, menuId] of [['twGenerateMenu', 'twGenerateDropdown'], ['twOptimiseMenu', 'twOptimiseDropdown'], ['twExportMenu', 'twExportDropdown']]) {
-    const trigger = doc.getElementById(triggerId);
-    const menu = doc.getElementById(menuId);
+  for (const id of MENUS) {
+    const trigger = doc.getElementById(id);
     trigger.disabled = false;
-    // Match the production click toggle, wired before the additive module.
-    trigger.addEventListener('click', event => {
-      event.stopPropagation();
-      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    // The page answers items; the shared script closes the menu.
+    doc.getElementById(trigger.getAttribute('aria-controls')).querySelectorAll('[role="menuitem"]').forEach(item => {
+      item.disabled = false;
+      item.addEventListener('click', event => {
+        event.preventDefault();
+        activations.push(item.dataset.mode || item.id);
+      });
     });
-    menu.querySelectorAll('[role="menuitem"]').forEach(item => item.addEventListener('click', () => {
-      menu.style.display = 'none';
-      activations.push(item.dataset.engine || item.dataset.mode);
-    }));
   }
   doc.querySelectorAll('[role="tablist"]').forEach(list => {
     list.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', () => {
@@ -36,32 +43,51 @@ function harness() {
       tab.classList.add('active');
     }));
   });
-  doc.getElementById('twBottomHandle').addEventListener('click', () => doc.getElementById('twBottom').classList.toggle('open'));
   window.eval(source);
   const key = (element, value) => element.dispatchEvent(new window.KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
   return { dom, doc, key, activations };
 }
 
-test('Publish and menu actions use valid native buttons and preserve action data', () => {
+test('Publish is a native button; every menu item is a button or a real link', () => {
   const h = harness();
   assert.equal(h.doc.getElementById('twPublish').tagName, 'BUTTON');
   assert.match(h.doc.getElementById('twPublish').textContent, /Publish/);
-  for (const item of h.doc.querySelectorAll('[role="menuitem"]')) assert.equal(item.tagName, 'BUTTON');
-  assert.equal(h.doc.querySelectorAll('[role="menuitem"]').length, 6);
+  const items = [...h.doc.querySelectorAll('[role="menuitem"]')];
+  // New (2), scenario actions (3), Optimise (2), Export (2), Open in (3).
+  assert.equal(items.length, 12);
+  for (const item of items) {
+    if (item.tagName === 'A') assert.match(item.getAttribute('href'), /^\/timetable-workspace\/(mri|graph|split)\/$/);
+    else assert.equal(item.tagName, 'BUTTON');
+  }
+  for (const id of MENUS) {
+    const trigger = h.doc.getElementById(id);
+    const menu = h.doc.getElementById(trigger.getAttribute('aria-controls'));
+    assert.equal(trigger.getAttribute('aria-haspopup'), 'menu', id);
+    assert.ok(menu.classList.contains('ux-menu'), id);
+    assert.equal(menu.getAttribute('role'), 'menu', id);
+    // The inline display is the state; the menu starts closed and hidden.
+    assert.equal(menu.style.display, 'none', id);
+    assert.equal(menu.getAttribute('aria-hidden'), 'true', id);
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', id);
+    assert.ok(trigger.closest('.btn-split, .ux-menu-anchor').contains(menu), id);
+  }
   h.dom.window.close();
 });
 
-test('menus navigate using arrows and endpoints, Escape restores focus, and selection fires once', async () => {
+test('menus navigate using arrows and endpoints, Escape restores focus, and a choice fires once', async () => {
   const h = harness();
-  const trigger = h.doc.getElementById('twGenerateMenu');
-  const items = [...h.doc.querySelectorAll('#twGenerateDropdown [role="menuitem"]')];
+  const trigger = h.doc.getElementById('twExportMenu');
+  const items = [...h.doc.querySelectorAll('#twExportDropdown [role="menuitem"]')];
   trigger.focus();
   h.key(trigger, 'ArrowDown');
   assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  assert.equal(h.doc.getElementById('twExportDropdown').style.display, 'block');
   assert.equal(h.doc.activeElement, items[0]);
   h.key(items[0], 'End');
   assert.equal(h.doc.activeElement, items[1]);
   h.key(items[1], 'ArrowDown');
+  assert.equal(h.doc.activeElement, items[0]);
+  h.key(items[0], 'Home');
   assert.equal(h.doc.activeElement, items[0]);
   h.key(items[0], 'Escape');
   assert.equal(trigger.getAttribute('aria-expanded'), 'false');
@@ -70,15 +96,28 @@ test('menus navigate using arrows and endpoints, Escape restores focus, and sele
   assert.equal(h.doc.activeElement, items[1]);
   items[1].click();
   await tick();
-  assert.deepEqual(h.activations, ['scheduler']);
+  assert.deepEqual(h.activations, ['combined']);
   assert.equal(trigger.getAttribute('aria-expanded'), 'false');
   assert.equal(h.doc.activeElement, trigger);
   h.dom.window.close();
 });
 
-test('only one menu stays open and outside click or leaving focus closes it', async () => {
+test('type-ahead moves to the next item starting with the typed letter', () => {
   const h = harness();
-  const gen = h.doc.getElementById('twGenerateMenu');
+  const trigger = h.doc.getElementById('twMoreMenu');
+  h.key(trigger, 'ArrowDown');
+  const items = [...h.doc.querySelectorAll('#twMoreDropdown [role="menuitem"]')];
+  assert.equal(h.doc.activeElement, items[0]);
+  h.key(items[0], 'e');
+  assert.equal(h.doc.activeElement, items[1], 'Edit time slots…');
+  h.key(items[1], 'e');
+  assert.equal(h.doc.activeElement, items[2], 'Elective mapping…');
+  h.dom.window.close();
+});
+
+test('only one menu stays open, and an outside click or leaving focus closes it', async () => {
+  const h = harness();
+  const gen = h.doc.getElementById('twNewMenu');
   const opt = h.doc.getElementById('twOptimiseMenu');
   gen.click(); opt.click();
   assert.equal(gen.getAttribute('aria-expanded'), 'false');
@@ -86,54 +125,16 @@ test('only one menu stays open and outside click or leaving focus closes it', as
   h.doc.getElementById('twSearch').focus();
   assert.equal(opt.getAttribute('aria-expanded'), 'false');
   gen.click();
+  assert.equal(gen.getAttribute('aria-expanded'), 'true');
   h.doc.getElementById('twSearch').click();
   await tick();
   assert.equal(gen.getAttribute('aria-expanded'), 'false');
   h.dom.window.close();
 });
 
-test('the Generate bar rises above the sticky command bar exactly while its menu is open', async () => {
-  // The bar's backdrop-filter traps the menu's own z-index, so the stylesheet
-  // raises the whole bar; use its exact selector and its resolved layer.
-  const css = fs.readFileSync(path.join(root, 'static/css/timetable-workspace.css'), 'utf8');
-  const globalCss = fs.readFileSync(path.join(root, 'static/css/global.css'), 'utf8');
-  const [, selector, body] = /(#twGenBar:has\([^{]+\))\s*{([^}]*)}/.exec(css);
-  const token = name => Number(new RegExp(`${name}:\\s*(\\d+)`).exec(globalCss)[1]);
-  const [, base, plus] = /z-index:\s*calc\(var\((--z-[\w-]+)\)\s*\+\s*(\d+)\)/.exec(body);
-  const raised = token(base) + Number(plus);
-  const commandBar = Number(/\n\.tw-cmd-bar\s*{[^}]*?z-index:\s*(\d+)/.exec(globalCss)[1]);
-  assert.match(body, /position:\s*relative/);
-  assert.ok(raised > commandBar, `${raised} must clear the command bar's ${commandBar}`);
-  for (const layer of ['--z-sidebar', '--z-drawer', '--z-modal', '--z-toast']) assert.ok(raised < token(layer), layer);
-
+test('a choice that disables its trigger moves focus to the announced status region', async () => {
   const h = harness();
-  const bar = h.doc.getElementById('twGenBar');
-  const gen = h.doc.getElementById('twGenerateMenu');
-  // jsdom's CSS parser rejects the menu's `border:1px solid var(--line)` and
-  // drops its whole inline style; a browser keeps `display:none`, so start there.
-  h.doc.getElementById('twGenerateDropdown').style.display = 'none';
-  const isRaised = async () => { await tick(); return bar.matches(selector); };
-  assert.equal(await isRaised(), false);
-  gen.click();
-  assert.equal(await isRaised(), true, 'click opens');
-  h.key(h.doc.getElementById('twGenerateDropdown'), 'Escape');
-  assert.equal(await isRaised(), false, 'Escape closes');
-  h.key(gen, 'ArrowDown');
-  assert.equal(await isRaised(), true, 'ArrowDown opens');
-  h.key(h.doc.activeElement, 'Tab');
-  assert.equal(await isRaised(), false, 'Tab closes');
-  gen.click(); h.doc.getElementById('twOptimiseMenu').click();
-  assert.equal(await isRaised(), false, 'opening Optimise closes it');
-  gen.click(); h.doc.getElementById('twSearch').click();
-  assert.equal(await isRaised(), false, 'outside click closes');
-  gen.click(); h.doc.querySelector('#twGenerateDropdown [role="menuitem"]').click();
-  assert.equal(await isRaised(), false, 'choosing an engine closes');
-  h.dom.window.close();
-});
-
-test('a planner action that disables the trigger restores focus to the visible status', async () => {
-  const h = harness();
-  const trigger = h.doc.getElementById('twGenerateMenu');
+  const trigger = h.doc.getElementById('twOptimiseMenu');
   h.key(trigger, 'ArrowDown');
   const item = h.doc.activeElement;
   item.addEventListener('click', () => { trigger.disabled = true; });
@@ -143,9 +144,36 @@ test('a planner action that disables the trigger restores focus to the visible s
   h.dom.window.close();
 });
 
-test('both tab groups use roving focus and update panel labels, including programmatic selection', async () => {
+test('a disabled trigger does not open its menu', () => {
   const h = harness();
-  for (const list of h.doc.querySelectorAll('[role="tablist"]')) {
+  const trigger = h.doc.getElementById('twOptimiseMenu');
+  trigger.disabled = true;
+  trigger.dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
+  h.key(trigger, 'ArrowDown');
+  assert.equal(h.doc.getElementById('twOptimiseDropdown').style.display, 'none');
+  h.dom.window.close();
+});
+
+test('header menus drop over the board bar, and every menu stays under sidebars, dialogs and toasts', () => {
+  // The header's glass makes it a stacking context: its menus can only paint
+  // over the board bar if the header's layer is above the bar's.
+  const globalCss = fs.readFileSync(path.join(root, 'static/css/global.css'), 'utf8');
+  const pageCss = fs.readFileSync(path.join(root, 'static/css/timetable-workspace.css'), 'utf8');
+  const token = name => Number(new RegExp(`${name}:\\s*(\\d+)`).exec(globalCss)[1]);
+  const header = Number(/\n\.page-header\s*{[^}]*?z-index:\s*(\d+)/.exec(globalCss)[1]);
+  const boardBar = Number(/\n\.tw-cmd-bar\s*{[^}]*?z-index:\s*(\d+)/.exec(pageCss)[1]);
+  assert.ok(boardBar < header, `board bar ${boardBar} must sit under the header ${header}`);
+  const [, base, plus] = /\n\.ux-menu\s*{[^}]*?z-index:\s*calc\(var\((--z-[\w-]+)\)\s*\+\s*(\d+)\)/.exec(globalCss);
+  const menu = token(base) + Number(plus);
+  for (const layer of ['--z-sidebar', '--z-drawer', '--z-modal', '--z-toast']) assert.ok(menu < token(layer), layer);
+});
+
+test('the inspector tabs use roving focus and update the panel label, including programmatic selection', async () => {
+  const h = harness();
+  const lists = [...h.doc.querySelectorAll('[role="tablist"]')];
+  assert.equal(lists.length, 1, 'board buttons are not a tablist');
+  for (const list of lists) {
+    assert.ok(list.classList.contains('ux-tabs'));
     const tabs = [...list.querySelectorAll('[role="tab"]')];
     tabs[0].focus();
     h.key(tabs[0], 'End');
@@ -160,26 +188,5 @@ test('both tab groups use roving focus and update panel labels, including progra
     await tick();
     assert.equal(last.getAttribute('aria-selected'), 'true');
   }
-  h.dom.window.close();
-});
-
-test('Details hides collapsed contents from keyboard focus and follows programmatic opening', async () => {
-  const h = harness();
-  const bottom = h.doc.getElementById('twBottom');
-  const handle = h.doc.getElementById('twBottomHandle');
-  const content = h.doc.getElementById('twBottomContent');
-  assert.equal(content.hidden, true);
-  handle.click();
-  assert.equal(handle.getAttribute('aria-expanded'), 'true');
-  assert.equal(content.hidden, false);
-  h.doc.getElementById('twTabDemand').focus();
-  bottom.classList.remove('open');
-  await tick();
-  assert.equal(handle.getAttribute('aria-expanded'), 'false');
-  assert.equal(content.hidden, true);
-  assert.equal(h.doc.activeElement, handle);
-  bottom.classList.add('open');
-  await tick();
-  assert.equal(content.hidden, false);
   h.dom.window.close();
 });
