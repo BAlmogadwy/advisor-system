@@ -8272,65 +8272,33 @@ const PM_VIEWS = {
   selection: { host: 'twsSelProgramme', hostClass: 'tws-sel-group', fieldClass: 'tws-sel-field', shown: () => RP.open && RP.tab === 'selection' },
   drawer: { host: 'twsDrawerProgramme', hostClass: '', fieldClass: 'field', shown: () => DRAWER.placementId != null },
 };
-const PM_T = {
-  label: IS_AR ? 'مخصّصة أساساً لبرنامج' : 'Mainly for programme',
-  any: IS_AR ? 'أي برنامج' : 'Any',
-  seated: IS_AR ? 'المقاعد' : 'Seated',
-  loading: IS_AR ? 'جارٍ حساب توزيع البرامج…' : 'Loading programme mix…',
-  saved: IS_AR ? 'حُفظ برنامج الشعبة' : 'Section programme saved',
-};
+// The words and parts are the shared module's (timetable-programme-mark.js);
+// this page wraps them in its own markup and saves through its own helper.
+const PM = window.TimetableProgrammeMark;
+const PM_T = PM.words;
 
 function hasProgrammeMark(p) {
-  return Boolean(p) && Object.prototype.hasOwnProperty.call(p, 'preferred_programme');
-}
-
-function programmeMarkOptions(p) {
-  const mark = String(p.preferred_programme || '');
-  const plans = (S.planLens.plans || []).filter(plan => plan && plan !== 'UNKNOWN');
-  if (mark && !plans.includes(mark)) plans.push(mark);
-  return [['', PM_T.any], ...plans.map(plan => [plan, plan])];
+  return PM.hasMark(p);
 }
 
 function programmeMixHtml(p) {
   if (S.planLens.loading || !S.planLens.loaded) {
     return `—<span class="tws-programme-note">${esc(PM_T.loading)}</span>`;
   }
-  const lens = sectionLensForPlacement(p);
-  const total = Number(lens?.actual_total || 0);
-  const entries = planLensActualEntries(p);
-  if (!lens || !total || !entries.length) return '—';
-  const parts = entries.map(([plan, count]) => `<bdi>${esc(plan)}</bdi> ${Number(count)}`).join(' · ');
-  // One LTR isolate: the figure leads with digits, which an Arabic drawer
-  // would otherwise paint as «23 AI2 :23».
-  return `<bdi dir="ltr">${total}: ${parts}</bdi>`;
+  return PM.mixHtml(sectionLensForPlacement(p)) || '—';
 }
 
 function programmeTradeHtml(grouping) {
-  if (!grouping || !Number.isFinite(Number(grouping.students_regrouped))) return '';
-  const moved = Number(grouping.students_regrouped);
-  const minutes = Number(grouping.student_gap_minutes_change || 0);
-  // The signed figure is isolated so Arabic prose never paints «450+».
-  const signed = `<bdi dir="ltr">${minutes > 0 ? '+' : minutes < 0 ? '−' : '±'}${Math.abs(minutes)}</bdi>`;
-  return IS_AR
-    ? `نقل التجميع ${moved} طالباً؛ إجمالي انتظار الطلاب ${signed} دقيقة`
-    : `Grouping moved ${moved} student${moved === 1 ? '' : 's'}; total student waiting ${signed} min`;
+  return PM.tradeHtml(grouping);
 }
 
 function programmeMarkInnerHtml(p, view) {
-  const mark = String(p.preferred_programme || '');
   const published = S.scenarioMeta && S.scenarioMeta.status === 'published';
   const pending = PROGRAMME_MARK.pending.has(String(p.term_section_id));
   const disabled = published || p.preferred_programme_editable === false || pending;
-  const options = programmeMarkOptions(p)
-    .map(([value, label]) => `<option value="${esc(value)}"${value === mark ? ' selected' : ''}>${esc(label)}</option>`)
-    .join('');
-  const course = courseLensForItem(p);
-  const nobody = mark && S.planLens.loaded && course && !Number((course.plans || {})[mark] || 0);
-  const warning = nobody
-    ? `<span class="tws-programme-note warn">${IS_AR
-      ? `لا يحتاج أي طالب من <bdi>${esc(mark)}</bdi> هذا المقرر؛ العلامة توجّه البرامج الأخرى إلى الشعب الأخرى فقط.`
-      : `No <bdi>${esc(mark)}</bdi> student needs this course; the mark only steers other programmes to the other sections.`}</span>`
-    : '';
+  const options = PM.optionsHtml(p, S.planLens.plans);
+  const nobody = S.planLens.loaded ? PM.nobodyHtml(p, courseLensForItem(p)) : '';
+  const warning = nobody ? `<span class="tws-programme-note warn">${nobody}</span>` : '';
   const trade = programmeTradeHtml(S.planLens.programme_grouping);
   const field = view.fieldClass;
   return `
@@ -8356,10 +8324,16 @@ function renderProgrammeMark(view) {
   // A repaint (the lens arriving) must not take focus off the select.
   const focused = host.contains(document.activeElement);
   host.innerHTML = programmeMarkInnerHtml(p, view);
-  const select = $(`${view.host}Select`);
-  select?.addEventListener('change', event => saveProgrammeMark(p.id, event.target.value));
-  if (focused) select?.focus();
+  if (focused) $(`${view.host}Select`)?.focus();
 }
+
+// One listener for every view's select, however often it is drawn; a
+// keyboard choice saves once the arrow keys rest.
+PM.saveOnSettle(document, '.tws-programme-select',
+  (placementId, value) => saveProgrammeMark(placementId, value),
+  // Read when the choice is made: a repaint may take the select off the page
+  // before a keyboard choice settles.
+  select => select.closest('[data-placement-id]')?.dataset.placementId);
 
 function renderDrawerProgramme() {
   renderProgrammeMark(PM_VIEWS.drawer);

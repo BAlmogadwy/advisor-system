@@ -69,6 +69,7 @@ async function harness(t, intercept = () => undefined, { arabic = false, placeme
   // The page loads the shared slot-column module before its own script.
   w.eval(read('static/js/timetable-slot-config.js'));
   w.eval(read('static/js/timetable-section-teacher.js'));
+  w.eval(read('static/js/timetable-programme-mark.js'));
   w.eval(read('static/js/page-timetable-workspace-split.js') + '\n;globalThis.__splitAudit = { S, DRAWER, RP };');
   await settle();
   const { S: state } = w.__splitAudit;
@@ -481,4 +482,21 @@ test('the second click of any other double-click is left alone', async t => {
   // A card's own dblclick still opens that card's drawer.
   fire(h, card(h, 10), 'dblclick', 2);
   assert.equal(h.w.__splitAudit.DRAWER.placementId, 10);
+});
+
+test('a keyboard choice survives a repaint of its view and saves for its own section', async t => {
+  const h = await drawer(t, {}, url => (url.endsWith('/programme-preference/') ? { ok: true, term_section_id: 111, preferred_programme: 'DS', changed: true } : undefined));
+  h.w.TimetableProgrammeMark.settleMs = 5;
+  h.select().focus();
+  h.select().dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  h.select().value = 'DS';
+  h.select().dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  h.w.renderDrawerProgramme();  // the lens arrives: the view is drawn again before the keys rest
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await wait(() => h.requests.some(row => row.url.endsWith('/programme-preference/')));
+  const posts = h.requests.filter(row => row.url.endsWith('/programme-preference/'));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, '/ops/tw/placements/11/programme-preference/');
+  assert.deepEqual(JSON.parse(posts[0].options.body), { preferred_programme: 'DS' });
+  for (let i = 0; i < 10; i++) await settle();
 });

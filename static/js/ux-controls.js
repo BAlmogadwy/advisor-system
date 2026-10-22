@@ -280,9 +280,10 @@
      its controls off while a write is in flight) drops focus to the page
      before any redraw; the region takes it, and hands it back the moment the
      control is enabled again — in place or by a redraw.
-     Returns whether it drew, so a page wires listeners only on new nodes.
-     Limits: focus only (not an input's value or caret); the region needs a
-     tabindex to hold the keyboard. */
+     The focused field keeps an edit not yet committed when the page draws it
+     from the same value. Returns whether it drew, so a page wires listeners
+     only on new nodes. Limits: not a caret or text selection; the region
+     needs a tabindex to hold the keyboard. */
   const drawn = new WeakMap();
   const focusKeyOf = element => (element.dataset.focusKey ? `focus:${element.dataset.focusKey}`
     : element.dataset.uxDisclosure ? `disclosure:${element.dataset.uxDisclosure}`
@@ -341,6 +342,21 @@
     });
     observer.observe(region, { attributes: true, attributeFilter: ['disabled'], subtree: true });
   }
+  // A field's value and the value the page drew it with (a select's
+  // selected option, an input's value attribute); null for other controls.
+  function fieldOf(element) {
+    if (element.tagName === 'SELECT') {
+      if (element.multiple) return null;
+      const drawnOption = [...element.options].find(option => option.defaultSelected) || element.options[0];
+      return { value: element.value, initial: drawnOption ? drawnOption.value : '' };
+    }
+    if (element.tagName === 'TEXTAREA' || (element.tagName === 'INPUT'
+      && !['checkbox', 'radio', 'file', 'button', 'submit', 'reset', 'image'].includes(element.type))) {
+      return { value: element.value, initial: element.defaultValue };
+    }
+    return null;
+  }
+  const sameData = (a, b) => JSON.stringify(Object.entries(a.dataset).sort()) === JSON.stringify(Object.entries(b.dataset).sort());
   function redraw(region, html) {
     watch(region);
     const last = drawn.get(region);
@@ -348,10 +364,21 @@
     const active = document.activeElement;
     const inside = Boolean(active) && active !== region && region.contains(active);
     const key = inside ? focusKeyOf(active) : active === region && last ? last.awaiting : '';
+    // An edit the user has not committed yet (a keyboard choice waiting to
+    // settle) survives a redraw that draws the field from the same value.
+    const field = inside ? fieldOf(active) : null;
     region.innerHTML = html;
     let awaiting = '';
     if (inside || key) {
       const control = key ? findControl(region, key) : null;
+      // The same field (its key and its data attributes, so another
+      // section's select never inherits the edit), drawn from the same value,
+      // and able to hold the edit (a select has that option).
+      const fresh = control && field && field.value !== field.initial && sameData(active, control) ? fieldOf(control) : null;
+      if (fresh && fresh.initial === field.initial
+        && (control.tagName !== 'SELECT' || [...control.options].some(option => option.value === field.value))) {
+        control.value = field.value;
+      }
       if (control && !control.disabled) control.focus({ preventScroll: true });
       // Gone, or not focusable now (disabled, inside a closed group): the region.
       if (!control || document.activeElement !== control) {

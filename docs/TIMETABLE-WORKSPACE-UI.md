@@ -116,8 +116,11 @@ padding-aware for `p-0`.
   held the same way: the region takes the keyboard and the control gets it
   back when it is switched on again, in place or by a redraw. A page that
   redraws a panel after every server answer uses it instead of `innerHTML`.
-  Limits: focus only, not an input's value or caret; the region needs a
-  `tabindex` to hold the keyboard.
+  The focused field keeps an edit not yet committed when the page draws the
+  same field (key and data attributes) from the same value, and only if the
+  field can hold it (a new value from the page wins; a multiple select is
+  drawn as the page says). Limits: not a caret
+  or text selection; the region needs a `tabindex` to hold the keyboard.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.
@@ -337,7 +340,34 @@ findings changed the plan:
    drawn through the global `UXControls.redraw`, so the several redraws one
    edit causes neither move the keyboard nor disturb a screen reader; an item
    from before the last edit says so in Selection as in Issues. **4b**: the programme mark (#160
-   parity, from split view into a shared module) and Seated on demand.
+   parity): its words and parts move from split view into a shared module,
+   `timetable-programme-mark.js`, which both pages wrap in their own markup;
+   Selection shows the mark, the "nobody needs it" warning, the seated mix
+   and the grouping trade-off. The seated mix comes from the lens the page
+   holds: after an edit it says it is from before the change and offers a
+   Refresh (the lens is a full seating evaluation, never re-read per edit); a
+   saved mark re-reads it once.
+   As built after review: a saved mark reads the lens, then the quality and
+   the publish check (seats and student clashes are seating), one at a time
+   on the small host; a mark saved again unchanged moves no version
+   (`twFetch`'s `_changed`), so nothing turns stale; one lens read per data
+   version, the newest answer winning; a section the lens does not hold reads
+   "—", not "nobody". The select is under the page's edit guard
+   (`data-tw-mutation`, with `data-tw-hold` keeping it off for its own
+   reasons) and keeps the keyboard through a save (the global redraw). A
+   choice made from the keyboard saves once the arrow keys rest, or on Enter
+   or on leaving — Chrome on Windows fires `change` per arrow key — in both
+   pages (`TimetableProgrammeMark.saveOnSettle`, which reads the section and
+   the value when the choice is made and keeps one wait per section: a
+   repaint before the keys rest loses nothing and saves nothing in between,
+   and a select a redraw takes off the page — Chromium blurs it as it goes —
+   is not "left"). A visually hidden status line says when the mix has been read
+   again. While a mark saves, the select shows the mark being saved; a
+   keyboard choice the page turned busy for is not dropped silently (the
+   saved mark comes back and a warning says why); a reset lens (the scenario
+   reloaded after a planner job) forgets the read in flight. The global
+   redraw keeps an edit the user has not committed in the focused field
+   when the page draws that field from the same value.
 5. **Keyboard.** Grid semantics for the board (days × columns) with roving
    focus; the left list as one roving stop; `event.code` for `[` and `]`; a
    Move dialog with one ranked list whose verdict follows the server's

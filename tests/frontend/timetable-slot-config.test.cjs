@@ -151,6 +151,7 @@ async function split(t, answer) {
   w.eval(read('static/js/timetable-meeting-policy.js'));
   w.eval(read('static/js/timetable-slot-config.js'));
   w.eval(read('static/js/timetable-section-teacher.js'));
+  w.eval(read('static/js/timetable-programme-mark.js'));
   w.eval(read('static/js/page-timetable-workspace-split.js') + '\n;globalThis.__split = { S };');
   await settle();
   const S = w.__split.S;
