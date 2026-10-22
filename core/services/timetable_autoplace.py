@@ -76,6 +76,7 @@ from core.models import (
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
+from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_board_persistence import locked_physical_section_ids
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
@@ -2099,7 +2100,7 @@ def auto_place_board(
                     "course_number": display_code,
                     "course_name": cd.get("course_name") or display_code,
                     "available_capacity": cd["budget"].max_per_section,
-                    "source_tag": "tw_auto",
+                    "source_tag": AUTO_SECTION_SOURCE_TAG,
                 },
             )
 

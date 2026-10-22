@@ -64,6 +64,11 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.board_ownership import external_shared_section_ids
+from core.services.natural_order import natural_key
+from core.services.section_source_tags import (
+    PLANNED_SECTION_SOURCE_TAG,
+    WORKSPACE_SECTION_SOURCE_TAGS,
+)
 from core.services.student_helpers import normalize_code
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
@@ -1979,6 +1984,34 @@ def _normalise_planned_meeting_rows(rows: list[dict]) -> list[dict[str, str]]:
     return meetings
 
 
+def _drop_stale_workspace_meetings(term_section: TermSection, scenario_id: int) -> None:
+    """Clear the meeting rows an earlier section of this label left behind.
+
+    Removing a placement from the board leaves the section and its
+    ``TermSectionMeeting`` rows in place. Creating the same label again reuses
+    the section, so the old pattern's rows would pile up beside the new
+    pattern's. They are dropped only for a section the workspace made itself
+    (``tw_planned``, or ``tw_auto`` from the engines, which label ``S{n}``
+    too), owned by this scenario, and on no board of ANY scenario: its rows
+    belong to the section, not to a scenario, so a placement from another
+    scenario's board keeps them. Registrar, imported and scraped sections are
+    never touched. The workspace's own rows carry a derived teacher name (the
+    one-teacher map, or the primary-instructor link; a pin lives in
+    ``SectionInstructor``) and ``name_new_section`` writes it back.
+
+    The reused section keeps its ``available_capacity`` and ``course_name``:
+    ``get_or_create`` sets them only when the section is first made.
+    """
+
+    if term_section.source_tag not in WORKSPACE_SECTION_SOURCE_TAGS:
+        return
+    if term_section.scenario_id != scenario_id:
+        return
+    if SectionPlacement.objects.filter(term_section=term_section).exists():
+        return
+    TermSectionMeeting.objects.filter(term_section=term_section).delete()
+
+
 def create_planned_section_placements(
     board_id: int,
     *,
@@ -2039,9 +2072,11 @@ def create_planned_section_placements(
                 "course_number": code,
                 "course_name": name,
                 "available_capacity": capacity,
-                "source_tag": "tw_planned",
+                "source_tag": PLANNED_SECTION_SOURCE_TAG,
             },
         )
+        if not _created:
+            _drop_stale_workspace_meetings(term_section, board.scenario_id)
         placements: list[SectionPlacement] = []
         validations = []
         if policy:
@@ -3614,6 +3649,9 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
 
     Returns:
         List of per-course dicts sorted by ``(programme_term, course_code)``.
+        ``used_section_labels`` lists the labels in use for the course on any
+        board of the scenario, in natural order (S1, S3, S10), so a page can
+        name the next section without colliding with one already taken.
     """
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
     section_counts_by_course = _section_meeting_counts(scenario_id)
@@ -3655,6 +3693,7 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
                 "max_per_section": b.max_per_section,
                 "total_demand": b.total_demand,
                 "used_sections": used,
+                "used_section_labels": sorted(used_sections.get(key, ()), key=natural_key),
                 "remaining_sections": max(0, b.planned_sections - used),
                 "boards_using": sorted(board_usage.get(key, set())),
                 "required_meetings_per_section": required_meetings,
