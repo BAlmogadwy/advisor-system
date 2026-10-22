@@ -24,6 +24,7 @@ from core.services.timetable_exact_rooming import (
     _solve_relaxed,
     build_meeting_demands,
 )
+from core.services.timetable_room_audit import AUDIT_DAYS, actual_rooms, meeting_room_verdict
 from core.services.timetable_rooming import (
     _budget_value_for_placement,
     _build_rooming_budget_maps,
@@ -31,7 +32,7 @@ from core.services.timetable_rooming import (
     get_capacity_buffer,
 )
 
-_DAYS = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+_DAYS = AUDIT_DAYS
 
 
 def _overlap(left: MeetingDemand, right: MeetingDemand) -> bool:
@@ -88,29 +89,31 @@ class RecoveryRoomEvaluator:
 
     def _original_room_report(self) -> dict[str, Any]:
         """Audit persisted rooms against exactly the same strict domains."""
-        missing = set()
-        incompatible = set()
-        undersized = set()
-        unsuitable = set()
+        missing: set[str] = set()
+        incompatible: set[str] = set()
+        undersized: set[str] = set()
+        unsuitable: set[str] = set()
         conflicts: set[str] = set()
+        flagged = {
+            "missing": missing,
+            "undersized": undersized,
+            "unsuitable": unsuitable,
+            "incompatible": incompatible,
+        }
         rooms_by_demand = {}
         for d in self.demands:
-            codes = {str(r or "").strip().upper() for r in d.incumbent_rooms}
-            if "" in codes or "UNASSIGNED" in codes:
-                missing.add(d.demand_id)
-            actual = codes - {"", "UNASSIGNED"}
-            rooms_by_demand[d.demand_id] = actual
-            if any(
-                r in self.capacities and self.capacities[r] < d.required_capacity for r in actual
-            ):
-                undersized.add(d.demand_id)
-            if len(actual) > 1 or any(r not in d.compatible_rooms for r in actual):
-                unsuitable.add(d.demand_id)
-            if len(actual) > 1 or any(
-                r not in d.compatible_rooms or self.capacities.get(r, 0) < d.required_capacity
-                for r in actual
-            ):
-                incompatible.add(d.demand_id)
+            rooms_by_demand[d.demand_id] = actual_rooms(d.incumbent_rooms)
+            # The audit's one verdict (timetable_room_audit); "split" is reported
+            # as unsuitable and incompatible.
+            verdict = meeting_room_verdict(
+                d.incumbent_rooms,
+                required_capacity=d.required_capacity,
+                compatible_rooms=d.compatible_rooms,
+                capacities=self.capacities,
+            )
+            for name, demand_ids in flagged.items():
+                if name in verdict:
+                    demand_ids.add(d.demand_id)
         for i, left in enumerate(self.demands):
             for right in self.demands[i + 1 :]:
                 if _overlap(left, right) and (

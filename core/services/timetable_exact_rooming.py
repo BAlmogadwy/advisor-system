@@ -38,10 +38,11 @@ Design decisions forced by the code (see the recon in the session notes):
   not the ``SectionPlacement`` row. A section shared across boards at the same
   slot is *one* physical class that must get *one* room written to *every* row —
   grouping this way also avoids doubling ``TermSectionMeeting`` rows on persist.
-* **The compatible-room domain mirrors the publish-gate auditor**
-  (``validate_physical_room_compatibility``), not the greedy: labs are
-  capacity-checked with buffered demand, room type/gender/department are
-  normalised. Producing a board the auditor would reject is not a "pass".
+* **The compatible-room domain is the quality audit's room rule**
+  (``timetable_room_audit.room_misfits``), not the greedy: room
+  type/gender/department are normalised, and seats are judged against the
+  buffered demand. The quality panel's room rows and the Change room
+  dialog read the same rule.
 * **Capacity is not a hard domain filter here.** Rooms are admitted on
   type∩gender∩department; the solver then *minimises* the capacity shortfall
   (``allow_capacity_shortfall=True``). That keeps a too-small-room meeting as a
@@ -67,15 +68,21 @@ from django.conf import settings
 from core.models import DeliveryBoard, Room, ScenarioSectionBudget, SectionPlacement
 from core.services.course_identity import course_display_code
 from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge
-from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_online import OnlineCourseLookup
+from core.services.timetable_room_audit import (
+    ExactRoomingError,
+    audit_room_inventory,
+    audit_skips,
+    board_gender_memo,
+    hhmm,
+    meeting_key,
+    meeting_room_need,
+    room_misfits,
+    to_min,
+)
 from core.services.timetable_rooming import (
-    _budget_value_for_placement,
     _build_rooming_budget_maps,
-    _section_gender,
-    get_board_gender,
     get_capacity_buffer,
-    room_type_for_placement,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,10 +90,6 @@ logger = logging.getLogger(__name__)
 #: ``_solve_relaxed`` pins each solved objective phase with one constraint
 #: (plus one for the optional ``keep_roomed`` tie-break phase).
 _MAX_PHASE_PINS = 4
-
-
-class ExactRoomingError(Exception):
-    """A scenario the exact room pass refuses to reason about (fail closed)."""
 
 
 @dataclass(frozen=True)
@@ -117,23 +120,10 @@ def is_exact_rooming_enabled() -> bool:
     return bool(getattr(settings, "TIMETABLE_EXACT_ROOMING_ENABLED", False))
 
 
-def _hhmm(value: object) -> str:
-    return value.strftime("%H:%M") if hasattr(value, "strftime") else str(value)[:5]
-
-
-def _to_min(value: object) -> int:
-    """Parse ``HH:MM`` to minutes, or raise ``ExactRoomingError`` (fail closed).
-
-    ``SectionPlacement.start_time`` / ``end_time`` are free-text fields, so a
-    malformed or empty value must surface as the typed error the endpoint turns
-    into a clean 422 — never a raw ``ValueError`` that escapes as a 500.
-    """
-    text = _hhmm(value)
-    try:
-        hh, mm = text.split(":")
-        return int(hh) * 60 + int(mm)
-    except (ValueError, AttributeError) as exc:
-        raise ExactRoomingError(f"Un-parseable placement time {value!r}.") from exc
+# ``ExactRoomingError`` and the time helpers are defined with the room rule
+# (``timetable_room_audit``); this module re-exports them under their old names.
+_hhmm = hhmm
+_to_min = to_min
 
 
 @dataclass(frozen=True)
@@ -226,24 +216,7 @@ def _load_room_inventory() -> tuple[dict[str, dict], dict[str, int]]:
     uniqueness on ``(room_code, section)``, so a code *could* carry two rows with
     different capacities — that would silently mis-size the model, so we refuse it.
     """
-    rows_by_code: dict[str, dict] = {}
-    duplicates: set[str] = set()
-    for room in Room.objects.all().order_by("id"):
-        code = str(room.room_code or "").strip().upper()
-        if not code:
-            continue
-        if code in rows_by_code:
-            duplicates.add(code)
-            continue
-        rows_by_code[code] = {
-            "room_code": code,
-            "capacity": int(room.capacity or 0),
-            "room_type": str(room.room_type or "lecture").strip().lower(),
-            "section": str(room.section or "").strip().upper(),
-            "programmes": frozenset(
-                p.strip().upper() for p in str(room.department or "").split(",") if p.strip()
-            ),
-        }
+    rows_by_code, duplicates = audit_room_inventory(Room.objects.all().order_by("id"))
     if duplicates:
         raise ExactRoomingError(
             "Room inventory carries duplicate room_codes "
@@ -260,9 +233,10 @@ def build_meeting_demands(
 ) -> list[MeetingDemand]:
     """Group the scenario's physical placements into per-meeting room demands.
 
-    Mirrors ``validate_physical_room_compatibility`` for the requirement side
-    (type/capacity/gender/programme) and the compatible-room domain, but keyed by
-    the physical meeting so shared-across-board sections resolve to one room.
+    The requirement side (type/capacity/gender/programme) and the
+    compatible-room domain are the room rule of ``timetable_room_audit``
+    (``meeting_room_need``, ``room_misfits``), keyed by the physical meeting so
+    shared-across-board sections resolve to one room.
 
     ``rows_by_code`` is the room inventory from a *single* ``_load_room_inventory``
     read; pass the same mapping the caller uses to build ``capacity_by_code`` so a
@@ -284,38 +258,21 @@ def build_meeting_demands(
         list(ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)),
         get_capacity_buffer(),
     )
-    board_gender_cache: dict[int, str] = {}
-
-    def board_gender(board_id: int) -> str:
-        if board_id not in board_gender_cache:
-            board_gender_cache[board_id] = get_board_gender(board_id)
-        return board_gender_cache[board_id]
-
-    def board_programmes(board) -> frozenset[str]:
-        return frozenset(
-            v.strip().upper() for v in str(board.program or "").split(",") if v.strip()
-        )
+    board_gender = board_gender_memo()
 
     # Group physical (non-online) placements into meetings. Day/time are
     # normalised so a spelling difference across boards cannot hide an overlap.
     groups: dict[tuple, list[SectionPlacement]] = defaultdict(list)
     for p in placements:
-        ts = p.term_section
-        policy = get_course_meeting_policy(ts.course_code, ts.course_key, ts.course_number)
-        if policy and not policy.uses_shared_room:
+        if audit_skips(p, online_lookup):
             continue
-        if online_lookup.is_online_course_for_board(
-            p.board, course_display_code(ts.course_key, ts.course_code, ts.course_number)
-        ):
-            continue
-        start_hhmm = _hhmm(p.start_time)
-        end_hhmm = _hhmm(p.end_time)
-        if _to_min(end_hhmm) <= _to_min(start_hhmm):  # fail closed on degenerate intervals
+        key = meeting_key(p)
+        _term_section_id, _day, start_hhmm, end_hhmm = key
+        if to_min(end_hhmm) <= to_min(start_hhmm):  # fail closed on degenerate intervals
             raise ExactRoomingError(
                 f"Placement {p.id} ({p.term_section.course_code}) has a non-positive "
                 f"interval {start_hhmm}-{end_hhmm}."
             )
-        key = (p.term_section_id, str(p.day).strip().upper(), start_hhmm, end_hhmm)
         groups[key].append(p)
 
     demands: list[MeetingDemand] = []
@@ -323,42 +280,23 @@ def build_meeting_demands(
         groups.items(), key=lambda kv: str(kv[0])
     ):
         sample = rows[0]
-        required_type = room_type_for_placement(
-            sample, start_time=start_hhmm, end_time=end_hhmm, budget_maps=budget_maps
+        # Type, buffered seats, gender (raising on boards that disagree) and one
+        # programme pool per board: the audit's room rule.
+        need = meeting_room_need(
+            rows,
+            day=day,
+            start_hhmm=start_hhmm,
+            end_hhmm=end_hhmm,
+            budget_maps=budget_maps,
+            board_gender=board_gender,
         )
-        buffered_demand = _budget_value_for_placement(sample, budget_maps, "buffered", 40)
+        # Reported for context; a room must serve EVERY board's pool, not the union.
+        required_programmes = frozenset().union(*need.programmes_per_board)
 
-        # Gender: per-section first, board second. A shared meeting whose boards
-        # disagree on gender is a data defect; fail closed on that meeting.
-        genders = set()
-        for p in rows:
-            genders.add(_section_gender(p.term_section.section) or board_gender(p.board_id))
-        if len({g for g in genders if g}) > 1:
-            raise ExactRoomingError(
-                f"Meeting {sample.term_section.course_code}|{sample.term_section.section} "
-                f"on {day} {start_hhmm} spans boards with conflicting gender {sorted(genders)}."
-            )
-        required_gender = next(iter(g for g in genders if g), "")
-
-        # Programme (H14): the auditor validates EACH placement against its own
-        # board's programme, so the chosen room must serve EVERY constituent
-        # board — an intersection over boards, not a union. Reported for context.
-        per_board_programmes = {board_programmes(p.board) for p in rows}
-        required_programmes = (
-            frozenset().union(*per_board_programmes) if per_board_programmes else frozenset()
-        )
-
-        # Compatible-room domain = auditor's type∩gender∩department (NOT capacity —
-        # capacity becomes a minimised shortfall, not a hard prune). A room must
-        # satisfy H14 for every board the meeting belongs to.
+        # Compatible-room domain = type∩gender∩every board's pool (NOT capacity —
+        # capacity becomes a minimised shortfall, not a hard prune).
         compatible = tuple(
-            sorted(
-                code
-                for code, room in rows_by_code.items()
-                if room["room_type"] == required_type
-                and (not required_gender or room["section"] == required_gender)
-                and all(bool(bp & room["programmes"]) for bp in per_board_programmes)
-            )
+            sorted(code for code, room in rows_by_code.items() if not room_misfits(room, need))
         )
 
         demands.append(
@@ -377,13 +315,13 @@ def build_meeting_demands(
                 day=day,
                 start_min=_to_min(start_hhmm),
                 end_min=_to_min(end_hhmm),
-                required_type=required_type,
-                required_capacity=int(buffered_demand),
-                required_gender=required_gender,
+                required_type=need.required_type,
+                required_capacity=need.required_capacity,
+                required_gender=need.required_gender,
                 required_programmes=required_programmes,
                 placement_ids=tuple(p.id for p in rows),
                 board_ids=tuple(sorted({p.board_id for p in rows})),
-                programmes_per_board=tuple(sorted(per_board_programmes, key=sorted)),
+                programmes_per_board=need.programmes_per_board,
                 incumbent_rooms=tuple(str(p.room or "").strip().upper() for p in rows),
                 compatible_rooms=compatible,
             )
