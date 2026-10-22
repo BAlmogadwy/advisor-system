@@ -161,6 +161,17 @@ def test_a_full_lane_answers_busy_at_once_without_running_the_preview(
     assert lane_free()
 
 
+def test_room_candidates_with_the_audit_take_the_same_lane(http, placement, monkeypatch) -> None:
+    """``?audit=1`` (the Change room dialog's quality-audit answer) is the same
+    preview: a full lane refuses it at once, without running it."""
+    monkeypatch.setattr(views, "preview_placement_room_candidates", _refuse)
+    with lane_full():
+        response = http.get(f"/ops/tw/placements/{placement.id}/room-candidates/?audit=1")
+    assert response.status_code == 503
+    assert response.json()["code"] == "SERVER_BUSY"
+    assert lane_free()
+
+
 def test_repair_analysis_is_refused_while_the_lane_is_full(http, placement, monkeypatch) -> None:
     monkeypatch.setattr(views, "section_move_optimisation_engine", _engine(_refuse))
     with lane_full():

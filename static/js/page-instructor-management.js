@@ -40,7 +40,7 @@ const T = {
   under:                IS_AR ? 'أقل من المطلوب' : 'Under',
   at:                   IS_AR ? 'في الحد المطلوب' : 'At Capacity',
   over:                 IS_AR ? 'فوق الحد المسموح' : 'Overloaded',
-  na:                   IS_AR ? 'غير محدد' : 'N/A',
+  na:                   IS_AR ? 'لا حد أسبوعي' : 'No weekly limit',
 
   // ── Actions ──
   edit:                 IS_AR ? 'تعديل' : 'Edit',
@@ -84,7 +84,25 @@ const T = {
   teachingDays:         IS_AR ? 'أيام التدريس' : 'Teaching Days',
   clashes:              IS_AR ? 'التعارضات' : 'Clashes',
   loadStatus:           IS_AR ? 'حالة العبء' : 'Load Status',
-  totalRow:             IS_AR ? 'الإجمالي' : 'TOTAL',
+  totalRow:             IS_AR ? 'الإجمالي' : 'Total',
+  programs:             IS_AR ? 'البرامج' : 'Programmes',
+  distinctCourses:      IS_AR ? 'مقررات مختلفة' : 'Distinct',
+  withLoad:             IS_AR ? 'لهم عبء' : 'With a load',
+  coursesAssigned:      IS_AR ? 'مقررات مُسندة' : 'Courses assigned',
+  overLimit:            IS_AR ? 'فوق الحد' : 'Over the limit',
+  noLimit:              IS_AR ? 'بلا حد أسبوعي' : 'No weekly limit',
+  summary:              IS_AR ? 'ملخص الأعباء' : 'Load summary',
+  confirmDeactivateBody: (name) => IS_AR
+    ? `لن يظهر ${name} في البحث عند الإسناد، وتبقى إسناداته الحالية. يمكن تفعيله لاحقاً.`
+    : `${name} will no longer appear when assigning courses; existing assignments stay. You can activate them again later.`,
+  deactivateConfirm:    IS_AR ? 'تعطيل' : 'Deactivate',
+  instructorActivated:  IS_AR ? 'تم تفعيل عضو هيئة التدريس' : 'Instructor activated',
+  instructorDeactivated: IS_AR ? 'تم تعطيل عضو هيئة التدريس' : 'Instructor deactivated',
+  editTitle:            IS_AR ? 'تعديل عضو هيئة تدريس' : 'Edit instructor',
+  severalMatch:         (n) => IS_AR
+    ? `يطابق النص ${n} من أعضاء هيئة التدريس؛ اكتب الاسم كاملاً.`
+    : `${n} instructors match; type the full name.`,
+  addTitle:             IS_AR ? 'إضافة عضو هيئة تدريس' : 'Add instructor',
   term:                 (n) => (n === null || n === undefined || n === '') ? '—' : (IS_AR ? `ف${n}` : `T${n}`),
 
   // ── Time labels ──
@@ -95,7 +113,9 @@ const T = {
   thursday:             IS_AR ? 'الخميس' : 'Thu',
 
   // ── Counts ──
-  nInstructors:      (n) => IS_AR ? `${n} عضو` : `${n} instructors`,
+  nInstructors:      (n) => IS_AR
+    ? pluralAr(n, { zero: 'لا أعضاء نشطون', one: 'عضو نشط واحد', two: 'عضوان نشطان', few: '{n} أعضاء نشطين', many: '{n} عضواً نشطاً', other: '{n} عضو نشط' })
+    : `${n} active ${n === 1 ? 'instructor' : 'instructors'}`,
   nSections:         (n) => IS_AR ? `${n} شعبة` : `${n} sections`,
   nSelected:         (n) => IS_AR ? `${n} محدد` : `${n} selected`,
   nAssigned:         (n) => IS_AR ? `تم توزيع ${n}` : `${n} assigned`,
@@ -122,27 +142,17 @@ function imSwitchTab(tab) {
   // switching tabs would otherwise leave it floating over the new tab.
   if (typeof ca !== 'undefined' && ca.hideAssignPopover) ca.hideAssignPopover();
 
-  // Update tab buttons
-  $$('.im-tab').forEach(btn => {
-    btn.classList.remove('im-tab-active');
-    btn.setAttribute('aria-selected', 'false');
-  });
-  $(`imTabBtn${tab.charAt(0).toUpperCase() + tab.slice(1)}`).classList.add('im-tab-active');
-  $(`imTabBtn${tab.charAt(0).toUpperCase() + tab.slice(1)}`).setAttribute('aria-selected', 'true');
-
-  // Update tab content
-  $$('.im-tab-content').forEach(content => {
-    content.classList.remove('im-tab-content-active');
-  });
-  $(`imTab${tab.charAt(0).toUpperCase() + tab.slice(1)}`).classList.add('im-tab-content-active');
+  // The global tabs (ux-tabs): `.active` marks the tab; UXControls keeps
+  // aria-selected, the roving tabindex and the arrow keys.
+  $$('.im-tabs [data-im-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.imTab === tab));
+  $$('.im-pane').forEach(pane => { pane.hidden = pane.id !== `imTab${tab.charAt(0).toUpperCase() + tab.slice(1)}`; });
 
   currentTab = tab;
 
-  // Load data for specific tabs
-  if (tab === 'assignments') {
-    if (typeof ca !== 'undefined' && ca.init) ca.init();
-  } else if (tab === 'roster') {
-    imLoadInstructors();
+  // The roster is read once (the page's count needs it) and again on Refresh
+  // or after a change; the report is read each time it is shown.
+  if (tab === 'roster') {
+    if (imRosterLoaded) imFilterInstructors(); else imLoadInstructors();
   } else if (tab === 'report') {
     imLoadReport();
   }
@@ -162,7 +172,11 @@ async function imApiCall(endpoint, options = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      // The server's own words when it gives them ("already exists"), else
+      // the status.
+      let body = null;
+      try { body = await response.json(); } catch (_) { body = null; }
+      throw new Error(body?.error?.message || `HTTP ${response.status}`);
     }
 
     return await response.json();
@@ -173,22 +187,25 @@ async function imApiCall(endpoint, options = {}) {
 }
 
 // ── Load Instructors ──
-async function imLoadInstructors() {
+let imRosterLoaded = false;
+
+async function imLoadInstructors(options = {}) {
+  // `focus`: a selector for the control that should have the keyboard once the
+  // table is drawn again (the one it had was in the old rows). An event
+  // (Refresh) carries none.
+  const focus = typeof options?.focus === 'string' ? options.focus : '';
   try {
-    const includeInactive = $('imIncludeInactive').checked ? 1 : 0;
-    const searchQ = $('imInstructorSearch').value.trim();
-
-    const params = new URLSearchParams({
-      q: searchQ,
-      include_inactive: includeInactive
-    });
-
-    const data = await imApiCall(`/ops/instructors/list/?${params}`);
+    // Every instructor, active or not: "Show inactive" and the search filter
+    // here, so neither needs another request.
+    const data = await imApiCall('/ops/instructors/list/?include_inactive=1');
 
     if (data.ok) {
       allInstructors = data.instructors;
-      imRenderInstructorTable();
-      $('imInstructorCount').textContent = T.nInstructors(allInstructors.length);
+      imRosterLoaded = true;
+      imFilterInstructors();
+      const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+      if (focus && lost) document.querySelector(focus)?.focus();
+      $('imInstructorCount').textContent = T.nInstructors(allInstructors.filter(i => i.is_active).length);
     } else {
       throw new Error(data.error?.message || 'Failed to load instructors');
     }
@@ -207,35 +224,39 @@ function imRenderInstructorTable(instructors = null) {
     return;
   }
 
-  tbody.innerHTML = data.map(instructor => `
-    <tr>
+  tbody.innerHTML = data.map(instructor => {
+    const id = Number(instructor.id);
+    const name = escapeHtml(instructor.full_name);
+    const other = imOtherName(instructor);
+    const dash = '<span class="im-none" aria-label="—">—</span>';
+    return `<tr>
       <td>
         <div class="im-instructor-name">
-          <strong>${escapeHtml(instructor.full_name)}</strong>
-          ${imField(instructor.full_name_ar) ? `<div class="text-muted fs-sm">${escapeHtml(imField(instructor.full_name_ar))}</div>` : ''}
+          <strong>${name}</strong>
+          ${other ? `<span class="im-name-other">${escapeHtml(other)}</span>` : ''}
         </div>
       </td>
-      <td><span class="pill-neutral">${escapeHtml(imField(instructor.department) || '—')}</span></td>
-      <td class="text-muted fs-sm">${escapeHtml(imField(instructor.email) || '—')}</td>
-      <td class="text-muted fs-sm">${escapeHtml(imField(instructor.employee_no) || '—')}</td>
-      <td class="text-center">${instructor.max_weekly_hours || '—'}</td>
-      <td>
-        <button class="pill-status ${instructor.is_active ? 'pill-status-success' : 'pill-status-muted'}"
-                onclick="imToggleInstructorActive(${instructor.id}, ${!instructor.is_active})"
-                title="${instructor.is_active ? T.clickToDisable : T.clickToEnable}">
-          ${instructor.is_active ? T.active : T.inactive}
-        </button>
-      </td>
+      <td>${imField(instructor.department) ? escapeHtml(imField(instructor.department)) : dash}</td>
+      <td>${imField(instructor.email) ? `<bdi dir="ltr">${escapeHtml(imField(instructor.email))}</bdi>` : dash}</td>
+      <td>${imField(instructor.employee_no) ? `<bdi dir="ltr">${escapeHtml(imField(instructor.employee_no))}</bdi>` : dash}</td>
+      <td class="text-center">${instructor.max_weekly_hours || dash}</td>
+      <td><span class="pill-status ${instructor.is_active ? 'pill-g' : 'pill-muted'}">${instructor.is_active ? T.active : T.inactive}</span></td>
       <td>
         <div class="im-row-actions">
-          <button class="im-row-btn" onclick="imEditInstructor(${instructor.id})"
-                  title="${T.edit}" aria-label="${T.edit} ${escapeHtml(instructor.full_name)}">
-            <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
+          <button type="button" class="btn btn-sm btn-neutral" data-im-edit="${id}" aria-label="${T.edit} — ${name}">${T.edit}</button>
+          <button type="button" class="btn btn-sm btn-neutral" data-im-active="${id}" data-im-to="${instructor.is_active ? '0' : '1'}"
+                  aria-label="${instructor.is_active ? T.deactivate : T.activate} — ${name}">${instructor.is_active ? T.deactivate : T.activate}</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
+}
+
+/* The second name under a roster name: the Arabic one, shown only when it
+   says something the first does not (imports often store one name twice). */
+function imOtherName(instructor) {
+  const other = imField(instructor.full_name_ar);
+  return other && other.trim() !== String(instructor.full_name || '').trim() ? other : '';
 }
 
 function imFilterInstructors() {
@@ -265,13 +286,13 @@ function imFilterInstructors() {
 
 function imCreateInstructor() {
   isEditMode = false;
-  $('imInstructorModalLabel').textContent = IS_AR ? 'إضافة عضو هيئة تدريس' : 'Add Instructor';
+  $('imInstructorModalLabel').textContent = T.addTitle;
   imClearInstructorForm();
   // The "seed from advisor" picker is only meaningful when creating.
   const seed = $('imAdvisorSeedGroup');
-  if (seed) seed.style.display = '';
+  if (seed) seed.hidden = false;
   imLoadAdvisors();
-  imShowInstructorModal();
+  imShowInstructorModal(() => $('imCreateInstructor'));
 }
 
 // ── Advisor seed typeahead (custom dropdown — replaces the native datalist,
@@ -284,6 +305,9 @@ async function imLoadAdvisors() {
     const data = await imApiCall('/ops/instructors/advisors/');
     if (data && data.ok) imAdvisors = data.advisors || [];
   } catch (e) { /* advisor seeding is optional — fail silent */ }
+  // The picker may already be open on the empty list it had before.
+  const picker = $('imAdvisorPicker');
+  if (picker && document.activeElement === picker) imRenderAdvisorResults(picker.value);
 }
 
 function imRenderAdvisorResults(query) {
@@ -354,20 +378,23 @@ function imEditInstructor(instructorId) {
   if (!instructor) return;
 
   isEditMode = true;
-  $('imInstructorModalLabel').textContent = IS_AR ? 'تعديل عضو هيئة تدريس' : 'Edit Instructor';
+  $('imInstructorModalLabel').textContent = T.editTitle;
+  imSayInForm('');
   const seed = $('imAdvisorSeedGroup');
-  if (seed) seed.style.display = 'none';
+  if (seed) seed.hidden = true;
 
   $('imInstructorId').value = instructor.id;
   $('imInstructorName').value = instructor.full_name;
-  $('imInstructorNameAr').value = instructor.full_name_ar || '';
-  $('imInstructorEmail').value = instructor.email || '';
-  $('imInstructorEmployeeNo').value = instructor.employee_no || '';
-  $('imInstructorDepartment').value = instructor.department || '';
+  $('imInstructorNameAr').value = imField(instructor.full_name_ar);
+  $('imInstructorEmail').value = imField(instructor.email);
+  $('imInstructorEmployeeNo').value = imField(instructor.employee_no);
+  $('imInstructorDepartment').value = imField(instructor.department);
   $('imInstructorMaxHours').value = instructor.max_weekly_hours || '';
   $('imInstructorActive').checked = instructor.is_active;
 
-  imShowInstructorModal();
+  // At close focus returns to this row's Edit; after a save the table is
+  // drawn again and imLoadInstructors puts it on the new Edit.
+  imShowInstructorModal(() => document.querySelector(`[data-im-edit="${Number(instructorId)}"]`) || $('imCreateInstructor'));
 }
 
 function imClearInstructorForm() {
@@ -381,28 +408,39 @@ function imClearInstructorForm() {
   $('imInstructorDepartment').value = '';
   $('imInstructorMaxHours').value = '';
   $('imInstructorActive').checked = true;
+  imSayInForm('');
 }
 
-function imShowInstructorModal() {
-  const modal = $('imInstructorModal');
-  modal.style.display = 'block';
-  modal.setAttribute('aria-hidden', 'false');
-  // Focus first input
-  setTimeout(() => $('imInstructorName').focus(), 100);
+function imShowInstructorModal(returnFocus) {
+  const dialog = $('imInstructorDialog');
+  window.UXControls.dialog.open(dialog, {
+    initialFocus: () => (isEditMode ? $('imInstructorName') : $('imAdvisorPicker')),
+    returnFocus,
+  });
 }
 
 function imHideInstructorModal() {
-  const modal = $('imInstructorModal');
-  modal.style.display = 'none';
-  modal.setAttribute('aria-hidden', 'true');
+  window.UXControls.dialog.close($('imInstructorDialog'));
+}
+
+/* The form's own message line: a toast behind a modal dialog is never seen. */
+function imSayInForm(text) {
+  const line = $('imInstructorError');
+  if (!line) return;
+  line.textContent = text;
+  line.hidden = !text;
 }
 
 async function imSaveInstructor() {
   const name = $('imInstructorName').value.trim();
   if (!name) {
-    notify.error(T.nameRequired);
+    imSayInForm(T.nameRequired);
+    $('imInstructorName').setAttribute('aria-invalid', 'true');
+    $('imInstructorName').focus();
     return;
   }
+  $('imInstructorName').removeAttribute('aria-invalid');
+  imSayInForm('');
 
   const payload = {
     full_name: name,
@@ -410,7 +448,8 @@ async function imSaveInstructor() {
     email: $('imInstructorEmail').value.trim() || null,
     employee_no: $('imInstructorEmployeeNo').value.trim() || null,
     department: $('imInstructorDepartment').value.trim() || null,
-    max_weekly_hours: parseInt($('imInstructorMaxHours').value) || null
+    max_weekly_hours: parseInt($('imInstructorMaxHours').value) || null,
+    is_active: $('imInstructorActive').checked,
   };
 
   if (isEditMode) {
@@ -425,18 +464,28 @@ async function imSaveInstructor() {
     });
 
     if (data.ok) {
-      notify.success(T.instructorSaved);
       imHideInstructorModal();
-      imLoadInstructors();
+      notify.success(T.instructorSaved);
+      imLoadInstructors({ focus: isEditMode ? `[data-im-edit="${Number(payload.id)}"]` : '#imCreateInstructor' });
     } else {
       throw new Error(data.error?.message || 'Failed to save instructor');
     }
   } catch (error) {
-    notify.error(error.message);
+    imSayInForm(error.message);
   }
 }
 
 async function imToggleInstructorActive(instructorId, isActive) {
+  if (!isActive) {
+    const who = allInstructors.find(i => i.id === instructorId);
+    const ok = await dlg.confirm({
+      title: T.confirmDeactivate,
+      body: `<p>${escapeHtml(T.confirmDeactivateBody(who ? who.full_name : ''))}</p>`,
+      kind: 'warning',
+      confirmText: T.deactivateConfirm,
+    });
+    if (!ok) return;
+  }
   try {
     const data = await imApiCall('/ops/instructors/set-active/', {
       method: 'POST',
@@ -444,9 +493,8 @@ async function imToggleInstructorActive(instructorId, isActive) {
     });
 
     if (data.ok) {
-      const action = isActive ? T.activate : T.deactivate;
-      notify.success(`${action} ${T.instructor}`);
-      imLoadInstructors();
+      notify.success(isActive ? T.instructorActivated : T.instructorDeactivated);
+      imLoadInstructors({ focus: `[data-im-active="${Number(instructorId)}"]` });
     } else {
       throw new Error(data.error?.message || 'Failed to update instructor');
     }
@@ -485,41 +533,56 @@ function imRenderReport(data) {
     return;
   }
 
-  let html = '<div class="table-wrap">';
-  html += '<table class="tbl-card im-report-table">';
+  const rows = [...data.rows].sort((a, b) => (Number(b.total_credit_hours) || 0) - (Number(a.total_credit_hours) || 0)
+    || (Number(b.course_count) || 0) - (Number(a.course_count) || 0)
+    || String(a.full_name || '').localeCompare(String(b.full_name || ''), IS_AR ? 'ar' : 'en'));
+  const count = status => rows.filter(row => row.load_status === status).length;
+  const over = count('over');
+  const stat = (label, value, tone = '') => `<div class="ux-stat"${tone ? ` data-tone="${tone}"` : ''}><dt>${label}</dt><dd>${value}</dd></div>`;
+  let html = `<section class="ux-stat-strip im-report-summary" aria-label="${T.summary}"><div class="ux-stat-group"><dl>`
+    + stat(T.withLoad, rows.filter(row => Number(row.course_count) > 0).length)
+    + stat(T.coursesAssigned, data.totals ? data.totals.course_count : '—')
+    + stat(T.creditHours, data.totals ? data.totals.total_credit_hours : '—')
+    + stat(T.overLimit, over, over ? 'warning' : 'ok')
+    + stat(T.noLimit, count('na'))
+    + '</dl></div></section>';
+  html += '<div class="table-wrap">';
+  html += `<table class="tbl-card im-table im-report-table" aria-label="${escapeHtml(T.loadStatus)}">`;
   html += '<thead><tr>';
   html += `
-    <th>${T.instructor}</th>
-    <th>${T.department}</th>
-    <th>${T.programs || 'Programs'}</th>
-    <th>${T.courses}</th>
-    <th>${T.distinctCourses || 'Distinct'}</th>
-    <th>${T.creditHours}</th>
-    <th>${T.loadStatus}</th>
+    <th scope="col">${T.instructor}</th>
+    <th scope="col">${T.department}</th>
+    <th scope="col">${T.programs}</th>
+    <th scope="col" class="text-center">${T.courses}</th>
+    <th scope="col" class="text-center">${T.distinctCourses}</th>
+    <th scope="col" class="text-center">${T.creditHours}</th>
+    <th scope="col">${T.loadStatus}</th>
   `;
   html += '</tr></thead><tbody>';
 
-  data.rows.forEach(row => {
-    const loadStatusClass = {
-      under: 'pill-status-info',
-      at: 'pill-status-success',
-      over: 'pill-status-warning',
-      na: 'pill-status-muted'
-    }[row.load_status] || 'pill-status-muted';
+  rows.forEach(row => {
+    const loadStatusClass = { under: 'pill-b', at: 'pill-g', over: 'pill-a' }[row.load_status] || 'pill-muted';
 
+    const other = imOtherName(row);
+    const dash = '<span class="im-none" aria-label="—">—</span>';
+    // No weekly limit set: there is nothing to measure the load against, so
+    // it is said in plain words, not as a status badge.
+    const status = row.load_status === 'na'
+      ? `<span class="im-none">${T.na}</span>`
+      : `<span class="pill-status ${loadStatusClass}">${T[row.load_status] || escapeHtml(row.load_status)}</span>`;
     html += `<tr>
       <td>
         <div class="im-instructor-name">
           <strong>${escapeHtml(row.full_name)}</strong>
-          ${imField(row.full_name_ar) ? `<div class="text-muted fs-sm">${escapeHtml(imField(row.full_name_ar))}</div>` : ''}
+          ${other ? `<span class="im-name-other">${escapeHtml(other)}</span>` : ''}
         </div>
       </td>
-      <td><span class="pill-neutral">${escapeHtml(imField(row.department) || '—')}</span></td>
-      <td>${(row.programs || []).map(p => `<span class="cr-id">${escapeHtml(p)}</span>`).join(' ') || '—'}</td>
+      <td>${imField(row.department) ? escapeHtml(imField(row.department)) : dash}</td>
+      <td>${(row.programs || []).map(p => `<span class="cr-id">${escapeHtml(p)}</span>`).join(' ') || dash}</td>
       <td class="text-center">${row.course_count}</td>
       <td class="text-center">${row.distinct_courses}</td>
       <td class="text-center">${row.total_credit_hours}</td>
-      <td><span class="pill-status ${loadStatusClass}">${T[row.load_status] || row.load_status}</span></td>
+      <td>${status}</td>
     </tr>`;
   });
 
@@ -527,12 +590,12 @@ function imRenderReport(data) {
   if (data.totals) {
     html += `<tr class="im-report-totals">
       <td><strong>${T.totalRow}</strong></td>
-      <td>—</td>
-      <td>—</td>
+      <td></td>
+      <td></td>
       <td class="text-center"><strong>${data.totals.course_count}</strong></td>
-      <td>—</td>
+      <td></td>
       <td class="text-center"><strong>${data.totals.total_credit_hours}</strong></td>
-      <td>—</td>
+      <td></td>
     </tr>`;
   }
 
@@ -542,11 +605,33 @@ function imRenderReport(data) {
 }
 
 // ── Utility Functions ──
+
+/* A course name as people write it. The registrar stores names in capitals
+   ("INTRODUCTION TO CHEMISTRY"); such a name is shown in title case, with
+   short joining words in lower case and Roman numerals and known acronyms
+   kept. A name that already has lower case is shown as stored. */
+const IM_KEEP_UPPER = new Set(['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+  'AI', 'IT', 'IS', 'CS', 'DS', 'UI', 'UX', 'IOT', 'API', 'SQL', 'OS', 'ML', 'NLP', 'HCI', 'GIS', 'ERP', 'ICT', 'OOP', 'CAD', 'PC', 'GPU', 'CPU', 'VR', 'AR']);
+const IM_LOWER = new Set(['A', 'AN', 'AND', 'AS', 'AT', 'BY', 'FOR', 'FROM', 'IN', 'OF', 'ON', 'OR', 'THE', 'TO', 'WITH']);
+function imCourseName(name) {
+  const text = String(name ?? '').trim();
+  if (!text || /[a-z]/.test(text) || !/[A-Z]/.test(text)) return text;
+  let first = true;
+  return text.replace(/[A-Z][A-Z'’]*/g, word => {
+    const out = IM_KEEP_UPPER.has(word) ? word
+      : (!first && IM_LOWER.has(word)) ? word.toLowerCase()
+      : word.charAt(0) + word.slice(1).toLowerCase();
+    first = false;
+    return out;
+  });
+}
+
+/* Text for HTML, safe in text AND in a quoted attribute: names and codes
+   from the server go into aria-label and data-* as well as cells. */
 function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  if (text === null || text === undefined) return '';
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Normalise placeholder-ish values to a blank string. Messy imports/seeds can
@@ -560,7 +645,6 @@ function imField(value) {
 }
 
 // ── Event Handlers ──
-$('imCreateInstructor').onclick = imCreateInstructor;
 if ($('imAdvisorPicker')) {
   const _picker = $('imAdvisorPicker');
   _picker.addEventListener('input', function () { imRenderAdvisorResults(this.value); });
@@ -608,6 +692,11 @@ const ca = {
       return;
     }
 
+    if (program !== this.currentProgram) {
+      // Ticked courses belong to the programme they were ticked in.
+      this.selectedCourses.clear();
+      this.updateBulkBar();
+    }
     this.currentProgram = program;
     const tbody = $('caTable').querySelector('tbody');
     tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.loading + '</td></tr>';
@@ -631,11 +720,11 @@ const ca = {
 
   // ── Section toggle ──
   setSection(section) {
-    // Update buttons
-    $$('.ca-seg-btn').forEach(btn => {
+    // A radio group: the chosen one is the group's tab stop.
+    $$('#caSection [data-sec]').forEach(btn => {
       const isActive = btn.dataset.sec === section;
-      btn.classList.toggle('ca-seg-active', isActive);
-      btn.setAttribute('aria-checked', isActive);
+      btn.setAttribute('aria-checked', String(isActive));
+      btn.tabIndex = isActive ? 0 : -1;
     });
 
     this.currentSection = section;
@@ -665,18 +754,21 @@ const ca = {
       const unschedulable = course.is_placeholder || course.is_orphan;
       const unschedulableHint = course.is_placeholder ? T.slotHint : T.orphanHint;
       let assignmentCell;
+      // Codes travel in data attributes (escaped), never inside inline script.
+      const code = escapeHtml(course.course_code);
       if (course.instructor) {
-        assignmentCell = `<div class="ca-chip" onclick="ca.showAssignPopover('${course.course_code}', event)" title="${T.assign}">
-             ${escapeHtml(course.instructor.full_name)}
-             <button class="ca-chip-x" onclick="ca.clearAssignment('${course.course_code}', event)"
-                     aria-label="${T.unassign} ${escapeHtml(course.instructor.full_name)} — ${course.course_code}">×</button>
+        const who = escapeHtml(course.instructor.full_name);
+        assignmentCell = `<div class="ca-chip">
+             <button type="button" class="ca-chip-name" data-ca-assign="${code}" aria-haspopup="dialog" aria-label="${T.assign} — ${code}: ${who}">${who}</button>
+             <button type="button" class="ca-chip-x" data-ca-clear="${code}"
+                     aria-label="${T.unassign} ${who} — ${code}">×</button>
            </div>`;
       } else if (unschedulable) {
-        assignmentCell = `<button class="ca-assign-add" disabled aria-disabled="true"
+        assignmentCell = `<button type="button" class="ca-assign-add" disabled aria-disabled="true"
                    title="${escapeHtml(unschedulableHint)}" aria-label="${escapeHtml(unschedulableHint)}">${T.addAssign}</button>`;
       } else {
-        assignmentCell = `<button class="ca-assign-add" onclick="ca.showAssignPopover('${course.course_code}', event)"
-                   aria-haspopup="dialog" aria-label="${T.assign} — ${course.course_code}">${T.addAssign}</button>`;
+        assignmentCell = `<button type="button" class="ca-assign-add" data-ca-assign="${code}"
+                   aria-haspopup="dialog" aria-label="${T.assign} — ${code}">${T.addAssign}</button>`;
       }
 
       // Course-code badge: real elective (offered/not-offered), an unmapped
@@ -697,11 +789,11 @@ const ca = {
       // Un-schedulable rows can't be assigned, so they can't be bulk-selected either.
       const cbDisabled = unschedulable ? 'disabled aria-disabled="true"' : '';
 
-      return `<tr data-course="${course.course_code}">
-        <td><input type="checkbox" ${checked} ${cbDisabled} onchange="ca.toggleCourse('${course.course_code}', this)"></td>
-        <td>${idx + 1}</td>
-        <td><span class="cr-id">${course.course_code}</span>${tag}</td>
-        <td>${escapeHtml(course.course_name)}</td>
+      return `<tr data-course="${code}">
+        <td><input type="checkbox" ${checked} ${cbDisabled} data-ca-course="${code}" aria-label="${code}"></td>
+        <td class="im-col-num">${idx + 1}</td>
+        <td><bdi class="cr-id">${code}</bdi>${tag}</td>
+        <td>${escapeHtml(imCourseName(course.course_name))}</td>
         <td class="text-center">${T.term(course.programme_term)}</td>
         <td class="text-center">${cr}</td>
         <td class="ca-assign-cell">${assignmentCell}</td>
@@ -726,7 +818,8 @@ const ca = {
 
       const matches = !query ||
         course.course_code.toLowerCase().includes(query) ||
-        course.course_name.toLowerCase().includes(query);
+        String(course.course_name || '').toLowerCase().includes(query) ||
+        String(course.instructor?.full_name || '').toLowerCase().includes(query);
 
       row.style.display = matches ? '' : 'none';
       if (matches) visible++;
@@ -803,12 +896,12 @@ const ca = {
   },
 
   // ── Assignment popover ──
-  showAssignPopover(courseCode, event) {
+  showAssignPopover(courseCode, event, opener = null) {
     event.stopPropagation();
     this.hideAssignPopover();
 
     this.activePopoverCourse = courseCode;
-    this.popoverTrigger = event.currentTarget || event.target;
+    this.popoverTrigger = opener || event.currentTarget || event.target;
     this.activeOptIndex = -1;
     const popover = $('caPop');
     const searchInput = $('caPopSearch');
@@ -1019,15 +1112,22 @@ const ca = {
       return;
     }
 
-    // Simple matching by name - could be enhanced with proper typeahead
+    // The instructor the user named: an exact name, else the only active
+    // instructor whose name contains the text. Several matches assign nothing.
     try {
-      const searchData = await imApiCall(`/ops/instructors/list/?q=${encodeURIComponent(query)}`);
-      if (!searchData.ok || !searchData.instructors.length) {
-        notify.error(T.selectInstructor);
+      if (!imRosterLoaded) await imLoadInstructors();
+      const wanted = query.toLowerCase();
+      const active = allInstructors.filter(i => i.is_active);
+      const named = i => [i.full_name, imField(i.full_name_ar)].filter(Boolean).map(n => n.toLowerCase());
+      const exact = active.filter(i => named(i).includes(wanted));
+      const partial = active.filter(i => named(i).some(n => n.includes(wanted)));
+      const matches = exact.length ? exact : partial;
+      if (matches.length !== 1) {
+        notify.warning(matches.length ? T.severalMatch(matches.length) : T.selectInstructor);
         return;
       }
 
-      const instructor = searchData.instructors[0]; // Take first match
+      const instructor = matches[0];
       const courseCodes = Array.from(this.selectedCourses);
 
       const data = await imApiCall('/ops/instructors/course-assignments/assign-bulk/', {
@@ -1104,7 +1204,66 @@ if ($('caPopSearch')) {
 }
 
 // ── Initialization ──
+function imWire() {
+  $$('.im-tabs [data-im-tab]').forEach(btn => btn.addEventListener('click', () => imSwitchTab(btn.dataset.imTab)));
+
+  // Assignments
+  $('caProgram').addEventListener('change', () => ca.loadCourses());
+  $('caSearch').addEventListener('input', () => ca.filterCourses());
+  $('caSelectAll').addEventListener('change', event => ca.toggleAllCourses(event.target));
+  $('caBulkAssign').addEventListener('click', () => ca.executeBulkAssign());
+  const seg = $('caSection');
+  seg.addEventListener('click', event => {
+    const btn = event.target.closest('[data-sec]');
+    if (btn) ca.setSection(btn.dataset.sec);
+  });
+  seg.addEventListener('keydown', event => {
+    // A radio group's arrows choose (mirrored in Arabic).
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const items = [...seg.querySelectorAll('[data-sec]')];
+    const at = items.findIndex(btn => btn.getAttribute('aria-checked') === 'true');
+    const rtl = getComputedStyle(seg).direction === 'rtl';
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1
+      : ((event.key === 'ArrowRight') !== rtl ? 1 : -1);
+    const next = items[(at + step + items.length) % items.length];
+    ca.setSection(next.dataset.sec);
+    next.focus();
+  });
+  const table = $('caTable');
+  table.addEventListener('click', event => {
+    const clear = event.target.closest('[data-ca-clear]');
+    if (clear) { ca.clearAssignment(clear.dataset.caClear, event); return; }
+    const assign = event.target.closest('[data-ca-assign]');
+    if (assign && !assign.disabled) ca.showAssignPopover(assign.dataset.caAssign, event, assign);
+  });
+  table.addEventListener('change', event => {
+    const box = event.target.closest('[data-ca-course]');
+    if (box) ca.toggleCourse(box.dataset.caCourse, box);
+  });
+
+  // Roster
+  $('imInstructorSearch').addEventListener('input', imFilterInstructors);
+  $('imIncludeInactive').addEventListener('change', imFilterInstructors);
+  $('imRefresh').addEventListener('click', imLoadInstructors);
+  $('imCreateInstructor').addEventListener('click', imCreateInstructor);
+  $('imInstructorTable').addEventListener('click', event => {
+    const edit = event.target.closest('[data-im-edit]');
+    if (edit) { imEditInstructor(Number(edit.dataset.imEdit)); return; }
+    const toggle = event.target.closest('[data-im-active]');
+    if (toggle) imToggleInstructorActive(Number(toggle.dataset.imActive), toggle.dataset.imTo === '1');
+  });
+
+  // The dialog: Save submits (Enter in a field too); a way out closes it.
+  $('imInstructorForm').addEventListener('submit', event => {
+    event.preventDefault();
+    imSaveInstructor();
+  });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-  // Start with assignments tab active
+  imWire();
   imSwitchTab('assignments');
+  // The page's count of active instructors, whichever tab is open.
+  imLoadInstructors();
 });

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from typing import TypeVar
 
 from django.conf import settings
 from django.utils import timezone
@@ -47,6 +48,9 @@ from core.services.timetable_stage_telemetry import (
     record_stage_iterations,
     record_stage_ms,
 )
+
+#: A budget lookup's default, returned as given when no budget row matches.
+_D = TypeVar("_D")
 
 
 def get_capacity_buffer() -> float:
@@ -137,8 +141,8 @@ def _budget_value_for_placement(
     placement: SectionPlacement,
     maps: dict[str, dict],
     bucket: str,
-    default: int,
-) -> int:
+    default: _D,
+) -> int | _D:
     key = _placement_identity(placement)
     by_key = maps.get(f"{bucket}_by_key", {})
     if key and key in by_key:

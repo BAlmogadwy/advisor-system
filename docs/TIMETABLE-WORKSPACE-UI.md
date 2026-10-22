@@ -694,6 +694,10 @@ findings changed the plan:
    the publish check can warn (`cross_board_conflicts`) where the verdict,
    like the legacy preview, counts no students between sections of one
    course.
+   **As built, 5c-audit (server, its own PR):** room candidates answer, on
+   `?audit=1`, what the quality audit will say once each room is saved; the
+   audit's room rule moved into one module both use (§7.3, 5c-audit). No
+   client change yet.
    **As built, 5e (Move and M):** M on a card and Selection's Move… (before
    Lock; none for an English section, which has "Change section pattern")
    go through the seam after the one gate (published, loading, job,
@@ -886,7 +890,7 @@ This spec was written from four drafts (grid, move, place, room) and two critiqu
 | D20 | **Change room** reads the room list at the server's current time (no slot parameters; VIEWS:2821-2823, SVC:2152-2154). | | Room findings |
 | D20a | Its commit body is `{room}` only. That keeps the change room-only and keeps the lock (VIEWS:2997-3013). | | |
 | D20b | A room that fits (type, gender, seats) can be chosen even when another section holds it at that time. This follows the owner ruling of 2026-10-20 (SPLIT:4254-4269). | | |
-| D20c | Rooms that do not fit are listed with their reason and cannot be chosen, as in split view (SPLIT:7095-7098). Owner question Q1. | | |
+| D20c | Rooms that do not fit are listed with their reason and cannot be chosen, as in split view (SPLIT:7095-7098). Owner question Q1. Amended by 5c-audit (judged by the quality audit; seats a choosable warning); the client PR applies it. | | |
 | D20d | The server stops counting the same class's copies as occupants and always returns the current room. | | |
 | D21 | `timetable-room-choice.js` is a shared module whose only user in PR 5 is the classic page. A parity test checks it against split's functions. Split switches to it in a follow-up. | | Split-refactor scope (eng) |
 | D22 | Fixes to the drag path in 5b: | | Place data defects |
@@ -1956,6 +1960,139 @@ Page CSS:
 
 ---
 
+#### 5c-audit (server): room candidates report the quality audit's rule
+
+**Why.** Issues' room rows ("Room too small", "Room unsuitable") come from the
+quality audit: `build_meeting_demands` says what a meeting needs and which rooms
+are compatible, and the recovery evaluator's `_original_room_report` judges the
+rooms it holds. Change room's candidates had a rule of their own: seats from
+`registered_count`, else `available_capacity`, else the board's target; a room
+with no department or no gender fits; only this board's pool counts. So the
+dialog could save a room Issues then flag, and refuse one Issues accept. On the
+QA copy's scenario 665: 72 choosable rows the audit calls too small, and 580
+rows refused for seats the audit accepts.
+
+**Server (this PR; no client change).**
+- `core/services/timetable_room_audit.py` holds the rule, moved out of
+  `timetable_exact_rooming` and `timetable_recovery_rooming` unchanged:
+  - `meeting_room_need`: the type, the buffered budget seats (40 with no budget
+    row, reported as `capacity_source: "default"`), the gender (boards that
+    disagree raise) and one programme pool per board;
+  - `room_misfits`: the one compatibility predicate (type, exact gender, every
+    board's pool), behind every `MeetingDemand.compatible_rooms`;
+  - `meeting_room_verdict`: missing, split, undersized, unsuitable, incompatible;
+  - `MeetingRoomAudit.choice(room)`: what the audit says once that room is saved.
+
+  It loads no OR-Tools and imports neither the workspace nor exact rooming
+  (`ExactRoomingError`, `_hhmm` and `_to_min` are re-exported there).
+  `build_meeting_demands`, `_load_room_inventory`, `_original_room_report` and
+  quality's `_rooms` call it, and their outputs are identical to `a5d8f96`.
+- `preview_placement_room_candidates(..., include_audit=False)`; the view sets
+  it from `?audit=1` (exactly "1"). Without it, the answer and its query count
+  are byte-identical to `a5d8f96` (the oracle
+  `tests/fixtures/tw_room_audit_legacy.json`, ids mapped to fixture symbols),
+  and the internal callers (bulk clean rooms, repair) keep the default.
+- With it:
+  - `target.audit` = `{assessed, save: "room_only" | "slot_change",
+    required_type, required_capacity, capacity_source, required_gender,
+    boards: [{board_id, board_label, programmes}], placement_ids,
+    moving_placement_ids, kept: [{placement_id, board_id, board_label, room}],
+    current}`, or `{assessed: false, reason}` with `duplicate_room_codes`,
+    `online` (online on this board), `no_room_required` (a policy course that
+    takes no room), `unknown_day`, `invalid_interval` (also a time the audit
+    cannot read, such as `9:00:00`) or `boards_disagree_on_gender`. Every
+    answer to `?audit=1` carries `target.audit`, so a missing key means a
+    server older than this PR (the client then keeps its legacy rule);
+  - each candidate gains `audit` = `{compatible, undersized, reasons,
+    programme_board_ids, quality_reasons}`. `reasons`, in order: `type`,
+    `gender`, `programme`, `capacity`, `split` (another copy of the class stays
+    in another room), `unroomed_copy`. `quality_reasons` are exactly the
+    meeting's quality reasons after the save, `clash` aside (tested by saving
+    every room of every subject and reading `_rooms`);
+  - `current` is the audit's answer for the current room (also a room the
+    inventory does not know), `null` when the placement has none.
+- The meeting after the save follows the move view: a room-only save moves the
+  copies in the placement's room (`_copies_moving_with`, now shared with
+  `assign_physical_meeting_room`); a slot change moves the placement alone.
+- The listing in audit mode: the legacy 60 and the current room, then every
+  other room the audit does not refuse for gender, in rank order. The legacy
+  score ranks a fitting room in use below type and gender misfits, so the cap
+  could hide a choosable room. `summary` is unchanged. This settles F6 for the
+  dialog.
+- Cost: one query (the class's copies), plus the gender of each other board
+  in the meeting (two queries at most each), plus, for a policy course that
+  uses a shared room, the budget read the request skips (its room type is
+  fixed; no policy uses a shared room today); nothing grows with the room
+  count.
+  Measured on the QA copy (this machine), within the 10% budget:
+  - scenario 665's four sample placements, best of 31: +0.7 to +1.6 ms
+    (+2% to +6%) on 19 to 31 ms, with one teacher per section off and on;
+    17 → 18 and 33 → 34 queries; peak memory +0.09 MiB;
+  - every one of its 187 placements, mean of 3 interleaved passes (two
+    runs): 20.5–21.6 → 22.0–23.4 ms (+7.0% to +8.2%) with one teacher off,
+    32.5–34.0 → 33.7–35.1 ms (+3.0% to +3.7%) with it on; 52.3 → 57.9 rows
+    per answer (the listing past the cap); peak memory 2.93 → 2.98 MiB.
+
+  The audit pays one predicate call per meeting and room:
+  `build_meeting_demands` 10.6 → 11.8 ms and quality's `_rooms` 15.6 → 16.4 ms
+  (a generator in the predicate had cost +3.5 ms; it is a plain loop). That is
+  a little over the 1 ms budget, and harmless: the optimiser builds the
+  demands a few times per run (local search, v2, compaction, cap repair), not
+  per search step.
+- On real data: on every scenario of the QA copy (662–666, 705 meetings
+  the audit judges), the answer's need equals the audit's, every listed
+  room's `compatible` equals the audit's domain, and the current room's
+  `quality_reasons` equal Issues' rows: no mismatch.
+
+**D20c, amended (the client PR applies it):** "Rooms that do not fit, judged by
+the quality audit's requirement when the answer carries one (`?audit=1`), are
+listed with their reason and cannot be chosen, except a room short of seats,
+which is a choosable warning (Q1). Split view keeps the legacy rule until F3."
+On 665 the two pages then differ on 1,679 rows that the dialog offers and
+split view refuses or does not list (seats), and on none the other way: type
+and gender agree everywhere on the QA data. Under the legacy seat number, 72 rows the
+dialog offered were "Room too small" to Issues, and 580 it refused were
+big enough.
+
+**Q1, restated and decided** (tech owner, delegated, 2026-10-22). Judged by the
+audit, should a room short of the audit's seat need (the buffered budget
+demand, or 40 when the course has no budget row) or of the wrong type be
+choosable as a warning?
+- **Seats: yes.** A choosable warning row, "Room too small", which Issues then
+  show. The need is an estimate: a buffered forecast, and the default 40 is a
+  policy number, not the section's size.
+- **Type: no.** Refused (D20c): a lab meeting in a lecture room has no
+  equipment.
+- **Gender: no.** Refused: rooms are segregated; this is not a quality trade-off.
+
+So the client refuses the audit reasons `gender` and `type` only. The server's
+extended listing keeps every row not refused for gender, so this answer (or a
+later change to it) needs no server change.
+
+**Known limits.**
+- A scenario-wide audit failure (a gender conflict, a bad interval or an
+  unknown day in another meeting) is not seen per meeting; the client reads
+  `TW.quality.rooms.assessed`.
+- Candidates find occupants with a 5-minute mask and compare times as stripped
+  strings; the audit uses exact minutes and `HH:MM`. `09:00:00` against `09:00`
+  is one meeting to the audit and an occupant to the candidates (follow-up:
+  `_same_class` becomes `meeting_key` equality, after #175).
+- A slot change describes the meeting joined, not the one left.
+- The default-40 need, shared meetings, boards without a programme and rooms
+  without a department have no instance in the QA data; their parity rests on
+  the fixture (`tests/tw_room_audit_support.py`).
+- A policy course that uses a shared room is skipped as an occupant by the
+  candidates but judged by the audit, which then reads the budget itself (the
+  legacy fields read none for a policy course). No policy uses a shared room
+  today; a test patches the English one to.
+
+**Follow-ups.** The client PR (`feat/workspace-change-room-audit`); F3 (split
+view on the module with `?audit=1`); bulk clean rooms and repair accepting only
+`quality_reasons == []`; `_PlacementTimeCheck`'s room warning for a shared
+section's own copies; online identity by display code everywhere.
+
+---
+
 #### Follow-ups (recorded, not in PR 5)
 
 - **F1.** Rebuild the English chooser (`TimetableMeetingPolicy.choose`) on `UXControls.dialog` and `.ux-choice-list` for both pages: `pluralAr` counts, visible disabled reasons, `returnFocus` by key, verdict words.
@@ -1966,11 +2103,11 @@ Page CSS:
   - the slot verdict in its create-assist.
 - **F4.** Keyboard placement for unplaced rows (scenarios without a budget). This needs `meetings[]` handled atomically in the non-policy branch of `tw_placement_create_view` (VIEWS:2077-2147).
 - **F5.** A bulk remove endpoint, so undo of a section create is atomic.
-- **F6.** A room-candidates `q=` filter beyond the 60 cap.
+- **F6.** A room-candidates `q=` filter beyond the 60 cap. For the dialog, 5c-audit lists past the cap every room the audit does not refuse for gender.
 - **F7.** Keys for Delete (Remove) and Shift+F10 (a card action menu).
 
 #### Owner questions (not settled by the owner rules)
 
-- **Q1.** Change room by hand: should a room **short of seats** or **of the wrong type** become a choosable warning row ("Room too small" / "Room unsuitable" are already warnings, PAGE:3203-3204), leaving only the wrong gender refused? PR 5 keeps split view's refusal (SPLIT:7095-7098). The rule is one function, `TimetableRoomChoice.fits`.
+- **Q1.** Change room by hand: should a room **short of seats** or **of the wrong type** become a choosable warning row ("Room too small" / "Room unsuitable" are already warnings, PAGE:3203-3204), leaving only the wrong gender refused? PR 5 keeps split view's refusal (SPLIT:7095-7098). The rule is one function, `TimetableRoomChoice.fits`. **Restated and decided in 5c-audit** (2026-10-22, tech owner, delegated): judged by the quality audit, seats short of its need are a choosable warning; wrong type and wrong gender stay refused.
 - **Q2.** Place for an **online** course: offer only the online (evening) windows? The 2026-07-28 rule for GS/GSE (timetable_autoplace.py:275-284) points that way. PR 5 offers the daytime columns, as the server does today (SVC:1428-1431), and shows a note.
 - **Q3.** Change room acts on **one meeting**, as split view does. Should it offer "all N meetings of this section" when they share the current room?

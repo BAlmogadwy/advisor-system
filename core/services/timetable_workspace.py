@@ -49,6 +49,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from django.db import transaction
 
@@ -99,6 +100,9 @@ from core.services.timetable_section_policy import (
     section_policy,
     switch_policy_section_bundle,
 )
+
+if TYPE_CHECKING:
+    from core.services.timetable_room_audit import MeetingRoomAudit
 
 # ── Bitmask constants (same as planner_builder) ─────────────────
 #
@@ -3089,6 +3093,141 @@ def _room_department_fits(room: Room, board: DeliveryBoard) -> bool:
 _ROOM_CANDIDATE_LIMIT = 60
 
 
+def _room_choice_audit(
+    placement: SectionPlacement,
+    *,
+    day: str,
+    start: str,
+    end: str,
+    rooms: list[Room],
+    online_lookup: OnlineCourseLookup,
+    budget_maps: dict[str, dict] | None,
+    board_gender: Callable[[int], str],
+) -> tuple[dict, MeetingRoomAudit | None]:
+    """``target.audit``, and the quality audit's rule for each room choice.
+
+    The meeting is the one the save leaves the placement in. A room-only save
+    (the target is the current slot, as the move view decides) moves the copies
+    in the placement's room (``_copies_moving_with``) and keeps the others; a
+    slot change moves the placement alone into the copies already at the
+    target. ``None`` (with the reason in ``target.audit``) when the audit
+    cannot judge this meeting.
+    """
+    from core.services import timetable_room_audit as rule
+
+    def not_assessed(reason: str) -> tuple[dict, None]:
+        return {"assessed": False, "reason": reason}, None
+
+    # The rows already read, in capacity order: the order only matters for a
+    # repeated code, and a repeated code is not assessed at all.
+    rows_by_code, duplicates = rule.audit_room_inventory(rooms)
+    if duplicates:
+        return not_assessed("duplicate_room_codes")
+    if rule.audit_skips(placement, online_lookup):
+        return not_assessed("online")
+    room_only = (day, start, end) == (
+        str(placement.day).strip().upper(),
+        str(placement.start_time).strip(),
+        str(placement.end_time).strip(),
+    )
+    key = (
+        rule.meeting_key(placement)
+        if room_only
+        else rule.meeting_key(placement, day=day, start=start, end=end)
+    )
+    if key[1] not in rule.AUDIT_DAYS:
+        return not_assessed("unknown_day")
+    try:
+        if rule.to_min(key[3]) <= rule.to_min(key[2]):
+            return not_assessed("invalid_interval")
+    except rule.ExactRoomingError:
+        return not_assessed("invalid_interval")
+
+    copies = list(
+        SectionPlacement.objects.filter(
+            board__scenario_id=placement.board.scenario_id,
+            term_section_id=placement.term_section_id,
+        )
+        .select_related("board", "term_section")
+        .order_by("id")
+    )
+    this = next(row for row in copies if row.pk == placement.pk)
+    others = [
+        row
+        for row in copies
+        if row.pk != this.pk
+        and rule.meeting_key(row) == key
+        and not rule.audit_skips(row, online_lookup)
+    ]
+    if room_only:
+        slot = (this.day, this.start_time, this.end_time)
+        moving = _copies_moving_with(
+            this, [row for row in copies if (row.day, row.start_time, row.end_time) == slot]
+        )
+    else:
+        moving = [this]
+    rows_after = sorted([this, *others], key=lambda row: row.pk)
+    moving_ids = {row.pk for row in moving}
+    kept = [row for row in rows_after if row.pk not in moving_ids]
+    if budget_maps is None:
+        from core.services.timetable_rooming import (
+            _build_rooming_budget_maps,
+            get_capacity_buffer,
+        )
+
+        budget_maps = _build_rooming_budget_maps(
+            list(ScenarioSectionBudget.objects.filter(scenario_id=placement.board.scenario_id)),
+            get_capacity_buffer(),
+        )
+    try:
+        need = rule.meeting_room_need(
+            rows_after,
+            day=key[1],
+            start_hhmm=key[2],
+            end_hhmm=key[3],
+            budget_maps=budget_maps,
+            board_gender=board_gender,
+        )
+    except rule.ExactRoomingError:
+        return not_assessed("boards_disagree_on_gender")
+    boards = dict(sorted({row.board_id: row.board for row in rows_after}.items()))
+    programmes = {board_id: rule.board_programmes(board) for board_id, board in boards.items()}
+    audit = rule.MeetingRoomAudit(
+        need,
+        rows_by_code,
+        kept_rooms=[row.room for row in kept],
+        boards=list(programmes.items()),
+    )
+    return {
+        "assessed": True,
+        "save": "room_only" if room_only else "slot_change",
+        "required_type": need.required_type,
+        "required_capacity": need.required_capacity,
+        "capacity_source": need.capacity_source,
+        "required_gender": need.required_gender,
+        "boards": [
+            {
+                "board_id": board_id,
+                "board_label": board.label,
+                "programmes": sorted(programmes[board_id]),
+            }
+            for board_id, board in boards.items()
+        ],
+        "placement_ids": [row.pk for row in rows_after],
+        "moving_placement_ids": sorted(moving_ids),
+        "kept": [
+            {
+                "placement_id": row.pk,
+                "board_id": row.board_id,
+                "board_label": row.board.label,
+                "room": row.room,
+            }
+            for row in kept
+        ],
+        "current": audit.choice(placement.room) if _room_key(placement.room) else None,
+    }, audit
+
+
 def preview_placement_room_candidates(
     placement_id: int,
     *,
@@ -3096,9 +3235,23 @@ def preview_placement_room_candidates(
     start_time: str | None = None,
     end_time: str | None = None,
     ignore_overlap_term_section_ids: set[int] | None = None,
+    include_audit: bool = False,
 ) -> dict:
-    """Return room candidates for assigning a placement at a target slot."""
-    from core.services.timetable_rooming import get_board_gender, room_type_for_placement
+    """Return room candidates for assigning a placement at a target slot.
+
+    ``include_audit`` adds what the quality audit (Issues' room rows) will say
+    about each room once it is saved: ``target.audit`` and ``candidates[].audit``
+    (``_room_choice_audit``), and lists past the cap every room the audit does
+    not refuse for gender. Every such answer carries ``target.audit``: a meeting
+    that takes no room (a policy course, a course online on this board) is
+    ``{"assessed": false, "reason": ...}``. Without it the answer is unchanged.
+    """
+    from core.services.timetable_room_audit import board_gender_memo
+    from core.services.timetable_rooming import (
+        _build_rooming_budget_maps,
+        get_capacity_buffer,
+        room_type_for_placement,
+    )
 
     placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
         id=placement_id
@@ -3109,8 +3262,16 @@ def preview_placement_room_candidates(
     term_section = placement.term_section
     board = placement.board
     policy = section_policy(term_section)
+
+    def without_rooms(answer: dict, reason: str) -> dict:
+        # A meeting that takes no room: nothing for the audit to judge, and an
+        # audit answer still says so (``target.audit``), as every one does.
+        if include_audit:
+            answer["target"]["audit"] = {"assessed": False, "reason": reason}
+        return answer
+
     if policy and not policy.uses_shared_room:
-        return {
+        no_room = {
             "placement": {
                 "id": placement.id,
                 "course_code": term_section.course_code,
@@ -3144,10 +3305,11 @@ def preview_placement_room_candidates(
                 "no_room_required": True,
             },
         }
+        return without_rooms(no_room, "no_room_required")
     online_lookup = OnlineCourseLookup()
     is_online = online_lookup.is_online_course_for_board(board, term_section.course_code)
     if is_online:
-        return {
+        online = {
             "placement": {
                 "id": placement.id,
                 "course_code": term_section.course_code,
@@ -3175,15 +3337,30 @@ def preview_placement_room_candidates(
                 "is_online": True,
             },
         }
+        return without_rooms(online, "online")
     required_capacity = int(
         term_section.registered_count or term_section.available_capacity or board.target_size or 0
     )
+    # One budget read for the room type and the audit's seat need (the room type
+    # reads none for a policy course), and one gender read per board.
+    budget_maps = (
+        None
+        if get_course_meeting_policy(
+            term_section.course_code, term_section.course_key, term_section.course_number
+        )
+        else _build_rooming_budget_maps(
+            list(ScenarioSectionBudget.objects.filter(scenario=board.scenario)),
+            get_capacity_buffer(),
+        )
+    )
+    board_gender = board_gender_memo()
     required_type = room_type_for_placement(
         placement,
         start_time=target_start,
         end_time=target_end,
+        budget_maps=budget_maps,
     )
-    required_gender = _section_gender(term_section.section) or get_board_gender(board.id)
+    required_gender = _section_gender(term_section.section) or board_gender(board.id)
 
     target_mask = _time_mask(target_day, target_start, target_end)
     occupied_by_room: dict[str, list[dict]] = defaultdict(list)
@@ -3238,7 +3415,7 @@ def preview_placement_room_candidates(
     )
 
     candidates: list[dict] = []
-    rooms = Room.objects.all().order_by("capacity", "room_code", "section")
+    rooms = list(Room.objects.all().order_by("capacity", "room_code", "section"))
     for room in rooms:
         room_code = str(room.room_code or "").strip()
         if not room_code:
@@ -3317,6 +3494,23 @@ def preview_placement_room_candidates(
             }
         )
 
+    target_audit: dict | None = None
+    audit: MeetingRoomAudit | None = None
+    if include_audit:
+        target_audit, audit = _room_choice_audit(
+            placement,
+            day=target_day,
+            start=target_start,
+            end=target_end,
+            rooms=rooms,
+            online_lookup=online_lookup,
+            budget_maps=budget_maps,
+            board_gender=board_gender,
+        )
+        if audit is not None:
+            for candidate in candidates:
+                candidate["audit"] = audit.choice(candidate["room_code"])
+
     candidates.sort(
         key=lambda c: (
             c["score"],
@@ -3336,7 +3530,15 @@ def preview_placement_room_candidates(
             for c in candidates[_ROOM_CANDIDATE_LIMIT:]
             if _room_key(c["room_code"]) == current_key
         ]
-    return {
+    if audit is not None:
+        # The legacy score ranks a fitting room in use below type and gender
+        # misfits, so the cap could hide a room the dialog may offer. Past it,
+        # every room the audit does not refuse for gender follows, in rank order.
+        shown = {id(c) for c in listed}
+        listed += [
+            c for c in candidates if id(c) not in shown and "gender" not in c["audit"]["reasons"]
+        ]
+    result = {
         "placement": {
             "id": placement.id,
             "course_code": term_section.course_code,
@@ -3364,6 +3566,9 @@ def preview_placement_room_candidates(
             "is_online": False,
         },
     }
+    if include_audit:
+        result["target"]["audit"] = target_audit
+    return result
 
 
 def _room_reservation_key(room_code: str, day: str, start: str, end: str) -> str:
@@ -3666,6 +3871,19 @@ def apply_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> d
     }
 
 
+def _copies_moving_with(
+    anchor: SectionPlacement, copies: Iterable[SectionPlacement]
+) -> list[SectionPlacement]:
+    """The copies a room-only save moves with ``anchor``: those in its room.
+
+    ``copies`` are the same-scenario rows of the anchor's section at its exact
+    slot (``assign_physical_meeting_room``); room candidates' audit reads the
+    same answer.
+    """
+    key = _room_key(anchor.room)
+    return [row for row in copies if _room_key(row.room) == key]
+
+
 def assign_physical_meeting_room(placement: SectionPlacement, room: str) -> list[SectionPlacement]:
     """Give one physical meeting a new room on every agreeing copy in its scenario.
 
@@ -3698,7 +3916,7 @@ def assign_physical_meeting_room(placement: SectionPlacement, room: str) -> list
         )
         anchor = next(row for row in copies if row.pk == placement.pk)
         old_key = _room_key(anchor.room)
-        rows = [row for row in copies if _room_key(row.room) == old_key]
+        rows = _copies_moving_with(anchor, copies)
         for row in rows:
             row.room = room
             row.save(update_fields=["room", "updated_at"])

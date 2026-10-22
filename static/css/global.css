@@ -2108,12 +2108,14 @@ html body .btn-split > .btn:focus-visible { position: relative; z-index: 1; }
 }
 .ux-seg-item:hover { background: color-mix(in srgb, var(--teal) 8%, transparent); color: var(--t0); }
 .ux-seg-item[aria-current="true"],
-.ux-seg-item[aria-current="page"] {
+.ux-seg-item[aria-current="page"],
+.ux-seg-item[aria-checked="true"] {
   background: var(--card); color: var(--t0); font-weight: 600;
   box-shadow: 0 1px 2px rgba(17,17,68,0.10), inset 0 0 0 1px var(--btn-neutral-border);
 }
 html[data-theme="dark"] .ux-seg-item[aria-current="true"],
-html[data-theme="dark"] .ux-seg-item[aria-current="page"] { background: var(--surface-2); }
+html[data-theme="dark"] .ux-seg-item[aria-current="page"],
+html[data-theme="dark"] .ux-seg-item[aria-checked="true"] { background: var(--surface-2); }
 .ux-seg-item:disabled { opacity: 0.5; cursor: not-allowed; }
 /* The same control as a radio group: `<label class="ux-seg-item"><input type=radio>`. */
 .ux-seg-item input {
@@ -2642,6 +2644,9 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
   user-select:none; transition:color .12s var(--ease); border:none;
   white-space:nowrap;
 }
+/* Arabic letters join and have no capitals: spacing them apart breaks the
+   word, and the mono face has no Arabic glyphs (the fallback reads tiny). */
+html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; font-family: inherit; }
 .tbl-card thead th:hover { color:var(--t3); }
 .tbl-card thead th.sorted { color:var(--teal); }
 .tbl-card thead th .sort-arrow {
@@ -3034,6 +3039,7 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 .pill-r { background:var(--pl-danger-bg); color:var(--danger); }
 .pill-a { background:rgba(154,106,8,0.06); color:var(--warning); }
 .pill-b { background:rgba(64,86,227,0.06); color:var(--royal); }
+.pill-muted { background:var(--surface-2); color:var(--t3); }
 
 /* ============================================================
    FILTER BAR — Glassmorphic toolbar
@@ -12349,46 +12355,6 @@ html[data-theme="dark"] .va-tool-meta span {
    COURSE ASSIGNMENT
    ============================================================ */
 
-/* ── Segmented M/F Control ── */
-.ca-seg {
-  display: flex;
-  background: var(--shadow-neu-inset);
-  border-radius: var(--radius-pill);
-  padding: var(--space-1);
-  height: 34px;
-  align-items: center;
-  box-shadow: var(--shadow-neu-inset);
-}
-
-.ca-seg-btn {
-  flex: 1;
-  height: 26px;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-pill);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--t3);
-  cursor: pointer;
-  transition: all var(--dur-fast);
-  min-width: 32px;
-}
-
-.ca-seg-btn:hover {
-  color: var(--t1);
-}
-
-.ca-seg-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.ca-seg-active {
-  background: var(--teal-dim);
-  color: var(--teal-deep);
-  box-shadow: var(--shadow-neu-sm);
-}
-
 /* ── Status Pills ── */
 .ca-pill {
   display: flex;
@@ -12644,10 +12610,6 @@ html[data-theme="dark"] .va-tool-meta span {
   color: var(--danger);
 }
 
-/* ── RTL Support ── */
-[dir="rtl"] .ca-seg-btn {
-  font-family: var(--font-body);
-}
 
 [dir="rtl"] .ca-chip {
   flex-direction: row-reverse;
@@ -12660,167 +12622,40 @@ html[data-theme="dark"] .va-tool-meta span {
 /* ============================================================
    INSTRUCTOR MANAGEMENT
    ============================================================ */
+/* ── Page frame: global tabs over three panes ── */
+.im-tabs { margin: 0 0 14px; }
+/* Page tabs sit at the start at their own width (the global tabs share a
+   pane's width equally, which spreads three short labels across a page). */
+.im-tabs > .ux-tab { flex: 0 0 auto; padding-inline: 18px; }
+.im-pane { display: grid; gap: 12px; min-width: 0; }
+.im-pane-lead { margin: 0; color: var(--t2); font-size: var(--text-sm); }
+.im-col-check { width: 40px; }
+.im-col-num { width: 44px; color: var(--t3); font-variant-numeric: tabular-nums; }
+.im-none { color: var(--t3); }
+.im-name-other { display: block; color: var(--t3); font-size: var(--text-xs); font-weight: 500; }
 
-/* ── Tab Navigation ── */
-.im-tabs {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-8);
-  border-bottom: 1px solid var(--line);
-  padding-bottom: var(--space-1);
+/* The chip of an assigned course: the name opens the picker, × clears it. */
+.ca-chip-name {
+  padding: 0; border: 0; background: none; color: inherit; font: inherit;
+  cursor: pointer; text-align: start;
 }
+.ca-chip-name:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 4px; }
 
-.im-tab {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  color: var(--t3);
-  cursor: pointer;
-  transition: all var(--dur-fast);
-  position: relative;
-}
+/* ── The add/edit dialog (UXControls.dialog): two columns of fields ── */
+.im-dialog { width: min(680px, calc(100vw - 32px)); }
+.im-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+@media (max-width: 560px) { .im-form-grid { grid-template-columns: 1fr; } }
+.im-form-check { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--t1); font-size: var(--text-sm); cursor: pointer; }
+.im-form-check input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--teal); }
+.im-form-error { margin: 0; color: var(--sev-critical); font-size: var(--text-sm); font-weight: 600; }
+.im-dialog input[aria-invalid="true"] { border-color: var(--sev-critical); }
 
-.im-tab:hover {
-  color: var(--t1);
-  background: var(--glass-bg-data);
-}
+/* ── Load report: the summary above the table ── */
+.im-report-summary { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); }
 
-.im-tab-active {
-  color: var(--teal);
-  background: var(--teal-dim);
-}
 
-.im-tab-active::after {
-  content: '';
-  position: absolute;
-  bottom: calc(var(--space-4) * -1 - 1px);
-  left: var(--space-6);
-  right: var(--space-6);
-  height: 2px;
-  background: var(--teal);
-  border-radius: 2px;
-}
-
-.im-tab-icon {
-  width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.im-tab-icon svg {
-  width: 100%;
-  height: 100%;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.5;
-}
-
-/* ── Tab Content ── */
-.im-tab-content {
-  display: none;
-}
-
-.im-tab-content-active {
-  display: block;
-}
-
-/* ── Panel Layout ── */
-.im-panel {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  margin-bottom: var(--space-8);
-  box-shadow: var(--shadow-card);
-}
-
-.im-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-6) var(--space-8);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: var(--radius) var(--radius) 0 0;
-}
-
-.im-panel-title {
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--t1);
-  margin: 0;
-}
-
-.im-panel-action {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-5);
-  background: var(--teal);
-  color: white;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--dur-fast);
-}
-
-.im-panel-action:hover {
-  background: var(--teal-deep);
-  transform: translateY(-1px);
-}
-
-.im-panel-action svg {
-  width: 16px;
-  height: 16px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
-}
 
 /* ── Toolbar ── */
-.im-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-6) var(--space-8);
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
-
-.im-search {
-  flex: 1;
-  max-width: 300px;
-}
-
-.im-search input {
-  width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--card);
-  font-size: var(--text-sm);
-  transition: border-color var(--dur-fast);
-}
-
-.im-search input:focus {
-  outline: none;
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px var(--teal-dim);
-}
-
-.im-filter-group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
 
 .im-filter-toggle {
   display: flex;
@@ -12852,31 +12687,9 @@ html[data-theme="dark"] .va-tool-meta span {
 /* ── Row Actions ── */
 .im-row-actions {
   display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.im-row-btn {
-  padding: var(--space-2);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--t3);
-  cursor: pointer;
-  transition: all var(--dur-fast);
-}
-
-.im-row-btn:hover {
-  background: var(--teal-dim);
-  border-color: var(--teal-border);
-  color: var(--teal);
-}
-
-.im-row-btn svg {
-  width: 14px;
-  height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.5;
 }
 
 /* ── Assignment Notices ── */
@@ -12916,142 +12729,10 @@ html[data-theme="dark"] .va-tool-meta span {
   color: var(--t1);
 }
 
-/* ── RTL Support ── */
-[dir="rtl"] .im-tab-active::after {
-  left: var(--space-6);
-  right: var(--space-6);
-}
-
-[dir="rtl"] .im-toolbar {
-  flex-direction: row-reverse;
-}
-
 /* ── Dark Theme ── */
-html[data-theme="dark"] .im-panel,
-html[data-theme="dark"] .im-toolbar,
-html[data-theme="dark"] .im-panel-header {
-  background: rgba(18,21,34,0.9);
-  border-color: rgba(255,255,255,0.08);
-}
-
-html[data-theme="dark"] .im-search input {
-  background: rgba(255,255,255,0.035);
-  border-color: rgba(255,255,255,0.08);
-  color: var(--t1);
-}
-
 html[data-theme="dark"] .im-assignment-notice {
   background: rgba(255,255,255,0.035);
   border-color: rgba(255,255,255,0.08);
-}
-
-/* ── Custom Modal ── */
-.im-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 1050;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.im-modal-backdrop {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.im-modal-content {
-  position: relative;
-  width: 90%;
-  max-width: 500px;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lift);
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.im-modal-lg {
-  max-width: 700px;
-}
-
-.im-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-8);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-
-.im-modal-header h3 {
-  margin: 0;
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--t1);
-}
-
-.im-modal-close {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  color: var(--t3);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--dur-fast);
-}
-
-.im-modal-close:hover {
-  background: var(--line);
-  color: var(--t1);
-}
-
-.im-modal-close svg {
-  width: 18px;
-  height: 18px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
-}
-
-.im-modal-body {
-  padding: var(--space-8);
-}
-
-.im-modal-footer {
-  display: flex;
-  gap: var(--space-4);
-  justify-content: flex-end;
-  padding: var(--space-8);
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-
-.im-form-group {
-  margin-bottom: var(--space-6);
-}
-
-.im-form-group label {
-  display: block;
-  margin-bottom: var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--t2);
 }
 
 /* ── Advisor-seed typeahead (custom dropdown, replaces native datalist) ── */
@@ -13125,42 +12806,6 @@ html[data-theme="dark"] .im-assignment-notice {
   font-size: var(--text-xs);
 }
 
-.im-form-check {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-6);
-}
-
-.im-form-check input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--teal);
-}
-
-.im-form-check label {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--t2);
-  cursor: pointer;
-}
-
-/* ── RTL Modal Support ── */
-[dir="rtl"] .im-modal-footer {
-  justify-content: flex-start;
-}
-
-/* ── Dark Theme Modal ── */
-html[data-theme="dark"] .im-modal-content {
-  background: rgba(18,21,34,0.95);
-  border-color: rgba(255,255,255,0.08);
-}
-
-html[data-theme="dark"] .im-modal-header,
-html[data-theme="dark"] .im-modal-footer {
-  background: rgba(255,255,255,0.025);
-  border-color: rgba(255,255,255,0.08);
-}
 
 /* ── Student adviser: durable conversations ──────────────────────
    Layout is a sidebar of conversations beside the open thread. Everything here

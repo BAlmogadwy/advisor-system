@@ -76,7 +76,7 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/advisor_inbox_case.html", "set_status"),
     ("core/templates/core/advisor_inbox_case.html", "add_note"),
     ("core/templates/core/db_admin.html", "elecRefreshBtn"),
-    ("core/templates/core/instructor_management.html", "imHideInstructorModal"),
+    ("core/templates/core/instructor_management.html", "imModalCancel"),
     ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmSavePreset"),
     ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmLoadPreset"),
     ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmXlsx"),
@@ -121,6 +121,12 @@ NEUTRAL_TEMPLATE_SITES = {
     ("static/js/page-timetable-workspace.js", "move"),
     ("static/js/page-timetable-workspace.js", "move-recheck"),
     ("static/js/page-timetable-workspace.js", "move-retry"),
+    # Instructor management: the roster's Refresh, the dialog's ×, and each
+    # row's Edit and Deactivate/Activate (built by the page script).
+    ("core/templates/core/instructor_management.html", "imRefresh"),
+    ("core/templates/core/instructor_management.html", "data-dialog-close"),
+    ("static/js/page-instructor-management.js", "data-im-edit"),
+    ("static/js/page-instructor-management.js", "data-im-active"),
 }
 
 #: The one that styles itself inline. It was never `ButtonFace`, and the neutral
@@ -167,6 +173,7 @@ def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
         r"(data-dialog-close)",
         r'class="[^"]*\b(tw-readiness-go)\b',
         r'data-focus-key="([^"]+)"',
+        r"(data-im-(?:edit|active))=",
     ):
         found = re.search(probe, tag)
         if found:
