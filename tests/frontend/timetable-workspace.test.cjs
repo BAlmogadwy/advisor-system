@@ -47,6 +47,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
     return { ok: !answer.httpError, status: answer.httpError || 200, json: async () => answer };
   };
   d.getElementById('twYear').value = '1448'; d.getElementById('twTerm').value = '1';
+  // The page loads the shared slot-column module before its own script.
+  w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-slot-config.js'), 'utf8'));
   w.eval(source);
   await wait(() => d.getElementById('twScenario').options.length === 2);
   const select = async () => { d.getElementById('twScenario').value = '1'; await w.onScenarioChange(); };
@@ -506,4 +508,88 @@ test('a scenario with no boards keeps its blockers on Publish, not in a board’
   assert.equal(h.d.getElementById('twIssuesCount').textContent, '');
   assert.match(h.d.getElementById('twPublishLabel').textContent, /1 blocker/);
   assert.deepEqual(h.errors, []);
+});
+
+/* ── Slot columns: the page draws and edits the server's effective columns ── */
+const ONLINE_LABS = [
+  { label: 'Lab 1', start: '09:00', end: '10:40' },
+  { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
+];
+const columns = { slot_config: [], lab_slot_config: [], effective_slot_config: scenario.slot_config, effective_lab_slot_config: ONLINE_LABS };
+
+test('the grid draws the server’s effective columns and never writes defaults into the scenario', async t => {
+  const online = { ...placement, id: 12, term_section_id: 6, course_code: 'GS101', start_time: '15:50', end_time: '17:30', room: '' };
+  const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements: [placement, online], ...columns } : undefined, columns);
+  await h.select();
+  const labTimes = [...h.d.querySelectorAll('.tw-lab-grid .tw-slot-time')].map(n => n.textContent);
+  assert.deepEqual(labTimes, ['09:00–10:40', '15:50–17:30']);
+  assert.ok(h.d.querySelector('.tw-lab-grid .tw-card[data-placement-id="12"]'), 'the online meeting is drawn in its window');
+  assert.deepEqual([h.w.TW.scenario.slot_config, h.w.TW.scenario.lab_slot_config], [[], []], 'the stored lists are untouched');
+  assert.deepEqual(h.errors, []);
+});
+
+test('a board answer without columns keeps the scenario’s effective columns', async t => {
+  // The default board answer carries only `slot_config`.
+  const h = await harness(t, undefined, columns);
+  await h.select();
+  assert.deepEqual(h.w.TW.scenario.effective_lab_slot_config.map(slot => slot.start), ['09:00', '15:50']);
+  assert.equal(h.d.querySelectorAll('.tw-lab-grid .tw-slot-time').length, 2);
+});
+
+function slotHarness(t, answer) {
+  const posts = [];
+  return harness(t, (url, opts) => {
+    if (url === '/ops/tw/boards/2/') return { placements: [placement], ...columns };
+    if (!url.endsWith('/slots/update/')) return undefined;
+    const body = JSON.parse(opts.body);
+    posts.push(body);
+    return answer(body);
+  }, columns).then(h => Object.assign(h, { posts }));
+}
+const dialogs = (h, ...answers) => {
+  const shown = [];
+  h.w.dlg = { confirm: async ({ title, body }) => {
+    shown.push({ title, body });
+    // The real dialog puts its body in the page: the editor reads its textareas.
+    h.d.body.insertAdjacentHTML('beforeend', `<div class="stub-dialog">${body}</div>`);
+    return answers.shift();
+  } };
+  return shown;
+};
+const HIDDEN = { hidden: [{ placement_id: 10, board_id: 2, board_label: 'Term 7', course_code: 'CS323', section: 'S1', day: 'SUN', start_time: '09:00', end_time: '10:15', is_locked: true }], hidden_count: 1, fingerprint: 'abc123' };
+
+test('a slot save that would hide meetings names them, and repeats only with that confirmation', async t => {
+  const h = await slotHarness(t, body => body.confirm_hidden === 'abc123'
+    ? { ok: true, scenario: { ...scenario, ...columns, slot_config: body.slot_config }, hidden_count: 1 }
+    : { httpError: 409, error: { code: 'SLOT_EDIT_HIDES_PLACEMENTS', message: 'x', details: HIDDEN } });
+  await h.select();
+  const shown = dialogs(h, true, true);
+  await h.w.openSlotEditor();
+  // The editor lists the effective columns, the online window included, and says it stays online-only.
+  assert.match(shown[0].body, /Online 1\t15:50\t17:30/);
+  assert.match(shown[0].body, /The online-only columns \(15:50\) stay online-only/);
+  assert.equal(h.posts.length, 2);
+  assert.equal(h.posts[0].confirm_hidden, undefined);
+  assert.deepEqual(h.posts[0].lab_slot_config.map(row => row.start), ['09:00', '15:50']);
+  assert.match(shown[1].body, /leaves 1 meeting outside the grid/);
+  assert.match(shown[1].body, /Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Sun <bdi dir="ltr">09:00–10:15<\/bdi> · time locked/);
+  assert.equal(h.posts[1].confirm_hidden, 'abc123');
+  assert.ok(h.notices.some(n => n.type === 'success'));
+  assert.deepEqual(h.errors, []);
+});
+
+test('declining the hidden meetings sends nothing more, and an invalid column is named', async t => {
+  let invalid = false;
+  const h = await slotHarness(t, () => invalid
+    ? { httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'x', details: { errors: [{ list: 'slot_config', index: 0, field: 'end', message: 'must be after the start' }] } } }
+    : { httpError: 409, error: { code: 'SLOT_EDIT_HIDES_PLACEMENTS', message: 'x', details: HIDDEN } });
+  await h.select();
+  dialogs(h, true, false);
+  await h.w.openSlotEditor();
+  assert.equal(h.posts.length, 1, 'declined: no second request');
+  assert.ok(!h.notices.some(n => n.type === 'success'));
+  invalid = true;
+  dialogs(h, true);
+  await h.w.openSlotEditor();
+  assert.ok(h.notices.some(n => n.type === 'error' && n.text === 'The columns were not saved: Lectures, line 1: end must be after the start'), JSON.stringify(h.notices));
 });

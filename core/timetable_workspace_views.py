@@ -150,6 +150,14 @@ from core.services.timetable_section_policy import (
     section_policy,
     switch_policy_section_bundle,
 )
+from core.services.timetable_slot_config import (
+    carry_slot_flags,
+    clean_slot_rows,
+    effective_lab_slots,
+    effective_lecture_slots,
+    hidden_by_slot_change,
+    hidden_fingerprint,
+)
 from core.services.timetable_student_blockers import build_scenario_student_blockers
 from core.services.timetable_workspace import (
     apply_bulk_clean_room_assignments,
@@ -266,6 +274,10 @@ def _scenario_to_dict(s: TimetableScenario) -> dict[str, object]:
         "status": s.status,
         "slot_config": s.slot_config,
         "lab_slot_config": s.lab_slot_config,
+        # The columns the scenario really uses (its own, or the defaults): the
+        # pages draw and edit these, never defaults of their own.
+        "effective_slot_config": effective_lecture_slots(s),
+        "effective_lab_slot_config": effective_lab_slots(s),
         "blocked_slots": s.blocked_slots,
         # What the scenario was generated for, so a new generation (and the
         # elective mapping) can start from the open scenario's scope.
@@ -930,10 +942,22 @@ def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResp
 @require_POST
 @guard_manual_scenario_write
 def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
-    """Replace the slot configuration (time periods) for a draft scenario.
+    """Replace the grid columns (time slots) of a draft scenario.
 
-    Blocked if the scenario is already published.  Accepts a JSON body
-    with ``slot_config`` (array of ``{start, end}`` objects).
+    Body: ``slot_config`` (lecture columns) and optionally ``lab_slot_config``
+    (lab columns; left as it is when absent), each an array of
+    ``{label, start, end}``; an empty array means the defaults.
+
+    - Every column is validated (``clean_slot_rows``); a bad one is a 400
+      ``VALIDATION_SLOTS`` naming its list, index and field.
+    - A column keeps the flags of the column it replaces (``online_only``,
+      ``policy_only``), matched by start and end, unless the request sets them:
+      the editors send plain rows, and an online window that lost its flag
+      would become a place an engine may book a room in the evening.
+    - A change that would leave drawn meetings off the grid, on any board, is
+      a 409 ``SLOT_EDIT_HIDES_PLACEMENTS`` listing them with a ``fingerprint``;
+      it saves only when the request repeats that fingerprint as
+      ``confirm_hidden``.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -950,15 +974,47 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
     if scenario.status == "published":
         return _err("Cannot edit published scenario", code="SCENARIO_PUBLISHED", status=400)
 
-    slots = payload.get("slot_config")
-    if not isinstance(slots, list):
+    if not isinstance(payload.get("slot_config"), list):
         return _err("slot_config must be an array", code="VALIDATION_SLOTS", status=400)
+    slots, errors = clean_slot_rows(payload["slot_config"], "slot_config")
+    lab_given = payload.get("lab_slot_config") is not None
+    if lab_given:
+        lab_slots, lab_errors = clean_slot_rows(payload["lab_slot_config"], "lab_slot_config")
+        errors += lab_errors
+    else:
+        lab_slots = list(scenario.lab_slot_config or [])
+    if errors:
+        return _err(
+            "Some time slots are not valid",
+            code="VALIDATION_SLOTS",
+            status=400,
+            details={"errors": [error.as_dict() for error in errors]},
+        )
 
-    lab_slots = payload.get("lab_slot_config")
+    # The flags of the columns being replaced: the effective ones, so a
+    # scenario still on the defaults keeps the online windows' flag too.
+    slots = carry_slot_flags(slots, effective_lecture_slots(scenario))
+    if lab_given:
+        lab_slots = carry_slot_flags(lab_slots, effective_lab_slots(scenario))
+
+    hidden = hidden_by_slot_change(scenario, slots, lab_slots)
+    if hidden:
+        fingerprint = hidden_fingerprint(hidden)
+        if payload.get("confirm_hidden") != fingerprint:
+            return _err(
+                f"This change would leave {len(hidden)} meeting(s) off the grid",
+                code="SLOT_EDIT_HIDES_PLACEMENTS",
+                status=409,
+                details={
+                    "hidden": hidden[:200],
+                    "hidden_count": len(hidden),
+                    "fingerprint": fingerprint,
+                },
+            )
 
     scenario.slot_config = slots
     update_fields = ["slot_config", "updated_at"]
-    if isinstance(lab_slots, list):
+    if lab_given:
         scenario.lab_slot_config = lab_slots
         update_fields.append("lab_slot_config")
     scenario.save(update_fields=update_fields)
@@ -967,9 +1023,14 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
         request,
         action="tw.scenario.slots_update",
         status="success",
-        details={"scenario_id": scenario_id, "slot_count": len(slots)},
+        details={
+            "scenario_id": scenario_id,
+            "slot_count": len(slots),
+            "lab_slot_count": len(lab_slots) if lab_given else None,
+            "hidden_count": len(hidden),
+        },
     )
-    return _ok({"scenario": _scenario_to_dict(scenario)})
+    return _ok({"scenario": _scenario_to_dict(scenario), "hidden_count": len(hidden)})
 
 
 @login_required(login_url="login")
@@ -1481,6 +1542,8 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
             "board": _board_to_dict(board),
             "slot_config": board.scenario.slot_config,
             "lab_slot_config": board.scenario.lab_slot_config,
+            "effective_slot_config": effective_lecture_slots(board.scenario),
+            "effective_lab_slot_config": effective_lab_slots(board.scenario),
             "placements": [_placement_to_dict(p, teachers, marks) for p in placements],
             "primary_student_count": primary_count,
             "visitor_student_count": visitor_count,

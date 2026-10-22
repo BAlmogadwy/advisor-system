@@ -51,6 +51,8 @@ async function drawer(t, teacher, { arabic = false, meetingName = '' } = {}) {
     return { ok: true, status: 200, json: async () => body };
   };
   w.eval(read('static/js/timetable-meeting-policy.js'));
+  // The page loads the shared slot-column module before its own script.
+  w.eval(read('static/js/timetable-slot-config.js'));
   w.eval(split + '\n;globalThis.__splitAudit = { S };');
   await settle();
   const { S: state } = w.__splitAudit;

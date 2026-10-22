@@ -198,12 +198,8 @@ job and disables its own trigger.
 **Stage 1 coherence.** Cards get theme-aware ink and a dark tint; groups get
 their real section label in natural order.
 
-Stage 2 (next PR): card anatomy (course hue bar, `.ux-meta` line, severity by
-icon and ring, lock icon, no-room marker), a legend, the Issues inspector
-grouped by severity with counts, a Selection tab with the programme mark, the
-drawer folded into the inspector, keyboard access to boards, cards and
-issues, an explicit programme lens, and slot edits that warn which placements
-they would hide.
+Stage 2: see §7 — the plan as revised after its audit and critiques, and the
+decisions it rests on.
 
 Stage 3 (to evaluate): a time-proportional week grid.
 
@@ -239,3 +235,76 @@ chrome height, type floor, contrast, blocked Publish never posts),
 `tests/test_design_system_tokens.py` (token contrast in both themes),
 `tests/test_timetable_toolbar_menus_browser.py` (every menu, eight widths, both
 languages, phone rotation) and the jsdom suites under `tests/frontend/`.
+
+## 7. Stage 2 — plan (2026-10-22, after a read-only audit and two adversarial critiques)
+
+A seven-agent read-only workflow mapped the stage-1 code (cards, inspector,
+keyboard, lens and slot edits, the design system), drafted a stage-2 spec, and
+had it attacked by a design critic and an engineering critic. Their strongest
+findings changed the plan:
+
+- Place… as drafted (one day and time) cannot create a section of most
+  courses: `create_planned_section_placements` requires the whole meeting
+  pattern (SVC:2018-2021), so drag-to-place already fails for them.
+- Re-running the plan lens after every edit is a second full seating
+  evaluation per edit on the 0.5 vCPU / 512 MB host.
+- The split view's slot editor is a second writer with the same data loss.
+- The drafted card head does not fit a 96 px slot (about 70 px of content).
+- The slot data defect was scheduled last.
+
+### 7.1 Decisions (the owner delegated them; each can be revisited)
+
+| # | Question | Decision | Why |
+|---|---|---|---|
+| 1 | Sections stacked in one cell with no server clash | **Info**, "Shares its time with …"; no ring | Red without a reason is the defect; the server says it is not a clash |
+| 2 | Empty room (`''`) | **Warning**, "Room not assigned yet" | Quality and the stat strip already count it; a neutral card would disagree with them |
+| 3 | A room double-booked with another board | **Warning** | Not a publish blocker today; the page must not invent one |
+| 4 | Meetings outside the grid's columns | **Warning**, and drawn in a parking strip under their table | Blocking would make scenarios unpublishable at once (online meetings saved through the old editors) |
+| 5 | Filter and programme lens | The **text filter** collapses tables without a match and dims inside the rest; the **lens** dims | Finding things needs fewer tables; a view never hides a clash |
+| 6 | Course hue | **Keep the tint, make it deterministic** (from the course key, not visit order), plus a same-course echo on focus or selection | The 10-hue palette is a weak signal; the bug is the visit order |
+| 7 | Severity on cards | Critical and warning ring; **info never rings**; counts are critical (or warning when none), never info | Info rings and info counts diluted severity |
+
+### 7.2 Pull requests, in order
+
+1. **Slot columns never lose data** (first, unconditionally).
+   - Server: every column validated; flags carried from the column a row
+     replaces (matched by start and end); a change that would leave drawn
+     meetings off the grid, on any board, is refused with their list until
+     the request names their fingerprint; the pages get the effective columns.
+   - Both editors (workspace and split) use one shared module
+     (`timetable-slot-config.js`), list the effective columns and confirm
+     hidden meetings by name. Neither page keeps defaults of its own.
+   - A manual move is never offered a policy column, nor an evening
+     (online-only) one unless the meeting is already in one.
+   - The per-plan export lists an off-grid lecture under its grid instead of
+     failing.
+2. **One issue model** (correctness before appearance).
+   - Server: per placement `is_online`, `needs_room`, `room_state`,
+     `shared_with_other_scenario`; meetings prefetched (one query per board).
+   - Client: one memoised model whose inputs carry fresh / stale / unknown;
+     severity follows the server per §7.1; no "UNASSIGNED" anywhere; card
+     tones updated in place (never a grid rebuild mid-drag); the MRI tab reads
+     the same counts; other boards' buttons use fresh readiness items.
+3. **Card anatomy and legend.** One icon per line, a room token that never
+   shrinks, the teacher only where the card is wide enough (container query),
+   selected = tint + `aria-current`, focus = the global ring, highlight = an
+   animation; a legend after the last table; browser checks that a
+   seven-character code is never truncated at 96 px in the wide font.
+4. **Inspector.** Global `.ux-disclosure` groups (critical / warning / info,
+   info collapsed), rows as buttons, "This section's issues" at the top of
+   Selection, teacher states, 0 versus unknown, Seated on demand (a Refresh,
+   never a per-edit lens reload).
+5. **Keyboard.** Grid semantics for the board (days × columns) with roving
+   focus; the left list as one roving stop; `event.code` for `[` and `]`; a
+   Move dialog with one ranked list whose verdict follows the server's
+   evidence kinds; Place… as a pattern picker over `meetings[]`; Change room
+   from `/room-candidates/` (allowed on time-locked meetings).
+6. **What the grid shows.** The lens from one server function shared with the
+   per-plan export (roles including out-of-plan), its cost measured first and
+   one evaluation per data fingerprint shared with quality; filter and lens
+   per §7.1; the parking strip; the slot dialog replaces the textarea on the
+   server contract from PR 1.
+
+Every PR: the frame acceptance of §6, its own version bumps, mutation-checked
+tests, and Arabic plurals through `Intl.PluralRules`; every time range in
+Arabic text isolated.

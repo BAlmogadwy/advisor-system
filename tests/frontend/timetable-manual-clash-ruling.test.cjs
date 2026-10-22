@@ -52,6 +52,8 @@ async function splitHarness(t, intercept = () => undefined) {
     return { ok: !body.httpError, status: body.httpError || 200, headers: { get: () => null }, json: async () => body };
   };
   w.eval(read('static/js/timetable-meeting-policy.js'));
+  // The page loads the shared slot-column module before its own script.
+  w.eval(read('static/js/timetable-slot-config.js'));
   w.eval(read('static/js/page-timetable-workspace-split.js') + '\n;globalThis.__splitAudit = { S, RP };');
   await settle();
   const { S: state, RP: panel } = w.__splitAudit;
