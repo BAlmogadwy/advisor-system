@@ -743,8 +743,9 @@ class _SectionTeachers:
     teacher_of: Callable[..., tuple[int | None, str] | None]
     same_teacher: Callable[..., bool]
     #: The map the publish check reads (``build_section_instructor_ids``):
-    #: built only for a slot verdict (``with_link_map``), else None.
-    link_map: dict[str, set[int]] | None
+    #: the same assignment's ``pr4_map``, built when called. Only a slot
+    #: verdict calls it, so the legacy paths never build it.
+    publish_map: Callable[[], dict[str, set[int]]]
     #: Each charged teacher's name, by id.
     names: dict[int, str]
 
@@ -766,12 +767,12 @@ def _section_teacher_matcher(scenario_id: int):
     return teachers.teacher_of, teachers.same_teacher
 
 
-def _load_section_teachers(scenario_id: int, *, with_link_map: bool = False) -> _SectionTeachers:
+def _load_section_teachers(scenario_id: int) -> _SectionTeachers:
     """The one-teacher map in force, read once, as :func:`_section_teacher_matcher`
     gives it, with the charged teachers' names: one assignment, one query for
-    the names. ``with_link_map`` (a slot verdict) adds the map as the publish
-    check reads it (``pr4_map``, built from the same assignment, no query);
-    the legacy paths never build it."""
+    the names. ``publish_map()`` builds the map as the publish check reads it
+    (``pr4_map`` of the same assignment, no query); the legacy paths never
+    call it."""
     from core.models import Instructor
     from core.services.section_teacher_assignment import CHARGED, STATUS_TBD, load_assignment
 
@@ -810,8 +811,7 @@ def _load_section_teachers(scenario_id: int, *, with_link_map: bool = False) -> 
         right = ((b[1] if b is not None else b_name) or "").strip().upper()
         return bool(left and right and left == right)
 
-    link_map = assignment.pr4_map() if with_link_map else None
-    return _SectionTeachers(teacher_of, same_teacher, link_map, names)
+    return _SectionTeachers(teacher_of, same_teacher, assignment.pr4_map, names)
 
 
 class _PlacementTimeCheck:
@@ -1340,8 +1340,8 @@ class _VerdictTeachers:
     (:func:`detect_board_conflicts`, ``build_section_instructor_ids``):
 
     - one teacher per section (production): the one-teacher map, from the
-      assignment the preview already loads (:func:`_load_section_teachers`
-      with ``with_link_map``); no query;
+      assignment the preview already loads (``publish_map()`` of
+      :func:`_load_section_teachers`); no query;
     - the links on and one teacher per section off (the local default): every
       teacher linked to a section's course, read by
       ``linked_section_instructor_ids``, the code ``build_section_instructor_ids``
@@ -1369,15 +1369,14 @@ class _VerdictTeachers:
         cls, scenario: TimetableScenario, section_teachers: _SectionTeachers | None
     ) -> _VerdictTeachers:
         """One request's verdict teachers. ``section_teachers`` is the request's
-        one-teacher map, loaded (``with_link_map``) when that rule is on."""
+        one-teacher map, loaded when that rule is on."""
         from core.services.timetable_pr4_instructor import (
             is_instructor_links_enabled,
             linked_section_instructor_ids,
         )
 
         if section_teachers is not None:
-            assert section_teachers.link_map is not None  # loaded with_link_map
-            return cls(section_teachers.link_map, True, section_teachers.names)
+            return cls(section_teachers.publish_map(), True, section_teachers.names)
         if is_instructor_links_enabled():
             linked = linked_section_instructor_ids(scenario)
             return cls(linked.ids, False, linked.names, linked.resolve)
@@ -1574,7 +1573,7 @@ def preview_placement_slot_candidates(
     teacher_of = same_teacher = new_teacher = None
     section_teachers = None
     if is_one_teacher_active():
-        section_teachers = _load_section_teachers(scenario.id, with_link_map=include_verdict)
+        section_teachers = _load_section_teachers(scenario.id)
         teacher_of, same_teacher = section_teachers.teacher_of, section_teachers.same_teacher
         new_teacher = teacher_of(
             placement.term_section_id, f"{course_key}_{placement.term_section.section}"
@@ -2190,7 +2189,7 @@ def preview_planned_section_slot_candidates(
     teacher_of = same_teacher = new_teacher = None
     section_teachers = None
     if is_one_teacher_active():
-        section_teachers = _load_section_teachers(scenario.id, with_link_map=include_verdict)
+        section_teachers = _load_section_teachers(scenario.id)
         teacher_of, same_teacher = section_teachers.teacher_of, section_teachers.same_teacher
         new_teacher = teacher_of(
             existing_section.id if existing_section else None,
