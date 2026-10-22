@@ -871,7 +871,7 @@ async function onScenarioChange() {
     TW.placements = []; TW.conflicts = {}; TW.capacityData = null; TW.quality = null;
     if (!sameScenario) {
       TW.undoStack = []; TW.redoStack = []; TW.plannerJob = null;
-      TW.sectionBudget = null; TW.unplacedSections = []; TW.boardStripShows = null;
+      TW.sectionBudget = null; TW.unplacedSections = [];
     }
     if (data.active_job) TW.plannerJob = data.active_job;
     else if (!TW_ACTIVITY.owner && ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) TW.plannerJob = null;
@@ -1289,7 +1289,10 @@ function refreshPublishReadiness(force = false) {
   }
   if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) return Promise.resolve(TW.readiness);
   const version = TW.dataVersion;
-  if (readinessRequest && readinessRequest.scenarioId === scenarioId && readinessRequest.version === version) {
+  // Background callers share one request per version. Publish (force) asks on
+  // its own and reports a failure: joining a quiet request would make a failed
+  // check a silent click.
+  if (!force && readinessRequest && readinessRequest.scenarioId === scenarioId && readinessRequest.version === version) {
     return readinessRequest.promise;
   }
   TW.readinessLoading = true;
@@ -1298,7 +1301,8 @@ function refreshPublishReadiness(force = false) {
     try {
       const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/readiness/`, { _quiet: !force });
       if (TW.scenarioId !== scenarioId) return null;
-      if (data?.readiness) { TW.readiness = data.readiness; TW.readinessVersion = version; }
+      // An answer about older data never replaces one about newer data.
+      if (data?.readiness && version >= TW.readinessVersion) { TW.readiness = data.readiness; TW.readinessVersion = version; }
       return data?.readiness || null;
     } finally {
       if (readinessRequest?.promise === promise) readinessRequest = null;
@@ -1308,7 +1312,7 @@ function refreshPublishReadiness(force = false) {
       renderBoardTabs();
     }
   })();
-  readinessRequest = { scenarioId, version, promise };
+  if (!force) readinessRequest = { scenarioId, version, promise };
   return promise;
 }
 
@@ -1316,7 +1320,7 @@ function refreshPublishReadiness(force = false) {
    are already counted from the board's own conflicts). A section not placed
    anywhere belongs to the board of its programme term. */
 function boardReadinessBlockers(boardId) {
-  if (!TW.readiness || TW.readinessVersion !== TW.dataVersion) return [];
+  if (!TW.readiness) return [];
   return readinessBlockers(TW.readiness)
     .filter(item => item.code !== 'board_critical_conflicts' && readinessItemBoard(item) === boardId);
 }
@@ -1342,9 +1346,12 @@ function renderPublishState() {
   const icon = $('twPublishIcon');
   const published = TW.scenario?.status === 'published';
   const blockers = readinessBlockers(TW.readiness).length;
-  const known = Boolean(TW.readiness) && TW.readinessVersion === TW.dataVersion;
+  // The label keeps the last known count while a newer check runs; the button
+  // becomes the primary only on an answer about the current data.
+  const known = Boolean(TW.readiness);
+  const fresh = known && TW.readinessVersion === TW.dataVersion;
   button.disabled = !workspaceCanEdit() || published;
-  const ready = known && blockers === 0 && !published;
+  const ready = fresh && blockers === 0 && !published;
   button.classList.toggle('btn-primary', ready);
   button.classList.toggle('btn-neutral', !ready);
   if (icon) icon.hidden = !(known && blockers > 0);
@@ -1461,7 +1468,7 @@ function resetWorkspace() {
   TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
   TW.quality = null; TW.undoStack = []; TW.redoStack = []; TW.selectedPlacementId = null;
   TW.readiness = null; TW.readinessVersion = -1; TW.qualityVersion = -1;
-  TW.sectionBudget = null; TW.unplacedSections = []; TW.boardStripShows = null;
+  TW.sectionBudget = null; TW.unplacedSections = [];
   resetPlanLens();
   $('twBoardTabs').innerHTML = '';
   $('twSectionList').innerHTML = `<p class="tw-pane-empty">${IS_AR ? 'افتح سيناريو لعرض الشعب المطلوبة.' : 'Open a scenario to see its required sections.'}</p>`;
@@ -1500,11 +1507,14 @@ function revealInStrip(strip, item) {
    name and tooltip. */
 function renderBoardTabs() {
   const wrap = $('twBoardTabs');
+  // A re-render replaces the buttons: keep the keyboard on the same board.
+  const focusedBoard = wrap.contains(document.activeElement) ? document.activeElement.dataset.boardId : null;
   wrap.innerHTML = '';
   TW.boards.forEach(b => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'ux-seg-item';
+    btn.dataset.boardId = String(b.id);
     const active = b.id === TW.boardId;
     if (active) btn.setAttribute('aria-current', 'true');
     const clashes = active ? ((TW.conflicts.summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
@@ -1527,13 +1537,15 @@ function renderBoardTabs() {
       + (left ? `<span class="ux-seg-meta">${IS_AR ? `${left} متبقية` : `${left} left`}</span>` : '');
     btn.addEventListener('click', () => selectBoard(b.id));
     wrap.appendChild(btn);
-    if (active && TW.boardStripShows !== b.id) {
-      // Bring a newly chosen board into its strip by scrolling the STRIP only,
-      // once per choice: scrollIntoView also scrolled the page (where the page
-      // scrolls) on every re-render — every filter keystroke.
-      TW.boardStripShows = b.id;
-      (window.requestAnimationFrame || setTimeout)(() => revealInStrip(wrap, btn));
-    }
+  });
+  if (focusedBoard) wrap.querySelector(`[data-board-id="${focusedBoard}"]`)?.focus({ preventScroll: true });
+  // Keep the chosen board in view by scrolling the STRIP only (scrollIntoView
+  // also scrolled the page, on every keystroke). It runs after every render,
+  // because later renders widen the buttons before it ("N left", flags), and it
+  // re-reads the current button: this one may be gone by the next frame.
+  (window.requestAnimationFrame || setTimeout)(() => {
+    const current = wrap.querySelector('[aria-current="true"]');
+    if (current) revealInStrip(wrap, current);
   });
 }
 
@@ -2329,8 +2341,9 @@ function renderRightPanel(tab) {
     const rClashes = TW.conflicts.room_clashes || [];
     const xConflictsEarly = activeBoardCrossBoardClashes();
     const roomShortages = activeBoardRoomShortages();
-    const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length + roomShortages.length;
-    setIssuesCount(total, ((TW.conflicts.summary || {}).critical || 0) + boardReadinessBlockers(TW.boardId).length);
+    const serverBlockers = boardReadinessBlockers(TW.boardId);
+    const total = serverBlockers.length + overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length + roomShortages.length;
+    setIssuesCount(total, ((TW.conflicts.summary || {}).critical || 0) + serverBlockers.length);
 
     if (total === 0) {
       body.innerHTML = `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${T.noIssues}</p>${TW.quality?.rooms?.assessed ? '' : `<small>${IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.'}</small>`}</div>`;
@@ -2340,6 +2353,14 @@ function renderRightPanel(tab) {
     // Severity first: what blocks publishing, then what lowers quality, then context.
     const heading = (text, count, tone) => `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(text)}</span><span class="tw-issue-count tnum">${count}</span></h3>`;
     let html = '';
+    // What the server says stops publishing on this board — a section placed on
+    // no board, meetings on blocked times, an incomplete pattern — first.
+    if (serverBlockers.length) {
+      html += heading(IS_AR ? 'يمنع النشر' : 'Blocks publishing', serverBlockers.length, 'critical');
+      serverBlockers.forEach(item => {
+        html += `<div class="tw-issue-row tw-issue-static"><span class="tw-issue-dot critical"></span><div>${esc(readinessItemText(item))}</div></div>`;
+      });
+    }
     const overlapRow = (o, dot) => `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
           <span class="tw-issue-dot ${dot}"></span>
           <div><div class="fw-semibold"><bdi>${esc((o.sections || []).join(' / '))}</bdi></div><div class="tw-issue-detail"><bdi>${esc(o.detail || '')}</bdi></div></div>

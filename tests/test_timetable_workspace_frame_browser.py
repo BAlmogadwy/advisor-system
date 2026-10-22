@@ -139,6 +139,7 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
             key = fx.requirement("AI", code, name)
             fx.budget(sc, key, 1 if code == "AI111" else 2)
             fx.place(board, fx.section(sc, key, "S1"), meetings, room="R101")
+        self.scenario = sc
         self.path = f"/timetable-workspace/?scenario={sc.id}"
 
     def _load(self, language: str, theme: str, width: int, height: int):
@@ -262,3 +263,60 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
         after = page.evaluate("document.getElementById('main-content').scrollTop")
         self.assertEqual(after, before)
         self.assertEqual([*sent, *errors], [])
+
+    def test_the_chosen_board_stays_in_view_in_a_long_board_strip(self) -> None:
+        # Coming back from MRI or Split view to the last of many boards: the
+        # strip scrolls (never the page) to show it, and keeps it shown when
+        # later answers widen the buttons before it ("N left", flags).
+        from core.models import DeliveryBoard
+
+        last = None
+        for term in range(3, 13):
+            last = DeliveryBoard.objects.create(
+                scenario=self.scenario,
+                label=f"Term {term} group with a longer name",
+                nominal_term=term,
+                program="AI",
+                display_order=term,
+            )
+        self.path = f"/timetable-workspace/?scenario={self.scenario.id}&board={last.id}"
+        for language in ("en", "ar"):
+            context = self.browser.new_context(
+                locale="ar" if language == "ar" else "en-US",
+                extra_http_headers={"Accept-Language": language},
+                viewport={"width": 1440, "height": 900},
+            )
+            context.add_cookies(
+                [
+                    {
+                        "name": settings.SESSION_COOKIE_NAME,
+                        "value": self.session,
+                        "url": self.live_server_url,
+                    },
+                    {
+                        "name": settings.LANGUAGE_COOKIE_NAME,
+                        "value": language,
+                        "url": self.live_server_url,
+                    },
+                ]
+            )
+            page = context.new_page()
+            page.goto(f"{self.live_server_url}{self.path}")
+            page.wait_for_function(
+                f"document.querySelector('#twBoardTabs [aria-current=\"true\"]')?.dataset.boardId === '{last.id}'"
+                " && /\d/.test(document.getElementById('twPublishLabel').textContent)"
+            )
+            page.wait_for_timeout(600)
+            seen = page.evaluate(
+                """() => {
+                  const strip = document.getElementById('twBoardTabs').getBoundingClientRect();
+                  const chosen = document.querySelector('#twBoardTabs [aria-current="true"]').getBoundingClientRect();
+                  return { overflow: document.getElementById('twBoardTabs').scrollWidth > strip.width + 1,
+                           inside: chosen.left >= strip.left - 1 && chosen.right <= strip.right + 1,
+                           pageScroll: document.getElementById('main-content').scrollTop };
+                }"""
+            )
+            self.assertTrue(seen["overflow"], f"{language}: the strip should overflow in this test")
+            self.assertTrue(seen["inside"], f"{language}: the chosen board is out of view")
+            self.assertEqual(seen["pageScroll"], 0)
+            context.close()

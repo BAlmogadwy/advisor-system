@@ -356,6 +356,9 @@ html[data-theme="dark"] .tw-card.locked {
 }
 .tw-issue-row:hover { background: color-mix(in srgb, var(--teal) 9%, var(--surface)); }
 .tw-issue-row:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+/* A server blocker has nothing on the grid to point at: it is read, not clicked. */
+.tw-issue-row.tw-issue-static,
+.tw-issue-row.tw-issue-static:hover { background: var(--sev-critical-bg); cursor: default; }
 .tw-issue-detail { color: var(--t3); font-size: var(--text-xs); }
 .tw-issue-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; }
 .tw-issue-dot.critical { background: var(--sev-critical); }

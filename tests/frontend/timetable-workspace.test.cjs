@@ -296,3 +296,50 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
   assert.equal(mri.querySelector('.tw-mri-score span').textContent, '16');
   assert.deepEqual(h.errors, []);
 });
+
+// The server's publish blockers on a board are shown where the user looks for
+// problems: listed first in Issues, counted on its badge and on the board button.
+test('the Issues tab lists the board’s publish blockers first and counts them', async t => {
+  const readiness = { ready: false, blockers: ['x'], warnings: [], blocker_items: [
+    { code: 'missing_required_section', board_id: null, board_label: null, count: 1,
+      params: { course_code: 'AI222', course_key: 'AI222', programme_term: 7, planned_sections: 2, used_sections: 1 } },
+  ], warning_items: [] };
+  const h = await harness(t, url => url.includes('/readiness/') ? { readiness } : undefined);
+  await h.select();
+  await h.w.refreshPublishReadiness(true);
+  h.w.renderRightPanel('issues');
+  const head = h.d.querySelector('#twRightBody .tw-issue-head');
+  assert.equal(head.dataset.tone, 'critical');
+  assert.equal(head.children[1].textContent, 'Blocks publishing');
+  assert.match(head.nextElementSibling.textContent, /AI222: 1 of 2 sections not placed \(term 7\)/);
+  assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'critical');
+  const flag = h.d.querySelector('#twBoardTabs .ux-seg-item[aria-current="true"] .ux-seg-flag');
+  assert.equal(flag.textContent, '1');
+  assert.match(h.d.getElementById('twPublishLabel').textContent, /Publish · 1 blocker/);
+});
+
+test('an older readiness answer never replaces a newer one', async t => {
+  const first = deferred(), second = deferred();
+  let calls = 0;
+  const h = await harness(t, url => url.includes('/readiness/') ? (++calls === 1 ? first.promise : second.promise) : undefined);
+  await h.select();
+  const older = h.w.refreshPublishReadiness(true);
+  h.w.TW.dataVersion++;
+  const newer = h.w.refreshPublishReadiness(true);
+  second.resolve({ readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } });
+  await newer;
+  first.resolve({ readiness: { ready: false, blockers: ['stale'], warnings: [], blocker_items: [{ code: 'no_boards' }], warning_items: [] } });
+  await older;
+  assert.equal(h.w.TW.readinessVersion, h.w.TW.dataVersion);
+  assert.equal(h.w.TW.readiness.ready, true);
+  assert.ok(h.d.getElementById('twPublish').classList.contains('btn-primary'));
+});
+
+test('re-rendering the board buttons keeps the keyboard on the same board', async t => {
+  const h = await harness(t, url => url.startsWith('/ops/tw/boards/?') ? { boards: [board, { ...board, id: 3, label: 'Second board' }] } : undefined);
+  await h.select();
+  h.d.querySelector('#twBoardTabs [data-board-id="3"]').focus();
+  h.w.renderBoardTabs();
+  assert.equal(h.d.activeElement.dataset.boardId, '3');
+  assert.ok(h.d.getElementById('twBoardTabs').contains(h.d.activeElement));
+});
