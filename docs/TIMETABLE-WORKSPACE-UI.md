@@ -136,6 +136,40 @@ padding-aware for `p-0`.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.
+- `UXControls.dialog` (`open(dialog, {initialFocus, returnFocus})`,
+  `close(dialog, reason)`, `isOpen(dialog)`): one layer for the template
+  dialogs that choose something (Move, Place, Change room). Modal through
+  `showModal`, or `[open]` plus `data-ux-dialog="fallback"` where there is
+  none (jsdom); one at a time (`open` answers false while one is open); menus
+  close first; focus to `initialFocus()`, else the first control that takes
+  it (never a hidden input). Delegated listeners close it, as `'cancel'`, from
+  its `[data-dialog-close]` buttons (never a submit, whatever their type; one
+  with no type is given `type="button"` at open, so Enter in a text field
+  never clicks it as the form's default button), the
+  browser's `cancel` (stopped, then closed by the helper) and, in fallback
+  mode, an Escape no control inside has used. A native close no cancel began
+  (a `<form method="dialog">` submitted, page code calling `dialog.close()`)
+  is bookkept as `'close'`. At close, focus goes to what `returnFocus()` gives
+  **then** (on the page, enabled, not a hidden input, not inside `[hidden]`
+  or `.d-none`), and
+  `ux-dialog-close` fires with `{reason}`. It acts only on dialogs it opened:
+  Generate and the English chooser keep their own handlers.
+- `.ux-dialog-scroll` — a dialog whose body scrolls while its head and foot
+  stay in view (`> form` a flex column, `.ux-dialog-body` the scroller).
+  `.ux-dialog-foot-note` is the foot's reason line, before its buttons.
+- `.ux-choice-list` — rows of `label.ux-choice`, one native radio each, with
+  `aria-busy` on the list alone while it reads. With `data-ux-submit`, a
+  delegated key handler adds Home, End and PageUp/PageDown (10 rows, held at
+  the ends) over the radio group's rows not hidden, on top of the native
+  arrows, and Enter submits the form once, only while its submit button (the
+  first that is not `[data-dialog-close]`) is on, a disabled fieldset around
+  it counting as off. Forced colours give each row a border, the chosen row a
+  thick Highlight one and the row with the keyboard an outline.
+  `.ux-choice[data-tone]` (`critical`, `warning`, `info`, `ok`) adds a
+  start-edge bar (CanvasText in forced colours) beside the verdict in words;
+  `.ux-choice-static` is a row that cannot be chosen, its reason written in it
+  (no disabled radios); `.ux-choice-title` is a flex line (icon, code, words);
+  `.ux-choice-status` is a row's small status line.
 - `.ux-job` — the shared planner job card, floating at the window's end edge.
 - `.pill-n` — neutral status pill.
 
@@ -249,6 +283,18 @@ Stage 3 (to evaluate): a time-proportional week grid.
   `display`. Tablists exist only where they behave as tabs.
 - Template copy stays `{% if LANGUAGE_CODE == 'ar' %}…{% else %}…{% endif %}`.
 - `.fb-search` capsules stay inside a `.fb-fit` row.
+- Dialogs opened through `UXControls.dialog` resolve `returnFocus` at close:
+  it is a function (from an origin key), never a node kept from the opening,
+  because the page may redraw the opener while the dialog is open.
+- While such a dialog is open, what its work came to is said inside it (its
+  `role=alert` line), never as a toast: a toast sits behind a modal, unseen.
+  Work the user left with Escape that ends while another such dialog is open
+  is said in that one; when that dialog is about something else (another
+  meeting, even in the same dialog element: each records what it is about in
+  `data-tw-about`), the words lead with what they are about (course and
+  section, isolated), so they never read as that dialog's own.
+  Its commit checks the page's edit hold itself before it writes
+  (`dialogWrite`), since the page's busy guard answers with a toast.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
 
@@ -437,6 +483,147 @@ findings changed the plan:
    none) — with the count (`pluralAr` in Arabic) and, until Place… (5f), a
    pointer to split view, which places a whole pattern; Enter on such a row
    says the same.
+   **As built, 5c (dialog layer, Change room, R):** the global parts came
+   first, in their own commits: `UXControls.dialog`, the choice-list keys and
+   `.ux-dialog-scroll`/`.ux-choice-list` (§3.3); `twFetch` handing every
+   failure to `_onError` once (contract C); `TimetableRoomChoice`, split
+   view's rules and the words, held to split view by a parity test; and the
+   server's room candidates (#173). The page has one gate,
+   `cardActionRefusal`, whose words are `REFUSAL`, for R and for Selection's
+   Room button (Change…, or Choose… with no room yet; none for a section
+   online or needing no room; drawn off with its reason under the fields,
+   and kept in step with the gate in place); one seam, `TW.keyActions.room`
+   (Move and Place join it in 5e and 5f); origins as focus keys, resolved at
+   close; `dialogWrite`, `dialogSay` and `previewRead` as contracts C and E
+   say (an answer is kept per meeting and data version until a board answer
+   arrives; a failed read is not kept, so the next open asks again). The
+   dialog reads the rooms at the meeting's own time and sends `{room}` alone,
+   undo and redo too, so a time lock holds; the current room is chosen at
+   first and holds Assign; a fitting room in use can be chosen (its row says
+   who uses it, and the toast after the save says so again); misfits are
+   rows with their reasons, in a group closed unless nothing fits; the
+   filter hides rows in place. After a save the dialog closes, the board's
+   tab stop moves to the card, the board is read again, then the toast.
+   Where it differs from the spec, and why: the "also changes on N other
+   boards" line is not shown before the save — the page holds only the open
+   board's placements, so the count comes after it, in the toast, from the
+   answer's `placements` (the spec's own fallback); the "this meeting only"
+   words are the sub-line's, as the Strings table has them, not repeated in
+   the body; a refusal of the save is said in a `role=alert` line
+   (`#twRoomAlert`, page-local `.tw-dialog-alert`) between the scrolling
+   body and the foot, which contract C needs and the template sketch lacked;
+   after the save the board on show is read again, as a drop does (the same
+   board unless the user switched boards while a save the dialog was closed
+   on was out); the toast leaves out the instructor backstop, since a room
+   changes no teacher; a class held on several boards counts once in "and N
+   more"; a group with no rows is left out; a row's description also points
+   at its occupants. Two mutants are equivalent, and recorded so: Assign
+   without `data-tw-mutation` (the dialog's own sync turns it off whenever
+   the page cannot write while it is open; dropping both is caught), and
+   `dialogWrite`'s `_onError` answering false (the request is quiet, so no
+   toast follows either way, and the code is taken before the answer).
+   After review (round 1): a save the user left with Escape (D17a) ends
+   where the user is: in the alert line of the helper dialog open by then
+   (R again while the write was out, D3b; `dialogSay` looks for it), else as
+   a toast, never as a toast behind a modal; the line takes the tone of what
+   it says (`data-tone`: a refusal is a warning, a saved change a success),
+   and a refusal of the same meeting holds Assign there too. Rooms read
+   before the data moved are not kept on show: each read records the data
+   version it asked at (`ROOM.version`), and a write that lands while the
+   dialog is open, or a meeting that left the board (a scenario reload) and
+   came back, makes them out of date. While no row has been chosen from
+   them the dialog reads them again by itself: the list loads and comes back
+   (the States table's "comes back on by itself"; nothing the user did is
+   lost), the filter stays drawn while it loads so a keyboard in it stays
+   there, a read still out is overtaken and its late answer never drawn,
+   and nothing is read for a meeting off the board. Once a row has been
+   chosen from them, the stale state holds Assign until Check again (which
+   drops that choice), so a choice is never carried silently onto rooms
+   whose verdicts may have changed; a meeting gone when Check again has read
+   the board is read once it is back. Until the user chooses, the choice
+   follows the current room as the board has it (after the escaped save,
+   the saved room), and a keyboard on a row the dialog chose goes with it;
+   a keyboard the user put on a row stays there. The "busy", "job" or
+   "published" alert of a commit the page's own hold met goes when that
+   hold ends or turns into another. Undo keeps the raw old room
+   (`UNASSIGNED` included), now pinned. RC12–RC19 and RB3's note and alert
+   contrast (in both tones) pin these and the reviewer's survivors; 59
+   mutants run against the RC tests, all red but one, equivalent: a late
+   answer drawn into a closed dialog (the next open starts a new session
+   and draws everything again; nothing reads the closed dialog). Of the
+   others the reviewer called equivalent, the open guard (the seam 5e and 5f
+   call), Selection's sync after its draw (a gate that moved under the same
+   markup) and a current room that does not fit (never chosen; the note asks
+   for a room) are pinned now.
+   After review (round 2): `#twRoomDialog` is one element whichever meeting
+   it is open on, so a save left with Escape could be said, bare, in the
+   dialog of another meeting opened meanwhile ("Room R101 assigned." under
+   "Change room · AI333 S1"; a refusal read as that section's). Each helper
+   dialog now records what it is about (`data-tw-about`, set when the room
+   dialog opens), and `dialogSay` leads words about anything else with the
+   meeting's course and section, isolated, in both languages (contract C,
+   and the Strings row); a toast stays as any save's, and a refusal still
+   holds only its own meeting's Assign. Move and Place (5e, 5f) get the same
+   by recording their meeting. A choice the filter hides now also drops the
+   pick, so nothing is chosen, by the user or the dialog: rooms read before
+   the data moved are then read again by themselves rather than held for
+   Check again. That exposed a gap the auto read shared with any redraw of
+   the same markup: the rows kept a check the filter had dropped while the
+   dialog chose the current room again, so the note said "This is the
+   current room." with no row checked; every draw now gives the rows the
+   choice, and the filter drops it again if it hides it. RC12 (the other
+   meeting's refusal and save, en and ar, and a dialog about the same
+   meeting keeping the words as they are) and RC13 pin these; of 13 new
+   mutants two are equivalent and recorded so: words named while clearing
+   (no clear passes `about`), and rows given the choice but never unchecked
+   by it (a row the user checked is the choice, picked, so the markup moves
+   with it and the rows are drawn anew).
+   After live QA (on a copy of the real data): the dialog offered 172FB007
+   for CS163 S1 under "Free and fits", worded "For context: outside this
+   board's programme rooms"; after Assign, Issues listed "Room unsuitable ·
+   CS163 · 172FB007" as a warning and the card rang. That is Issues' rule,
+   not a slip: the quality check's `incompatible` (from the rooming audit's
+   `original_unsuitable_demand_ids`) holds a saved room to the meeting's
+   compatible rooms, built in `timetable_exact_rooming` as type ∩ gender ∩
+   programme pool (H14) for every board of the meeting, so a room with
+   `department_fit === false` is a "Room unsuitable" warning once saved. An
+   info verdict promised no ring (§7.1: info rows never ring a card), which
+   the save then broke; the dialog must say what Issues will say (D24's
+   spirit). Such a room is now its own group, "Free, but outside this
+   board's programme rooms (n)", between free and in use, with its hint
+   (choosing one saves a "Room unsuitable" warning); its verdict is Issues'
+   warning ("Lowers quality: Room unsuitable · outside this board's programme
+   rooms", the kind word pinned to `ISSUE_KINDS.roomUnsuitable`); a room in
+   use that is also outside keeps its clash's group and tone, and its words
+   add the pool, so nothing Issues will list is left unsaid; the current
+   room, the filter, Assign's hold and the busy lists treat the group as
+   the others. The report after the save is a warning that names it ("Room
+   {c} assigned; Issues will show it as unsuitable for this board's
+   programmes.", or, after an in-use report, "Issues will also show it as
+   unsuitable…"). No verdict is info any more. The case table's R7 and R12
+   changed and R30 (held here and outside) and R31 (a misfit outside, still
+   a misfit) joined it; RC2, RC6, RC15, RC20, RC21 and, in Chrome, RB4
+   (no "Room unsuitable" on the card before; the
+   row, its verdict and hint; the warning report; Issues' "Room unsuitable ·
+   AI111 · R105" row and the card's warning ring; English and Arabic) pin
+   it. 18 jsdom mutants (the pool rule before the in-use rule, which hides
+   the clash; an info tone; the group merged into free; the in-use pool
+   words dropped; a success report; the report's words; the group not
+   drawn; the current room, the count and the hint skipping it; a missing
+   flag read as outside; outside before misfit; the kind word, lead and
+   reason; the Arabic heading) and 2 in Chrome (the old verdict; a success
+   report) all go red.
+   What still differs, a server follow-up: room candidates count as fitting
+   some rooms the audit does not. A room with no department fits any board
+   in `_room_department_fits`, while the audit needs a programme in common;
+   a room with no gender fits either gender there, while the audit needs the
+   meeting's own; seats are judged against the section's registered or
+   available capacity, while the audit ("Room too small") uses its buffered
+   demand; and `department_fit` is this board's pool only, while the audit
+   asks it of every board a shared meeting is on. Until the server reports
+   fit as the audit does, the dialog may under-report those: a room it calls
+   "Free and fits" can still be listed as unsuitable or too small once
+   saved.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
@@ -523,7 +710,7 @@ This spec was written from four drafts (grid, move, place, room) and two critiqu
 | D16a | The shared gate runs first; "Finding patterns…" is announced before the fetch; focus follows the recreated rows. | | |
 | D16b | Accepted gaps, each a recorded follow-up: the chooser's counts without `pluralAr`, disabled reasons only in a `title`, focus returned to a stored node (POLICY:50, 69, 81). The page calls `boardNav.restore()` after the chooser resolves, which covers the stored node. | | |
 | D17 | **While a dialog is open, every message is shown inside it, never as a toast.** Toasts go into a body-level container (notify.js:6-13) that is inert behind a modal. | | Inline-errors findings |
-| D17a | **Escape during a commit closes the dialog.** The write finishes and its result arrives as a toast after the close. | | |
+| D17a | **Escape during a commit closes the dialog.** The write finishes and its result arrives as a toast after the close, or, when another helper dialog is open by then, in that dialog's alert line (D17), led by the meeting's course and section when that dialog is about another meeting. | | |
 | D17b | `twFetch` fixes: announce the planner job of `SCENARIO_BUSY` before `_onError` and `_quiet`; call `_onError(null, status)` when the body is not JSON; call `_onError(null, 0)` when fetch rejects. | Today `_onError` runs first (PAGE:204-208), a non-JSON body skips it (PAGE:212), and a rejection skips it (PAGE:219-221). | |
 | D18 | Before a commit button turns off, focus moves to the checked radio. | | Commit-focus findings (both critics) |
 | D18a | `aria-busy` goes only on `.ux-choice-list`. Status lines sit outside it. | | |
@@ -632,25 +819,44 @@ dialogWrite(dialog, url, body) -> Promise<{data} | {code}>
 2. Call `twFetch(url, {method:'POST', headers, body: JSON.stringify(body), _quiet: true, _onError: (b, s) => (code = b?.error?.code || (b ? String(s) : 'NETWORK'), true)})`.
 3. If the answer is null, return `{code}`. Otherwise return `{data}`.
 
-`dialogSay(dialog, text, tone)`:
+`dialogSay(dialog, text, tone, about)`:
 - While `UXControls.dialog.isOpen(dialog)`: put the text in that dialog's `[role=alert]` line.
-- Otherwise: `notify[tone](text)`.
+- Otherwise, when another helper dialog is open (the user left this one during its commit and opened another): put the text in that one's line. Clearing (`''`) is only ever about the dialog itself.
+- Otherwise: `notify[tone](text)`, as it is.
+- Each helper dialog records what it is about when it opens (`data-tw-about`, as `placement:<id>`). `about` is `{key, name}` for the meeting the words are about (`name` = course and section, each isolated). In a line whose dialog is about anything but `about.key`, the words read `{name}: {text}`, in both languages, so a result never reads as being about the meeting the open dialog names (`#twRoomDialog` is one element, whichever meeting it is open on).
+- The line takes the tone (`data-tone`), so a saved change never reads as a refusal.
 
 **`twFetch` changes (PAGE:197-221)**, shipped in 5c:
 
 ```js
+// Asked at most once; a handler that throws has not handled the failure
+// (the slip is logged, and the toast follows as if there were no handler).
+const handled = (body, status) => {
+  if (asked || typeof _onError !== 'function') return false;
+  asked = true;
+  try { return Boolean(_onError(body, status)); } catch (slip) { console.error(…); return false; }
+};
 if (!response.ok) {
   let d = busyBody; if (!d) { try { d = await response.json(); } catch { d = null; } }
   const e = d?.error;
   if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
-  if (typeof _onError === 'function' && _onError(d, response.status)) return null;
+  if (handled(d, response.status)) return null;
   if (_quiet) return null;
   /* message as today */ notify.error(msg); return null;
 }
-/* catch (err): */ if (typeof _onError === 'function' && _onError(null, 0)) return null; if (!_quiet) notify.error(…)
+/* catch (err): a rejected fetch, or a 2xx whose body is not JSON */
+if (handled(null, 0)) return null; if (!_quiet) notify.error(…)
 ```
 
-The two existing `_onError` users (PAGE:1461, 3464) already read `body?.`, so a null body is safe for them.
+The local busy guard (a write while the workspace is busy) toasts and
+returns null before any request, and never reaches `_onError`. The existing
+`_onError` users (publish, drop, the slot editor) use no dialog or the
+page's `dlg` ones, which sit under the toast stack (z-index 2000 against
+3000) and hide only `main` from assistive technology, so that toast is
+seen; they read `body?.`, so a null body is safe for them. A template
+`<dialog>` opened modal is in the top layer, over every toast: its commit
+is `data-tw-mutation` (off while busy), and `dialogWrite` checks
+`workspaceCanEdit()` itself before it asks.
 
 ##### D. Report after an edit (5e; drag shares it)
 
@@ -977,7 +1183,7 @@ open(dialog, {initialFocus, returnFocus}) -> boolean
 close(dialog, reason = 'close')
 ```
 - Does nothing for a dialog the helper did not open.
-- Closes the dialog, then focuses `returnFocus()` if that element is connected, enabled and not inside `[hidden]` or `.d-none`.
+- Closes the dialog, then focuses `returnFocus()` if that element is connected, enabled, not a hidden input and not inside `[hidden]` or `.d-none`.
 - Dispatches `ux-dialog-close` with `{reason}`.
 
 ```
@@ -985,15 +1191,15 @@ isOpen(dialog)
 ```
 
 Delegated listeners on `document`, acting **only on dialogs in the WeakMap**:
-- `click` on `[data-dialog-close]` → close with reason `'cancel'`;
+- `click` on `[data-dialog-close]` → `preventDefault` (a button with no type is a submit button), then close with reason `'cancel'`;
 - capture-phase `cancel` → `preventDefault`, then close with `'cancel'`;
-- capture-phase native `close` while the dialog is still in the map (Chrome's close watcher) → do the close bookkeeping;
+- capture-phase native `close` while the dialog is still in the map → do the close bookkeeping with reason `'close'`: no cancel began it (a cancel closes the dialog and leaves the map first), so it is a `<form method="dialog">` submitted or page code calling `dialog.close()`. Chromium 145 fires `cancel` on every Escape (a second one with no click between as a cancel it cannot stop), so this listener is a guard, not the Escape path;
 - in fallback mode, `keydown` Escape not `defaultPrevented` → close.
 
 **Choice list** (one delegated `keydown` in UXC):
 - For a radio inside `.ux-choice-list[data-ux-submit]`, among radios of the same name that are not hidden (filtered in JS, no `CSS.escape`):
   - Home, End, PgUp and PgDn (±10, clamped) check, focus and `scrollIntoView?.()` the radio, then dispatch a bubbling `change`.
-  - Enter: `preventDefault`, then `form.requestSubmit()` once, and only when the form's submit button is enabled.
+  - Enter: `preventDefault`, then `form.requestSubmit()` once, and only when the form's submit button (the first not `[data-dialog-close]`) is not `:disabled` (a disabled fieldset around it included).
 - The arrow keys stay native.
 
 **CSS (GCSS, after `.ux-choice` at :2373):**
@@ -1021,12 +1227,12 @@ Docs: §3.3 adds `UXControls.dialog`, `.ux-dialog-scroll`, `.ux-choice-list` / `
   | Condition | Group | Tone | Words |
   |---|---|---|---|
   | not `fits` | misfit | — | — |
-  | an `occupied_by` entry has `board_id === p.board_id` | inUse | critical | `TONE_LEAD.critical` + `ISSUE_KINDS.room` |
-  | other `occupied_by` entries | inUse | warning | warning lead + `roomElsewhere` |
-  | `department_fit === false` | free | info | "For context: outside this board's programme rooms" |
+  | an `occupied_by` entry is on `p`'s board (ids compared as text, so `2` and `"2"` are one board; a missing id is never this board) | inUse | critical | `TONE_LEAD.critical` + `ISSUE_KINDS.room` (+ " · outside this board's programme rooms" when `department_fit === false`) |
+  | other `occupied_by` entries | inUse | warning | warning lead + `roomElsewhere` (+ the same pool words when `department_fit === false`) |
+  | `department_fit === false` | outside | warning | warning lead + `ISSUE_KINDS.roomUnsuitable` + " · outside this board's programme rooms" |
   | otherwise | free | ok | "Free and fits" |
 
-  The verdict reads `occupied_by` only; same-class copies are already left out by the server.
+  The verdict reads `occupied_by` only; same-class copies are already left out by the server. `outsidePool(room)` is `department_fit === false` (a flag the answer leaves out is no fact). No verdict is `info`: every room Issues will list once saved is a warning or worse, since an info row never rings a card (§7.1).
 - **`misfitReasons(room, target, ar)`**, **`factsHtml(room, target, ar)`** and **`words(ar)`**.
 
 ##### Server
@@ -1078,7 +1284,7 @@ Docs: §3.3 adds `UXControls.dialog`, `.ux-dialog-scroll`, `.ux-choice-list` / `
 3. An optional "also changes on N other boards": the `occupied_by` entries of the current room with the same `term_section_id`. Since the server now skips them, this count comes from the move answer's `placements` after the commit; before the commit, use the selected section's other-board placements in `TW.placements` when they are known, else leave the hint out.
 4. A "this meeting only" hint when `p.meetings.length > 1`.
 5. The filter: `input#twRoomFilter[type=search][dir=auto][aria-controls=twRoomChoices]`.
-6. `#twRoomChoices` with two fieldsets, each a `.ux-choice-list[data-ux-submit]` (it must have that attribute): "Free and fits (n)" and "Fits, but in use at this time (n)" plus its hint.
+6. `#twRoomChoices` with three fieldsets, each a `.ux-choice-list[data-ux-submit]` (it must have that attribute): "Free and fits (n)", "Free, but outside this board's programme rooms (n)" plus its hint, and "Fits, but in use at this time (n)" plus its hint.
 7. A misfit disclosure (`data-ux-disclosure="tw-room:misfits"`, closed by default; forced open when nothing fits) over `.ux-choice-static` rows.
 8. A truncation note.
 
@@ -1093,7 +1299,7 @@ Rows:
 - Tab order: filter, list, misfit toggle, Cancel, Assign.
 - Filter:
   - typing hides rows in place by code, building or wing, with no redraw;
-  - a hidden chosen row clears the choice;
+  - a hidden chosen row clears the choice, and then nothing is chosen, by the user or the dialog;
   - Enter with exactly one visible row checks and focuses it, and never submits;
   - Escape with text clears the field and calls `stopPropagation` and `preventDefault`, so the dialog stays open.
 
@@ -1142,9 +1348,10 @@ Rows:
 | Time's own clashes | Whatever the room, its time keeps {X}. X = 1 clash / {n} clashes | أيّاً كانت القاعة، يبقى في وقته {X}. X = pluralAr {one:'تعارض واحد', two:'تعارضان', few:'{n} تعارضات', many:'{n} تعارضاً', other:'{n} تعارض'} |
 | Other boards | Its room also changes on {X} (the same class at the same time). X = 1 other board / {n} other boards | تتغيّر قاعته أيضاً في {X} (الشعبة نفسها في الوقت نفسه). X = pluralAr {one:'لوحة أخرى', two:'لوحتين أخريين', few:'{n} لوحات أخرى', many:'{n} لوحةً أخرى', other:'{n} لوحة أخرى'} |
 | Filter | Filter rooms · placeholder "Room code or building" · "No room matches the filter." | تصفية القاعات · رمز القاعة أو المبنى · لا توجد قاعة تطابق التصفية. |
-| Groups | Free and fits (n) · Fits, but in use at this time (n) · Rooms that do not fit (n) | متاحة ومناسبة (n) · مناسبة لكنها مستخدمة في هذا الوقت (n) · قاعات غير مناسبة (n) |
+| Groups | Free and fits (n) · Free, but outside this board's programme rooms (n) · Fits, but in use at this time (n) · Rooms that do not fit (n) | متاحة ومناسبة (n) · متاحة لكنها خارج قاعات برامج هذه اللوحة (n) · مناسبة لكنها مستخدمة في هذا الوقت (n) · قاعات غير مناسبة (n) |
+| Outside hint | Choosing one saves a “Room unsuitable” warning, which Issues then shows. | اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل». |
 | In-use hint | Choosing one saves a room clash, which Issues then shows. | اختيار إحداها يحفظ تعارض قاعة يظهر بعدها في «المشاكل». |
-| Verdicts | Free and fits · For context: outside this board's programme rooms · {TONE_LEAD} + kind label | متاحة ومناسبة · للاطلاع: خارج قاعات برامج هذه اللوحة · (ISSUE_KINDS, PAGE:3194-3209) |
+| Verdicts | Free and fits · {TONE_LEAD} + kind label (ISSUE_KINDS: room, roomElsewhere, roomUnsuitable) · the pool words: " · outside this board's programme rooms" | متاحة ومناسبة · (ISSUE_KINDS) · " · خارج قاعات برامج هذه اللوحة" |
 | Occupants | Used by {c} ({board}) at {t}; and 1 more / and {n} more | تستخدمها {c} ({board}) في {t}؛ pluralAr {one:'وشعبة أخرى', two:'وشعبتان أخريان', few:'و{n} شعب أخرى', many:'و{n} شعبةً أخرى', other:'و{n} شعبة أخرى'} |
 | Facts | Lecture room · Lab · {n} seats · {n} spare · {n} short · Male (M) · Female (F) · Building B · Wing W · Floor 2 | قاعة محاضرات · معمل · pluralAr seats {one:'مقعد واحد', two:'مقعدان', few:'{n} مقاعد', many:'{n} مقعداً', other:'{n} مقعد'} · spare {zero:'بلا فائض', one:'مقعد فائض', two:'مقعدان فائضان', few:'{n} مقاعد فائضة', many:'{n} مقعداً فائضاً', other:'{n} مقعد فائض'} · short {one:'ينقصها مقعد واحد', two:'ينقصها مقعدان', few:'ينقصها {n} مقاعد', many:'ينقصها {n} مقعداً', other:'ينقصها {n} مقعد'} · طلاب (M) · طالبات (F) · المبنى B · الجناح W · الطابق 2 |
 | Misfit reasons | This meeting needs a lecture room · needs a lab · needs a room of type {c} · needs a Male (M) room · needs a Female (F) room | هذا اللقاء يحتاج إلى قاعة محاضرات · إلى معمل · إلى قاعة من نوع {c} · إلى قاعة طلاب (M) · إلى قاعة طالبات (F) |
@@ -1153,8 +1360,9 @@ Rows:
 | Stale | This meeting changed since its rooms were read. · Check again | تغيّر هذا اللقاء منذ قراءة قاعاته. · إعادة التحقق |
 | Notes | Choose a room. · This is the current room. | اختر قاعة. · هذه هي القاعة الحالية. |
 | Progress | Assigning room {c}… | جارٍ تعيين القاعة {c}… |
-| Toasts | Room {c} assigned. · Room {c} assigned; {c} also uses it at this time. · It also changed on {X}. | عُيّنت القاعة {c}. · عُيّنت القاعة {c}، ويستخدمها في هذا الوقت أيضاً: {c}. · وتغيّرت أيضاً في {X}. |
+| Toasts | Room {c} assigned. · Room {c} assigned; {c} also uses it at this time. · Room {c} assigned; Issues will show it as unsuitable for this board's programmes. · (in use and outside) Issues will also show it as unsuitable for this board's programmes. · It also changed on {X}. — a success only when nothing is in use and the room is in the pool; else a warning | عُيّنت القاعة {c}. · عُيّنت القاعة {c}، ويستخدمها في هذا الوقت أيضاً: {c}. · عُيّنت القاعة {c}، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة. · وستعرضها «المشاكل» أيضاً غير مناسبة لبرامج هذه اللوحة. · وتغيّرت أيضاً في {X}. |
 | Failures | This meeting is no longer on the board. · The room was not changed. | لم يعد هذا اللقاء في اللوحة. · لم تتغيّر القاعة. |
+| A result said in a dialog about another meeting (contract C) | {c} {c}: {words} | {c} {c}: {words} |
 
 ##### Tests
 
@@ -1163,9 +1371,12 @@ Rows:
 | Test | What it checks | Mutants it must kill |
 |---|---|---|
 | G1 | Fallback mode: open sets `[open]` and honours `initialFocus`; `[data-dialog-close]` and an Escape `keydown` close it; focus goes to the element `returnFocus()` gives **at close**, after the opener node was replaced. | Resolver read at open |
-| G2 | A cancelable `cancel` is `defaultPrevented`; the dialog closes; `ux-dialog-close` fires with `reason 'cancel'`. A native `close` without `cancel` runs the same bookkeeping. | No capture listener; close watcher ignored |
+| G2 | A cancelable `cancel` is `defaultPrevented`; the dialog closes; `ux-dialog-close` fires with `reason 'cancel'`. A native `close` without `cancel` runs the same bookkeeping, with reason `'close'`. | No capture listener; close watcher ignored; a native close reported as `'cancel'` |
 | G3 | A disabled or detached target throws nothing and does not take focus. A dialog the helper did not open (`#twGenerateDialog`): its × and Escape behave natively, and the helper's handler never runs. | Listeners not scoped to the helper's dialogs |
-| C1 | `.ux-choice-list[data-ux-submit]`: End, Home and PgDn (clamped) check, focus and fire `change`; hidden radios are skipped; Enter submits once (the spy counts `submit` events); Enter with the submit button disabled submits nothing; a list without `data-ux-submit` never submits. | End off by one; no clamp; hidden included; double submit; submit not opt-in |
+| C1 | `.ux-choice-list[data-ux-submit]`: End, Home and PgDn (clamped) check, focus and fire `change`; hidden radios are skipped; Enter submits once (the spy counts `submit` events); Enter with the submit button disabled, or inside a disabled fieldset, submits nothing; the submitter is the commit button, past a leading `type=button` and a `[data-dialog-close]` with no type; the Page keys scroll the row, not the radio, into view; a list without `data-ux-submit` never submits. | End off by one; no clamp; hidden included; double submit; submit not opt-in; `.disabled` only; any button taken as the submitter; the radio scrolled |
+| C2 | Forced colours (pinned from `global.css`, seen in Chromium with forced colours emulated): every `.ux-choice` has a `CanvasText` border, the checked row a thicker `Highlight` border, the focused row a `CanvasText` outline; the two marks never share a property. | No frame; no checked mark; checked by colour only; checked as an outline; no focus mark |
+| G4 | Opening a helper dialog closes an open menu. `isOpen` is false for a dialog its page opened and for a helper dialog taken off the page, which does not block the next. | Menus left open; `isOpen` unscoped; `isOpen` ignores `isConnected` |
+| G5 | A `[data-dialog-close]` with no type closes as `'cancel'` and submits nothing (the same button in a page's own dialog is left alone). A fallback Escape inside a nested page dialog leaves the helper's open. The first control skips a hidden input, a disabled button and `[hidden]`/`.d-none` content, also when `initialFocus()` is a hidden input. | No `preventDefault`; `preventDefault` unscoped; owner check dropped; any of the focus filters dropped |
 | F1 | `twFetch` with `_onError` returning true on a 409 `SCENARIO_BUSY` with `active_job`: `tw:planner-job` still fires. | Announce left after `_onError` |
 | F2 | A 502 with an HTML body calls `_onError(null, 502)` and fires no toast. A rejected fetch calls `_onError(null, 0)`. | Non-JSON path skips `_onError`; rejection path skips it |
 
@@ -1176,7 +1387,7 @@ Rows:
 | Test | What it checks | Mutants it must kill |
 |---|---|---|
 | RC1 | A locked meeting: the GET URL is exactly `/ops/tw/placements/10/room-candidates/`. Choose R2 and submit: the POST body deep-equals `{room:'R2'}`. The undo top is `{type:'room', old_room:'LAB25', new_room:'R2'}`. A `/boards/2/` GET and a success toast follow. | Slot parameters added to the GET; time or override sent; lock refused; no history push; no `selectBoard` |
-| RC2 | R1 free; R9 occupied on board 2; R8 on another board; R7 with `department_fit:false`; R3, R4, R5 misfits: radios R1/R9/R8/R7 with tones ok/critical/warning/info; misfits are static rows with words from their flags. | `free()` used for choosability; server tone used; same-board rule dropped |
+| RC2 | R1 free; R9 occupied on board 2; R8 on another board; R7 with `department_fit:false`; R3, R4, R5 misfits: radios R1/R7/R9/R8 in groups free/outside/inUse/inUse with tones ok/warning/critical/warning; the outside and in-use groups carry their hints; misfits are static rows with words from their flags. | `free()` used for choosability; server tone used; same-board rule dropped; outside toned info or merged into free |
 | RC3 | Hold: nothing chosen → "Choose a room."; the current room → held; a deferred `toggleLock` POST → disabled with the busy note, back on afterwards. | `data-tw-mutation` dropped; current-room hold dropped |
 | RC4 | Opened from Selection, then `renderGrid()` and a Selection redraw with new content: the radio nodes are the same and the dialog stays open; `cancel` puts focus on the **new** `[data-focus-key=room]`. Opened by R from the card: focus ends on the new card. | Opener kept as a node |
 | RC5 | After assigning from a card, focus is on the rebuilt card through `boardNav`. | `active()` call removed |
@@ -1204,6 +1415,7 @@ The oracle tests in `tests/test_tw_room_candidates_fast_path.py` stay unchanged 
 | RB1 | Keyboard only, en and ar: Tab to Selection's Change…, Enter, ↓ to R101, Enter. The database shows room R101, `is_locked` still True, the time unchanged. Focus is back on the button. Esc on a second open also returns there. R on the card, choose, and focus returns to the card. | Locked meetings refused; focus restore removed; `cancel` routing removed |
 | RB2 | Choosing R102 saves it; Issues shows "Room double-booked" and the card's ring is critical. | Assign held for in-use rooms |
 | RB3 | 1366×650 and 1440×790, light and dark, en and ar: `CONTRAST` on `.ux-choice-title`, `.ux-choice-desc`, `.ux-field-label`, `.ux-dialog-sub`; no text under 11px; the foot stays visible while the body scrolls; in Arabic ↓ moves to the next radio. | `.ux-dialog-scroll` removed; a low-contrast tone colour |
+| RB4 | R105 (department CS, the board's programme AI; R100–R104 are AI's), en and ar: before the save the card names no "Room unsuitable"; R105's row is in the outside group, toned warning, with Issues' verdict and the group's hint; after Assign the report is a warning that names it, Issues lists "Room unsuitable · AI111 · R105" and the card's ring is warning. (Added after live QA, see 5c's as-built note.) | The old "For context" verdict; a success report |
 
 ##### Risks
 
@@ -1387,7 +1599,7 @@ Rows:
 | Published or job | Held. |
 | A write in flight | Opens; Commit is held until it ends. |
 | Loading, empty, error | Its words below. |
-| Escape during a commit | The dialog closes; the result arrives as a toast (D17). |
+| Escape during a commit | The dialog closes; the result arrives as a toast, or in the dialog open by then (D17, D17a), led by the meeting's course and section when that dialog is about another (contract C). |
 
 ##### Strings
 
