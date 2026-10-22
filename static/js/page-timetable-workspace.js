@@ -2893,9 +2893,11 @@ $('twRedo').addEventListener('click', () => runHistoryAction(false));
    lists for it at its own time. No time is ever sent, so the change is
    room-only and a time lock holds. A room that fits (type, gender, seats) can
    be chosen even while another section holds it at that time: that saves a
-   room clash, which Issues then shows (owner ruling 2026-10-20). A room that
-   does not fit is listed with its reason and cannot be chosen. Which room is
-   which, and its words, are TimetableRoomChoice's, shared with split view. */
+   room clash, which Issues then shows (owner ruling 2026-10-20); one outside
+   the board's programme rooms saves a "Room unsuitable" warning, and the
+   dialog says so before and after. A room that does not fit is listed with
+   its reason and cannot be chosen. Which room is which, and its words, are
+   TimetableRoomChoice's, shared with split view. */
 const isolatedText = text => `\u2066${text}\u2069`;
 const ROOM_WORDS = IS_AR ? {
   change: 'تغيير…', choose: 'اختيار…', changeLabel: 'تغيير القاعة', chooseLabel: 'اختيار قاعة',
@@ -2906,8 +2908,10 @@ const ROOM_WORDS = IS_AR ? {
   timeClashes: n => `أيّاً كانت القاعة، يبقى في وقته ${pluralAr(n, { one: 'تعارض واحد', two: 'تعارضان', few: '{n} تعارضات', many: '{n} تعارضاً', other: '{n} تعارض' })}.`,
   filter: 'تصفية القاعات', filterHint: 'رمز القاعة أو المبنى', noMatch: 'لا توجد قاعة تطابق التصفية.',
   free: n => `متاحة ومناسبة (${n})`,
+  outside: n => `متاحة لكنها خارج قاعات برامج هذه اللوحة (${n})`,
   inUse: n => `مناسبة لكنها مستخدمة في هذا الوقت (${n})`,
   misfits: n => `قاعات غير مناسبة (${n})`,
+  outsideHint: 'اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل».',
   inUseHint: 'اختيار إحداها يحفظ تعارض قاعة يظهر بعدها في «المشاكل».',
   usedBy: (who, board, when) => `تستخدمها ${who} (${board}) في ${when}`,
   more: n => pluralAr(n, { one: 'وشعبة أخرى', two: 'وشعبتان أخريان', few: 'و{n} شعب أخرى', many: 'و{n} شعبةً أخرى', other: 'و{n} شعبة أخرى' }),
@@ -2921,6 +2925,8 @@ const ROOM_WORDS = IS_AR ? {
   progress: c => `جارٍ تعيين القاعة ${c}…`,
   assigned: c => `عُيّنت القاعة ${c}.`,
   assignedInUse: (c, who) => `عُيّنت القاعة ${c}، ويستخدمها في هذا الوقت أيضاً: ${who}.`,
+  assignedOutside: c => `عُيّنت القاعة ${c}، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة.`,
+  outsideToo: 'وستعرضها «المشاكل» أيضاً غير مناسبة لبرامج هذه اللوحة.',
   alsoChanged: n => `وتغيّرت أيضاً في ${pluralAr(n, { one: 'لوحة أخرى', two: 'لوحتين أخريين', few: '{n} لوحات أخرى', many: '{n} لوحةً أخرى', other: '{n} لوحة أخرى' })}.`,
   gone: 'لم يعد هذا اللقاء في اللوحة.', notChanged: 'لم تتغيّر القاعة.',
 } : {
@@ -2932,8 +2938,10 @@ const ROOM_WORDS = IS_AR ? {
   timeClashes: n => `Whatever the room, its time keeps ${n === 1 ? '1 clash' : `${n} clashes`}.`,
   filter: 'Filter rooms', filterHint: 'Room code or building', noMatch: 'No room matches the filter.',
   free: n => `Free and fits (${n})`,
+  outside: n => `Free, but outside this board's programme rooms (${n})`,
   inUse: n => `Fits, but in use at this time (${n})`,
   misfits: n => `Rooms that do not fit (${n})`,
+  outsideHint: 'Choosing one saves a “Room unsuitable” warning, which Issues then shows.',
   inUseHint: 'Choosing one saves a room clash, which Issues then shows.',
   usedBy: (who, board, when) => `Used by ${who} (${board}) at ${when}`,
   more: n => (n === 1 ? 'and 1 more' : `and ${n} more`),
@@ -2947,6 +2955,8 @@ const ROOM_WORDS = IS_AR ? {
   progress: c => `Assigning room ${c}…`,
   assigned: c => `Room ${c} assigned.`,
   assignedInUse: (c, who, n) => `Room ${c} assigned; ${who} also ${n === 1 ? 'uses' : 'use'} it at this time.`,
+  assignedOutside: c => `Room ${c} assigned; Issues will show it as unsuitable for this board's programmes.`,
+  outsideToo: "Issues will also show it as unsuitable for this board's programmes.",
   alsoChanged: n => `It also changed on ${n === 1 ? '1 other board' : `${n} other boards`}.`,
   gone: 'This meeting is no longer on the board.', notChanged: 'The room was not changed.',
 };
@@ -3087,12 +3097,13 @@ function roomFailureWords(failure) {
   return failure?.code === 'SERVER_BUSY' || failure?.status === 503 ? ROOM_WORDS.serverBusy : ROOM_WORDS.failed;
 }
 
-/* The rooms in their groups, in the server's order: free, in use at this
-   time, and those that do not fit. A code listed twice (an M and an F room)
-   is one row, the first; the placer's UNASSIGNED marker is not a room. */
+/* The rooms in their groups, in the server's order: free, free but outside
+   the board's programme rooms, in use at this time, and those that do not
+   fit. A code listed twice (an M and an F room) is one row, the first; the
+   placer's UNASSIGNED marker is not a room. */
 function roomGroups(answer, p) {
   const RC = window.TimetableRoomChoice;
-  const groups = { free: [], inUse: [], misfit: [] };
+  const groups = { free: [], outside: [], inUse: [], misfit: [] };
   const seen = new Set();
   (answer?.candidates || []).forEach(room => {
     const key = RC.codeKey(room?.room_code);
@@ -3112,8 +3123,8 @@ function initialRoomChoice(answer) {
   if (!p) return '';
   const RC = window.TimetableRoomChoice;
   const current = RC.codeKey(p.room);
-  const { free, inUse } = roomGroups(answer, p);
-  const row = [...free, ...inUse].find(item => RC.codeKey(item.room.room_code) === current);
+  const { free, outside, inUse } = roomGroups(answer, p);
+  const row = [...free, ...outside, ...inUse].find(item => RC.codeKey(item.room.room_code) === current);
   return row ? String(row.room.room_code).trim() : '';
 }
 
@@ -3161,11 +3172,12 @@ function roomSubHtml(p) {
 }
 
 /* The body, in order: the current room; the time's own clashes, which stay
-   whatever the room; the filter; the rooms that can be chosen (free, then in
-   use); the rooms that do not fit, closed unless nothing fits; and how many
-   the server left out. Every other state is one line (and its way on); the
-   filter stays while the rooms load, so the keyboard in it stays there when
-   they are read again. */
+   whatever the room; the filter; the rooms that can be chosen (free, then
+   free but outside the board's programme rooms, then in use), each group
+   that saves an issue saying which; the rooms that do not fit, closed unless
+   nothing fits; and how many the server left out. Every other state is one
+   line (and its way on); the filter stays while the rooms load, so the
+   keyboard in it stays there when they are read again. */
 function roomDialogHtml(view) {
   const W = ROOM_WORDS;
   const p = view.p;
@@ -3192,7 +3204,7 @@ function roomDialogHtml(view) {
   // Student and teacher clashes belong to the time: no room changes them.
   const clashes = Number(answer.candidates?.[0]?.validation?.critical_count) || 0;
   if (clashes > 0) html += `<p class="tw-room-note">${esc(W.timeClashes(clashes))}</p>`;
-  const choosable = groups.free.length + groups.inUse.length;
+  const choosable = groups.free.length + groups.outside.length + groups.inUse.length;
   if (!choosable && !groups.misfit.length) return html + line(W.empty);
   const chosen = RC.codeKey(ROOM.choice);
   const filterText = room => [room.room_code, room.building, room.wing].map(value => String(value ?? '').trim()).join(' ').toUpperCase();
@@ -3225,6 +3237,7 @@ function roomDialogHtml(view) {
   html += '<div class="tw-room-choices" id="twRoomChoices">';
   if (!choosable) html += line(W.noneFit);
   if (groups.free.length) html += group('free', W.free(groups.free.length), '', groups.free);
+  if (groups.outside.length) html += group('outside', W.outside(groups.outside.length), W.outsideHint, groups.outside);
   if (groups.inUse.length) html += group('inUse', W.inUse(groups.inUse.length), W.inUseHint, groups.inUse);
   html += `${line(W.noMatch, ' id="twRoomNoMatch" hidden')}</div>`;
   if (groups.misfit.length) {
@@ -3361,20 +3374,24 @@ async function checkRoomAgain() {
 }
 
 /* What a saved change came to, read after the board: the room, who else uses
-   it at this time (a clash is saved, not refused), and the other boards
-   where the same class changed with it. */
+   it at this time (a clash is saved, not refused), whether Issues will list
+   it as unsuitable (outside the board's programme rooms), and the other
+   boards where the same class changed with it. Either issue makes it a
+   warning, as the row's verdict said. */
 function roomAssignedWords(p, choice, chosenRow, data) {
   const changed = (data?.placements || []).map(row => String(row.id));
   const others = changed.filter(id => id !== String(p.id)).length;
   const users = [...new Set((chosenRow?.occupied_by || [])
     .filter(entry => !changed.includes(String(entry.placement_id)))
     .map(entry => String(entry.section || '').trim()).filter(Boolean))];
+  const outside = window.TimetableRoomChoice.outsidePool(chosenRow);
   const room = isolatedText(choice);
   let text = users.length
     ? ROOM_WORDS.assignedInUse(room, users.map(isolatedText).join(ROOM_WORDS.listJoin), users.length)
-    : ROOM_WORDS.assigned(room);
+    : outside ? ROOM_WORDS.assignedOutside(room) : ROOM_WORDS.assigned(room);
+  if (users.length && outside) text += ` ${ROOM_WORDS.outsideToo}`;
   if (others) text += ` ${ROOM_WORDS.alsoChanged(others)}`;
-  return { text, tone: users.length ? 'warning' : 'success' };
+  return { text, tone: users.length || outside ? 'warning' : 'success' };
 }
 
 /* Assign: the room alone is sent (the lock holds). A refusal stays in the

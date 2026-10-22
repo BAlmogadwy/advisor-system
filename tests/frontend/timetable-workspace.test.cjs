@@ -2084,8 +2084,8 @@ const rc = (code, extra = {}) => ({ room_code: code, room_type: 'lecture', capac
 const heldOn = (board, extra = {}) => ({ placement_id: 60 + board, board_id: board, board_label: `Term ${board}`, term_section_id: 600 + board,
   section: `CS10${board}-S1`, day: 'SUN', start: '09:00', end: '10:15', ...extra });
 // In the server's order. R9 is held on this board, R8 on three others (two
-// classes: CS103 is on boards 3 and 5); R3, R4 and R5 miss on type, gender
-// and seats.
+// classes: CS103 is on boards 3 and 5); R7 is free but outside the board's
+// programme rooms; R3, R4 and R5 miss on type, gender and seats.
 const ROOM_SET = [
   rc('R1'), rc('LAB25'), rc('R2', { building: 'North' }),
   rc('R9', { available: false, tone: 'block', occupied_by: [heldOn(2)] }),
@@ -2174,7 +2174,7 @@ test('RC1 a locked meeting changes room by its room alone: no slot is read, {roo
     'Room \u2066R6\u2069 assigned; \u2066CS104-S1\u2069 also uses it at this time. It also changed on 1 other board.');
 });
 
-test('RC2 rooms are grouped by what choosing them does: free, held here (critical) or elsewhere (warning); a misfit is a row with its reason', async t => {
+test('RC2 rooms are grouped by what choosing them does: free, outside the programme rooms (warning), held here (critical) or elsewhere (warning); a misfit is a row with its reason', async t => {
   // The time's own clashes (the same for every room) come with each candidate.
   const timed = room => ({ ...room, validation: { ...room.validation, critical_count: 2 } });
   const h = await roomHarness(t, { rooms: () => roomsAnswer(ROOM_SET.filter(r => !['LAB25', 'R2'].includes(r.room_code)).map(timed)) });
@@ -2183,14 +2183,25 @@ test('RC2 rooms are grouped by what choosing them does: free, held here (critica
   await settled(h);
   assert.equal(h.d.querySelector('#twRoomBody .tw-room-note').textContent, 'Whatever the room, its time keeps 2 clashes.');
   assert.deepEqual(roomRadios(h).map(r => [r.value, r.closest('.ux-choice').dataset.tone, r.closest('fieldset').dataset.group]),
-    [['R1', 'ok', 'free'], ['R7', 'info', 'free'], ['R9', 'critical', 'inUse'], ['R8', 'warning', 'inUse']]);
+    [['R1', 'ok', 'free'], ['R7', 'warning', 'outside'], ['R9', 'critical', 'inUse'], ['R8', 'warning', 'inUse']]);
+  // Each row's tone mark is its verdict's.
+  assert.deepEqual(roomRadios(h).map(r => r.closest('.ux-choice').querySelector('.ux-tone-icon').dataset.tone), ['ok', 'warning', 'critical', 'warning']);
   const said = (code, index) => h.d.getElementById(roomRadio(h, code).getAttribute('aria-describedby').split(' ')[index]).textContent;
   assert.deepEqual(['R1', 'R7', 'R9', 'R8'].map(code => said(code, 0)),
-    ['Free and fits', "For context: outside this board's programme rooms", 'Blocks publishing: Room double-booked', 'Lowers quality: Room also booked on another board']);
+    ['Free and fits', "Lowers quality: Room unsuitable · outside this board's programme rooms", 'Blocks publishing: Room double-booked', 'Lowers quality: Room also booked on another board']);
   assert.equal(h.d.getElementById(roomRadio(h, 'R9').getAttribute('aria-labelledby')).textContent, 'R9');
+  // A room outside the programme rooms is a row like the others: its code,
+  // its verdict and its facts (no occupants).
+  assert.equal(h.d.getElementById(roomRadio(h, 'R7').getAttribute('aria-labelledby')).textContent, 'R7');
+  assert.equal(roomRadio(h, 'R7').getAttribute('aria-describedby').split(' ').length, 2);
+  assert.match(said('R7', 1), /^Lecture room · 40 seats · 10 spare/);
   assert.equal(strip(said('R8', 2)), 'Used by CS103-S1 (Term 3) at 09:00–10:15; and 1 more');
   assert.equal(strip(said('R9', 2)), 'Used by CS102-S1 (Term 2) at 09:00–10:15');
-  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices legend')].map(l => l.textContent), ['Free and fits (2)', 'Fits, but in use at this time (2)']);
+  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices legend')].map(l => l.textContent),
+    ['Free and fits (1)', "Free, but outside this board's programme rooms (1)", 'Fits, but in use at this time (2)']);
+  // The groups that save an issue say which; free and fits saves none.
+  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(set => set.getAttribute('aria-describedby')), [null, 'twRoomHint-outside', 'twRoomHint-inUse']);
+  assert.equal(h.d.getElementById('twRoomHint-outside').textContent, 'Choosing one saves a “Room unsuitable” warning, which Issues then shows.');
   assert.equal(h.d.getElementById('twRoomHint-inUse').textContent, 'Choosing one saves a room clash, which Issues then shows.');
   // The misfits: rows with their reasons, never radios; closed while rooms fit.
   const misfits = [...h.d.querySelectorAll('#twRoomMisfits .ux-choice-static')];
@@ -2386,7 +2397,7 @@ test('RC6 the gate: published, loading, a planner job, another scenario’s sect
   // While the write is out: the keyboard on the chosen row (Assign turns
   // off), the lists busy, and Assign held saying what it is doing.
   assert.equal(h.d.activeElement, roomRadio(h, 'R2'));
-  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(f => f.getAttribute('aria-busy')), ['true', 'true']);
+  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(f => f.getAttribute('aria-busy')), ['true', 'true', 'true'], 'every group, outside the programme rooms too');
   assert.deepEqual([roomNote(h)[0], strip(roomNote(h)[1])], [true, 'Assigning room R2…']);
   assert.equal(strip(h.d.getElementById('twRoomStatus').textContent), 'Assigning room R2…');
   answer.resolve({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
@@ -2395,7 +2406,7 @@ test('RC6 the gate: published, loading, a planner job, another scenario’s sect
   assert.equal(h.d.getElementById('twRoomAlert').textContent, "Another scenario owns this section's time and room; change it there.");
   assert.equal(roomDialogEl(h).hasAttribute('open'), true);
   assert.equal(h.d.getElementById('twRoomAssign').disabled, true, 'held: asking again would change nothing');
-  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(f => f.hasAttribute('aria-busy')), [false, false]);
+  assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(f => f.hasAttribute('aria-busy')), [false, false, false]);
   assert.equal(h.w.TW.undoStack.length, 0);
   assert.deepEqual(h.notices.slice(toasts), []);
   // Escape while the write is out closes the dialog; the refusal then comes as a toast.
@@ -3007,11 +3018,14 @@ test('RC15 the filter finds a wing too, hides a group it empties, and leaves Esc
   const groups = () => [...h.d.querySelectorAll('#twRoomChoices fieldset')].map(set => [set.dataset.group, set.hidden]);
   type('east');
   assert.deepEqual(shown(), ['R2'], 'by wing');
-  assert.deepEqual(groups(), [['free', false], ['inUse', true]], 'a group the filter empties is hidden, legend and all');
+  assert.deepEqual(groups(), [['free', false], ['outside', true], ['inUse', true]], 'a group the filter empties is hidden, legend and all');
   type('r8');
-  assert.deepEqual(groups(), [['free', true], ['inUse', false]]);
+  assert.deepEqual(groups(), [['free', true], ['outside', true], ['inUse', false]]);
+  type('r7');
+  assert.deepEqual(groups(), [['free', true], ['outside', false], ['inUse', true]]);
+  assert.deepEqual(shown(), ['R7']);
   type('');
-  assert.deepEqual(groups(), [['free', false], ['inUse', false]]);
+  assert.deepEqual(groups(), [['free', false], ['outside', false], ['inUse', false]]);
   // Escape in the empty filter closes the dialog, as it does anywhere in it.
   const closes = [];
   roomDialogEl(h).addEventListener('ux-dialog-close', event => closes.push(event.detail.reason));
@@ -3122,4 +3136,87 @@ test('RC19 the note gives the first reason: published, a planner job, busy, then
     refresh = null;
     await refreshing;
   }
+});
+
+/* ── Change room, live QA: a room outside the board's programme rooms ──
+   Saved, it is Issues' "Room unsuitable", a warning that rings the card
+   (the quality check holds a room to the meeting's programme pool), so the
+   dialog says so before the save and the report says so after it. */
+test('RC20 a free room outside the programme rooms is its own group, a warning as Issues word it; saved, the report is a warning that says Issues will list it', async t => {
+  for (const arabic of [false, true]) {
+    const h = await roomHarness(t, { arabic });
+    await h.select();
+    roomByKey(h);
+    await settled(h);
+    const set = h.d.querySelector('#twRoomChoices fieldset[data-group="outside"]');
+    assert.equal(set.querySelector('legend').textContent, arabic ? 'متاحة لكنها خارج قاعات برامج هذه اللوحة (1)' : "Free, but outside this board's programme rooms (1)");
+    assert.equal(h.d.getElementById('twRoomHint-outside').textContent, arabic
+      ? 'اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل».'
+      : 'Choosing one saves a “Room unsuitable” warning, which Issues then shows.');
+    assert.ok(set.matches('.ux-choice-list[data-ux-submit]'), 'its rows submit on Enter, as the other groups do');
+    assert.deepEqual([...set.querySelectorAll('input[name="twRoomChoice"]')].map(radio => radio.value), ['R7']);
+    assert.equal(h.d.getElementById(roomRadio(h, 'R7').getAttribute('aria-describedby').split(' ')[0]).textContent, arabic
+      ? 'يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة'
+      : "Lowers quality: Room unsuitable · outside this board's programme rooms");
+    roomRadio(h, 'R7').click();
+    assert.deepEqual(roomNote(h), [false, '']);
+    h.d.getElementById('twRoomAssign').click();
+    await wait(() => h.notices.length > 0 && roomDialogEl(h).hasAttribute('open') === false);
+    assert.deepEqual(h.posts, [{ room: 'R7' }]);
+    assert.deepEqual(h.notices.at(-1), { type: 'warning', text: arabic
+      ? 'عُيّنت القاعة \u2066R7\u2069، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة.'
+      : "Room \u2066R7\u2069 assigned; Issues will show it as unsuitable for this board's programmes." });
+  }
+});
+
+test('RC21 a room in use and outside the programme rooms keeps its clash, says both, and so does its report; the current room outside them is chosen at first', async t => {
+  const R12 = rc('R12', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(3)] });
+  const R13 = rc('R13', { available: false, tone: 'block', department_fit: false, occupied_by: [heldOn(2)] });
+  const withCopy = body => ({ ok: true, placement: roomRow({ room: body.room }), placements: [roomRow({ room: body.room }), roomRow({ id: 31, board_id: 3, room: body.room })] });
+  for (const arabic of [false, true]) {
+    const h = await roomHarness(t, { arabic, rooms: () => roomsAnswer([rc('R1'), rc('LAB25'), R12, R13]), move: withCopy });
+    await h.select();
+    roomByKey(h);
+    await settled(h);
+    const said = code => h.d.getElementById(roomRadio(h, code).getAttribute('aria-describedby').split(' ')[0]).textContent;
+    assert.deepEqual([...h.d.querySelectorAll('#twRoomChoices fieldset')].map(set => set.dataset.group), ['free', 'inUse'], 'no outside group: both are in use');
+    assert.deepEqual(['R12', 'R13'].map(code => roomRadio(h, code).closest('.ux-choice').dataset.tone), ['warning', 'critical']);
+    assert.deepEqual(['R12', 'R13'].map(said), arabic
+      ? ['يُضعف الجودة: القاعة محجوزة في لوحة أخرى · خارج قاعات برامج هذه اللوحة', 'يمنع النشر: القاعة محجوزة مرتين · خارج قاعات برامج هذه اللوحة']
+      : ["Lowers quality: Room also booked on another board · outside this board's programme rooms", "Blocks publishing: Room double-booked · outside this board's programme rooms"]);
+    roomRadio(h, 'R12').click();
+    h.d.getElementById('twRoomAssign').click();
+    await wait(() => h.notices.length > 0 && roomDialogEl(h).hasAttribute('open') === false);
+    assert.deepEqual(h.notices.at(-1), { type: 'warning', text: arabic
+      ? 'عُيّنت القاعة \u2066R12\u2069، ويستخدمها في هذا الوقت أيضاً: \u2066CS103-S1\u2069. وستعرضها «المشاكل» أيضاً غير مناسبة لبرامج هذه اللوحة. وتغيّرت أيضاً في لوحة أخرى.'
+      : "Room \u2066R12\u2069 assigned; \u2066CS103-S1\u2069 also uses it at this time. Issues will also show it as unsuitable for this board's programmes. It also changed on 1 other board." });
+  }
+  // A meeting already in a room outside the programme rooms: that room is
+  // chosen at first and holds Assign, as a current room in any group does.
+  const h = await roomHarness(t, { rows: () => [roomRow({ room: 'R7' })] });
+  await h.select();
+  roomByKey(h);
+  await settled(h);
+  assert.equal(roomRadio(h, 'R7').checked, true);
+  assert.deepEqual(roomNote(h), [true, 'This is the current room.']);
+  // Free and outside, with the class's copy on another board changed with
+  // it: the warning first, then the other board.
+  const shared = await roomHarness(t, { move: withCopy });
+  await shared.select();
+  roomByKey(shared);
+  await settled(shared);
+  roomRadio(shared, 'R7').click();
+  shared.d.getElementById('twRoomAssign').click();
+  await wait(() => shared.notices.length > 0);
+  assert.deepEqual(shared.notices.at(-1), { type: 'warning',
+    text: "Room \u2066R7\u2069 assigned; Issues will show it as unsuitable for this board's programmes. It also changed on 1 other board." });
+  // Rooms outside the programme rooms can be chosen: a list of only those
+  // and misfits is not "none fit", and its misfits stay closed.
+  const only = await roomHarness(t, { rooms: () => roomsAnswer(ROOM_SET.filter(room => ['R7', 'R3'].includes(room.room_code))) });
+  await only.select();
+  roomByKey(only);
+  await settled(only);
+  assert.deepEqual(roomRadios(only).map(radio => radio.value), ['R7']);
+  assert.doesNotMatch(only.d.getElementById('twRoomBody').textContent, /No room fits this meeting\./);
+  assert.equal(only.d.getElementById('twRoomMisfits').hidden, true);
 });

@@ -13,11 +13,12 @@
    itself (design record F3).
 
    The words are the module's own, so it never reads a page's globals. A room
-   in use is described as the page's Issues describe the clash it saves
-   (TONE_LEAD and ISSUE_KINDS in page-timetable-workspace.js); a test pins the
-   two equal. Verdicts and misfit reasons are plain text, which the caller
-   escapes; factsHtml is HTML. A value from the room list is put into a
-   sentence as it is: never read as a replace() pattern. */
+   in use, or outside the board's programme rooms, is described as the page's
+   Issues describe what saving it brings (TONE_LEAD and ISSUE_KINDS in
+   page-timetable-workspace.js); a test pins the two equal. Verdicts and
+   misfit reasons are plain text, which the caller escapes; factsHtml is
+   HTML. A value from the room list is put into a sentence as it is: never
+   read as a replace() pattern. */
 (function () {
   'use strict';
   // The page's language, as the pages read it (base.html's LANGUAGE_CODE), at
@@ -41,7 +42,7 @@
   const WORDS = freeze({
     en: {
       toneLead: { critical: 'Blocks publishing', warning: 'Lowers quality', info: 'For context' },
-      kinds: { room: 'Room double-booked', roomElsewhere: 'Room also booked on another board' },
+      kinds: { room: 'Room double-booked', roomElsewhere: 'Room also booked on another board', roomUnsuitable: 'Room unsuitable' },
       free: 'Free and fits',
       outsidePool: "outside this board's programme rooms",
       needsLead: 'This meeting',
@@ -58,7 +59,7 @@
     },
     ar: {
       toneLead: { critical: 'يمنع النشر', warning: 'يُضعف الجودة', info: 'للاطلاع' },
-      kinds: { room: 'القاعة محجوزة مرتين', roomElsewhere: 'القاعة محجوزة في لوحة أخرى' },
+      kinds: { room: 'القاعة محجوزة مرتين', roomElsewhere: 'القاعة محجوزة في لوحة أخرى', roomUnsuitable: 'القاعة غير مناسبة' },
       free: 'متاحة ومناسبة',
       outsidePool: 'خارج قاعات برامج هذه اللوحة',
       needsLead: 'هذا اللقاء يحتاج',
@@ -101,25 +102,39 @@
      and no board is ever "this board". */
   const boardKey = id => (id == null ? '' : String(id));
 
+  /* Outside the board's programme rooms (H14): saved, Issues list it as
+     "Room unsuitable" (the quality check holds a room to the meeting's
+     compatible rooms, the programme pool among them), a warning that rings
+     the card. Only an explicit false counts: a flag the answer leaves out is
+     no fact. */
+  function outsidePool(room) {
+    return room?.department_fit === false;
+  }
+
   /* {group, tone, words} for a room offered to placement `p`; the first rule
-     that applies wins: a misfit, then in use, then free. A room this board
-     already uses at that time is the clash publishing refuses (critical); one
-     used only on other boards lowers quality (warning). Once a room fits, only
-     `occupied_by` decides: the server's own tone and `available` say "not
-     free", which is not "cannot be chosen". Since PR #173 the server leaves
-     the section's own same-slot copies (the ones a room change moves with
-     this meeting) out of `occupied_by`; before it, those copies made a shared
-     section's own room read as in use. */
+     that applies wins: a misfit, then in use, then outside the programme
+     rooms, then free. A room this board already uses at that time is the
+     clash publishing refuses (critical); one used only on other boards lowers
+     quality (warning). A free room outside the programme rooms lowers quality
+     too ("Room unsuitable", as Issues say once it is saved); a room in use
+     that is also outside them keeps its clash's group and tone, and its words
+     add the pool, so nothing Issues will list is left unsaid. Once a room
+     fits, only `occupied_by` decides use: the server's own tone and
+     `available` say "not free", which is not "cannot be chosen". Since PR
+     #173 the server leaves the section's own same-slot copies (the ones a
+     room change moves with this meeting) out of `occupied_by`; before it,
+     those copies made a shared section's own room read as in use. */
   function verdict(room, p) {
     if (!fits(room)) return { group: 'misfit', tone: '', words: '' };
     const w = words();
+    const pool = outsidePool(room) ? ` · ${w.outsidePool}` : '';
     if (occupied(room)) {
       const board = boardKey(p?.board_id);
       const here = board !== '' && room.occupied_by.some(entry => boardKey(entry?.board_id) === board);
       const tone = here ? 'critical' : 'warning';
-      return { group: 'inUse', tone, words: `${w.toneLead[tone]}: ${w.kinds[here ? 'room' : 'roomElsewhere']}` };
+      return { group: 'inUse', tone, words: `${w.toneLead[tone]}: ${w.kinds[here ? 'room' : 'roomElsewhere']}${pool}` };
     }
-    if (room.department_fit === false) return { group: 'free', tone: 'info', words: `${w.toneLead.info}: ${w.outsidePool}` };
+    if (pool) return { group: 'outside', tone: 'warning', words: `${w.toneLead.warning}: ${w.kinds.roomUnsuitable}${pool}` };
     return { group: 'free', tone: 'ok', words: w.free };
   }
 
@@ -174,5 +189,5 @@
     return parts.join(' · ');
   }
 
-  window.TimetableRoomChoice = { codeKey, occupied, fits, verdict, misfitReasons, factsHtml, words };
+  window.TimetableRoomChoice = { codeKey, occupied, fits, outsidePool, verdict, misfitReasons, factsHtml, words };
 })();

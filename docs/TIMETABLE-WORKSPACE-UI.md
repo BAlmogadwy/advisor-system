@@ -578,6 +578,52 @@ findings changed the plan:
    (no clear passes `about`), and rows given the choice but never unchecked
    by it (a row the user checked is the choice, picked, so the markup moves
    with it and the rows are drawn anew).
+   After live QA (on a copy of the real data): the dialog offered 172FB007
+   for CS163 S1 under "Free and fits", worded "For context: outside this
+   board's programme rooms"; after Assign, Issues listed "Room unsuitable ·
+   CS163 · 172FB007" as a warning and the card rang. That is Issues' rule,
+   not a slip: the quality check's `incompatible` (from the rooming audit's
+   `original_unsuitable_demand_ids`) holds a saved room to the meeting's
+   compatible rooms, built in `timetable_exact_rooming` as type ∩ gender ∩
+   programme pool (H14) for every board of the meeting, so a room with
+   `department_fit === false` is a "Room unsuitable" warning once saved. An
+   info verdict promised no ring (§7.1: info rows never ring a card), which
+   the save then broke; the dialog must say what Issues will say (D24's
+   spirit). Such a room is now its own group, "Free, but outside this
+   board's programme rooms (n)", between free and in use, with its hint
+   (choosing one saves a "Room unsuitable" warning); its verdict is Issues'
+   warning ("Lowers quality: Room unsuitable · outside this board's programme
+   rooms", the kind word pinned to `ISSUE_KINDS.roomUnsuitable`); a room in
+   use that is also outside keeps its clash's group and tone, and its words
+   add the pool, so nothing Issues will list is left unsaid; the current
+   room, the filter, Assign's hold and the busy lists treat the group as
+   the others. The report after the save is a warning that names it ("Room
+   {c} assigned; Issues will show it as unsuitable for this board's
+   programmes.", or, after an in-use report, "Issues will also show it as
+   unsuitable…"). No verdict is info any more. The case table's R7 and R12
+   changed and R30 (held here and outside) and R31 (a misfit outside, still
+   a misfit) joined it; RC2, RC6, RC15, RC20, RC21 and, in Chrome, RB4
+   (no "Room unsuitable" on the card before; the
+   row, its verdict and hint; the warning report; Issues' "Room unsuitable ·
+   AI111 · R105" row and the card's warning ring; English and Arabic) pin
+   it. 18 jsdom mutants (the pool rule before the in-use rule, which hides
+   the clash; an info tone; the group merged into free; the in-use pool
+   words dropped; a success report; the report's words; the group not
+   drawn; the current room, the count and the hint skipping it; a missing
+   flag read as outside; outside before misfit; the kind word, lead and
+   reason; the Arabic heading) and 2 in Chrome (the old verdict; a success
+   report) all go red.
+   What still differs, a server follow-up: room candidates count as fitting
+   some rooms the audit does not. A room with no department fits any board
+   in `_room_department_fits`, while the audit needs a programme in common;
+   a room with no gender fits either gender there, while the audit needs the
+   meeting's own; seats are judged against the section's registered or
+   available capacity, while the audit ("Room too small") uses its buffered
+   demand; and `department_fit` is this board's pool only, while the audit
+   asks it of every board a shared meeting is on. Until the server reports
+   fit as the audit does, the dialog may under-report those: a room it calls
+   "Free and fits" can still be listed as unsuitable or too small once
+   saved.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
@@ -1181,12 +1227,12 @@ Docs: §3.3 adds `UXControls.dialog`, `.ux-dialog-scroll`, `.ux-choice-list` / `
   | Condition | Group | Tone | Words |
   |---|---|---|---|
   | not `fits` | misfit | — | — |
-  | an `occupied_by` entry is on `p`'s board (ids compared as text, so `2` and `"2"` are one board; a missing id is never this board) | inUse | critical | `TONE_LEAD.critical` + `ISSUE_KINDS.room` |
-  | other `occupied_by` entries | inUse | warning | warning lead + `roomElsewhere` |
-  | `department_fit === false` | free | info | "For context: outside this board's programme rooms" |
+  | an `occupied_by` entry is on `p`'s board (ids compared as text, so `2` and `"2"` are one board; a missing id is never this board) | inUse | critical | `TONE_LEAD.critical` + `ISSUE_KINDS.room` (+ " · outside this board's programme rooms" when `department_fit === false`) |
+  | other `occupied_by` entries | inUse | warning | warning lead + `roomElsewhere` (+ the same pool words when `department_fit === false`) |
+  | `department_fit === false` | outside | warning | warning lead + `ISSUE_KINDS.roomUnsuitable` + " · outside this board's programme rooms" |
   | otherwise | free | ok | "Free and fits" |
 
-  The verdict reads `occupied_by` only; same-class copies are already left out by the server.
+  The verdict reads `occupied_by` only; same-class copies are already left out by the server. `outsidePool(room)` is `department_fit === false` (a flag the answer leaves out is no fact). No verdict is `info`: every room Issues will list once saved is a warning or worse, since an info row never rings a card (§7.1).
 - **`misfitReasons(room, target, ar)`**, **`factsHtml(room, target, ar)`** and **`words(ar)`**.
 
 ##### Server
@@ -1238,7 +1284,7 @@ Docs: §3.3 adds `UXControls.dialog`, `.ux-dialog-scroll`, `.ux-choice-list` / `
 3. An optional "also changes on N other boards": the `occupied_by` entries of the current room with the same `term_section_id`. Since the server now skips them, this count comes from the move answer's `placements` after the commit; before the commit, use the selected section's other-board placements in `TW.placements` when they are known, else leave the hint out.
 4. A "this meeting only" hint when `p.meetings.length > 1`.
 5. The filter: `input#twRoomFilter[type=search][dir=auto][aria-controls=twRoomChoices]`.
-6. `#twRoomChoices` with two fieldsets, each a `.ux-choice-list[data-ux-submit]` (it must have that attribute): "Free and fits (n)" and "Fits, but in use at this time (n)" plus its hint.
+6. `#twRoomChoices` with three fieldsets, each a `.ux-choice-list[data-ux-submit]` (it must have that attribute): "Free and fits (n)", "Free, but outside this board's programme rooms (n)" plus its hint, and "Fits, but in use at this time (n)" plus its hint.
 7. A misfit disclosure (`data-ux-disclosure="tw-room:misfits"`, closed by default; forced open when nothing fits) over `.ux-choice-static` rows.
 8. A truncation note.
 
@@ -1302,9 +1348,10 @@ Rows:
 | Time's own clashes | Whatever the room, its time keeps {X}. X = 1 clash / {n} clashes | أيّاً كانت القاعة، يبقى في وقته {X}. X = pluralAr {one:'تعارض واحد', two:'تعارضان', few:'{n} تعارضات', many:'{n} تعارضاً', other:'{n} تعارض'} |
 | Other boards | Its room also changes on {X} (the same class at the same time). X = 1 other board / {n} other boards | تتغيّر قاعته أيضاً في {X} (الشعبة نفسها في الوقت نفسه). X = pluralAr {one:'لوحة أخرى', two:'لوحتين أخريين', few:'{n} لوحات أخرى', many:'{n} لوحةً أخرى', other:'{n} لوحة أخرى'} |
 | Filter | Filter rooms · placeholder "Room code or building" · "No room matches the filter." | تصفية القاعات · رمز القاعة أو المبنى · لا توجد قاعة تطابق التصفية. |
-| Groups | Free and fits (n) · Fits, but in use at this time (n) · Rooms that do not fit (n) | متاحة ومناسبة (n) · مناسبة لكنها مستخدمة في هذا الوقت (n) · قاعات غير مناسبة (n) |
+| Groups | Free and fits (n) · Free, but outside this board's programme rooms (n) · Fits, but in use at this time (n) · Rooms that do not fit (n) | متاحة ومناسبة (n) · متاحة لكنها خارج قاعات برامج هذه اللوحة (n) · مناسبة لكنها مستخدمة في هذا الوقت (n) · قاعات غير مناسبة (n) |
+| Outside hint | Choosing one saves a “Room unsuitable” warning, which Issues then shows. | اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل». |
 | In-use hint | Choosing one saves a room clash, which Issues then shows. | اختيار إحداها يحفظ تعارض قاعة يظهر بعدها في «المشاكل». |
-| Verdicts | Free and fits · For context: outside this board's programme rooms · {TONE_LEAD} + kind label | متاحة ومناسبة · للاطلاع: خارج قاعات برامج هذه اللوحة · (ISSUE_KINDS, PAGE:3194-3209) |
+| Verdicts | Free and fits · {TONE_LEAD} + kind label (ISSUE_KINDS: room, roomElsewhere, roomUnsuitable) · the pool words: " · outside this board's programme rooms" | متاحة ومناسبة · (ISSUE_KINDS) · " · خارج قاعات برامج هذه اللوحة" |
 | Occupants | Used by {c} ({board}) at {t}; and 1 more / and {n} more | تستخدمها {c} ({board}) في {t}؛ pluralAr {one:'وشعبة أخرى', two:'وشعبتان أخريان', few:'و{n} شعب أخرى', many:'و{n} شعبةً أخرى', other:'و{n} شعبة أخرى'} |
 | Facts | Lecture room · Lab · {n} seats · {n} spare · {n} short · Male (M) · Female (F) · Building B · Wing W · Floor 2 | قاعة محاضرات · معمل · pluralAr seats {one:'مقعد واحد', two:'مقعدان', few:'{n} مقاعد', many:'{n} مقعداً', other:'{n} مقعد'} · spare {zero:'بلا فائض', one:'مقعد فائض', two:'مقعدان فائضان', few:'{n} مقاعد فائضة', many:'{n} مقعداً فائضاً', other:'{n} مقعد فائض'} · short {one:'ينقصها مقعد واحد', two:'ينقصها مقعدان', few:'ينقصها {n} مقاعد', many:'ينقصها {n} مقعداً', other:'ينقصها {n} مقعد'} · طلاب (M) · طالبات (F) · المبنى B · الجناح W · الطابق 2 |
 | Misfit reasons | This meeting needs a lecture room · needs a lab · needs a room of type {c} · needs a Male (M) room · needs a Female (F) room | هذا اللقاء يحتاج إلى قاعة محاضرات · إلى معمل · إلى قاعة من نوع {c} · إلى قاعة طلاب (M) · إلى قاعة طالبات (F) |
@@ -1313,7 +1360,7 @@ Rows:
 | Stale | This meeting changed since its rooms were read. · Check again | تغيّر هذا اللقاء منذ قراءة قاعاته. · إعادة التحقق |
 | Notes | Choose a room. · This is the current room. | اختر قاعة. · هذه هي القاعة الحالية. |
 | Progress | Assigning room {c}… | جارٍ تعيين القاعة {c}… |
-| Toasts | Room {c} assigned. · Room {c} assigned; {c} also uses it at this time. · It also changed on {X}. | عُيّنت القاعة {c}. · عُيّنت القاعة {c}، ويستخدمها في هذا الوقت أيضاً: {c}. · وتغيّرت أيضاً في {X}. |
+| Toasts | Room {c} assigned. · Room {c} assigned; {c} also uses it at this time. · Room {c} assigned; Issues will show it as unsuitable for this board's programmes. · (in use and outside) Issues will also show it as unsuitable for this board's programmes. · It also changed on {X}. — a success only when nothing is in use and the room is in the pool; else a warning | عُيّنت القاعة {c}. · عُيّنت القاعة {c}، ويستخدمها في هذا الوقت أيضاً: {c}. · عُيّنت القاعة {c}، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة. · وستعرضها «المشاكل» أيضاً غير مناسبة لبرامج هذه اللوحة. · وتغيّرت أيضاً في {X}. |
 | Failures | This meeting is no longer on the board. · The room was not changed. | لم يعد هذا اللقاء في اللوحة. · لم تتغيّر القاعة. |
 | A result said in a dialog about another meeting (contract C) | {c} {c}: {words} | {c} {c}: {words} |
 
@@ -1340,7 +1387,7 @@ Rows:
 | Test | What it checks | Mutants it must kill |
 |---|---|---|
 | RC1 | A locked meeting: the GET URL is exactly `/ops/tw/placements/10/room-candidates/`. Choose R2 and submit: the POST body deep-equals `{room:'R2'}`. The undo top is `{type:'room', old_room:'LAB25', new_room:'R2'}`. A `/boards/2/` GET and a success toast follow. | Slot parameters added to the GET; time or override sent; lock refused; no history push; no `selectBoard` |
-| RC2 | R1 free; R9 occupied on board 2; R8 on another board; R7 with `department_fit:false`; R3, R4, R5 misfits: radios R1/R9/R8/R7 with tones ok/critical/warning/info; misfits are static rows with words from their flags. | `free()` used for choosability; server tone used; same-board rule dropped |
+| RC2 | R1 free; R9 occupied on board 2; R8 on another board; R7 with `department_fit:false`; R3, R4, R5 misfits: radios R1/R7/R9/R8 in groups free/outside/inUse/inUse with tones ok/warning/critical/warning; the outside and in-use groups carry their hints; misfits are static rows with words from their flags. | `free()` used for choosability; server tone used; same-board rule dropped; outside toned info or merged into free |
 | RC3 | Hold: nothing chosen → "Choose a room."; the current room → held; a deferred `toggleLock` POST → disabled with the busy note, back on afterwards. | `data-tw-mutation` dropped; current-room hold dropped |
 | RC4 | Opened from Selection, then `renderGrid()` and a Selection redraw with new content: the radio nodes are the same and the dialog stays open; `cancel` puts focus on the **new** `[data-focus-key=room]`. Opened by R from the card: focus ends on the new card. | Opener kept as a node |
 | RC5 | After assigning from a card, focus is on the rebuilt card through `boardNav`. | `active()` call removed |
@@ -1368,6 +1415,7 @@ The oracle tests in `tests/test_tw_room_candidates_fast_path.py` stay unchanged 
 | RB1 | Keyboard only, en and ar: Tab to Selection's Change…, Enter, ↓ to R101, Enter. The database shows room R101, `is_locked` still True, the time unchanged. Focus is back on the button. Esc on a second open also returns there. R on the card, choose, and focus returns to the card. | Locked meetings refused; focus restore removed; `cancel` routing removed |
 | RB2 | Choosing R102 saves it; Issues shows "Room double-booked" and the card's ring is critical. | Assign held for in-use rooms |
 | RB3 | 1366×650 and 1440×790, light and dark, en and ar: `CONTRAST` on `.ux-choice-title`, `.ux-choice-desc`, `.ux-field-label`, `.ux-dialog-sub`; no text under 11px; the foot stays visible while the body scrolls; in Arabic ↓ moves to the next radio. | `.ux-dialog-scroll` removed; a low-contrast tone colour |
+| RB4 | R105 (department CS, the board's programme AI; R100–R104 are AI's), en and ar: before the save the card names no "Room unsuitable"; R105's row is in the outside group, toned warning, with Issues' verdict and the group's hint; after Assign the report is a warning that names it, Issues lists "Room unsuitable · AI111 · R105" and the card's ring is warning. (Added after live QA, see 5c's as-built note.) | The old "For context" verdict; a success report |
 
 ##### Risks
 

@@ -1,5 +1,5 @@
 {
-  "about": "Change room's rules, stated once for both implementations: TimetableRoomChoice (static/js/timetable-room-choice.js) and split view's roomCodeKey, roomIsOccupied and roomFitsSection (static/js/page-timetable-workspace-split.js). Each room is a candidate as preview_placement_room_candidates sends it; `target` overrides fields of the shared target for that case, `placement` (when present, even null) replaces the shared placement, and `facts` (when present) is the room's factsHtml in English and Arabic. A room that fits (type, gender, seats) can be chosen when it is free or when another section holds it at that time (owner ruling 2026-10-20), and a room that does not fit is a misfit even when it is held; the verdict reads occupied_by only, never the server's tone or `available`, and compares board ids as text. occupied_by is what the server sends: since PR #173 it leaves out the section's own same-slot copies (the ones a room change moves with the meeting); before it, those copies are listed as occupants. Misfit reasons name the type and the gender only: a room short of seats says so in its facts.",
+  "about": "Change room's rules, stated once for both implementations: TimetableRoomChoice (static/js/timetable-room-choice.js) and split view's roomCodeKey, roomIsOccupied and roomFitsSection (static/js/page-timetable-workspace-split.js). Each room is a candidate as preview_placement_room_candidates sends it; `target` overrides fields of the shared target for that case, `placement` (when present, even null) replaces the shared placement, and `facts` (when present) is the room's factsHtml in English and Arabic. A room that fits (type, gender, seats) can be chosen when it is free or when another section holds it at that time (owner ruling 2026-10-20), and a room that does not fit is a misfit even when it is held; the verdict reads occupied_by only, never the server's tone or `available`, and compares board ids as text. A room that fits, is free and has department_fit false (outside the board's programme rooms) is its own group, a warning worded as Issues word what it saves (Room unsuitable); a room in use keeps its clash's group and tone when it is also outside them, and its words add that. occupied_by is what the server sends: since PR #173 it leaves out the section's own same-slot copies (the ones a room change moves with the meeting); before it, those copies are listed as occupants. Misfit reasons name the type and the gender only: a room short of seats says so in its facts.",
   "placement": {"id": 10, "board_id": 2},
   "target": {"day": "SUN", "start": "09:00", "end": "10:15", "required_type": "lecture", "required_gender": "M", "required_capacity": 30},
   "cases": [
@@ -11,10 +11,10 @@
       "reasons": {"en": [], "ar": []}
     },
     {
-      "name": "a free room outside the board's programme rooms is free, for context",
+      "name": "a free room outside the board's programme rooms lowers quality, as Issues say of it once it is saved",
       "room": {"room_code": "R7", "room_type": "lecture", "capacity": 40, "section": "M", "available": true, "tone": "warn", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false, "occupied_by": []},
       "code_key": "R7", "fits": true, "occupied": false,
-      "verdict": {"group": "free", "tone": "info", "en": "For context: outside this board's programme rooms", "ar": "للاطلاع: خارج قاعات برامج هذه اللوحة"},
+      "verdict": {"group": "outside", "tone": "warning", "en": "Lowers quality: Room unsuitable · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة"},
       "reasons": {"en": [], "ar": []}
     },
     {
@@ -45,12 +45,27 @@
       "reasons": {"en": [], "ar": []}
     },
     {
-      "name": "a room held elsewhere and outside the programme rooms is in use, not context",
+      "name": "a room held elsewhere and outside the programme rooms is in use, and says it is outside them too",
       "room": {"room_code": "R12", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false,
         "occupied_by": [{"placement_id": 31, "term_section_id": 131, "board_id": 3, "board_label": "Term 4", "section": "CS30-S2", "day": "SUN", "start": "09:00", "end": "10:15"}]},
       "code_key": "R12", "fits": true, "occupied": true,
-      "verdict": {"group": "inUse", "tone": "warning", "en": "Lowers quality: Room also booked on another board", "ar": "يُضعف الجودة: القاعة محجوزة في لوحة أخرى"},
+      "verdict": {"group": "inUse", "tone": "warning", "en": "Lowers quality: Room also booked on another board · outside this board's programme rooms", "ar": "يُضعف الجودة: القاعة محجوزة في لوحة أخرى · خارج قاعات برامج هذه اللوحة"},
       "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a room held on this board and outside the programme rooms is a critical clash that says it is outside them too",
+      "room": {"room_code": "R30", "room_type": "lecture", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": true, "fits_gender": true, "fits_capacity": true, "department_fit": false,
+        "occupied_by": [{"placement_id": 21, "term_section_id": 121, "board_id": 2, "board_label": "Term 2", "section": "AI20-S1", "day": "SUN", "start": "09:00", "end": "10:15"}]},
+      "code_key": "R30", "fits": true, "occupied": true,
+      "verdict": {"group": "inUse", "tone": "critical", "en": "Blocks publishing: Room double-booked · outside this board's programme rooms", "ar": "يمنع النشر: القاعة محجوزة مرتين · خارج قاعات برامج هذه اللوحة"},
+      "reasons": {"en": [], "ar": []}
+    },
+    {
+      "name": "a lab outside the programme rooms where the meeting needs a lecture room is a misfit, not outside",
+      "room": {"room_code": "R31", "room_type": "lab", "capacity": 40, "section": "M", "available": false, "tone": "block", "fits_type": false, "fits_gender": true, "fits_capacity": true, "department_fit": false, "occupied_by": []},
+      "code_key": "R31", "fits": false, "occupied": false,
+      "verdict": {"group": "misfit", "tone": "", "en": "", "ar": ""},
+      "reasons": {"en": ["This meeting needs a lecture room"], "ar": ["هذا اللقاء يحتاج إلى قاعة محاضرات"]}
     },
     {
       "name": "a meeting whose board id comes as text is on the board of an occupant with that id as a number",

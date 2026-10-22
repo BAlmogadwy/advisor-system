@@ -9,9 +9,11 @@ keyboard moves to is never under the sticky header or the floating job card.
 
 §7.3, 5c (RoomDialogTests): Change room from the keyboard, from Selection's
 button and by R on a card, keeps the time lock and gives the keyboard back to
-whatever opened it; a room in use can be chosen and its clash is shown; the
-dialog reads in both themes and languages, keeps its foot in view while its
-list scrolls, and follows the arrow keys down the list in either direction.
+whatever opened it; a room in use can be chosen and its clash is shown; a room
+outside the board's programme rooms is the "Room unsuitable" warning Issues
+then show, before the save and after it; the dialog reads in both themes and
+languages, keeps its foot in view while its list scrolls, and follows the
+arrow keys down the list in either direction.
 """
 
 from __future__ import annotations
@@ -499,6 +501,87 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
         )
         self.assertIn("Room R102 assigned; AI333-S1 also uses it at this time.", toast)
         self.assertEqual(errors, [])
+
+    def test_a_room_outside_the_boards_programmes_is_the_warning_issues_then_show(self) -> None:
+        """Live QA of 5c: a free room outside the board's programme rooms was
+        offered as "For context", and Issues then listed it as "Room
+        unsuitable", a warning that rang the card. The dialog now says what
+        Issues will say, and so does the report after the save."""
+        from core.models import Room
+
+        # The rooms so far serve the board's programme (AI); R105 is a free
+        # lecture room of another programme (CS).
+        Room.objects.filter(room_code__startswith="R10").update(department="AI")
+        Room.objects.create(
+            room_code="R105", room_type="lecture", capacity=40, section="M", department="CS"
+        )
+        words = {
+            "en": (
+                "Room unsuitable",
+                "Lowers quality: Room unsuitable · outside this board's programme rooms",
+                "Choosing one saves a “Room unsuitable” warning, which Issues then shows.",
+                "Room R105 assigned; Issues will show it as unsuitable for this board's programmes.",
+            ),
+            "ar": (
+                "القاعة غير مناسبة",
+                "يُضعف الجودة: القاعة غير مناسبة · خارج قاعات برامج هذه اللوحة",
+                "اختيار إحداها يحفظ تحذير «القاعة غير مناسبة» الذي يظهر بعدها في «المشاكل».",
+                "عُيّنت القاعة R105، وستعرضها «المشاكل» غير مناسبة لبرامج هذه اللوحة.",
+            ),
+        }
+        # The card's tone mark names its issues once the quality check has
+        # answered about the data on show.
+        card_issues = f"""() => {{
+          const mark = document.querySelector('{self.card} .tw-card-tone');
+          return TW.quality && TW.qualityVersion === TW.dataVersion ? (mark.hidden ? '' : mark.getAttribute('aria-label')) : null;
+        }}"""
+        for language, (kind, verdict, hint, report) in words.items():
+            self._reset()
+            page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
+            page.wait_for_function(f"({card_issues})() !== null")
+            self.assertNotIn(kind, page.evaluate(card_issues), f"{language}: R100 serves AI")
+            page.click(self.card)
+            page.click('#twRightBody [data-tw-action="room"]')
+            page.wait_for_selector('#twRoomBody input[value="R105"]', state="attached")
+            row = page.evaluate(
+                """() => {
+                  const radio = document.querySelector('#twRoomBody input[value="R105"]');
+                  const group = radio.closest('fieldset');
+                  const text = id => document.getElementById(id || '')?.textContent ?? null;
+                  return [group.dataset.group, radio.closest('.ux-choice').dataset.tone,
+                          text(radio.getAttribute('aria-describedby').split(' ')[0]),
+                          text(group.getAttribute('aria-describedby'))];
+                }"""
+            )
+            self.assertEqual(row, ["outside", "warning", verdict, hint], language)
+            page.click('#twRoomBody label:has(input[value="R105"])')
+            page.click("#twRoomAssign")
+            self._saved(page, "R105")
+            self.assertEqual(self.placements.get(pk=self.sunday.pk).room, "R105", language)
+            # The report is a warning that names what Issues will list (codes
+            # are isolated in it).
+            page.wait_for_function(
+                """report => [...document.querySelectorAll('#toast-container .ux-toast.warning .ux-toast-title')]
+                  .some(title => title.textContent.replace(/[\\u2066\\u2069]/g, '') === report)""",
+                arg=report,
+            )
+            # Issues list it as unsuitable, and the card rings for it.
+            page.wait_for_function(f"({card_issues})()?.includes({kind!r})")
+            page.click("#twTabIssues")
+            page.wait_for_function(
+                "([kind, subject]) => [...document.querySelectorAll('#twRightBody .tw-issue-row[data-tone=\"warning\"]')]"
+                ".some(row => row.querySelector('.tw-issue-kind').textContent === kind"
+                " && row.querySelector('.tw-issue-subject').textContent === subject)",
+                arg=[kind, "AI111 · R105"],
+            )
+            self.assertTrue(
+                page.evaluate(
+                    f"document.querySelector('{self.card}').classList.contains('warning')"
+                ),
+                language,
+            )
+            self.assertEqual(errors, [], language)
+            page.context.close()
 
     def test_the_room_dialog_reads_keeps_its_foot_and_follows_the_arrows_in_both_directions(
         self,

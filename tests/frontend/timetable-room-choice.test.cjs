@@ -45,9 +45,18 @@ test('each room in the case table fits, is in use and reads as the table says, i
     }
   }
   // Every group and tone is in the table, and only a room that fits is offered.
+  // No verdict is context: an info row never rings a card (§7.1), and every
+  // room the dialog offers that Issues will list does ring one.
   const verdicts = table.cases.map(c => `${c.verdict.group}/${c.verdict.tone}`);
-  for (const kind of ['free/ok', 'free/info', 'inUse/critical', 'inUse/warning', 'misfit/']) assert.ok(verdicts.includes(kind), kind);
+  for (const kind of ['free/ok', 'outside/warning', 'inUse/critical', 'inUse/warning', 'misfit/']) assert.ok(verdicts.includes(kind), kind);
+  assert.deepEqual([...new Set(verdicts)].sort(), ['free/ok', 'inUse/critical', 'inUse/warning', 'misfit/', 'outside/warning']);
   assert.ok(table.cases.every(c => (c.verdict.group === 'misfit') === !c.fits));
+  // A room outside the programme rooms, each way it can be offered: free, held
+  // here, held elsewhere; and one that does not fit, which stays a misfit.
+  const outside = c => c.room?.department_fit === false;
+  for (const kind of ['outside/warning', 'inUse/critical', 'inUse/warning', 'misfit/']) {
+    assert.ok(table.cases.some(c => outside(c) && `${c.verdict.group}/${c.verdict.tone}` === kind), `outside the programme rooms: ${kind}`);
+  }
   // For each fit flag, a held room that misses on that flag alone: being held
   // never makes a misfit choosable, whichever check says so.
   const flags = ['fits_type', 'fits_gender', 'fits_capacity'];
@@ -78,7 +87,8 @@ test('writing to the words handed out changes no later verdict, reason or fact',
   const w = load(t);
   const choice = w.TimetableRoomChoice;
   const held = table.cases.find(c => c.verdict.tone === 'critical').room;
-  const elsewhere = table.cases.find(c => c.verdict.tone === 'warning').room;
+  const elsewhere = table.cases.find(c => c.verdict.tone === 'warning' && c.verdict.group === 'inUse').room;
+  const heldOutside = table.cases.find(c => c.verdict.group === 'inUse' && c.room.department_fit === false).room;
   const both = table.cases.find(c => c.reasons.en.length === 2 && !c.target);
   const studio = table.cases.find(c => c.target?.required_type === 'studio');
   const room = { room_type: 'lab', capacity: 40, section: 'F', building: 'B', wing: 'W', floor: 1 };
@@ -88,6 +98,7 @@ test('writing to the words handed out changes no later verdict, reason or fact',
     return [
       choice.verdict(held, table.placement).words, choice.verdict(elsewhere, table.placement).words,
       choice.verdict(table.cases[0].room, table.placement).words, choice.verdict(table.cases[1].room, table.placement).words,
+      choice.verdict(heldOutside, table.placement).words,
       ...choice.misfitReasons(both.room, table.target, ar), ...choice.misfitReasons(studio.room, { ...table.target, ...studio.target }, ar),
       choice.factsHtml(room, { required_capacity: 30 }, ar), choice.factsHtml({ ...room, room_type: 'lecture', section: 'M' }, { required_capacity: 50 }, ar),
     ];
@@ -124,28 +135,35 @@ test('the language is read when the words are asked for, not when the module loa
   assert.equal(w.TimetableRoomChoice.words(true).free, 'متاحة ومناسبة');
 });
 
-test("a room in use is worded and toned as the page's Issues word the clash it saves", t => {
+test("a room in use, or outside the programme rooms, is worded and toned as the page's Issues word what it saves", t => {
   const w = load(t);
   const workspace = read('static/js/page-timetable-workspace.js');
   const begin = workspace.indexOf('const ISSUE_KINDS = {');
   const end = workspace.indexOf('const issueKindLabel', begin);
   assert.ok(begin >= 0 && end > begin, "the page's ISSUE_KINDS and TONE_LEAD are where this test reads them");
-  const here = table.cases.find(c => c.verdict.tone === 'critical').room;
-  const elsewhere = table.cases.find(c => c.verdict.tone === 'warning').room;
+  const inPool = c => c.room?.department_fit !== false;
+  const here = table.cases.find(c => c.verdict.tone === 'critical' && inPool(c)).room;
+  const elsewhere = table.cases.find(c => c.verdict.tone === 'warning' && c.verdict.group === 'inUse' && inPool(c)).room;
+  const outside = table.cases.find(c => c.verdict.group === 'outside').room;
   for (const arabic of [false, true]) {
     const page = vm.runInNewContext(`${workspace.slice(begin, end)}\n;({ ISSUE_KINDS, TONE_LEAD })`, { IS_AR: arabic });
+    const label = kind => page.ISSUE_KINDS[kind][arabic ? 'ar' : 'en'];
     const own = w.TimetableRoomChoice.words(arabic);
     assert.deepEqual(plain(own.toneLead), plain(page.TONE_LEAD));
-    assert.equal(own.kinds.room, page.ISSUE_KINDS.room[arabic ? 'ar' : 'en']);
-    assert.equal(own.kinds.roomElsewhere, page.ISSUE_KINDS.roomElsewhere[arabic ? 'ar' : 'en']);
+    assert.deepEqual(Object.keys(own.kinds), ['room', 'roomElsewhere', 'roomUnsuitable']);
+    for (const kind of Object.keys(own.kinds)) assert.equal(own.kinds[kind], label(kind), kind);
     w.LANGUAGE_CODE = arabic ? 'ar' : 'en';
     const onThisBoard = w.TimetableRoomChoice.verdict(here, table.placement);
     const onAnother = w.TimetableRoomChoice.verdict(elsewhere, table.placement);
+    const unsuitable = w.TimetableRoomChoice.verdict(outside, table.placement);
     assert.equal(onThisBoard.tone, page.ISSUE_KINDS.room.tone);
-    assert.equal(onThisBoard.words, `${page.TONE_LEAD.critical}: ${page.ISSUE_KINDS.room[arabic ? 'ar' : 'en']}`);
+    assert.equal(onThisBoard.words, `${page.TONE_LEAD.critical}: ${label('room')}`);
     assert.equal(onAnother.tone, page.ISSUE_KINDS.roomElsewhere.tone);
-    assert.equal(onAnother.words, `${page.TONE_LEAD.warning}: ${page.ISSUE_KINDS.roomElsewhere[arabic ? 'ar' : 'en']}`);
-    assert.equal(w.TimetableRoomChoice.verdict(table.cases[1].room, table.placement).words.split(': ')[0], page.TONE_LEAD.info);
+    assert.equal(onAnother.words, `${page.TONE_LEAD.warning}: ${label('roomElsewhere')}`);
+    // Saved, a room outside the programme rooms is Issues' "Room unsuitable",
+    // a warning: the verdict leads with it, then says why.
+    assert.equal(unsuitable.tone, page.ISSUE_KINDS.roomUnsuitable.tone);
+    assert.equal(unsuitable.words, `${page.TONE_LEAD.warning}: ${label('roomUnsuitable')} · ${own.outsidePool}`);
   }
 });
 
