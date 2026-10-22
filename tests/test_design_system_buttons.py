@@ -116,6 +116,11 @@ NEUTRAL_TEMPLATE_SITES = {
     ("static/js/page-timetable-workspace.js", "room"),
     ("static/js/page-timetable-workspace.js", "room-recheck"),
     ("static/js/page-timetable-workspace.js", "room-retry"),
+    # Move: Selection's Move…, and the dialog's Check again and Try again (its
+    # × and Cancel are the template's data-dialog-close).
+    ("static/js/page-timetable-workspace.js", "move"),
+    ("static/js/page-timetable-workspace.js", "move-recheck"),
+    ("static/js/page-timetable-workspace.js", "move-retry"),
 }
 
 #: The one that styles itself inline. It was never `ButtonFace`, and the neutral
