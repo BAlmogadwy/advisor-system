@@ -249,7 +249,30 @@ async function twFetch(url, opts = {}) {
   // `_quiet`: a background read whose failure only means "unknown" — no toast.
   // `_changed(body)`: a write the server answers "nothing changed" leaves the
   // data version, so every answer read before it stays current.
+  // `_onError(body, status)`: a caller that can say more than a toast takes
+  // the failure instead (true = handled: no toast). It hears of every
+  // failure the server or the network gives, since a dialog keeps its
+  // messages inside itself (a toast behind a modal is never seen): `body` is
+  // null when the answer is not JSON (a proxy's error page); status 0 means
+  // no answer could be read at all. It does not hear the local busy guard
+  // below, which warns and returns null before any request is made; a
+  // dialog's commit does not meet that guard, since its button carries
+  // data-tw-mutation and is off while the workspace is busy.
+  // It is asked at most once. A handler that throws has not handled the
+  // failure: the slip is logged, and the toast follows as if there were no
+  // handler (the server's message; none for a quiet request).
   const { _workspaceToken, _onError, _quiet, _changed, ...requestOptions } = opts;
+  let asked = false;
+  const handled = (body, status) => {
+    if (asked || typeof _onError !== 'function') return false;
+    asked = true;
+    try {
+      return Boolean(_onError(body, status));
+    } catch (slip) {
+      console.error('[twFetch] the _onError handler threw', slip);
+      return false;
+    }
+  };
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && workspaceBusy() && (!TW_ACTIVITY.owner || _workspaceToken !== TW_ACTIVITY.owner)) {
     notify.warning(IS_AR ? 'الجدول قيد التحديث؛ انتظر انتهاء العملية.' : 'The timetable is being updated; wait for the operation to finish.');
@@ -271,28 +294,36 @@ async function twFetch(url, opts = {}) {
       response = await fetch(url, _injectCsrf(requestOptions));
     }
     if (!response.ok) {
-      let msg = `${response.status}`;
-      try {
-        const d = busyBody || await response.json();
-        const e = d.error;
-        // A caller that can say more than a toast (Publish lists the server's
-        // blockers) takes the error body instead.
-        if (typeof opts._onError === 'function' && opts._onError(d, response.status)) return null;
-        if (_quiet) return null;
-        if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) {
-          announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
-        }
-        msg = (e && typeof e === 'object') ? (e.message || e.code || JSON.stringify(e)) : (e || d.message || msg);
-        const seedLabel = runSeedText(e?.details || d);
-        if (seedLabel) msg += ` · ${seedLabel}`;
-      } catch {}
-      if (!_quiet) notify.error(msg);
+      // The retry loop above may have read the body already (a body is read
+      // once). One that is not JSON reads as null.
+      let d = busyBody;
+      if (!d) { try { d = await response.json(); } catch { d = null; } }
+      const e = d?.error;
+      // A planner job holding the scenario is announced before the caller
+      // takes the refusal: a dialog that says "busy" in its own words, or a
+      // quiet request, still leaves the page showing the job and holding edits.
+      if (e?.code === 'SCENARIO_BUSY' && e.details?.active_job) {
+        announcePlannerJob(e.details.active_job, e.details.scenario_id, e.details.active_job.job_id);
+      }
+      // Publish lists the server's blockers; a dialog keeps the refusal inside itself.
+      if (handled(d, response.status)) return null;
+      if (_quiet) return null;
+      let msg = (e && typeof e === 'object') ? (e.message || e.code || JSON.stringify(e)) : (e || d?.message || `${response.status}`);
+      const seedLabel = runSeedText(e?.details || d);
+      if (seedLabel) msg += ` · ${seedLabel}`;
+      notify.error(msg);
       return null;
     }
     const body = await response.json();
     if (writes && (typeof _changed !== 'function' || _changed(body))) TW.dataVersion++;
     return body;
   } catch (err) {
+    // No answer could be read: fetch rejected (offline, the connection
+    // dropped), or a 2xx came back whose body is not JSON. fetch follows a
+    // redirect, so a session that expired mid-request lands here with the
+    // login page's HTML under a 200. Either way there is no refusal to hand
+    // over, and _onError(null, 0) is the intended answer.
+    if (handled(null, 0)) return null;
     if (!_quiet) notify.error(err.message || String(err));
     return null;
   } finally {
