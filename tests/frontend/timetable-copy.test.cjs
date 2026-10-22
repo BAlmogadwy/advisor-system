@@ -222,7 +222,6 @@ for (const split of [false, true]) {
         assert.equal(h.state.placements.length, 0);
         assert.equal(h.d.querySelector('.tw-card'), null);
         assert.equal(h.d.getElementById('twBoardTabs').children.length, 0);
-        assert.equal(h.d.getElementById('twBoardsNav').children.length, 0);
       }
       assert.ok([...h.d.getElementById(`${h.prefix}Scenario`).options].some(option => option.value === '2'));
     });

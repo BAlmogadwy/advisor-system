@@ -1,102 +1,441 @@
-/* Additive workspace refinements: all tools remain available at every width. */
-.tw-workspace { grid-template-columns: 220px minmax(0, 1fr) 290px; min-height: 540px; }
-.tw-workspace > * { min-width: 0; }
-.tw-centre { max-height: 76vh; }
-#twGridWrap { min-width: 0; }
-.tw-grid { min-width: 650px; }
-.tw-left, .tw-right { max-height: 76vh; }
-.tw-panel-tabs { position: sticky; top: 0; z-index: 2; }
-button.tw-panel-tab { appearance: none; background: transparent; border: 0; border-bottom: 2px solid transparent; font-family: inherit; min-height: 40px; }
-button.tw-panel-tab.active { border-bottom-color: var(--teal); }
-.tw-panel-body { overflow-x: auto; overflow-wrap: anywhere; }
-.tw-gen-item, .tw-opt-item, .tw-export-item {
-  display: block; width: 100%; appearance: none; border: 0; background: transparent;
-  text-align: start; color: var(--ink); font: inherit; white-space: normal; line-height: 1.5;
-}
-.tw-gen-item span, .tw-opt-item span, .tw-export-item span { display: block; }
-.tw-gen-item:hover, .tw-opt-item:hover, .tw-export-item:hover,
-.tw-gen-item:focus-visible, .tw-opt-item:focus-visible, .tw-export-item:focus-visible { background: var(--brand-soft); }
-#twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown {
-  max-width: calc(100vw - 32px); max-height: min(420px, 65vh); overflow-y: auto;
-}
-/* Before the menu script places them: under the end edge of their group, in
-   either direction (the inline `right:0` alone is wrong in Arabic). */
-#twOptimiseDropdown, #twExportDropdown { inset-inline-start: auto !important; inset-inline-end: 0 !important; }
-/* The Generate bar's glass blur (backdrop-filter) makes it a stacking context,
-   so its menu's own z-index cannot rise above the sticky command bar painted
-   after it. While the menu is open, lift the whole bar just above the sticky
-   layer, still under sidebars, drawers, modals and toasts; closed, the page
-   layers exactly as before. aria-expanded is kept current on every open and
-   close path by timetable-workspace-accessibility.js. */
-#twGenBar:has(#twGenerateMenu[aria-expanded="true"]) { position: relative; z-index: calc(var(--z-sticky) + 1); }
-.tw-cmd-bar .tw-btn:disabled, #twGenBar button:disabled { opacity: .5; cursor: not-allowed; }
-.tw-cmd-bar .tw-btn:disabled:hover { background: var(--card); }
-.tw-cmd-bar .tw-btn-primary:disabled:hover { background: var(--teal); }
-.tw-workspace button:disabled, .tw-card [aria-disabled="true"], .tw-card button:disabled { opacity: .55; cursor: not-allowed; }
-.tw-workspace [aria-disabled="true"], .tw-cmd-bar a[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
-.tw-workspace[aria-busy="true"] .tw-card, .tw-workspace[aria-busy="true"] .tw-section-item { cursor: progress; }
-.tw-cmd-bar button:focus-visible, #twGenBar button:focus-visible, .tw-workspace :focus-visible,
-.tw-bottom :focus-visible, .tw-cmd-bar a:focus-visible { outline: 2px solid var(--royal); outline-offset: 3px; }
-.tw-bottom { max-height: none; overflow: visible; }
-.tw-bottom.open { max-height: none; overflow: visible; }
-button.tw-bottom-handle { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line); background: var(--glass-bg-header); font-family: inherit; min-height: 38px; }
-#twBottomContent { display: none; }
-.tw-bottom.open #twBottomContent { display: block; }
-#twBottomContent[hidden] { display: none; }
-#twBottomBody { max-height: 280px; overflow: auto; }
-.tw-quality-summary {
-  display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 14px 16px;
-  background: var(--card); border-bottom: 1px solid var(--line);
-}
-.tw-quality-heading { flex: 1 1 210px; }
-.tw-quality-heading h2 { margin: 0 0 4px; font-size: .85rem; font-weight: 700; color: var(--ink); }
-.tw-quality-heading p { margin: 0; color: var(--t3); font-size: .74rem; line-height: 1.5; }
-.tw-quality-metrics { display: grid; grid-template-columns: repeat(6, minmax(80px, 1fr)); gap: 12px 18px; flex: 3 1 660px; min-width: 0; margin: 0; }
-.tw-quality-metrics div { min-width: 0; }
-.tw-quality-metrics dt { color: var(--t3); font-size: .68rem; font-weight: 500; line-height: 1.45; }
-.tw-quality-metrics dd { margin: 5px 0 0; color: var(--teal); font-size: 1.1rem; font-weight: 750; font-variant-numeric: tabular-nums; }
-.tw-quality-metrics dd.danger { color: var(--danger); }
-/* One teacher per section adds a seventh cell; keep the wide grid on one row. */
-@media (min-width: 1101px) {
-  .tw-quality-metrics:has(> #twQualityTeacherCoverageRow:not([hidden])) { grid-template-columns: repeat(7, minmax(80px, 1fr)); }
-}
-@media (max-width: 1100px) {
-  .tw-workspace { grid-template-columns: minmax(0, 1fr); min-height: 0; }
-  .tw-workspace .tw-left, .tw-workspace .tw-right { display: block; max-height: none; border-inline: 0; border-bottom: 1px solid var(--line); }
-  .tw-left { display: grid !important; grid-template-columns: minmax(150px, .8fr) minmax(250px, 1.5fr) minmax(150px, .7fr); }
-  .tw-left-section { min-width: 0; border-inline-end: 1px solid var(--line); }
-  #twBoardsNav { max-height: 200px; overflow-y: auto; }
-  .tw-section-list { max-height: 200px; }
-  .tw-centre { max-height: 70vh; min-height: 280px; }
-  .tw-right .tw-panel-body { max-height: 420px; overflow: auto; }
-  .tw-quality-metrics { flex-basis: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 640px) {
-  .tw-cmd-bar { position: relative; padding: 10px; gap: 7px; }
-  .tw-cmd-bar select { max-width: 100%; flex: 1 1 210px; }
-  .tw-cmd-bar #twSearch { width: 100%; flex: 1 1 100%; }
-  .tw-cmd-sep { display: none; }
-  .tw-left { grid-template-columns: minmax(0, 1fr); }
-  .tw-left-section { border-inline-end: 0; }
-  .tw-centre { padding: 10px; }
-  .tw-quality-summary { padding: 12px; gap: 12px; }
-  .tw-quality-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .tw-quality-metrics dt { font-size: .66rem; }
-  .tw-right .tw-panel-tab { font-size: .76rem; }
-  /* Phones: each menu is a full-width sheet across its own bar. The button
-     groups stop being the containing block, so the sheet spans the bar; the
-     menu script lifts it to just under its buttons (without the script it
-     falls to the bar's bottom edge, never over the buttons that opened it).
-     The command bar is not sticky here, so the Generate bar can sit above it
-     for good: browsers without :has() still show its sheet whole. */
-  #twGenBar { position: relative; z-index: calc(var(--z-sticky) + 1); }
-  #twGenerateGroup, #twOptimiseGroup, #twExportGroup { position: static !important; }
-  #twGenerateDropdown, #twOptimiseDropdown, #twExportDropdown {
-    position: absolute !important; top: 100% !important; inset-inline: 12px !important;
-    min-width: 0 !important;
+/* ══════════════════════════════════════════════════════════════════
+   Timetable Workspace — this page's own layout and the timetable itself.
+
+   Shared controls (toolbar, menus, segmented buttons, tabs, stat strip, panes,
+   dialog, job card) are the design system's ux-* components in global.css;
+   the page frame is global.css's `full` width tier with `data-fill="viewport"`.
+   This file holds only what is this page's: the chrome's arrangement, the
+   panes' proportions, the board grid and its cards, and the inspector's
+   contents. Design record: docs/TIMETABLE-WORKSPACE-UI.md.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Header: scenario scope and scenario actions ─────────────────── */
+#main-content .page-header { flex-wrap: wrap; row-gap: 6px; column-gap: 16px; }
+#main-content .page-header-left { flex: none; }
+#main-content .page-header-module { margin: 0; }
+#main-content .page-header-right { flex: 1 1 520px; min-width: 0; }
+/* Below 1600px the title gives its row to the controls (it is still the page's
+   <h1> for assistive technology, the browser tab and the active sidebar item). */
+@media (max-width: 1599.98px) {
+  #main-content .page-header-left {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
   }
 }
+.tw-header { width: 100%; }
+.tw-scope { flex-wrap: wrap; }
+.tw-scope-fields { display: flex; gap: 6px; }
+/* The scenario picker is capped and ellipsised; its title carries the full name. */
+.tw-scenario-field .fb-search { max-width: min(380px, 40vw); }
+.tw-scenario-field .fb-search > select { width: 100%; max-width: 360px; }
+.tw-scenario-actions { flex-wrap: wrap; justify-content: flex-end; }
+#twPublish { min-width: 92px; }
+
+/* ── Board bar ──────────────────────────────────────────────────────
+   Not sticky (the page does not scroll), but lifted above the strip and panes
+   so its Open menu drops over them — and kept under the header (z 50), whose
+   menus drop over this bar. */
+.tw-cmd-bar {
+  position: relative; z-index: 40;
+  padding: 6px 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.tw-boards { max-width: min(760px, 52vw); }
+.tw-filter .fb-search { min-width: 220px; }
+.tw-filter .fb-search > input { width: 30ch; }
+.tw-search-count { flex: none; color: var(--t3); font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
+.tw-search-count:empty { display: none; }
+
+/* ── Generation notice (#twGenStatus): a live region, shown only with news ── */
+.tw-notice {
+  padding: 8px 16px;
+  background: var(--sev-info-bg);
+  border-bottom: 1px solid var(--line);
+  color: var(--t1); font-size: var(--text-sm); line-height: 1.55;
+}
+/* Empty, it takes no room but stays rendered: it is where focus lands when a
+   menu choice starts a job and disables the control that opened it. */
+.tw-notice:empty { padding: 0; border: 0; background: none; }
+
+/* ── Stat strip ─────────────────────────────────────────────────── */
+.tw-stats {
+  padding: 6px 16px 5px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+/* ── Panes ──────────────────────────────────────────────────────────
+   Left: required sections, collapsible to a rail. Centre: the board.
+   Right: the inspector, collapsible to a rail. Defaults by width and the
+   user's choice are applied by timetable-workspace-panes.js. At the defaults a
+   lecture slot is at least 96px wide at 1366 and 1440. */
+.tw-workspace {
+  --tw-left-w: 248px;
+  --tw-right-w: 296px;
+  --tw-rail-w: 44px;
+  display: grid;
+  grid-template-columns: var(--tw-left-w) minmax(0, 1fr) var(--tw-right-w);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg);
+}
+@media (min-width: 1440px) { .tw-workspace { --tw-right-w: 320px; } }
+@media (min-width: 1600px) { .tw-workspace { --tw-right-w: 352px; } }
+.tw-workspace[data-left="collapsed"]  { --tw-left-w: var(--tw-rail-w); }
+.tw-workspace[data-right="collapsed"] { --tw-right-w: var(--tw-rail-w); }
+.tw-left  { border-inline-end: 1px solid var(--line-strong); }
+.tw-right { border-inline-start: 1px solid var(--line-strong); }
+.tw-centre {
+  min-width: 0; min-height: 0;
+  padding: 10px 14px 16px;
+  overflow: auto; overscroll-behavior: contain;
+}
+.tw-pane-count {
+  flex: none; min-width: 22px; padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--sev-warning-bg); color: var(--sev-warning);
+  font-size: var(--text-2xs); font-weight: 700; line-height: 1.6; text-align: center;
+}
+.tw-pane-count:empty { display: none; }
+.tw-pane-collapse { flex: none; }
+
+/* A collapsed pane is a rail: its count and its name, one click to open. */
+.tw-rail {
+  display: none;
+  flex-direction: column; align-items: center; gap: 10px;
+  box-sizing: border-box; width: 100%; height: 100%; padding: 12px 0;
+  border: 0; background: transparent; color: var(--t2);
+  font: inherit; cursor: pointer;
+}
+.tw-rail:hover { background: color-mix(in srgb, var(--teal) 7%, transparent); color: var(--t0); }
+.tw-rail:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+.tw-rail-label { writing-mode: vertical-rl; font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
+.tw-rail-count {
+  min-width: 22px; padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--sev-warning-bg); color: var(--sev-warning);
+  font-size: var(--text-2xs); font-weight: 700; text-align: center;
+}
+.tw-rail-count:empty { display: none; }
+.tw-workspace[data-left="collapsed"] .tw-left > :not(.tw-rail),
+.tw-workspace[data-right="collapsed"] .tw-right > :not(.tw-rail) { display: none; }
+.tw-workspace[data-left="collapsed"] .tw-left > .tw-rail,
+.tw-workspace[data-right="collapsed"] .tw-right > .tw-rail { display: flex; }
+
+/* A window that cannot hold the frame (under 640px tall, or 1024px wide and
+   below): the page scrolls, and each pane keeps a usable height of its own. */
+@media (max-height: 639.98px), (max-width: 1024px) {
+  .tw-workspace { height: max(480px, calc(100dvh - 72px)); }
+}
+@media (max-width: 1024px) {
+  .tw-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; height: auto; }
+  .tw-centre { order: 1; height: min(75dvh, 760px); }
+  .tw-left { order: 2; max-height: 50dvh; border-inline-end: 0; border-top: 1px solid var(--line-strong); }
+  .tw-right { order: 3; max-height: 70dvh; border-inline-start: 0; border-top: 1px solid var(--line-strong); }
+  .tw-rail { flex-direction: row; justify-content: center; height: auto; padding: 10px; }
+  .tw-rail-label { writing-mode: horizontal-tb; }
+  .tw-boards { max-width: 100%; }
+}
+
+/* ── Required sections ──────────────────────────────────────────── */
+.tw-left-filter { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.tw-search {
+  box-sizing: border-box; width: 100%; min-height: 32px; padding: 4px 10px;
+  border: 0; border-radius: 10px;
+  background: var(--btn-neutral-bg); box-shadow: inset 0 0 0 1px var(--btn-neutral-border);
+  color: var(--t1); font: inherit; font-size: var(--text-sm);
+}
+.tw-search::placeholder { color: var(--t4); }
+.tw-search:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.tw-section-list { padding: 2px 10px 14px; }
+.tw-term-head {
+  margin: 12px 2px 5px;
+  color: var(--t3); font-size: var(--text-2xs); font-weight: 700;
+  letter-spacing: 0.05em; text-transform: uppercase;
+}
+.tw-term-head.is-active { color: var(--text-brand); }
+html[dir="rtl"] .tw-term-head { letter-spacing: 0; text-transform: none; }
+.tw-section-item {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-bottom: 5px; padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--card); box-shadow: inset 0 0 0 1px var(--line-strong);
+  font-size: var(--text-sm); cursor: grab;
+}
+html[data-theme="dark"] .tw-section-item { background: var(--surface); }
+.tw-section-item:hover { box-shadow: inset 0 0 0 1px var(--btn-neutral-border), var(--shadow-sm); }
+.tw-section-item .code { color: var(--text-brand); font-weight: 700; }
+.tw-section-item .meta { color: var(--t3); font-size: var(--text-xs); }
+/* A course whose sections are all placed: quiet, still readable. */
+.tw-section-item.is-complete,
+html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; background: transparent; box-shadow: none; cursor: default; }
+.tw-section-item.is-complete .code { display: inline-flex; align-items: center; gap: 6px; color: var(--t2); font-weight: 600; }
+.tw-show-more { width: 100%; margin-top: 6px; }
+
+/* ── The board ──────────────────────────────────────────────────── */
+#twGridWrap { min-width: 0; }
+.tw-grid { min-width: 0; }
+.tw-group-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+  margin: 16px 0 6px;
+  color: var(--t0); font-size: var(--text-sm); font-weight: 700;
+}
+.tw-group-head:first-child { margin-top: 2px; }
+.tw-group-meta { color: var(--t3); font-size: var(--text-xs); font-weight: 500; }
+.tw-subhead {
+  display: flex; align-items: center; gap: 6px;
+  margin: 2px 0 6px;
+  color: var(--t2); font-size: var(--text-xs); font-weight: 700;
+}
+.tw-subhead-lab::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--text-brand); }
+
+/* One table per group (lectures, English, labs). `overflow: clip` keeps the
+   rounded corners without becoming a scroll container, so each table's header
+   row sticks to the top of the board while the table is in view. */
+.tw-grid-table {
+  display: grid;
+  grid-template-columns: 56px repeat(var(--tw-slots, 7), minmax(96px, 1fr));
+  margin-bottom: 12px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--card);
+  overflow: clip;
+}
+.tw-grid-header {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: 0; padding: 5px 4px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--t2); font-size: var(--text-xs); font-weight: 600; line-height: 1.3;
+  text-align: center;
+}
+.tw-grid-corner { inset-inline-start: 0; z-index: 3; }
+.tw-slot-no { color: var(--t3); font-size: var(--text-2xs); font-weight: 700; }
+.tw-slot-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tw-grid-slot-label {
+  position: sticky; inset-inline-start: 0; z-index: 1;
+  display: flex; align-items: center;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line-strong);
+  color: var(--t2); font-size: var(--text-xs); font-weight: 600;
+}
+.tw-cell {
+  position: relative;
+  display: flex; flex-direction: column; gap: 3px;
+  min-width: 0; min-height: 58px; padding: 3px;
+  border-bottom: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.tw-cell:last-child { border-inline-end: 0; }
+.tw-cell.drop-valid {
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--teal) 55%, transparent);
+}
+.tw-lab-grid { background: color-mix(in srgb, var(--teal) 4%, var(--card)); }
+.tw-lab-grid .tw-grid-header { background: color-mix(in srgb, var(--teal) 10%, var(--surface)); }
+
+/* A placement. Its course hue (--tw-card-hue, set by the script) is the light
+   pastel in light mode; in dark mode it is mixed into the surface so the board
+   is not a wall of light tiles, and the ink follows the theme. Severity is a
+   ring AND a shaped icon — octagon blocks, triangle warns, circle informs —
+   never colour alone. */
+.tw-card {
+  --tw-card-hue: #d4e6f1;
+  position: relative; min-width: 0;
+  padding: 4px 18px 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--tw-card-hue);
+  border: 1px solid rgba(17,24,39,0.10);
+  border-inline-start: 3px solid color-mix(in srgb, var(--tw-card-hue) 55%, #111827);
+  color: #111827;
+  font-size: var(--text-xs); line-height: 1.35;
+  cursor: grab;
+  transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.tw-card:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.tw-card .cc {
+  overflow: hidden; color: #111827;
+  font-size: var(--text-xs); font-weight: 700;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+/* Two quiet lines under the code: the course's name (only where two courses
+   share a code), then room · capacity · instructor. Each stays on one line and
+   gives way by ellipsis; the inspector shows everything in full. */
+.tw-card-name,
+.tw-card .ci { overflow: hidden; color: #374151; font-size: var(--text-xs); white-space: nowrap; }
+.tw-card-name { text-overflow: ellipsis; }
+.tw-card .ci { flex-wrap: nowrap; }
+.tw-card .ci > * { flex: 0 1 auto; min-width: 1.6em; overflow: hidden; text-overflow: ellipsis; }
+.tw-card .ci > * + *::before { color: #6b7280; }
+html[data-theme="dark"] .tw-card {
+  background: color-mix(in srgb, var(--tw-card-hue) 16%, var(--surface));
+  border-color: rgba(255,255,255,0.08);
+  border-inline-start-color: color-mix(in srgb, var(--tw-card-hue) 80%, transparent);
+  color: var(--t0);
+}
+html[data-theme="dark"] .tw-card .cc { color: var(--t0); }
+html[data-theme="dark"] .tw-card .ci,
+html[data-theme="dark"] .tw-card-name { color: var(--t2); }
+html[data-theme="dark"] .tw-card .ci > * + *::before { color: var(--t4); }
+html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
+.tw-card.critical { box-shadow: inset 0 0 0 2px var(--sev-critical); }
+.tw-card.warning  { box-shadow: inset 0 0 0 2px var(--sev-warning); }
+.tw-card.info     { box-shadow: inset 0 0 0 1px var(--sev-info); }
+.tw-card.has-issue::after {
+  content: ''; position: absolute; top: 4px; inset-inline-end: 4px;
+  width: 12px; height: 12px;
+  background: var(--sev-critical);
+  -webkit-mask: var(--ux-icon-critical) center / contain no-repeat;
+          mask: var(--ux-icon-critical) center / contain no-repeat;
+}
+.tw-card.warning.has-issue::after {
+  background: var(--sev-warning);
+  -webkit-mask-image: var(--ux-icon-warning); mask-image: var(--ux-icon-warning);
+}
+.tw-card.info.has-issue::after {
+  background: var(--sev-info);
+  -webkit-mask-image: var(--ux-icon-info); mask-image: var(--ux-icon-info);
+}
+/* Locked: its time is frozen. A hatch, not a fade — a faded card was unreadable. */
+.tw-card.locked {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(17,24,39,0.07) 6px 7px);
+  cursor: default;
+}
+html[data-theme="dark"] .tw-card.locked {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,255,255,0.06) 6px 7px);
+}
+.tw-card.is-selected { outline: 2px solid var(--sev-info); outline-offset: 1px; }
+.tw-card.highlight { outline: 2px solid var(--sev-info); outline-offset: 1px; animation: tw-pulse 0.6s var(--ease) 2; }
+@keyframes tw-pulse {
+  0%, 100% { outline-color: var(--sev-info); }
+  50%      { outline-color: transparent; }
+}
+.tw-workspace[aria-busy="true"] .tw-card,
+.tw-workspace[aria-busy="true"] .tw-section-item { cursor: progress; }
+
+/* ── Inspector ──────────────────────────────────────────────────── */
+.tw-right .ux-tabs { padding-inline: 4px; }
+.tw-right .ux-tab { flex: 0 1 auto; padding-inline: 8px; }
+.tw-right .tw-pane-collapse { align-self: center; margin-inline-start: auto; }
+.tw-panel-body { padding: 8px 10px 18px; overflow-wrap: anywhere; }
+.tw-pane-empty, .tw-pane-note { margin: 12px 4px; color: var(--t3); font-size: var(--text-sm); }
+
+/* Issues */
+.tw-issue-head {
+  display: flex; align-items: center; gap: 6px;
+  margin: 14px 2px 6px;
+  color: var(--t1); font-size: var(--text-xs); font-weight: 700;
+}
+.tw-issue-head:first-child { margin-top: 4px; }
+.tw-issue-head[data-tone="critical"] { color: var(--sev-critical); }
+.tw-issue-head[data-tone="warning"]  { color: var(--sev-warning); }
+.tw-issue-head[data-tone="info"]     { color: var(--sev-info); }
+.tw-issue-count {
+  margin-inline-start: auto; padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--t2);
+  font-size: var(--text-2xs); font-weight: 700;
+}
+.tw-issue-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  box-sizing: border-box; width: 100%; margin-bottom: 4px; padding: 7px 9px;
+  border: 0; border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--t1);
+  font: inherit; font-size: var(--text-sm); line-height: 1.4; text-align: start;
+  cursor: pointer;
+}
+.tw-issue-row:hover { background: color-mix(in srgb, var(--teal) 9%, var(--surface)); }
+.tw-issue-row:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.tw-issue-detail { color: var(--t3); font-size: var(--text-xs); }
+.tw-issue-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; }
+.tw-issue-dot.critical { background: var(--sev-critical); }
+.tw-issue-dot.warning  { background: var(--sev-warning); }
+.tw-issue-dot.info     { background: var(--sev-info); }
+
+/* Selection */
+.tw-sel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 2px 10px; }
+.tw-sel-title { color: var(--t0); font-size: var(--text-md); font-weight: 700; }
+.tw-sel-sub { flex-basis: 100%; color: var(--t3); font-size: var(--text-xs); }
+.tw-sel-fields { margin: 0; }
+.tw-sel-field {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.tw-sel-field dt { color: var(--t3); font-weight: 500; }
+.tw-sel-field dd { margin: 0; color: var(--t1); font-weight: 600; text-align: end; }
+.tw-sel-subhead { margin: 14px 2px 4px; color: var(--t2); font-size: var(--text-xs); font-weight: 700; }
+.tw-sel-meetings { margin: 0; padding: 0; list-style: none; font-size: var(--text-xs); }
+.tw-sel-meetings li { padding: 4px 2px; border-bottom: 1px solid var(--line); color: var(--t1); }
+.tw-sel-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.tw-sel-help { margin: 8px 2px 0; color: var(--t3); font-size: var(--text-xs); }
+
+/* Capacity */
+.tw-cap-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 4px 0 12px; }
+.tw-cap-totals > div { padding: 6px 8px; border-radius: var(--radius-sm); background: var(--surface); }
+.tw-cap-totals dt { color: var(--t3); font-size: var(--text-xs); }
+.tw-cap-totals dd { margin: 0; color: var(--t0); font-size: var(--text-base); font-weight: 700; }
+.tw-cap-totals [data-tone="critical"] dd { color: var(--sev-critical); }
+.tw-cap-row { margin-bottom: 8px; }
+.tw-cap-line { display: flex; justify-content: space-between; gap: 8px; color: var(--t2); font-size: var(--text-xs); }
+.tw-cap-line strong { color: var(--sev-critical); }
+.tw-cap-bar { height: 4px; margin-top: 3px; overflow: hidden; border-radius: 2px; background: var(--line-strong); }
+.tw-cap-bar > i { display: block; height: 100%; background: var(--sev-ok); }
+.tw-cap-row[data-tone="critical"] .tw-cap-bar > i { background: var(--sev-critical); }
+
+/* Demand */
+.tw-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+.tw-table th, .tw-table td { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: end; }
+.tw-table th[scope="row"], .tw-table thead th:first-child { text-align: start; }
+.tw-table thead th { position: sticky; top: 0; background: var(--card); color: var(--t3); font-weight: 600; }
+.tw-table tbody th { color: var(--t1); font-weight: 600; }
+.tw-table tfoot th, .tw-table tfoot td { border-bottom: 0; color: var(--t0); font-weight: 700; }
+.tw-table [data-tone="critical"] td:last-child { color: var(--sev-critical); font-weight: 700; }
+
+/* ── Empty states ───────────────────────────────────────────────── */
+.tw-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  min-height: 320px; padding: 40px 24px;
+  color: var(--t3); text-align: center;
+}
+.tw-empty svg { width: 44px; height: 44px; opacity: 0.45; }
+.tw-empty-title { margin: 0; color: var(--t1); font-size: var(--text-md); font-weight: 700; }
+.tw-empty p { max-width: 380px; margin: 0; font-size: var(--text-sm); }
+.tw-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.tw-empty-sm { min-height: 0; padding: 24px 12px; }
+.tw-empty-sm .ux-tone-icon { width: 20px; height: 20px; }
+
+/* ── Publish readiness (inside the shared dialog) ───────────────── */
+.tw-readiness-lead { margin: 0 0 8px; color: var(--t2); font-size: var(--text-sm); }
+.tw-readiness-list { display: grid; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; text-align: start; }
+.tw-readiness-list li {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--sev-critical-bg); color: var(--t1);
+  font-size: var(--text-sm); line-height: 1.45;
+}
+.tw-readiness-list[data-tone="warning"] li { background: var(--sev-warning-bg); }
+.tw-readiness-list .ux-tone-icon { margin-top: 2px; }
+.tw-readiness-go { flex: none; margin-inline-start: auto; }
+
+/* ── Generate dialog ────────────────────────────────────────────── */
+.tw-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.tw-gen-section { align-self: flex-start; }
+.tw-gen-error {
+  margin: 0; padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--sev-critical-bg); color: var(--sev-critical);
+  font-size: var(--text-sm); font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .tw-card, .tw-btn, .tw-panel-tab, .tw-bottom { transition: none; }
+  .tw-card, .tw-cell { transition: none; }
+  .tw-card:hover { transform: none; }
   .tw-card.highlight { animation: none; }
 }

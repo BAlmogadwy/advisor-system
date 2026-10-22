@@ -13,7 +13,7 @@ function harness(name, arabic = false) {
   const source = sources[name];
   const elements = new Map();
   const $ = id => {
-    if (!elements.has(id)) elements.set(id, { value: '', innerHTML: '', textContent: '', style: {}, classList: { remove: () => {} }, appendChild: () => {}, querySelector: () => null });
+    if (!elements.has(id)) elements.set(id, { value: '', innerHTML: '', textContent: '', style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false }, appendChild: () => {}, querySelector: () => null });
     return elements.get(id);
   };
   const dialogs = [], notices = { error: [], success: [], warning: [] };
@@ -38,11 +38,14 @@ function harness(name, arabic = false) {
     vm.runInContext(slice(source, 'function showOptimiseResults(', 'async function doPublish('), context);
     vm.runInContext(slice(source, 'async function openGenerateModal(', '/* ── New empty scenario'), context);
   } else {
-    vm.runInContext(slice(source, 'async function runOptimiseV2(', '/* ── Fullscreen:'), context);
+    vm.runInContext(slice(source, 'async function runOptimiseV2(', '/* End V2 optimiser. */'), context);
     vm.runInContext(slice(source, "async function runGenerate(engine =", '/* debounce()'), context);
   }
   return { context, $, dialogs, notices };
 }
+
+// What the classic page's Generate dialog hands runGenerate.
+const GENERATE_REQUEST = { year: '1448', term: '1', programs: ['AI'], section: 'M' };
 
 function result(worseStudentGap = false) {
   return {
@@ -237,8 +240,7 @@ for (const name of Object.keys(sources)) {
         assert.equal(await h.dialogs[0].buttons[1].onClick({}), false);
         body = h.dialogs[1].body;
       } else {
-        for (const [id, value] of Object.entries({ twYear: '1448', twTerm: '1', twProgram: 'AI', twSection: 'M', twStrategy: 'compact' })) h.$(id).value = value;
-        await h.context.runGenerate(engine);
+        await h.context.runGenerate(engine, GENERATE_REQUEST);
         body = h.$('twGenStatus').innerHTML || h.$('twGenStatus').textContent;
       }
       assert.match(body, engine === 'classic' ? /3 → 2/ : /optimum proven.*missing seats 0; clashes 0/);
@@ -257,8 +259,7 @@ for (const name of Object.keys(sources)) {
         twsGenSection: 'M', twsGenStrategy: 'compact', twsGenEngine: 'classic' })) h.$(id).value = value;
       await h.dialogs[0].buttons[1].onClick({});
     } else {
-      for (const [id, value] of Object.entries({ twYear: '1448', twTerm: '1', twProgram: 'AI', twSection: 'M', twStrategy: 'compact' })) h.$(id).value = value;
-      await h.context.runGenerate('classic');
+      await h.context.runGenerate('classic', GENERATE_REQUEST);
     }
     assert.deepEqual(h.notices.success, []);
     assert.match(h.notices.warning[0], /build did not start.*Full rebuild/);
@@ -281,8 +282,7 @@ for (const name of Object.keys(sources)) {
         await h.dialogs[0].buttons[1].onClick({});
         assert.match(h.$('twsGenStatus').textContent, /Run seed: 0/);
       } else {
-        for (const [id, value] of Object.entries({ twYear: '1448', twTerm: '1', twProgram: 'AI', twSection: 'M', twStrategy: 'compact' })) h.$(id).value = value;
-        await h.context.runGenerate('classic');
+        await h.context.runGenerate('classic', GENERATE_REQUEST);
         assert.match(h.$('twGenStatus').textContent, /Run seed: 0/);
       }
       assert.deepEqual(h.notices.success, []);

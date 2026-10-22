@@ -12,6 +12,8 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 const scenario = { id: 1, name: 'Real scenario copy', status: 'draft', slot_config: [{ label: '09:00', start: '09:00', end: '10:15' }] };
 const placement = { id: 10, course_code: 'CS323', section: 'S1', term_section_id: 5, day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'LAB25', meetings: [], available_capacity: 24 };
 const board = { id: 2, label: 'Term 7', nominal_term: 7, primary_count: 1 };
+// What the Generate dialog hands runGenerate (it has its own year and term).
+const GENERATE = { year: '1448', term: '1', programs: ['AI'], section: 'M' };
 const quality = { ok: true, scenario_id: 1, instructor: { assessed: true, working_days: 18, idle_minutes: 780 }, soft_seats: { assessed: true, unresolved: 18 }, rooms: { assessed: true, shortages: 3, details: [{ course_code: 'CS323', placement_ids: [10], rooms: ['LAB25'], reasons: ['undersized'], required_capacity: 26 }] }, assigned_student_clashes: { assessed: true, count: 0 } };
 async function harness(t, intercept = () => undefined, extra = {}, arabic = false) {
   const html = template.replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
@@ -69,24 +71,25 @@ test('saved scenario shows evaluated scope and genuine buffered room shortages i
 test('Generate takes ownership before POST; incompatible actions and duplicate engine clicks are guarded', async t => {
   const pending = deferred();
   const h = await harness(t, (url) => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined);
-  await h.select(); h.d.getElementById('twProgram').value = 'AI';
-  const generation = h.w.runGenerate('classic');
-  for (const id of ['twGenerate', 'twGenerateMenu', 'twOptimise', 'twOptimiseMenu', 'twPublish', 'twScenario', 'twSlotEdit']) assert.equal(h.d.getElementById(id).disabled, true, id);
+  await h.select();
+  const generation = h.w.runGenerate('classic', GENERATE);
+  for (const id of ['twGenerate', 'twGenerateRun', 'twEmptyGenerate', 'twNewScenario', 'twOptimise', 'twOptimiseMenu', 'twPublish', 'twScenario', 'twSlotEdit']) assert.equal(h.d.getElementById(id).disabled, true, id);
   assert.equal(h.d.getElementById('twExport').disabled, false);
-  h.w.openSectionDrawer(10);
-  assert.ok([...h.d.querySelectorAll('#twDrawer [data-tw-mutation]')].every(el => el.disabled));
+  h.w.TW.selectedPlacementId = 10; h.w.renderRightPanel('selection');
+  const mutations = [...h.d.querySelectorAll('#twRightBody [data-tw-mutation]')];
+  assert.ok(mutations.length && mutations.every(el => el.disabled));
   assert.equal(h.d.querySelector('.tw-card').draggable, false);
   await h.w.runOptimiseV2('current'); await h.w.runGenerate('scheduler'); await h.w.toggleLock(10);
   assert.equal(h.requests.filter(r => r.opts.method === 'POST').length, 1);
   pending.resolve({ httpError: 500, error: { message: 'Build submission failed' } }); await generation;
-  for (const id of ['twGenerate', 'twGenerateMenu', 'twOptimise', 'twPublish', 'twScenario']) assert.equal(h.d.getElementById(id).disabled, false, id);
+  for (const id of ['twGenerate', 'twGenerateRun', 'twOptimise', 'twPublish', 'twScenario']) assert.equal(h.d.getElementById(id).disabled, false, id);
   assert.equal(h.d.querySelector('.tw-card').draggable, true);
 });
 
 test('unexpected Generate render failure releases all controls', async t => {
   const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? { ok: true } : undefined);
-  await h.select(); h.d.getElementById('twProgram').value = 'AI';
-  await h.w.runGenerate('classic');
+  await h.select();
+  await h.w.runGenerate('classic', GENERATE);
   assert.equal(h.d.getElementById('twGenerate').disabled, false);
   assert.equal(h.d.getElementById('twScenario').disabled, false);
 });
@@ -95,8 +98,8 @@ test('completed deferred Generate refreshes its captured scenario and keeps save
   const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? { scenario, boards: [board], build_job_id: 'build1' }
     : url === '/planner-jobs/build1/' ? { job_id: 'build1', status: 'succeeded' }
     : url === '/planner-jobs/build1/result/' ? { result: {} } : undefined);
-  await h.select(); h.d.getElementById('twProgram').value = 'AI';
-  await h.w.runGenerate('classic');
+  await h.select();
+  await h.w.runGenerate('classic', GENERATE);
   assert.equal(h.d.getElementById('twGenerate').disabled, false);
   assert.equal(h.d.getElementById('twOptimise').disabled, false);
   assert.equal(h.w.TW.boardId, 2);
@@ -225,28 +228,23 @@ const LOCK_HELP = {
   en: "Keeps this section's days and times; its room can still change.",
   ar: 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.',
 };
-for (const arabic of [false, true]) test(`inspector and drawer Lock buttons say a lock keeps days and times, not the room (${arabic ? 'ar' : 'en'})`, async t => {
+for (const arabic of [false, true]) test(`the inspector's Lock button says a lock keeps days and times, not the room (${arabic ? 'ar' : 'en'})`, async t => {
   const h = await harness(t, undefined, {}, arabic); await h.select();
   const help = LOCK_HELP[arabic ? 'ar' : 'en'];
   h.w.TW.selectedPlacementId = 10; h.w.renderRightPanel('selection');
   const inspectorButtons = [...h.d.querySelectorAll('#twRightBody button')];
   const inspectorLock = inspectorButtons.find(el => /toggleLock\(10\)/.test(el.getAttribute('onclick') || ''));
   assert.ok(inspectorLock);
-  assert.equal(inspectorLock.textContent, arabic ? 'قفل' : 'Lock');
+  assert.equal(inspectorLock.textContent, arabic ? 'قفل الوقت' : 'Lock time');
+  assert.equal(inspectorLock.getAttribute('aria-pressed'), 'false');
   assert.equal(inspectorLock.getAttribute('title'), help);
   assert.equal(inspectorLock.hasAttribute('dir'), false);
   const inspectorRemove = inspectorButtons.find(el => /removePlacement\(10\)/.test(el.getAttribute('onclick') || ''));
   assert.ok(inspectorRemove);
   assert.equal(inspectorRemove.hasAttribute('title'), false);
-  h.w.openSectionDrawer(10);
-  const drawerButtons = [...h.d.querySelectorAll('#twDrawer button')];
-  const drawerLock = drawerButtons.find(el => /toggleLock\(10\)/.test(el.getAttribute('onclick') || ''));
-  assert.ok(drawerLock);
-  assert.equal(drawerLock.getAttribute('title'), help);
-  assert.equal(drawerLock.hasAttribute('dir'), false);
-  const drawerRemove = drawerButtons.find(el => /removePlacement\(10\)/.test(el.getAttribute('onclick') || ''));
-  assert.ok(drawerRemove);
-  assert.equal(drawerRemove.hasAttribute('title'), false);
+  // The sentence is also spelled out under the buttons, once, in the page's language.
+  assert.equal(h.d.querySelector('#twRightBody .tw-sel-help').textContent, help);
+  assert.equal(h.d.getElementById('twDrawer'), null);
   assert.equal(h.d.body.innerHTML.includes(LOCK_HELP[arabic ? 'en' : 'ar']), false);
   assert.deepEqual(h.errors, []);
 });
@@ -258,7 +256,7 @@ const OVERLAP_LABELS = {
   en: { critical: 'Same-board time clash', warning: 'Same-board overlap (non-blocking)' },
   ar: { critical: 'تعارض زمني داخل اللوحة', warning: 'تداخل زمني داخل اللوحة لا يمنع النشر' },
 };
-for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning in the board strip, cards, Issues and MRI (${arabic ? 'ar' : 'en'})`, async t => {
+for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning on the board button, cards, Issues and MRI (${arabic ? 'ar' : 'en'})`, async t => {
   const at = (id, day) => ({ ...placement, id, term_section_id: id + 100, course_code: `AI${id}`, day, room: '' });
   const overlap = (ids, severity) => ({ ids, sections: ids.map(id => `AI${id}-S1`), detail: `${ids[0]} vs ${ids[1]}`,
     severity, same_course: false, shared_students: 30, blocked_students: severity === 'critical' ? 30 : 0 });
@@ -268,9 +266,9 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
     : url.includes('/conflicts/') ? conflicts : undefined, {}, arabic);
   await h.select();
   const label = OVERLAP_LABELS[arabic ? 'ar' : 'en'];
-  const metric = text => [...h.d.querySelectorAll('#twBoardStrip .tw-metric')].find(node => node.querySelector('.lbl').textContent === text).querySelector('.num');
-  assert.deepEqual([metric(label.critical).className, metric(label.critical).textContent], ['num danger', '1']);
-  assert.deepEqual([metric(label.warning).className, metric(label.warning).textContent], ['num text-warning', '1']);
+  // The board's button counts only what blocks (the critical overlap), with the octagon.
+  const flag = h.d.querySelector('#twBoardTabs .ux-seg-item[aria-current="true"] .ux-seg-flag');
+  assert.deepEqual([flag.dataset.tone, flag.textContent], ['critical', '1']);
   const card = id => h.d.querySelector(`.tw-card[data-placement-id="${id}"]`);
   assert.ok(card(10).classList.contains('critical'));
   assert.ok(card(12).classList.contains('warning'));
@@ -278,12 +276,12 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
   assert.ok(card(12).title.startsWith(label.warning));
   h.w.renderRightPanel('issues');
   const issue = text => {
-    const head = [...h.d.querySelectorAll('#twRightBody div')].find(node => node.textContent === text);
+    const head = [...h.d.querySelectorAll('#twRightBody .tw-issue-head')].find(node => node.children[1]?.textContent === text);
     assert.ok(head, text);
-    return [head.classList.contains('text-danger'), head.nextElementSibling.querySelector('.tw-issue-dot').className, head.nextElementSibling.querySelector('.fw-semibold').textContent];
+    return [head.dataset.tone, head.querySelector('.tw-issue-count').textContent, head.nextElementSibling.querySelector('.tw-issue-dot').className, head.nextElementSibling.querySelector('.fw-semibold').textContent];
   };
-  assert.deepEqual(issue(`${label.critical} (1)`), [true, 'tw-issue-dot critical', 'AI10-S1 / AI11-S1']);
-  assert.deepEqual(issue(`${label.warning} (1)`), [false, 'tw-issue-dot warning', 'AI12-S1 / AI13-S1']);
+  assert.deepEqual(issue(label.critical), ['critical', '1', 'tw-issue-dot critical', 'AI10-S1 / AI11-S1']);
+  assert.deepEqual(issue(label.warning), ['warning', '1', 'tw-issue-dot warning', 'AI12-S1 / AI13-S1']);
   // With only the warning left, the MRI panel counts no critical and paints it amber.
   h.w.TW.conflicts = { ...conflicts, summary: { critical: 0, warning: 1 }, overlaps: [conflicts.overlaps[1]] };
   h.w.renderRightPanel('mri');

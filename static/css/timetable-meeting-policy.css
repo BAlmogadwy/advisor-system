@@ -12,7 +12,7 @@
 .tw-pattern-choice:focus-visible, .tw-pattern-cancel:focus-visible, .tw-pattern-action:focus-visible { outline: 2px solid var(--royal); outline-offset: 3px; }
 .tw-english-heading { padding: 10px 4px 6px; color: var(--teal); font-size: .8rem; font-weight: 700; }
 .tw-english-grid .tw-card, .english-grid .cell.filled { min-height: 66px; }
-.english-grid .slbl { font-size: .55rem; white-space: normal; line-height: 1.35; }
-.tw-pattern-label { display: block; font-size: .65rem; font-weight: 600; margin: 4px 0; }
+.english-grid .slbl { font-size: var(--text-2xs, .6875rem); white-space: normal; line-height: 1.35; }
+.tw-pattern-label { display: block; font-size: var(--text-2xs, .6875rem); font-weight: 600; margin: 4px 0; }
 .tw-pattern-action { width: 100%; font-size: .75rem; margin: 7px 0; }
 @media (max-width: 420px) { .tw-pattern-choices { grid-template-columns: minmax(0, 1fr); } }

@@ -15,10 +15,25 @@
     if (!node) return null;
     try { return JSON.parse(node.textContent || "{}"); } catch (_) { return null; }
   }
+  // A full ISO timestamp reads as a local time; anything else is shown as given.
+  function shownValue(key, value) {
+    if (value == null || value === "") return "-";
+    var text = String(value);
+    if (/_at$/.test(key) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) {
+      var date = new Date(text);
+      if (!isNaN(date.getTime())) {
+        try { return date.toLocaleString(AR ? "ar" : "en-GB", { dateStyle: "medium", timeStyle: "medium" }); } catch (_) { return text; }
+      }
+    }
+    return text;
+  }
   function setField(card, key, value) {
     var node = qs(card, '[data-pr8-field="' + key + '"]');
-    if (node) node.textContent = value == null || value === "" ? "-" : String(value);
+    if (node) node.textContent = shownValue(key, value);
   }
+  // The design system's pill tone for each status (global.css .pill-*).
+  var TONES = { submitting: "pill-b", queued: "pill-b", running: "pill-b", unknown: "pill-a",
+    succeeded: "pill-g", failed: "pill-r", cancelled: "pill-n", idle: "pill-n" };
   function scenarioLabel(id) {
     if (id == null) return "-";
     var select = document.getElementById("twScenario");
@@ -49,9 +64,11 @@
       succeeded: say("Completed", "اكتمل"), failed: say("Failed", "فشل"), cancelled: say("Cancelled", "ملغي")
     };
     var pill = qs(state.card, "[data-pr8-status]");
-    if (pill) { pill.textContent = names[status] || status; pill.className = "pr8-status-pill status-" + status; }
+    if (pill) {
+      pill.textContent = names[status] || status;
+      pill.className = "pr8-status-pill pill-status " + (TONES[status] || "pill-n") + " status-" + status;
+    }
     setField(state.card, "scenario", scenarioLabel(state.scenarioId));
-    setField(state.card, "output_scenario", state.currentJob ? scenarioLabel(state.scenarioId) : "-");
     ["submitted_at", "started_at", "finished_at", "last_stage_seen", "error_message"].forEach(function (key) {
       setField(state.card, key, job[key]);
     });
@@ -75,6 +92,14 @@
     if (rerun) { rerun.hidden = !(job.status === "failed" || job.status === "cancelled"); rerun.disabled = blocked || state.scenarioId == null; }
     var message = qs(state.card, "[data-pr8-message]");
     if (message) { message.textContent = state.message || ""; message.hidden = !state.message; }
+    // The card is shown only with something to say: a run in progress, a run
+    // that ended (until closed), or a message. Idle, it stays out of the way.
+    var terminal = !!TERMINAL[job.status];
+    var dismissed = terminal && state.jobId && same(state.dismissedJobId, state.jobId);
+    state.card.dataset.status = status;
+    state.card.hidden = !(active || !!state.inFlight || !!state.message || (terminal && !dismissed));
+    var dismiss = qs(state.card, "[data-pr8-dismiss]");
+    if (dismiss) dismiss.hidden = active || !!state.inFlight;
   }
   function publish(state, name, detail) {
     state.dispatching = true;
@@ -159,6 +184,17 @@
     if (saved) acceptJob(state, saved, state.scenarioId, saved.job_id, false);
     paint(state);
   }
+  // "Run in background" and "Run again" start the full rebuild, which replaces
+  // every unlocked placement: where the page has the shared dialog, ask first.
+  function confirmSubmit() {
+    var dialog = window.dlg;
+    return Promise.resolve(dialog.confirm({
+      title: say("Rebuild in the background?", "إعادة البناء في الخلفية؟"),
+      body: say("Every unlocked placement in this scenario is replaced by a new build. Locked sections keep their days and times.",
+        "تُستبدل كل الشعب غير المقفلة في هذا السيناريو ببناء جديد. الشعب المقفلة تبقى في أيامها وأوقاتها."),
+      kind: "warning", confirmText: say("Rebuild", "إعادة البناء")
+    }));
+  }
   function onSubmit(state) {
     if (state.inFlight || state.externalPending || state.externalBusy || readOnly(state) || ACTIVE[(state.currentJob || {}).status]) return;
     var scenarioId = state.scenarioId;
@@ -213,11 +249,25 @@
       jobs: {}, pollTimer: null, pollEpoch: 0, polling: false, inFlight: false,
       externalPending: false, externalBusy: !!(window.TW && window.TW.busy), message: "", dispatching: false };
     card.addEventListener("click", function (event) {
+      if (event.target.closest("[data-pr8-dismiss]")) {
+        state.dismissedJobId = state.jobId;
+        state.message = "";
+        paint(state);
+        return;
+      }
       var target = event.target.closest("[data-pr8-action]");
       if (!target || !card.contains(target) || target.disabled || target.hidden) return;
       event.preventDefault();
       var action = target.getAttribute("data-pr8-action");
-      if (action === "submit" || action === "rerun") onSubmit(state);
+      if (action === "submit" || action === "rerun") {
+        // Without the shared dialog (a page that does not load it) the click
+        // submits at once, as before; with it, after the user agrees.
+        if (window.dlg && typeof window.dlg.confirm === "function") {
+          confirmSubmit().then(function (ok) { if (ok) onSubmit(state); });
+        } else {
+          onSubmit(state);
+        }
+      }
       else if (action === "cancel") onCancel(state);
       else if (action === "view-result" && state.jobId && (state.currentJob || {}).status === "succeeded") {
         var opened = window.open(fillUrl(cfg.resultUrl, state.jobId), "_blank", "noopener");

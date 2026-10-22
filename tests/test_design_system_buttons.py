@@ -83,15 +83,48 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),
     ("core/templates/core/student_advisor.html", "saHistoryToggle"),
     ("core/templates/core/student_graduation.html", "link:student_advisor"),
+    # The planner job card's controls (shared partial; Cancel is outline-danger).
+    ("core/templates/core/partials/pr8_async_job_card.html", "data-pr8-dismiss"),
+    ("core/templates/core/partials/pr8_async_job_card.html", "submit"),
+    ("core/templates/core/partials/pr8_async_job_card.html", "view-result"),
+    ("core/templates/core/partials/pr8_async_job_card.html", "rerun"),
+    # The Timetable Workspace's toolbar, pane and dialog controls.
+    ("core/templates/core/timetable_workspace.html", "twNewMenu"),
+    ("core/templates/core/timetable_workspace.html", "twMoreMenu"),
+    ("core/templates/core/timetable_workspace.html", "twOptimise"),
+    ("core/templates/core/timetable_workspace.html", "twOptimiseMenu"),
+    ("core/templates/core/timetable_workspace.html", "twExport"),
+    ("core/templates/core/timetable_workspace.html", "twExportMenu"),
+    ("core/templates/core/timetable_workspace.html", "twPublish"),
+    ("core/templates/core/timetable_workspace.html", "twNewBoard"),
+    ("core/templates/core/timetable_workspace.html", "twUndo"),
+    ("core/templates/core/timetable_workspace.html", "twRedo"),
+    ("core/templates/core/timetable_workspace.html", "twOpenMenu"),
+    ("core/templates/core/timetable_workspace.html", "twToggleLeft"),
+    ("core/templates/core/timetable_workspace.html", "twToggleRight"),
+    ("core/templates/core/timetable_workspace.html", "left"),
+    ("core/templates/core/timetable_workspace.html", "right"),
+    ("core/templates/core/timetable_workspace.html", "data-dialog-close"),
+    # Built by the workspace script: the inspector's Lock, and "Open board" in
+    # the publish-readiness list.
+    ("static/js/page-timetable-workspace.js", "toggleLock"),
+    ("static/js/page-timetable-workspace.js", "tw-readiness-go"),
 }
 
-#: The three that style themselves inline. They were never `ButtonFace`, and the
-#: neutral ring would draw a hairline inside a fill they already own.
+#: The one that styles itself inline. It was never `ButtonFace`, and the neutral
+#: ring would draw a hairline inside a fill it already owns. (The workspace's two
+#: inline-styled buttons went with its redesign: Electives is a menu item, and
+#: "Focus" became the Split view link.)
 INLINE_SURFACE_SITES = {
     ("core/templates/core/section_planning.html", "spAdvSaveDb"),
-    ("core/templates/core/timetable_workspace.html", "twMapElectives"),
-    ("core/templates/core/timetable_workspace.html", "twFullscreen"),
 }
+
+#: `btn-*` tokens that shape a control without giving it a surface: a size
+#: (`btn-sm`), a square icon shape (`btn-icon`) and the caret half of a split
+#: button (`btn-split-caret`). They have CSS rules, so without this list a
+#: `btn btn-icon` would count as a variant that brings its own fill and pass
+#: while rendering the browser's ButtonFace grey.
+SURFACELESS_MODIFIERS = ("btn-sm", "btn-neutral", "btn-icon", "btn-split-caret")
 
 #: Unconditional neutral constructors. Escalation chooses neutral or primary.
 NEUTRAL_JS_CONTROLS = {"sa-fb-btn", "sa-fb-reason", "sa-retry"}
@@ -111,7 +144,16 @@ _EXAMPLE_KEYS = {
 def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
     """(file, stable identifier) for one control."""
     rel = path.relative_to(ROOT).as_posix()
-    for probe in (r'id="([^"]+)"', r'data-ai-action="([^"]+)"', r'onclick="([^"(]+)'):
+    for probe in (
+        r'id="([^"]+)"',
+        r'data-ai-action="([^"]+)"',
+        r'onclick="([^"(]+)',
+        r'data-pr8-action="([^"]+)"',
+        r"(data-pr8-dismiss)",
+        r'data-pane-toggle="([^"]+)"',
+        r"(data-dialog-close)",
+        r'class="[^"]*\b(tw-readiness-go)\b',
+    ):
         found = re.search(probe, tag)
         if found:
             return rel, found.group(1)
@@ -210,9 +252,7 @@ def test_every_affected_control_carries_btn_neutral(_):
                 if "btn" not in classes:
                     continue
                 variants = [
-                    c
-                    for c in classes
-                    if c.startswith("btn-") and c not in ("btn-sm", "btn-neutral")
+                    c for c in classes if c.startswith("btn-") and c not in SURFACELESS_MODIFIERS
                 ]
                 if [c for c in variants if has_rule(c)]:
                     continue  # a real variant: it brings its own surface
@@ -291,7 +331,7 @@ def test_no_btn_neutral_reached_a_control_that_owns_a_surface():
                 clashing = [
                     c
                     for c in classes
-                    if c.startswith("btn-") and c not in ("btn-sm", "btn-neutral") and has_rule(c)
+                    if c.startswith("btn-") and c not in SURFACELESS_MODIFIERS and has_rule(c)
                 ]
                 if clashing:
                     wrong.append(

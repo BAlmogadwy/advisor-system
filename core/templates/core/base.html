@@ -29,7 +29,7 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=77" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=78" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}?v=3" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
@@ -40,7 +40,8 @@
 {% block body %}
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
-  <main id="main-content" class="flex-grow-1 {% block main_padding %}p-4{% endblock %}" role="main" {% block main_attrs %}{% endblock %}>
+  {# content_width: default (1120px reading column) | wide (1480px) | full (tool pages). content_fill: "viewport" makes the page fill the window with its own panes scrolling (global.css, "Content width tiers"). #}
+  <main id="main-content" class="flex-grow-1 {% block main_padding %}p-4{% endblock %}" role="main" data-width="{% block content_width %}default{% endblock %}"{% block content_fill %}{% endblock %} {% block main_attrs %}{% endblock %}>
     <div class="content-wrap">
     <header class="page-header" role="banner">
       <div class="page-header-left">
@@ -75,6 +76,7 @@
 <script src="{% static 'js/safe-fetch.js' %}?v=2"></script>
 <script src="{% static 'js/dialog.js' %}?v=4"></script>
 <script src="{% static 'js/shared-ux.js' %}?v=2"></script>
+<script src="{% static 'js/ux-controls.js' %}?v=1"></script>
 <script>
 /* ── Back to top button ── */
 (function(){

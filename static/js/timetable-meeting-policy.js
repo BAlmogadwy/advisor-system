@@ -18,7 +18,9 @@
     row.day === meeting.day && (row.start_time || row.start) === meeting.start_time && (row.end_time || row.end) === meeting.end_time)))?.pattern_id || null;
   const label = (placement, arabic = false) => {
     const pattern = patterns.find(row => row.start === placement?.start_time && row.end === placement?.end_time);
-    return pattern ? (arabic ? `${pattern.start === '09:00' ? 'صباحي' : 'مسائي'} ${pattern.start}–${pattern.end}` : pattern.label)
+    // The time range is isolated left-to-right (LRI … PDI): inside an Arabic
+    // sentence "13:00–16:00" was otherwise painted as "16:00–13:00".
+    return pattern ? (arabic ? `${pattern.start === '09:00' ? 'صباحي' : 'مسائي'} \u2066${pattern.start}–${pattern.end}\u2069` : pattern.label)
       : (arabic ? 'موعد محفوظ' : 'Saved meeting time');
   };
   const roomLabel = (placement, arabic = false, empty = '—') => isEnglish(placement)

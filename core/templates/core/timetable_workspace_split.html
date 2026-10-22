@@ -8,7 +8,7 @@
 
 {% block extra_css %}
 <link href="{% static 'css/timetable-workspace-split.css' %}?v=6" rel="stylesheet">
-<link href="{% static 'css/timetable-meeting-policy.css' %}?v=2" rel="stylesheet">
+<link href="{% static 'css/timetable-meeting-policy.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
 {% block page_heading %}{% endblock %}
@@ -387,6 +387,6 @@
   const DEFAULT_YEAR = "{{ default_year|default:''|escapejs }}";
   const DEFAULT_TERM = "{{ default_term|default:''|escapejs }}";
 </script>
-<script src="{% static 'js/timetable-meeting-policy.js' %}?v=3"></script>
+<script src="{% static 'js/timetable-meeting-policy.js' %}?v=4"></script>
 <script src="{% static 'js/page-timetable-workspace-split.js' %}?v=133"></script>
 {% endblock %}

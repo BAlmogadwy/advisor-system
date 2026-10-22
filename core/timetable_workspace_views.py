@@ -267,6 +267,10 @@ def _scenario_to_dict(s: TimetableScenario) -> dict[str, object]:
         "slot_config": s.slot_config,
         "lab_slot_config": s.lab_slot_config,
         "blocked_slots": s.blocked_slots,
+        # What the scenario was generated for, so a new generation (and the
+        # elective mapping) can start from the open scenario's scope.
+        "gender": s.gender or "",
+        "programs": list(s.programs or []),
         "created_by": s.created_by,
         "created_at": s.created_at.isoformat() if s.created_at else "",
         "updated_at": s.updated_at.isoformat() if s.updated_at else "",

@@ -17,7 +17,9 @@ const hidden = {
 };
 
 async function dialog(t, split, mappings) {
-  const dom = new JSDOM('<button id="twMapElectives"></button><input id="twYear" value="1448"><input id="twTerm" value="1"><input id="twProgram" value="EVA">', { runScripts: 'outside-only' });
+  // The main page maps the open scenario's programme (one here); the split page
+  // reads its boards.
+  const dom = new JSDOM('<button id="twMapElectives"></button><input id="twYear" value="1448"><input id="twTerm" value="1">', { runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const context = dom.getInternalVMContext();
   const document = dom.window.document;
@@ -36,6 +38,7 @@ async function dialog(t, split, mappings) {
   Object.assign(context, {
     IS_AR: false, $: id => document.getElementById(id), esc: text => String(text),
     S: { scenarioMeta: { academic_year: '1448', term: '1' }, boards: [{ program: 'EVA' }] },
+    TW: { scenario: { programs: ['EVA'] } },
     notify: { error: message => errors.push(message), success() {} },
     api: request, twFetch: request,
     openModal: options => { modal = options; document.body.insertAdjacentHTML('beforeend', options.body); },
