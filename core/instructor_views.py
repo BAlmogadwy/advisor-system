@@ -74,6 +74,12 @@ def _instructor_to_dict(i: Instructor) -> dict[str, object]:
     }
 
 
+def _text(value: object) -> str:
+    """A text field from a JSON payload: a missing or null value is empty,
+    never the string "None" (``str(None)``)."""
+    return "" if value is None else str(value).strip()
+
+
 def _parse_int_or_none(value: object) -> int | None:
     if value in (None, ""):
         return None
@@ -136,11 +142,12 @@ def instructors_create_view(request: HttpRequest) -> JsonResponse:
             instructor = Instructor.objects.create(
                 full_name=full_name,
                 normalised_name=norm,
-                full_name_ar=str(payload.get("full_name_ar", "")).strip(),
-                email=str(payload.get("email", "")).strip(),
-                employee_no=str(payload.get("employee_no", "")).strip(),
-                department=str(payload.get("department", "")).strip(),
+                full_name_ar=_text(payload.get("full_name_ar")),
+                email=_text(payload.get("email")),
+                employee_no=_text(payload.get("employee_no")),
+                department=_text(payload.get("department")),
                 max_weekly_hours=_parse_int_or_none(payload.get("max_weekly_hours")),
+                is_active=bool(payload.get("is_active", True)),
             )
     except IntegrityError:
         return _err(
@@ -172,11 +179,14 @@ def instructors_update_view(request: HttpRequest) -> JsonResponse:
         fields += ["full_name", "normalised_name"]
     for key in ("full_name_ar", "email", "employee_no", "department"):
         if key in payload:
-            setattr(instructor, key, str(payload.get(key, "")).strip())
+            setattr(instructor, key, _text(payload.get(key)))
             fields.append(key)
     if "max_weekly_hours" in payload:
         instructor.max_weekly_hours = _parse_int_or_none(payload.get("max_weekly_hours"))
         fields.append("max_weekly_hours")
+    if "is_active" in payload:
+        instructor.is_active = bool(payload.get("is_active"))
+        fields.append("is_active")
     if not fields:
         return _ok({"instructor": _instructor_to_dict(instructor)})
     try:

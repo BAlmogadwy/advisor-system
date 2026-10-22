@@ -4,46 +4,37 @@
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}إدارة هيئة التدريس{% else %}Instructor Management{% endif %}{% endblock %}
 
+{# A management screen: the wide tier, so the tables use the window. #}
+{% block content_width %}wide{% endblock %}
+
 {% block extra_css %}{# All instructor-management styles live in static/css/global.css (INSTRUCTOR MANAGEMENT section). #}{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}إدارة هيئة التدريس{% else %}Instructor Management{% endif %}{% endblock %}
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-role">{{ role }}</span>
-  <span class="ph-chip ph-chip-gray" id="imInstructorCount">—</span>
+  <span class="ph-chip ph-chip-gray" id="imInstructorCount" aria-live="polite">—</span>
 {% endblock %}
 
 {% block page_intro %}
-  <h2>{% if LANGUAGE_CODE == 'ar' %}إدارة هيئة التدريس وتوزيع الأعباء{% else %}Faculty Management & Assignment{% endif %}</h2>
-  <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}إدارة بيانات أعضاء هيئة التدريس وتوزيع المقررات والشعب وتقارير الأعباء التدريسية.{% else %}Manage instructor data, course assignments, and teaching load reports.{% endif %}</div>
+  <h2>{% if LANGUAGE_CODE == 'ar' %}إدارة هيئة التدريس وتوزيع الأعباء{% else %}Faculty management and assignment{% endif %}</h2>
+  <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}أسند المقررات إلى أعضاء هيئة التدريس، وحدّث بياناتهم، وراجع أعباءهم التدريسية.{% else %}Assign courses to instructors, keep their records up to date, and review their teaching load.{% endif %}</div>
 {% endblock %}
 
 {% block content %}
-<!-- ─── Tab Navigation ─── -->
-<div class="im-tabs" role="tablist">
-  <button class="im-tab im-tab-active" role="tab" aria-selected="true" aria-controls="imTabAssignments" id="imTabBtnAssignments" onclick="imSwitchTab('assignments')">
-    <span class="im-tab-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
-    {% if LANGUAGE_CODE == 'ar' %}التوزيعات{% else %}Assignments{% endif %}
-  </button>
-  <button class="im-tab" role="tab" aria-selected="false" aria-controls="imTabRoster" id="imTabBtnRoster" onclick="imSwitchTab('roster')">
-    <span class="im-tab-icon"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-    {% if LANGUAGE_CODE == 'ar' %}هيئة التدريس{% else %}Roster{% endif %}
-  </button>
-  <button class="im-tab" role="tab" aria-selected="false" aria-controls="imTabReport" id="imTabBtnReport" onclick="imSwitchTab('report')">
-    <span class="im-tab-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/><path d="M8 16h6"/><path d="M8 8h8"/></svg></span>
-    {% if LANGUAGE_CODE == 'ar' %}تقرير الأعباء{% else %}Load Report{% endif %}
-  </button>
+<div class="ux-tabs im-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقسام الصفحة{% else %}Page sections{% endif %}">
+  <button type="button" class="ux-tab active" role="tab" id="imTabBtnAssignments" aria-controls="imTabAssignments" data-im-tab="assignments">{% if LANGUAGE_CODE == 'ar' %}التوزيعات{% else %}Assignments{% endif %}</button>
+  <button type="button" class="ux-tab" role="tab" id="imTabBtnRoster" aria-controls="imTabRoster" data-im-tab="roster">{% if LANGUAGE_CODE == 'ar' %}هيئة التدريس{% else %}Roster{% endif %}</button>
+  <button type="button" class="ux-tab" role="tab" id="imTabBtnReport" aria-controls="imTabReport" data-im-tab="report">{% if LANGUAGE_CODE == 'ar' %}تقرير الأعباء{% else %}Load report{% endif %}</button>
 </div>
 
-<!-- ─── Tab 1: Course Assignments ─── -->
-<div class="im-tab-content im-tab-content-active" role="tabpanel" id="imTabAssignments" aria-labelledby="imTabBtnAssignments">
-
-  <!-- Control bar (mirroring section_planning.html pattern) -->
+<!-- ─── Assignments: one instructor per course, per programme and section ─── -->
+<section class="im-pane" role="tabpanel" id="imTabAssignments" aria-labelledby="imTabBtnAssignments">
   <div class="filter-bar fb-fit sticky-cta mb-0">
     <div class="fb-search">
-      <label class="fb-lbl" for="caProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-      <select id="caProgram" onchange="ca.loadCourses()">
-        <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر برنامج…{% else %}Select program…{% endif %}</option>
+      <label class="fb-lbl" for="caProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</label>
+      <select id="caProgram">
+        <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر برنامجاً…{% else %}Choose a programme…{% endif %}</option>
         <option value="AI">AI</option>
         <option value="AI2">AI2</option>
         <option value="COE">COE</option>
@@ -58,138 +49,111 @@
         <option value="IS2">IS2</option>
       </select>
     </div>
-    <div class="ca-seg" role="radiogroup" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}">
-      <button type="button" class="ca-seg-btn ca-seg-active" data-sec="M" role="radio" aria-checked="true" onclick="ca.setSection('M')">M</button>
-      <button type="button" class="ca-seg-btn" data-sec="F" role="radio" aria-checked="false" onclick="ca.setSection('F')">F</button>
+    <div class="ux-seg" role="radiogroup" id="caSection" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}">
+      <button type="button" class="ux-seg-item" data-sec="M" role="radio" aria-checked="true">{% if LANGUAGE_CODE == 'ar' %}طلاب (M){% else %}Male (M){% endif %}</button>
+      <button type="button" class="ux-seg-item" data-sec="F" role="radio" aria-checked="false" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}طالبات (F){% else %}Female (F){% endif %}</button>
     </div>
     <div class="fb-search fb-grow">
       <label class="fb-lbl" for="caSearch">{% if LANGUAGE_CODE == 'ar' %}البحث{% else %}Search{% endif %}</label>
-      <input id="caSearch" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز أو اسم المقرر…{% else %}Course code or name…{% endif %}" oninput="ca.filterCourses()">
+      <input id="caSearch" type="search" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الرمز أو الاسم أو المدرس…{% else %}Code, name or instructor…{% endif %}">
     </div>
     <div class="fb-actions">
       <div class="ca-pill is-assigned" id="caAssigned" aria-live="polite">
         <span class="ca-pill-count">0</span>
-        <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}مُوزع{% else %}Assigned{% endif %}</span>
+        <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}مُسند{% else %}Assigned{% endif %}</span>
       </div>
       <div class="ca-pill is-unassigned" id="caUnassigned" aria-live="polite">
         <span class="ca-pill-count">0</span>
-        <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}غير مُوزع{% else %}Unassigned{% endif %}</span>
+        <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}غير مُسند{% else %}Unassigned{% endif %}</span>
       </div>
     </div>
   </div>
 
-  <!-- Bulk action bar (hidden by default) -->
-  <div class="ca-bulkbar d-none" id="caBulkbar">
+  <!-- Bulk assignment: shown while courses are ticked -->
+  <div class="ca-bulkbar d-none" id="caBulkbar" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}إسناد جماعي{% else %}Bulk assignment{% endif %}">
     <div class="ca-bulk-content">
-      <input type="text" id="caBulkTypeahead" class="fb-search" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس…{% else %}Search instructor…{% endif %}" autocomplete="off">
-      <button type="button" class="btn btn-primary" id="caBulkAssign" onclick="ca.executeBulkAssign()">
-        {% if LANGUAGE_CODE == 'ar' %}توزيع على <span id="caBulkCount">0</span> مقررات{% else %}Assign to <span id="caBulkCount">0</span> courses{% endif %}
+      <label class="fb-lbl" for="caBulkTypeahead">{% if LANGUAGE_CODE == 'ar' %}المدرس{% else %}Instructor{% endif %}</label>
+      <input type="text" id="caBulkTypeahead" class="fb-search" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس…{% else %}Search an instructor…{% endif %}" autocomplete="off">
+      <button type="button" class="btn btn-primary btn-sm" id="caBulkAssign">
+        {% if LANGUAGE_CODE == 'ar' %}إسناد إلى <span id="caBulkCount">0</span> مقررات{% else %}Assign to <span id="caBulkCount">0</span> courses{% endif %}
       </button>
     </div>
   </div>
 
-  <!-- Course assignments table -->
-  <table class="tbl-card" id="caTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}جدول توزيع المقررات على المدرسين{% else %}Course-to-instructor assignments{% endif %}">
-    <thead>
-      <tr>
-        <th scope="col" style="width:40px"><input type="checkbox" id="caSelectAll" onchange="ca.toggleAllCourses(this)" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد كل المقررات{% else %}Select all courses{% endif %}"></th>
-        <th scope="col">#</th>
-        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
-        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Name{% endif %}</th>
-        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %}</th>
-        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}س.م{% else %}Cr{% endif %}</th>
-        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المدرس{% else %}Instructor{% endif %}</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr><td colspan="7" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}اختر برنامج وشعبة{% else %}Select a program and section{% endif %}</td></tr>
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table class="tbl-card im-table" id="caTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}إسناد المقررات إلى المدرسين{% else %}Course-to-instructor assignments{% endif %}">
+      <thead>
+        <tr>
+          <th scope="col" class="im-col-check"><input type="checkbox" id="caSelectAll" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد كل المقررات الظاهرة{% else %}Select every course shown{% endif %}"></th>
+          <th scope="col" class="im-col-num">#</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Name{% endif %}</th>
+          <th scope="col" class="text-center">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %}</th>
+          <th scope="col" class="text-center"><abbr title="{% if LANGUAGE_CODE == 'ar' %}الساعات المعتمدة{% else %}Credit hours{% endif %}">{% if LANGUAGE_CODE == 'ar' %}س.م{% else %}Cr{% endif %}</abbr></th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المدرس{% else %}Instructor{% endif %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="7" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}اختر برنامجاً وشعبة لعرض مقرراتهما.{% else %}Choose a programme and a section to see their courses.{% endif %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
 
-</div>
-
-<!-- ─── Tab 2: Instructor Roster ─── -->
-<div class="im-tab-content" role="tabpanel" id="imTabRoster" aria-labelledby="imTabBtnRoster">
-
-  <!-- Instructor Roster Panel -->
-  <div class="im-panel">
-    <div class="im-panel-header">
-      <h3 class="im-panel-title">{% if LANGUAGE_CODE == 'ar' %}سجل هيئة التدريس{% else %}Instructor Roster{% endif %}</h3>
-      <button class="im-panel-action" id="imCreateInstructor">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-        {% if LANGUAGE_CODE == 'ar' %}إضافة عضو هيئة تدريس{% else %}Add Instructor{% endif %}
-      </button>
+<!-- ─── Roster ─── -->
+<section class="im-pane" role="tabpanel" id="imTabRoster" aria-labelledby="imTabBtnRoster" hidden>
+  <div class="filter-bar fb-fit mb-0">
+    <div class="fb-search fb-grow">
+      <label class="fb-lbl" for="imInstructorSearch">{% if LANGUAGE_CODE == 'ar' %}البحث{% else %}Search{% endif %}</label>
+      <input id="imInstructorSearch" type="search" class="fb-w-20ch"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}الاسم أو البريد أو القسم أو رقم الموظف…{% else %}Name, email, department or employee no…{% endif %}">
     </div>
-
-    <!-- Instructor filters and search -->
-    <div class="im-toolbar">
-      <div class="im-search">
-        <input id="imInstructorSearch" class="form-control form-control-compact" type="search"
-               placeholder="{% if LANGUAGE_CODE == 'ar' %}البحث في هيئة التدريس…{% else %}Search instructors…{% endif %}"
-               oninput="imFilterInstructors()">
-      </div>
-      <div class="im-filter-group">
-        <label class="im-filter-toggle">
-          <input type="checkbox" id="imIncludeInactive" onchange="imFilterInstructors()">
-          <span>{% if LANGUAGE_CODE == 'ar' %}إظهار غير النشطين{% else %}Include inactive{% endif %}</span>
-        </label>
-        <button class="btn btn-sm btn-outline-secondary" onclick="imLoadInstructors()">
-          <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          {% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}
-        </button>
-      </div>
-    </div>
-
-    <!-- Instructor table -->
-    <div class="table-wrap">
-      <table class="tbl-card" id="imInstructorTable">
-        <thead>
-          <tr>
-            <th>{% if LANGUAGE_CODE == 'ar' %}الاسم{% else %}Name{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Department{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}البريد{% else %}Email{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}رقم الموظف{% else %}Employee No{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى (ساعة/أسبوع){% else %}Max Weekly Hours{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td colspan="7" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل…{% else %}Loading instructors…{% endif %}</td></tr>
-        </tbody>
-      </table>
+    <label class="im-filter-toggle">
+      <input type="checkbox" id="imIncludeInactive">
+      <span>{% if LANGUAGE_CODE == 'ar' %}إظهار غير النشطين{% else %}Show inactive{% endif %}</span>
+    </label>
+    <div class="fb-actions">
+      <button type="button" class="btn btn-sm btn-neutral" id="imRefresh">{% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}</button>
+      <button type="button" class="btn btn-sm btn-primary" id="imCreateInstructor">{% if LANGUAGE_CODE == 'ar' %}إضافة عضو هيئة تدريس{% else %}Add instructor{% endif %}</button>
     </div>
   </div>
 
-</div>
-
-<!-- ─── Tab 3: Load Report ─── -->
-<div class="im-tab-content" role="tabpanel" id="imTabReport" aria-labelledby="imTabBtnReport">
-
-  <div class="im-panel">
-    <div class="im-panel-header">
-      <h3 class="im-panel-title">{% if LANGUAGE_CODE == 'ar' %}تقرير الأعباء التدريسية{% else %}Teaching Load Report{% endif %}</h3>
-      <p class="im-panel-sub">{% if LANGUAGE_CODE == 'ar' %}عبء كل عضو هيئة تدريس عبر جميع توزيعات المقررات.{% else %}Each instructor's load across all course assignments.{% endif %}</p>
-    </div>
-
-    <div id="imReportContent">
-      <div class="im-assignment-notice">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-        <span>{% if LANGUAGE_CODE == 'ar' %}جاري التحميل…{% else %}Loading…{% endif %}</span>
-      </div>
-    </div>
+  <div class="table-wrap">
+    <table class="tbl-card im-table" id="imInstructorTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}سجل هيئة التدريس{% else %}Instructor roster{% endif %}">
+      <thead>
+        <tr>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الاسم{% else %}Name{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Department{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}البريد{% else %}Email{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}رقم الموظف{% else %}Employee no{% endif %}</th>
+          <th scope="col" class="text-center">{% if LANGUAGE_CODE == 'ar' %}الحد الأسبوعي{% else %}Weekly limit{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+          <th scope="col"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="7" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل…{% else %}Loading instructors…{% endif %}</td></tr>
+      </tbody>
+    </table>
   </div>
+</section>
 
-</div>
+<!-- ─── Load report ─── -->
+<section class="im-pane" role="tabpanel" id="imTabReport" aria-labelledby="imTabBtnReport" hidden>
+  <p class="im-pane-lead">{% if LANGUAGE_CODE == 'ar' %}عبء كل عضو هيئة تدريس عبر كل إسنادات المقررات، الأعلى أولاً.{% else %}Each instructor's load across all course assignments, highest first.{% endif %}</p>
+  <div id="imReportContent">
+    <p class="empty-note">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل…{% else %}Loading…{% endif %}</p>
+  </div>
+</section>
 
-<!-- ─── Instructor Assignment Popover ─── -->
+<!-- ─── Instructor assignment popover ─── -->
 <div class="ca-pop" id="caPop" style="display:none" aria-hidden="true" role="dialog"
      aria-label="{% if LANGUAGE_CODE == 'ar' %}إسناد مدرس للمقرر{% else %}Assign an instructor to the course{% endif %}">
   <div class="ca-pop-search">
     <input type="text" id="caPopSearch" class="ca-pop-input" autocomplete="off"
            role="combobox" aria-expanded="true" aria-controls="caPopResults" aria-autocomplete="list"
            aria-label="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس{% else %}Search for an instructor{% endif %}"
-           placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس…{% else %}Search instructor…{% endif %}">
+           placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس…{% else %}Search an instructor…{% endif %}">
   </div>
   <div class="ca-pop-results" id="caPopResults" role="listbox"
        aria-label="{% if LANGUAGE_CODE == 'ar' %}نتائج البحث عن المدرسين{% else %}Instructor search results{% endif %}">
@@ -197,92 +161,68 @@
   </div>
 </div>
 
-<!-- ─── Modals ─── -->
-
-<!-- Create/Edit Instructor Modal -->
-<div class="im-modal" id="imInstructorModal" style="display:none" aria-hidden="true">
-  <div class="im-modal-backdrop" onclick="imHideInstructorModal()"></div>
-  <div class="im-modal-content">
-    <div class="im-modal-header">
-      <h3 id="imInstructorModalLabel">
-        {% if LANGUAGE_CODE == 'ar' %}إضافة عضو هيئة تدريس{% else %}Add Instructor{% endif %}
-      </h3>
-      <button class="im-modal-close" onclick="imHideInstructorModal()" aria-label="Close">
-        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+<!-- ─── Add / edit an instructor ─── -->
+<dialog id="imInstructorDialog" class="ux-dialog im-dialog" aria-labelledby="imInstructorModalLabel" aria-describedby="imInstructorModalSub">
+  <form method="dialog" id="imInstructorForm" novalidate>
+    <div class="ux-dialog-head">
+      <div>
+        <h2 class="ux-dialog-title" id="imInstructorModalLabel">{% if LANGUAGE_CODE == 'ar' %}إضافة عضو هيئة تدريس{% else %}Add instructor{% endif %}</h2>
+        <p class="ux-dialog-sub" id="imInstructorModalSub">{% if LANGUAGE_CODE == 'ar' %}الحقول المعلّمة بـ * مطلوبة.{% else %}Fields marked * are required.{% endif %}</p>
+      </div>
+      <button type="button" class="btn btn-sm btn-neutral btn-icon" data-dialog-close aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
-    <div class="im-modal-body">
-      <form id="imInstructorForm">
-        <input type="hidden" id="imInstructorId">
-        <div class="im-form-group" id="imAdvisorSeedGroup">
-          <label for="imAdvisorPicker">
-            {% if LANGUAGE_CODE == 'ar' %}تعبئة من مرشد أكاديمي (اختياري){% else %}Seed from existing advisor (optional){% endif %}
-          </label>
-          <div class="im-ac">
-            <input type="text" id="imAdvisorPicker" class="form-control" autocomplete="off"
-              role="combobox" aria-expanded="false" aria-controls="imAdvisorResults" aria-autocomplete="list"
-              placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مرشد بالاسم أو البريد…{% else %}Search an advisor by name or email…{% endif %}">
-            <div class="im-ac-panel" id="imAdvisorResults" role="listbox" style="display:none"></div>
-          </div>
-          <small class="im-hint">
-            {% if LANGUAGE_CODE == 'ar' %}اختر مرشداً لتعبئة الاسم والبريد والقسم تلقائياً، ثم أكمل باقي الحقول — أو أدخل عضو هيئة تدريس جديداً يدوياً بالأسفل.{% else %}Pick an advisor to auto-fill name, email &amp; department, then complete the rest — or just enter a new instructor manually below.{% endif %}
-          </small>
+    <div class="ux-dialog-body">
+      <input type="hidden" id="imInstructorId">
+      <div class="ux-field" id="imAdvisorSeedGroup">
+        <label class="ux-field-label" for="imAdvisorPicker">{% if LANGUAGE_CODE == 'ar' %}تعبئة من مرشد أكاديمي (اختياري){% else %}Fill in from an advisor (optional){% endif %}</label>
+        <div class="im-ac">
+          <input type="text" id="imAdvisorPicker" class="form-control" autocomplete="off"
+            role="combobox" aria-expanded="false" aria-controls="imAdvisorResults" aria-autocomplete="list" aria-describedby="imAdvisorHint"
+            placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مرشد بالاسم أو البريد…{% else %}Search an advisor by name or email…{% endif %}">
+          <div class="im-ac-panel" id="imAdvisorResults" role="listbox" style="display:none"></div>
         </div>
-        <div class="im-form-group">
-          <label for="imInstructorName">
-            {% if LANGUAGE_CODE == 'ar' %}الاسم (إنجليزي) *{% else %}Full Name *{% endif %}
-          </label>
-          <input type="text" id="imInstructorName" class="form-control" required>
+        <p class="ux-field-hint" id="imAdvisorHint">{% if LANGUAGE_CODE == 'ar' %}يعبّئ الاسم والبريد والقسم، ثم أكمل باقي الحقول.{% else %}Fills in the name, email and department; complete the rest below.{% endif %}</p>
+      </div>
+      <div class="im-form-grid">
+        <div class="ux-field">
+          <label class="ux-field-label" for="imInstructorName">{% if LANGUAGE_CODE == 'ar' %}الاسم *{% else %}Full name *{% endif %}</label>
+          <input type="text" id="imInstructorName" class="form-control" required autocomplete="off">
         </div>
-        <div class="im-form-group">
-          <label for="imInstructorNameAr">
-            {% if LANGUAGE_CODE == 'ar' %}الاسم (عربي){% else %}Arabic Name{% endif %}
-          </label>
-          <input type="text" id="imInstructorNameAr" class="form-control">
+        <div class="ux-field">
+          <label class="ux-field-label" for="imInstructorNameAr">{% if LANGUAGE_CODE == 'ar' %}الاسم بالعربية{% else %}Name in Arabic{% endif %}</label>
+          <input type="text" id="imInstructorNameAr" class="form-control" dir="rtl" autocomplete="off">
         </div>
-        <div class="im-form-group">
-          <label for="imInstructorEmail">
-            {% if LANGUAGE_CODE == 'ar' %}البريد الإلكتروني{% else %}Email{% endif %}
-          </label>
-          <input type="email" id="imInstructorEmail" class="form-control">
+        <div class="ux-field">
+          <label class="ux-field-label" for="imInstructorEmail">{% if LANGUAGE_CODE == 'ar' %}البريد الإلكتروني{% else %}Email{% endif %}</label>
+          <input type="email" id="imInstructorEmail" class="form-control" dir="ltr" autocomplete="off">
         </div>
-        <div class="im-form-group">
-          <label for="imInstructorEmployeeNo">
-            {% if LANGUAGE_CODE == 'ar' %}رقم الموظف{% else %}Employee No{% endif %}
-          </label>
-          <input type="text" id="imInstructorEmployeeNo" class="form-control">
+        <div class="ux-field">
+          <label class="ux-field-label" for="imInstructorEmployeeNo">{% if LANGUAGE_CODE == 'ar' %}رقم الموظف{% else %}Employee no{% endif %}</label>
+          <input type="text" id="imInstructorEmployeeNo" class="form-control" dir="ltr" autocomplete="off">
         </div>
-        <div class="im-form-group">
-          <label for="imInstructorDepartment">
-            {% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Department{% endif %}
-          </label>
-          <input type="text" id="imInstructorDepartment" class="form-control">
+        <div class="ux-field">
+          <label class="ux-field-label" for="imInstructorDepartment">{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Department{% endif %}</label>
+          <input type="text" id="imInstructorDepartment" class="form-control" autocomplete="off">
         </div>
-        <div class="im-form-group">
-          <label for="imInstructorMaxHours">
-            {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى (ساعة/أسبوع){% else %}Max Weekly Hours{% endif %}
-          </label>
-          <input type="number" id="imInstructorMaxHours" class="form-control" min="1" max="40">
+        <div class="ux-field">
+          <label class="ux-field-label" for="imInstructorMaxHours">{% if LANGUAGE_CODE == 'ar' %}الحد الأسبوعي (ساعات){% else %}Weekly limit (hours){% endif %}</label>
+          <input type="number" id="imInstructorMaxHours" class="form-control" min="1" max="40" inputmode="numeric">
         </div>
-        <div class="im-form-check">
-          <input type="checkbox" id="imInstructorActive" checked>
-          <label for="imInstructorActive">
-            {% if LANGUAGE_CODE == 'ar' %}نشط{% else %}Active{% endif %}
-          </label>
-        </div>
-      </form>
+      </div>
+      <label class="im-form-check">
+        <input type="checkbox" id="imInstructorActive" checked>
+        <span>{% if LANGUAGE_CODE == 'ar' %}نشط — يمكن إسناد المقررات إليه{% else %}Active — courses can be assigned to this instructor{% endif %}</span>
+      </label>
+      <p class="im-form-error" id="imInstructorError" role="alert" hidden></p>
     </div>
-    <div class="im-modal-footer">
-      <button class="btn btn-neutral" onclick="imHideInstructorModal()">
-        {% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}
-      </button>
-      <button class="btn btn-primary" onclick="imSaveInstructor()">
-        {% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}
-      </button>
+    <div class="ux-dialog-foot">
+      <button type="button" class="btn btn-neutral" id="imModalCancel" data-dialog-close>{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+      <button type="submit" class="btn btn-primary" id="imInstructorSave">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</button>
     </div>
-  </div>
-</div>
-
+  </form>
+</dialog>
 {% endblock %}
 
 {% block extra_js %}
@@ -290,5 +230,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=16"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=17"></script>
 {% endblock %}
