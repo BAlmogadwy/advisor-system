@@ -160,3 +160,32 @@ test('a slot whose analysed repair is not apply-ready is still a plain two-click
   assert.ok(!h.notices.some(row => /not an apply-ready repair/.test(row.message)));
   assert.equal(h.requests.filter(row => row.url.includes('/repair/runs/')).length, 0);
 });
+
+test("the classic page's Change room decides fit and use exactly as split view does", async t => {
+  // TimetableRoomChoice copies split's rules until split calls it (design
+  // record F3); the two read one case table (timetable-room-choice.test.cjs).
+  const h = await splitHarness(t);
+  h.w.eval(read('static/js/timetable-room-choice.js'));
+  const choice = h.w.TimetableRoomChoice;
+  const { cases } = JSON.parse(read('tests/fixtures/room_choice_cases.json'));
+  for (const { name, room, ...expected } of cases) {
+    assert.equal(choice.fits(room), h.w.roomFitsSection(room), name);
+    assert.equal(choice.occupied(room), h.w.roomIsOccupied(room), name);
+    assert.equal(choice.codeKey(room?.room_code), h.w.roomCodeKey(room?.room_code), name);
+    // Split's answer is the table's, not only the module's.
+    assert.equal(h.w.roomFitsSection(room), expected.fits, name);
+    assert.equal(h.w.roomIsOccupied(room), expected.occupied, name);
+    assert.equal(h.w.roomCodeKey(room?.room_code), expected.code_key, name);
+  }
+  // The table holds rooms each way, so agreeing says something.
+  for (const rule of [h.w.roomFitsSection, h.w.roomIsOccupied]) {
+    assert.ok(cases.some(c => rule(c.room)) && cases.some(c => !rule(c.room)), rule.name);
+  }
+  assert.ok(cases.some(c => !c.room?.available && h.w.roomFitsSection(c.room)), 'a held room that fits');
+  // A held room that misses on one flag alone, for each flag: dropping any
+  // one check from either copy is a held misfit made choosable.
+  const flags = ['fits_type', 'fits_gender', 'fits_capacity'];
+  for (const flag of flags) {
+    assert.ok(cases.some(c => h.w.roomIsOccupied(c.room) && flags.every(f => (c.room[f] === false) === (f === flag))), `a held room that misses only ${flag}`);
+  }
+});
