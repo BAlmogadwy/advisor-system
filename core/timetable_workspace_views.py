@@ -2811,7 +2811,11 @@ def tw_repair_run_rollback_view(request: HttpRequest, run_id) -> JsonResponse:
 @preview_lane
 @_one_teacher_request
 def tw_placement_room_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
-    """Return room candidates for a placement at its current or previewed slot."""
+    """Return room candidates for a placement at its current or previewed slot.
+
+    ``?audit=1`` (exactly "1") adds the quality audit's answer for each room
+    (``include_audit``); without it the answer is unchanged.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -2821,6 +2825,7 @@ def tw_placement_room_candidates_view(request: HttpRequest, placement_id: int) -
             day=request.GET.get("day") or None,
             start_time=request.GET.get("start_time") or None,
             end_time=request.GET.get("end_time") or None,
+            include_audit=request.GET.get("audit") == "1",
         )
     except SectionPlacement.DoesNotExist:
         return _err("Placement not found", code="NOT_FOUND", status=404)
