@@ -2,8 +2,9 @@
  * a meeting may take by hand, and the words each room is shown with. One case
  * table (tests/fixtures/room_choice_cases.json, which the split-view parity
  * test in timetable-manual-clash-ruling.test.cjs also reads) drives fits,
- * occupied, the verdict in English and Arabic, and the misfit reasons. The
- * module runs alone, with only what base.html loads on every page. */
+ * occupied, the verdict in English and Arabic, the misfit reasons and, where a
+ * case gives them, the facts. The module runs alone, with only what base.html
+ * loads on every page. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -32,19 +33,70 @@ test('each room in the case table fits, is in use and reads as the table says, i
   const choice = w.TimetableRoomChoice;
   for (const c of table.cases) {
     const target = { ...table.target, ...(c.target || {}) };
+    const placement = 'placement' in c ? c.placement : table.placement;
     assert.equal(choice.codeKey(c.room?.room_code), c.code_key, c.name);
     assert.equal(choice.fits(c.room), c.fits, c.name);
     assert.equal(choice.occupied(c.room), c.occupied, c.name);
     for (const language of ['en', 'ar']) {
       w.LANGUAGE_CODE = language;
-      assert.deepEqual(plain(choice.verdict(c.room, table.placement)), { group: c.verdict.group, tone: c.verdict.tone, words: c.verdict[language] }, `${c.name} (${language})`);
+      assert.deepEqual(plain(choice.verdict(c.room, placement)), { group: c.verdict.group, tone: c.verdict.tone, words: c.verdict[language] }, `${c.name} (${language})`);
       assert.deepEqual(plain(choice.misfitReasons(c.room, target, language === 'ar')), c.reasons[language], `${c.name} (${language})`);
+      if (c.facts) assert.equal(choice.factsHtml(c.room, target, language === 'ar'), c.facts[language], `${c.name} (${language})`);
     }
   }
   // Every group and tone is in the table, and only a room that fits is offered.
   const verdicts = table.cases.map(c => `${c.verdict.group}/${c.verdict.tone}`);
   for (const kind of ['free/ok', 'free/info', 'inUse/critical', 'inUse/warning', 'misfit/']) assert.ok(verdicts.includes(kind), kind);
   assert.ok(table.cases.every(c => (c.verdict.group === 'misfit') === !c.fits));
+  // For each fit flag, a held room that misses on that flag alone: being held
+  // never makes a misfit choosable, whichever check says so.
+  const flags = ['fits_type', 'fits_gender', 'fits_capacity'];
+  for (const flag of flags) {
+    assert.ok(table.cases.some(c => c.occupied && flags.every(f => (c.room[f] === false) === (f === flag))), `a held room that misses only ${flag}`);
+  }
+  // And the cases the normalisations need are still there.
+  const shapes = {
+    'a board id as text': c => typeof c.placement?.board_id === 'string' || c.room?.occupied_by?.some(e => typeof e.board_id === 'string'),
+    'no board on either side': c => c.occupied && c.verdict.tone === 'warning' && 'placement' in c && c.placement?.board_id == null,
+    'a need in another case': c => c.target?.required_type && c.target.required_type !== c.target.required_type.trim().toLowerCase() && c.reasons.en.length === 2,
+    'a room type and gender in another case': c => c.facts && c.room.room_type !== c.room.room_type.trim().toLowerCase() && c.room.section !== c.room.section.trim().toUpperCase(),
+    'a room without seats': c => c.facts && c.room.capacity === null,
+    'a meeting without a seat need': c => c.facts && c.target?.required_capacity === null,
+    'a $ in the room list': c => c.facts && /\$[&`'$]/.test(`${c.target?.required_type}${c.room.building}${c.room.wing}${c.room.floor}`),
+  };
+  for (const [shape, holds] of Object.entries(shapes)) assert.ok(table.cases.some(holds), shape);
+});
+
+test('writing to the words handed out changes no later verdict, reason or fact', t => {
+  const w = load(t);
+  const choice = w.TimetableRoomChoice;
+  const held = table.cases.find(c => c.verdict.tone === 'critical').room;
+  const elsewhere = table.cases.find(c => c.verdict.tone === 'warning').room;
+  const both = table.cases.find(c => c.reasons.en.length === 2 && !c.target);
+  const studio = table.cases.find(c => c.target?.required_type === 'studio');
+  const room = { room_type: 'lab', capacity: 40, section: 'F', building: 'B', wing: 'W', floor: 1 };
+  const shown = () => ['en', 'ar'].flatMap(language => {
+    w.LANGUAGE_CODE = language;
+    const ar = language === 'ar';
+    return [
+      choice.verdict(held, table.placement).words, choice.verdict(elsewhere, table.placement).words,
+      choice.verdict(table.cases[0].room, table.placement).words, choice.verdict(table.cases[1].room, table.placement).words,
+      ...choice.misfitReasons(both.room, table.target, ar), ...choice.misfitReasons(studio.room, { ...table.target, ...studio.target }, ar),
+      choice.factsHtml(room, { required_capacity: 30 }, ar), choice.factsHtml({ ...room, room_type: 'lecture', section: 'M' }, { required_capacity: 50 }, ar),
+    ];
+  });
+  const before = shown();
+  // Every word and count, at every depth, in both languages, is written over.
+  const scribble = words => {
+    for (const [key, value] of Object.entries(words)) {
+      if (value && typeof value === 'object') scribble(value);
+      else Reflect.set(words, key, typeof value === 'function' ? () => 'changed' : 'changed {c}');
+    }
+  };
+  scribble(choice.words(false));
+  scribble(choice.words(true));
+  assert.deepEqual(shown(), before);
+  assert.equal(choice.words(false).toneLead.critical, 'Blocks publishing');
 });
 
 test("a misfit's reasons follow the page's language when none is given", t => {

@@ -16,7 +16,8 @@
    in use is described as the page's Issues describe the clash it saves
    (TONE_LEAD and ISSUE_KINDS in page-timetable-workspace.js); a test pins the
    two equal. Verdicts and misfit reasons are plain text, which the caller
-   escapes; factsHtml is HTML. */
+   escapes; factsHtml is HTML. A value from the room list is put into a
+   sentence as it is: never read as a replace() pattern. */
 (function () {
   'use strict';
   // The page's language, as the pages read it (base.html's LANGUAGE_CODE), at
@@ -29,9 +30,15 @@
   // Latin code is otherwise reordered with the words around it.
   const isolate = value => `\u2066${value}\u2069`;
 
+  // Frozen all the way down: words() hands these tables to callers, and a
+  // caller writing to them must not change the words of a later verdict.
+  const freeze = table => {
+    for (const value of Object.values(table)) if (value && typeof value === 'object') freeze(value);
+    return Object.freeze(table);
+  };
   // Arabic counts use pluralAr (shared-utils.js, loaded by base.html on every
   // page), read when a count is worded.
-  const WORDS = {
+  const WORDS = freeze({
     en: {
       toneLead: { critical: 'Blocks publishing', warning: 'Lowers quality', info: 'For context' },
       kinds: { room: 'Room double-booked', roomElsewhere: 'Room also booked on another board' },
@@ -66,7 +73,7 @@
       spare: n => pluralAr(n, { zero: 'بلا فائض', one: 'مقعد فائض', two: 'مقعدان فائضان', few: '{n} مقاعد فائضة', many: '{n} مقعداً فائضاً', other: '{n} مقعد فائض' }),
       short: n => pluralAr(n, { one: 'ينقصها مقعد واحد', two: 'ينقصها مقعدان', few: 'ينقصها {n} مقاعد', many: 'ينقصها {n} مقعداً', other: 'ينقصها {n} مقعد' }),
     },
-  };
+  });
   const words = ar => WORDS[arabicOf(ar) ? 'ar' : 'en'];
 
   function codeKey(roomCode) {
@@ -90,19 +97,25 @@
       && room.fits_capacity !== false;
   }
 
+  /* A board id as text, so 2 and "2" are one board; '' when there is none,
+     and no board is ever "this board". */
+  const boardKey = id => (id == null ? '' : String(id));
+
   /* {group, tone, words} for a room offered to placement `p`; the first rule
      that applies wins: a misfit, then in use, then free. A room this board
      already uses at that time is the clash publishing refuses (critical); one
      used only on other boards lowers quality (warning). Once a room fits, only
      `occupied_by` decides: the server's own tone and `available` say "not
-     free", which is not "cannot be chosen", and the server already leaves out
-     the copies of this class that move with this meeting. */
+     free", which is not "cannot be chosen". Since PR #173 the server leaves
+     the section's own same-slot copies (the ones a room change moves with
+     this meeting) out of `occupied_by`; before it, those copies made a shared
+     section's own room read as in use. */
   function verdict(room, p) {
     if (!fits(room)) return { group: 'misfit', tone: '', words: '' };
     const w = words();
     if (occupied(room)) {
-      const boardId = p ? p.board_id : undefined;
-      const here = boardId != null && room.occupied_by.some(entry => entry && entry.board_id === boardId);
+      const board = boardKey(p?.board_id);
+      const here = board !== '' && room.occupied_by.some(entry => boardKey(entry?.board_id) === board);
       const tone = here ? 'critical' : 'warning';
       return { group: 'inUse', tone, words: `${w.toneLead[tone]}: ${w.kinds[here ? 'room' : 'roomElsewhere']}` };
     }
@@ -123,7 +136,7 @@
       const type = String(target?.required_type || '').trim();
       const kind = type.toLowerCase();
       if (kind === 'lecture' || kind === 'lab') items.push(w.needs[kind]);
-      else if (type) items.push(w.needs.type.replace('{c}', isolate(type)));
+      else if (type) items.push(w.needs.type.replace('{c}', () => isolate(type)));
     }
     if (room.fits_gender === false) {
       const gender = String(target?.required_gender || '').trim().toUpperCase();
@@ -156,7 +169,7 @@
     else if (gender) parts.push(code(gender));
     for (const key of ['building', 'wing', 'floor']) {
       const value = String(room[key] ?? '').trim();
-      if (value) parts.push(escapeHtml(w[key]).replace('{c}', code(value)));
+      if (value) parts.push(escapeHtml(w[key]).replace('{c}', () => code(value)));
     }
     return parts.join(' · ');
   }
