@@ -47,7 +47,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
     return { ok: !answer.httpError, status: answer.httpError || 200, json: async () => answer };
   };
   d.getElementById('twYear').value = '1448'; d.getElementById('twTerm').value = '1';
-  // The page loads the shared slot-column module before its own script.
+  // The page loads the meeting policy and the shared slot-column module before its own script.
+  w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-meeting-policy.js'), 'utf8'));
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-slot-config.js'), 'utf8'));
   w.eval(source);
   await wait(() => d.getElementById('twScenario').options.length === 2);
@@ -761,4 +762,14 @@ test('another board’s flag counts its publish-check items, not a stale list fi
   assert.equal(flag(), '9', 'before any check: the board list’s own count');
   await h.w.refreshPublishReadiness(true);
   assert.equal(flag(), '3', 'two blocking clashes and one section placed nowhere');
+});
+
+test('the grid rule matches the shared case table (also run against the server’s rule)', async t => {
+  const table = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/grid_rule_cases.json'), 'utf8'));
+  const h = await harness(t, undefined, { effective_slot_config: table.lecture_slots, effective_lab_slot_config: table.lab_slots });
+  await h.select();
+  for (const c of table.cases) {
+    const drawn = h.w.isPlacementOnGrid({ course_code: c.course, day: c.day, start_time: c.start, end_time: c.end });
+    assert.equal(drawn, c.on_grid, c.name);
+  }
 });
