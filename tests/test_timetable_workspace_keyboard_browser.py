@@ -14,9 +14,18 @@ outside the board's programme rooms is the "Room unsuitable" warning Issues
 then show, before the save and after it; the dialog reads in both themes and
 languages, keeps its foot in view while its list scrolls, and follows the
 arrow keys down the list in either direction.
+
+§7.3, 5e (MoveDialogTests): Move from Selection's Move… and by M on a card:
+the times the server offers, in the order of its verdict, read in both
+themes and languages with their times left to right; a time chosen by its
+accessible name moves the meeting by its time alone, and the card, toned by
+what the move saved, keeps the keyboard; Undo moves it back; a time-locked
+meeting reads nothing.
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -643,3 +652,246 @@ class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                         problems[f"{language} {theme} {width}x{height}"] = found
                     page.context.close()
         self.assertEqual(problems, {})
+
+
+# ── Move (§7.3, 5e) ──
+# Text in the Move dialog under 11px.
+MOVE_SMALL_TEXT = SMALL_TEXT.replace("#twRoomDialog", "#twMoveDialog")
+# With the list scrolled to its end, the title and the commit are on screen
+# and not covered; the dialog itself never scrolls (its body does).
+MOVE_FOOT_IN_VIEW = r"""() => {
+  const dialog = document.getElementById('twMoveDialog'), body = document.getElementById('twMoveBody');
+  if (body.scrollHeight <= body.clientHeight + 1) return ['the list does not scroll at this size: the check proves nothing'];
+  body.scrollTop = body.scrollHeight;
+  const bad = [];
+  const seen = el => { const r = el.getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= innerHeight && el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)); };
+  if (!seen(document.getElementById('twMoveCommit'))) bad.push('the commit scrolled away or is covered');
+  if (!seen(document.getElementById('twMoveTitle'))) bad.push('the title scrolled away or is covered');
+  if (dialog.scrollTop !== 0) bad.push('the dialog itself scrolled');
+  if (body.scrollTop === 0) bad.push('the list did not scroll');
+  return bad;
+}"""
+# Every time in the dialog is isolated left to right, as a time.
+MOVE_LTR_TIMES = r"""() => {
+  const times = [...document.querySelectorAll('#twMoveDialog bdi[dir="ltr"]')].map(bdi => bdi.textContent);
+  const rows = [...document.querySelectorAll('#twMoveBody input[name="twMoveChoice"]')];
+  const bad = times.filter(text => !/^\d\d:\d\d–\d\d:\d\d$/.test(text)).map(text => `not a time: ${text}`);
+  if (times.length < rows.length + 2) bad.push(`only ${times.length} isolated times for ${rows.length} rows`);
+  rows.filter(radio => !document.getElementById(radio.getAttribute('aria-labelledby')).querySelector('bdi[dir="ltr"]'))
+    .forEach(radio => bad.push(`${radio.value}: its time is not isolated`));
+  return bad;
+}"""
+SAY_IN_MOVE_ALERT = """tone => dialogSay(document.getElementById('twMoveDialog'),
+  tone === 'success' ? movedWords('MON', '13:00', '14:15') : MOVE_WORDS.changed, tone)"""
+MOVE_ALERT_IN_TONE = ALERT_IN_TONE.replace("twRoomAlert", "twMoveAlert")
+# The status line, drawn as a failed read draws it (nothing failed here).
+SHOW_MOVE_FAILURE = """() => { Object.assign(MOVE, { state: 'error', failure: { code: 'BOOM', status: 500 } }); drawMoveDialog(); }"""
+ON_MOVE = "document.activeElement?.matches('#twRightBody [data-tw-action=\"move\"]')"
+CHOSEN_MOVE = "document.activeElement?.name === 'twMoveChoice'"
+
+
+class MoveDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
+    """Move (§7.3, 5e) in a real browser. These write, to pytest's database.
+    AI111 S1 meets on Sunday and Tuesday 09:00 in R101; AI222 S1 meets on
+    Monday and Wednesday 13:00 in R101 too, so moving AI111's Sunday meeting
+    to Monday 13:00 keeps its room and double-books R101. MATH201 S1 meets
+    on Thursday 10:30, its time locked (and no other scenario owns it)."""
+
+    maxDiff = None
+
+    def setUp(self) -> None:
+        super().setUp()
+        from core.models import DeliveryBoard, SectionPlacement, TermSection
+
+        board = DeliveryBoard.objects.get(scenario=self.scenario)
+        key = fx.requirement("AI", "MATH201", "Discrete Mathematics")
+        fx.budget(self.scenario, key, 1)
+        fx.place(
+            board,
+            fx.section(self.scenario, key, "S1"),
+            (("THU", "10:30", "11:45"),),
+            locked=True,
+            room="R102",
+        )
+        self.placements = SectionPlacement.objects
+        ai111 = TermSection.objects.get(scenario=self.scenario, course_code="AI111")
+        self.sunday = self.placements.get(term_section=ai111, day="SUN")
+        self.card = f'#twGrid [data-focus-key="placement:{self.sunday.id}"]'
+        self.math = self.placements.get(term_section__course_code="MATH201")
+        self.math_card = f'#twGrid [data-focus-key="placement:{self.math.id}"]'
+
+    def _at_rest(self, page, day: str, start: str) -> None:
+        # The board read again with the meeting at this time, and the page at rest.
+        page.wait_for_function(
+            """([id, day, start]) => !document.getElementById('twMoveDialog').open
+              && TW.placements.some(p => p.id === id && p.day === day && p.start_time === start)
+              && document.querySelector('.tw-workspace').dataset.busy === 'false'""",
+            arg=[self.sunday.id, day, start],
+        )
+
+    def test_mb1_the_move_dialog_reads_keeps_its_foot_and_gives_the_keyboard_back(self) -> None:
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                for width, height in ((1366, 650), (1440, 790)):
+                    page, sent, errors = self._load(language, theme, width, height, cards=5)
+                    page.click(self.card)
+                    page.click('#twRightBody [data-tw-action="move"]')
+                    page.wait_for_function(CHOSEN_MOVE)
+                    found = page.evaluate(
+                        CONTRAST,
+                        [
+                            "#twMoveDialog .ux-dialog-title",
+                            "#twMoveDialog .ux-dialog-sub",
+                            "#twMoveDialog .ux-choice-title",
+                            "#twMoveDialog .ux-choice-desc",
+                            "#twMoveDialog .tw-move-verdict",
+                            "#twMoveDialog .ux-field-label",
+                            "#twMoveDialog .ux-dialog-foot-note",
+                        ],
+                    )
+                    found += page.evaluate(MOVE_SMALL_TEXT)
+                    found += page.evaluate(MOVE_FOOT_IN_VIEW)
+                    if language == "ar":
+                        found += page.evaluate(MOVE_LTR_TIMES)
+                    # The alert line in each tone it takes, and the status line:
+                    # drawn here, since nothing was refused and nothing failed.
+                    for tone in ("warning", "success"):
+                        page.evaluate(SAY_IN_MOVE_ALERT, tone)
+                        found += page.evaluate(CONTRAST, ["#twMoveDialog #twMoveAlert"])
+                        found += page.evaluate(MOVE_ALERT_IN_TONE, tone)
+                    page.evaluate(SHOW_MOVE_FAILURE)
+                    found += page.evaluate(CONTRAST, ["#twMoveDialog .ux-choice-status"])
+                    found += page.evaluate(MOVE_SMALL_TEXT)
+                    # Escape gives the keyboard back to Selection's Move…, drawn
+                    # again while the dialog was open (the browser's own return
+                    # would aim at the old node).
+                    page.evaluate(
+                        f"TW.placements.find(p => p.id === {self.sunday.id}).registered_count = 7;"
+                        " renderRightPanel('selection')"
+                    )
+                    page.keyboard.press("Escape")
+                    page.wait_for_function("!document.getElementById('twMoveDialog').open")
+                    if not page.evaluate(ON_MOVE):
+                        found.append("Escape did not give the keyboard back to Move…")
+                    if sent or errors:
+                        found += [*sent, *errors]
+                    if found:
+                        problems[f"{language} {theme} {width}x{height}"] = found
+                    page.context.close()
+        self.assertEqual(problems, {})
+
+    def test_mb2_m_moves_the_meeting_by_its_time_alone_and_undo_moves_it_back(self) -> None:
+        for language, name, kind, report in (
+            (
+                "en",
+                r"Mon.*13:00",
+                "Room double-booked",
+                "Press R on the card to change its room.",
+            ),
+            (
+                "ar",
+                r"الاثنين.*13:00",
+                "القاعة محجوزة مرتين",
+                "اضغط R على البطاقة لتغيير قاعتها.",
+            ),
+        ):
+            self.placements.filter(pk=self.sunday.pk).update(
+                day="SUN", start_time="09:00", end_time="10:15"
+            )
+            page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
+            posts: list[tuple[str, str]] = []
+            page.on(
+                "request",
+                lambda r, posts=posts: posts.append((r.url, r.post_data))
+                if r.method == "POST"
+                else None,
+            )
+            page.focus(self.card)
+            page.keyboard.press("m")
+            page.wait_for_function(CHOSEN_MOVE)
+            # The board drawn again while the dialog is open: the keyboard
+            # comes back to the card drawn now, not the old node.
+            page.evaluate("renderGrid()")
+            # The time, by its accessible name: Monday 13:00, where R101 is AI222's.
+            value = page.get_by_role("radio", name=re.compile(name)).get_attribute("value")
+            self.assertEqual(value, "MON|13:00", language)
+            page.focus(f'#twMoveBody input[value="{value}"]')
+            page.keyboard.press("Space")
+            row = page.evaluate(
+                """value => { const radio = document.querySelector(`#twMoveBody input[value="${value}"]`);
+                  return [radio.checked, radio.closest('.ux-choice').dataset.tone,
+                          document.getElementById(radio.getAttribute('aria-describedby').split(' ')[0]).textContent]; }""",
+                value,
+            )
+            self.assertEqual(row[:2], [True, "critical"], language)
+            self.assertIn(kind, row[2], language)
+            page.keyboard.press("Enter")
+            self._at_rest(page, "MON", "13:00")
+            moves = [
+                body for url, body in posts if url.endswith(f"/placements/{self.sunday.id}/move/")
+            ]
+            self.assertEqual(
+                moves, ['{"day":"MON","start_time":"13:00","end_time":"14:15"}'], language
+            )
+            saved = self.placements.get(pk=self.sunday.pk)
+            self.assertEqual(
+                (saved.day, saved.start_time, saved.end_time, saved.room),
+                ("MON", "13:00", "14:15", "R101"),
+                f"{language}: its time moved, its room stayed",
+            )
+            # The card at its new time, toned by the clash it saved, has the keyboard.
+            page.wait_for_function(
+                f"document.activeElement?.matches('{self.card}') && document.activeElement.classList.contains('critical')"
+            )
+            self.assertEqual(
+                page.evaluate(
+                    "(() => { const cell = document.activeElement.closest('[role=\"gridcell\"]'); return [cell.dataset.day, cell.dataset.start]; })()"
+                ),
+                ["MON", "13:00"],
+                language,
+            )
+            page.wait_for_function(
+                """([kind, report]) => [...document.querySelectorAll('#toast-container .ux-toast.warning .ux-toast-title')]
+                  .some(title => { const text = title.textContent.replace(/[\\u2066\\u2069]/g, ''); return text.includes(kind) && text.endsWith(report); })""",
+                arg=[kind, report],
+            )
+            # Undo moves it back, by its time alone.
+            page.click("#twUndo")
+            self._at_rest(page, "SUN", "09:00")
+            moves = [
+                body for url, body in posts if url.endswith(f"/placements/{self.sunday.id}/move/")
+            ]
+            self.assertEqual(
+                moves[1:], ['{"day":"SUN","start_time":"09:00","end_time":"10:15"}'], language
+            )
+            self.assertEqual(self.placements.get(pk=self.sunday.pk).day, "SUN", language)
+            self.assertEqual(errors, [], language)
+            page.context.close()
+
+    def test_mb3_a_time_locked_meeting_reads_nothing_and_says_why(self) -> None:
+        page, sent, errors = self._load("en", "light", 1440, 790, cards=5)
+        reads: list[str] = []
+        page.on("request", lambda r: reads.append(r.url) if "/slot-candidates/" in r.url else None)
+        page.click(self.math_card)
+        page.wait_for_selector('#twRightBody [data-tw-action="move"]')
+        held = page.evaluate(
+            """() => { const button = document.querySelector('#twRightBody [data-tw-action="move"]');
+              const note = document.getElementById('twSelActionNote');
+              return [button.disabled, button.hasAttribute('data-tw-hold'), button.getAttribute('aria-describedby'),
+                      note.textContent, note.hidden, note.getClientRects().length > 0]; }"""
+        )
+        locked = (
+            "This section's time is locked. Unlock its time to move it; its room can still change."
+        )
+        self.assertEqual(held, [True, True, "twSelActionNote", locked, False, True])
+        page.focus(self.math_card)
+        page.keyboard.press("m")
+        page.wait_for_function(
+            "words => [...document.querySelectorAll('#toast-container .ux-toast.warning .ux-toast-title')].some(t => t.textContent === words)",
+            arg=locked,
+        )
+        self.assertFalse(page.evaluate("document.getElementById('twMoveDialog').open"))
+        self.assertEqual(reads, [])
+        self.assertEqual([*sent, *errors], [])
