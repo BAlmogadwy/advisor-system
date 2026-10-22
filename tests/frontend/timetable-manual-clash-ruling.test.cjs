@@ -189,3 +189,49 @@ test("the classic page's Change room decides fit and use exactly as split view d
     assert.ok(cases.some(c => h.w.roomIsOccupied(c.room) && flags.every(f => (c.room[f] === false) === (f === flag))), `a held room that misses only ${flag}`);
   }
 });
+
+test('the classic page and split view differ only on answers that carry the audit; without it, which room can be chosen is split view’s answer', async t => {
+  // 5c-audit: the classic dialog judges by the quality audit when the answer
+  // carries it (?audit=1); split view keeps the legacy rule until F3.
+  const h = await splitHarness(t);
+  h.w.eval(read('static/js/timetable-room-choice.js'));
+  const choice = h.w.TimetableRoomChoice;
+  const table = JSON.parse(read('tests/fixtures/room_choice_cases.json'));
+  const targetOf = c => {
+    const target = { ...table.target, ...(c.target || {}) };
+    if ('audit_target' in c) target.audit = { ...table.audit_target, ...c.audit_target };
+    return target;
+  };
+  const carries = c => 'audit_target' in c && targetOf(c).audit.assessed === true && Boolean(c.room?.audit);
+  const placement = c => ('placement' in c ? c.placement : table.placement);
+  const offered = (c, room, target) => choice.verdict(room, placement(c), target).group !== 'misfit';
+  const parted = { offered: [], refused: [] };
+  for (const c of table.cases) {
+    const target = targetOf(c);
+    const split = h.w.roomFitsSection(c.room);
+    // The same answer without the audit, on either side: split view's answer.
+    const legacyTarget = { ...target };
+    delete legacyTarget.audit;
+    const legacyRoom = c.room && { ...c.room };
+    if (legacyRoom) delete legacyRoom.audit;
+    assert.equal(offered(c, c.room, legacyTarget), split, `${c.name}: no audit on the target`);
+    assert.equal(offered(c, legacyRoom, target), split, `${c.name}: no audit on the room`);
+    if (!carries(c)) assert.equal(offered(c, c.room, target), split, c.name);
+    else if (offered(c, c.room, target) !== split) parted[split ? 'refused' : 'offered'].push(c.room.room_code);
+  }
+  // They do part, both ways: rooms the audit offers that split refuses (seats)
+  // and rooms it refuses that split offers (a room with no gender, the
+  // audit's type or gender need).
+  assert.ok(parted.offered.length > 0 && parted.refused.length > 0, JSON.stringify(parted));
+  assert.ok(parted.offered.includes('R25') && parted.refused.includes('R34'), JSON.stringify(parted));
+});
+
+test('split view keeps the legacy rule: its room reads never ask for the audit (design record F3)', async t => {
+  const h = await splitHarness(t);
+  h.state.selectedPlacementId = 10; h.state.selectedPaneIdx = 0;
+  h.panel.open = true; h.panel.tab = 'selection'; h.w.renderRpanel();
+  await wait(() => h.d.querySelectorAll('.tws-room-card').length === 2);
+  const reads = h.requests.filter(row => row.url.includes('/room-candidates/'));
+  assert.ok(reads.length > 0, 'split view read its rooms');
+  assert.ok(reads.every(row => !/[?&]audit=/.test(row.url)), reads.map(row => row.url).join('\n'));
+});

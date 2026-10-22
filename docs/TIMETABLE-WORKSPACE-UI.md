@@ -698,6 +698,126 @@ findings changed the plan:
    `?audit=1`, what the quality audit will say once each room is saved; the
    audit's room rule moved into one module both use (§7.3, 5c-audit). No
    client change yet.
+   **As built, 5c-audit (client, `feat/workspace-room-audit-client`):**
+   Change room reads `/room-candidates/?audit=1` (the `previewRead` key is
+   unchanged) and, before a save, says the room rows Issues will show after
+   it. This closes the gap the 5c note above left to a server follow-up
+   (seats, rooms with no department or gender, every board of a shared
+   meeting).
+   - **When.** An answer is judged by the audit when `target.audit.assessed`
+     is exactly `true` and the quality check has not said it cannot judge the
+     scenario's rooms (`TW.quality.rooms.assessed !== false`: a fault in
+     another meeting that the answer cannot see). `roomJudgement` decides once,
+     when the answer arrives (`ROOM.target`, `ROOM.unassessed`): a quality
+     check answering later never re-sorts a list a room was chosen from (the
+     next open judges again), and a save is reported by what its row was
+     judged against, also a save the user left with Escape while the list
+     open by then is judged otherwise. Otherwise the legacy rule holds,
+     byte for byte: an answer with no `audit` key (a server before
+     5c-audit) draws and saves exactly as before (RC22 replays a snapshot
+     recorded at `5892a12` before any client change); one that asked and is
+     not judged by it draws the same plus the note "The quality check cannot
+     judge rooms for this meeting; rooms are grouped by type, gender and
+     seats only."
+   - **The rule** (`TimetableRoomChoice` v2): `REFUSED_AUDIT_REASONS =
+     ['gender', 'type']` (the owner's answer to Q1: a room short of the
+     audit's seats is a choosable warning); `auditOf`, `refusals`,
+     `issueKinds`, `verdict(room, p, target, refused)`, `misfitReasons`
+     (named from `target.audit`'s need), `factsHtml` (seats spare or short
+     of `target.audit.required_capacity`), `currentVerdict` and
+     `auditNotes`. `fits`, `occupied` and the legacy verdict are the same
+     code. Judged by the audit a room is a misfit when the audit refuses it
+     (held or not); else in use (critical when this board holds it, else a
+     warning), flagged (a free room the audit will flag: a warning) or free.
+     Its words are Issues' card for it once saved: the tone's lead, then the
+     kinds in `ISSUE_KIND_ORDER` (Room double-booked, Room too small, Room
+     unsuitable, Room also booked on another board), joined with ", " as the
+     card joins them in both languages; then why: "needs N seats" whenever
+     "Room too small" is among them (also when only a copy that stays is too
+     small; the page's `seatsNeeded` words), "outside this board's programme
+     rooms" when this board is in `programme_board_ids`, else "outside the
+     programme rooms of {boards}", "{board} has no programme", and "the same
+     class stays in {room} ({boards})" for each room a kept copy holds when
+     the class would be split. Codes and labels are isolated.
+   - **The dialog.** Groups: free, "Free, but lowers quality (n)" with its
+     hint, in use, then the misfits; the legacy "outside" group only for
+     rooms judged by the legacy rule. Notes above the filter (and only when
+     there are rooms): a copy staying in its room (by room, with its boards)
+     and a board with no programme, both warnings; seats assumed for a
+     course with no budget row (context; `capacity_source: "default"`); and
+     the unassessed note (context). `.tw-room-note` takes `data-tone`
+     (warning or info); the time's own clashes keep the critical mark. The
+     current room's line adds what Issues say of it now
+     (`target.audit.current`, its use at this time from its row, and what the
+     meeting needs of a type or gender it misses on), nothing when Issues
+     list nothing for it. A current room the audit flags is chosen at first;
+     one it refuses is not. The report names the rows Issues will list
+     ("Issues will show “Room too small”, “Room unsuitable”."), after the
+     clash sentence when the room is in use ("Issues will also show …"), a
+     warning; a success when Issues list nothing for it.
+   Where it differs from the design (critique §5), and why:
+   - `REFUSED_AUDIT_REASONS` is `['gender', 'type']`, not `['gender',
+     'type', 'capacity']`: the owner's decision. The list is one constant
+     (`verdict`, `refusals` and `misfitReasons` take another for the test of
+     Q1's other answers).
+   - "Issues shows" (singular) in the new hint and notes, as the dialog's
+     hints already say it; the design's strings table wrote "show".
+   - The report quotes the kinds (“…”, «…»), as the outside hint quotes
+     “Room unsuitable”; the design's `{k}` was bare.
+   - The judgement is fixed when the answer arrives, not at each draw (the
+     design was silent): a redraw must not move a chosen row out of the
+     choosable groups.
+   - A room with no `audit` in an answer that has one is judged by the
+     legacy rule (the server always sends one); `unroomed_copy`
+     (`missing`) is not worded: Issues read a copy with no room from the
+     board ("No room" on that copy), not as a row of this meeting.
+   - The truncation line is unchanged: it counts the rows the server lists,
+     which audit mode extends past 60 (`summary.total` is unchanged).
+   Tests (spec changes said where they are): the case table gains 29 audit
+   cases (a shared `audit_target`; `fits`/`occupied` stay split view's
+   answer), and its test checks each by group, tone, words (en, ar), reasons
+   and facts, with the shapes that matter pinned (refused for gender alone
+   and type alone, held and refused, short of seats alone choosable, both
+   ways the two rules part, Issues' kinds alone and together in Issues'
+   order; and answers that asked but are judged by the legacy rule). The
+   kinds' words and order and `needsSeats` are pinned to the page's
+   `ISSUE_KINDS`, `ISSUE_KIND_ORDER` and `seatsNeeded` (the kinds test's key
+   list gained `roomSmall`, a spec change); new module tests cover the
+   refused list (C2), `issueKinds`, `currentVerdict`, `auditNotes` (with
+   Arabic counts) and server strings put in as they are. Split view's
+   parity file now pins that the two pages differ only on answers that carry
+   the audit, both ways (C12), and that split never asks for it (C6). Page:
+   RC1 expects `?audit=1` (C6, a spec change); RC22 (the legacy snapshot,
+   C4); RC23 (groups, tones, words, facts, misfits, the current room, en and
+   ar; C1, C7, C9); RC24 (reports, also of a save left with Escape; C8);
+   RC25 (each combination of quality reasons and use: the row's words are
+   Issues' card text and tone after the save, and "needs N seats" is Issues'
+   row; C3); RC26 (the quality check that cannot judge, and an audit that
+   did not judge the meeting: the snapshot plus the note, and the judgement
+   fixed at read time; C5); RC27 (the notes, escaped and isolated, none
+   without rooms; C11); RC28 (a refused current room, one in use, one that
+   fits, none). Chrome (`RoomDialogTests`): RB2 now expects R104 (10 seats
+   for the audit's 22) among the choosable rooms and R103 alone refused, and
+   RB4 the flagged group, its hint and the new report (both spec changes:
+   the audit rule); RB3 also checks the notes' tone marks in both themes;
+   RB5 is new: a 25-seat room for the audit's 26 (the budget's 24, +10%) is
+   the "Room too small" warning before the save, the report says so, and
+   Issues list "Room too small · AI111 · R106 · needs 26 seats" and ring the
+   card, in English and Arabic; the lab stays refused. Mutation: 80 jsdom
+   mutants (the refused list each way, the kind order, the quality-kind map,
+   `auditOf`'s three conditions, each verdict, detail, note, current-line
+   and word rule, the page's request, judgement, groups, notes, current
+   line, escaping and report, and the legacy paths) all go red; two
+   survived the first run and were pinned (the current line's words
+   unescaped, now RC27 with a label holding markup; the current line while
+   the rooms load, now RC28 byte for byte). In Chrome, 5 mutants all go red:
+   seats refused (RB5, RB2), the audit not asked and the report by the
+   legacy rule (RB5), and either note's tone mark dropped (RB3).
+   Assets: page `?v=55`, `timetable-room-choice.js` `?v=2`,
+   `timetable-workspace.css` `?v=15`; `global.css` unchanged.
+   Known limits: split view keeps the legacy rule (F3, next); a slot change
+   is not this dialog's (it is room-only), so `save: "slot_change"` answers
+   have no client yet; this PR has no live check on the real data.
    **As built, 5e (Move and M):** M on a card and Selection's Move… (before
    Lock; none for an English section, which has "Change section pattern")
    go through the seam after the one gate (published, loading, job,
@@ -1022,10 +1142,10 @@ This spec was written from four drafts (grid, move, place, room) and two critiqu
 | D18a | `aria-busy` goes only on `.ux-choice-list`. Status lines sit outside it. | | |
 | D19 | **Preview reads keep one promise in flight per key**, joined again on reopen and never aborted. | The lane token is released only when the view returns (request_lanes.py:63-80). Precedent: `loadPlanLens` (PAGE:1655-1685). | Preview-lane finding (eng) |
 | D19a | The memo key includes `TW.dataVersion`. Retry skips the memo but still joins a request in flight. | | |
-| D20 | **Change room** reads the room list at the server's current time (no slot parameters; VIEWS:2821-2823, SVC:2152-2154). | | Room findings |
+| D20 | **Change room** reads the room list at the server's current time (no slot parameters; VIEWS:2821-2823, SVC:2152-2154). Since 5c-audit it asks for the quality audit's answer with it (`?audit=1`). | | Room findings |
 | D20a | Its commit body is `{room}` only. That keeps the change room-only and keeps the lock (VIEWS:2997-3013). | | |
 | D20b | A room that fits (type, gender, seats) can be chosen even when another section holds it at that time. This follows the owner ruling of 2026-10-20 (SPLIT:4254-4269). | | |
-| D20c | Rooms that do not fit are listed with their reason and cannot be chosen, as in split view (SPLIT:7095-7098). Owner question Q1. Amended by 5c-audit (judged by the quality audit; seats a choosable warning); the client PR applies it. | | |
+| D20c | Rooms that do not fit are listed with their reason and cannot be chosen, as in split view (SPLIT:7095-7098). Owner question Q1. **Amended by 5c-audit and applied by its client PR (the owner's decision, 2026-10-22):** judged by the quality audit's requirement when the answer carries one, a room the audit refuses for the wrong gender or the wrong type is listed with its reason and cannot be chosen; a room short of the audit's seats is a choosable warning ("Room too small"). Split view keeps the legacy rule until F3. | | |
 | D20d | The server stops counting the same class's copies as occupants and always returns the current room. | | |
 | D21 | `timetable-room-choice.js` is a shared module whose only user in PR 5 is the classic page. A parity test checks it against split's functions. Split switches to it in a follow-up. | | Split-refactor scope (eng) |
 | D22 | Fixes to the drag path in 5b: | | Place data defects |
@@ -1539,6 +1659,8 @@ Docs: §3.3 adds `UXControls.dialog`, `.ux-dialog-scroll`, `.ux-choice-list` / `
   | otherwise | free | ok | "Free and fits" |
 
   The verdict reads `occupied_by` only; same-class copies are already left out by the server. `outsidePool(room)` is `department_fit === false` (a flag the answer leaves out is no fact). No verdict is `info`: every room Issues will list once saved is a warning or worse, since an info row never rings a card (§7.1).
+
+  This table is the legacy rule. Since 5c-audit (v2) an answer that carries the quality audit's answer is judged by it instead: `verdict(room, p, target)` gives misfit (refused for gender or type), inUse, **flagged** (a free room Issues will flag once saved) or free, worded as Issues' card for it; see 5c-audit and its as-built note.
 - **`misfitReasons(room, target, ar)`**, **`factsHtml(room, target, ar)`** and **`words(ar)`**.
 
 ##### Server
@@ -2179,20 +2301,22 @@ rows refused for seats the audit accepts.
   room's `compatible` equals the audit's domain, and the current room's
   `quality_reasons` equal Issues' rows: no mismatch.
 
-**D20c, amended (the client PR applies it):** "Rooms that do not fit, judged by
-the quality audit's requirement when the answer carries one (`?audit=1`), are
-listed with their reason and cannot be chosen, except a room short of seats,
-which is a choosable warning (Q1). Split view keeps the legacy rule until F3."
+**D20c, amended (applied by the client PR; the owner's decision, 2026-10-22):**
+"Rooms that do not fit, judged by the quality audit's requirement when the
+answer carries one (`?audit=1`), are listed with their reason and cannot be
+chosen: the wrong gender and the wrong type. A room short of the audit's seats
+is a choosable warning, 'Room too small' (Q1). Split view keeps the legacy rule
+until F3."
 On 665 the two pages then differ on 1,679 rows that the dialog offers and
 split view refuses or does not list (seats), and on none the other way: type
 and gender agree everywhere on the QA data. Under the legacy seat number, 72 rows the
 dialog offered were "Room too small" to Issues, and 580 it refused were
 big enough.
 
-**Q1, restated and decided** (tech owner, delegated, 2026-10-22). Judged by the
-audit, should a room short of the audit's seat need (the buffered budget
-demand, or 40 when the course has no budget row) or of the wrong type be
-choosable as a warning?
+**Q1, restated and answered by the owner** (2026-10-22). Judged by the audit,
+should a room short of the audit's seat need (the buffered budget demand, or 40
+when the course has no budget row) or of the wrong type be choosable as a
+warning?
 - **Seats: yes.** A choosable warning row, "Room too small", which Issues then
   show. The need is an estimate: a buffered forecast, and the default 40 is a
   policy number, not the section's size.
@@ -2200,9 +2324,27 @@ choosable as a warning?
   equipment.
 - **Gender: no.** Refused: rooms are segregated; this is not a quality trade-off.
 
-So the client refuses the audit reasons `gender` and `type` only. The server's
-extended listing keeps every row not refused for gender, so this answer (or a
-later change to it) needs no server change.
+So the client refuses the audit reasons `gender` and `type` only
+(`TimetableRoomChoice.REFUSED_AUDIT_REASONS`). The server's extended listing
+keeps every row not refused for gender, so this answer (or a later change to
+it) needs no server change.
+
+**Client (`feat/workspace-room-audit-client`).** The Change room dialog reads
+`?audit=1` and, before a save, says the room rows Issues will show after it;
+see the as-built note under §7.2 item 5. Answers without the audit (a server
+before this PR, a meeting the audit cannot judge) and scenarios whose rooms the
+quality check cannot judge keep the legacy rule, byte for byte (the latter
+with a note). Its new words ({c} a room code, {b} a board label, both
+isolated; {k} Issues' kind labels, quoted):
+
+| Where | English | Arabic |
+|---|---|---|
+| Kind (Issues' `roomSmall`) | Room too small | القاعة أصغر من المطلوب |
+| Seats (Issues' `seatsNeeded`) | needs {n} seat(s) | pluralAr: يحتاج مقعداً واحداً · مقعدين · {n} مقاعد · {n} مقعداً · {n} مقعد |
+| Why | outside the programme rooms of {b} · {b} has no programme · the same class stays in {c} ({b}) | خارج قاعات برامج {b} · ليس للوحة {b} برنامج · تبقى الشعبة نفسها في {c} ({b}) |
+| Group, hint | Free, but lowers quality ({n}) · Choosing one saves the warning on its row, which Issues then shows. | متاحة لكنها تُضعف الجودة ({n}) · اختيار إحداها يحفظ التحذير المذكور في سطرها، ويظهر بعدها في «المشاكل». |
+| Notes | The same class stays in {c} ({b}): any other room leaves it split, which Issues shows as “Room unsuitable”. · {b} has no programme, so Issues shows every room as “Room unsuitable”. · This course has no budget row, so the quality check assumes {n} seat(s). · The quality check cannot judge rooms for this meeting; rooms are grouped by type, gender and seats only. | تبقى الشعبة نفسها في {c} ({b})؛ وأي قاعة أخرى تتركها مقسّمة، فتعرضها «المشاكل» «القاعة غير مناسبة». · ليس للوحة {b} برنامج، لذا تعرض «المشاكل» كل قاعة «القاعة غير مناسبة». · لا يوجد صف ميزانية لهذا المقرر، لذا يفترض فحص الجودة {n} (pluralAr: مقعداً واحداً · مقعدين · {n} مقاعد · {n} مقعداً · {n} مقعد). · لا يستطيع فحص الجودة الحكم على قاعات هذا اللقاء؛ صُنّفت القاعات حسب النوع والجنس والمقاعد فقط. |
+| Report | Room {c} assigned; Issues will show {k}. · (after the clash sentence) Issues will also show {k}. | عُيّنت القاعة {c}، وستعرض «المشاكل»: {k}. · وستعرض «المشاكل» أيضاً: {k}. |
 
 **Known limits.**
 - A scenario-wide audit failure (a gender conflict, a bad interval or an
@@ -2221,8 +2363,8 @@ later change to it) needs no server change.
   legacy fields read none for a policy course). No policy uses a shared room
   today; a test patches the English one to.
 
-**Follow-ups.** The client PR (`feat/workspace-change-room-audit`); F3 (split
-view on the module with `?audit=1`); bulk clean rooms and repair accepting only
+**Follow-ups.** F3 (split view on the module with `?audit=1`), next; bulk
+clean rooms and repair accepting only
 `quality_reasons == []`; `_PlacementTimeCheck`'s room warning for a shared
 section's own copies; online identity by display code everywhere.
 
@@ -2243,6 +2385,6 @@ section's own copies; online identity by display code everywhere.
 
 #### Owner questions (not settled by the owner rules)
 
-- **Q1.** Change room by hand: should a room **short of seats** or **of the wrong type** become a choosable warning row ("Room too small" / "Room unsuitable" are already warnings, PAGE:3203-3204), leaving only the wrong gender refused? PR 5 keeps split view's refusal (SPLIT:7095-7098). The rule is one function, `TimetableRoomChoice.fits`. **Restated and decided in 5c-audit** (2026-10-22, tech owner, delegated): judged by the quality audit, seats short of its need are a choosable warning; wrong type and wrong gender stay refused.
+- **Q1.** Change room by hand: should a room **short of seats** or **of the wrong type** become a choosable warning row ("Room too small" / "Room unsuitable" are already warnings, PAGE:3203-3204), leaving only the wrong gender refused? PR 5 keeps split view's refusal (SPLIT:7095-7098). The rule is one function, `TimetableRoomChoice.fits`. **Answered by the owner (2026-10-22), restated in 5c-audit:** judged by the quality audit, seats short of its need are a choosable warning ("Room too small"); the wrong type and the wrong gender stay refused (`REFUSED_AUDIT_REASONS = ['gender', 'type']`, applied by the 5c-audit client).
 - **Q2.** Place for an **online** course: offer only the online (evening) windows? The 2026-07-28 rule for GS/GSE (timetable_autoplace.py:275-284) points that way. PR 5 offers the daytime columns, as the server does today (SVC:1428-1431), and shows a note.
 - **Q3.** Change room acts on **one meeting**, as split view does. Should it offer "all N meetings of this section" when they share the current room?
