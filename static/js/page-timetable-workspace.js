@@ -2060,7 +2060,7 @@ function boardLegendHtml() {
     + item(icon('icon', 'lock'), IS_AR ? 'الوقت مقفل؛ القاعة قابلة للتغيير' : 'Time locked; its room can change')
     + item(icon('icon', 'shared'), IS_AR ? 'يملكها سيناريو آخر' : 'Another scenario owns it')
     + item(swatch('selected'), IS_AR ? 'الشعبة المحددة' : 'The selected section')
-    + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه' : 'The same course’s other meetings')
+    + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه الأخرى' : 'The same course’s other meetings')
     + `<span class="ux-legend-item">${IS_AR ? 'اللون يساعد على إيجاد المقرر' : 'Colour helps find a course'}</span>`
     + `</div>`;
 }

@@ -285,7 +285,8 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
    carry the severity (red text cannot reach 4.5:1 on every course colour). */
 .tw-card-room[data-room-state="unassigned"] { font-weight: 700; }
 /* The teacher only where the card is wide enough to keep the room readable. */
-.tw-card-teacher { display: none; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* At least ~6em or its own line: never a stray "·" squeezed beside the room. */
+.tw-card-teacher { display: none; flex: 1 1 6em; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tw-card-teacher::before { content: '· '; color: #6b7280; }
 @container tw-cell (min-width: 130px) { .tw-card-teacher { display: inline; } }
 .tw-card-marks { display: inline-flex; align-items: center; gap: 3px; flex: none; margin-inline-start: auto; }
