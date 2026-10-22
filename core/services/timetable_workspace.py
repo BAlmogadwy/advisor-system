@@ -2246,11 +2246,13 @@ def preview_placement_room_candidates(
         .select_related("board", "term_section")
     )
     for other in occupiers:
-        # The section's own copies at this very slot (the query is already this
-        # scenario) are one class with this placement: assign_physical_meeting_room
-        # selects its copies by exactly this section and slot and moves them with
-        # a room change, so they are not another class holding the room. The same
-        # section at another time is another class, and stays an occupant.
+        # Every copy of the section at this very slot (the query is already this
+        # scenario) is skipped: the same section at the same time is the same
+        # class, not another class holding the room. Choosing the room of a copy
+        # that sits in another room makes the copies agree, and the move itself
+        # takes only the copies in this placement's room with it
+        # (assign_physical_meeting_room). The same section at another time is
+        # another class, and stays an occupant.
         if (
             other.term_section_id == placement.term_section_id
             and str(other.day).strip().upper() == target_day

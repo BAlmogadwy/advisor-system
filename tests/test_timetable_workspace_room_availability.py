@@ -1249,8 +1249,10 @@ def test_bulk_safe_time_moves_skip_an_externally_owned_section(monkeypatch, stal
 # ── Change room: a section's own copies, the current room, the reasons ───────
 #
 # Design record 7.3, sub-PR 5c (server half). The page's "Change room" sends only
-# {room}, a room-only change that assign_physical_meeting_room applies to every
-# copy of the section at that slot, so those copies are not other occupants.
+# {room}, a room-only change. Every copy of the section at the same slot is the
+# same class, so none is an occupant: choosing the room of a copy that sits in
+# another room makes the copies agree, and the move itself
+# (assign_physical_meeting_room) takes the copies in the anchor's room with it.
 
 
 def _placed(
@@ -1347,8 +1349,9 @@ def test_rs1_an_occupant_names_its_section_by_id() -> None:
 
 
 def test_rs1_the_skipped_copy_is_the_one_a_room_change_moves() -> None:
-    # Why the skip is right: the room change writes exactly the copies the
-    # preview no longer lists as occupants, and leaves the other-time copy alone.
+    # Why the skip is right: the room change writes the copy in the placement's
+    # room, which the preview no longer lists as an occupant, and leaves the
+    # other-time copy alone.
     scenario, board_a, board_b = _workspace()
     board_c = _third_board(scenario)
     section = _term_section(scenario, "AI101", "S1")
@@ -1372,6 +1375,55 @@ def test_rs1_the_skipped_copy_is_the_one_a_room_change_moves() -> None:
     assert own_copy.room == "R200"
     assert other_time.room == "R100"
     assert occupants == {other_time.id}
+
+
+def test_rs1_a_time_move_preview_skips_a_copy_already_at_the_previewed_slot() -> None:
+    # The skip compares with the slot being previewed, not the placement's own:
+    # a copy of the section already sitting at the override slot is the same
+    # class as the placement arriving there.
+    scenario, board_a, board_b = _workspace()
+    section_a = _term_section(scenario, "AI101", "S1")
+    section_b = _term_section(scenario, "DS201", "S1")
+    _lecture_room("R100")
+    _lecture_room("R200")
+    subject = _placed(board_a, section_a, "R100")  # SUN 09:00, in R100
+    _placed(board_b, section_a, "R100", day="MON")  # its copy, already at the override slot
+    _placed(board_b, section_b, "R200", day="MON")  # another section at the override slot
+
+    preview = preview_placement_room_candidates(
+        subject.id, day="MON", start_time="09:00", end_time="10:15"
+    )
+    by_room = {row["room_code"]: row for row in preview["candidates"]}
+
+    assert preview["target"]["day"] == "MON"
+    assert by_room["R100"]["occupied_by"] == []
+    assert by_room["R100"]["available"] is True
+    # The override slot is the one being checked: another section there still occupies.
+    assert [row["term_section_id"] for row in by_room["R200"]["occupied_by"]] == [section_b.id]
+    assert by_room["R200"]["available"] is False
+
+
+def test_rs1_a_copy_in_another_room_is_not_an_occupant_of_that_room() -> None:
+    # The same section at the same slot is the same class wherever its copy sits:
+    # choosing that room makes the copies agree rather than double-booking it.
+    scenario, board_a, board_b = _workspace()
+    section = _term_section(scenario, "AI101", "S1")
+    _lecture_room("R100")
+    _lecture_room("R200")
+    subject = _placed(board_a, section, "R100")
+    copy = _placed(board_b, section, "R200")  # same slot, a different room
+
+    preview = preview_placement_room_candidates(subject.id)
+    by_room = {row["room_code"]: row for row in preview["candidates"]}
+
+    assert by_room["R200"]["occupied_by"] == []
+    assert by_room["R200"]["available"] is True
+    assert "room occupied at this time" not in by_room["R200"]["reasons"]
+
+    # And the room change does what the preview promises: the copies agree.
+    assign_physical_meeting_room(subject, "R200")
+    copy.refresh_from_db()
+    assert (subject.room, copy.room) == ("R200", "R200")
 
 
 def _crowded_rooms(count: int) -> None:
