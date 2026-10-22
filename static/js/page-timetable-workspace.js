@@ -1731,9 +1731,10 @@ function placementSearchText(p) {
   const lensBits = lens
     ? [lens.owner, lens.owner_label, lens.role, ...(lens.filter_plans || [])].filter(Boolean).join(' ')
     : '';
-  // The words the user sees ("No room", "Online"), never the placer's marker.
+  // The words the user sees ("No room", "Online"), never the placer's marker;
+  // the teacher as the card names it (a meeting row can carry a stale name).
   const meetingBits = (p.meetings || [])
-    .map(m => [m.instructor, meetingRoomText(m.room, p), m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
+    .map(m => [meetingRoomText(m.room, p), m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
     .join(' ');
   return [
     p.course_code,
@@ -1745,7 +1746,7 @@ function placementSearchText(p) {
     p.start_time,
     p.end_time,
     placementRoomText(p),
-    p.instructor,
+    window.TimetableSectionTeacher.teacherOf(p).name,
     meetingBits,
     lensBits,
   ].filter(Boolean).join(' ').toUpperCase();
@@ -2389,8 +2390,33 @@ $('twUndo').addEventListener('click', () => runHistoryAction(true));
 $('twRedo').addEventListener('click', () => runHistoryAction(false));
 
 /* ── Right Panel ── */
+/* An item from before the last edit says so, in Issues and in Selection. */
+function issuePendingWord() {
+  return TW.readinessLoading || TW.qualityLoading
+    ? (IS_AR ? 'يجري التحقق' : 'checking')
+    : (IS_AR ? 'من قبل آخر تعديل' : 'from before your last change');
+}
+
+// An Issues row with sections takes the user to them (another board's first).
+$('twRightBody').addEventListener('click', async event => {
+  const row = event.target.closest && event.target.closest('.tw-issue-row[data-ids]');
+  if (!row) return;
+  const targetBoard = parseInt(row.dataset.boardTarget || '', 10);
+  try {
+    const ids = JSON.parse(row.dataset.ids);
+    if (Number.isFinite(targetBoard) && targetBoard && targetBoard !== TW.boardId) {
+      await selectBoard(targetBoard);
+    }
+    highlightWorkspacePlacements(ids);
+  } catch {}
+});
+
 function renderRightPanel(tab) {
   const body = $('twRightBody');
+  // The panel is drawn again after every answer from the server: the design
+  // system's redraw leaves unchanged content alone and keeps the keyboard on
+  // the same control (a toggle, a row, a button) when it changes.
+  const draw = html => (window.UXControls?.redraw ? window.UXControls.redraw(body, html) : ((body.innerHTML = html), true));
 
   if (tab === 'issues') {
     const model = buildBoardIssues();
@@ -2398,13 +2424,14 @@ function renderRightPanel(tab) {
     // With no board open (a scenario with none yet), the tab has no board to
     // speak for; the scenario's own blockers are on Publish.
     if (!TW.boardId) {
-      body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'افتح لوحة لعرض مشاكلها.' : 'Open a board to see its issues.'}</p></div>`;
+      draw(`<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'افتح لوحة لعرض مشاكلها.' : 'Open a board to see its issues.'}</p></div>`);
       return;
     }
     const note = text => `<p class="tw-issue-note">${text}</p>`;
     let notes = '';
     if (!model.known.conflicts) notes += note(IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.');
     const checking = Boolean(TW.readinessLoading || TW.qualityLoading);
+    const pendingWord = issuePendingWord();
     if (model.rows.some(row => row.pending)) {
       notes += note(checking
         ? (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ يجري التحقق منها.' : 'Some items are from before your last change; they are being checked.')
@@ -2413,9 +2440,9 @@ function renderRightPanel(tab) {
     if (TW.quality && !TW.quality.rooms?.assessed) notes += note(IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.');
 
     if (!model.rows.length) {
-      body.innerHTML = model.known.conflicts
+      draw(model.known.conflicts
         ? `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${IS_AR ? 'لا مشاكل في هذه اللوحة' : 'No issues on this board'}</p></div>${notes}`
-        : notes;
+        : notes);
       return;
     }
 
@@ -2432,72 +2459,59 @@ function renderRightPanel(tab) {
       const region = `twIssues-${tone}`;
       html += `<section class="tw-issue-group" data-tone="${tone}"><h3 class="tw-issue-group-head">`
         + `<button type="button" class="ux-disclosure-toggle tw-issue-head" data-tone="${tone}" data-ux-disclosure="${key}" aria-expanded="${open}" aria-controls="${region}">`
-        + `<span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span>`
+        + `<span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span class="ux-disclosure-label">${esc(TONE_LEAD[tone])}</span>`
         + `<span class="tw-issue-count tnum">${model.counts[tone]}</span><span class="ux-disclosure-chevron" aria-hidden="true"></span></button></h3>`
         + `<div class="tw-issue-group-body" id="${region}"${open ? '' : ' hidden'}>`;
       rows.forEach(row => {
-        const pendingWord = checking ? (IS_AR ? 'يجري التحقق' : 'checking') : (IS_AR ? 'من قبل آخر تعديل' : 'from before your last change');
         const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
           + `<span class="tw-issue-subject"><bdi>${isolateTimes(row.subject)}</bdi></span>`
           + (row.detail ? `<span class="tw-issue-detail"><bdi>${isolateTimes(row.detail)}</bdi></span>` : '');
         html += row.ids.length && row.locate !== false
-          ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
+          ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-focus-key="${esc(`${row.kind}:${row.ids.join(',')}`)}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
           : `<div class="tw-issue-row tw-issue-static" data-tone="${tone}">${inner}</div>`;
       });
       html += '</div></section>';
     });
-    body.innerHTML = html;
-
-    // A row with sections takes the user to them (another board's first).
-    body.querySelectorAll('.tw-issue-row[data-ids]').forEach(row => {
-      row.addEventListener('click', async () => {
-        const targetBoard = parseInt(row.dataset.boardTarget || '', 10);
-        try {
-          const ids = JSON.parse(row.dataset.ids);
-          if (Number.isFinite(targetBoard) && targetBoard && targetBoard !== TW.boardId) {
-            await selectBoard(targetBoard);
-          }
-          highlightWorkspacePlacements(ids);
-        } catch {}
-      });
-    });
+    draw(html);
   } else if (tab === 'selection') {
     if (!TW.selectedPlacementId) {
-      body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'اختر شعبة في الجدول لعرض تفاصيلها.' : 'Click a section on the grid to inspect it.'}</p></div>`;
+      draw(`<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'اختر شعبة في الجدول لعرض تفاصيلها.' : 'Click a section on the grid to inspect it.'}</p></div>`);
       return;
     }
     const p = TW.placements.find(x => x.id === TW.selectedPlacementId);
-    if (!p) { body.innerHTML = ''; return; }
+    if (!p) { draw(''); return; }
     const english = globalThis.TimetableMeetingPolicy?.isEnglish(p);
     const dayLabel = code => DAY_LABELS[DAYS.indexOf(code)] || code || '—';
     const field = (label, value) => `<div class="tw-sel-field"><dt>${label}</dt><dd>${value}</dd></div>`;
     // A count of 0 is a count; only a missing one is unknown.
-    const count = value => (value === null || value === undefined || value === '') ? '—' : esc(Number(value).toLocaleString());
+    const count = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)))
+      ? '—' : esc(Number(value).toLocaleString());
     // The section's teacher by the one-teacher rule (a meeting row can carry a
     // stale name, so the meetings list below names no one).
     const teacher = window.TimetableSectionTeacher.teacherOf(p);
     const teacherHtml = teacher.state === 'tbd'
       ? `${esc(window.TimetableSectionTeacher.words.tbd)}${teacher.hint ? `<span class="tw-sel-hint">${esc(teacher.hint)}</span>` : ''}`
-      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : '—';
+      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : esc(window.TimetableSectionTeacher.words.none);
     // What is wrong with this section, from the board's one issue model: what
     // blocks publishing or lowers quality (context stays in the Issues tab),
-    // each naming what it is about — a pair shows both sections.
+    // each naming what it is about — a pair shows both sections. An item from
+    // before the last edit says so, as in Issues (the card does not ring for it).
     const ownRows = buildBoardIssues().rows.filter(row => row.tone !== 'info' && row.ids.includes(String(p.id)));
     const ownIssues = ownRows.length
       ? `<h3 class="tw-sel-subhead">${IS_AR ? 'مشاكل هذه الشعبة' : 'This section’s issues'}</h3><ul class="tw-sel-issues">${ownRows.map(row =>
         `<li data-tone="${row.tone}"><span class="ux-tone-icon" data-tone="${row.tone}" role="img" aria-label="${esc(TONE_LEAD[row.tone])}"></span>`
-        + `<span><span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}</span> <bdi class="tw-sel-issue-subject">${isolateTimes(row.subject)}</bdi>${row.detail ? `<span class="tw-sel-hint"><bdi>${isolateTimes(row.detail)}</bdi></span>` : ''}</span></li>`).join('')}</ul>`
+        + `<span><span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${esc(issuePendingWord())}` : ''}</span> <bdi class="tw-sel-issue-subject">${isolateTimes(row.subject)}</bdi>${row.detail ? `<span class="tw-sel-hint"><bdi>${isolateTimes(row.detail)}</bdi></span>` : ''}</span></li>`).join('')}</ul>`
       : '';
     const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
-    body.innerHTML = `
+    draw(`
       <div class="tw-sel-head">
         <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
         ${p.course_name ? `<div class="tw-sel-sub">${esc(compactCourseName(p.course_name))}</div>` : ''}
         ${p.is_locked ? `<span class="pill-status pill-b">${IS_AR ? 'الوقت مقفل' : 'Time locked'}</span>` : ''}
       </div>
       ${ownIssues}
-      ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${editable ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
+      ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-focus-key="pattern" data-tw-mutation ${editable ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
       <dl class="tw-sel-fields">
         ${field(IS_AR ? 'اليوم' : 'Day', esc(dayLabel(p.day)))}
         ${field(IS_AR ? 'الوقت' : 'Time', `<bdi>${esc(p.start_time)}–${esc(p.end_time)}</bdi>`)}
@@ -2508,11 +2522,11 @@ function renderRightPanel(tab) {
       </dl>
       ${meetings ? `<h3 class="tw-sel-subhead">${IS_AR ? 'جميع لقاءات الشعبة' : 'All meetings of this section'}</h3><ul class="tw-sel-meetings">${meetings}</ul>` : ''}
       <div class="tw-sel-actions">
-        <button type="button" class="btn btn-sm btn-neutral" data-tw-mutation ${editable ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح قفل الوقت' : 'Unlock time') : (IS_AR ? 'قفل الوقت' : 'Lock time')}</button>
-        <button type="button" class="btn btn-sm btn-outline-danger" data-tw-mutation ${editable ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة من الجدول' : 'Remove from timetable'}</button>
+        <button type="button" class="btn btn-sm btn-neutral" data-focus-key="lock" data-tw-mutation ${editable ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح قفل الوقت' : 'Unlock time') : (IS_AR ? 'قفل الوقت' : 'Lock time')}</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" data-focus-key="remove" data-tw-mutation ${editable ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة من الجدول' : 'Remove from timetable'}</button>
       </div>
       <p class="tw-sel-help">${esc(T.lockHelp)}</p>
-    `;
+    `);
   } else if (tab === 'capacity') {
     const courses = (TW.capacityData && TW.capacityData.courses) || [];
     if (courses.length === 0) {

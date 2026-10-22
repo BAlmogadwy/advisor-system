@@ -642,7 +642,7 @@ const at = (id, extra = {}) => ({ ...placement, id, term_section_id: id + 100, c
   needs_room: true, room_state: 'assigned', is_online: false, shared_with_other_scenario: false, ...extra });
 const quiet = { summary: { critical: 0, warning: 0 }, overlaps: [], instructor_clashes: [], room_clashes: [], cross_board_conflicts: [], hard_overlap_threshold: 20 };
 const noRooms = { ...quality, rooms: { assessed: true, shortages: 0, details: [] } };
-function modelHarness(t, { placements, conflicts = quiet, q = noRooms, boards = [board], extra = {}, readiness = null }) {
+function modelHarness(t, { placements, conflicts = quiet, q = noRooms, boards = [board], extra = {}, readiness = null, arabic = false }) {
   return harness(t, url => {
     if (url === '/ops/tw/boards/2/') return { placements, slot_config: scenario.slot_config };
     if (url.includes('/conflicts/')) return conflicts;
@@ -650,7 +650,7 @@ function modelHarness(t, { placements, conflicts = quiet, q = noRooms, boards = 
     if (url.startsWith('/ops/tw/boards/?')) return { boards };
     if (url.includes('/readiness/')) return { readiness: readiness || { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     return undefined;
-  }, extra);
+  }, extra, arabic);
 }
 const card = (h, id) => h.d.querySelector(`.tw-card[data-placement-id="${id}"]`);
 const tone = (h, id) => ['critical', 'warning'].find(name => card(h, id).classList.contains(name)) || '';
@@ -1062,4 +1062,73 @@ test('Selection lists the section’s own issues, its teacher by the rule, and t
   assert.equal(other.querySelector('.tw-sel-issues'), null, 'nothing wrong: no list');
   const teacher = [...other.querySelectorAll('.tw-sel-field')].find(f => f.querySelector('dt').textContent === 'Teacher');
   assert.equal(teacher.querySelector('dd').textContent, 'Dr Meeting', 'a section the map does not know keeps its meeting name');
+});
+
+test('the keyboard stays on an Issues group or row through every redraw', async t => {
+  const h = await modelHarness(t, { placements: [at(10, { room: 'UNASSIGNED', room_state: 'unassigned' }), at(11, { day: 'MON' })], q: quality });
+  await h.select();
+  h.w.renderRightPanel('issues');
+  const head = () => h.d.querySelector('#twRightBody .tw-issue-head[data-tone="critical"]');
+  head().focus();
+  const node = head();
+  h.w.renderReadinessViews();  // the same issues: nothing is drawn again
+  assert.equal(head(), node, 'unchanged content keeps its nodes');
+  h.w.TW.dataVersion++;  // an edit: rows turn "checking", the panel is drawn anew
+  h.w.renderReadinessViews();
+  assert.notEqual(head(), node);
+  assert.equal(h.d.activeElement, head(), 'focus is back on the same group');
+  const row = () => h.d.querySelector('#twRightBody .tw-issue-row[data-tone="warning"]');
+  h.w.TW.readinessLoading = false; h.w.TW.qualityLoading = false;
+  h.w.renderRightPanel('issues');
+  row().focus();
+  const rowNode = row();
+  h.w.TW.qualityLoading = true;  // its caveat turns to "checking"
+  h.w.renderRightPanel('issues');
+  assert.notEqual(row(), rowNode, 'drawn anew');
+  assert.equal(h.d.activeElement, row(), 'and on the same row');
+  // A row still takes the user to its section after a redraw (one listener).
+  row().click();
+  await settle();
+  assert.ok(card(h, 11).classList.contains('highlight') || card(h, 10).classList.contains('highlight'));
+  assert.deepEqual(h.errors, []);
+});
+
+test('Selection marks an item from before the last edit, names a pair, and says None in both languages', async t => {
+  for (const arabic of [false, true]) {
+    const h = await modelHarness(t, { arabic, q: quality, placements: [
+      at(10, { teacher: { name: '', status: 'pinned' } }),
+      at(11, { day: 'MON' }),
+    ], conflicts: { ...quiet, summary: { critical: 0, warning: 1 }, room_clashes: [{ ids: [10, 11], room: 'R1', sections: ['AI10-S1', 'AI11-S1'] }] } });
+    await h.select();
+    card(h, 10).click();
+    const body = h.d.getElementById('twRightBody');
+    const issues = () => [...body.querySelectorAll('.tw-sel-issues li')].map(li => li.textContent);
+    assert.ok(issues().some(text => /AI10-S1/.test(text) && /AI11-S1/.test(text)), `a pair names both sections: ${issues()}`);
+    const teacher = [...body.querySelectorAll('.tw-sel-field')][3].querySelector('dd').textContent;
+    assert.equal(teacher, arabic ? 'لا يوجد' : 'None', 'the drawer’s word for no teacher');
+    assert.ok(!issues().some(text => /checking|from before|يجري التحقق|من قبل آخر تعديل/.test(text)), 'fresh rows carry no caveat');
+    h.w.TW.dataVersion++;  // an edit: the room check is about older data
+    h.w.TW.readinessLoading = false; h.w.TW.qualityLoading = false;
+    h.w.renderRightPanel('selection');
+    const room = issues().find(text => /Room too small|القاعة أصغر/.test(text));
+    assert.ok(room, issues().join(' | '));
+    assert.match(room, arabic ? /من قبل آخر تعديل/ : /from before your last change/);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
+test('search finds a section by the teacher its card names, never by a stale meeting name', async t => {
+  const h = await modelHarness(t, { placements: [
+    at(10, { teacher: { name: 'Dr Rule', status: 'pinned' }, meetings: [{ day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'R1', instructor: 'Stale Name' }] }),
+    at(11, { day: 'MON', meetings: [{ day: 'MON', start_time: '09:00', end_time: '10:15', room: 'R1', instructor: 'Dr Meeting' }] }),
+  ] });
+  await h.select();
+  const search = h.d.getElementById('twSearch');
+  const find = async text => { search.value = text; search.dispatchEvent(new h.w.Event('input')); await settle(); };
+  await find('dr rule');
+  assert.ok(card(h, 10));
+  await find('stale name');
+  assert.equal(card(h, 10), null, 'the stale name is not on the card, so it finds nothing');
+  await find('dr meeting');
+  assert.ok(card(h, 11), 'a section the rule leaves to its meetings keeps that name');
 });

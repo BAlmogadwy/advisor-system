@@ -2257,14 +2257,11 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 .ux-icon[data-icon="lock"]   { --ux-icon: var(--ux-icon-lock); }
 .ux-icon[data-icon="shared"] { --ux-icon: var(--ux-icon-shared); }
 
-/* ── Legend: what a page's marks mean ───────────────────────
-   `<div class="ux-legend" role="note">` holding `.ux-legend-item`s, each a
-   swatch (or icon) and its words. One quiet line that wraps; it is read once
-   and then out of the way, so it sits after the content it explains. */
 /* ── Disclosure: a group whose header opens and closes it ─────
    `<button class="ux-disclosure-toggle" aria-expanded aria-controls>` holding
-   its label (and, if it has one, a count that stays visible when closed),
-   then the region it controls. ux-controls.js does the opening. */
+   its `.ux-disclosure-label` (which takes the free width), then anything that
+   stays visible when closed (a count), then `.ux-disclosure-chevron`; the
+   region it controls follows the button. ux-controls.js does the opening. */
 .ux-disclosure-toggle {
   display: flex; align-items: center; gap: 6px;
   width: 100%; margin: 0; padding: 6px 4px;
@@ -2274,10 +2271,15 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
   cursor: pointer;
 }
 .ux-disclosure-toggle:hover { background: color-mix(in srgb, var(--t0) 5%, transparent); }
+.ux-disclosure-label { flex: 1 1 auto; min-width: 0; }
+/* The chevron is an L drawn with PHYSICAL borders (its corner bottom-right)
+   and turned: 45deg points it down (open, either direction); closed, it points
+   along the reading direction — right in LTR (-45deg), left in RTL (135deg).
+   Logical borders would move the corner in RTL and every angle with it. */
 .ux-disclosure-chevron {
   flex: none; margin-inline-start: auto;
   width: 8px; height: 8px;
-  border-inline-end: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
   transform: rotate(45deg); opacity: 0.7;
   transition: transform var(--dur-fast, 0.15s) var(--ease, ease);
 }
@@ -2285,6 +2287,10 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 [dir="rtl"] .ux-disclosure-toggle[aria-expanded="false"] .ux-disclosure-chevron { transform: rotate(135deg); }
 @media (prefers-reduced-motion: reduce) { .ux-disclosure-chevron { transition: none; } }
 
+/* ── Legend: what a page's marks mean ───────────────────────
+   `<div class="ux-legend" role="note">` holding `.ux-legend-item`s, each a
+   swatch (or icon) and its words. One quiet line that wraps; it is read once
+   and then out of the way, so it sits after the content it explains. */
 .ux-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
   margin: 0; padding: 8px 2px;

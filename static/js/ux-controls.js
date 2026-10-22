@@ -236,7 +236,10 @@
   }
 
   // ── Disclosure ────────────────────────────────────────────────
+  // The choice is kept for the session; where storage is unavailable (a
+  // private window, blocked site data) it is kept for the page's life.
   const DISCLOSURE_STORE = 'ux-disclosure:';
+  const disclosureChoices = new Map();
   const disclosure = {
     isOpen(key, fallback = true) {
       try {
@@ -244,9 +247,10 @@
         if (saved === 'open') return true;
         if (saved === 'closed') return false;
       } catch (_) { /* a per-session convenience only */ }
-      return fallback;
+      return disclosureChoices.has(key) ? disclosureChoices.get(key) : fallback;
     },
     remember(key, open) {
+      disclosureChoices.set(key, open);
       try { window.sessionStorage.setItem(DISCLOSURE_STORE + key, open ? 'open' : 'closed'); } catch (_) { /* as above */ }
     },
   };
@@ -261,6 +265,45 @@
     if (toggle.dataset.uxDisclosure) disclosure.remember(toggle.dataset.uxDisclosure, open);
   });
 
+  // ── Redraw: new content for a region, the keyboard kept in place ──
+  /* A page that draws a region from its data again and again (an inspector
+     panel after every answer from the server) calls
+     `UXControls.redraw(region, html)` rather than setting innerHTML:
+     - the same content leaves the nodes alone, so a screen reader keeps its
+       place and a click in progress still lands;
+     - new content gives focus back to the same control, matched by its
+       `data-focus-key`, its `data-ux-disclosure` or its id; when that
+       control is gone, or disabled for now (a save in progress), focus goes
+       to the region if it can take it, and the control gets it back on a
+       later redraw that shows it enabled, unless the user has moved on.
+     Returns whether it drew, so a page wires listeners only on new nodes. */
+  const drawn = new WeakMap();
+  const focusKeyOf = element => (element.dataset.focusKey ? `focus:${element.dataset.focusKey}`
+    : element.dataset.uxDisclosure ? `disclosure:${element.dataset.uxDisclosure}`
+      : element.id ? `id:${element.id}` : '');
+  function redraw(region, html) {
+    const last = drawn.get(region);
+    if (last && last.html === html && last.first === region.firstChild && last.count === region.childNodes.length) return false;
+    const active = document.activeElement;
+    const inside = Boolean(active) && active !== region && region.contains(active);
+    const key = inside ? focusKeyOf(active) : active === region && last ? last.awaiting : '';
+    region.innerHTML = html;
+    let awaiting = '';
+    if (inside || key) {
+      const control = key
+        ? [...region.querySelectorAll('[data-focus-key],[data-ux-disclosure],[id]')].find(element => focusKeyOf(element) === key)
+        : null;
+      if (control && !control.disabled) control.focus({ preventScroll: true });
+      // Gone, or not focusable now (disabled, inside a closed group): the region.
+      if (!control || document.activeElement !== control) {
+        if (region.hasAttribute('tabindex') && document.activeElement !== region) region.focus({ preventScroll: true });
+        if (control) awaiting = key;
+      }
+    }
+    drawn.set(region, { html, first: region.firstChild, count: region.childNodes.length, awaiting });
+    return true;
+  }
+
   function wire(root) {
     const scope = root || document;
     scope.querySelectorAll('button[aria-haspopup="menu"][aria-controls]').forEach(wireMenu);
@@ -272,7 +315,7 @@
     entries.forEach(entry => { if (!entry.anchor.contains(event.target)) close(entry); });
   });
 
-  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure };
+  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw };
   // base.html loads this at the end of <body>, so the page's markup is already
   // there: wire it now, and again once parsing ends for anything later (wiring
   // is idempotent per control).
