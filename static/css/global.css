@@ -3020,6 +3020,7 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .pill-r { background:var(--pl-danger-bg); color:var(--danger); }
 .pill-a { background:rgba(154,106,8,0.06); color:var(--warning); }
 .pill-b { background:rgba(64,86,227,0.06); color:var(--royal); }
+.pill-muted { background:var(--surface-2); color:var(--t3); }
 
 /* ============================================================
    FILTER BAR — Glassmorphic toolbar
@@ -12335,46 +12336,6 @@ html[data-theme="dark"] .va-tool-meta span {
    COURSE ASSIGNMENT
    ============================================================ */
 
-/* ── Segmented M/F Control ── */
-.ca-seg {
-  display: flex;
-  background: var(--shadow-neu-inset);
-  border-radius: var(--radius-pill);
-  padding: var(--space-1);
-  height: 34px;
-  align-items: center;
-  box-shadow: var(--shadow-neu-inset);
-}
-
-.ca-seg-btn {
-  flex: 1;
-  height: 26px;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-pill);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--t3);
-  cursor: pointer;
-  transition: all var(--dur-fast);
-  min-width: 32px;
-}
-
-.ca-seg-btn:hover {
-  color: var(--t1);
-}
-
-.ca-seg-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.ca-seg-active {
-  background: var(--teal-dim);
-  color: var(--teal-deep);
-  box-shadow: var(--shadow-neu-sm);
-}
-
 /* ── Status Pills ── */
 .ca-pill {
   display: flex;
@@ -12630,10 +12591,6 @@ html[data-theme="dark"] .va-tool-meta span {
   color: var(--danger);
 }
 
-/* ── RTL Support ── */
-[dir="rtl"] .ca-seg-btn {
-  font-family: var(--font-body);
-}
 
 [dir="rtl"] .ca-chip {
   flex-direction: row-reverse;
@@ -12754,9 +12711,6 @@ html[data-theme="dark"] .va-tool-meta span {
 }
 
 /* ── Dark Theme ── */
-html[data-theme="dark"] .im-panel,
-html[data-theme="dark"] .im-toolbar,
-
 html[data-theme="dark"] .im-assignment-notice {
   background: rgba(255,255,255,0.035);
   border-color: rgba(255,255,255,0.08);
@@ -12833,8 +12787,6 @@ html[data-theme="dark"] .im-assignment-notice {
   font-size: var(--text-xs);
 }
 
-
-html[data-theme="dark"] .im-modal-header,
 
 /* ── Student adviser: durable conversations ──────────────────────
    Layout is a sidebar of conversations beside the open thread. Everything here

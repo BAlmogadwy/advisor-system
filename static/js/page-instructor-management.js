@@ -99,6 +99,9 @@ const T = {
   instructorActivated:  IS_AR ? 'تم تفعيل عضو هيئة التدريس' : 'Instructor activated',
   instructorDeactivated: IS_AR ? 'تم تعطيل عضو هيئة التدريس' : 'Instructor deactivated',
   editTitle:            IS_AR ? 'تعديل عضو هيئة تدريس' : 'Edit instructor',
+  severalMatch:         (n) => IS_AR
+    ? `يطابق النص ${n} من أعضاء هيئة التدريس؛ اكتب الاسم كاملاً.`
+    : `${n} instructors match; type the full name.`,
   addTitle:             IS_AR ? 'إضافة عضو هيئة تدريس' : 'Add instructor',
   term:                 (n) => (n === null || n === undefined || n === '') ? '—' : (IS_AR ? `ف${n}` : `T${n}`),
 
@@ -169,7 +172,11 @@ async function imApiCall(endpoint, options = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      // The server's own words when it gives them ("already exists"), else
+      // the status.
+      let body = null;
+      try { body = await response.json(); } catch (_) { body = null; }
+      throw new Error(body?.error?.message || `HTTP ${response.status}`);
     }
 
     return await response.json();
@@ -182,7 +189,11 @@ async function imApiCall(endpoint, options = {}) {
 // ── Load Instructors ──
 let imRosterLoaded = false;
 
-async function imLoadInstructors() {
+async function imLoadInstructors(options = {}) {
+  // `focus`: a selector for the control that should have the keyboard once the
+  // table is drawn again (the one it had was in the old rows). An event
+  // (Refresh) carries none.
+  const focus = typeof options?.focus === 'string' ? options.focus : '';
   try {
     // Every instructor, active or not: "Show inactive" and the search filter
     // here, so neither needs another request.
@@ -192,6 +203,8 @@ async function imLoadInstructors() {
       allInstructors = data.instructors;
       imRosterLoaded = true;
       imFilterInstructors();
+      const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+      if (focus && lost) document.querySelector(focus)?.focus();
       $('imInstructorCount').textContent = T.nInstructors(allInstructors.filter(i => i.is_active).length);
     } else {
       throw new Error(data.error?.message || 'Failed to load instructors');
@@ -227,7 +240,7 @@ function imRenderInstructorTable(instructors = null) {
       <td>${imField(instructor.email) ? `<bdi dir="ltr">${escapeHtml(imField(instructor.email))}</bdi>` : dash}</td>
       <td>${imField(instructor.employee_no) ? `<bdi dir="ltr">${escapeHtml(imField(instructor.employee_no))}</bdi>` : dash}</td>
       <td class="text-center">${instructor.max_weekly_hours || dash}</td>
-      <td><span class="pill-status ${instructor.is_active ? 'pill-status-success' : 'pill-status-muted'}">${instructor.is_active ? T.active : T.inactive}</span></td>
+      <td><span class="pill-status ${instructor.is_active ? 'pill-g' : 'pill-muted'}">${instructor.is_active ? T.active : T.inactive}</span></td>
       <td>
         <div class="im-row-actions">
           <button type="button" class="btn btn-sm btn-neutral" data-im-edit="${id}" aria-label="${T.edit} — ${name}">${T.edit}</button>
@@ -292,6 +305,9 @@ async function imLoadAdvisors() {
     const data = await imApiCall('/ops/instructors/advisors/');
     if (data && data.ok) imAdvisors = data.advisors || [];
   } catch (e) { /* advisor seeding is optional — fail silent */ }
+  // The picker may already be open on the empty list it had before.
+  const picker = $('imAdvisorPicker');
+  if (picker && document.activeElement === picker) imRenderAdvisorResults(picker.value);
 }
 
 function imRenderAdvisorResults(query) {
@@ -369,14 +385,15 @@ function imEditInstructor(instructorId) {
 
   $('imInstructorId').value = instructor.id;
   $('imInstructorName').value = instructor.full_name;
-  $('imInstructorNameAr').value = instructor.full_name_ar || '';
-  $('imInstructorEmail').value = instructor.email || '';
-  $('imInstructorEmployeeNo').value = instructor.employee_no || '';
-  $('imInstructorDepartment').value = instructor.department || '';
+  $('imInstructorNameAr').value = imField(instructor.full_name_ar);
+  $('imInstructorEmail').value = imField(instructor.email);
+  $('imInstructorEmployeeNo').value = imField(instructor.employee_no);
+  $('imInstructorDepartment').value = imField(instructor.department);
   $('imInstructorMaxHours').value = instructor.max_weekly_hours || '';
   $('imInstructorActive').checked = instructor.is_active;
 
-  // The row is drawn again after a save: focus goes back to its new Edit.
+  // At close focus returns to this row's Edit; after a save the table is
+  // drawn again and imLoadInstructors puts it on the new Edit.
   imShowInstructorModal(() => document.querySelector(`[data-im-edit="${Number(instructorId)}"]`) || $('imCreateInstructor'));
 }
 
@@ -449,7 +466,7 @@ async function imSaveInstructor() {
     if (data.ok) {
       imHideInstructorModal();
       notify.success(T.instructorSaved);
-      imLoadInstructors();
+      imLoadInstructors({ focus: isEditMode ? `[data-im-edit="${Number(payload.id)}"]` : '#imCreateInstructor' });
     } else {
       throw new Error(data.error?.message || 'Failed to save instructor');
     }
@@ -477,7 +494,7 @@ async function imToggleInstructorActive(instructorId, isActive) {
 
     if (data.ok) {
       notify.success(isActive ? T.instructorActivated : T.instructorDeactivated);
-      imLoadInstructors();
+      imLoadInstructors({ focus: `[data-im-active="${Number(instructorId)}"]` });
     } else {
       throw new Error(data.error?.message || 'Failed to update instructor');
     }
@@ -544,12 +561,7 @@ function imRenderReport(data) {
   html += '</tr></thead><tbody>';
 
   rows.forEach(row => {
-    const loadStatusClass = {
-      under: 'pill-status-info',
-      at: 'pill-status-success',
-      over: 'pill-status-warning',
-      na: 'pill-status-muted'
-    }[row.load_status] || 'pill-status-muted';
+    const loadStatusClass = { under: 'pill-b', at: 'pill-g', over: 'pill-a' }[row.load_status] || 'pill-muted';
 
     const other = imOtherName(row);
     const dash = '<span class="im-none" aria-label="—">—</span>';
@@ -614,11 +626,12 @@ function imCourseName(name) {
   });
 }
 
+/* Text for HTML, safe in text AND in a quoted attribute: names and codes
+   from the server go into aria-label and data-* as well as cells. */
 function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  if (text === null || text === undefined) return '';
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Normalise placeholder-ish values to a blank string. Messy imports/seeds can
@@ -632,7 +645,6 @@ function imField(value) {
 }
 
 // ── Event Handlers ──
-$('imCreateInstructor').onclick = imCreateInstructor;
 if ($('imAdvisorPicker')) {
   const _picker = $('imAdvisorPicker');
   _picker.addEventListener('input', function () { imRenderAdvisorResults(this.value); });
@@ -680,6 +692,11 @@ const ca = {
       return;
     }
 
+    if (program !== this.currentProgram) {
+      // Ticked courses belong to the programme they were ticked in.
+      this.selectedCourses.clear();
+      this.updateBulkBar();
+    }
     this.currentProgram = program;
     const tbody = $('caTable').querySelector('tbody');
     tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.loading + '</td></tr>';
@@ -1095,15 +1112,22 @@ const ca = {
       return;
     }
 
-    // Simple matching by name - could be enhanced with proper typeahead
+    // The instructor the user named: an exact name, else the only active
+    // instructor whose name contains the text. Several matches assign nothing.
     try {
-      const searchData = await imApiCall(`/ops/instructors/list/?q=${encodeURIComponent(query)}`);
-      if (!searchData.ok || !searchData.instructors.length) {
-        notify.error(T.selectInstructor);
+      if (!imRosterLoaded) await imLoadInstructors();
+      const wanted = query.toLowerCase();
+      const active = allInstructors.filter(i => i.is_active);
+      const named = i => [i.full_name, imField(i.full_name_ar)].filter(Boolean).map(n => n.toLowerCase());
+      const exact = active.filter(i => named(i).includes(wanted));
+      const partial = active.filter(i => named(i).some(n => n.includes(wanted)));
+      const matches = exact.length ? exact : partial;
+      if (matches.length !== 1) {
+        notify.warning(matches.length ? T.severalMatch(matches.length) : T.selectInstructor);
         return;
       }
 
-      const instructor = searchData.instructors[0]; // Take first match
+      const instructor = matches[0];
       const courseCodes = Array.from(this.selectedCourses);
 
       const data = await imApiCall('/ops/instructors/course-assignments/assign-bulk/', {

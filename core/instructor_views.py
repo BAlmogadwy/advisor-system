@@ -196,9 +196,10 @@ def instructors_update_view(request: HttpRequest) -> JsonResponse:
         return _err(
             "Another instructor already has this name or email", code="DUPLICATE", status=409
         )
-    log_audit_event(
-        request, action="instructor_update", status="success", details={"id": instructor.pk}
-    )
+    details: dict[str, object] = {"id": instructor.pk, "fields": sorted(fields)}
+    if "is_active" in fields:
+        details["is_active"] = instructor.is_active
+    log_audit_event(request, action="instructor_update", status="success", details=details)
     return _ok({"instructor": _instructor_to_dict(instructor)})
 
 

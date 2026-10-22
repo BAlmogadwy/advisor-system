@@ -93,3 +93,26 @@ def test_update_clears_a_field_to_empty_and_changes_active():
     )
     row.refresh_from_db()
     assert row.is_active is True
+
+
+@pytest.mark.django_db
+def test_an_update_audits_what_changed_and_the_active_flag(monkeypatch):
+    from core import instructor_views
+
+    seen = []
+    monkeypatch.setattr(
+        instructor_views,
+        "log_audit_event",
+        lambda request, **kw: seen.append((kw["action"], kw["details"])),
+    )
+    client = _client()
+    pk = _post(client, "/ops/instructors/create/", {"full_name": "Dr Audit"}).json()["instructor"][
+        "id"
+    ]
+    _post(client, "/ops/instructors/update/", {"id": pk, "department": "AI", "is_active": False})
+    assert seen[-1] == (
+        "instructor_update",
+        {"id": pk, "fields": ["department", "is_active"], "is_active": False},
+    )
+    _post(client, "/ops/instructors/update/", {"id": pk, "department": "DS"})
+    assert seen[-1] == ("instructor_update", {"id": pk, "fields": ["department"]})

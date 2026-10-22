@@ -212,3 +212,96 @@ test('the load report: a summary, the highest load first, and no badge where no 
   assert.equal(light.querySelector('.pill-status'), null);
   assert.equal(light.cells[6].textContent.trim(), 'No weekly limit');
 });
+
+test('a name with quotes stays text: nothing it holds becomes an attribute', async t => {
+  const evil = 'Ali " autofocus onfocus="alert(1)';
+  const h = await page(t, { answer: url => (url.startsWith('/ops/instructors/list/')
+    ? { ok: true, instructors: [{ id: 7, full_name: evil, full_name_ar: '', is_active: true }] }
+    : url.startsWith('/ops/instructors/course-assignments/?')
+      ? { ok: true, courses: [{ course_code: 'C"1', course_name: 'X', instructor: { id: 7, full_name: evil } }] }
+      : undefined) });
+  h.$('imTabBtnRoster').click();
+  await h.w.Promise.resolve();
+  await new Promise(r => setTimeout(r, 20));
+  const edit = h.d.querySelector('[data-im-edit="7"]');
+  assert.equal(edit.hasAttribute('onfocus'), false);
+  assert.equal(edit.hasAttribute('autofocus'), false);
+  assert.equal(edit.getAttribute('aria-label'), `Edit — ${evil}`);
+  h.$('imTabBtnAssignments').click();
+  h.$('caProgram').value = 'AI';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await new Promise(r => setTimeout(r, 20));
+  const chip = h.d.querySelector('.ca-chip-name');
+  assert.equal(chip.hasAttribute('onfocus'), false);
+  assert.equal(chip.dataset.caAssign, 'C"1');
+  assert.equal(h.d.querySelectorAll('[onfocus], [autofocus]').length, 0);
+});
+
+test('Add opens once and reads the advisors once; an Edit save gives the keyboard to that row', async t => {
+  const h = await page(t);
+  h.$('imTabBtnRoster').click();
+  await new Promise(r => setTimeout(r, 20));
+  h.$('imCreateInstructor').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(h.gets.filter(url => url.startsWith('/ops/instructors/advisors/')).length, 1);
+  h.w.UXControls.dialog.close(h.$('imInstructorDialog'));
+  h.d.querySelector('[data-im-edit="1"]').focus();
+  h.d.querySelector('[data-im-edit="1"]').click();
+  await new Promise(r => setTimeout(r, 20));
+  h.$('imInstructorDepartment').value = 'AI';
+  h.$('imInstructorForm').requestSubmit(h.$('imInstructorSave'));
+  for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(h.posts.at(-1).url, '/ops/instructors/update/');
+  const edit = h.d.querySelector('[data-im-edit="1"]');
+  assert.ok(edit && edit.isConnected);
+  assert.equal(h.d.activeElement, edit, 'the new Edit of the saved row');
+});
+
+test('a refusal is said in the server’s words; legacy "None" never returns to the form', async t => {
+  const h = await page(t, { answer: url => (url === '/ops/instructors/update/'
+    ? { httpError: 409, ok: false, error: { message: 'Another instructor already has this name or email' } } : undefined) });
+  h.$('imTabBtnRoster').click();
+  await new Promise(r => setTimeout(r, 20));
+  h.d.querySelector('[data-im-edit="2"]').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(h.$('imInstructorEmployeeNo').value, '', 'a stored "None" is not put back');
+  h.$('imInstructorForm').requestSubmit(h.$('imInstructorSave'));
+  for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal(h.$('imInstructorError').textContent, 'Another instructor already has this name or email');
+});
+
+test('badges use the design system tones; bulk assign never picks the first of several', async t => {
+  const h = await page(t);
+  h.$('imTabBtnRoster').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.ok(h.d.querySelector('#imInstructorTable .pill-status').classList.contains('pill-g'));
+  h.$('imTabBtnAssignments').click();
+  h.$('caProgram').value = 'AI';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await new Promise(r => setTimeout(r, 20));
+  const box = h.d.querySelector('[data-ca-course="CS101"]');
+  box.checked = true;
+  box.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  const before = h.posts.length;
+  // Both active instructors' names contain the letter ا.
+  h.$('caBulkTypeahead').value = 'ا';
+  h.$('caBulkAssign').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(h.posts.length, before, 'several match: nothing assigned');
+  assert.match(h.notices.at(-1).text, /instructors match; type the full name/);
+  h.$('caBulkTypeahead').value = 'dr hala omar';
+  h.$('caBulkAssign').click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(h.posts.at(-1).url, '/ops/instructors/course-assignments/assign-bulk/');
+  assert.equal(h.posts.at(-1).body.instructor_id, 1);
+  // Another programme: the ticks do not carry over.
+  await new Promise(r => setTimeout(r, 20));
+  const again = h.d.querySelector('[data-ca-course="CS101"]');
+  again.checked = true;
+  again.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.equal(h.$('caBulkbar').classList.contains('d-none'), false);
+  h.$('caProgram').value = 'CS';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(h.$('caBulkbar').classList.contains('d-none'), true);
+});
