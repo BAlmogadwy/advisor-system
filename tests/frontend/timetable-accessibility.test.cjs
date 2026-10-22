@@ -192,11 +192,12 @@ test('the inspector tabs use roving focus and update the panel label, including 
 });
 
 /* ── Disclosure and redraw (global, ux-controls.js) ── */
-function bare(storage = true) {
+function bare(storage = true, setup = null) {
   const dom = new JSDOM('<!doctype html><html><body><div id="region" tabindex="0"></div><button id="outside">x</button></body></html>', { runScripts: 'outside-only' });
   if (!storage) {
     Object.defineProperty(dom.window, 'sessionStorage', { get() { throw new dom.window.DOMException('blocked', 'SecurityError'); } });
   }
+  if (setup) setup(dom.window);
   dom.window.eval(source);
   return { dom, doc: dom.window.document, UX: dom.window.UXControls, region: dom.window.document.getElementById('region') };
 }
@@ -325,5 +326,35 @@ test('a control switched off in place while it has the keyboard gets it back whe
   assert.equal(h.doc.activeElement, h.region, 'no stale hand-back on a later switch');
   h.UX.redraw(h.region, '<button data-focus-key="lock">Lock</button><button data-focus-key="other">Other!</button>');
   assert.equal(h.doc.activeElement, h.region, 'nor on a later redraw');
+  h.dom.window.close();
+});
+
+test('a region taken off the page is let go, and watched again when it comes back', async () => {
+  // Count the observers the helper keeps watching.
+  let live = 0;
+  const h = bare(true, w => {
+    const Native = w.MutationObserver;
+    w.MutationObserver = class extends Native {
+      observe(...args) { live++; return super.observe(...args); }
+      disconnect() { live--; return super.disconnect(); }
+    };
+  });
+  const html = '<button data-focus-key="lock">Lock</button>';
+  h.UX.redraw(h.region, html);
+  const parent = h.region.parentNode;
+  h.region.remove();
+  h.doc.getElementById('outside').focus();  // the next focus anywhere lets the region go
+  assert.equal(live, 0, 'nothing watches a region off the page');
+  parent.prepend(h.region);
+  h.UX.redraw(h.region, html + ' ');
+  const lock = () => h.region.querySelector('[data-focus-key="lock"]');
+  lock().focus();
+  lock().blur();
+  lock().disabled = true;
+  lock().dispatchEvent(new h.dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+  assert.equal(h.doc.activeElement, h.region);
+  lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement, lock(), 'the hand-back still works after it came back');
   h.dom.window.close();
 });

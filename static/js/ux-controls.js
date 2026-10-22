@@ -300,9 +300,18 @@
     // Focus landing anywhere but the region (another control, another part
     // of the page) means the user moved on: nothing waits for the keyboard any
     // more. A window losing focus moves it nowhere, so the wait survives that.
-    document.addEventListener('focusin', event => {
+    // The listener lets go of a region taken off the page (a global helper
+    // may watch short-lived regions), which is then watched again if reused.
+    const onFocusin = event => {
+      if (!region.isConnected) {
+        document.removeEventListener('focusin', onFocusin);
+        observer.disconnect();
+        watched.delete(region);
+        return;
+      }
       if (event.target !== region && drawn.has(region)) drawn.get(region).awaiting = '';
-    });
+    };
+    document.addEventListener('focusin', onFocusin);
     region.addEventListener('focusout', event => {
       const control = event.target;
       // Only a control that lost the keyboard by being switched off is held
@@ -322,14 +331,15 @@
     });
     // Enabled again in place: the awaited control takes the keyboard back
     // if the region still holds it.
-    new MutationObserver(() => {
+    const observer = new MutationObserver(() => {
       const entry = drawn.get(region);
       if (!entry || !entry.awaiting || document.activeElement !== region) return;
       const control = findControl(region, entry.awaiting);
       if (!control || control.disabled) return;
       control.focus({ preventScroll: true });
       if (document.activeElement === control) entry.awaiting = '';
-    }).observe(region, { attributes: true, attributeFilter: ['disabled'], subtree: true });
+    });
+    observer.observe(region, { attributes: true, attributeFilter: ['disabled'], subtree: true });
   }
   function redraw(region, html) {
     watch(region);
