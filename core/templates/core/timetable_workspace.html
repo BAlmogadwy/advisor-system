@@ -12,7 +12,7 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
-  <link href="{% static 'css/timetable-workspace.css' %}?v=12" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=13" rel="stylesheet">
   <link href="{% static 'css/timetable-meeting-policy.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
@@ -245,7 +245,7 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
       </div>
       <div class="tw-grid d-none" id="twGrid" tabindex="-1"></div>
     </div>
-    <p id="twGridKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الأوقات والأيام والشعب في الوقت نفسه · Page Up/Down: الجدول التالي · Enter: التحديد · Esc: إلغاء التحديد{% else %}Arrows: times, days and the sections at one time · Page Up/Down: next table · Enter: select · Esc: clear the selection{% endif %}</p>
+    <p id="twGridKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الأوقات والأيام والشعب في الوقت نفسه · Page Up/Down: الجدول التالي · Enter: التحديد · Esc: إلغاء التحديد · R: تغيير القاعة{% else %}Arrows: times, days and the sections at one time · Page Up/Down: next table · Enter: select · Esc: clear the selection · R: change the room{% endif %}</p>
     <p id="twBoardStatus" class="visually-hidden" role="status" aria-live="polite"></p>
   </div>
 
@@ -334,6 +334,30 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
   </form>
 </dialog>
 
+{# ── Change room: one meeting's room, from the rooms the server lists at its time (§7.3, 5c); the page draws its title, sub-line and body ── #}
+<dialog id="twRoomDialog" class="ux-dialog ux-dialog-scroll" aria-labelledby="twRoomTitle" aria-describedby="twRoomSub">
+  <form method="dialog" id="twRoomForm" novalidate>
+    <div class="ux-dialog-head">
+      <div>
+        <h2 class="ux-dialog-title" id="twRoomTitle"></h2>
+        <p class="ux-dialog-sub" id="twRoomSub"></p>
+      </div>
+      <button type="button" class="btn btn-sm btn-neutral btn-icon" data-dialog-close aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="ux-dialog-body" id="twRoomBody" tabindex="-1"></div>
+    {# A refusal of the commit, said inside the dialog (a toast behind a modal is never seen). #}
+    <p class="tw-dialog-alert" id="twRoomAlert" role="alert" hidden></p>
+    <p id="twRoomStatus" class="visually-hidden" role="status" aria-live="polite"></p>
+    <div class="ux-dialog-foot">
+      <p class="ux-dialog-foot-note" id="twRoomNote"></p>
+      <button type="button" class="btn btn-sm btn-neutral" data-dialog-close>{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+      <button type="submit" class="btn btn-sm btn-primary" id="twRoomAssign" data-tw-mutation data-tw-hold disabled aria-describedby="twRoomNote">{% if LANGUAGE_CODE == 'ar' %}تعيين القاعة{% else %}Assign room{% endif %}</button>
+    </div>
+  </form>
+</dialog>
+
 {% include "core/partials/pr8_async_job_card.html" %}
 
 {% endblock %}
@@ -349,6 +373,8 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
 <script src="{% static 'js/timetable-slot-config.js' %}?v=3"></script>
 <script src="{% static 'js/timetable-section-teacher.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=51"></script>
+<script src="{% static 'js/timetable-room-choice.js' %}?v=1"></script>
+<script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=53"></script>
 <script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}

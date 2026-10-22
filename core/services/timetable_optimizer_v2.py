@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import ExitStack, nullcontext
 
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.db.models import Q
 
 from core.models import (
@@ -47,6 +47,7 @@ from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_board_persistence import external_shared_section_ids
 from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
+    hotspot_result_fields,
     rank_timetable_candidates,
 )
 from core.services.timetable_course_policy import (
@@ -534,7 +535,7 @@ def refresh_final_score_after_instructor_passes(
     # hotspots/quality and misattributes them.
     result["unresolved_students"] = len(post.unresolved_student_ids)
     result["quality_score"] = post.quality_score
-    result["hotspot_courses"] = post.hotspot_courses[:10]
+    result.update(hotspot_result_fields(post))
     result["capacity_pressure_courses"] = post.capacity_pressure_courses[:10]
     result["reserve_heavy_sections"] = [
         {"section": s, "ratio": round(r, 2)} for s, r in post.reserve_heavy_sections[:10]
@@ -580,7 +581,7 @@ def refresh_final_score_after_required_section_repair(
     result["final_score"] = after
     result["unresolved_students"] = len(post.unresolved_student_ids)
     result["quality_score"] = post.quality_score
-    result["hotspot_courses"] = post.hotspot_courses[:10]
+    result.update(hotspot_result_fields(post))
     result["capacity_pressure_courses"] = post.capacity_pressure_courses[:10]
     result["reserve_heavy_sections"] = [
         {"section": s, "ratio": round(r, 2)} for s, r in post.reserve_heavy_sections[:10]
@@ -1106,7 +1107,7 @@ def refresh_final_score_after_teacher_recompute(
     result["final_score"] = list(post.lexicographic_score)
     result["unresolved_students"] = len(post.unresolved_student_ids)
     result["quality_score"] = post.quality_score
-    result["hotspot_courses"] = post.hotspot_courses[:10]
+    result.update(hotspot_result_fields(post))
     result["capacity_pressure_courses"] = post.capacity_pressure_courses[:10]
     result["reserve_heavy_sections"] = [
         {"section": s, "ratio": round(r, 2)} for s, r in post.reserve_heavy_sections[:10]
@@ -1286,6 +1287,44 @@ def _final_teacher_recompute(
     return stored, changed, final
 
 
+def _attach_hotspot_details(result: dict, scenario_id: int) -> dict:
+    """``hotspot_details`` for the page, in the engine's order: each hotspot
+    course's code (the part of the budget row's code, else of the key, before
+    "::") and name (the budget row's, else none) and how many students it leaves
+    without a section. One query, only when there are hotspots. The names
+    are for display: a failed read is logged and leaves the run's result
+    as it was (its changes are already saved)."""
+    keys = list(result.get("hotspot_courses") or [])
+    if not keys:
+        return result
+    students = result.get("hotspot_students") or {}
+    rows: dict[str, tuple[str, str]] = {}
+    try:
+        for key, code, name in (
+            ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
+            .filter(Q(course_key__in=keys) | Q(course_code__in=keys))
+            .values_list("course_key", "course_code", "course_name")
+        ):
+            # A row is found by its key or by its code: either may be the hotspot's.
+            for match in {key, code} & set(keys):
+                rows.setdefault(match, (code or "", name or ""))
+    except DatabaseError:
+        logger.warning(
+            "hotspot names could not be read for scenario %s", scenario_id, exc_info=True
+        )
+        rows = {}
+    result["hotspot_details"] = [
+        {
+            "course_key": key,
+            "course_code": (rows.get(key, ("", ""))[0] or str(key)).split("::", 1)[0],
+            "course_name": rows.get(key, ("", ""))[1],
+            "students": int(students.get(key, 0)),
+        }
+        for key in keys
+    ]
+    return result
+
+
 def optimise_scenario_timetable_v2(
     scenario_id: int,
     strategies: list[str] | None = None,
@@ -1324,12 +1363,13 @@ def optimise_scenario_timetable_v2(
         "checkpoint": checkpoint,
     }
     with ExitStack() as stack:
-        return _optimise_scenario_timetable_v2(
+        result = _optimise_scenario_timetable_v2(
             scenario_id,
             teachers=_FullRunTeachers(scenario_id, stack) if is_one_teacher_active() else None,
             scope=stack,
             **kwargs,
         )
+    return _attach_hotspot_details(result, scenario_id)
 
 
 def _optimise_scenario_timetable_v2(
@@ -1509,7 +1549,7 @@ def _optimise_scenario_timetable_v2(
         "best_score": list(best.lexicographic_score),
         "optimisation_policy": "instructor_first" if is_instructor_priority_enabled() else "legacy",
         "baseline_instructor_schedule": schedule_metrics_of(best),
-        "hotspot_courses": best.hotspot_courses[:10],
+        **hotspot_result_fields(best),
         "capacity_pressure_courses": best.capacity_pressure_courses[:10],
         "reserve_heavy_sections": [
             {"section": s, "ratio": round(r, 2)} for s, r in best.reserve_heavy_sections[:10]
@@ -1626,7 +1666,7 @@ def _optimise_scenario_timetable_v2(
             result["local_search_applied"] = True
             result["score_before_local_search"] = list(score_before)
             result["final_score"] = list(score_after)
-            result["hotspot_courses"] = improved.hotspot_courses[:10]
+            result.update(hotspot_result_fields(improved))
             result["capacity_pressure_courses"] = improved.capacity_pressure_courses[:10]
             result["quality_score"] = improved.quality_score
             result["reserve_heavy_sections"] = [
@@ -1712,7 +1752,7 @@ def _optimise_scenario_timetable_v2(
                 result["chain_search_applied"] = True
                 result["score_before_chain"] = list(current_eval_for_chain.lexicographic_score)
                 result["final_score"] = list(chain_result.lexicographic_score)
-                result["hotspot_courses"] = chain_result.hotspot_courses[:10]
+                result.update(hotspot_result_fields(chain_result))
                 result["quality_score"] = chain_result.quality_score
                 result["unresolved_students"] = len(chain_result.unresolved_student_ids)
                 current_eval_for_chain = chain_result
@@ -1774,7 +1814,7 @@ def _optimise_scenario_timetable_v2(
                 result["cpsat_polish_applied"] = True
                 result["score_before_cpsat"] = list(current_eval_for_chain.lexicographic_score)
                 result["final_score"] = list(cpsat_eval.lexicographic_score)
-                result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
+                result.update(hotspot_result_fields(cpsat_eval))
                 result["quality_score"] = cpsat_eval.quality_score
                 result["unresolved_students"] = len(cpsat_eval.unresolved_student_ids)
                 # LEAK FIX: overlay improved sections into sections_by_id
@@ -2121,7 +2161,7 @@ def optimise_current_timetable(
     the post passes and returns the new map when it changed who teaches what.
     """
     with ExitStack() as scope:
-        return _optimise_current_timetable(
+        result = _optimise_current_timetable(
             scenario_id,
             max_search_iterations=max_search_iterations,
             run_local_search=run_local_search,
@@ -2136,6 +2176,7 @@ def optimise_current_timetable(
             teacher_swap=teacher_swap,
             scope=scope,
         )
+    return _attach_hotspot_details(result, scenario_id)
 
 
 def _own_day_off_anchor(scenario_id: int, baseline) -> DayOffAnchor | None:
@@ -2267,7 +2308,7 @@ def _optimise_current_timetable(
         "baseline_instructor_schedule": schedule_metrics_of(baseline),
         "best_score": list(baseline.lexicographic_score),
         "final_score": list(baseline.lexicographic_score),
-        "hotspot_courses": baseline.hotspot_courses[:10],
+        **hotspot_result_fields(baseline),
         "capacity_pressure_courses": baseline.capacity_pressure_courses[:10],
         "reserve_heavy_sections": [
             {"section": s, "ratio": round(r, 2)} for s, r in baseline.reserve_heavy_sections[:10]
@@ -2357,7 +2398,7 @@ def _optimise_current_timetable(
         result["local_search_applied"] = True
         result["score_before_local_search"] = list(score_before)
         result["final_score"] = list(score_after)
-        result["hotspot_courses"] = improved.hotspot_courses[:10]
+        result.update(hotspot_result_fields(improved))
         result["quality_score"] = improved.quality_score
         result["unresolved_students"] = len(improved.unresolved_student_ids)
 
@@ -2405,7 +2446,7 @@ def _optimise_current_timetable(
         if stage_is_better(chain_result, current_eval):
             result["chain_search_applied"] = True
             result["final_score"] = list(chain_result.lexicographic_score)
-            result["hotspot_courses"] = chain_result.hotspot_courses[:10]
+            result.update(hotspot_result_fields(chain_result))
             result["quality_score"] = chain_result.quality_score
             result["unresolved_students"] = len(chain_result.unresolved_student_ids)
             current_eval = chain_result
@@ -2442,7 +2483,7 @@ def _optimise_current_timetable(
             current_eval = cpsat_eval
             result["cpsat_polish_applied"] = True
             result["final_score"] = list(cpsat_eval.lexicographic_score)
-            result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
+            result.update(hotspot_result_fields(cpsat_eval))
             result["quality_score"] = cpsat_eval.quality_score
             result["unresolved_students"] = len(cpsat_eval.unresolved_student_ids)
             # LEAK FIX: overlay improved sections into sections_by_id

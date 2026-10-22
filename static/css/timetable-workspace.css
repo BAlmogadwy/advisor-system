@@ -519,12 +519,40 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 /* ── Generate dialog ────────────────────────────────────────────── */
 .tw-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .tw-gen-section { align-self: flex-start; }
-.tw-gen-error {
+.tw-gen-error,
+.tw-dialog-alert {
   margin: 0; padding: 8px 10px;
   border-radius: var(--radius-sm);
   background: var(--sev-critical-bg); color: var(--sev-critical);
   font-size: var(--text-sm); font-weight: 600;
 }
+
+/* ── Change room dialog (design record §7.3, 5c) ────────────────── */
+/* A refusal of the commit sits between the scrolling body and the foot, so
+   it is in view wherever the list is scrolled. It takes the tone of what it
+   says: a refusal is a warning, as its toast would be; a change saved while
+   another dialog was open (D17a) is a success, never read as a refusal. */
+.tw-dialog-alert { margin: 0 20px 10px; }
+.tw-dialog-alert[data-tone="warning"] { background: var(--sev-warning-bg); color: var(--sev-warning); }
+.tw-dialog-alert[data-tone="success"] { background: var(--sev-ok-bg); color: var(--sev-ok); }
+.tw-room-current { margin: 0; color: var(--t1); font-size: var(--text-sm); font-weight: 600; }
+/* The time's own clashes: whatever the room, they stay. */
+.tw-room-note {
+  margin: 0; padding-inline-start: 8px;
+  border-inline-start: 3px solid var(--sev-critical);
+  color: var(--t1); font-size: var(--text-xs);
+}
+.tw-room-choices,
+.tw-room-misfits { display: grid; gap: 12px; min-width: 0; }
+.tw-room-group > legend { margin-bottom: 6px; }
+/* The misfits' heading reads as the groups' legends do. */
+.tw-room-misfits .ux-disclosure-toggle { padding: 4px 2px; color: var(--t2); font-size: var(--text-xs); font-weight: 600; }
+.tw-room-verdict { color: var(--t2); font-size: var(--text-xs); font-weight: 500; }
+.tw-room-action { margin: 0; }
+/* Selection's Change… beside the room it changes; the row's label stays
+   level with them. */
+.tw-sel-inline { margin-inline-start: 6px; }
+.tw-sel-field:has(.tw-sel-inline) { align-items: center; }
 
 @media (prefers-reduced-motion: reduce) {
   .tw-card, .tw-cell { transition: none; }

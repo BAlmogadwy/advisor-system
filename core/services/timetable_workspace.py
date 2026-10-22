@@ -47,8 +47,8 @@ Key models used:
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from django.db import transaction
@@ -137,6 +137,24 @@ def _room_key(room: object | None) -> str:
     """Normalize a room code; return empty for no real room assignment."""
     value = str(room or "").strip().upper()
     return "" if value in {"", "UNASSIGNED"} else value
+
+
+def _same_class(
+    other: SectionPlacement, term_section_id: int, day: str, start: str, end: str
+) -> bool:
+    """Whether ``other`` is a copy of section ``term_section_id`` at this very slot.
+
+    A section shared by several boards is placed once per board; its copies at
+    one slot are one class, in one room, with one teacher, so a copy never
+    holds a room against itself or double-books its own teacher. The same
+    section at another time is another class.
+    """
+    return (
+        other.term_section_id == term_section_id
+        and str(other.day).strip().upper() == str(day).strip().upper()
+        and str(other.start_time).strip() == str(start).strip()
+        and str(other.end_time).strip() == str(end).strip()
+    )
 
 
 def _to_minutes(t: str) -> int:
@@ -416,16 +434,39 @@ def _placed_section_masks(scenario_id: int, course_keys: set[str]) -> dict[str, 
             "end_time",
         )
     )
-    section_course: dict[int, str] = {}
-    section_mask: dict[int, int] = defaultdict(int)
-    for ts_id, course_key, course_code, day, start_time, end_time in rows:
-        section_course[ts_id] = normalize_code(course_key or course_code)
-        section_mask[ts_id] |= _time_mask(day, start_time, end_time)
-    masks: dict[str, list[int]] = defaultdict(list)
-    for ts_id, mask in section_mask.items():
-        if mask:
-            masks[section_course[ts_id]].append(mask)
-    return dict(masks)
+    by_course = _section_masks_by_course(
+        (ts_id, course_key, course_code, _time_mask(day, start_time, end_time))
+        for ts_id, course_key, course_code, day, start_time, end_time in rows
+    )
+    return _nonzero_course_masks(by_course)
+
+
+def _section_masks_by_course(
+    rows: Iterable[tuple[int, str, str, int]],
+) -> dict[str, dict[int, int]]:
+    """``{course: {term_section_id: weekly mask}}`` from placement masks.
+
+    ``rows`` are ``(term_section_id, course_key, course_code, mask)``, one per
+    placement. The course is the normalised planner identity (the code when
+    the key is blank) and a section's mask is the union of its placements:
+    the keys and masks of :func:`_placed_section_masks`, which reads them with
+    one query; the slot verdict builds them from placements a preview has
+    already loaded.
+    """
+    by_course: dict[str, dict[int, int]] = defaultdict(dict)
+    for ts_id, course_key, course_code, mask in rows:
+        sections = by_course[normalize_code(course_key or course_code)]
+        sections[ts_id] = sections.get(ts_id, 0) | mask
+    return dict(by_course)
+
+
+def _nonzero_course_masks(by_course: dict[str, dict[int, int]]) -> dict[str, list[int]]:
+    """Each course's section masks as a list, empty masks and courses dropped."""
+    masks = {
+        course: [mask for mask in by_section.values() if mask]
+        for course, by_section in by_course.items()
+    }
+    return {course: section_masks for course, section_masks in masks.items() if section_masks}
 
 
 def _has_clash_free_section_pair(masks_a: list[int], masks_b: list[int]) -> bool:
@@ -435,6 +476,43 @@ def _has_clash_free_section_pair(masks_a: list[int], masks_b: list[int]) -> bool
     their sections clashes; one clash-free pair is a timetable they can take.
     """
     return any(not (mask_a & mask_b) for mask_a in masks_a for mask_b in masks_b)
+
+
+def _h15_blocked_students(shared: int, masks_a: list[int], masks_b: list[int]) -> int:
+    """H15: how many of the ``shared`` students an overlap of two courses blocks.
+
+    Zero while some placed section of one course fits round one of the other
+    (the students take that pair), else every one of them. The overlap is
+    critical when this reaches ``HARD_OVERLAP_THRESHOLD``. The publish check
+    (:func:`detect_board_conflicts`) and the slot verdict both decide by it.
+    """
+    return 0 if _has_clash_free_section_pair(masks_a, masks_b) else shared
+
+
+def _publish_teacher_keys(
+    link_map: Mapping[str, set[int]],
+    by_presence: bool,
+    course_key: str,
+    section: str,
+    instructor: str,
+) -> tuple:
+    """Who the publish check charges with a section's meetings.
+
+    The keys :func:`detect_board_conflicts` groups its instructor clashes by:
+    two overlapping meetings clash when their keys share one. ``link_map`` is
+    ``build_section_instructor_ids`` (teacher ids by ``course_key|section``;
+    empty with the links flag off) and ``instructor`` the section's first
+    meeting row's free-text name. With one teacher per section
+    (``by_presence``) a section the map has is charged to its ids -- to nobody
+    while its teacher is still to be decided, its meeting row's name never
+    counting. Otherwise a section with ids is charged to all of them, and one
+    with none to its name (stripped, upper-case). An id never matches a name.
+    The slot verdict judges teachers by these keys too.
+    """
+    key = f"{course_key}|{section}"
+    if link_map.get(key) or (by_presence and key in link_map):
+        return tuple(link_map[key])
+    return (instructor.strip().upper(),) if instructor else ()
 
 
 def detect_board_conflicts(board_id: int) -> dict:
@@ -452,7 +530,8 @@ def detect_board_conflicts(board_id: int) -> dict:
       clash-free pair of sibling sections, so it costs choice, not a
       timetable; a blocked overlap below the threshold stays a warning too.
     * **instructor_clashes** (critical) -- same instructor teaching two
-      sections at overlapping times.  Compared case-insensitively.
+      sections at overlapping times: who teaches a section is
+      :func:`_publish_teacher_keys` (names compared case-insensitively).
     * **room_clashes** (warning) -- same room assigned to two sections
       at overlapping times.  Compared case-insensitively.
 
@@ -519,16 +598,10 @@ def detect_board_conflicts(board_id: int) -> dict:
     # nobody — its meeting row may still carry a stale name.
     by_presence = is_one_teacher_active()
     for item in items:
-        key = f"{item.course_key}|{item.section}"
-        ids = link_map.get(key)
-        if by_presence and key in link_map:
-            for iid in ids:
-                by_instructor[iid].append(item)
-        elif ids:
-            for iid in ids:
-                by_instructor[iid].append(item)
-        elif item.instructor:
-            by_instructor[item.instructor.strip().upper()].append(item)
+        for teacher in _publish_teacher_keys(
+            link_map, by_presence, item.course_key, item.section, item.instructor
+        ):
+            by_instructor[teacher].append(item)
         if not item.is_online and item.room and item.room.strip().upper() != "UNASSIGNED":
             by_room[item.room.strip().upper()].append(item)
 
@@ -598,12 +671,10 @@ def detect_board_conflicts(board_id: int) -> dict:
         )
         for overlap in cross_course:
             key_a, key_b = (normalize_code(key) for key in overlap["course_keys"])
-            blocked = (
-                0
-                if _has_clash_free_section_pair(
-                    section_masks.get(key_a, []), section_masks.get(key_b, [])
-                )
-                else overlap["shared_students"]
+            blocked = _h15_blocked_students(
+                overlap["shared_students"],
+                section_masks.get(key_a, []),
+                section_masks.get(key_b, []),
             )
             overlap["blocked_students"] = blocked
             if blocked >= HARD_OVERLAP_THRESHOLD:
@@ -669,6 +740,20 @@ def detect_board_conflicts(board_id: int) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class _SectionTeachers:
+    """One request's one-teacher map, read once (:func:`_load_section_teachers`)."""
+
+    teacher_of: Callable[..., tuple[int | None, str] | None]
+    same_teacher: Callable[..., bool]
+    #: The map the publish check reads (``build_section_instructor_ids``):
+    #: the same assignment's ``pr4_map``, built when called. Only a slot
+    #: verdict calls it, so the legacy paths never build it.
+    publish_map: Callable[[], dict[str, set[int]]]
+    #: Each charged teacher's name, by id.
+    names: dict[int, str]
+
+
 def _section_teacher_matcher(scenario_id: int):
     """One teacher per section: ``(teacher_of, same_teacher)`` for one request.
 
@@ -676,11 +761,22 @@ def _section_teacher_matcher(scenario_id: int):
     section the one-teacher map charges, ``(None, "")`` for one still to be
     decided, and None for one the map leaves out (no links, or a frozen section
     with no known teacher). ``same_teacher(a, a_name, b, b_name)`` is the clash
-    test the manual-placement checks share with the engine: two charged
-    sections clash when their teacher ids are equal; a section to be decided
-    clashes with nobody; when either is left out, the free-text names decide,
-    as they did before the rule.
+    test the manual-placement checks share: two charged sections clash when
+    their teacher ids are equal; a section to be decided clashes with nobody;
+    when either is left out, the free-text names decide, as they did before
+    the rule. (The publish check never matches a charged teacher with a name:
+    :func:`_publish_teacher_keys`.)
     """
+    teachers = _load_section_teachers(scenario_id)
+    return teachers.teacher_of, teachers.same_teacher
+
+
+def _load_section_teachers(scenario_id: int) -> _SectionTeachers:
+    """The one-teacher map in force, read once, as :func:`_section_teacher_matcher`
+    gives it, with the charged teachers' names: one assignment, one query for
+    the names. ``publish_map()`` builds the map as the publish check reads it
+    (``pr4_map`` of the same assignment, no query); the legacy paths never
+    call it."""
     from core.models import Instructor
     from core.services.section_teacher_assignment import CHARGED, STATUS_TBD, load_assignment
 
@@ -719,7 +815,7 @@ def _section_teacher_matcher(scenario_id: int):
         right = ((b[1] if b is not None else b_name) or "").strip().upper()
         return bool(left and right and left == right)
 
-    return teacher_of, same_teacher
+    return _SectionTeachers(teacher_of, same_teacher, assignment.pr4_map, names)
 
 
 class _PlacementTimeCheck:
@@ -1006,16 +1102,390 @@ def validate_placement(
     ).result(room)
 
 
+# ── Slot verdict (the Move and Place dialogs) ────────────────────
+#
+# Both slot previews can say, for each candidate, what the board's Issues and
+# the publish check would say about it once saved:
+#   - same-board students: H15, decided by the publish check's own test
+#     (_h15_blocked_students): critical only when the edit leaves at least
+#     HARD_OVERLAP_THRESHOLD students with no clash-free pair of sections,
+#     including a move's EFFECT on overlaps it does not touch;
+#   - a same-course overlap, a blocked time, a same-board room clash: critical
+#     (each blocks publishing);
+#   - a same-board teacher clash: critical, the teachers judged by the publish
+#     check's keys (_publish_teacher_keys) from the publish check's own map
+#     (_VerdictTeachers): the one-teacher map, or, with the links on and one
+#     teacher per section off, every teacher linked to a course;
+#   - cross-board students: a warning at the threshold, where the publish check
+#     warns (cross_board_conflicts), and info below it, as Issues lists them;
+#   - a teacher or room also booked on another board: a warning, the teacher by
+#     the same keys (the publish check does not look across boards for them,
+#     so the verdict must not invent a blocker).
+# The legacy fields (tone, counts, evidence, rank) keep their own older rules
+# and order, the legacy teacher test included (_section_teacher_matcher, or the
+# names). The verdict is built only when a caller asks (include_verdict), so
+# the legacy answers and the other callers (safe moves, repair, the move
+# outcome) never pay for it. It is built from data the preview has already
+# loaded, with one exception: with the links on and one teacher per section
+# off (the local default) it reads the course links as the publish check does
+# (linked_section_instructor_ids, three queries, once per request). With one
+# teacher per section (production) or the links off it adds no query.
+
+_VERDICT_SEVERITIES = ("critical", "warning", "info")
+_VERDICT_SEVERITY_RANK = {"ok": 0, "info": 1, "warning": 2, "critical": 3}
+#: Item kinds in the order a verdict lists them within one severity.
+_VERDICT_KINDS = (
+    "time",
+    "instructor",
+    "room",
+    "blocked",
+    "softOverlap",
+    "instructorElsewhere",
+    "roomElsewhere",
+    "crossBoard",
+    "crossBoardMinor",
+)
+_VERDICT_ITEMS_SHOWN = 8
+
+
+def _verdict_other(
+    course_code: str,
+    section: str,
+    board_id: int,
+    board_label: str,
+    day: str,
+    start: str,
+    end: str,
+) -> dict:
+    """The placement a verdict item is about."""
+    return {
+        "course_code": course_code,
+        "section": section,
+        "board_id": board_id,
+        "board_label": board_label,
+        "day": day,
+        "start": start,
+        "end": end,
+    }
+
+
+def _verdict_item(
+    issue_kind: str,
+    severity: str,
+    source: str,
+    *,
+    other: dict | None = None,
+    room: str | None = None,
+    teacher: str | None = None,
+    students: int | None = None,
+    blocked_students: int | None = None,
+) -> dict:
+    """One verdict item. ``source`` names the check: the legacy evidence kind
+    of the same check (``same_course``, ``students``, ``instructor``, ``room``,
+    ``cross_board_room``, ``cross_board_students``), or ``cross_board_instructor``,
+    ``blocked_slot`` and ``h15_effect``, which have none. The verdict judges
+    by its own rules, so an item need not have a legacy evidence row: an
+    ``instructor`` item follows the publish check's teachers, while the
+    legacy ``instructor`` evidence keeps its own test. ``meeting`` is the
+    index of the meeting it belongs to in a planned pattern, else None."""
+    return {
+        "issue_kind": issue_kind,
+        "severity": severity,
+        "source": source,
+        "meeting": None,
+        "other": other,
+        "room": room,
+        "teacher": teacher,
+        "students": students,
+        "blocked_students": blocked_students,
+    }
+
+
+@dataclass
+class _CellVerdict:
+    """One cell's verdict evidence, before H15 is applied.
+
+    ``items`` are final. Each ``pending`` entry is a same-board student overlap
+    ``(shared, other_course, other)``: whether it blocks anyone depends on the
+    whole week of the section being moved or placed, so it is resolved per
+    candidate (a move) or per pattern (a planned section) by
+    :func:`_resolve_cell_verdict`. ``students`` are the distinct students the
+    cell's student overlaps count; ``mask`` is the cell's own time.
+    """
+
+    mask: int
+    items: list[dict] = field(default_factory=list)
+    pending: list[tuple[int, str, dict | None]] = field(default_factory=list)
+    students: set[int] = field(default_factory=set)
+
+
+def _resolve_cell_verdict(
+    cell: _CellVerdict,
+    own_masks: list[int],
+    course_masks: dict[str, list[int]],
+    *,
+    meeting: int | None = None,
+) -> list[dict]:
+    """The cell's items, its student overlaps judged by H15.
+
+    ``own_masks`` are the weekly masks of every placed section of the course
+    once the edit is made (the moved section at its candidate time, or the new
+    section's whole pattern); ``course_masks`` every other course's, as
+    :func:`_placed_section_masks` gives them. An overlap is ``time``/critical
+    when it leaves at least ``HARD_OVERLAP_THRESHOLD`` students with no
+    clash-free pair, else ``softOverlap``/warning: the rule of
+    :func:`detect_board_conflicts`. The items are new lists and dicts tagged
+    with ``meeting``; the cell is shared and never changed.
+    """
+    from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
+
+    items = list(cell.items)
+    for shared, course, other in cell.pending:
+        blocked = _h15_blocked_students(shared, own_masks, course_masks.get(course, []))
+        critical = blocked >= HARD_OVERLAP_THRESHOLD
+        items.append(
+            _verdict_item(
+                "time" if critical else "softOverlap",
+                "critical" if critical else "warning",
+                "students",
+                other=other,
+                students=shared,
+                blocked_students=blocked,
+            )
+        )
+    if meeting is None:
+        return items
+    return [{**item, "meeting": meeting} for item in items]
+
+
+def _slot_verdict(
+    items: list[dict], students: int, *, own_section_meeting: bool | None = None
+) -> dict:
+    """A candidate's verdict: its worst severity, counts over ALL its items,
+    and the first eight items (worst first) with how many more there are.
+
+    Items are ordered by severity, then by kind (:data:`_VERDICT_KINDS`), then
+    by students, most first; ties keep the order they were found in.
+    ``own_section_meeting`` is set on move candidates only.
+    """
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _VERDICT_SEVERITIES.index(item["severity"]),
+            _VERDICT_KINDS.index(item["issue_kind"]),
+            -int(item["students"] or 0),
+        ),
+    )
+    counts = dict.fromkeys(_VERDICT_SEVERITIES, 0)
+    for item in items:
+        counts[item["severity"]] += 1
+    verdict = {
+        "severity": next((severity for severity in _VERDICT_SEVERITIES if counts[severity]), "ok"),
+        "counts": counts,
+        "students": students,
+        "items": ordered[:_VERDICT_ITEMS_SHOWN],
+        "more": max(0, len(ordered) - _VERDICT_ITEMS_SHOWN),
+    }
+    if own_section_meeting is not None:
+        verdict["own_section_meeting"] = own_section_meeting
+    return verdict
+
+
+def _rank_by_verdict(candidates: list[dict]) -> None:
+    """Number the candidates best verdict first (``verdict_rank``, from 1).
+
+    The ranking is a sorted copy: the list keeps its legacy order. A slot the
+    section already meets in comes last (the move would be refused), then by
+    severity, the critical, warning and info counts, the legacy score, the
+    day and the start.
+    """
+
+    def key(candidate: dict) -> tuple:
+        verdict = candidate["verdict"]
+        counts = verdict["counts"]
+        return (
+            bool(verdict.get("own_section_meeting")),
+            _VERDICT_SEVERITY_RANK[verdict["severity"]],
+            counts["critical"],
+            counts["warning"],
+            counts["info"],
+            candidate["score"],
+            _DAY_INDEX.get(str(candidate["day"]).upper(), 99),
+            _to_minutes(str(candidate["start"])),
+        )
+
+    for rank, candidate in enumerate(sorted(candidates, key=key), start=1):
+        candidate["verdict_rank"] = rank
+
+
+def _cross_board_student_item(shared: int, other: dict | None) -> dict:
+    """Students who need both courses, the other one on another board.
+
+    A warning at ``HARD_OVERLAP_THRESHOLD`` shared students, where the publish
+    check warns (``cross_board_conflicts``, never a blocker), and info below
+    it, as the board's Issues list it. Both previews' rule.
+    """
+    from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
+
+    at_line = shared >= HARD_OVERLAP_THRESHOLD
+    return _verdict_item(
+        "crossBoard" if at_line else "crossBoardMinor",
+        "warning" if at_line else "info",
+        "cross_board_students",
+        other=other,
+        students=shared,
+    )
+
+
+@dataclass(frozen=True)
+class _VerdictTeachers:
+    """The slot verdict's teachers: the publish check's keys
+    (:func:`_publish_teacher_keys`) over the map the publish check reads
+    (:func:`detect_board_conflicts`, ``build_section_instructor_ids``):
+
+    - one teacher per section (production): the one-teacher map, from the
+      assignment the preview already loads (``publish_map()`` of
+      :func:`_load_section_teachers`); no query;
+    - the links on and one teacher per section off (the local default): every
+      teacher linked to a section's course, read by
+      ``linked_section_instructor_ids``, the code ``build_section_instructor_ids``
+      runs in that mode, with the teachers' names from the same query: three
+      queries, once per request, only for a verdict;
+    - the links off: no map; the meeting rows' names decide, as there.
+    """
+
+    link_map: Mapping[str, set[int]]
+    by_presence: bool
+    #: The charged or linked teachers' names, by id.
+    names: Mapping[int, str]
+    #: The links on and one teacher per section off: who a section not created
+    #: yet will be charged with once it is, ``resolve(course_key, display_code)``
+    #: (the map has only the scenario's sections). None in the other modes.
+    resolve: Callable[[object, object], set[int]] | None = None
+
+    @classmethod
+    def none(cls) -> _VerdictTeachers:
+        """No verdict asked for: nothing read."""
+        return cls({}, False, {})
+
+    @classmethod
+    def load(
+        cls, scenario: TimetableScenario, section_teachers: _SectionTeachers | None
+    ) -> _VerdictTeachers:
+        """One request's verdict teachers. ``section_teachers`` is the request's
+        one-teacher map, loaded when that rule is on."""
+        from core.services.timetable_pr4_instructor import (
+            is_instructor_links_enabled,
+            linked_section_instructor_ids,
+        )
+
+        if section_teachers is not None:
+            return cls(section_teachers.publish_map(), True, section_teachers.names)
+        if is_instructor_links_enabled():
+            linked = linked_section_instructor_ids(scenario)
+            return cls(linked.ids, False, linked.names, linked.resolve)
+        return cls.none()
+
+    def keys(self, course_key: str, section: str, instructor: str) -> tuple:
+        """A section's keys, ``instructor`` being its first meeting row's name."""
+        return _publish_teacher_keys(
+            self.link_map, self.by_presence, course_key, section, instructor
+        )
+
+    def new_section_keys(self, course_key: str, section: str, display_code: str) -> tuple:
+        """The keys of a section not created yet (no meeting row, so no name),
+        as the publish check will charge it once it is: with the links on and
+        one teacher per section off, its course's linked teachers; otherwise
+        by the map (the one-teacher map has every budgeted section)."""
+        if self.resolve is not None:
+            return tuple(self.resolve(course_key, display_code))
+        return self.keys(course_key, section, "")
+
+    def clash(self, mine: tuple, theirs: tuple, their_name: str) -> tuple[bool, str]:
+        """Whether two sections share a teacher, and the teacher's name: the
+        charged or linked teacher's, or ``their_name`` as written when the
+        names match."""
+        for key in theirs:
+            if key in mine:
+                return True, (self.names.get(key, "") if isinstance(key, int) else their_name)
+        return False, ""
+
+
+def _first_meeting_instructor(placement: SectionPlacement) -> str:
+    """The free-text name on a placed section's first meeting row (prefetched),
+    as :func:`_load_board_placements` reads it."""
+    meetings = list(placement.term_section.meetings.all())
+    return meetings[0].instructor if meetings else ""
+
+
+def _other_board_teacher_clash(
+    other: SectionPlacement,
+    *,
+    new_teacher: tuple[int | None, str] | None,
+    new_instructor: str,
+    teacher_of: Callable | None,
+    same_teacher: Callable | None,
+) -> tuple[bool, str]:
+    """Whether a placement on another board has the section's teacher, and its name.
+
+    ``other`` comes with its section and meetings loaded. Its teacher is the
+    one-teacher map's when the rule is on and the map has it, else the
+    free-text name on its first meeting row; the section's own is
+    ``new_teacher`` / ``new_instructor`` (stripped, upper-case). The planned
+    preview's legacy score counts a clash as critical evidence. The slot
+    verdict does not use this test: it judges teachers by the publish check's
+    keys (:class:`_VerdictTeachers`).
+    """
+    other_instructor = _first_meeting_instructor(other)
+    other_teacher = (
+        teacher_of(
+            other.term_section_id,
+            f"{other.term_section.course_key or other.term_section.course_code}"
+            f"_{other.term_section.section}",
+        )
+        if teacher_of is not None
+        else None
+    )
+    if other_teacher is not None:
+        other_instructor = other_teacher[1]
+    clash = (
+        same_teacher(new_teacher, new_instructor, other_teacher, other_instructor)
+        if same_teacher is not None
+        else (new_instructor and new_instructor == other_instructor.strip().upper())
+    )
+    return bool(clash), other_instructor
+
+
 # ── Direct Student Feasibility ───────────────────────────────────
 
 
-def preview_placement_slot_candidates(placement_id: int) -> dict:
+def preview_placement_slot_candidates(
+    placement_id: int, *, include_verdict: bool = False, offer_manual: bool = False
+) -> dict:
     """Return student-aware candidate slots for moving a placement.
 
     The preview is read-only. It scores candidate slots against all placements
     on the same board and direct student pressure across the whole scenario, so
     visitor/cross-group students are included.  The response also includes the
     placement's current impact so the UI can show before/after improvement.
+
+    ``include_verdict`` adds the slot verdict (the Move dialog's): a
+    ``verdict`` and a ``verdict_rank`` on every candidate and a
+    ``current_verdict`` for the slot the meeting is in now (its direct items
+    only; a move has effects, the current slot none). See "Slot verdict" above.
+    ``offer_manual`` offers the columns a manual move may use
+    (:func:`~core.services.timetable_slot_config.offered_move_columns`): an
+    evening online-only window too when the meeting already starts in one.
+    Without either, the answer and its order are exactly what they were. A
+    section under a course meeting policy is answered by the planned preview,
+    whose patterns come from its policy (``offer_manual`` does not apply).
+
+    Warning: that verdict is a PLACE verdict. It judges the section's new
+    pattern beside what is placed, with no H15 effects: it does not see that
+    the section leaves its old pattern, which can turn untouched overlaps of
+    its course critical. Nothing shows it for a move (the Move dialog sends a
+    policy section to the pattern chooser, 5e); add the effects before any
+    caller does.
     """
     from core.services.timetable_autoplace import (
         DEFAULT_LAB_SLOTS,
@@ -1032,12 +1502,14 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     )
     policy = section_policy(placement.term_section)
     if policy:
+        # A place verdict, not a move's: no H15 effects (see the warning above).
         result = preview_planned_section_slot_candidates(
             placement.board_id,
             course_code=placement.term_section.course_code,
             course_key=placement.term_section.course_key,
             section_label=placement.term_section.section,
             exclude_term_section_id=placement.term_section_id,
+            include_verdict=include_verdict,
         )
         for candidate in result["candidates"]:
             target = next(
@@ -1070,7 +1542,19 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     duration = _to_minutes(placement.end_time) - _to_minutes(placement.start_time)
     is_lab = duration > 80
     slot_config = scenario.lab_slot_config if is_lab else scenario.slot_config
-    slots = placeable_slots(slot_config or (DEFAULT_LAB_SLOTS if is_lab else DEFAULT_SLOTS))
+    if offer_manual:
+        from core.services.timetable_slot_config import (
+            effective_lab_slots,
+            effective_lecture_slots,
+            offered_move_columns,
+        )
+
+        slots = offered_move_columns(
+            effective_lab_slots(scenario) if is_lab else effective_lecture_slots(scenario),
+            placement.start_time,
+        )
+    else:
+        slots = placeable_slots(slot_config or (DEFAULT_LAB_SLOTS if is_lab else DEFAULT_SLOTS))
     kind = "lab" if is_lab else "lect"
 
     board_items = _load_board_placements(placement.board_id)
@@ -1091,8 +1575,10 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     new_instructor = (new_meeting.instructor if new_meeting else "").strip().upper()
     # One teacher per section: compare teachers by id (see validate_placement).
     teacher_of = same_teacher = new_teacher = None
+    section_teachers = None
     if is_one_teacher_active():
-        teacher_of, same_teacher = _section_teacher_matcher(scenario.id)
+        section_teachers = _load_section_teachers(scenario.id)
+        teacher_of, same_teacher = section_teachers.teacher_of, section_teachers.same_teacher
         new_teacher = teacher_of(
             placement.term_section_id, f"{course_key}_{placement.term_section.section}"
         )
@@ -1107,6 +1593,113 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
         if normalize_code(other_code) == course_norm:
             return set()
         return moving_students & course_students.get(normalize_code(other_code), set())
+
+    # The slot verdict's inputs, only with include_verdict: from the placements
+    # already loaded (no query; O(placements) once per request), and its
+    # teachers (_VerdictTeachers: three queries with the links on and one
+    # teacher per section off, none otherwise).
+    blocked_slots: set[tuple[str, str]] = set()
+    section_masks: dict[str, dict[int, int]] = {}
+    course_masks: dict[str, list[int]] = {}
+    course_placements: dict[str, list[tuple[SectionPlacement, int]]] = defaultdict(list)
+    own_rest = 0  # this section's other meetings, on every board
+    own_slots: set[tuple[str, str]] = set()  # ...and where it meets on this board
+    # The courses a move could turn critical elsewhere (H15 effects): at least
+    # HARD_OVERLAP_THRESHOLD students need both, and a clash-free pair of their
+    # sections exists now.
+    effect_courses: dict[str, tuple[set[int], list[int]]] = {}
+    verdict_teachers = _VerdictTeachers.none()
+    own_teachers: tuple = ()  # who the publish check charges with this section
+    if include_verdict:
+        from core.services.timetable_validation import blocked_slot_keys
+
+        verdict_teachers = _VerdictTeachers.load(scenario, section_teachers)
+        own_teachers = verdict_teachers.keys(
+            course_key,
+            placement.term_section.section,
+            # Its first meeting row's name, read as the publish check reads it.
+            next((item.instructor for item in board_items if item.id == placement.id), ""),
+        )
+        blocked_slots = blocked_slot_keys(scenario.blocked_slots)
+        placement_masks = [
+            (other, _time_mask(other.day, other.start_time, other.end_time))
+            for other in scenario_placements
+        ]
+        section_masks = _section_masks_by_course(
+            (
+                other.term_section_id,
+                other.term_section.course_key,
+                other.term_section.course_code,
+                mask,
+            )
+            for other, mask in placement_masks
+        )
+        course_masks = _nonzero_course_masks(section_masks)
+        for other, mask in placement_masks:
+            other_course = normalize_code(
+                other.term_section.course_key or other.term_section.course_code
+            )
+            course_placements[other_course].append((other, mask))
+            if other.term_section_id == placement.term_section_id and other.id != placement.id:
+                own_rest |= mask
+                if other.board_id == placement.board_id:
+                    own_slots.add((other.day, other.start_time))
+        masks_before = course_masks.get(course_norm, [])
+        for other_course, masks in course_masks.items():
+            shared = shared_students(other_course)
+            if (
+                len(shared) >= HARD_OVERLAP_THRESHOLD
+                and _h15_blocked_students(len(shared), masks_before, masks) == 0
+            ):
+                effect_courses[other_course] = (shared, masks)
+
+    def masks_after(cell_mask: int) -> list[int]:
+        """This course's section masks with the moving meeting at ``cell_mask``."""
+        sections = dict(section_masks.get(course_norm, {}))
+        sections[placement.term_section_id] = own_rest | cell_mask
+        return [mask for mask in sections.values() if mask]
+
+    def effect_items(after: list[int]) -> list[dict]:
+        """The H15 effects of a move: overlaps it does not touch turned critical.
+
+        A course of ``effect_courses`` that the move leaves with no clash-free
+        pair (``after``) blocks its shared students in every overlap of the two
+        courses on one board -- any board -- as detect_board_conflicts will then
+        say. The moving meeting's own overlaps are direct items, not effects.
+        Pairs are enumerated only on such a flip; otherwise this is one H15
+        test per effect course (sections x sections masks). Their students are
+        already the candidate's: a flip means the moving meeting now meets a
+        section of that course, on this board or another.
+        """
+        items: list[dict] = []
+        for other_course, (shared, masks) in effect_courses.items():
+            if _h15_blocked_students(len(shared), after, masks) < HARD_OVERLAP_THRESHOLD:
+                continue
+            for own, own_mask in course_placements[course_norm]:
+                if own.id == placement.id:
+                    continue
+                for other, other_mask in course_placements[other_course]:
+                    if other.board_id != own.board_id or not (own_mask & other_mask):
+                        continue
+                    items.append(
+                        _verdict_item(
+                            "time",
+                            "critical",
+                            "h15_effect",
+                            other=_verdict_other(
+                                other.term_section.course_code,
+                                other.term_section.section,
+                                other.board_id,
+                                other.board.label,
+                                other.day,
+                                other.start_time,
+                                other.end_time,
+                            ),
+                            students=len(shared),
+                            blocked_students=len(shared),
+                        )
+                    )
+        return items
 
     def evidence(kind_: str, tone: str, title: str, detail: str, count: int = 0) -> dict:
         return {
@@ -1144,8 +1737,14 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             "reasons": quality_reason_rows(components),
         }
 
-    def score_slot(day: str, start: str, end: str) -> dict:
+    def score_slot(day: str, start: str, end: str) -> tuple[dict, _CellVerdict | None]:
+        """The legacy impact of the meeting at this slot, and with
+        include_verdict its verdict evidence (H15 still to apply)."""
         candidate_mask = _time_mask(day, start, end)
+        cell = _CellVerdict(candidate_mask) if include_verdict else None
+        # The verdict's same-board teacher clashes, by section and time: a copy
+        # of one on another board is the same class, not a second clash.
+        teacher_sessions: set[tuple[int, str, str, str]] = set()
         affected_same_board: set[int] = set()
         affected_cross_board: set[int] = set()
         candidate_evidence: list[dict] = []
@@ -1160,6 +1759,19 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             if item.id == placement.id or not (candidate_mask & item.mask):
                 continue
 
+            item_other = (
+                _verdict_other(
+                    item.course_code,
+                    item.section,
+                    placement.board_id,
+                    placement.board.label,
+                    item.day,
+                    item.start_time,
+                    item.end_time,
+                )
+                if cell is not None
+                else None
+            )
             if _same_course_code(item.course_key, course_key):
                 overlap_critical += 1
                 candidate_evidence.append(
@@ -1170,6 +1782,10 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                         f"{item.day} {item.start_time}-{item.end_time}",
                     )
                 )
+                if cell is not None:
+                    cell.items.append(
+                        _verdict_item("time", "critical", "same_course", other=item_other)
+                    )
             else:
                 shared = shared_students(item.course_key)
                 if shared:
@@ -1188,6 +1804,10 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                             len(shared),
                         )
                     )
+                    if cell is not None:
+                        cell.pending.append(
+                            (len(shared), normalize_code(item.course_key), item_other)
+                        )
 
             item_teacher = (
                 teacher_of(item.term_section_id, f"{item.course_key}_{item.section}")
@@ -1212,6 +1832,26 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                         f"{item.course_code}-{item.section} is at {item.day} {item.start_time}-{item.end_time}",
                     )
                 )
+            if cell is not None:
+                # The verdict's teachers are the publish check's, not the legacy test's.
+                clash, teacher = verdict_teachers.clash(
+                    own_teachers,
+                    verdict_teachers.keys(item.course_key, item.section, item.instructor),
+                    item.instructor,
+                )
+                if clash:
+                    teacher_sessions.add(
+                        (item.term_section_id, item.day, item.start_time, item.end_time)
+                    )
+                    cell.items.append(
+                        _verdict_item(
+                            "instructor",
+                            "critical",
+                            "instructor",
+                            other=item_other,
+                            teacher=teacher,
+                        )
+                    )
 
             item_room = _room_key(item.room)
             if room_norm and not item.is_online and room_norm == item_room:
@@ -1224,6 +1864,14 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                         f"{item.course_code}-{item.section} already uses this room",
                     )
                 )
+                # A room clash on the board blocks publishing
+                # (``board_room_conflicts``): critical in the verdict.
+                if cell is not None:
+                    cell.items.append(
+                        _verdict_item(
+                            "room", "critical", "room", other=item_other, room=placement.room
+                        )
+                    )
 
         for other in scenario_placements:
             if other.id == placement.id or other.board_id == placement.board_id:
@@ -1231,6 +1879,25 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             other_mask = _time_mask(other.day, other.start_time, other.end_time)
             if not (candidate_mask & other_mask):
                 continue
+            elsewhere = (
+                _verdict_other(
+                    other.term_section.course_code,
+                    other.term_section.section,
+                    other.board_id,
+                    other.board.label,
+                    other.day,
+                    other.start_time,
+                    other.end_time,
+                )
+                if cell is not None
+                else None
+            )
+            # The section's own copy at this very slot (a shared section) is
+            # the same class: in the verdict it neither holds the room nor
+            # double-books the teacher (the legacy evidence still lists it).
+            same_class = cell is not None and _same_class(
+                other, placement.term_section_id, day, start, end
+            )
 
             if (
                 room_norm
@@ -1249,6 +1916,42 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                         f"{other.term_section.course_code}-{other.term_section.section} at {other.day} {other.start_time}-{other.end_time}",
                     )
                 )
+                if cell is not None and not same_class:
+                    cell.items.append(
+                        _verdict_item(
+                            "roomElsewhere",
+                            "warning",
+                            "cross_board_room",
+                            other=elsewhere,
+                            room=placement.room,
+                        )
+                    )
+
+            if cell is not None and not same_class:
+                # The legacy move score never looked at teachers on other boards;
+                # the verdict does, by the publish check's keys, as a warning.
+                other_name = _first_meeting_instructor(other)
+                clash, other_teacher = verdict_teachers.clash(
+                    own_teachers,
+                    verdict_teachers.keys(
+                        other.term_section.course_key or other.term_section.course_code,
+                        other.term_section.section,
+                        other_name,
+                    ),
+                    other_name,
+                )
+                session = (other.term_section_id, other.day, other.start_time, other.end_time)
+                if clash and session not in teacher_sessions:
+                    teacher_sessions.add(session)
+                    cell.items.append(
+                        _verdict_item(
+                            "instructorElsewhere",
+                            "warning",
+                            "cross_board_instructor",
+                            other=elsewhere,
+                            teacher=other_teacher,
+                        )
+                    )
 
             shared = shared_students(
                 other.term_section.course_key or other.term_section.course_code
@@ -1270,8 +1973,15 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                     len(shared),
                 )
             )
+            if cell is not None:
+                cell.items.append(_cross_board_student_item(len(shared), elsewhere))
 
         affected_students = affected_same_board | affected_cross_board
+        if cell is not None:
+            cell.students = affected_students
+            # Flagged, never removed: a blocked time blocks publishing.
+            if (day, start) in blocked_slots:
+                cell.items.append(_verdict_item("blocked", "critical", "blocked_slot"))
         critical = overlap_critical + instructor_critical + cross_critical
         warning = overlap_warning + room_warning + cross_warning
         impact_score = critical * 1000 + warning * 140 + len(affected_students) * 4
@@ -1296,9 +2006,11 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             "evidence": candidate_evidence[:5],
             "ranking_reasons": ranking_reasons,
             "primary_reason": _slot_primary_reason(ranking_reasons),
-        }
+        }, cell
 
-    current_impact = score_slot(placement.day, placement.start_time, placement.end_time)
+    current_impact, current_cell = score_slot(
+        placement.day, placement.start_time, placement.end_time
+    )
 
     candidates: list[dict] = []
     for day in days:
@@ -1310,7 +2022,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             if day == placement.day and start == placement.start_time:
                 continue
 
-            impact = score_slot(day, start, end)
+            impact, cell = score_slot(day, start, end)
             score = (
                 impact["impact_score"]
                 + impact["quality_score"]
@@ -1341,6 +2053,13 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                     "impact_improvement": current_impact["impact_score"] - impact["impact_score"],
                 }
             )
+            if cell is not None:
+                after = masks_after(cell.mask)
+                candidates[-1]["verdict"] = _slot_verdict(
+                    _resolve_cell_verdict(cell, after, course_masks) + effect_items(after),
+                    len(cell.students),
+                    own_section_meeting=(day, start) in own_slots,
+                )
 
     candidates.sort(
         key=lambda c: (
@@ -1362,7 +2081,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
         else:
             candidate["badge"] = "Avoid"
 
-    return {
+    result = {
         "placement": {
             "id": placement.id,
             "course_code": course_code,
@@ -1378,6 +2097,15 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
         "hard_student_threshold": HARD_OVERLAP_THRESHOLD,
         "candidates": candidates,
     }
+    if current_cell is not None:
+        _rank_by_verdict(candidates)
+        # Where the meeting is now: its direct items (a move's effects are
+        # what changes, and nothing changes here).
+        result["current_verdict"] = _slot_verdict(
+            _resolve_cell_verdict(current_cell, masks_after(current_cell.mask), course_masks),
+            len(current_cell.students),
+        )
+    return result
 
 
 def preview_planned_section_slot_candidates(
@@ -1391,12 +2119,21 @@ def preview_planned_section_slot_candidates(
     kind: str | None = None,
     limit: int = 80,
     exclude_term_section_id: int | None = None,
+    include_verdict: bool = False,
 ) -> dict:
     """Return ranked target slots for creating a planned missing section.
 
     This is the read-only companion to ``tw_placement_create_planned_view``.
     It lets the UI guide the advisor before any row is created, using the
     same student-overlap and timetable-quality signals as placement moves.
+
+    ``include_verdict`` adds the slot verdict (the Place dialog's) to every
+    candidate returned, with a ``verdict_rank`` among them: items per meeting
+    (``meeting`` is its index in ``meetings``; None for a one-meeting
+    candidate), H15 judged for the whole pattern, blocked meetings flagged. A
+    new section has no room yet and adds a clash-free option rather than
+    removing one, so there are no room items and no effects. Without it the
+    answer and its order are exactly what they were.
     """
     from core.services.timetable_autoplace import (
         DEFAULT_LAB_SLOTS,
@@ -1454,8 +2191,10 @@ def preview_planned_section_slot_candidates(
     # One teacher per section: the planned section's own teacher (a budget
     # label has one before it is placed), compared by id (see validate_placement).
     teacher_of = same_teacher = new_teacher = None
+    section_teachers = None
     if is_one_teacher_active():
-        teacher_of, same_teacher = _section_teacher_matcher(scenario.id)
+        section_teachers = _load_section_teachers(scenario.id)
+        teacher_of, same_teacher = section_teachers.teacher_of, section_teachers.same_teacher
         new_teacher = teacher_of(
             existing_section.id if existing_section else None,
             f"{existing_section.course_key or existing_section.course_code}_{existing_section.section}"
@@ -1493,6 +2232,48 @@ def preview_planned_section_slot_candidates(
             return set()
         return planned_students & course_students.get(normalize_code(other_code), set())
 
+    # The slot verdict's inputs, only with include_verdict: from the placements
+    # already loaded (no query), the blocked times and every placed course's
+    # section masks, this course's being the existing sections the new one
+    # joins; and its teachers (_VerdictTeachers: three queries with the links
+    # on and one teacher per section off, none otherwise).
+    blocked_slots: set[tuple[str, str]] = set()
+    course_masks: dict[str, list[int]] = {}
+    verdict_teachers = _VerdictTeachers.none()
+    # Who the publish check charges with the section: the one it has now (with
+    # one teacher per section, creating it may name another: name_new_section).
+    own_teachers: tuple = ()
+    if include_verdict:
+        from core.services.course_identity import course_display_code
+        from core.services.timetable_validation import blocked_slot_keys
+
+        verdict_teachers = _VerdictTeachers.load(scenario, section_teachers)
+        if existing_section is not None:
+            own_teachers = verdict_teachers.keys(
+                existing_section.course_key or existing_section.course_code,
+                existing_section.section,
+                existing_meetings[0].instructor if existing_meetings else "",
+            )
+        else:
+            # Not created yet: create_planned_section_placements stores ``code``
+            # as its course code and number, and writes no teacher's name.
+            own_teachers = verdict_teachers.new_section_keys(
+                key, section, course_display_code(key, code, code)
+            )
+        blocked_slots = blocked_slot_keys(scenario.blocked_slots)
+        course_masks = _nonzero_course_masks(
+            _section_masks_by_course(
+                (
+                    other.term_section_id,
+                    other.term_section.course_key,
+                    other.term_section.course_code,
+                    _time_mask(other.day, other.start_time, other.end_time),
+                )
+                for other in scenario_placements
+            )
+        )
+    own_masks = course_masks.get(normalize_code(key), [])
+
     def evidence(kind_: str, tone: str, title: str, detail: str, count: int = 0) -> dict:
         return {
             "kind": kind_,
@@ -1529,8 +2310,27 @@ def preview_planned_section_slot_candidates(
             "reasons": quality_reason_rows(components),
         }
 
-    def score_slot(slot_kind: str, day: str, start: str, end: str) -> dict:
+    # One request's memo: a cell is scored once however many patterns use it
+    # (a two-meeting course reuses each cell in a pattern per other day and
+    # column). The kind is part of the key: a lecture and a lab column can share
+    # a window and score differently. Callers never change what it returns.
+    cell_scores: dict[tuple[str, str, str, str], tuple[dict, _CellVerdict | None]] = {}
+
+    def score_slot(
+        slot_kind: str, day: str, start: str, end: str
+    ) -> tuple[dict, _CellVerdict | None]:
+        cell_key = (slot_kind, day, start, end)
+        if cell_key not in cell_scores:
+            cell_scores[cell_key] = score_cell(slot_kind, day, start, end)
+        return cell_scores[cell_key]
+
+    def score_cell(
+        slot_kind: str, day: str, start: str, end: str
+    ) -> tuple[dict, _CellVerdict | None]:
+        """The legacy score of one meeting at this cell, and with
+        include_verdict its verdict evidence (H15 still to apply)."""
         candidate_mask = _time_mask(day, start, end)
+        cell = _CellVerdict(candidate_mask) if include_verdict else None
         affected_same_board: set[int] = set()
         affected_cross_board: set[int] = set()
         candidate_evidence: list[dict] = []
@@ -1538,12 +2338,28 @@ def preview_planned_section_slot_candidates(
         overlap_warning = 0
         instructor_critical = 0
         instructor_sessions: set[tuple[int, str, str, str]] = set()
+        # The verdict's same-board teacher clashes, by section and time: a copy
+        # of one on another board is the same class, not a second clash.
+        verdict_sessions: set[tuple[int, str, str, str]] = set()
         cross_critical = 0
         cross_warning = 0
 
         for item in board_items:
             if not (candidate_mask & item.mask):
                 continue
+            item_other = (
+                _verdict_other(
+                    item.course_code,
+                    item.section,
+                    board.id,
+                    board.label,
+                    item.day,
+                    item.start_time,
+                    item.end_time,
+                )
+                if cell is not None
+                else None
+            )
             if _same_course_code(item.course_key, key):
                 overlap_critical += 1
                 candidate_evidence.append(
@@ -1554,6 +2370,10 @@ def preview_planned_section_slot_candidates(
                         f"{item.day} {item.start_time}-{item.end_time}",
                     )
                 )
+                if cell is not None:
+                    cell.items.append(
+                        _verdict_item("time", "critical", "same_course", other=item_other)
+                    )
             else:
                 shared = shared_students(item.course_key)
                 if shared:
@@ -1572,6 +2392,10 @@ def preview_planned_section_slot_candidates(
                             len(shared),
                         )
                     )
+                    if cell is not None:
+                        cell.pending.append(
+                            (len(shared), normalize_code(item.course_key), item_other)
+                        )
 
             item_teacher = (
                 teacher_of(item.term_section_id, f"{item.course_key}_{item.section}")
@@ -1599,6 +2423,26 @@ def preview_planned_section_slot_candidates(
                         f"{item.course_code}-{item.section} is at {item.day} {item.start_time}-{item.end_time}",
                     )
                 )
+            if cell is not None:
+                # The verdict's teachers are the publish check's, not the legacy test's.
+                clash, teacher = verdict_teachers.clash(
+                    own_teachers,
+                    verdict_teachers.keys(item.course_key, item.section, item.instructor),
+                    item.instructor,
+                )
+                if clash:
+                    verdict_sessions.add(
+                        (item.term_section_id, item.day, item.start_time, item.end_time)
+                    )
+                    cell.items.append(
+                        _verdict_item(
+                            "instructor",
+                            "critical",
+                            "instructor",
+                            other=item_other,
+                            teacher=teacher,
+                        )
+                    )
 
         for other in scenario_placements:
             if other.board_id == board.id:
@@ -1606,25 +2450,28 @@ def preview_planned_section_slot_candidates(
             other_mask = _time_mask(other.day, other.start_time, other.end_time)
             if not (candidate_mask & other_mask):
                 continue
-            other_meetings = list(other.term_section.meetings.all())
-            other_instructor = other_meetings[0].instructor if other_meetings else ""
-            identity = (other.term_section_id, other.day, other.start_time, other.end_time)
-            other_teacher = (
-                teacher_of(
-                    other.term_section_id,
-                    f"{other.term_section.course_key or other.term_section.course_code}"
-                    f"_{other.term_section.section}",
+            elsewhere = (
+                _verdict_other(
+                    other.term_section.course_code,
+                    other.term_section.section,
+                    other.board_id,
+                    other.board.label,
+                    other.day,
+                    other.start_time,
+                    other.end_time,
                 )
-                if teacher_of is not None
+                if cell is not None
                 else None
             )
-            if other_teacher is not None:
-                other_instructor = other_teacher[1]
-            if (
-                same_teacher(new_teacher, new_instructor, other_teacher, other_instructor)
-                if same_teacher is not None
-                else (new_instructor and new_instructor == other_instructor.strip().upper())
-            ) and identity not in instructor_sessions:
+            identity = (other.term_section_id, other.day, other.start_time, other.end_time)
+            clash, other_instructor = _other_board_teacher_clash(
+                other,
+                new_teacher=new_teacher,
+                new_instructor=new_instructor,
+                teacher_of=teacher_of,
+                same_teacher=same_teacher,
+            )
+            if clash and identity not in instructor_sessions:
                 instructor_sessions.add(identity)
                 instructor_critical += 1
                 candidate_evidence.append(
@@ -1635,6 +2482,31 @@ def preview_planned_section_slot_candidates(
                         f"{other.board.label}: {other.term_section.course_code}-{other.term_section.section} is at {other.day} {other.start_time}-{other.end_time}",
                     )
                 )
+            if cell is not None:
+                # The publish check does not block a teacher on two boards at
+                # once, so the verdict warns (the legacy score counts it
+                # critical), the teachers judged by the publish check's keys.
+                other_name = _first_meeting_instructor(other)
+                clash, other_teacher = verdict_teachers.clash(
+                    own_teachers,
+                    verdict_teachers.keys(
+                        other.term_section.course_key or other.term_section.course_code,
+                        other.term_section.section,
+                        other_name,
+                    ),
+                    other_name,
+                )
+                if clash and identity not in verdict_sessions:
+                    verdict_sessions.add(identity)
+                    cell.items.append(
+                        _verdict_item(
+                            "instructorElsewhere",
+                            "warning",
+                            "cross_board_instructor",
+                            other=elsewhere,
+                            teacher=other_teacher,
+                        )
+                    )
             shared = shared_students(
                 other.term_section.course_key or other.term_section.course_code
             )
@@ -1655,8 +2527,15 @@ def preview_planned_section_slot_candidates(
                     len(shared),
                 )
             )
+            if cell is not None:
+                cell.items.append(_cross_board_student_item(len(shared), elsewhere))
 
         affected_students = affected_same_board | affected_cross_board
+        if cell is not None:
+            cell.students = affected_students
+            # Flagged per meeting, never removed: a blocked time blocks publishing.
+            if (day, start) in blocked_slots:
+                cell.items.append(_verdict_item("blocked", "critical", "blocked_slot"))
         critical = overlap_critical + instructor_critical + cross_critical
         warning = overlap_warning + cross_warning
         impact_score = critical * 1000 + warning * 140 + len(affected_students) * 4
@@ -1687,7 +2566,33 @@ def preview_planned_section_slot_candidates(
             "evidence": candidate_evidence[:6],
             "ranking_reasons": ranking_reasons,
             "primary_reason": _slot_primary_reason(ranking_reasons),
-        }
+        }, cell
+
+    def candidate_verdict(meetings: list[dict], *, per_meeting: bool) -> dict:
+        """The verdict of placing the section at ``meetings`` (each with its
+        kind, day, start and end), from the memo. H15 is judged with the new
+        section's whole week beside the course's existing sections (per
+        pattern, never per cell); ``per_meeting`` tags each item with the index
+        of its meeting."""
+        cells: list[_CellVerdict] = []
+        pattern_mask = 0
+        for row in meetings:
+            cell = score_slot(row["kind"], row["day"], row["start"], row["end"])[1]
+            assert cell is not None  # include_verdict built it
+            cells.append(cell)
+            pattern_mask |= cell.mask
+        masks = [*own_masks, pattern_mask]
+        items = [
+            item
+            for index, cell in enumerate(cells)
+            for item in _resolve_cell_verdict(
+                cell, masks, course_masks, meeting=index if per_meeting else None
+            )
+        ]
+        students: set[int] = set()
+        for cell in cells:
+            students |= cell.students
+        return _slot_verdict(items, len(students))
 
     def meeting_kind(start: str, end: str) -> str:
         if policy:
@@ -1721,7 +2626,7 @@ def preview_planned_section_slot_candidates(
             start = str(row.get("start", ""))
             end = str(row.get("end", ""))
             kind_ = meeting_kind(start, end)
-            slot_score = score_slot(kind_, day, start, end)
+            slot_score, _cell = score_slot(kind_, day, start, end)
             slot_scores.append(slot_score)
             meetings.append(
                 {
@@ -1875,6 +2780,10 @@ def preview_planned_section_slot_candidates(
                 candidate["badge"] = "Avoid"
 
         limited = candidates[: max(1, int(limit or 80))]
+        if include_verdict:
+            for candidate in limited:
+                candidate["verdict"] = candidate_verdict(candidate["meetings"], per_meeting=True)
+            _rank_by_verdict(limited)
         return {
             "section_policy": policy_payload(policy) if policy else None,
             "board": {
@@ -1913,7 +2822,8 @@ def preview_planned_section_slot_candidates(
                 end = str(slot.get("end", ""))
                 if not start or not end:
                     continue
-                candidates.append(score_slot(slot_kind, day, start, end))
+                # A copy: the memo's own dict must not take a rank or a badge.
+                candidates.append(dict(score_slot(slot_kind, day, start, end)[0]))
 
     candidates.sort(
         key=lambda c: (
@@ -1937,6 +2847,10 @@ def preview_planned_section_slot_candidates(
             candidate["badge"] = "Avoid"
 
     limited = candidates[: max(1, int(limit or 80))]
+    if include_verdict:
+        for candidate in limited:
+            candidate["verdict"] = candidate_verdict([candidate], per_meeting=False)
+        _rank_by_verdict(limited)
     return {
         "board": {
             "id": board.id,
@@ -2465,12 +3379,7 @@ def preview_placement_room_candidates(
         # takes only the copies in this placement's room with it
         # (assign_physical_meeting_room). The same section at another time is
         # another class, and stays an occupant.
-        if (
-            other.term_section_id == placement.term_section_id
-            and str(other.day).strip().upper() == target_day
-            and str(other.start_time).strip() == target_start
-            and str(other.end_time).strip() == target_end
-        ):
+        if _same_class(other, placement.term_section_id, target_day, target_start, target_end):
             continue
         if section_policy(other.term_section):
             continue
