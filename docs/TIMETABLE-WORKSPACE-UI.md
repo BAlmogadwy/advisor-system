@@ -422,6 +422,21 @@ findings changed the plan:
    screen reader may not say a cell's headers while the focus is on a card).
    Not yet done: the manual NVDA/JAWS check of D6c (no screen reader on the
    build machine; the accessibility-tree test guards Chrome's exposure).
+   **As built, 5b (placing a planned section from the list):** the server
+   (its own PR) names the labels placed anywhere in the scenario
+   (`used_section_labels`, natural order) and replaces a reused
+   workspace-made section's meeting rows (`tw_planned`, `tw_auto`,
+   `tw_scheduler`; scenario-owned; placed on no board of any scenario) —
+   without the spec's blank-instructor guard, since one-teacher mode writes
+   the engine's names into those rows and they are derived. The page
+   proposes the first free labels (S2 with S1 and S3 placed; an older server:
+   the first `used_sections` count as used), a drop names the course (key and
+   name), and a drop of a course that meets N times a week is refused before
+   any request — and the server's own "complete pattern" refusal reads the
+   same, re-reading the budget (with no count invented when the message has
+   none) — with the count (`pluralAr` in Arabic) and, until Place… (5f), a
+   pointer to split view, which places a whole pattern; Enter on such a row
+   says the same.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
