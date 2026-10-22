@@ -2651,7 +2651,7 @@ const lockOk = url => (url.endsWith('/lock/') ? { placement_id: 10, is_locked: t
 // The second read and on hold a room the first did not: R6.
 const roomsThenR6 = n => roomsAnswer(n === 1 ? ROOM_SET : [...ROOM_SET, rc('R6')]);
 
-test('RC12 a save the user left (Escape, then R again) ends inside the dialog open by then, never as a toast behind it, and that dialog reads its rooms again', async t => {
+test('RC12 a save the user left (Escape, then R again) ends inside the dialog open by then, never as a toast behind it, naming its meeting where that dialog is about another, and that dialog reads its rooms again', async t => {
   // The reviewer's steps: R, a row, Enter with the move held; Escape; R
   // again while it is out (D3b); then the move lands.
   let room = 'LAB25';
@@ -2718,8 +2718,9 @@ test('RC12 a save the user left (Escape, then R again) ends inside the dialog op
   assert.deepEqual(r.notices.slice(before), []);
   assert.equal(r.d.getElementById('twRoomAssign').disabled, true, 'asking again would change nothing');
   assert.equal(r.w.TW.undoStack.length, 0);
-  // Opened on another meeting meanwhile: the words are said there, and its
-  // own Assign is not held by them.
+  // Opened on another meeting meanwhile (the same dialog, its title naming
+  // that one): the words name the meeting they are about, so they never
+  // read as its own, and its own Assign is not held by them.
   const elsewhere = deferred();
   const m = await roomHarness(t, { rows: () => [roomRow(), at(11, { board_id: 2 })], move: () => elsewhere.promise });
   await m.select();
@@ -2736,10 +2737,47 @@ test('RC12 a save the user left (Escape, then R again) ends inside the dialog op
   await wait(() => !m.d.getElementById('twRoomAlert').hidden);
   await settle();
   assert.equal(m.d.getElementById('twRoomTitle').textContent, 'Change room · AI11 S1');
-  assert.equal(m.d.getElementById('twRoomAlert').textContent, "Another scenario owns this section's time and room; change it there.");
+  assert.equal(m.d.getElementById('twRoomAlert').textContent, "\u2066CS323\u2069 \u2066S1\u2069: Another scenario owns this section's time and room; change it there.");
   assert.equal(m.d.getElementById('twRoomAssign').disabled, false, 'another meeting: asking is still the user’s');
+  // Saved instead (the reviewer's steps, in either language): said there,
+  // naming its meeting, with no toast; that dialog reads its rooms again.
+  for (const arabic of [false, true]) {
+    let moved = 'LAB25';
+    const landed = deferred();
+    const s = await roomHarness(t, {
+      arabic,
+      rooms: roomsThenR6,
+      rows: () => [roomRow({ room: moved }), at(11, { board_id: 2 })],
+      move: async body => {
+        await landed.promise;
+        moved = body.room;
+        return { ok: true, placement: roomRow({ room: moved }), placements: [roomRow({ room: moved })] };
+      },
+    });
+    await s.select();
+    roomByKey(s);
+    await settled(s);
+    roomRadio(s, 'R1').click();
+    s.d.getElementById('twRoomAssign').click();
+    await settle();
+    keyOn(s, 'Escape');
+    roomByKey(s, 11);
+    await settled(s);
+    assert.equal(s.reads.length, 2);
+    const toasts = s.notices.length;
+    const said = s.d.getElementById('twRoomAlert');
+    landed.resolve();
+    await wait(() => !said.hidden);
+    assert.equal(s.d.getElementById('twRoomTitle').textContent, arabic ? 'تغيير القاعة · AI11 S1' : 'Change room · AI11 S1');
+    assert.deepEqual([said.textContent, said.dataset.tone],
+      [arabic ? '\u2066CS323\u2069 \u2066S1\u2069: عُيّنت القاعة \u2066R1\u2069.' : '\u2066CS323\u2069 \u2066S1\u2069: Room \u2066R1\u2069 assigned.', 'success']);
+    assert.deepEqual(s.notices.slice(toasts), [], 'no toast behind the dialog');
+    await wait(() => s.reads.length === 3);
+  }
   // Whichever helper dialog is open by then takes the words (Move and Place
-  // join in 5e and 5f); clearing a closed dialog's line leaves another's be.
+  // join in 5e and 5f), naming the meeting unless that dialog is about it;
+  // clearing a closed dialog's line leaves another's be; a toast is the
+  // toast of any save.
   roomDialogEl(r).querySelector('.ux-dialog-foot [data-dialog-close]').click();
   const other = r.d.createElement('dialog');
   other.innerHTML = '<p role="alert" hidden></p><button type="button">OK</button>';
@@ -2747,12 +2785,16 @@ test('RC12 a save the user left (Escape, then R again) ends inside the dialog op
   assert.equal(r.w.UXControls.dialog.open(other), true);
   const quiet = r.notices.length;
   const otherLine = other.querySelector('[role="alert"]');
-  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success');
-  assert.deepEqual([otherLine.textContent, otherLine.hidden, otherLine.dataset.tone], ['Room \u2066R2\u2069 assigned.', false, 'success']);
+  const about = { key: 'placement:10', name: '\u2066CS323\u2069 \u2066S1\u2069' };
+  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success', about);
+  assert.deepEqual([otherLine.textContent, otherLine.hidden, otherLine.dataset.tone], ['\u2066CS323\u2069 \u2066S1\u2069: Room \u2066R2\u2069 assigned.', false, 'success']);
+  other.dataset.twAbout = 'placement:10';
+  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success', about);
+  assert.equal(otherLine.textContent, 'Room \u2066R2\u2069 assigned.', 'a dialog about the same meeting: the words as they are');
   r.w.dialogSay(roomDialogEl(r), '');
   assert.equal(otherLine.hidden, false, 'clearing is the closed dialog’s own business');
   r.w.UXControls.dialog.close(other);
-  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success');
+  r.w.dialogSay(roomDialogEl(r), 'Room \u2066R2\u2069 assigned.', 'success', about);
   assert.deepEqual(r.notices.slice(quiet), [{ type: 'success', text: 'Room \u2066R2\u2069 assigned.' }], 'no dialog open: a toast');
 });
 
@@ -2790,6 +2832,23 @@ test('RC13 data that moves under an open dialog: a chosen room waits for Check a
   assert.equal(f.d.activeElement, f.d.getElementById('twRoomFilter'), 'the keyboard stays in the filter');
   assert.equal(f.d.getElementById('twRoomFilter').value, 'b1');
   assert.deepEqual(roomNote(f), [true, 'This is the current room.']);
+  // A choice the filter hid is no choice: nothing is chosen, so the rooms
+  // are read again by themselves too, never held for Check again.
+  const hid = await roomHarness(t, { rooms: roomsThenR6, more: lockOk });
+  await hid.select();
+  roomByKey(hid);
+  await settled(hid);
+  roomRadio(hid, 'R1').click();
+  const hiding = hid.d.getElementById('twRoomFilter');
+  hiding.focus();
+  hiding.value = 'r8';
+  hiding.dispatchEvent(new hid.w.Event('input', { bubbles: true }));
+  assert.deepEqual(roomNote(hid), [true, 'Choose a room.']);
+  await hid.w.toggleLock(10);
+  await wait(() => roomRadio(hid, 'R6'));
+  assert.equal(hid.reads.length, 2);
+  assert.doesNotMatch(hid.d.getElementById('twRoomBody').textContent, /changed since its rooms were read/);
+  assert.deepEqual(roomNote(hid), [true, 'Choose a room.'], 'the current room, hidden by the filter, is not chosen either');
   // A write out as the dialog opens (D3b): its read is overtaken as the
   // write lands, read again at once, and the first answer is never drawn.
   const lock = deferred();

@@ -247,14 +247,18 @@ async function dialogWrite(dialog, url, body) {
 /* What a dialog's work came to: in its alert line while it is open. Once the
    user has left it (Escape while its write was out, D17a), in the alert line
    of the helper dialog open now, if any, since a toast behind a modal is
-   never seen (D17); else a toast. The line takes the tone, so a saved change
-   never reads as a refusal. Clearing is only ever about the dialog itself. */
-function dialogSay(dialog, text, tone = 'warning') {
+   never seen (D17); else a toast. A helper dialog says what it is about
+   (`data-tw-about`, as `placement:<id>`), and the same dialog may be open on
+   another meeting by then: in a dialog about anything but `about.key`, the
+   words lead with `about.name` (the same form in Arabic), so they never read
+   as that dialog's own. The line takes the tone, so a saved change never
+   reads as a refusal. Clearing is only ever about the dialog itself. */
+function dialogSay(dialog, text, tone = 'warning', about = null) {
   const shown = element => Boolean(element && window.UXControls?.dialog?.isOpen(element));
   const open = shown(dialog) ? dialog : text ? [...document.querySelectorAll('dialog[open]')].find(shown) : null;
   const line = open?.querySelector('[role="alert"]');
   if (line) {
-    line.textContent = text;
+    line.textContent = text && about && open.dataset.twAbout !== about.key ? `${about.name}: ${text}` : text;
     line.hidden = !text;
     line.dataset.tone = tone;
     return;
@@ -3043,6 +3047,8 @@ function openRoomDialog(p, { origin = '' } = {}) {
   });
   const alert = $('twRoomAlert');
   if (alert) { alert.textContent = ''; alert.hidden = true; }
+  // What it is about, for the words a write of another meeting says in it.
+  dialog.dataset.twAbout = `placement:${p.id}`;
   drawRoomDialog();
   if (!window.UXControls.dialog.open(dialog, { initialFocus: () => $('twRoomBody'), returnFocus: () => resolveOrigin(origin) })) return false;
   readRoomCandidates();
@@ -3251,6 +3257,11 @@ function drawRoomDialog() {
   const html = roomDialogHtml(view);
   if (window.UXControls?.redraw) window.UXControls.redraw(body, html);
   else body.innerHTML = html;
+  // The same markup leaves the rows alone, a row the filter hid unchecked:
+  // the rows take the choice again (the filter then drops it if hidden).
+  const RC = window.TimetableRoomChoice;
+  const chosen = RC.codeKey(ROOM.choice);
+  body.querySelectorAll('input[name="twRoomChoice"]').forEach(radio => { radio.checked = RC.codeKey(radio.value) === chosen; });
   // The keyboard on a row while the dialog (not the user) chooses goes with
   // its choice.
   if (!ROOM.picked && document.activeElement?.matches('#twRoomBody input[name="twRoomChoice"]')) {
@@ -3329,7 +3340,9 @@ function applyRoomFilter() {
   const chosen = body.querySelector('input[name="twRoomChoice"]:checked');
   if (chosen && chosen.closest('[hidden]')) {
     chosen.checked = false;
-    ROOM.choice = '';
+    // Nothing is chosen now, by the user or the dialog: rooms read before
+    // the data moved are read again by themselves, as before any choice.
+    Object.assign(ROOM, { choice: '', picked: false });
     syncRoomDialog();
   }
 }
@@ -3370,7 +3383,8 @@ function roomAssignedWords(p, choice, chosenRow, data) {
    tab stop moves to the card, the board is read again, and then the toast.
    Escape while the write is out closes the dialog; the write still ends,
    and says how: as a toast, or in the dialog open by then (R again: a toast
-   would sit behind it), where a refusal of the same meeting holds Assign. */
+   would sit behind it), where a refusal of the same meeting holds Assign,
+   and words about this meeting in a dialog about another one name it. */
 const ROOM_FINAL_REFUSALS = ['PLACEMENT_EXTERNALLY_OWNED', 'SCENARIO_PUBLISHED', 'NOT_FOUND'];
 async function commitRoom() {
   const dialog = $('twRoomDialog');
@@ -3383,6 +3397,7 @@ async function commitRoom() {
   const session = ROOM.token;
   const scenarioAtStart = TW.scenarioId;
   const oldRoom = p.room ?? '';
+  const about = { key: `placement:${p.id}`, name: `${isolatedText(p.course_code)} ${isolatedText(p.section)}` };
   ROOM.pending = true;
   dialogSay(dialog, '');
   announceRoom(ROOM_WORDS.progress(isolatedText(choice)));
@@ -3401,7 +3416,7 @@ async function commitRoom() {
     // The page's own hold (dialogWrite's check, answered before any await):
     // it ends by itself, and its words go with it.
     if (['published', 'job', 'busy'].includes(result.code)) ROOM.held = result.code;
-    dialogSay(dialog, words, 'warning');
+    dialogSay(dialog, words, 'warning', about);
     syncRoomDialog();
     return;
   }
@@ -3412,7 +3427,7 @@ async function commitRoom() {
   if (TW.scenarioId === scenarioAtStart) await selectBoard(TW.boardId);
   updateUndoRedoButtons();
   const said = roomAssignedWords(p, choice, chosenRow, result.data);
-  dialogSay(dialog, said.text, said.tone);
+  dialogSay(dialog, said.text, said.tone, about);
 }
 
 (function wireRoomDialog() {

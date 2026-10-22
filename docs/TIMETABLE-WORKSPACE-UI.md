@@ -289,7 +289,10 @@ Stage 3 (to evaluate): a time-proportional week grid.
 - While such a dialog is open, what its work came to is said inside it (its
   `role=alert` line), never as a toast: a toast sits behind a modal, unseen.
   Work the user left with Escape that ends while another such dialog is open
-  is said in that one.
+  is said in that one; when that dialog is about something else (another
+  meeting, even in the same dialog element: each records what it is about in
+  `data-tw-about`), the words lead with what they are about (course and
+  section, isolated), so they never read as that dialog's own.
   Its commit checks the page's edit hold itself before it writes
   (`dialogWrite`), since the page's busy guard answers with a toast.
 - Tests that pin a detail this design changes are updated in the same commit
@@ -552,6 +555,29 @@ findings changed the plan:
    call), Selection's sync after its draw (a gate that moved under the same
    markup) and a current room that does not fit (never chosen; the note asks
    for a room) are pinned now.
+   After review (round 2): `#twRoomDialog` is one element whichever meeting
+   it is open on, so a save left with Escape could be said, bare, in the
+   dialog of another meeting opened meanwhile ("Room R101 assigned." under
+   "Change room · AI333 S1"; a refusal read as that section's). Each helper
+   dialog now records what it is about (`data-tw-about`, set when the room
+   dialog opens), and `dialogSay` leads words about anything else with the
+   meeting's course and section, isolated, in both languages (contract C,
+   and the Strings row); a toast stays as any save's, and a refusal still
+   holds only its own meeting's Assign. Move and Place (5e, 5f) get the same
+   by recording their meeting. A choice the filter hides now also drops the
+   pick, so nothing is chosen, by the user or the dialog: rooms read before
+   the data moved are then read again by themselves rather than held for
+   Check again. That exposed a gap the auto read shared with any redraw of
+   the same markup: the rows kept a check the filter had dropped while the
+   dialog chose the current room again, so the note said "This is the
+   current room." with no row checked; every draw now gives the rows the
+   choice, and the filter drops it again if it hides it. RC12 (the other
+   meeting's refusal and save, en and ar, and a dialog about the same
+   meeting keeping the words as they are) and RC13 pin these; of 13 new
+   mutants two are equivalent and recorded so: words named while clearing
+   (no clear passes `about`), and rows given the choice but never unchecked
+   by it (a row the user checked is the choice, picked, so the markup moves
+   with it and the rows are drawn anew).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
@@ -638,7 +664,7 @@ This spec was written from four drafts (grid, move, place, room) and two critiqu
 | D16a | The shared gate runs first; "Finding patterns…" is announced before the fetch; focus follows the recreated rows. | | |
 | D16b | Accepted gaps, each a recorded follow-up: the chooser's counts without `pluralAr`, disabled reasons only in a `title`, focus returned to a stored node (POLICY:50, 69, 81). The page calls `boardNav.restore()` after the chooser resolves, which covers the stored node. | | |
 | D17 | **While a dialog is open, every message is shown inside it, never as a toast.** Toasts go into a body-level container (notify.js:6-13) that is inert behind a modal. | | Inline-errors findings |
-| D17a | **Escape during a commit closes the dialog.** The write finishes and its result arrives as a toast after the close, or, when another helper dialog is open by then, in that dialog's alert line (D17). | | |
+| D17a | **Escape during a commit closes the dialog.** The write finishes and its result arrives as a toast after the close, or, when another helper dialog is open by then, in that dialog's alert line (D17), led by the meeting's course and section when that dialog is about another meeting. | | |
 | D17b | `twFetch` fixes: announce the planner job of `SCENARIO_BUSY` before `_onError` and `_quiet`; call `_onError(null, status)` when the body is not JSON; call `_onError(null, 0)` when fetch rejects. | Today `_onError` runs first (PAGE:204-208), a non-JSON body skips it (PAGE:212), and a rejection skips it (PAGE:219-221). | |
 | D18 | Before a commit button turns off, focus moves to the checked radio. | | Commit-focus findings (both critics) |
 | D18a | `aria-busy` goes only on `.ux-choice-list`. Status lines sit outside it. | | |
@@ -747,10 +773,11 @@ dialogWrite(dialog, url, body) -> Promise<{data} | {code}>
 2. Call `twFetch(url, {method:'POST', headers, body: JSON.stringify(body), _quiet: true, _onError: (b, s) => (code = b?.error?.code || (b ? String(s) : 'NETWORK'), true)})`.
 3. If the answer is null, return `{code}`. Otherwise return `{data}`.
 
-`dialogSay(dialog, text, tone)`:
+`dialogSay(dialog, text, tone, about)`:
 - While `UXControls.dialog.isOpen(dialog)`: put the text in that dialog's `[role=alert]` line.
 - Otherwise, when another helper dialog is open (the user left this one during its commit and opened another): put the text in that one's line. Clearing (`''`) is only ever about the dialog itself.
-- Otherwise: `notify[tone](text)`.
+- Otherwise: `notify[tone](text)`, as it is.
+- Each helper dialog records what it is about when it opens (`data-tw-about`, as `placement:<id>`). `about` is `{key, name}` for the meeting the words are about (`name` = course and section, each isolated). In a line whose dialog is about anything but `about.key`, the words read `{name}: {text}`, in both languages, so a result never reads as being about the meeting the open dialog names (`#twRoomDialog` is one element, whichever meeting it is open on).
 - The line takes the tone (`data-tone`), so a saved change never reads as a refusal.
 
 **`twFetch` changes (PAGE:197-221)**, shipped in 5c:
@@ -1226,7 +1253,7 @@ Rows:
 - Tab order: filter, list, misfit toggle, Cancel, Assign.
 - Filter:
   - typing hides rows in place by code, building or wing, with no redraw;
-  - a hidden chosen row clears the choice;
+  - a hidden chosen row clears the choice, and then nothing is chosen, by the user or the dialog;
   - Enter with exactly one visible row checks and focuses it, and never submits;
   - Escape with text clears the field and calls `stopPropagation` and `preventDefault`, so the dialog stays open.
 
@@ -1288,6 +1315,7 @@ Rows:
 | Progress | Assigning room {c}… | جارٍ تعيين القاعة {c}… |
 | Toasts | Room {c} assigned. · Room {c} assigned; {c} also uses it at this time. · It also changed on {X}. | عُيّنت القاعة {c}. · عُيّنت القاعة {c}، ويستخدمها في هذا الوقت أيضاً: {c}. · وتغيّرت أيضاً في {X}. |
 | Failures | This meeting is no longer on the board. · The room was not changed. | لم يعد هذا اللقاء في اللوحة. · لم تتغيّر القاعة. |
+| A result said in a dialog about another meeting (contract C) | {c} {c}: {words} | {c} {c}: {words} |
 
 ##### Tests
 
@@ -1523,7 +1551,7 @@ Rows:
 | Published or job | Held. |
 | A write in flight | Opens; Commit is held until it ends. |
 | Loading, empty, error | Its words below. |
-| Escape during a commit | The dialog closes; the result arrives as a toast, or in the dialog open by then (D17, D17a). |
+| Escape during a commit | The dialog closes; the result arrives as a toast, or in the dialog open by then (D17, D17a), led by the meeting's course and section when that dialog is about another (contract C). |
 
 ##### Strings
 
