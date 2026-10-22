@@ -68,6 +68,65 @@ const TW = {
   readinessVersion: -1,
 };
 
+/* ── Keyboard (design record §7.3, 5a) ──
+   The board and the required-sections list are each ONE tab stop
+   (UXControls.roving): arrows move over the cards (and the empty cells), ↑/↓
+   walk the sections stacked at one time, Enter selects (Selection shows it),
+   Escape clears the selection. The keys line under each shows while the
+   keyboard is there; what a key did is said in #twBoardStatus, outside both
+   panes (a collapsed inspector would silence its own status line). */
+const boardNav = window.UXControls?.roving?.($('twGrid'), {
+  stop: '.tw-card',
+  hint: $('twGridKeys'),
+  initial: () => (TW.selectedPlacementId ? `placement:${TW.selectedPlacementId}` : ''),
+  activate: stop => { if (stop.matches('.tw-card')) selectCardFromKeyboard(stop); },
+  keys: { Escape: () => clearSelectionFromKeyboard() },
+});
+const listNav = window.UXControls?.roving?.($('twSectionList'), {
+  hint: $('twListKeys'),
+  activate: cell => activateListRow(cell),
+});
+
+function announceBoard(text) {
+  const status = $('twBoardStatus');
+  if (!status) return;
+  status.textContent = '';
+  status.textContent = text;
+}
+
+/* Enter on a card: selected, as a click does; the keyboard stays on the card. */
+function selectCardFromKeyboard(card) {
+  card.click();
+  const p = TW.placements.find(row => String(row.id) === card.dataset.placementId);
+  if (!p) return;
+  const what = `\u2066${p.course_code} ${p.section}\u2069`;
+  announceBoard(IS_AR ? `حُدِّدت الشعبة ${what}؛ تفاصيلها في تبويب «التحديد».` : `${what} selected; its details are in Selection.`);
+}
+
+/* Escape on the board: the selection is cleared when there is one; otherwise
+   the key is not the board's (it passes through). */
+function clearSelectionFromKeyboard() {
+  if (!TW.selectedPlacementId) return false;
+  TW.selectedPlacementId = null;
+  markSelection();
+  redrawSelection();
+  announceBoard(IS_AR ? 'أُلغي التحديد.' : 'Selection cleared.');
+  return true;
+}
+
+/* Enter on a list row: an English row opens its weekly pattern; a complete
+   course says so; any other row says how to place it (Place… comes in 5f). */
+function activateListRow(cell) {
+  if (cell.getAttribute('aria-disabled') === 'true') {
+    const what = `\u2066${cell.dataset.course || ''}\u2069`;
+    announceBoard(IS_AR ? `وُضعت كل شعب ${what}.` : `Every section of ${what} is placed.`);
+    return;
+  }
+  const pattern = cell.querySelector('.tw-pattern-action');
+  if (pattern) { pattern.click(); return; }
+  announceBoard(IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.');
+}
+
 // Expose workspace state for the PR8 async-job UI adapter (reads
 // TW.scenarioId at submit time so the Run-in-background card targets
 // whatever scenario the registrar currently has active).
@@ -105,7 +164,8 @@ function syncWorkspaceControls() {
   // save in flight, a section another scenario owns) stays off.
   document.querySelectorAll('.tw-opt-item, [data-tw-mutation]').forEach(el => { el.disabled = !editable || el.hasAttribute('data-tw-hold'); });
   document.querySelectorAll('[data-tw-draggable]').forEach(el => { el.draggable = editable && el.dataset.twMovable !== 'false' && !el.classList.contains('locked'); });
-  document.querySelector('.tw-workspace')?.setAttribute('aria-busy', String(busy));
+  const workspaceEl = document.querySelector('.tw-workspace');
+  if (workspaceEl) workspaceEl.dataset.busy = String(busy);
   updateOpenLinks();
   renderPublishState();
   window.dispatchEvent(new CustomEvent('tw:planner-busy', { detail: { busy } }));
@@ -1040,7 +1100,11 @@ async function selectBoard(boardId) {
       if (!TW.boardId) { $('twGrid').classList.add('d-none'); $('twEmptyState').style.display = ''; }
       return;
     }
-    if (TW.loadedBoardId !== boardId) TW.selectedPlacementId = null;
+    if (TW.loadedBoardId !== boardId) {
+      TW.selectedPlacementId = null;
+      // Another board: the keyboard starts at its first card.
+      boardNav?.reset();
+    }
     TW.loadedBoardId = boardId;
     persistWorkspaceScenario(TW.scenarioId, boardId);
 
@@ -1149,12 +1213,18 @@ function renderBudgetSidebar() {
   const sortedTerms = Object.keys(byTerm).map(Number).sort((a, b) => a - b);
 
   let leftToPlace = 0;
+  let firstGrid = true;
   sortedTerms.forEach(t => {
-    // Term header
+    // Term header, and its rows as a one-column grid (one keyboard stop for the
+    // whole list; design record §7.3, 5a).
     const hdr = document.createElement('h3');
     hdr.className = 'tw-term-head' + (t === activeTerm ? ' is-active' : '');
+    hdr.id = `twTerm-${t}`;
     hdr.textContent = `${IS_AR ? 'المستوى' : 'Term'} ${t}`;
     list.appendChild(hdr);
+    const termGrid = listGrid(`twTerm-${t}`, firstGrid);
+    firstGrid = false;
+    list.appendChild(termGrid);
 
     byTerm[t].forEach(c => {
       const remaining = c.remaining_sections || 0;
@@ -1168,19 +1238,20 @@ function renderBudgetSidebar() {
       if (count === 0 && used > 0) {
         // A course whose sections are all placed: a quiet, readable line (it was
         // faded to 40% opacity, which no one could read).
-        const div = document.createElement('div');
+        const div = listRow(termGrid, `place:${c.course_key}|complete`);
         div.className = 'tw-section-item is-complete';
+        div.setAttribute('aria-disabled', 'true');
+        div.dataset.course = c.course_code;
         div.innerHTML = `
           <span class="code"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span>${esc(c.course_code)}</span>
           <span class="meta ux-meta"><span>${IS_AR ? `${used}/${planned} موضوعة` : `${used}/${planned} placed`}</span><span>${IS_AR ? `${c.total_demand} طالب` : `demand ${c.total_demand}`}</span></span>
         `;
-        list.appendChild(div);
         return;
       }
 
       for (let s = used + 1; s <= planned; s++) {
         const secLabel = `S${s}`;
-        const div = document.createElement('div');
+        const div = listRow(termGrid, `place:${c.course_key}|${secLabel}`);
         div.className = 'tw-section-item';
         div.draggable = workspaceCanEdit();
         div.dataset.twDraggable = 'true';
@@ -1208,17 +1279,41 @@ function renderBudgetSidebar() {
         if (globalThis.TimetableMeetingPolicy?.isEnglish(c)) {
           const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'tw-pattern-action';
           choose.dataset.twMutation = ''; choose.disabled = !workspaceCanEdit();
+          // For the pointer: the keyboard reaches it with Enter on its row.
+          choose.tabIndex = -1;
           choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
           choose.addEventListener('click', () => chooseEnglishWorkspacePattern({ ...c, type: 'create_planned', section_label: secLabel }));
           div.appendChild(choose);
         }
-        list.appendChild(div);
       }
     });
   });
   setLeftCount(leftToPlace);
+  listNav?.refresh();
   renderBoardTabs();
   renderWorkspaceQuality();
+}
+
+/* The list's grids: one per term (or one for the unplaced sections), each row
+   one cell, the cell the keyboard's stop. */
+function listGrid(labelledBy, describe) {
+  const grid = document.createElement('div');
+  grid.className = 'tw-term-list';
+  grid.setAttribute('role', 'grid');
+  grid.setAttribute('aria-labelledby', labelledBy);
+  if (describe) grid.setAttribute('aria-describedby', 'twListKeys');
+  return grid;
+}
+function listRow(grid, key) {
+  const row = document.createElement('div');
+  row.className = 'ux-grid-row';
+  row.setAttribute('role', 'row');
+  const cell = document.createElement('div');
+  cell.setAttribute('role', 'gridcell');
+  cell.dataset.focusKey = key;
+  row.appendChild(cell);
+  grid.appendChild(row);
+  return cell;
 }
 
 /* ── Conflicts ── */
@@ -1907,13 +2002,16 @@ function renderGridWithSlots(slots, labSlots) {
     return (toMin(p.end_time) - toMin(p.start_time)) > 80;
   }
 
+  // Only the board's first table points at the keys line.
+  TW.gridKeysDescribed = false;
   // If no placements, show empty grid
   if (numGroups === 0) {
-    _renderSingleGrid(gridEl, slots, [], 'tw-grid-table', null);
+    _renderSingleGrid(gridEl, slots, [], 'tw-grid-table', null, 'lecture');
     if (labSlots.length) {
       gridEl.appendChild(gridSubheading(IS_AR ? 'المعامل (100 دقيقة)' : 'Labs (100 min)', 'lab'));
-      _renderSingleGrid(gridEl, labSlots, [], 'tw-grid-table tw-lab-grid', null);
+      _renderSingleGrid(gridEl, labSlots, [], 'tw-grid-table tw-lab-grid', null, 'lab');
     }
+    boardNav?.refresh();
     return;
   }
 
@@ -1942,12 +2040,12 @@ function renderGridWithSlots(slots, labSlots) {
     const gridInner = document.createElement('div');
     gridInner.className = 'tw-grid-inner';
     const englishPlacements = lecturePlacements.filter(p => globalThis.TimetableMeetingPolicy?.isEnglish(p));
-    _renderSingleGrid(gridInner, slots, lecturePlacements.filter(p => !globalThis.TimetableMeetingPolicy?.isEnglish(p)), 'tw-grid-table', secKey);
+    _renderSingleGrid(gridInner, slots, lecturePlacements.filter(p => !globalThis.TimetableMeetingPolicy?.isEnglish(p)), 'tw-grid-table', secKey, 'lecture');
     if (englishPlacements.length) {
       const heading = document.createElement('div'); heading.className = 'tw-english-heading';
       heading.textContent = IS_AR ? 'الإنجليزية · لقاءات متصلة لمدة ثلاث ساعات' : 'English · continuous three-hour meetings';
       gridInner.appendChild(heading);
-      _renderSingleGrid(gridInner, TimetableMeetingPolicy.gridSlots(englishPlacements), englishPlacements, 'tw-grid-table tw-english-grid', secKey);
+      _renderSingleGrid(gridInner, TimetableMeetingPolicy.gridSlots(englishPlacements), englishPlacements, 'tw-grid-table tw-english-grid', secKey, 'english');
     }
     gridEl.appendChild(gridInner);
 
@@ -1956,7 +2054,7 @@ function renderGridWithSlots(slots, labSlots) {
       gridEl.appendChild(gridSubheading(IS_AR ? 'المعامل' : 'Labs', 'lab'));
       const labInner = document.createElement('div');
       labInner.className = 'tw-grid-inner';
-      _renderSingleGrid(labInner, labSlots, labPlacements, 'tw-grid-table tw-lab-grid', secKey);
+      _renderSingleGrid(labInner, labSlots, labPlacements, 'tw-grid-table tw-lab-grid', secKey, 'lab');
       gridEl.appendChild(labInner);
     }
   });
@@ -1964,7 +2062,17 @@ function renderGridWithSlots(slots, labSlots) {
   // New cards take their tones and the selection at once, not at the next redraw.
   markSelection();
   applyCardTones();
+  boardNav?.refresh();
 }
+
+/* A table's name for assistive technology: what it holds, and its section
+   group when the board has several. */
+function gridLabel(secKey, kind) {
+  const what = { lecture: IS_AR ? 'المحاضرات' : 'Lectures', english: IS_AR ? 'الإنجليزية' : 'English', lab: IS_AR ? 'المعامل' : 'Labs' }[kind] || '';
+  return secKey && TW.cardsShowSection === false ? `${IS_AR ? 'الشعبة' : 'Section'} ${secKey} · ${what}` : what;
+}
+const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
+const minutesOf = time => { const [h, m] = String(time || '0:0').split(':').map(Number); return h * 60 + m; };
 
 function gridSubheading(text, kind) {
   const heading = document.createElement('div');
@@ -1973,40 +2081,67 @@ function gridSubheading(text, kind) {
   return heading;
 }
 
-function _renderSingleGrid(container, slots, placements, className, secKey) {
+/* One table of the board: an ARIA grid (design record §7.3, 5a) whose rows
+   are `.ux-grid-row` (display: contents) on the CSS grid. The keyboard moves
+   over its cards, and over the empty cells, with UXControls.roving. */
+function _renderSingleGrid(container, slots, placements, className, secKey, kind = 'lecture') {
   // Transposed: columns = time slots, rows = days. The column count is the one
   // layout fact the stylesheet cannot know; everything else is in its classes.
   const numSlots = slots.length;
   const table = document.createElement('div');
   table.className = className;
   table.style.setProperty('--tw-slots', String(numSlots));
+  table.setAttribute('role', 'grid');
+  table.setAttribute('aria-label', gridLabel(secKey, kind));
+  if (!TW.gridKeysDescribed) {
+    table.setAttribute('aria-describedby', 'twGridKeys');
+    TW.gridKeysDescribed = true;
+  }
+  const row = () => {
+    const element = document.createElement('div');
+    element.className = 'ux-grid-row';
+    element.setAttribute('role', 'row');
+    table.appendChild(element);
+    return element;
+  };
 
   // One sticky header row: the slot's number above its times.
+  const head = row();
   const corner = document.createElement('div');
   corner.className = 'tw-grid-header tw-grid-corner';
-  table.appendChild(corner);
+  corner.setAttribute('role', 'columnheader');
+  corner.innerHTML = `<span class="visually-hidden">${IS_AR ? 'اليوم' : 'Day'}</span>`;
+  head.appendChild(corner);
   slots.forEach((s, i) => {
     const hdr = document.createElement('div');
     hdr.className = 'tw-grid-header';
+    hdr.setAttribute('role', 'columnheader');
+    hdr.setAttribute('aria-label', `${IS_AR ? 'الفترة' : 'Slot'} ${i + 1}${IS_AR ? '،' : ','} \u2066${s.start}–${s.end}\u2069`);
     hdr.innerHTML = `<span class="tw-slot-no">${i + 1}</span><bdi class="tw-slot-time">${esc(s.start)}–${esc(s.end)}</bdi>`;
-    table.appendChild(hdr);
+    head.appendChild(hdr);
   });
 
   // Day rows
   DAYS.forEach((day, di) => {
+    const line = row();
     // Day label
     const lbl = document.createElement('div');
     lbl.className = 'tw-grid-slot-label';
+    lbl.setAttribute('role', 'rowheader');
+    if (!IS_AR) lbl.setAttribute('aria-label', DAY_NAMES_EN[di]);
     lbl.textContent = DAY_LABELS[di];
-    table.appendChild(lbl);
+    line.appendChild(lbl);
 
     // Slot cells
     slots.forEach(slot => {
       const cell = document.createElement('div');
       cell.className = 'tw-cell';
+      cell.setAttribute('role', 'gridcell');
       cell.dataset.day = day;
       cell.dataset.start = slot.start;
       cell.dataset.end = slot.end;
+      cell.dataset.uxCol = String(minutesOf(slot.start));
+      cell.dataset.focusKey = `cell:${secKey || '-'}:${kind}|${day}|${slot.start}`;
 
       cell.addEventListener('dragover', onDragOver);
       cell.addEventListener('dragleave', onDragLeave);
@@ -2024,10 +2159,17 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
       } else if (cellPlacements.length > 1) {
         // Sections sharing a time are not a clash by themselves (parallel
         // sections for other cohorts): the model tones what the server calls one.
-        cellPlacements.forEach(p => cell.appendChild(createPlacementCard(p)));
+        // Each says where it is in the stack (the keyboard walks it with ↑/↓).
+        cellPlacements.forEach((p, i) => {
+          const card = createPlacementCard(p);
+          card.insertAdjacentHTML('beforeend', `<span class="visually-hidden">${IS_AR
+            ? `(${i + 1} من ${cellPlacements.length} في هذا الوقت)`
+            : `(${i + 1} of ${cellPlacements.length} at this time)`}</span>`);
+          cell.appendChild(card);
+        });
       }
 
-      table.appendChild(cell);
+      line.appendChild(cell);
     });
   });
 
@@ -2052,6 +2194,8 @@ function meetingRoomText(room, p = null) {
 function createPlacementCard(p) {
   const card = document.createElement('div');
   card.className = 'tw-card';
+  card.setAttribute('role', 'button');
+  card.dataset.focusKey = `placement:${p.id}`;
   // Another scenario owns a shared section's time and room: the server refuses
   // its move, so it does not drag (Remove still works).
   const movable = !p.is_locked && !p.shared_with_other_scenario;
@@ -2166,8 +2310,10 @@ function renderUnplacedList() {
     return;
   }
 
+  const unplacedGrid = listGrid('twLeftTitle', true);
+  list.appendChild(unplacedGrid);
   items.slice(0, visibleLimit).forEach(s => {
-    const div = document.createElement('div');
+    const div = listRow(unplacedGrid, `ts:${s.term_section_id}`);
     div.className = 'tw-section-item';
     div.draggable = workspaceCanEdit();
     div.dataset.twDraggable = 'true';
@@ -2181,6 +2327,7 @@ function renderUnplacedList() {
     if (globalThis.TimetableMeetingPolicy?.isEnglish(s)) {
       const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'tw-pattern-action'; choose.dataset.twMutation = '';
       choose.disabled = !workspaceCanEdit(); choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
+      choose.tabIndex = -1;
       choose.addEventListener('click', () => chooseEnglishWorkspacePattern({ ...s, type: 'create', section_label: s.section }));
       div.appendChild(choose);
     }
@@ -2201,15 +2348,21 @@ function renderUnplacedList() {
       }));
       e.dataTransfer.effectAllowed = 'copy';
     });
-    list.appendChild(div);
   });
   if (items.length > visibleLimit) {
     const more = document.createElement('button');
     more.type = 'button'; more.className = 'btn btn-sm btn-neutral tw-show-more';
     more.textContent = IS_AR ? `عرض المزيد (${visibleLimit}/${items.length})` : `Show more (${visibleLimit}/${items.length})`;
-    more.addEventListener('click', () => { TW.unplacedVisibleLimit = visibleLimit + 100; renderUnplacedList(); });
+    more.addEventListener('click', () => {
+      // The keyboard goes on at the first row it had not seen.
+      listNav?.active(`ts:${items[visibleLimit].term_section_id}`, { focus: true });
+      TW.unplacedVisibleLimit = visibleLimit + 100;
+      renderUnplacedList();
+      listNav?.element()?.focus({ preventScroll: true });
+    });
     list.appendChild(more);
   }
+  listNav?.refresh();
   setLeftCount(items.length);
 }
 
@@ -2567,7 +2720,16 @@ $('twRightBody').addEventListener('click', async event => {
     if (Number.isFinite(targetBoard) && targetBoard && targetBoard !== TW.boardId) {
       await selectBoard(targetBoard);
     }
-    highlightWorkspacePlacements(ids);
+    const card = highlightWorkspacePlacements(ids);
+    const p = card && TW.placements.find(row => String(row.id) === card.dataset.placementId);
+    if (p) {
+      const day = DAY_LABELS[DAYS.indexOf(p.day)] || p.day;
+      const where = `${day} \u2066${p.start_time}–${p.end_time}\u2069`;
+      const what = `\u2066${p.course_code} ${p.section}\u2069`;
+      announceBoard(IS_AR
+        ? `عُثر عليها: ${where}، ${what}. والتنقل بالمفتاح Tab إلى الجدول يصل إليها.`
+        : `Located: ${where}, ${what}. The board's tab stop is on it.`);
+    }
   } catch {}
 });
 
@@ -2952,7 +3114,12 @@ function highlightWorkspacePlacements(ids) {
       if (!firstCard) firstCard = card;
     }
   });
-  if (firstCard) firstCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (firstCard) {
+    // Tab into the board reaches it; the keyboard stays where it is.
+    boardNav?.active(firstCard.dataset.focusKey);
+    firstCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  return firstCard;
 }
 
 function wireMriInteractions(body) {

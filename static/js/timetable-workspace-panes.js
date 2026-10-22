@@ -5,10 +5,12 @@
    required-sections list starts collapsed below 1600px so the board gets the
    width (a lecture slot stays at least 96px at 1366 and 1440), and the
    inspector starts open. `[` toggles the list and `]` the inspector, unless a
-   field has the keyboard. A click on a card opens a collapsed inspector for
-   that click only (event `tw:pane-request`), without changing the saved choice.
-   Arabic mirrors the panes (the grid is in logical order); `[` and `]` keep
-   their meaning: list, inspector. */
+   field has the keyboard — by the key's position too (event.code), so the keys
+   work on an Arabic layout (ج and د sit there). Collapsing the pane that has
+   the keyboard moves it to its rail. A click on a card opens a collapsed
+   inspector for that click only (event `tw:pane-request`), without changing
+   the saved choice. Arabic mirrors the panes (the grid is in logical order);
+   `[` and `]` keep their meaning: list, inspector. */
 (function () {
   'use strict';
   const workspace = document.getElementById('twWorkspace');
@@ -69,13 +71,15 @@
   panes.right.toggle?.addEventListener('click', () => toggle('right', false));
 
   document.addEventListener('keydown', event => {
-    if (event.key !== '[' && event.key !== ']') return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const side = (event.key === '[' || (event.code === 'BracketLeft' && !event.shiftKey)) ? 'left'
+      : (event.key === ']' || (event.code === 'BracketRight' && !event.shiftKey)) ? 'right' : '';
+    if (!side || event.repeat || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
     if (document.querySelector('dialog[open], .dlg-backdrop')) return;
     event.preventDefault();
-    toggle(event.key === '[' ? 'left' : 'right', false);
+    const holds = panes[side].el && panes[side].el.contains(document.activeElement);
+    toggle(side, holds && state[side] === 'open');
   });
 
   window.addEventListener('tw:pane-request', event => {

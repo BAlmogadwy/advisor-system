@@ -12,7 +12,7 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
-  <link href="{% static 'css/timetable-workspace.css' %}?v=11" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=12" rel="stylesheet">
   <link href="{% static 'css/timetable-meeting-policy.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
@@ -223,9 +223,10 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
       <label class="visually-hidden" for="twSectionSearch">{% if LANGUAGE_CODE == 'ar' %}تصفية الشعب المطلوبة{% else %}Filter required sections{% endif %}</label>
       <input type="search" class="tw-search" id="twSectionSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية المقررات…{% else %}Filter courses…{% endif %}">
     </div>
-    <div class="ux-pane-body tw-section-list" id="twSectionList">
+    <div class="ux-pane-body tw-section-list" id="twSectionList" tabindex="-1">
       <p class="tw-pane-empty">{% if LANGUAGE_CODE == 'ar' %}افتح سيناريو لعرض الشعب المطلوبة.{% else %}Open a scenario to see its required sections.{% endif %}</p>
     </div>
+    <p id="twListKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الشعب · Page Up/Down: المستوى التالي · Enter على صف الإنجليزية: اختيار نمطها الأسبوعي{% else %}Arrows: sections · Page Up/Down: next term · Enter on an English row: choose its weekly pattern{% endif %}</p>
     <button class="tw-rail" type="button" data-pane-toggle="left" aria-controls="twLeft" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار الشعب المطلوبة{% else %}Show required sections{% endif %}">
       <span class="tw-rail-count tnum" id="twLeftRailCount"></span>
       <span class="tw-rail-label">{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Required sections{% endif %}</span>
@@ -242,8 +243,10 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
           <button class="btn btn-sm btn-primary" type="button" id="twEmptyGenerate">{% if LANGUAGE_CODE == 'ar' %}توليد جدول…{% else %}Generate timetable…{% endif %}</button>
         </div>
       </div>
-      <div class="tw-grid d-none" id="twGrid"></div>
+      <div class="tw-grid d-none" id="twGrid" tabindex="-1"></div>
     </div>
+    <p id="twGridKeys" class="ux-keys" hidden>{% if LANGUAGE_CODE == 'ar' %}الأسهم: الأوقات والأيام والشعب في الوقت نفسه · Page Up/Down: الجدول التالي · Enter: التحديد · Esc: إلغاء التحديد{% else %}Arrows: times, days and the sections at one time · Page Up/Down: next table · Enter: select · Esc: clear the selection{% endif %}</p>
+    <p id="twBoardStatus" class="visually-hidden" role="status" aria-live="polite"></p>
   </div>
 
   <aside class="tw-right ux-pane" id="twRight" aria-label="{% if LANGUAGE_CODE == 'ar' %}فحص الجدول{% else %}Timetable inspector{% endif %}">
@@ -346,6 +349,6 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
 <script src="{% static 'js/timetable-slot-config.js' %}?v=3"></script>
 <script src="{% static 'js/timetable-section-teacher.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=49"></script>
-<script src="{% static 'js/timetable-workspace-panes.js' %}?v=1"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=50"></script>
+<script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}

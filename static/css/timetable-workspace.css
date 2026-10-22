@@ -99,9 +99,17 @@
 .tw-left  { border-inline-end: 1px solid var(--line-strong); }
 .tw-right { border-inline-start: 1px solid var(--line-strong); }
 .tw-centre {
+  /* Positioned: what it holds absolutely (its visually hidden status line)
+     stays in its own scroller, never stretching the page. */
+  position: relative;
   min-width: 0; min-height: 0;
   padding: 10px 14px 16px;
   overflow: auto; overscroll-behavior: contain;
+  /* A card the keyboard moves to is never under the sticky slot header, the
+     day column or the floating job card. */
+  scroll-padding-block-start: 52px;
+  scroll-padding-inline-start: 60px;
+  scroll-padding-block-end: calc(var(--ux-job-block, 0px) + 40px);
 }
 .tw-pane-count {
   flex: none; min-width: 22px; padding: 0 7px;
@@ -176,6 +184,9 @@ html[dir="rtl"] .tw-term-head { letter-spacing: 0; text-transform: none; }
   font-size: var(--text-sm); cursor: grab;
 }
 html[data-theme="dark"] .tw-section-item { background: var(--surface); }
+/* The row's edge survives a mouse focus (the global rule clears box-shadow
+   on :focus:not(:focus-visible)). */
+.tw-section-list .tw-section-item { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .tw-section-item:hover { box-shadow: inset 0 0 0 1px var(--btn-neutral-border), var(--shadow-sm); }
 .tw-section-item .code { color: var(--text-brand); font-weight: 700; }
 .tw-section-item .meta { color: var(--t3); font-size: var(--text-xs); }
@@ -324,9 +335,12 @@ html[data-theme="dark"] .tw-card .ci,
 html[data-theme="dark"] .tw-card-name { color: var(--t2); }
 html[data-theme="dark"] .tw-card-teacher::before { color: var(--t4); }
 html[data-theme="dark"] .tw-card-marks .ux-icon { color: var(--t2); }
-html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
-.tw-card.critical { box-shadow: inset 0 0 0 2px var(--sev-critical); }
-.tw-card.warning  { box-shadow: inset 0 0 0 2px var(--tw-warning-ink); }
+html[data-theme="dark"] .tw-card:hover { box-shadow: var(--tw-ring), 0 2px 8px rgba(0,0,0,0.35); }
+/* The severity ring is a variable, so hover and keyboard focus keep it. */
+.tw-card { --tw-ring: 0 0 #0000; }
+.tw-card.critical { --tw-ring: inset 0 0 0 2px var(--sev-critical); box-shadow: var(--tw-ring); }
+.tw-card.warning  { --tw-ring: inset 0 0 0 2px var(--tw-warning-ink); box-shadow: var(--tw-ring); }
+html body .tw-card:focus-visible { outline-offset: 1px !important; box-shadow: var(--tw-ring), 0 0 0 4px var(--brand-glow) !important; }
 /* Locked: its time is frozen — said by the padlock on the meta line (a hatch
    at about 1.1:1 was invisible). */
 .tw-card.locked { cursor: default; }
@@ -356,8 +370,8 @@ html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35);
 .tw-legend .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
 .tw-legend { --tw-warning-ink: #9a3b06; }
 html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
-.tw-workspace[aria-busy="true"] .tw-card,
-.tw-workspace[aria-busy="true"] .tw-section-item { cursor: progress; }
+.tw-workspace[data-busy="true"] .tw-card,
+.tw-workspace[data-busy="true"] .tw-section-item { cursor: progress; }
 
 /* ── Inspector ──────────────────────────────────────────────────── */
 /* The tab strip and the collapse button share one row; the button is not a

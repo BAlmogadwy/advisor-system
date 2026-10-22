@@ -390,6 +390,318 @@
     return true;
   }
 
+  // ── Roving focus over grids ───────────────────────────────────
+  /* `UXControls.roving(region, options)` gives a region of ARIA grids
+     (`[role=grid] > [role=row] > [role=gridcell]`, rows usually
+     `.ux-grid-row`) ONE tab stop and arrow-key movement, the WAI-ARIA grid
+     pattern. A board (days × times, several tables) and a list (one cell per
+     row) use the same controller.
+     - stop: selector of the stops inside a cell (cards); a cell holding none
+       is itself a stop. Stops are named by `data-focus-key`.
+     - Keys: arrows (mirrored in RTL; ↑/↓ also walk the stops stacked in one
+       cell), Home/End (row; the whole list when every row has one cell),
+       Ctrl+Home/End, PageUp/PageDown (the previous/next table), Enter and
+       Space (`activate`, default a click; never a repeat, never on a native
+       control), and a `keys` map (a Latin capital is matched by `letterOf`,
+       any other name by `event.key`; a handler returning false leaves the
+       key alone).
+     - The page redraws freely: the controller keeps the active stop's key and
+       position, finds them again after every redraw (a MutationObserver, or
+       `nav.refresh()`), and gives the keyboard back to the active stop when
+       the keyboard was in the region and the redraw left it nowhere. A
+       restore never scrolls unless the last input was a key.
+     - hint: an element shown while the keyboard is in the region (its keys).
+     nav: active() / active(key, {focus}), element(key), refresh(), restore(),
+     reset(). */
+  let lastInputWasKeyboard = false;
+  document.addEventListener('keydown', () => { lastInputWasKeyboard = true; }, true);
+  document.addEventListener('pointerdown', () => { lastInputWasKeyboard = false; }, true);
+  document.addEventListener('wheel', () => { lastInputWasKeyboard = false; }, { capture: true, passive: true });
+
+  /* The letter a key means, on any layout: the Latin letter it types, or,
+     where it types another script's letter (Arabic ة on KeyM), its key's
+     letter. Punctuation and digits mean none (AZERTY's KeyM types ","). */
+  function letterOf(event) {
+    const key = String(event.key || '');
+    if (/^[a-z]$/i.test(key)) return key.toUpperCase();
+    if (/^\p{L}$/u.test(key) && /^Key[A-Z]$/.test(String(event.code || ''))) return event.code.slice(3);
+    return '';
+  }
+
+  const NATIVE_CONTROL = 'button, a[href], input, select, textarea';
+  const rovers = new WeakMap();
+  function roving(region, options = {}) {
+    if (!region) return null;
+    if (rovers.has(region)) {
+      Object.assign(rovers.get(region).options, options);
+      return rovers.get(region).nav;
+    }
+    const self = { options: { ...options }, key: '', pos: null, pending: '', owned: false, nav: null };
+    rovers.set(region, self);
+    const opt = self.options;
+    const keyOf = element => (element && element.dataset ? element.dataset.focusKey || '' : '');
+    // Hidden, or inside something hidden. An element that draws no box (a
+    // display: contents row) has no visibility of its own to check: Chrome's
+    // checkVisibility() says false for it.
+    const skipped = element => {
+      for (let node = element; node && node !== region; node = node.parentElement) {
+        if (node.hidden || (node.classList && node.classList.contains('d-none'))) return true;
+      }
+      if (typeof element.checkVisibility !== 'function' || getComputedStyle(element).display === 'contents') return false;
+      return element.checkVisibility() === false;
+    };
+
+    // The structure, read on demand: tables → rows → cells → stops.
+    function layout() {
+      return [...region.querySelectorAll('[role="grid"]')].filter(table => !skipped(table)).map(table =>
+        [...table.querySelectorAll('[role="row"]')].filter(row => !skipped(row) && row.querySelector('[role="gridcell"]')).map(row =>
+          [...row.querySelectorAll('[role="gridcell"]')].filter(cell => !skipped(cell)).map(cell => {
+            const inner = opt.stop ? [...cell.querySelectorAll(opt.stop)].filter(stop => !skipped(stop)) : [];
+            return { cell, stops: inner.length ? inner : [cell] };
+          })).filter(row => row.length)).filter(table => table.length);
+    }
+    const allStops = grid => grid.flatMap(table => table.flatMap(row => row.flatMap(cell => cell.stops)));
+    const listShaped = grid => grid.length > 0 && grid.every(table => table.every(row => row.length === 1));
+    function locate(grid, element) {
+      for (let g = 0; g < grid.length; g++) {
+        for (let r = 0; r < grid[g].length; r++) {
+          for (let c = 0; c < grid[g][r].length; c++) {
+            const s = grid[g][r][c].stops.indexOf(element);
+            if (s >= 0) return { g, r, c, s };
+          }
+        }
+      }
+      return null;
+    }
+    const at = (grid, pos) => grid[pos.g][pos.r][pos.c].stops[pos.s];
+    // The stop a key names; a key naming a cell that now holds stops names its first.
+    function byKey(grid, key) {
+      if (!key) return null;
+      for (const stop of allStops(grid)) if (keyOf(stop) === key) return stop;
+      for (const table of grid) for (const row of table) for (const cell of row) {
+        if (keyOf(cell.cell) === key) return cell.stops[0];
+      }
+      return null;
+    }
+    // In a row, the cell nearest a column (data-ux-col), else the same index.
+    function aligned(row, fromCell, index) {
+      const col = Number(fromCell.cell.dataset.uxCol);
+      if (Number.isFinite(col) && row.every(cell => Number.isFinite(Number(cell.cell.dataset.uxCol)))) {
+        let best = 0;
+        row.forEach((cell, i) => {
+          if (Math.abs(Number(cell.cell.dataset.uxCol) - col) < Math.abs(Number(row[best].cell.dataset.uxCol) - col)) best = i;
+        });
+        return best;
+      }
+      return Math.min(index, row.length - 1);
+    }
+
+    function setActive(grid, stop) {
+      const stops = allStops(grid);
+      region.querySelectorAll('[data-ux-roving]').forEach(element => {
+        if (!stops.includes(element)) { element.removeAttribute('tabindex'); element.removeAttribute('data-ux-roving'); }
+      });
+      stops.forEach(element => {
+        element.setAttribute('data-ux-roving', '');
+        element.tabIndex = element === stop ? 0 : -1;
+      });
+      if (stop) {
+        self.key = keyOf(stop);
+        self.pos = locate(grid, stop);
+      }
+    }
+    function moveTo(grid, stop) {
+      if (!stop) return;
+      setActive(grid, stop);
+      stop.focus({ preventScroll: true });
+      if (typeof stop.scrollIntoView === 'function') stop.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    const nowhere = () => {
+      const active = document.activeElement;
+      return !active || active === document.body || !active.isConnected;
+    };
+    function giveBack(grid, stop, { always = false } = {}) {
+      if (!always && !(self.owned && nowhere())) return;
+      const target = stop || region;
+      if (!stop && !region.hasAttribute('tabindex')) return;
+      target.focus({ preventScroll: true });
+      if (lastInputWasKeyboard && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
+    // R2: which stop is active after a redraw.
+    function refresh() {
+      const grid = layout();
+      const stops = allStops(grid);
+      if (!stops.length) { setActive(grid, null); giveBack(grid, null); return; }
+      let stop = null;
+      if (self.pending) {
+        stop = byKey(grid, self.pending);
+        if (stop) self.pending = '';
+      }
+      stop = stop || byKey(grid, self.key);
+      if (!stop && typeof opt.initial === 'function') stop = byKey(grid, opt.initial() || '');
+      if (!stop && self.pos) {
+        const g = Math.min(self.pos.g, grid.length - 1);
+        const r = Math.min(self.pos.r, grid[g].length - 1);
+        const c = Math.min(self.pos.c, grid[g][r].length - 1);
+        const cell = grid[g][r][c];
+        stop = cell.stops[Math.min(self.pos.s, cell.stops.length - 1)];
+      }
+      stop = stop || stops.find(element => element.getAttribute('aria-disabled') !== 'true') || stops[0];
+      setActive(grid, stop);
+      giveBack(grid, stop);
+    }
+
+    function step(grid, pos, key, event, rtl) {
+      const row = grid[pos.g][pos.r];
+      const cell = row[pos.c];
+      const forward = rtl ? 'ArrowLeft' : 'ArrowRight';
+      const back = rtl ? 'ArrowRight' : 'ArrowLeft';
+      const list = listShaped(grid);
+      const stops = allStops(grid);
+      const rowAt = (g, r, fromIndex, last) => {
+        const target = grid[g][r];
+        const c = aligned(target, cell, fromIndex);
+        return last ? target[c].stops[target[c].stops.length - 1] : target[c].stops[0];
+      };
+      if (key === forward || key === back) {
+        if (list) return undefined;
+        const c = key === forward ? pos.c + 1 : pos.c - 1;
+        if (c < 0 || c >= row.length) return at(grid, pos);
+        return row[c].stops[Math.min(pos.s, row[c].stops.length - 1)];
+      }
+      if (key === 'ArrowDown') {
+        if (pos.s + 1 < cell.stops.length) return cell.stops[pos.s + 1];
+        if (pos.r + 1 < grid[pos.g].length) return rowAt(pos.g, pos.r + 1, pos.c, false);
+        if (pos.g + 1 < grid.length) return rowAt(pos.g + 1, 0, pos.c, false);
+        return at(grid, pos);
+      }
+      if (key === 'ArrowUp') {
+        if (pos.s > 0) return cell.stops[pos.s - 1];
+        if (pos.r > 0) return rowAt(pos.g, pos.r - 1, pos.c, true);
+        if (pos.g > 0) return rowAt(pos.g - 1, grid[pos.g - 1].length - 1, pos.c, true);
+        return at(grid, pos);
+      }
+      if (key === 'Home' || key === 'End') {
+        if (event.ctrlKey || list) return key === 'Home' ? stops[0] : stops[stops.length - 1];
+        return (key === 'Home' ? row[0] : row[row.length - 1]).stops[0];
+      }
+      if (key === 'PageDown' || key === 'PageUp') {
+        const g = key === 'PageDown' ? pos.g + 1 : pos.g - 1;
+        if (g < 0 || g >= grid.length) return at(grid, pos);
+        return rowAt(g, Math.min(pos.r, grid[g].length - 1), pos.c, false);
+      }
+      return undefined;
+    }
+
+    const NAVIGATION = new Set(['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp']);
+    region.addEventListener('keydown', event => {
+      if (event.isComposing || event.altKey || event.metaKey || event.shiftKey) return;
+      const grid = layout();
+      const stops = allStops(grid);
+      const target = event.target;
+      const stop = stops.find(element => element === target || element.contains(target)) || null;
+      if (!stop && target !== region) return;
+      const key = event.key;
+      if (event.ctrlKey && key !== 'Home' && key !== 'End') return;
+      if (NAVIGATION.has(key)) {
+        if (!stops.length) return;
+        if (!stop) {
+          event.preventDefault();
+          moveTo(grid, byKey(grid, self.key) || stops[0]);
+          return;
+        }
+        const rtl = getComputedStyle(region).direction === 'rtl';
+        const next = step(grid, locate(grid, stop), key, event, rtl);
+        if (next === undefined) return;
+        event.preventDefault();
+        if (next !== document.activeElement) moveTo(grid, next);
+        return;
+      }
+      if (!stop || event.repeat) return;
+      if (key === 'Enter' || key === ' ') {
+        if (target.matches && target.matches(NATIVE_CONTROL)) return;
+        event.preventDefault();
+        if (typeof opt.activate === 'function') opt.activate(stop, event);
+        else stop.click();
+        return;
+      }
+      const keys = opt.keys || {};
+      const letter = letterOf(event);
+      const name = Object.keys(keys).find(entry => (/^[A-Z]$/.test(entry) ? entry === letter : entry === key));
+      if (!name || event.ctrlKey) return;
+      if (keys[name](stop, event) === false) return;
+      event.preventDefault();
+    });
+
+    // R3/R4: who has the keyboard.
+    region.addEventListener('focusin', event => {
+      self.owned = true;
+      const grid = layout();
+      const stop = allStops(grid).find(element => element === event.target || element.contains(event.target));
+      if (stop) setActive(grid, stop);
+      if (opt.hint && lastInputWasKeyboard) opt.hint.hidden = false;
+    });
+    region.addEventListener('focusout', event => {
+      if (event.relatedTarget && !region.contains(event.relatedTarget)) {
+        self.owned = false;
+        if (opt.hint) opt.hint.hidden = true;
+      }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (!region.contains(event.target)) {
+        self.owned = false;
+        if (opt.hint) opt.hint.hidden = true;
+      }
+    }, true);
+    // R6: any redraw of the region (attributes are not watched: tones and the
+    // selection never move the keyboard).
+    new MutationObserver(() => { if (region.isConnected) refresh(); }).observe(region, { childList: true, subtree: true });
+
+    const nav = {
+      active(key, { focus = false } = {}) {
+        if (key === undefined) return self.key;
+        const grid = layout();
+        const stop = byKey(grid, key);
+        if (!stop) { self.pending = key; return key; }
+        self.pending = '';
+        setActive(grid, stop);
+        if (focus) moveTo(grid, stop);
+        return self.key;
+      },
+      element(key = self.key) {
+        const stop = byKey(layout(), key);
+        return stop && stop.isConnected ? stop : null;
+      },
+      refresh,
+      restore() {
+        refresh();
+        giveBack(layout(), nav.element(), { always: true });
+      },
+      reset() {
+        self.key = '';
+        self.pos = null;
+        self.pending = '';
+      },
+    };
+    self.nav = nav;
+    refresh();
+    return nav;
+  }
+
+  // The floating job card: content kept clear of it (scroll padding) reads its
+  // height from --ux-job-block.
+  if (window.ResizeObserver) {
+    const jobBlock = new ResizeObserver(entries => {
+      entries.forEach(entry => {
+        const card = entry.target;
+        const size = card.hidden ? 0 : card.getBoundingClientRect().height;
+        document.documentElement.style.setProperty('--ux-job-block', size ? `${Math.ceil(size) + 16}px` : '0px');
+      });
+    });
+    document.querySelectorAll('.ux-job').forEach(card => jobBlock.observe(card));
+  }
+
   function wire(root) {
     const scope = root || document;
     scope.querySelectorAll('button[aria-haspopup="menu"][aria-controls]').forEach(wireMenu);
@@ -401,7 +713,7 @@
     entries.forEach(entry => { if (!entry.anchor.contains(event.target)) close(entry); });
   });
 
-  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw };
+  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw, roving, letterOf };
   // base.html loads this at the end of <body>, so the page's markup is already
   // there: wire it now, and again once parsing ends for anything later (wiring
   // is idempotent per control).

@@ -34,15 +34,14 @@ os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "1")
 
 import pytest
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from django.test import Client, override_settings
+from django.test import override_settings
 
 from tests import one_teacher_support as fx
 from tests.test_exam_rosters_browser import WIDE_FONT
+from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin
 
-playwright_api = pytest.importorskip("playwright.sync_api")
-sync_playwright = playwright_api.sync_playwright
+pytest.importorskip("playwright.sync_api")
 
 WINDOWS = ((1366, 650), (1440, 790), (1536, 730), (1920, 1080))
 
@@ -107,86 +106,8 @@ TEXT = [
 ]
 
 
-class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
+class WorkspaceFrameBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
     maxDiff = None
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        super().setUpClass()
-        cls._pw = sync_playwright().start()
-        cls.browser = cls._pw.chromium.launch()
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.browser.close()
-        cls._pw.stop()
-        super().tearDownClass()
-
-    def setUp(self) -> None:
-        user = get_user_model().objects.create_superuser(
-            username="workspace-frame", email="workspace-frame@example.test", password="unused"
-        )
-        client = Client()
-        client.force_login(user)
-        self.session = client.cookies[settings.SESSION_COOKIE_NAME].value
-        sc, board = fx.scenario("Workspace frame", programs=("AI",))
-        # Two sections on the board, and a third still to place: the scenario
-        # has a publish blocker (a required section that is on no board).
-        for code, name, meetings in (
-            ("AI111", "Intro AI", (("SUN", "09:00", "10:15"), ("TUE", "09:00", "10:15"))),
-            ("AI222", "Search", (("MON", "13:00", "14:15"), ("WED", "13:00", "14:15"))),
-        ):
-            key = fx.requirement("AI", code, name)
-            fx.budget(sc, key, 1 if code == "AI111" else 2)
-            fx.place(board, fx.section(sc, key, "S1"), meetings, room="R101")
-        self.scenario = sc
-        self.path = f"/timetable-workspace/?scenario={sc.id}"
-
-    def _load(self, language: str, theme: str, width: int, height: int, cards: int = 4):
-        context = self.browser.new_context(
-            locale="ar" if language == "ar" else "en-US",
-            extra_http_headers={"Accept-Language": language},
-            viewport={"width": width, "height": height},
-            color_scheme=theme,
-        )
-        self.addCleanup(context.close)
-        context.add_cookies(
-            [
-                {
-                    "name": settings.SESSION_COOKIE_NAME,
-                    "value": self.session,
-                    "url": self.live_server_url,
-                },
-                {
-                    "name": settings.LANGUAGE_COOKIE_NAME,
-                    "value": language,
-                    "url": self.live_server_url,
-                },
-            ]
-        )
-        context.add_init_script(
-            f"try {{ localStorage.setItem('theme', '{theme}'); }} catch (e) {{}}"
-        )
-        context.add_init_script(WIDE_FONT)
-        page = context.new_page()
-        sent: list[str] = []
-        errors: list[str] = []
-        page.on(
-            "request", lambda r: sent.append(f"{r.method} {r.url}") if r.method != "GET" else None
-        )
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(f"{self.live_server_url}{self.path}")
-        page.add_style_tag(
-            content="*, *::before, *::after { transition: none !important; animation: none !important; }"
-        )
-        self.assertEqual(page.evaluate("document.documentElement.lang"), language)
-        # Loaded: the board's cards are drawn and the readiness answer is in.
-        page.wait_for_function(
-            f"document.querySelectorAll('.tw-card').length === {cards}"
-            " && !document.getElementById('twOptimiseMenu').disabled"
-            " && /\\d/.test(document.getElementById('twPublishLabel').textContent)"
-        )
-        return page, sent, errors
 
     def test_the_frame_fits_the_window_and_reads(self) -> None:
         problems: dict[str, list] = {}
