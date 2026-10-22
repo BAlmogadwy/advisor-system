@@ -809,7 +809,7 @@ test('G1 a helper dialog without showModal opens on its initial focus; its butto
   h.dom.window.close();
 });
 
-test('G2 the browser’s cancel is stopped and closes the dialog once; a native close without cancel does the same bookkeeping', async () => {
+test('G2 the browser’s cancel is stopped and closes the dialog once; a native close no cancel began does the same bookkeeping, as a close', async () => {
   const h = dialogFixture({ modal: true });
   const D = h.UX.dialog;
   const options = { initialFocus: () => h.$('dlgBody'), returnFocus: () => h.$('opener') };
@@ -826,18 +826,20 @@ test('G2 the browser’s cancel is stopped and closes the dialog once; a native 
   assert.equal(h.doc.activeElement, opener);
   await new Promise(resolve => setTimeout(resolve, 5));  // the browser's own `close` event, after ours
   assert.deepEqual(h.closes, ['cancel'], 'one close');
-  // Chrome's close watcher: closed by the browser, with no cancel first.
+  // Closed natively with no cancel first (page code calling dialog.close(), as
+  // a `<form method="dialog">` submitted does): the bookkeeping, as a close,
+  // not as the user's cancel.
   D.open(h.dlg, options);
-  h.dlg.removeAttribute('open');
-  h.dlg.dispatchEvent(new h.dom.window.Event('close'));
-  assert.equal(D.isOpen(h.dlg), false);
+  h.dlg.close();
+  assert.equal(D.isOpen(h.dlg), false, 'closed, though not by the helper yet');
+  await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(h.doc.activeElement, h.$('opener'));
-  assert.deepEqual(h.closes, ['cancel', 'cancel']);
+  assert.deepEqual(h.closes, ['cancel', 'close']);
   // A late `close` from an earlier closing finds the dialog open again: not its own.
   D.open(h.dlg, options);
   h.dlg.dispatchEvent(new h.dom.window.Event('close'));
   assert.equal(D.isOpen(h.dlg), true);
-  assert.deepEqual(h.closes, ['cancel', 'cancel']);
+  assert.deepEqual(h.closes, ['cancel', 'close']);
   h.dom.window.close();
 });
 
@@ -886,16 +888,19 @@ test('G3 a focus target that cannot take focus is skipped quietly; dialogs the h
   page.dom.window.close();
 });
 
-test('C1 a choice list with data-ux-submit: Home, End and PageUp/PageDown (clamped) skip hidden rows; Enter submits once, only while the button is on', () => {
-  const h = bare();
+test('C1 a choice list with data-ux-submit: Home, End and PageUp/PageDown (clamped) skip hidden rows and bring the row into view; Enter submits once, through the commit button, only while it is on', () => {
+  const scrolled = [];
+  const h = bare(true, w => { w.Element.prototype.scrollIntoView = function () { scrolled.push(this); }; });
   const row = (id, name, { dNone = false, hidden = false } = {}) => `<label class="ux-choice${dNone ? ' d-none' : ''}"${hidden ? ' hidden' : ''}>`
     + `<input type="radio" name="${name}" id="${id}" value="${id}"><span class="ux-choice-title">${id}</span></label>`;
   const rows = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i)
     .map(n => row(`r${n}`, 'pick', { dNone: n === 4, hidden: n === 13 })).join('');
-  h.doc.body.insertAdjacentHTML('beforeend', `<form id="f" novalidate>
+  // As a real choosing dialog's form: a leading type=button (its ×) and a
+  // way out with no type (itself a submit button) before the commit button.
+  h.doc.body.insertAdjacentHTML('beforeend', `<form id="f" novalidate><button type="button" id="x">×</button>
       <fieldset class="ux-choice-list" data-ux-submit>${rows(0, 6)}</fieldset>
       <fieldset class="ux-choice-list" data-ux-submit>${rows(7, 13)}</fieldset>
-      ${row('o1', 'other')}<button type="submit" id="go">Assign</button></form>
+      ${row('o1', 'other')}<button id="bareClose" data-dialog-close>Cancel</button><button type="submit" id="go">Assign</button></form>
     <form id="g" novalidate><div class="ux-choice-list">${row('s0', 'plain')}${row('s1', 'plain')}</div><button type="submit">Go</button></form>`);
   const $ = id => h.doc.getElementById(id);
   const changes = [];
@@ -905,9 +910,12 @@ test('C1 a choice list with data-ux-submit: Home, End and PageUp/PageDown (clamp
   const press = (target, key, init = {}) => target.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   const step = (from, key, expected) => {
     $(from).focus();
+    scrolled.length = 0;
     assert.equal(press($(from), key), false, `${key} is used`);
     const checked = h.doc.querySelector('#f input[name="pick"]:checked');
     assert.deepEqual([checked && checked.id, h.doc.activeElement.id], [expected, expected], `${key} from ${from}`);
+    // The radio is a clipped pixel: the whole row is what comes into view.
+    assert.deepEqual(scrolled, [$(expected).closest('label.ux-choice')], `${key} from ${from}: the row scrolls into view`);
   };
   // Visible rows, in order: r0–r3, r5–r12 (r4 is .d-none, r13 hidden), across both lists.
   step('r2', 'End', 'r12');
@@ -919,17 +927,126 @@ test('C1 a choice list with data-ux-submit: Home, End and PageUp/PageDown (clamp
   step('r0', 'Home', 'r0');
   assert.deepEqual(changes, ['r12', 'r0', 'r11', 'r12', 'r1', 'r0'], 'a change for each new choice, none for the same one');
   assert.equal(press($('r0'), 'ArrowDown'), true, 'the arrows stay the browser’s');
-  // Enter: one submit per press, with the submit button as its submitter.
+  // Enter: one submit per press, with the commit button as its submitter (not
+  // the × before it, nor the way out with no type).
   assert.equal(press($('r0'), 'Enter'), false);
   press($('r0'), 'Enter', { repeat: true });
   assert.deepEqual(submits.f, ['go']);
   $('go').disabled = true;
   assert.equal(press($('r0'), 'Enter'), false, 'Enter is still used');
   assert.deepEqual(submits.f, ['go'], 'nothing submitted while the button is off');
+  // Off through a disabled fieldset around it is off too.
+  $('go').disabled = false;
+  const wrap = h.doc.createElement('fieldset');
+  wrap.disabled = true;
+  $('go').before(wrap);
+  wrap.append($('go'));
+  assert.equal(press($('r0'), 'Enter'), false);
+  assert.deepEqual(submits.f, ['go'], 'nothing submitted while a disabled fieldset holds the button');
+  wrap.disabled = false;
+  press($('r0'), 'Enter');
+  assert.deepEqual(submits.f, ['go', 'go'], 'and it submits once the fieldset is on');
   // A list without data-ux-submit: neither Enter nor Home/End.
   $('s0').focus();
   assert.equal(press($('s0'), 'Enter'), true);
   assert.equal(press($('s0'), 'End'), true);
   assert.deepEqual([submits.g, $('s1').checked], [[], false]);
   h.dom.window.close();
+});
+
+test('G4 opening a helper dialog closes an open menu; isOpen answers only for a helper dialog that is still on the page', async () => {
+  const h = dialogFixture();
+  const D = h.UX.dialog;
+  h.doc.body.insertAdjacentHTML('beforeend', `<div class="ux-menu-anchor"><button type="button" id="more" aria-haspopup="menu" aria-controls="moreMenu">More</button>
+      <div id="moreMenu" class="ux-menu" role="menu" style="display:none"><button type="button" role="menuitem">One</button></div></div>
+    <dialog id="pageOwn" open><button type="button">The page’s own</button></dialog>
+    <dialog id="next"><button type="button" id="nextBtn">Next</button></dialog>`);
+  h.UX.wire();
+  // A pointer opens the menu: the keyboard stays where it was, outside it, so
+  // no focus leaving the menu closes it on the way.
+  h.$('more').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  assert.deepEqual([h.$('moreMenu').style.display, h.$('more').getAttribute('aria-expanded')], ['block', 'true']);
+  assert.equal(D.open(h.dlg, { returnFocus: () => h.$('opener') }), true);
+  assert.deepEqual([h.$('moreMenu').style.display, h.$('more').getAttribute('aria-expanded')], ['none', 'false'], 'the menu closed as the dialog opened');
+  // Open by its page: not the helper's.
+  assert.equal(h.$('pageOwn').hasAttribute('open'), true);
+  assert.equal(D.isOpen(h.$('pageOwn')), false, 'open, but not the helper’s');
+  // Taken off the page while open: not open, and it does not block the next.
+  h.dlg.remove();
+  assert.equal(h.dlg.hasAttribute('open'), true);
+  assert.equal(D.isOpen(h.dlg), false, 'off the page');
+  assert.equal(D.open(h.$('next')), true, 'the next helper dialog opens');
+  assert.equal(D.isOpen(h.$('next')), true);
+  await tick();  // the menu's observer answers while the window is still there
+  h.dom.window.close();
+});
+
+test('G5 a way out with no type never submits; a fallback Escape inside a nested dialog is that dialog’s; the first control skips what cannot take focus', () => {
+  const h = dialogFixture();
+  const D = h.UX.dialog;
+  const options = { returnFocus: () => h.$('opener') };
+  const submits = [];
+  h.doc.addEventListener('submit', event => { event.preventDefault(); submits.push(event.submitter && event.submitter.id); });
+  // A Close with no type is a submit button of the form: closed as a cancel,
+  // and the choice it closes on is not submitted.
+  h.$('dlgCancel').insertAdjacentHTML('beforebegin', '<button id="dlgBare" data-dialog-close>Close</button>');
+  D.open(h.dlg, options);
+  h.$('dlgBare').click();
+  assert.deepEqual([D.isOpen(h.dlg), h.closes, submits], [false, ['cancel'], []], 'closed as a cancel, nothing submitted');
+  assert.equal(h.doc.activeElement, h.$('opener'));
+  // The same button in a dialog the page owns keeps the browser's behaviour.
+  h.doc.body.insertAdjacentHTML('beforeend', '<dialog id="pageOwn" open><form method="dialog"><button id="pageBare" data-dialog-close>Close</button></form></dialog>');
+  const click = new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+  h.$('pageBare').dispatchEvent(click);
+  assert.deepEqual([click.defaultPrevented, submits], [false, ['pageBare']], 'not the helper’s to stop');
+  h.$('pageOwn').remove();
+  // A page dialog open inside the helper's (fallback mode): an Escape in it
+  // is its own, and the helper's dialog stays open.
+  D.open(h.dlg, options);
+  h.$('dlgBody').insertAdjacentHTML('beforeend', '<dialog id="inner" open><button type="button" id="innerBtn">OK</button></dialog>');
+  const escape = new h.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  h.$('innerBtn').dispatchEvent(escape);
+  assert.deepEqual([escape.defaultPrevented, D.isOpen(h.dlg)], [false, true], 'the inner dialog’s Escape');
+  h.key(h.$('dlgFilter'), { key: 'Escape' });
+  assert.equal(D.isOpen(h.dlg), false, 'an Escape of its own still closes it');
+  // The first control that takes focus: not a hidden input, a disabled
+  // button, or one inside [hidden] or .d-none; an initialFocus that is a
+  // hidden input falls back the same way.
+  h.doc.body.insertAdjacentHTML('beforeend', `<dialog id="picky"><form method="dialog"><input type="hidden" id="pkHidden" name="token" value="1">
+      <button type="button" id="pkOff" disabled>off</button><div hidden><button type="button" id="pkInHidden">h</button></div>
+      <div class="d-none"><button type="button" id="pkInDNone">d</button></div><input type="search" id="pkReal"></form></dialog>`);
+  for (const initialFocus of [undefined, () => h.$('pkHidden')]) {
+    h.$('opener').focus();
+    assert.equal(D.open(h.$('picky'), { initialFocus, returnFocus: () => h.$('opener') }), true);
+    assert.equal(h.doc.activeElement, h.$('pkReal'), initialFocus ? 'initialFocus a hidden input' : 'no initialFocus');
+    D.close(h.$('picky'));
+  }
+  h.dom.window.close();
+});
+
+test('C2 forced colours: every choice row draws a border, the chosen row a Highlight one, the row with the keyboard an outline (never the same property)', () => {
+  // Forced colours drop box shadows and author backgrounds, the row's only
+  // frame and checked mark otherwise; the radio itself is a clipped pixel.
+  // (Checked in Chromium with forced colours emulated; this pins the rules.)
+  const css = fs.readFileSync(path.join(root, 'static/css/global.css'), 'utf8');
+  const rules = new Map();
+  for (const match of css.matchAll(/@media \(forced-colors: active\) \{/g)) {
+    let depth = 1, i = match.index + match[0].length;
+    const start = i;
+    while (depth) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
+    for (const [, selector, body] of css.slice(start, i - 1).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      for (const one of selector.split(',')) rules.set(one.trim(), (rules.get(one.trim()) || '') + body);
+    }
+  }
+  const declared = (selector, property) => {
+    const body = rules.get(selector) || '';
+    const found = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`).exec(body);
+    return found ? found[1].trim() : '';
+  };
+  assert.match(declared('.ux-choice', 'border'), /^1px solid CanvasText$/, 'every row: a frame');
+  assert.match(declared('.ux-choice:has(input:checked)', 'border'), /^\d+px solid Highlight$/, 'the chosen row: Highlight');
+  assert.ok(parseInt(declared('.ux-choice:has(input:checked)', 'border'), 10) > 1, 'and thicker than the frame, not colour alone');
+  assert.match(declared('.ux-choice:focus-within', 'outline'), /^2px solid CanvasText$/, 'the row with the keyboard: an outline');
+  assert.equal(declared('.ux-choice:has(input:checked)', 'outline'), '', 'the chosen mark leaves the outline to focus');
+  assert.equal(declared('.ux-choice:focus-within', 'border'), '', 'and focus leaves the border to the chosen mark');
 });

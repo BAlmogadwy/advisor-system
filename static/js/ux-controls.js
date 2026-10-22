@@ -737,18 +737,21 @@
        may have redrawn the control that opened the dialog while it was open,
        and the new node is the one that should get the keyboard back.
      `close(dialog, reason = 'close')` closes it, focuses what `returnFocus()`
-     gives if it can take focus (on the page, enabled, not inside `[hidden]`
-     or `.d-none`), then fires `ux-dialog-close` (bubbling, `detail.reason`).
-     The user's ways out are 'cancel': a `[data-dialog-close]` button, Escape
-     (the browser's `cancel`, or a keydown in fallback mode) and the browser
-     closing it by itself. Every listener acts only on dialogs in `dialogs`,
-     so the Generate dialog and the English chooser, which wire their own
-     closing, are never touched. */
+     gives if it can take focus (on the page, enabled, not a hidden input, not
+     inside `[hidden]` or `.d-none`), then fires `ux-dialog-close` (bubbling,
+     `detail.reason`). The user's ways out are 'cancel': a
+     `[data-dialog-close]` button (never a submit, whatever its type) and
+     Escape (the browser's `cancel`, or a keydown in fallback mode). A close
+     the helper did not start and no cancel began (a `<form method="dialog">`
+     submitted, page code calling `dialog.close()`) is 'close'. Every listener
+     acts only on dialogs in `dialogs`, so the Generate dialog and the English
+     chooser, which wire their own closing, are never touched. */
   const dialogs = new WeakMap();
   let shownDialog = null;
   const FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
   const canTakeFocus = element => Boolean(element) && typeof element.focus === 'function'
-    && element.isConnected && !element.disabled && !element.closest('[hidden], .d-none');
+    && element.isConnected && !element.disabled && !(element.tagName === 'INPUT' && element.type === 'hidden')
+    && !element.closest('[hidden], .d-none');
   const dialogIsOpen = dialog => Boolean(dialog) && dialogs.has(dialog)
     && dialog.isConnected && dialog.hasAttribute('open');
 
@@ -801,24 +804,32 @@
   document.addEventListener('click', event => {
     const button = event.target.closest && event.target.closest('[data-dialog-close]');
     const dialog = button && button.closest('dialog');
-    if (dialog && dialogs.has(dialog)) closeDialog(dialog, 'cancel');
+    if (!dialog || !dialogs.has(dialog)) return;
+    // A button with no type in the form is a submit button: it closes, and
+    // never submits the choice it is closing on.
+    event.preventDefault();
+    closeDialog(dialog, 'cancel');
   });
   // Escape in a modal dialog: the browser fires `cancel` (it does not
   // bubble, so only a capturing listener on the document hears it). The
-  // helper closes the dialog itself, so focus and the event are its own.
+  // helper closes the dialog itself, so focus and the event are its own, and
+  // lets it go before the browser's own `close` arrives.
   document.addEventListener('cancel', event => {
     if (!dialogs.has(event.target)) return;
     event.preventDefault();
     closeDialog(event.target, 'cancel');
   }, true);
-  // The browser can close a dialog by itself, with no `cancel` first (Chrome's
-  // close watcher has done so on a second Escape with no click in between):
-  // it is closed, so only the bookkeeping is left, as the user's cancel. The
-  // event comes a moment after the closing; a dialog open again by then is
-  // not the one it means.
+  // So a `close` that still finds the dialog the helper's is one no cancel
+  // began: a `<form method="dialog">` submitted with nothing stopping it, or
+  // page code calling dialog.close(). It is closed; only the bookkeeping is
+  // left, as 'close'. Chromium (145) fires `cancel` on every Escape, a second
+  // one with no click in between included (a cancel it no longer lets the
+  // page stop), so no Escape lands here there; the listener is a guard for a
+  // browser that would close without one. The event comes a moment after
+  // the closing; a dialog open again by then is not the one it means.
   document.addEventListener('close', event => {
     const dialog = event.target;
-    if (dialogs.has(dialog) && !dialog.hasAttribute('open')) closeDialog(dialog, 'cancel');
+    if (dialogs.has(dialog) && !dialog.hasAttribute('open')) closeDialog(dialog, 'close');
   }, true);
   // No showModal, so no `cancel` either: Escape itself, unless a control
   // inside used it (a filter clearing its text stops it).
@@ -851,8 +862,11 @@
     return scope.filter(input => input.tagName === 'INPUT' && input.type === 'radio' && input.name === radio.name
       && input.form === radio.form && !input.disabled && !choiceHidden(input));
   }
-  const submitButtonOf = form => [...form.elements].find(element => (element.tagName === 'BUTTON' && element.type === 'submit')
-    || (element.tagName === 'INPUT' && (element.type === 'submit' || element.type === 'image')));
+  // The commit button: the first submit button that is not a way out (a
+  // `[data-dialog-close]` button with no type is a submit button too).
+  const submitButtonOf = form => [...form.elements].find(element => !element.matches('[data-dialog-close]')
+    && ((element.tagName === 'BUTTON' && element.type === 'submit')
+      || (element.tagName === 'INPUT' && (element.type === 'submit' || element.type === 'image'))));
   const CHOICE_KEYS = new Set(['Home', 'End', 'PageUp', 'PageDown', 'Enter']);
   document.addEventListener('keydown', event => {
     if (!CHOICE_KEYS.has(event.key) || event.defaultPrevented || event.isComposing
@@ -866,7 +880,8 @@
       event.preventDefault();
       const form = radio.form;
       const submit = form ? submitButtonOf(form) : null;
-      if (event.repeat || !submit || submit.disabled) return;
+      // Off by itself or by a disabled fieldset around it.
+      if (event.repeat || !submit || submit.matches(':disabled')) return;
       form.requestSubmit(submit);
       return;
     }
