@@ -116,8 +116,10 @@ padding-aware for `p-0`.
   held the same way: the region takes the keyboard and the control gets it
   back when it is switched on again, in place or by a redraw. A page that
   redraws a panel after every server answer uses it instead of `innerHTML`.
-  The focused field keeps an edit not yet committed when the page draws it
-  from the same value (a new value from the page wins). Limits: not a caret
+  The focused field keeps an edit not yet committed when the page draws the
+  same field (key and data attributes) from the same value, and only if the
+  field can hold it (a new value from the page wins; a multiple select is
+  drawn as the page says). Limits: not a caret
   or text selection; the region needs a `tabindex` to hold the keyboard.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
@@ -356,8 +358,10 @@ findings changed the plan:
    choice made from the keyboard saves once the arrow keys rest, or on Enter
    or on leaving — Chrome on Windows fires `change` per arrow key — in both
    pages (`TimetableProgrammeMark.saveOnSettle`, which reads the section and
-   the value when the choice is made, so a repaint before the keys rest loses
-   nothing). A visually hidden status line says when the mix has been read
+   the value when the choice is made and keeps one wait per section: a
+   repaint before the keys rest loses nothing and saves nothing in between,
+   and a select a redraw takes off the page — Chromium blurs it as it goes —
+   is not "left"). A visually hidden status line says when the mix has been read
    again. While a mark saves, the select shows the mark being saved; a
    keyboard choice the page turned busy for is not dropped silently (the
    saved mark comes back and a warning says why); a reset lens (the scenario

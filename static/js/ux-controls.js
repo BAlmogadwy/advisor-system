@@ -346,6 +346,7 @@
   // selected option, an input's value attribute); null for other controls.
   function fieldOf(element) {
     if (element.tagName === 'SELECT') {
+      if (element.multiple) return null;
       const drawnOption = [...element.options].find(option => option.defaultSelected) || element.options[0];
       return { value: element.value, initial: drawnOption ? drawnOption.value : '' };
     }
@@ -355,6 +356,7 @@
     }
     return null;
   }
+  const sameData = (a, b) => JSON.stringify(Object.entries(a.dataset).sort()) === JSON.stringify(Object.entries(b.dataset).sort());
   function redraw(region, html) {
     watch(region);
     const last = drawn.get(region);
@@ -369,8 +371,14 @@
     let awaiting = '';
     if (inside || key) {
       const control = key ? findControl(region, key) : null;
-      const fresh = control && field && field.value !== field.initial ? fieldOf(control) : null;
-      if (fresh && fresh.initial === field.initial) control.value = field.value;
+      // The same field (its key and its data attributes, so another
+      // section's select never inherits the edit), drawn from the same value,
+      // and able to hold the edit (a select has that option).
+      const fresh = control && field && field.value !== field.initial && sameData(active, control) ? fieldOf(control) : null;
+      if (fresh && fresh.initial === field.initial
+        && (control.tagName !== 'SELECT' || [...control.options].some(option => option.value === field.value))) {
+        control.value = field.value;
+      }
       if (control && !control.disabled) control.focus({ preventScroll: true });
       // Gone, or not focusable now (disabled, inside a closed group): the region.
       if (!control || document.activeElement !== control) {

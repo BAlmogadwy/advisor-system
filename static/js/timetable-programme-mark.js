@@ -82,44 +82,52 @@
      passed on the way: a choice made from the keyboard saves once the keys
      rest (or at once on Enter, or on leaving the select); a pointer choice
      saves at once. Delegated from `root`, so a select drawn again later is
-     covered too; `save(capture(select), value)` is called once per settled
-     choice, with what `capture` read from the select when it changed. */
+     covered too.
+
+     `capture(select)` names what the choice is about (the section), read when
+     it changes; `save(that, value)` is called once per settled choice. The
+     wait belongs to that section, not to an element: a select drawn again
+     while the keys move carries on the same wait (no intermediate save), and
+     one taken off the page by a redraw (the browser blurs it as it goes) is
+     not "leaving" — its wait still ends in one save. */
   const SETTLE_MS = 700;
   function saveOnSettle(root, selector, save, capture = select => select) {
-    const state = new WeakMap();
-    const of = select => {
-      if (!state.has(select)) state.set(select, { timer: 0, keyed: false });
-      return state.get(select);
-    };
+    const keyed = new WeakMap();   // select → its last input came from the keyboard
+    const waiting = new Map();     // what the choice is about → { timer, value }
     const target = event => (event.target && event.target.closest ? event.target.closest(selector) : null);
-    const commit = select => {
-      const entry = of(select);
-      if (!entry.timer) return;
+    const commit = about => {
+      const entry = waiting.get(about);
+      if (!entry) return;
       clearTimeout(entry.timer);
-      entry.timer = 0;
-      save(entry.target, entry.value);
+      waiting.delete(about);
+      save(about, entry.value);
     };
-    root.addEventListener('pointerdown', event => { const select = target(event); if (select) of(select).keyed = false; });
+    root.addEventListener('pointerdown', event => { const select = target(event); if (select) keyed.set(select, false); });
     root.addEventListener('keydown', event => {
       const select = target(event);
       if (!select) return;
-      of(select).keyed = true;
-      if (event.key === 'Enter') commit(select);
+      keyed.set(select, true);
+      if (event.key === 'Enter') commit(capture(select));
     });
     root.addEventListener('change', event => {
       const select = target(event);
       if (!select) return;
-      const entry = of(select);
-      clearTimeout(entry.timer);
-      entry.timer = 0;
-      // What the choice is about, read now: the select may be drawn again (or
-      // taken off the page) before a keyboard choice settles.
-      entry.target = capture(select);
-      entry.value = select.value;
-      if (!entry.keyed) { save(entry.target, entry.value); return; }
-      entry.timer = setTimeout(() => commit(select), api.settleMs);
+      const about = capture(select);
+      const earlier = waiting.get(about);
+      if (earlier) clearTimeout(earlier.timer);
+      waiting.delete(about);
+      if (!keyed.get(select)) { save(about, select.value); return; }
+      const entry = { value: select.value, timer: 0 };
+      entry.timer = setTimeout(() => commit(about), api.settleMs);
+      waiting.set(about, entry);
     });
-    root.addEventListener('focusout', event => { const select = target(event); if (select) commit(select); });
+    root.addEventListener('focusout', event => {
+      const select = target(event);
+      if (!select) return;
+      const about = capture(select);
+      // After the event: a select still on the page was left by the user.
+      queueMicrotask(() => { if (select.isConnected) commit(about); });
+    });
   }
 
   const api = { words, hasMark, options, optionsHtml, mixHtml, nobodyHtml, tradeHtml, saveOnSettle, settleMs: SETTLE_MS };

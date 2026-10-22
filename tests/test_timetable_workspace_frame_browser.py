@@ -36,7 +36,7 @@ import pytest
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from django.test import Client
+from django.test import Client, override_settings
 
 from tests import one_teacher_support as fx
 from tests.test_exam_rosters_browser import WIDE_FONT
@@ -511,3 +511,42 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
         )
         self.assertEqual(errors, [])
         self.assertTrue(any("/lock/" in request for request in sent), sent)
+
+    @override_settings(TIMETABLE_SECTION_PROGRAMME_PREFERENCE=True)
+    def test_a_keyboard_mark_choice_saves_once_through_a_redraw(self) -> None:
+        """Chromium blurs a focused select as a redraw removes it. A keyboard
+        choice is not "left" then: it is not saved in the middle of the redraw,
+        its wait ends in one save, and the select ends enabled, showing it,
+        with the keyboard."""
+        from core.models import TermSection
+
+        # A marked section: its select offers "Any" and its mark (the fixture
+        # seats no students, so the lens names no other programme).
+        TermSection.objects.filter(scenario=self.scenario).update(preferred_programme="AI")
+        page, sent, errors = self._load("en", "light", 1440, 900)
+        page.click(".tw-card")
+        page.click("#twTabSelection")
+        page.wait_for_selector("#twSelProgramme:not([disabled])")
+        page.evaluate("window.TimetableProgrammeMark.settleMs = 400")
+        page.focus("#twSelProgramme")
+        page.keyboard.press("ArrowUp")
+        chosen = page.evaluate("document.getElementById('twSelProgramme').value")
+        self.assertEqual(chosen, "", "the arrow key chose Any")
+        # An answer arrives before the keys rest: the panel is drawn anew.
+        page.evaluate("TW.dataVersion++; renderRightPanel('selection')")
+        page.wait_for_timeout(100)
+        posts = [r for r in sent if "programme-preference" in r]
+        self.assertEqual(posts, [], "nothing is saved in the middle of a redraw")
+        page.wait_for_function(
+            "TW.placements.find(p => p.id === TW.selectedPlacementId).preferred_programme === ''"
+            " && !document.getElementById('twSelProgramme').disabled"
+        )
+        page.wait_for_timeout(300)
+        self.assertEqual(len([r for r in sent if "programme-preference" in r]), 1)
+        self.assertEqual(
+            page.evaluate(
+                "[document.getElementById('twSelProgramme').value, document.activeElement.id]"
+            ),
+            [chosen, "twSelProgramme"],
+        )
+        self.assertEqual(errors, [])

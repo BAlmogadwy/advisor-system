@@ -378,3 +378,22 @@ test('a redraw keeps an edit the user has not committed when the field is drawn 
   assert.deepEqual([input().value, h.doc.activeElement.id], ['typed', 'name']);
   h.dom.window.close();
 });
+
+test('a kept edit belongs to the same field, fits it, and skips multiple selects', () => {
+  const h = bare();
+  const select = (owner, options, extra = '') => `<select id="mark" data-owner="${owner}"${extra}>${options.map(v => `<option value="${v}">${v || 'Any'}</option>`).join('')}</select>`;
+  h.UX.redraw(h.region, select('10', ['', 'AI', 'DS']));
+  h.doc.getElementById('mark').focus();
+  h.doc.getElementById('mark').value = 'DS';
+  h.UX.redraw(h.region, select('11', ['', 'AI', 'DS']));
+  assert.equal(h.doc.getElementById('mark').value, '', 'another section’s select does not inherit the edit');
+  h.doc.getElementById('mark').value = 'DS';
+  h.UX.redraw(h.region, select('11', ['', 'AI']));
+  assert.equal(h.doc.getElementById('mark').selectedIndex, 0, 'an edit the new select cannot hold is not forced on it (no blank select)');
+  h.UX.redraw(h.region, select('11', ['', 'AI', 'DS'], ' multiple'));
+  const multi = h.doc.getElementById('mark');
+  multi.options[1].selected = true; multi.options[2].selected = true;
+  h.UX.redraw(h.region, select('11', ['', 'AI', 'DS'], ' multiple') + ' ');
+  assert.deepEqual([...h.doc.getElementById('mark').selectedOptions].map(o => o.value), [], 'a multiple select is drawn as the page says');
+  h.dom.window.close();
+});

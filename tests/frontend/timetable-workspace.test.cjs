@@ -1523,3 +1523,38 @@ test('an older read finishing never clears the newer read’s loading', async t 
   await b;
   assert.equal(h.w.TW.planLens.loading, false);
 });
+
+test('a select drawn again while the keys move carries on the same wait: one save, the last choice', async t => {
+  const h = await markHarness(t);
+  h.w.TimetableProgrammeMark.settleMs = 50;
+  card(h, 10).click();
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  h.choose('AI', { keyed: true });
+  h.w.TW.dataVersion++;  // an answer: the panel is drawn anew, a new select
+  h.w.renderRightPanel('selection');
+  h.choose('AI2', { keyed: true });  // the keys go on, on the new select
+  await new Promise(resolve => setTimeout(resolve, 120));
+  await waitTimed(() => h.seen.posts.length >= 1 && !h.select().disabled);
+  await waitTimed(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2'], 'no intermediate save');
+});
+
+test('a select taken off the page as the browser blurs it is not "leaving": its wait still ends in one save', async t => {
+  const h = await markHarness(t);
+  h.w.TimetableProgrammeMark.settleMs = 40;
+  card(h, 10).click();
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  h.choose('AI2', { keyed: true });
+  // What Chromium does when a redraw removes the focused select: focusout as it goes.
+  const old = h.select();
+  old.dispatchEvent(new h.w.FocusEvent('focusout', { bubbles: true }));
+  old.remove();
+  await settle();
+  assert.equal(h.seen.posts.length, 0, 'not saved in the middle of a redraw');
+  await waitTimed(() => h.seen.posts.length === 1);
+  assert.equal(h.seen.posts[0].preferred_programme, 'AI2');
+  h.w.renderRightPanel('selection');
+  await waitTimed(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+});
