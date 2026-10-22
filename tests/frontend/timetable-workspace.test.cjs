@@ -1579,3 +1579,226 @@ test('a settled choice is saved once: leaving after it, or a pointer choice over
   assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2', ''], 'the waiting key never lands');
   await waitTimed(() => h.seen.quality === quality0 + 2 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
 });
+
+/* ── Keyboard: grid and list semantics, roving focus (design record §7.3, 5a) ── */
+const keyOn = (h, key, init = {}) => {
+  const event = new h.w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+  h.d.activeElement.dispatchEvent(event);
+  return event;
+};
+const strip = text => String(text || '').replace(/[\u2066\u2069]/g, '');
+
+test('W1 the board is a grid: named tables, a header row, day row headers, cells and cards, one tab stop', async t => {
+  const h = await modelHarness(t, { placements: [at(10)] });
+  await h.select();
+  const grids = [...h.d.querySelectorAll('#twGrid [role="grid"]')];
+  assert.deepEqual(grids.map(g => g.getAttribute('aria-label')), ['Lectures']);
+  assert.equal(grids[0].getAttribute('aria-describedby'), 'twGridKeys');
+  const header = grids[0].querySelector('[role="row"]');
+  const columns = [...header.querySelectorAll('[role="columnheader"]')];
+  assert.equal(columns[0].textContent, 'Day');
+  assert.equal(strip(columns[1].getAttribute('aria-label')), 'Slot 1, 09:00–10:15');
+  assert.deepEqual([...grids[0].querySelectorAll('[role="rowheader"]')].map(r => r.getAttribute('aria-label')), ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday']);
+  const cells = [...grids[0].querySelectorAll('[role="gridcell"]')];
+  assert.equal(cells.length, 5);
+  assert.ok(cells.every(cell => cell.dataset.uxCol === '540'));
+  const c = card(h, 10);
+  assert.deepEqual([c.getAttribute('role'), c.dataset.focusKey], ['button', 'placement:10']);
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')], [c], 'one tab stop: the card');
+  // Two section groups: only the first table points at the keys line.
+  const two = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON', section: 'S2', term_section_id: 211 })] });
+  await two.select();
+  assert.deepEqual([...two.d.querySelectorAll('#twGrid [role="grid"]')].map(g => [g.getAttribute('aria-label'), g.getAttribute('aria-describedby')]),
+    [['Section S1 · Lectures', 'twGridKeys'], ['Section S2 · Lectures', null]]);
+  two.w.renderGrid();  // drawn again: still only the first
+  assert.deepEqual([...two.d.querySelectorAll('#twGrid [role="grid"]')].map(g => g.getAttribute('aria-describedby')), ['twGridKeys', null]);
+  const firstCells = [...two.d.querySelectorAll('#twGrid [role="grid"]')].map(g => g.querySelector('[role="gridcell"]').dataset.focusKey);
+  assert.deepEqual(firstCells, ['cell:S1:lecture|SUN|09:00', 'cell:S2:lecture|SUN|09:00'], 'a cell key names its group');
+  // A card names its own day and time.
+  assert.match(c.querySelector('.visually-hidden').textContent, /^Sunday \u206609:00–10:15\u2069$/);
+});
+
+test('W2 in Arabic the tables, slots and corner are named in Arabic with the times isolated', async t => {
+  const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements: [at(10)], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined, {}, true);
+  await h.select();
+  const grid = h.d.querySelector('#twGrid [role="grid"]');
+  assert.equal(grid.getAttribute('aria-label'), 'المحاضرات');
+  const columns = [...grid.querySelectorAll('[role="columnheader"]')];
+  assert.equal(columns[0].textContent, 'اليوم');
+  assert.equal(columns[1].getAttribute('aria-label'), 'الفترة 1، \u206609:00–10:15\u2069');
+});
+
+test('W3 the keyboard stays on its card through tones and a redraw that moves it; a stack says where each card is', async t => {
+  const h = await modelHarness(t, { placements: [at(10)] });
+  await h.select();
+  card(h, 10).focus();
+  const node = card(h, 10);
+  h.w.applyCardTones();
+  assert.equal(card(h, 10), node, 'tones change in place');
+  assert.equal(h.d.activeElement, node);
+  h.w.TW.placements = [at(10, { day: 'MON' }), at(11), at(12)];
+  h.w.renderGrid();
+  assert.equal(h.d.activeElement.dataset.focusKey, 'placement:10', 'the same section has the keyboard');
+  assert.equal(h.d.activeElement.closest('[role="gridcell"]').dataset.day, 'MON');
+  assert.deepEqual([card(h, 11), card(h, 12)].map(c => c.textContent.match(/\((\d) of (\d) at this time\)/)?.slice(1)), [['1', '2'], ['2', '2']]);
+});
+
+test('W4 Enter selects the card and says so outside the inspector; Escape clears, then lets the key pass', async t => {
+  const h = await modelHarness(t, { placements: [at(10)] });
+  await h.select();
+  h.d.getElementById('twWorkspace')?.setAttribute('data-right', 'collapsed');
+  card(h, 10).focus();
+  keyOn(h, 'Enter');
+  assert.equal(h.w.TW.selectedPlacementId, 10);
+  assert.ok(h.d.getElementById('twTabSelection').classList.contains('active'));
+  assert.equal(h.d.activeElement, card(h, 10), 'the keyboard stays on the card');
+  assert.match(strip(h.d.getElementById('twBoardStatus').textContent), /AI10 S1 selected/);
+  assert.equal(h.d.getElementById('twInspectorStatus')?.textContent || '', '', 'not said inside the inspector');
+  assert.equal(keyOn(h, 'Escape').defaultPrevented, true);
+  assert.equal(h.w.TW.selectedPlacementId, null);
+  assert.equal(h.d.getElementById('twBoardStatus').textContent, 'Selection cleared.');
+  assert.equal(h.d.getElementById('twRightBody').textContent.trim(), 'Select a section on the grid to inspect it.');
+  assert.equal(keyOn(h, 'Escape').defaultPrevented, false, 'nothing to clear: the key passes');
+});
+
+const budgetRows = [
+  { course_code: 'CS101', course_key: 'CS101', programme_term: 3, remaining_sections: 0, used_sections: 2, planned_sections: 2, total_demand: 60 },
+  { course_code: 'CS323', course_key: 'CS323', programme_term: 3, remaining_sections: 2, used_sections: 0, planned_sections: 2, total_demand: 70 },
+  { course_code: 'ENG101', course_key: 'ENG101', programme_term: 4, remaining_sections: 1, used_sections: 0, planned_sections: 1, total_demand: 30 },
+];
+function listHarness(t, { budget = () => budgetRows, unplaced = () => [] } = {}) {
+  return harness(t, url => url.includes('/budget/') ? { budget: budget() }
+    : url.includes('/unplaced/') ? { unplaced: unplaced() }
+    : url === '/ops/tw/boards/2/' ? { placements: [at(10)], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
+}
+
+test('W5 the list is one grid per term with one tab stop; a placed course is reachable; Enter on English opens its pattern', async t => {
+  const h = await listHarness(t);
+  await h.select();
+  await wait(() => h.d.querySelectorAll('#twSectionList [role="grid"]').length === 2);
+  const grids = [...h.d.querySelectorAll('#twSectionList [role="grid"]')];
+  assert.deepEqual(grids.map(g => g.getAttribute('aria-labelledby')), ['twTerm-3', 'twTerm-4']);
+  assert.equal(grids[0].getAttribute('aria-describedby'), 'twListKeys');
+  assert.equal(h.d.querySelectorAll('#twSectionList [tabindex="0"]').length, 1);
+  const done = h.d.querySelector('#twSectionList [data-focus-key="place:CS101|complete"]');
+  assert.equal(done.getAttribute('aria-disabled'), 'true');
+  done.focus();
+  keyOn(h, 'ArrowDown');
+  assert.equal(h.d.activeElement.dataset.focusKey, 'place:CS323|S1');
+  const calls = [];
+  h.w.chooseEnglishWorkspacePattern = item => calls.push(item.course_code);
+  const english = h.d.querySelector('#twSectionList [data-focus-key="place:ENG101|S1"]');
+  assert.equal(english.querySelector('.tw-pattern-action').tabIndex, -1, 'the button is the pointer’s; the row is the keyboard’s');
+  english.focus();
+  keyOn(h, 'Enter');
+  await settle();
+  assert.deepEqual(calls, ['ENG101']);
+  const u = await listHarness(t, { budget: () => [], unplaced: () => [{ term_section_id: 77, course_code: 'ENG101', section: 'S1', meetings: [] }] });
+  await u.select();
+  await wait(() => u.d.querySelector('#twSectionList [data-focus-key="ts:77"]'));
+  assert.equal(u.d.querySelector('#twSectionList [data-focus-key="ts:77"] .tw-pattern-action').tabIndex, -1);
+});
+
+test('W6 the list keeps its place when a row goes, and Show more goes on at the first new row', async t => {
+  let used = 0;
+  const h = await listHarness(t, { budget: () => budgetRows.map(r => r.course_code === 'CS323' ? { ...r, used_sections: used, remaining_sections: 2 - used } : r) });
+  await h.select();
+  await wait(() => h.d.querySelector('#twSectionList [data-focus-key="place:CS323|S1"]'));
+  h.d.querySelector('#twSectionList [data-focus-key="place:CS323|S1"]').focus();
+  used = 1;
+  await h.w.loadBudget();
+  assert.equal(h.d.activeElement.dataset.focusKey, 'place:CS323|S2', 'the row now at that place');
+  const many = Array.from({ length: 125 }, (_, i) => ({ term_section_id: 1000 + i, course_code: `X${i}`, section: 'S1', meetings: [] }));
+  const u = await listHarness(t, { budget: () => [], unplaced: () => many });
+  await u.select();
+  await wait(() => u.d.querySelector('.tw-show-more'));
+  const more = u.d.querySelector('.tw-show-more');
+  more.focus();
+  more.click();
+  assert.equal(u.d.activeElement.dataset.focusKey, 'ts:1100');
+});
+
+test('W7 an Issues row locates without moving the keyboard: the board’s tab stop moves and the place is said', async t => {
+  const h = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON', room: 'UNASSIGNED', room_state: 'unassigned' })] });
+  await h.select();
+  h.w.Element.prototype.scrollIntoView = () => {};  // jsdom has none
+  h.w.renderRightPanel('issues');
+  const row = h.d.querySelector('#twRightBody .tw-issue-row[data-ids]');
+  row.focus();
+  row.click();
+  await settle();
+  assert.equal(h.d.activeElement, row, 'the keyboard stays on the row');
+  assert.equal(card(h, 11).getAttribute('tabindex'), '0', 'Tab into the board reaches it');
+  assert.match(strip(h.d.getElementById('twBoardStatus').textContent), /^Located: Mon 09:00–10:15, AI11 S1\./);
+  const ar = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements: [at(10), at(11, { day: 'MON', room: 'UNASSIGNED', room_state: 'unassigned' })], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined, {}, true);
+  await ar.select();
+  ar.w.Element.prototype.scrollIntoView = () => {};
+  ar.w.renderRightPanel('issues');
+  ar.d.querySelector('#twRightBody .tw-issue-row[data-ids]').click();
+  await settle();
+  assert.match(ar.d.getElementById('twBoardStatus').textContent, /^عُثر عليها: الاثنين \u206609:00–10:15\u2069، \u2066AI11 S1\u2069\./);
+});
+
+test('W8 busy is a progress cursor, never aria-busy on the workspace', async t => {
+  const held = deferred();
+  const h = await harness(t, url => url.endsWith('/lock/') ? held.promise.then(() => ({ placement_id: 10, is_locked: true })) : undefined);
+  await h.select();
+  const workspace = h.d.querySelector('.tw-workspace');
+  const locking = h.w.toggleLock(10);
+  await settle();
+  assert.equal(workspace.dataset.busy, 'true');
+  assert.equal(workspace.hasAttribute('aria-busy'), false);
+  held.resolve();
+  await locking;
+  assert.equal(workspace.hasAttribute('aria-busy'), false);
+});
+
+test('W9 another board: the keyboard starts at its first stop, not where it was on the last board', async t => {
+  const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const h = await harness(t, url => url.startsWith('/ops/tw/boards/?') ? { boards: [board, other] }
+    : url === '/ops/tw/boards/2/' ? { placements: [at(10), at(11, { day: 'THU' })], slot_config: scenario.slot_config }
+    : url === '/ops/tw/boards/3/' ? { placements: [at(20, { day: 'SUN' }), at(21, { day: 'THU' })], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
+  await h.select();
+  card(h, 11).focus();  // Thursday on the first board
+  await h.w.selectBoard(3);
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')].map(e => e.dataset.focusKey), ['placement:20'], 'the new board’s first stop');
+});
+
+test('W10 Enter on an English row the page cannot act on says why; after the chooser the keyboard is back on the list', async t => {
+  const h = await listHarness(t, { budget: () => budgetRows });
+  await h.select();
+  await wait(() => h.d.querySelector('#twSectionList [data-focus-key="place:ENG101|S1"]'));
+  let resolve;
+  h.w.chooseEnglishWorkspacePattern = () => new Promise(r => { resolve = r; });
+  const row = () => h.d.querySelector('#twSectionList [data-focus-key="place:ENG101|S1"]');
+  row().focus();
+  keyOn(h, 'Enter');
+  h.d.activeElement.blur();  // the chooser had the keyboard; the list was drawn again
+  resolve(null);
+  await settle(); await settle();
+  assert.equal(h.d.activeElement.dataset.focusKey, 'place:ENG101|S1', 'the keyboard is back on the row');
+  h.w.TW.scenario = { ...h.w.TW.scenario, status: 'published' };
+  row().focus();
+  keyOn(h, 'Enter');
+  assert.equal(h.d.getElementById('twBoardStatus').textContent, 'This scenario is published and read-only.');
+});
+
+test('W11 Enter on an English row of the unplaced list opens its pattern; the keyboard stays where the user put it', async t => {
+  const u = await listHarness(t, { budget: () => [], unplaced: () => [{ term_section_id: 77, course_code: 'ENG101', section: 'S1', meetings: [] }] });
+  await u.select();
+  await wait(() => u.d.querySelector('#twSectionList [data-focus-key="ts:77"]'));
+  let resolve;
+  const calls = [];
+  u.w.chooseEnglishWorkspacePattern = item => { calls.push(item.term_section_id); return new Promise(r => { resolve = r; }); };
+  u.d.querySelector('#twSectionList [data-focus-key="ts:77"]').focus();
+  keyOn(u, 'Enter');
+  assert.deepEqual(calls, [77]);
+  u.d.getElementById('twSearch').focus();  // the user moved on meanwhile
+  resolve(null);
+  await settle(); await settle();
+  assert.equal(u.d.activeElement.id, 'twSearch', 'not pulled back to the list');
+});
