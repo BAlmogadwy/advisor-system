@@ -144,3 +144,25 @@ def test_a_board_reads_its_meetings_once_however_many_placements(http) -> None:
         return len(ctx.captured_queries)
 
     assert queries(2) == queries(12)
+
+
+def test_the_conflicts_answer_carries_the_publish_checks_overlap_line(http) -> None:
+    from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
+
+    board = _board()
+    _place(board, "CS101", "A101")
+    answer = http.get(f"/ops/tw/boards/{board.id}/conflicts/").json()
+    assert answer["hard_overlap_threshold"] == HARD_OVERLAP_THRESHOLD
+
+
+def test_a_write_response_carries_the_same_room_facts() -> None:
+    board = _board()
+    moved = _place(board, "CS101", "UNASSIGNED")
+    other = _place(board, "CS102", "", start="10:30")
+    payload = views._placement_payloads(moved, [moved, other], None, None)
+    assert payload["placement"]["room_state"] == "unassigned"
+    assert [row["room_state"] for row in payload["placements"]] == ["unassigned", "unset"]
+    assert all(
+        {"is_online", "needs_room", "shared_with_other_scenario"} <= set(row)
+        for row in payload["placements"]
+    )

@@ -16,21 +16,14 @@ const IS_AR = (typeof LANGUAGE_CODE === 'string' ? LANGUAGE_CODE : 'en') === 'ar
 const T = {
   draft: IS_AR ? 'مسودة' : 'Draft',
   published: IS_AR ? 'منشور' : 'Published',
-  noIssues: IS_AR ? 'لا توجد مشاكل' : 'No issues',
   selectScenario: IS_AR ? 'اختر سيناريو' : 'Select Scenario',
   createScenario: IS_AR ? 'إنشاء سيناريو' : 'Create Scenario',
   scenarioName: IS_AR ? 'اسم السيناريو' : 'Scenario name',
   createBoard: IS_AR ? 'إنشاء لوحة' : 'Create Board',
   boardLabel: IS_AR ? 'اسم اللوحة' : 'Board label',
   placed: IS_AR ? 'موضوعة' : 'Placed',
-  conflicts: IS_AR ? 'تعارضات' : 'Conflicts',
   publishConfirm: IS_AR ? 'هل تريد نشر هذا السيناريو؟' : 'Publish this scenario?',
   published_ok: IS_AR ? 'تم النشر' : 'Published successfully',
-  overlap: IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash',
-  overlapWarning: IS_AR ? 'تداخل زمني داخل اللوحة لا يمنع النشر' : 'Same-board overlap (non-blocking)',
-  instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
-  roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
-  crossBoardClash: IS_AR ? 'تداخل محتمل في الطلب عبر اللوحات' : 'Potential cross-board demand overlap',
   lockHelp: IS_AR ? 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.' : "Keeps this section's days and times; its room can still change.",
   publish: IS_AR ? 'نشر' : 'Publish',
   checking: IS_AR ? 'جارٍ التحقق…' : 'Checking…',
@@ -1534,6 +1527,12 @@ function revealInStrip(strip, item) {
 /* What blocks publishing on a board that is not open: the publish check's
    items for it (a clash or room count counts each one), or, before any check,
    the board list's own clash count. */
+/* The open board: what the model knows, and while its clashes are unknown
+   the board list's own count for them (rather than none). */
+function activeBoardCritical(board) {
+  const model = buildBoardIssues();
+  return model.counts.critical + (model.known.conflicts ? 0 : (board.critical || 0));
+}
 const COUNTED_READINESS_CODES = new Set(['board_critical_conflicts', 'board_room_conflicts', 'board_sections_without_rooms', 'board_blocked_slot_placements']);
 function otherBoardCritical(board) {
   if (!TW.readiness) return board.critical || 0;
@@ -1554,7 +1553,7 @@ function renderBoardTabs() {
     btn.dataset.boardId = String(b.id);
     const active = b.id === TW.boardId;
     if (active) btn.setAttribute('aria-current', 'true');
-    const critical = active ? buildBoardIssues().counts.critical : otherBoardCritical(b);
+    const critical = active ? activeBoardCritical(b) : otherBoardCritical(b);
     const left = boardSectionsLeft(b);
     const students = `${b.primary_count || 0}${b.visitor_count ? ` + ${b.visitor_count}` : ''}`;
     const meetings = active ? TW.placements.length : (b.placement_count || 0);
@@ -1562,7 +1561,7 @@ function renderBoardTabs() {
       IS_AR ? `${students} طالب` : `${students} students`,
       IS_AR ? `${meetings} لقاء` : `${meetings} meetings`,
     ];
-    if (critical) parts.push(IS_AR ? `${critical} من موانع النشر` : `${critical} ${critical === 1 ? 'issue blocks' : 'issues block'} publishing`);
+    if (critical) parts.push(IS_AR ? `موانع النشر: ${critical}` : `${critical} ${critical === 1 ? 'issue blocks' : 'issues block'} publishing`);
     if (left) parts.push(IS_AR ? `${left} شعب لم توضع` : `${left} sections to place`);
     btn.title = parts.join(' · ');
     btn.setAttribute('aria-label', `${b.label}: ${parts.join(', ')}`);
@@ -1703,8 +1702,9 @@ function placementSearchText(p) {
   const lensBits = lens
     ? [lens.owner, lens.owner_label, lens.role, ...(lens.filter_plans || [])].filter(Boolean).join(' ')
     : '';
+  // The words the user sees ("No room", "Online"), never the placer's marker.
   const meetingBits = (p.meetings || [])
-    .map(m => [m.instructor, m.room, m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
+    .map(m => [m.instructor, meetingRoomText(m.room, p), m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
     .join(' ');
   return [
     p.course_code,
@@ -1715,7 +1715,7 @@ function placementSearchText(p) {
     p.day,
     p.start_time,
     p.end_time,
-    p.room,
+    placementRoomText(p),
     p.instructor,
     meetingBits,
     lensBits,
@@ -1944,12 +1944,14 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
 function placementRoomText(p) {
   if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return TimetableMeetingPolicy.roomLabel(p, IS_AR);
   if (p.is_online) return IS_AR ? 'عن بُعد' : 'Online';
-  if (p.room_state === 'unassigned' || p.room === 'UNASSIGNED') return IS_AR ? 'بلا قاعة' : 'No room';
+  // The placer's marker on a section that needs no room is not a missing room.
+  if (p.room_state === 'unassigned' || p.room === 'UNASSIGNED') return p.needs_room === false ? '' : (IS_AR ? 'بلا قاعة' : 'No room');
   if (p.room_state === 'unset' || !String(p.room || '').trim()) return '';
   return p.room;
 }
-function meetingRoomText(room) {
-  if (room === 'UNASSIGNED') return IS_AR ? 'بلا قاعة' : 'No room';
+function meetingRoomText(room, p = null) {
+  if (p?.is_online) return IS_AR ? 'عن بُعد' : 'Online';
+  if (room === 'UNASSIGNED') return p?.needs_room === false ? '—' : (IS_AR ? 'بلا قاعة' : 'No room');
   return String(room || '').trim() || '—';
 }
 
@@ -2336,7 +2338,12 @@ function renderRightPanel(tab) {
     const note = text => `<p class="tw-issue-note">${text}</p>`;
     let notes = '';
     if (!model.known.conflicts) notes += note(IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.');
-    if (model.rows.some(row => row.pending)) notes += note(IS_AR ? 'بعض البنود من قبل آخر تعديل؛ يجري التحقق منها.' : 'Some items are from before your last change; they are being checked.');
+    const checking = Boolean(TW.readinessLoading || TW.qualityLoading);
+    if (model.rows.some(row => row.pending)) {
+      notes += note(checking
+        ? (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ يجري التحقق منها.' : 'Some items are from before your last change; they are being checked.')
+        : (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ لم يُعَد التحقق منها بعد.' : 'Some items are from before your last change and have not been checked again.'));
+    }
     if (TW.quality && !TW.quality.rooms?.assessed) notes += note(IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.');
 
     if (!model.rows.length) {
@@ -2353,10 +2360,11 @@ function renderRightPanel(tab) {
       if (!rows.length) return;
       html += `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span><span class="tw-issue-count tnum">${rows.length}</span></h3>`;
       rows.forEach(row => {
-        const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${IS_AR ? 'يجري التحقق' : 'checking'}` : ''}</span>`
-          + `<span class="tw-issue-subject"><bdi>${esc(row.subject)}</bdi></span>`
-          + (row.detail ? `<span class="tw-issue-detail"><bdi>${esc(row.detail)}</bdi></span>` : '');
-        html += row.ids.length
+        const pendingWord = checking ? (IS_AR ? 'يجري التحقق' : 'checking') : (IS_AR ? 'من قبل آخر تعديل' : 'from before your last change');
+        const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
+          + `<span class="tw-issue-subject"><bdi>${isolateTimes(row.subject)}</bdi></span>`
+          + (row.detail ? `<span class="tw-issue-detail"><bdi>${isolateTimes(row.detail)}</bdi></span>` : '');
+        html += row.ids.length && row.locate !== false
           ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
           : `<div class="tw-issue-row tw-issue-static" data-tone="${tone}">${inner}</div>`;
       });
@@ -2387,7 +2395,7 @@ function renderRightPanel(tab) {
     const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
     const dayLabel = code => DAY_LABELS[DAYS.indexOf(code)] || code || '—';
     const field = (label, value) => `<div class="tw-sel-field"><dt>${label}</dt><dd>${value}</dd></div>`;
-    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi>${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room))}</bdi>${m.instructor ? `<bdi>${esc(m.instructor)}</bdi>` : ''}</li>`).join('');
+    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi>${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi>${m.instructor ? `<bdi>${esc(m.instructor)}</bdi>` : ''}</li>`).join('');
     const editable = workspaceCanEdit();
     body.innerHTML = `
       <div class="tw-sel-head">
@@ -2524,7 +2532,7 @@ function renderMriPanel(body) {
       label: 'Room/instructor layer',
       value: iClashes.length + rClashes.length + roomShortages.length,
       max: Math.max(1, TW.placements.length),
-      tone: iClashes.length ? 'critical' : (rClashes.length || roomShortages.length || !roomsAssessed) ? 'watch' : 'stable',
+      tone: (iClashes.length || rClashes.length) ? 'critical' : (roomShortages.length || !roomsAssessed) ? 'watch' : 'stable',
       detail: `${iClashes.length} instructor clashes, ${rClashes.length} room double-bookings; ${roomsAssessed ? roomShortages.length + ' meetings lack a suitable room' : 'room suitability unknown'}`,
     },
     {
@@ -2539,7 +2547,7 @@ function renderMriPanel(body) {
 
   const topPairs = [
     ...roomShortages.map(room => ({ kind: 'Room suitability', tone: 'watch', ids: room.placement_ids,
-      title: room.course_code || room.course_key || room.room || 'UNASSIGNED',
+      title: room.course_code || room.course_key || room.room || (IS_AR ? 'بلا قاعة' : 'No room'),
       detail: `${(room.reasons || []).join(', ')}; required capacity ${room.required_capacity ?? '—'}` })),
     ...[...criticalOverlaps, ...warningOverlaps].map(o => ({
       kind: isWarningOverlap(o) ? 'Same-board overlap (non-blocking)' : 'Same-board time clash',
@@ -2746,8 +2754,14 @@ async function refreshWorkspaceQuality(force = false) {
   }
   const version = TW.dataVersion;
   if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
-  const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
-  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) return;
+  TW.qualityLoading = true;
+  let data;
+  try {
+    data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
+  } finally {
+    if (revision === qualityLoadRevision) TW.qualityLoading = false;
+  }
+  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) { renderWorkspaceQuality(); return; }
   TW.quality = data?.ok ? data : null;
   TW.qualityVersion = version;
   renderWorkspaceQuality();
@@ -2937,7 +2951,15 @@ const TONE_LEAD = {
 };
 const issueKindLabel = kind => (IS_AR ? ISSUE_KINDS[kind].ar : ISSUE_KINDS[kind].en);
 const dayName = code => DAY_LABELS[DAYS.indexOf(String(code || '').toUpperCase().slice(0, 3))] || code || '—';
-const studentsNeedBoth = n => (IS_AR ? `${n} طالباً يحتاجون كليهما` : `${n} ${n === 1 ? 'student needs' : 'students need'} both`);
+const studentsNeedBoth = n => (IS_AR
+  ? pluralAr(n, { zero: 'لا طلاب يحتاجون كليهما', one: 'طالب واحد يحتاج كليهما', two: 'طالبان يحتاجان كليهما', few: '{n} طلاب يحتاجون كليهما', many: '{n} طالباً يحتاجون كليهما', other: '{n} طالب يحتاجون كليهما' })
+  : `${n} ${n === 1 ? 'student needs' : 'students need'} both`);
+const seatsNeeded = n => (IS_AR
+  ? pluralAr(n, { one: 'يحتاج مقعداً واحداً', two: 'يحتاج مقعدين', few: 'يحتاج {n} مقاعد', many: 'يحتاج {n} مقعداً', other: 'يحتاج {n} مقعد' })
+  : `needs ${n} ${n === 1 ? 'seat' : 'seats'}`);
+/* Escaped text with every time range isolated left to right: inside an
+   Arabic line "09:00–10:15" is otherwise painted "10:15–09:00". */
+const isolateTimes = text => esc(text).replace(/(\d{1,2}:\d{2})–(\d{1,2}:\d{2})/g, '<bdi dir="ltr">$1–$2</bdi>');
 
 /* The grid's rule (timetable_slot_config.is_on_grid): a teaching day and a
    column start of the meeting's kind — a lab runs more than 80 minutes.
@@ -2953,7 +2975,11 @@ function isPlacementOnGrid(p) {
 
 function computeBoardIssues() {
   const rows = [];
-  const byId = new Map(TW.placements.map(p => [String(p.id), p]));
+  // Between a board switch and its answer, TW.placements is still the previous
+  // board's: nothing read from the placements counts for the new one.
+  const placementsKnown = Boolean(TW.boardId) && TW.loadedBoardId === TW.boardId;
+  const placements = placementsKnown ? TW.placements : [];
+  const byId = new Map(placements.map(p => [String(p.id), p]));
   const conflictsKnown = boardConflictsKnown();
   const conflicts = boardConflicts();
   const quality = TW.quality;
@@ -2998,24 +3024,25 @@ function computeBoardIssues() {
 
   // The board itself: rooms, blocked times, the grid's columns.
   const blocked = new Set((TW.scenario?.blocked_slots || []).map(b => `${b.day}|${b.start}`));
-  TW.placements.forEach(p => {
+  placements.forEach(p => {
     if (p.needs_room && p.room_state === 'unassigned') add('noRoom', [p.id], name(p), when(p));
     else if (p.needs_room && p.room_state === 'unset') add('roomUnset', [p.id], name(p), when(p));
     if (blocked.has(`${p.day}|${p.start_time}`)) add('blocked', [p.id], name(p), when(p));
-    if (!isPlacementOnGrid(p)) add('offGrid', [p.id], name(p), when(p));
+    // Not drawn until the grid gets its parking strip: the row cannot point at it.
+    if (!isPlacementOnGrid(p)) add('offGrid', [p.id], name(p), when(p), { locate: false });
   });
 
   // The quality check: room suitability. "missing" is read from the board above.
-  if (quality) {
+  if (quality && placementsKnown) {
     activeBoardRoomShortages().forEach(detail => {
       const ids = (detail.placement_ids || []).map(String).filter(id => byId.has(id));
       const reasons = new Set(detail.reasons || []);
       const subject = [detail.course_code || detail.course_key || '', (detail.rooms || []).join(', ')].filter(Boolean).join(' · ');
-      const needs = detail.required_capacity != null ? (IS_AR ? `يحتاج ${detail.required_capacity} مقعداً` : `needs ${detail.required_capacity} seats`) : '';
+      const needs = detail.required_capacity != null ? seatsNeeded(detail.required_capacity) : '';
       const pending = !qualityFresh;
       if (reasons.has('undersized')) add('roomSmall', ids, subject, needs, { pending });
       if (reasons.has('incompatible')) add('roomUnsuitable', ids, subject, '', { pending });
-      if (reasons.has('clash') && !ids.some(id => roomClashIds.has(id))) add('roomElsewhere', ids, subject, '', { pending });
+      if (conflictsKnown && reasons.has('clash') && !ids.some(id => roomClashIds.has(id))) add('roomElsewhere', ids, subject, '', { pending });
     });
   }
 
@@ -3047,7 +3074,7 @@ function computeBoardIssues() {
   rows.forEach(row => { counts[row.tone] += 1; });
   return {
     rows, byPlacement, counts,
-    known: { conflicts: conflictsKnown, quality: Boolean(quality), readiness: Boolean(TW.readiness) },
+    known: { conflicts: conflictsKnown, placements: placementsKnown, quality: Boolean(quality), readiness: Boolean(TW.readiness) },
     fresh: { quality: qualityFresh, readiness: readinessFresh },
   };
 }
@@ -3056,8 +3083,8 @@ function computeBoardIssues() {
    buttons) reads the same answer without rebuilding it. */
 let issueMemo = null;
 function buildBoardIssues() {
-  const key = [TW.boardId, TW.conflicts, TW.conflictsBoardId, TW.quality, TW.qualityVersion, TW.readiness,
-    TW.readinessVersion, TW.dataVersion, TW.placements, TW.scenario];
+  const key = [TW.boardId, TW.loadedBoardId, TW.conflicts, TW.conflictsBoardId, TW.quality, TW.qualityVersion, TW.readiness,
+    TW.readinessVersion, TW.dataVersion, TW.placements, TW.scenario, TW.qualityLoading, TW.readinessLoading];
   if (issueMemo && issueMemo.key.every((value, i) => value === key[i])) return issueMemo.model;
   const model = computeBoardIssues();
   issueMemo = { key, model };

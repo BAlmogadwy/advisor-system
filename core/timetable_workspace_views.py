@@ -364,7 +364,9 @@ class PlacementPayloadContext:
     boards: dict[int, DeliveryBoard]
 
     @classmethod
-    def build(cls, scenario_id: int, placements: list[SectionPlacement]) -> PlacementPayloadContext:
+    def build(
+        cls, scenario_id: int, placements: list[SectionPlacement], *, shared: set[int] | None = None
+    ) -> PlacementPayloadContext:
         section_ids = {p.term_section_id for p in placements}
         meetings: dict[int, list[dict[str, object]]] = {sid: [] for sid in section_ids}
         for row in (
@@ -378,7 +380,8 @@ class PlacementPayloadContext:
         }
         return cls(
             meetings=meetings,
-            shared=external_shared_section_ids(scenario_id),
+            # The programme marks already read this set (their "frozen").
+            shared=shared if shared is not None else external_shared_section_ids(scenario_id),
             online=OnlineCourseLookup(),
             boards=boards,
         )
@@ -399,7 +402,9 @@ def _placement_payloads(
 ) -> dict[str, object]:
     """``placement`` and the board's ``placements``, from one shared context."""
     rows = list(rows)
-    ctx = PlacementPayloadContext.build(primary.board.scenario_id, [primary, *rows])
+    ctx = PlacementPayloadContext.build(
+        primary.board.scenario_id, [primary, *rows], shared=marks["frozen"] if marks else None
+    )
     return {
         "placement": _placement_to_dict(primary, teachers, marks, ctx),
         "placements": [_placement_to_dict(row, teachers, marks, ctx) for row in rows],
@@ -1630,6 +1635,9 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
     visitor_count = BoardStudentLink.objects.filter(board=board, link_type="visitor").count()
     teachers = _section_teachers(board.scenario_id)
     marks = _programme_marks(board.scenario_id)
+    ctx = PlacementPayloadContext.build(
+        board.scenario_id, placements, shared=marks["frozen"] if marks else None
+    )
     return _ok(
         {
             "board": _board_to_dict(board),
@@ -1637,11 +1645,7 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
             "lab_slot_config": board.scenario.lab_slot_config,
             "effective_slot_config": effective_lecture_slots(board.scenario),
             "effective_lab_slot_config": effective_lab_slots(board.scenario),
-            "placements": [
-                _placement_to_dict(p, teachers, marks, ctx)
-                for ctx in [PlacementPayloadContext.build(board.scenario_id, placements)]
-                for p in placements
-            ],
+            "placements": [_placement_to_dict(p, teachers, marks, ctx) for p in placements],
             "primary_student_count": primary_count,
             "visitor_student_count": visitor_count,
         }

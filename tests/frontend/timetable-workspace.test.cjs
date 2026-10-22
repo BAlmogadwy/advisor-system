@@ -22,6 +22,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
   const w = dom.window, d = w.document, requests = [], notices = [], errors = [];
   w.addEventListener('error', e => errors.push(e.error));
   // A const in an indirect eval stays local to that eval; the page reads a global.
+  // base.html loads shared-utils (esc, pluralAr) on every page.
+  w.eval(fs.readFileSync(path.join(root, 'static/js/shared-utils.js'), 'utf8'));
   w.LANGUAGE_CODE = arabic ? 'ar' : 'en';
   w._injectCsrf = x => x;
   w.esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -665,6 +667,9 @@ test('a room double-booked and a meeting with no room block publishing everywher
   // The placer's marker is never shown: the card says "No room".
   assert.doesNotMatch(h.d.getElementById('twGrid').textContent + text, /UNASSIGNED/);
   assert.match(card(h, 12).textContent, /No room/);
+  // MRI's resource layer says the same: a double-booked room is critical there too.
+  h.w.renderRightPanel('mri');
+  assert.ok(h.d.querySelector('[data-mri-layer="resource-layer"]').classList.contains('critical'));
   assert.deepEqual(h.errors, []);
 });
 
@@ -682,21 +687,17 @@ test('a blank room lowers quality, an online meeting needs none, and Arabic neve
 });
 
 test('sections sharing a time are not red by themselves, and unknown clashes tone nothing', async t => {
-  const pending = deferred();
-  let hold = false;
   const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements: [at(10), at(11)], slot_config: scenario.slot_config }
-    : url.includes('/conflicts/') ? (hold ? pending.promise : quiet) : url.includes('/quality/') ? noRooms : undefined);
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
   await h.select();
   assert.equal(card(h, 10).parentElement, card(h, 11).parentElement, 'both in one cell');
   assert.deepEqual([tone(h, 10), tone(h, 11)], ['', ''], 'no server clash: no red');
-  // The board reloads its clashes: until they answer, nothing is toned from them.
-  hold = true;
+  // Clashes held that are not this board's (a reload in flight, or a failed one): nothing is toned from them.
   h.w.TW.conflicts = { ...quiet, room_clashes: [{ ids: [10, 11], room: 'R1', sections: [] }] };
   h.w.TW.conflictsBoardId = null;
   h.w.renderWorkspaceQuality();
   assert.deepEqual([tone(h, 10), tone(h, 11)], ['', '']);
   assert.match(issuesText(h), /This board’s clashes are not loaded/);
-  pending.resolve(quiet);
 });
 
 test('a grid drawn again is toned at once, before any other redraw', async t => {
@@ -715,9 +716,15 @@ test('a check older than the last edit lists its rows as being checked and tones
   h.w.renderWorkspaceQuality();
   assert.equal(card(h, 10), before, 'tones change in place: the grid is not rebuilt');
   assert.equal(tone(h, 10), '', 'a stale check tones nothing');
-  const text = issuesText(h);
+  // No check in flight: it says how old the row is, not that it is being checked.
+  let text = issuesText(h);
+  assert.match(text, /Room too small · from before your last change/);
+  assert.match(text, /have not been checked again/);
+  // A check in flight: "checking".
+  h.w.TW.qualityLoading = true;
+  text = issuesText(h);
   assert.match(text, /Room too small · checking/);
-  assert.match(text, /Some items are from before your last change/);
+  assert.match(text, /they are being checked/);
 });
 
 test('a cross-board pair at the publish line lowers quality; below it, it is context and never counted', async t => {
@@ -772,4 +779,89 @@ test('the grid rule matches the shared case table (also run against the server�
     const drawn = h.w.isPlacementOnGrid({ course_code: c.course, day: c.day, start_time: c.start, end_time: c.end });
     assert.equal(drawn, c.on_grid, c.name);
   }
+});
+
+test('Arabic issue rows keep every time range left to right, and count in the right form', async t => {
+  const h = await harness(t, url => url === '/ops/tw/boards/2/'
+    ? { placements: [at(10), at(11, { day: 'MON' })], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? { ...quiet, overlaps: [{ ids: [10, 11], sections: ['AI10-S1', 'AI11-S1'], severity: 'critical', shared_students: 2 }] }
+    : url.includes('/quality/') ? noRooms : undefined, {}, true);
+  await h.select();
+  h.w.renderRightPanel('issues');
+  const html = h.d.getElementById('twRightBody').innerHTML;
+  assert.match(html, /الأحد <bdi dir="ltr">09:00–10:15<\/bdi>/);
+  assert.match(html, /طالبان يحتاجان كليهما/);
+  assert.match(h.d.querySelector('#twBoardTabs [aria-current="true"]').getAttribute('aria-label'), /موانع النشر: 1/);
+});
+
+test('a board switch never counts the previous board’s meetings as the new board’s', async t => {
+  const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const held = deferred();
+  const h = await harness(t, url => {
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, other] };
+    if (url === '/ops/tw/boards/2/') return { placements: [at(10, { room: 'UNASSIGNED', room_state: 'unassigned' })], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/3/') return held.promise;
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    return undefined;
+  });
+  await h.select();
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '1', 'board 2: its meeting with no room');
+  const switching = h.w.selectBoard(3);
+  h.w.renderReadinessViews();  // something redraws before board 3 answers
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '', 'board 2’s meeting is not board 3’s');
+  assert.equal(h.d.querySelector('#twBoardTabs [data-board-id="3"] .ux-seg-flag'), null);
+  held.resolve({ placements: [at(30)], slot_config: scenario.slot_config });
+  await switching;
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '');
+});
+
+test('the open board’s flag keeps the list’s clash count while its own clashes are unknown', async t => {
+  const h = await modelHarness(t, { placements: [at(10)], boards: [{ ...board, critical: 4 }], conflicts: { httpError: 500, error: { message: 'down' } } });
+  await h.select();
+  assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '4');
+});
+
+test('an issue row takes the user to its sections, on another board too; an unplaceable one is read only', async t => {
+  const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+  const pair = { board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: 25, board_a_label: 'Term 7', board_b_label: 'Term 8' };
+  const h = await harness(t, url => {
+    if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, other] };
+    if (url === '/ops/tw/boards/2/') return { placements: [at(10), at(11), at(12, { day: 'MON', start_time: '18:30', end_time: '19:45' })], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/3/') return { placements: [at(99)], slot_config: scenario.slot_config };
+    if (url === '/ops/tw/boards/2/conflicts/') return { ...quiet, hard_overlap_threshold: 20, room_clashes: [{ ids: [10, 11], room: 'R1', sections: ['AI10-S1', 'AI11-S1'] }], cross_board_conflicts: [pair] };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    return undefined;
+  });
+  await h.select();
+  h.w.renderRightPanel('issues');
+  const rows = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')];
+  const row = kind => rows.find(r => r.querySelector('.tw-issue-kind').textContent.startsWith(kind));
+  assert.equal(row('Outside the grid’s columns').tagName, 'DIV', 'not drawn yet: nothing to point at');
+  row('Room double-booked').click();
+  await settle();
+  assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId).sort(), ['10', '11']);
+  row('Overlap with another board').click();
+  await wait(() => h.w.TW.loadedBoardId === 3);
+  await wait(() => h.d.querySelector('.tw-card.highlight[data-placement-id="99"]'));
+});
+
+test('rooms are words everywhere, and those are the words the filter finds', async t => {
+  const h = await modelHarness(t, { placements: [
+    at(10, { room: 'UNASSIGNED', room_state: 'unassigned', meetings: [{ day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'UNASSIGNED' }] }),
+    at(11, { day: 'MON', room: 'UNASSIGNED', room_state: 'unassigned', needs_room: false }),
+    at(12, { day: 'TUE', room: '', room_state: 'unset', is_online: true, needs_room: false, meetings: [{ day: 'TUE', start_time: '09:00', end_time: '10:15', room: 'UNASSIGNED' }] }),
+  ] });
+  await h.select();
+  assert.doesNotMatch(card(h, 11).textContent, /No room/, 'a section that needs no room is not missing one');
+  card(h, 12).click();
+  assert.match(h.d.querySelector('#twRightBody .tw-sel-meetings').textContent, /Online/, 'its meeting is online too');
+  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /No room|UNASSIGNED/);
+  const search = h.d.getElementById('twSearch');
+  const find = async text => { search.value = text; search.dispatchEvent(new h.w.Event('input')); await settle(); };
+  await find('no room');
+  assert.ok(card(h, 10), 'the meeting with no room matches what its card says');
+  await find('unassigned');
+  assert.equal(card(h, 10), null, 'the placer’s marker is not something the user can see, nor find');
 });

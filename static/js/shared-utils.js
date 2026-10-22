@@ -6,6 +6,15 @@
 /* ── DOM shorthand ──────────────────────────────────────────── */
 const q = (id) => document.getElementById(id);
 
+/* ── Arabic plural forms ─────────────────────────────────────
+   An Arabic count takes a different form for 1, 2, 3–10, 11–99 and 100+.
+   `forms` = { zero, one, two, few, many, other }, "{n}" for the number; a
+   missing form falls back to `other`. */
+function pluralAr(n, forms) {
+  const rule = (typeof Intl !== 'undefined' && Intl.PluralRules) ? new Intl.PluralRules('ar').select(n) : 'other';
+  return String(forms[rule] ?? forms.other).replace('{n}', n);
+}
+
 /* ── HTML entity escaper ────────────────────────────────────── */
 function esc(s) {
   return String(s)

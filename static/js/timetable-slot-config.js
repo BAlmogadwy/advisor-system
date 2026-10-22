@@ -21,13 +21,9 @@
     : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu' };
   const time = (start, end) => `<bdi dir="ltr">${escape(start)}–${escape(end)}</bdi>`;
 
-  /* "N meetings" in Arabic takes a different form for 1, 2, 3–10 and 11+. */
-  const arPlural = (n, forms) => {
-    const rule = (typeof Intl !== 'undefined' && Intl.PluralRules) ? new Intl.PluralRules('ar').select(n) : 'other';
-    return (forms[rule] || forms.other).replace('{n}', n);
-  };
+  /* "N meetings": in Arabic through the global plural helper (shared-utils). */
   const meetingsText = n => (AR
-    ? arPlural(n, { zero: 'لا لقاءات', one: 'لقاءً واحداً', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })
+    ? pluralAr(n, { zero: 'لا لقاءات', one: 'لقاءً واحداً', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })
     : `${n} ${n === 1 ? 'meeting' : 'meetings'}`);
 
   /* The columns as the editor's text: one per line, label TAB start TAB end. */

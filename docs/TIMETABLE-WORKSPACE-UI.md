@@ -256,13 +256,15 @@ findings changed the plan:
 
 | # | Question | Decision | Why |
 |---|---|---|---|
-| 1 | Sections stacked in one cell with no server clash | **Info**, "Shares its time with …"; no ring | Red without a reason is the defect; the server says it is not a clash |
+| 1 | Sections stacked in one cell with no server clash | **Not an issue**: no ring, no row | Red without a reason was the defect; parallel sections for other cohorts share times all the time |
 | 2 | Empty room (`''`) | **Warning**, "Room not assigned yet" | Quality and the stat strip already count it; a neutral card would disagree with them |
 | 3 | A room double-booked with another board | **Warning** | Not a publish blocker today; the page must not invent one |
 | 4 | Meetings outside the grid's columns | **Warning**, and drawn in a parking strip under their table | Blocking would make scenarios unpublishable at once (online meetings saved through the old editors) |
 | 5 | Filter and programme lens | The **text filter** collapses tables without a match and dims inside the rest; the **lens** dims | Finding things needs fewer tables; a view never hides a clash |
 | 6 | Course hue | **Keep the tint, make it deterministic** (from the course key, not visit order), plus a same-course echo on focus or selection | The 10-hue palette is a weak signal; the bug is the visit order |
 | 7 | Severity on cards | Critical and warning ring; **info never rings**; counts are critical (or warning when none), never info | Info rings and info counts diluted severity |
+| 8 | A room double-booked on the same board; a meeting that needs a room and has none (`UNASSIGNED`) | **Critical** | Both block publishing (`board_room_conflicts`, `board_sections_without_rooms`) |
+| 9 | A cross-board student overlap | **Warning** at the publish check's line (`hard_overlap_threshold`, sent with the conflicts), **info** below it | The publish check warns at that line; the page uses the server's number, not a copy |
 
 ### 7.2 Pull requests, in order
 
@@ -304,6 +306,13 @@ findings changed the plan:
    one evaluation per data fingerprint shared with quality; filter and lens
    per §7.1; the parking strip; the slot dialog replaces the textarea on the
    server contract from PR 1.
+
+Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
+suitable room" is toned critical whenever the quality check reports any
+`missing` or `clash`, but that count also holds blank rooms and cross-board
+clashes, which §7.1 rates a warning. Telling them apart needs the server to
+split `missing` into unassigned and blank (and same- from cross-board
+clashes); until then the strip can read more severe than the cards.
 
 Every PR: the frame acceptance of §6, its own version bumps, mutation-checked
 tests, and Arabic plurals through `Intl.PluralRules`; every time range in
