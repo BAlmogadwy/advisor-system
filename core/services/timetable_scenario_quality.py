@@ -186,7 +186,7 @@ def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
     is not the seating's never reads as a failed seating. Any failure here is
     logged and the lens is ``None``; the quality keys are never touched.
     """
-    result, seated = _build_scenario_quality(scenario_id)
+    result, seated = _build_scenario_quality(scenario_id, keep_demands=with_lens)
     if not with_lens:
         return result
     lens: dict[str, Any] | None
@@ -218,7 +218,14 @@ def _lens_seating(seated: _Seated) -> SeatingEvidence | None:
     return None
 
 
-def _build_scenario_quality(scenario_id: int) -> tuple[dict[str, Any], _Seated]:
+def _build_scenario_quality(
+    scenario_id: int, *, keep_demands: bool = False
+) -> tuple[dict[str, Any], _Seated]:
+    """Quality, and what its seating leaves for a lens (``_Seated``).
+
+    ``keep_demands``: hold the demand rows for a lens; without one they are
+    let go before the seating, as they always were.
+    """
     result: dict[str, Any] = {
         "scenario_id": scenario_id,
         "instructor": {
@@ -297,8 +304,10 @@ def _build_scenario_quality(scenario_id: int) -> tuple[dict[str, Any], _Seated]:
     try:
         # Read here, at the point the profile builder would read it, so a lens
         # asked with this read reuses the rows instead of reading them again.
-        demands = load_scenario_course_demands(scenario_id)
+        demands: list[StudentCourseDemand] | None = load_scenario_course_demands(scenario_id)
         profiles = build_student_profiles_for_scenario(scenario_id, demand_rows=demands)
+        if not keep_demands:
+            demands = None  # nothing reads them again: never held through the seating
         if not profiles:
             result["soft_seats"]["reason"] = "no_student_demand"
             result["seats"]["reason"] = "no_student_demand"

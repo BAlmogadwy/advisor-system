@@ -382,3 +382,33 @@ def test_the_profile_builder_takes_demand_rows_already_read(settings):
     assert handed == read_here and len(handed) == STUDENTS
     assert len(given) == len(own) - 1
     assert not any("scenario_student_course_requests" in q["sql"] for q in given)
+
+
+@pytest.mark.parametrize("with_lens", [False, True])
+def test_the_demand_rows_are_held_through_the_seating_only_for_a_lens(
+    settings, monkeypatch, with_lens
+):
+    """Plain quality lets its demand rows go before the seating, as it always
+    did; only a read with the lens holds them for the lens."""
+    apply_flags(settings, "production")
+    fx = build_seating_fixture()
+    rows = []
+    real_load = quality.load_scenario_course_demands
+
+    def load(*args, **kwargs):
+        out = real_load(*args, **kwargs)
+        rows.append(weakref.ref(out[0]))
+        return out
+
+    alive = []
+    real_evaluate = quality.evaluate_generated_timetable_candidate
+
+    def evaluate(**kwargs):
+        alive.append(rows[0]() is not None)
+        return real_evaluate(**kwargs)
+
+    monkeypatch.setattr(quality, "load_scenario_course_demands", load)
+    monkeypatch.setattr(quality, "evaluate_generated_timetable_candidate", evaluate)
+    out = quality.build_scenario_quality(fx.scenario.pk, with_lens=with_lens)
+    assert alive == [with_lens]
+    assert out["seats"]["assessed"] is True
