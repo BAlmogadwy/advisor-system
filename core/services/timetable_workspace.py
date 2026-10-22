@@ -1979,6 +1979,38 @@ def _normalise_planned_meeting_rows(rows: list[dict]) -> list[dict[str, str]]:
     return meetings
 
 
+#: ``TermSection.source_tag`` of a section the workspace itself created for a
+#: required course. Only such a section may have its leftover meeting rows
+#: replaced when it is created again; a registrar or auto-built section never.
+PLANNED_SECTION_SOURCE_TAG = "tw_planned"
+
+
+def _drop_stale_planned_meetings(term_section: TermSection, scenario_id: int) -> int:
+    """Clear the meeting rows an earlier planned section left behind.
+
+    Removing a placement from the board leaves the section and its
+    ``TermSectionMeeting`` rows in place. Creating the same label again reuses
+    the section, so the old pattern's rows would pile up beside the new
+    pattern's. They are dropped only when nothing else could own them: the
+    section is one the workspace planned itself, it is on no board of this
+    scenario, and no row carries a teacher. Anything else is the registrar's or
+    a placed section's data and is left exactly as it is.
+
+    Returns the number of rows removed.
+    """
+
+    if term_section.source_tag != PLANNED_SECTION_SOURCE_TAG:
+        return 0
+    if SectionPlacement.objects.filter(
+        term_section=term_section, board__scenario_id=scenario_id
+    ).exists():
+        return 0
+    stale = TermSectionMeeting.objects.filter(term_section=term_section)
+    if stale.exclude(instructor="").exists():
+        return 0
+    return stale.delete()[0]
+
+
 def create_planned_section_placements(
     board_id: int,
     *,
@@ -2039,9 +2071,11 @@ def create_planned_section_placements(
                 "course_number": code,
                 "course_name": name,
                 "available_capacity": capacity,
-                "source_tag": "tw_planned",
+                "source_tag": PLANNED_SECTION_SOURCE_TAG,
             },
         )
+        if not _created:
+            _drop_stale_planned_meetings(term_section, board.scenario_id)
         placements: list[SectionPlacement] = []
         validations = []
         if policy:
@@ -3614,7 +3648,15 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
 
     Returns:
         List of per-course dicts sorted by ``(programme_term, course_code)``.
+        ``used_section_labels`` lists the labels in use for the course on any
+        board of the scenario, in natural order (S1, S3, S10), so a page can
+        name the next section without colliding with one already taken.
     """
+    # The house natural order (M2 before M10). It lives with the exam rosters;
+    # imported here, not at module level, so the planner does not load the exam
+    # stack just to import this module.
+    from core.services.exam_rosters import natural_key
+
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
     section_counts_by_course = _section_meeting_counts(scenario_id)
 
@@ -3655,6 +3697,7 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
                 "max_per_section": b.max_per_section,
                 "total_demand": b.total_demand,
                 "used_sections": used,
+                "used_section_labels": sorted(used_sections.get(key, ()), key=natural_key),
                 "remaining_sections": max(0, b.planned_sections - used),
                 "boards_using": sorted(board_usage.get(key, set())),
                 "required_meetings_per_section": required_meetings,
