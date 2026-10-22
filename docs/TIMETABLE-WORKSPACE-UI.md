@@ -337,7 +337,13 @@ findings changed the plan:
    drawn through the global `UXControls.redraw`, so the several redraws one
    edit causes neither move the keyboard nor disturb a screen reader; an item
    from before the last edit says so in Selection as in Issues. **4b**: the programme mark (#160
-   parity, from split view into a shared module) and Seated on demand.
+   parity): its words and parts move from split view into a shared module,
+   `timetable-programme-mark.js`, which both pages wrap in their own markup;
+   Selection shows the mark, the "nobody needs it" warning, the seated mix
+   and the grouping trade-off. The seated mix comes from the lens the page
+   holds: after an edit it says it is from before the change and offers a
+   Refresh (the lens is a full seating evaluation, never re-read per edit); a
+   saved mark re-reads it once.
 5. **Keyboard.** Grid semantics for the board (days × columns) with roving
    focus; the left list as one roving stop; `event.code` for `[` and `]`; a
    Move dialog with one ranked list whose verdict follows the server's

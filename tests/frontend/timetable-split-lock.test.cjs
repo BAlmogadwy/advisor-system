@@ -53,6 +53,7 @@ async function harness(t, intercept = () => undefined, { arabic = false } = {}) 
   // The page loads the shared slot-column module before its own script.
   w.eval(read('static/js/timetable-slot-config.js'));
   w.eval(read('static/js/timetable-section-teacher.js'));
+  w.eval(read('static/js/timetable-programme-mark.js'));
   w.eval(source + '\n;globalThis.__splitAudit = { S, RP, DRAWER };');
   await settle();
   const { S: state, RP: panel } = w.__splitAudit;

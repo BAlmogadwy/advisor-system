@@ -381,6 +381,10 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-sel-issues li { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; font-size: var(--text-sm); }
 .tw-sel-issues .ux-tone-icon { margin-top: 2px; }
 .tw-sel-hint { display: block; margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
+.tw-sel-hint .btn { margin-inline-start: 4px; }
+.tw-sel-note { margin: 2px 0 8px; color: var(--t2); font-size: var(--text-xs); }
+.tw-sel-note[data-tone="warning"] { color: var(--t1); border-inline-start: 3px solid var(--sev-warning); padding-inline-start: 8px; }
+.tw-programme-select { max-width: 100%; }
 /* The group header is the global disclosure toggle; it spans its group. */
 .tw-issue-head {
   margin: 0 0 4px;

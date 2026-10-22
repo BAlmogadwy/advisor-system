@@ -53,6 +53,7 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-meeting-policy.js'), 'utf8'));
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-slot-config.js'), 'utf8'));
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-section-teacher.js'), 'utf8'));
+  w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-programme-mark.js'), 'utf8'));
   // base.html loads the design system's controls (menus, tabs, disclosures) on every page.
   w.eval(fs.readFileSync(path.join(root, 'static/js/ux-controls.js'), 'utf8'));
   w.eval(source);
@@ -1131,4 +1132,79 @@ test('search finds a section by the teacher its card names, never by a stale mee
   assert.equal(card(h, 10), null, 'the stale name is not on the card, so it finds nothing');
   await find('dr meeting');
   assert.ok(card(h, 11), 'a section the rule leaves to its meetings keeps that name');
+});
+
+/* ── Programme mark in Selection (PR 4b) ── */
+function markHarness(t, { lensSections, posts, lensRequests, extra = {} }) {
+  const placements = [
+    at(10, { course_key: 'CS112', preferred_programme: '', preferred_programme_editable: true }),
+    at(11, { day: 'MON', course_key: 'CS113', preferred_programme: 'CYS', preferred_programme_editable: false, term_section_id: 111 }),
+    at(12, { day: 'TUE', course_key: 'CS114' }),  // the feature off for this one: no key
+  ];
+  return harness(t, (url, opts) => {
+    if (url === '/ops/tw/boards/2/') return { placements, slot_config: scenario.slot_config };
+    if (url.includes('/plan-lens/')) {
+      lensRequests.push(url);
+      return { plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } }, sections: lensSections(), programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } } };
+    }
+    if (url.endsWith('/programme-preference/') && opts.method === 'POST') {
+      const body = JSON.parse(opts.body); posts.push(body);
+      return { term_section_id: 110, preferred_programme: body.preferred_programme, changed: true };
+    }
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    return undefined;
+  }, extra);
+}
+
+test('Selection carries the programme mark where the feature does, with the seated mix from the lens', async t => {
+  const posts = [], lensRequests = [];
+  const h = await markHarness(t, { posts, lensRequests, lensSections: () => ({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }) });
+  await h.select();
+  card(h, 12).click();
+  assert.equal(h.d.getElementById('twSelProgramme'), null, 'no key, no mark');
+  card(h, 10).click();
+  const select = h.d.getElementById('twSelProgramme');
+  assert.deepEqual([...select.options].map(o => o.value), ['', 'AI', 'AI2']);
+  assert.equal(select.disabled, false);
+  assert.match(h.d.getElementById('twRightBody').textContent, /38: AI2 30 · AI 6/);
+  assert.match(h.d.getElementById('twRightBody').textContent, /Grouping moved 3 students/);
+  card(h, 11).click();
+  assert.equal(h.d.getElementById('twSelProgramme').disabled, true, 'another scenario owns it');
+  assert.match(h.d.getElementById('twRightBody').textContent, /No CYS student needs this course/);
+});
+
+test('after an edit the seated mix says how old it is; only Refresh re-reads the lens', async t => {
+  const posts = [], lensRequests = [];
+  let total = 38;
+  const h = await markHarness(t, { posts, lensRequests, lensSections: () => ({ 110: { actual_total: total, actual_plans: { AI2: total } } }) });
+  await h.select();
+  const before = lensRequests.length;
+  card(h, 10).click();
+  h.w.TW.dataVersion++;  // an edit
+  h.w.renderRightPanel('selection');
+  assert.equal(lensRequests.length, before, 'an edit never re-reads the lens');
+  assert.match(h.d.getElementById('twRightBody').textContent, /From before your last change/);
+  total = 40;
+  h.d.querySelector('[data-tw-lens-refresh]').click();
+  await wait(() => /40: AI2 40/.test(h.d.getElementById('twRightBody').textContent));
+  assert.equal(lensRequests.length, before + 1);
+  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /From before your last change/);
+});
+
+test('saving the mark posts once, re-reads the lens once, and gives the keyboard back', async t => {
+  const posts = [], lensRequests = [];
+  const h = await markHarness(t, { posts, lensRequests, lensSections: () => ({ 110: { actual_total: 10, actual_plans: { AI2: 10 } } }) });
+  await h.select();
+  card(h, 10).click();
+  const before = lensRequests.length;
+  const select = h.d.getElementById('twSelProgramme');
+  select.focus();
+  select.value = 'AI2';
+  select.dispatchEvent(new h.w.Event('change'));
+  await wait(() => lensRequests.length === before + 1 && h.d.getElementById('twSelProgramme')?.value === 'AI2' && !h.d.getElementById('twSelProgramme').disabled);
+  assert.deepEqual(posts.map(b => b.preferred_programme), ['AI2']);
+  assert.equal(h.w.TW.placements.find(p => p.id === 10).preferred_programme, 'AI2');
+  assert.ok(h.notices.some(n => n.type === 'success'));
+  assert.equal(h.d.activeElement?.id, 'twSelProgramme');
 });
