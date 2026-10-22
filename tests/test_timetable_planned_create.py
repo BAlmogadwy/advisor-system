@@ -8,8 +8,9 @@ Two server facts behind the "required sections" list:
 * ``create_planned_section_placements`` reuses a planned section that was
   created before. Taking a section off the board leaves its meeting rows, so a
   section created with pattern A, removed, and created again with pattern B used
-  to hold A's rows and B's. The leftovers go, but only when nothing else can own
-  them (the registrar's teachers, a section that is still on a board).
+  to hold A's rows and B's. The leftovers go, but only for a section the
+  workspace planned that is on no board; a registrar's or auto-built section, or
+  one still placed, keeps its rows.
 """
 
 from __future__ import annotations
@@ -32,7 +33,17 @@ from core.services.timetable_workspace import (
     compute_scenario_budget,
     create_planned_section_placements,
 )
-from tests.one_teacher_support import budget, place, requirement, scenario, section
+from tests.one_teacher_support import (
+    FLAG_ON,
+    budget,
+    engine_rows,
+    instructor,
+    link,
+    place,
+    requirement,
+    scenario,
+    section,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -197,18 +208,29 @@ def test_a_section_still_placed_elsewhere_in_the_scenario_keeps_its_rows():
     assert _meeting_rows(term_section) == _rows(PATTERN_A + PATTERN_B)
 
 
-def test_a_meeting_row_with_an_instructor_keeps_every_row():
+def test_one_teacher_mode_rows_are_replaced_and_the_teacher_is_named_again(settings):
+    # A planned section's rows are the workspace's own: the teacher name on them
+    # is derived, and the create writes it back. So a name on the old rows must
+    # not keep them (in production one-teacher is on and every linked course
+    # carries a name).
+    for name, value in FLAG_ON.items():
+        setattr(settings, name, value)
     sc, board, _other, key = _workspace()
+    link("AI", "AI401", instructor("Dr A"))
     term_section = _create(board, key, "S2", PATTERN_A)["term_section"]
     _remove_from_board(term_section)
-    named = TermSectionMeeting.objects.filter(term_section=term_section, day="SUN").get()
-    named.instructor = "Dr Registrar"
-    named.save(update_fields=["instructor"])
+    old = TermSectionMeeting.objects.filter(term_section=term_section)
+    assert {row.instructor for row in old} == {"Dr A"}  # the rows a name would have kept
 
     _create(board, key, "S2", PATTERN_B)
 
-    assert _meeting_rows(term_section) == _rows(PATTERN_A + PATTERN_B)
-    assert TermSectionMeeting.objects.get(pk=named.pk).instructor == "Dr Registrar"
+    assert _meeting_rows(term_section) == _rows(PATTERN_B)
+    assert set(
+        TermSectionMeeting.objects.filter(term_section=term_section).values_list(
+            "instructor", flat=True
+        )
+    ) == {"Dr A"}
+    assert engine_rows(sc)[(key, "S2")] == "Dr A"
 
 
 def test_a_section_the_workspace_did_not_plan_keeps_its_rows():

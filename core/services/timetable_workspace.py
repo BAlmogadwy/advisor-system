@@ -1991,10 +1991,11 @@ def _drop_stale_planned_meetings(term_section: TermSection, scenario_id: int) ->
     Removing a placement from the board leaves the section and its
     ``TermSectionMeeting`` rows in place. Creating the same label again reuses
     the section, so the old pattern's rows would pile up beside the new
-    pattern's. They are dropped only when nothing else could own them: the
-    section is one the workspace planned itself, it is on no board of this
-    scenario, and no row carries a teacher. Anything else is the registrar's or
-    a placed section's data and is left exactly as it is.
+    pattern's. They are dropped only for a section the workspace planned itself
+    (never a registrar's or an auto-built one) that is on no board of this
+    scenario. Its rows are the workspace's own, so a teacher name on them is
+    derived (the one-teacher map, or the primary-instructor link; a pin lives
+    in ``SectionInstructor``) and ``name_new_section`` writes it back.
 
     Returns the number of rows removed.
     """
@@ -2005,10 +2006,7 @@ def _drop_stale_planned_meetings(term_section: TermSection, scenario_id: int) ->
         term_section=term_section, board__scenario_id=scenario_id
     ).exists():
         return 0
-    stale = TermSectionMeeting.objects.filter(term_section=term_section)
-    if stale.exclude(instructor="").exists():
-        return 0
-    return stale.delete()[0]
+    return TermSectionMeeting.objects.filter(term_section=term_section).delete()[0]
 
 
 def create_planned_section_placements(
