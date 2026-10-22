@@ -64,6 +64,11 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.board_ownership import external_shared_section_ids
+from core.services.natural_order import natural_key
+from core.services.section_source_tags import (
+    PLANNED_SECTION_SOURCE_TAG,
+    WORKSPACE_SECTION_SOURCE_TAGS,
+)
 from core.services.student_helpers import normalize_code
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
@@ -1979,34 +1984,32 @@ def _normalise_planned_meeting_rows(rows: list[dict]) -> list[dict[str, str]]:
     return meetings
 
 
-#: ``TermSection.source_tag`` of a section the workspace itself created for a
-#: required course. Only such a section may have its leftover meeting rows
-#: replaced when it is created again; a registrar or auto-built section never.
-PLANNED_SECTION_SOURCE_TAG = "tw_planned"
-
-
-def _drop_stale_planned_meetings(term_section: TermSection, scenario_id: int) -> int:
-    """Clear the meeting rows an earlier planned section left behind.
+def _drop_stale_planned_meetings(term_section: TermSection, scenario_id: int) -> None:
+    """Clear the meeting rows an earlier section of this label left behind.
 
     Removing a placement from the board leaves the section and its
     ``TermSectionMeeting`` rows in place. Creating the same label again reuses
     the section, so the old pattern's rows would pile up beside the new
-    pattern's. They are dropped only for a section the workspace planned itself
-    (never a registrar's or an auto-built one) that is on no board of this
-    scenario. Its rows are the workspace's own, so a teacher name on them is
-    derived (the one-teacher map, or the primary-instructor link; a pin lives
-    in ``SectionInstructor``) and ``name_new_section`` writes it back.
+    pattern's. They are dropped only for a section the workspace made itself
+    (``tw_planned``, or ``tw_auto`` from the engines, which label ``S{n}``
+    too), owned by this scenario, and on no board of ANY scenario: its rows
+    belong to the section, not to a scenario, so a placement from another
+    scenario's board keeps them. Registrar, imported and scraped sections are
+    never touched. The workspace's own rows carry a derived teacher name (the
+    one-teacher map, or the primary-instructor link; a pin lives in
+    ``SectionInstructor``) and ``name_new_section`` writes it back.
 
-    Returns the number of rows removed.
+    The reused section keeps its ``available_capacity`` and ``course_name``:
+    ``get_or_create`` sets them only when the section is first made.
     """
 
-    if term_section.source_tag != PLANNED_SECTION_SOURCE_TAG:
-        return 0
-    if SectionPlacement.objects.filter(
-        term_section=term_section, board__scenario_id=scenario_id
-    ).exists():
-        return 0
-    return TermSectionMeeting.objects.filter(term_section=term_section).delete()[0]
+    if term_section.source_tag not in WORKSPACE_SECTION_SOURCE_TAGS:
+        return
+    if term_section.scenario_id != scenario_id:
+        return
+    if SectionPlacement.objects.filter(term_section=term_section).exists():
+        return
+    TermSectionMeeting.objects.filter(term_section=term_section).delete()
 
 
 def create_planned_section_placements(
@@ -3650,11 +3653,6 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
         board of the scenario, in natural order (S1, S3, S10), so a page can
         name the next section without colliding with one already taken.
     """
-    # The house natural order (M2 before M10). It lives with the exam rosters;
-    # imported here, not at module level, so the planner does not load the exam
-    # stack just to import this module.
-    from core.services.exam_rosters import natural_key
-
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
     section_counts_by_course = _section_meeting_counts(scenario_id)
 

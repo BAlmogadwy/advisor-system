@@ -5,12 +5,13 @@ Two server facts behind the "required sections" list:
 * ``compute_scenario_budget`` names, for every course, the section labels in use
   across the whole scenario, in natural order, so the page can propose a free
   label instead of ``S{used + 1}`` (S1 and S3 used: S2 is free, then S4).
-* ``create_planned_section_placements`` reuses a planned section that was
-  created before. Taking a section off the board leaves its meeting rows, so a
-  section created with pattern A, removed, and created again with pattern B used
-  to hold A's rows and B's. The leftovers go, but only for a section the
-  workspace planned that is on no board; a registrar's or auto-built section, or
-  one still placed, keeps its rows.
+* ``create_planned_section_placements`` reuses a section that was created
+  before. Taking a section off the board leaves its meeting rows, so a section
+  created with pattern A, removed, and created again with pattern B used to hold
+  A's rows and B's. The leftovers go, but only for a section the workspace made
+  (``tw_planned``, or ``tw_auto`` from the engines) that this scenario owns and
+  that is on no board of any scenario. A registrar's, imported or scraped
+  section, a section owned elsewhere, or one still placed, keeps its rows.
 """
 
 from __future__ import annotations
@@ -27,9 +28,15 @@ from core.models import (
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
+    TimetableScenario,
+)
+from core.services import timetable_workspace as tws
+from core.services.section_source_tags import (
+    AUTO_SECTION_SOURCE_TAG,
+    PLANNED_SECTION_SOURCE_TAG,
+    WORKSPACE_SECTION_SOURCE_TAGS,
 )
 from core.services.timetable_workspace import (
-    PLANNED_SECTION_SOURCE_TAG,
     compute_scenario_budget,
     create_planned_section_placements,
 )
@@ -233,18 +240,156 @@ def test_one_teacher_mode_rows_are_replaced_and_the_teacher_is_named_again(setti
     assert engine_rows(sc)[(key, "S2")] == "Dr A"
 
 
-def test_a_section_the_workspace_did_not_plan_keeps_its_rows():
+def test_a_section_placed_by_another_scenarios_board_keeps_its_rows():
+    # Meeting rows belong to the section, not to a scenario: another scenario's
+    # board still shows this section, so the rows stay.
     sc, board, _other, key = _workspace()
-    existing = section(sc, key, "S2")  # source_tag "tw_auto": not a planned section
-    for day, start, end in PATTERN_A:
-        TermSectionMeeting.objects.create(
-            term_section=existing, day=day, start_time=start, end_time=end
-        )
-    assert existing.source_tag != PLANNED_SECTION_SOURCE_TAG
+    term_section = _create(board, key, "S2", PATTERN_A)["term_section"]
+    _remove_from_board(term_section)
+    _sc2, board2 = scenario(name="somewhere else")
+    SectionPlacement.objects.create(
+        board=board2,
+        term_section=term_section,
+        day="SUN",
+        start_time="08:00",
+        end_time="09:15",
+        room="R1",
+    )
 
     _create(board, key, "S2", PATTERN_B)
 
+    assert _meeting_rows(term_section) == _rows(PATTERN_A + PATTERN_B)
+
+
+def test_an_engine_made_section_with_no_placement_is_replaced():
+    sc, board, _other, key = _workspace()
+    engine_made = section(sc, key, "S2")  # what the engines write: tw_auto
+    assert engine_made.source_tag == AUTO_SECTION_SOURCE_TAG == "tw_auto"
+    for day, start, end in PATTERN_A:
+        TermSectionMeeting.objects.create(
+            term_section=engine_made, day=day, start_time=start, end_time=end
+        )
+
+    result = _create(board, key, "S2", PATTERN_B)
+
+    assert result["term_section"].id == engine_made.id  # reused, not created
+    assert _meeting_rows(engine_made) == _rows(PATTERN_B)
+
+
+@pytest.mark.parametrize(
+    "tag", ["other", "department", "external", "scraper_timetable", "f_optimised_plan"]
+)
+def test_a_section_the_registrar_or_an_import_made_keeps_its_rows(tag):
+    # The tags the section imports, the scrape and the F-plan import write.
+    assert tag not in WORKSPACE_SECTION_SOURCE_TAGS
+    sc, board, _other, key = _workspace()
+    existing = TermSection.objects.create(
+        scenario=sc,
+        course_key=key,
+        course_code="AI401",
+        course_number="AI401",
+        course_name="PLANNED COURSE",
+        section="S2",
+        source_tag=tag,
+    )
+    for day, start, end in PATTERN_A:
+        TermSectionMeeting.objects.create(
+            term_section=existing, day=day, start_time=start, end_time=end, instructor="Registrar"
+        )
+
+    result = _create(board, key, "S2", PATTERN_B)
+
+    assert result["term_section"].id == existing.id  # reused, not created
     assert _meeting_rows(existing) == _rows(PATTERN_A + PATTERN_B)
+
+
+def test_a_section_owned_by_another_scenario_or_by_none_is_never_touched():
+    # Not reachable through the create (its get_or_create is scoped to the
+    # scenario), so the guard is tested on the helper: a workspace-made tag and
+    # no placement are not enough without ownership.
+    sc, _board, _other, _key = _workspace()
+    other_sc, _other_board = scenario(name="owner elsewhere")
+    cases = [(other_sc, "AI501"), (None, "AI502"), (sc, "AI503")]
+    sections = {}
+    for owner, code in cases:
+        sections[code] = TermSection.objects.create(
+            scenario=owner,
+            course_key=code,
+            course_code=code,
+            course_number=code,
+            course_name=code,
+            section="S2",
+            source_tag=PLANNED_SECTION_SOURCE_TAG,
+        )
+        TermSectionMeeting.objects.create(
+            term_section=sections[code], day="SUN", start_time="08:00", end_time="09:15"
+        )
+
+    for ts in sections.values():
+        tws._drop_stale_planned_meetings(ts, sc.id)
+
+    assert _meeting_rows(sections["AI501"]) == [("SUN", "08:00", "09:15")]  # another scenario's
+    assert _meeting_rows(sections["AI502"]) == [("SUN", "08:00", "09:15")]  # nobody's
+    assert _meeting_rows(sections["AI503"]) == []  # ours: swept (the control)
+
+
+def test_an_english_policy_section_is_recreated_with_its_four_rows():
+    sc = TimetableScenario.objects.create(
+        academic_year="1448", term="1", gender="M", programs=["AI"]
+    )
+    board = DeliveryBoard.objects.create(scenario=sc, label="English", nominal_term=1, program="AI")
+    days = ("SUN", "MON", "WED", "THU")
+
+    def english(start, end):
+        return create_planned_section_placements(
+            board.id,
+            course_code="ENG101",
+            course_key="ENG101",
+            course_name="English",
+            section_label="M2",
+            capacity=25,
+            meetings=[{"day": day, "start_time": start, "end_time": end} for day in days],
+        )
+
+    term_section = english("09:00", "12:00")["term_section"]
+    _remove_from_board(term_section)
+    assert _meeting_rows(term_section) == [(day, "09:00", "12:00") for day in sorted(days)]
+    old_ids = set(
+        TermSectionMeeting.objects.filter(term_section=term_section).values_list("id", flat=True)
+    )
+
+    again = english("13:00", "16:00")
+
+    assert again["term_section"].id == term_section.id
+    assert len(again["placements"]) == 4
+    assert _meeting_rows(term_section) == [(day, "13:00", "16:00") for day in sorted(days)]
+    # Replaced, not repointed in place: none of the old rows survives.
+    new_ids = set(
+        TermSectionMeeting.objects.filter(term_section=term_section).values_list("id", flat=True)
+    )
+    assert len(new_ids) == 4 and not (new_ids & old_ids)
+
+
+def test_a_failure_after_the_drop_restores_the_old_rows(monkeypatch):
+    sc, board, _other, key = _workspace()
+    term_section = _create(board, key, "S2", PATTERN_A)["term_section"]
+    _remove_from_board(term_section)
+    seen = []
+
+    def explode(**_kwargs):
+        seen.append(_meeting_rows(term_section))
+        raise RuntimeError("validation failed after the old rows were dropped")
+
+    monkeypatch.setattr(tws, "validate_placement", explode)
+
+    with pytest.raises(RuntimeError):
+        _create(board, key, "S2", PATTERN_B)
+
+    # At the failure A's rows were already gone and B's first row was written ...
+    assert seen == [[("MON", "11:00", "12:15")]]
+    # ... and the whole create rolled back: A's rows are back, nothing of B's.
+    assert _meeting_rows(term_section) == _rows(PATTERN_A)
+    assert not SectionPlacement.objects.filter(term_section=term_section).exists()
 
 
 def test_a_newly_created_section_is_not_swept():
@@ -260,3 +405,17 @@ def test_a_newly_created_section_is_not_swept():
     ]
     assert deletes == []
     assert _meeting_rows(result["term_section"]) == _rows(PATTERN_A)
+
+
+def test_natural_key_is_one_function_whichever_module_it_is_taken_from():
+    from core.services.exam_rosters import natural_key as from_exams
+    from core.services.natural_order import natural_key
+
+    assert from_exams is natural_key
+    assert sorted(["M10", "M2", "PHYS103 (2)", "PHYS103 (1)", "m1"], key=natural_key) == [
+        "m1",
+        "M2",
+        "M10",
+        "PHYS103 (1)",
+        "PHYS103 (2)",
+    ]

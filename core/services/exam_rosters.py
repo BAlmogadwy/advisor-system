@@ -70,6 +70,10 @@ from core.services.exam_timetable import (
     select_exam_course_enrollments,
 )
 
+# The house natural order moved to its own module; still importable from here
+# (exam_roster_view and exam_student_export take it from this module).
+from core.services.natural_order import natural_key
+
 logger = logging.getLogger(__name__)
 
 OVERFLOW_DAY = "OVERFLOW"
@@ -293,14 +297,6 @@ def student_exam_flags(
                     exams_that_day=len(ordered),
                 )
     return FlagIndex(sittings=sittings, days=days)
-
-
-def natural_key(label: str) -> tuple:
-    """M2 before M10 and "PHYS103 (2)" after "PHYS103 (1)": the house order."""
-    return tuple(
-        (1, int(part)) if part.isdecimal() else (0, part.casefold())
-        for part in re.split(r"(\d+)", str(label or ""))
-    )
 
 
 def lists_code(lines: Iterable[str]) -> str:

@@ -31,6 +31,7 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
+from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
@@ -844,7 +845,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
                 "course_name": p.get("course_name")
                 or (budget.course_name if budget else display_code),
                 "available_capacity": cap,
-                "source_tag": "tw_auto",
+                "source_tag": AUTO_SECTION_SOURCE_TAG,
             },
         )
         if (
