@@ -736,3 +736,200 @@ test('K4 the pane keys never take Shift with another script’s letter', () => {
   assert.equal(h.workspace.dataset.left, before);
   h.dom.window.close();
 });
+
+/* ── Dialogs and choice lists (UXControls.dialog; design record §7.3, 5c) ── */
+const DIALOG = `<button id="opener" type="button">Change…</button>
+  <dialog id="dlg" class="ux-dialog ux-dialog-scroll" aria-labelledby="dlgTitle"><form method="dialog" novalidate>
+    <div class="ux-dialog-head"><h2 id="dlgTitle">Change room</h2>
+      <button type="button" id="dlgX" data-dialog-close aria-label="Close"><span>×</span></button></div>
+    <div class="ux-dialog-body" id="dlgBody" tabindex="-1"><input id="dlgFilter" type="search"></div>
+    <div class="ux-dialog-foot"><button type="button" id="dlgCancel" data-dialog-close>Cancel</button>
+      <button type="submit" id="dlgOk">Assign room</button></div>
+  </form></dialog>
+  <div id="spares"><button id="off" disabled>off</button><div hidden><button id="inHidden">h</button></div>
+    <div class="d-none"><button id="inDNone">d</button></div></div>`;
+function dialogFixture({ modal = false } = {}) {
+  const h = bare(true, w => {
+    if (!modal) return;
+    // A browser's dialog: showModal, and close() whose `close` event comes
+    // a moment later.
+    w.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+    w.HTMLDialogElement.prototype.close = function () {
+      if (!this.hasAttribute('open')) return;
+      this.removeAttribute('open');
+      setTimeout(() => this.dispatchEvent(new w.Event('close')), 0);
+    };
+  });
+  h.doc.body.insertAdjacentHTML('beforeend', DIALOG);
+  const closes = [];
+  h.doc.addEventListener('ux-dialog-close', event => closes.push(event.detail.reason));
+  const $ = id => h.doc.getElementById(id);
+  const key = (target, init) => target.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+  // The page redraws the control that opened the dialog: a new node, same id.
+  const redrawOpener = () => { const fresh = $('opener').cloneNode(true); $('opener').replaceWith(fresh); return fresh; };
+  return { ...h, dlg: $('dlg'), closes, $, key, redrawOpener };
+}
+
+test('G1 a helper dialog without showModal opens on its initial focus; its buttons and Escape close it; focus returns to the opener as it is at close', () => {
+  const h = dialogFixture();
+  const D = h.UX.dialog;
+  h.$('opener').focus();
+  const options = { initialFocus: () => h.$('dlgBody'), returnFocus: () => h.$('opener') };
+  assert.equal(D.open(h.dlg, options), true);
+  assert.deepEqual([h.dlg.hasAttribute('open'), h.dlg.dataset.uxDialog, D.isOpen(h.dlg)], [true, 'fallback', true]);
+  assert.equal(h.doc.activeElement, h.$('dlgBody'), 'initialFocus');
+  assert.equal(D.open(h.dlg, options), false, 'one helper dialog at a time');
+  // The × (a click on its icon), with the opener redrawn while it was open.
+  let opener = h.redrawOpener();
+  h.$('dlgX').querySelector('span').click();
+  assert.deepEqual([h.dlg.hasAttribute('open'), 'uxDialog' in h.dlg.dataset, D.isOpen(h.dlg)], [false, false, false]);
+  assert.equal(h.doc.activeElement, opener, 'the opener drawn now, not the one at open');
+  assert.deepEqual(h.closes, ['cancel']);
+  // No initialFocus: the first control that takes focus. Escape closes.
+  assert.equal(D.open(h.dlg, { returnFocus: () => h.$('opener') }), true);
+  assert.equal(h.doc.activeElement, h.$('dlgX'));
+  h.$('dlgFilter').focus();
+  opener = h.redrawOpener();
+  assert.equal(h.key(h.$('dlgFilter'), { key: 'Escape' }), false, 'Escape is used');
+  assert.equal(h.dlg.hasAttribute('open'), false);
+  assert.equal(h.doc.activeElement, opener);
+  // An Escape a control inside used (a filter clearing its text) leaves it open; Cancel closes.
+  D.open(h.dlg, options);
+  h.$('dlgFilter').addEventListener('keydown', event => event.preventDefault(), { once: true });
+  h.key(h.$('dlgFilter'), { key: 'Escape' });
+  assert.equal(D.isOpen(h.dlg), true);
+  h.$('dlgCancel').click();
+  assert.equal(D.isOpen(h.dlg), false);
+  // The page's own close: reason 'close'; a second close does nothing.
+  D.open(h.dlg, options);
+  D.close(h.dlg);
+  D.close(h.dlg);
+  assert.deepEqual(h.closes, ['cancel', 'cancel', 'cancel', 'close']);
+  assert.equal(h.doc.activeElement, h.$('opener'));
+  h.dom.window.close();
+});
+
+test('G2 the browser’s cancel is stopped and closes the dialog once; a native close without cancel does the same bookkeeping', async () => {
+  const h = dialogFixture({ modal: true });
+  const D = h.UX.dialog;
+  const options = { initialFocus: () => h.$('dlgBody'), returnFocus: () => h.$('opener') };
+  assert.equal(D.open(h.dlg, options), true);
+  assert.equal('uxDialog' in h.dlg.dataset, false, 'modal: showModal, no fallback');
+  // Modal: the browser turns Escape into `cancel`; the keydown alone closes nothing.
+  h.key(h.$('dlgBody'), { key: 'Escape' });
+  assert.equal(D.isOpen(h.dlg), true);
+  const opener = h.redrawOpener();
+  const cancel = new h.dom.window.Event('cancel', { cancelable: true });
+  h.dlg.dispatchEvent(cancel);
+  assert.equal(cancel.defaultPrevented, true);
+  assert.deepEqual([h.dlg.hasAttribute('open'), D.isOpen(h.dlg)], [false, false]);
+  assert.equal(h.doc.activeElement, opener);
+  await new Promise(resolve => setTimeout(resolve, 5));  // the browser's own `close` event, after ours
+  assert.deepEqual(h.closes, ['cancel'], 'one close');
+  // Chrome's close watcher: closed by the browser, with no cancel first.
+  D.open(h.dlg, options);
+  h.dlg.removeAttribute('open');
+  h.dlg.dispatchEvent(new h.dom.window.Event('close'));
+  assert.equal(D.isOpen(h.dlg), false);
+  assert.equal(h.doc.activeElement, h.$('opener'));
+  assert.deepEqual(h.closes, ['cancel', 'cancel']);
+  // A late `close` from an earlier closing finds the dialog open again: not its own.
+  D.open(h.dlg, options);
+  h.dlg.dispatchEvent(new h.dom.window.Event('close'));
+  assert.equal(D.isOpen(h.dlg), true);
+  assert.deepEqual(h.closes, ['cancel', 'cancel']);
+  h.dom.window.close();
+});
+
+test('G3 a focus target that cannot take focus is skipped quietly; dialogs the helper did not open keep their own behaviour', async () => {
+  const h = dialogFixture();
+  const D = h.UX.dialog;
+  const detached = h.doc.createElement('button');
+  for (const target of [h.$('off'), detached, h.$('inHidden'), h.$('inDNone'), null]) {
+    D.open(h.dlg, { returnFocus: () => target });
+    h.$('dlgFilter').focus();
+    assert.doesNotThrow(() => D.close(h.dlg));
+    assert.equal(h.doc.activeElement, h.$('dlgFilter'), `focus not given to ${target ? target.id || 'a detached button' : 'nothing'}`);
+    assert.equal(D.isOpen(h.dlg), false);
+  }
+  assert.equal(h.closes.length, 5, 'each close completed');
+  h.dom.window.close();
+
+  // The real Generate dialog, wired as the page wires it (no showModal in jsdom).
+  const page = harness();
+  const w = page.dom.window;
+  const generate = page.doc.getElementById('twGenerateDialog');
+  const reasons = [];
+  page.doc.addEventListener('ux-dialog-close', event => reasons.push(event.detail.reason));
+  generate.querySelectorAll('[data-dialog-close]').forEach(button => button.addEventListener('click', () => generate.removeAttribute('open')));
+  generate.setAttribute('open', '');
+  const radio = generate.querySelector('input[name="twGenEngine"]');
+  radio.focus();
+  assert.equal(w.UXControls.dialog.open(generate), false, 'open by its page: not the helper’s');
+  assert.equal(page.key(radio, 'Escape'), true, 'Escape is not taken');
+  const cancel = new w.Event('cancel', { cancelable: true });
+  generate.dispatchEvent(cancel);
+  assert.equal(cancel.defaultPrevented, false, 'the browser may close it natively');
+  w.UXControls.dialog.close(generate);
+  assert.equal(generate.hasAttribute('open'), true, 'still the page’s to close');
+  generate.querySelector('.ux-dialog-head [data-dialog-close]').click();
+  assert.equal(generate.hasAttribute('open'), false, 'its × closes it through the page');
+  // The English chooser: its own cancel handler answers Escape.
+  w.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  w.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
+  w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-meeting-policy.js'), 'utf8'));
+  const choice = w.TimetableMeetingPolicy.choose('ENG101');
+  const chooser = page.doc.querySelector('dialog.tw-pattern-dialog');
+  chooser.dispatchEvent(new w.Event('cancel', { cancelable: true }));
+  assert.equal(await choice, null);
+  assert.deepEqual(reasons, [], 'the helper never ran');
+  page.dom.window.close();
+});
+
+test('C1 a choice list with data-ux-submit: Home, End and PageUp/PageDown (clamped) skip hidden rows; Enter submits once, only while the button is on', () => {
+  const h = bare();
+  const row = (id, name, { dNone = false, hidden = false } = {}) => `<label class="ux-choice${dNone ? ' d-none' : ''}"${hidden ? ' hidden' : ''}>`
+    + `<input type="radio" name="${name}" id="${id}" value="${id}"><span class="ux-choice-title">${id}</span></label>`;
+  const rows = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i)
+    .map(n => row(`r${n}`, 'pick', { dNone: n === 4, hidden: n === 13 })).join('');
+  h.doc.body.insertAdjacentHTML('beforeend', `<form id="f" novalidate>
+      <fieldset class="ux-choice-list" data-ux-submit>${rows(0, 6)}</fieldset>
+      <fieldset class="ux-choice-list" data-ux-submit>${rows(7, 13)}</fieldset>
+      ${row('o1', 'other')}<button type="submit" id="go">Assign</button></form>
+    <form id="g" novalidate><div class="ux-choice-list">${row('s0', 'plain')}${row('s1', 'plain')}</div><button type="submit">Go</button></form>`);
+  const $ = id => h.doc.getElementById(id);
+  const changes = [];
+  h.doc.addEventListener('change', event => changes.push(event.target.id));
+  const submits = { f: [], g: [] };
+  for (const id of ['f', 'g']) $(id).addEventListener('submit', event => { event.preventDefault(); submits[id].push(event.submitter && event.submitter.id); });
+  const press = (target, key, init = {}) => target.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
+  const step = (from, key, expected) => {
+    $(from).focus();
+    assert.equal(press($(from), key), false, `${key} is used`);
+    const checked = h.doc.querySelector('#f input[name="pick"]:checked');
+    assert.deepEqual([checked && checked.id, h.doc.activeElement.id], [expected, expected], `${key} from ${from}`);
+  };
+  // Visible rows, in order: r0–r3, r5–r12 (r4 is .d-none, r13 hidden), across both lists.
+  step('r2', 'End', 'r12');
+  step('r12', 'Home', 'r0');
+  step('r0', 'PageDown', 'r11');
+  step('r11', 'PageDown', 'r12');
+  step('r12', 'PageUp', 'r1');
+  step('r1', 'PageUp', 'r0');
+  step('r0', 'Home', 'r0');
+  assert.deepEqual(changes, ['r12', 'r0', 'r11', 'r12', 'r1', 'r0'], 'a change for each new choice, none for the same one');
+  assert.equal(press($('r0'), 'ArrowDown'), true, 'the arrows stay the browser’s');
+  // Enter: one submit per press, with the submit button as its submitter.
+  assert.equal(press($('r0'), 'Enter'), false);
+  press($('r0'), 'Enter', { repeat: true });
+  assert.deepEqual(submits.f, ['go']);
+  $('go').disabled = true;
+  assert.equal(press($('r0'), 'Enter'), false, 'Enter is still used');
+  assert.deepEqual(submits.f, ['go'], 'nothing submitted while the button is off');
+  // A list without data-ux-submit: neither Enter nor Home/End.
+  $('s0').focus();
+  assert.equal(press($('s0'), 'Enter'), true);
+  assert.equal(press($('s0'), 'End'), true);
+  assert.deepEqual([submits.g, $('s1').checked], [[], false]);
+  h.dom.window.close();
+});

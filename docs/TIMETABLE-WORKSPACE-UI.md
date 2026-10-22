@@ -136,6 +136,32 @@ padding-aware for `p-0`.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.
+- `UXControls.dialog` (`open(dialog, {initialFocus, returnFocus})`,
+  `close(dialog, reason)`, `isOpen(dialog)`): one layer for the template
+  dialogs that choose something (Move, Place, Change room). Modal through
+  `showModal`, or `[open]` plus `data-ux-dialog="fallback"` where there is
+  none (jsdom); one at a time (`open` answers false while one is open); menus
+  close first; focus to `initialFocus()`, else the first control. Delegated
+  listeners close it, as `'cancel'`, from its `[data-dialog-close]` buttons, the
+  browser's `cancel` (stopped, then closed by the helper), the browser closing
+  it by itself (Chrome's close watcher) and, in fallback mode, an Escape no
+  control inside has used. At close, focus goes to what `returnFocus()` gives
+  **then** (on the page, enabled, not inside `[hidden]` or `.d-none`), and
+  `ux-dialog-close` fires with `{reason}`. It acts only on dialogs it opened:
+  Generate and the English chooser keep their own handlers.
+- `.ux-dialog-scroll` — a dialog whose body scrolls while its head and foot
+  stay in view (`> form` a flex column, `.ux-dialog-body` the scroller).
+  `.ux-dialog-foot-note` is the foot's reason line, before its buttons.
+- `.ux-choice-list` — rows of `label.ux-choice`, one native radio each, with
+  `aria-busy` on the list alone while it reads. With `data-ux-submit`, a
+  delegated key handler adds Home, End and PageUp/PageDown (10 rows, held at
+  the ends) over the radio group's rows not hidden, on top of the native
+  arrows, and Enter submits the form once, only while its submit button is on.
+  `.ux-choice[data-tone]` (`critical`, `warning`, `info`, `ok`) adds a
+  start-edge bar (CanvasText in forced colours) beside the verdict in words;
+  `.ux-choice-static` is a row that cannot be chosen, its reason written in it
+  (no disabled radios); `.ux-choice-title` is a flex line (icon, code, words);
+  `.ux-choice-status` is a row's small status line.
 - `.ux-job` — the shared planner job card, floating at the window's end edge.
 - `.pill-n` — neutral status pill.
 
@@ -249,6 +275,9 @@ Stage 3 (to evaluate): a time-proportional week grid.
   `display`. Tablists exist only where they behave as tabs.
 - Template copy stays `{% if LANGUAGE_CODE == 'ar' %}…{% else %}…{% endif %}`.
 - `.fb-search` capsules stay inside a `.fb-fit` row.
+- Dialogs opened through `UXControls.dialog` resolve `returnFocus` at close:
+  it is a function (from an origin key), never a node kept from the opening,
+  because the page may redraw the opener while the dialog is open.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
 
