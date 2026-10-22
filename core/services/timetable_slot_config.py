@@ -43,12 +43,18 @@ _TIME = re.compile(r"^\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*$")
 
 def effective_lecture_slots(scenario: Any) -> list[dict]:
     """The lecture columns the scenario uses: its own, or the defaults."""
-    return [dict(slot) for slot in (scenario.slot_config or DEFAULT_SLOTS)]
+    return [
+        dict(slot) for slot in (scenario.slot_config or DEFAULT_SLOTS) if isinstance(slot, dict)
+    ]
 
 
 def effective_lab_slots(scenario: Any) -> list[dict]:
     """The lab columns the scenario uses: its own, or the defaults."""
-    return [dict(slot) for slot in (scenario.lab_slot_config or DEFAULT_LAB_SLOTS)]
+    return [
+        dict(slot)
+        for slot in (scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
+        if isinstance(slot, dict)
+    ]
 
 
 def _minutes(value: Any) -> int | None:
@@ -183,8 +189,10 @@ def hidden_by_slot_change(
     from core.models import SectionPlacement
 
     old_lecture, old_lab = effective_lecture_slots(scenario), effective_lab_slots(scenario)
-    new_lecture = new_lecture_slots or [dict(slot) for slot in DEFAULT_SLOTS]
-    new_lab = new_lab_slots or [dict(slot) for slot in DEFAULT_LAB_SLOTS]
+    new_lecture = new_lecture_slots or [
+        dict(slot) for slot in DEFAULT_SLOTS if isinstance(slot, dict)
+    ]
+    new_lab = new_lab_slots or [dict(slot) for slot in DEFAULT_LAB_SLOTS if isinstance(slot, dict)]
     placements = (
         SectionPlacement.objects.filter(board__scenario=scenario)
         .select_related("board", "term_section")
