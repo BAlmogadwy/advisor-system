@@ -52,6 +52,9 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
   // The page loads the meeting policy and the shared slot-column module before its own script.
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-meeting-policy.js'), 'utf8'));
   w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-slot-config.js'), 'utf8'));
+  w.eval(fs.readFileSync(path.join(root, 'static/js/timetable-section-teacher.js'), 'utf8'));
+  // base.html loads the design system's controls (menus, tabs, disclosures) on every page.
+  w.eval(fs.readFileSync(path.join(root, 'static/js/ux-controls.js'), 'utf8'));
   w.eval(source);
   await wait(() => d.getElementById('twScenario').options.length === 2);
   const select = async () => { d.getElementById('twScenario').value = '1'; await w.onScenarioChange(); };
@@ -243,7 +246,8 @@ for (const arabic of [false, true]) test(`the inspector's Lock button says a loc
   const inspectorLock = inspectorButtons.find(el => /toggleLock\(10\)/.test(el.getAttribute('onclick') || ''));
   assert.ok(inspectorLock);
   assert.equal(inspectorLock.textContent, arabic ? 'قفل الوقت' : 'Lock time');
-  assert.equal(inspectorLock.getAttribute('aria-pressed'), 'false');
+  // Its label says what it does; aria-pressed would say the state twice.
+  assert.equal(inspectorLock.hasAttribute('aria-pressed'), false);
   assert.equal(inspectorLock.getAttribute('title'), help);
   assert.equal(inspectorLock.hasAttribute('dir'), false);
   const inspectorRemove = inspectorButtons.find(el => /removePlacement\(10\)/.test(el.getAttribute('onclick') || ''));
@@ -287,7 +291,8 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
   const issue = text => {
     const head = [...h.d.querySelectorAll('#twRightBody .tw-issue-head')].find(node => node.children[1]?.textContent === text);
     assert.ok(head, text);
-    const row = head.nextElementSibling;
+    // The heading is the group's disclosure button; its rows are in the group's region.
+    const row = h.d.getElementById(head.getAttribute('aria-controls')).querySelector('.tw-issue-row');
     return [head.dataset.tone, head.querySelector('.tw-issue-count').textContent, row.dataset.tone, row.querySelector('.tw-issue-kind').textContent, row.querySelector('.tw-issue-subject').textContent];
   };
   assert.deepEqual(issue(label.critical), ['critical', '1', 'critical', label.criticalKind, 'AI10-S1 / AI11-S1']);
@@ -322,7 +327,7 @@ test('the Issues tab lists the board’s publish blockers first and counts them'
   const head = h.d.querySelector('#twRightBody .tw-issue-head');
   assert.equal(head.dataset.tone, 'critical');
   assert.equal(head.children[1].textContent, 'Blocks publishing');
-  assert.match(head.nextElementSibling.textContent, /AI222: 1 of 2 sections not placed \(term 7\)/);
+  assert.match(h.d.getElementById(head.getAttribute('aria-controls')).textContent, /AI222: 1 of 2 sections not placed \(term 7\)/);
   assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'critical');
   const flag = h.d.querySelector('#twBoardTabs .ux-seg-item[aria-current="true"] .ux-seg-flag');
   assert.equal(flag.textContent, '1');
@@ -1008,4 +1013,53 @@ test('a located card lets go without an animation too, and a second locate is ne
   assert.ok(card(h, 10).classList.contains('highlight'));
   [...timers.values()].forEach(fn => fn());  // no animationend (reduced motion)
   assert.equal(card(h, 10).classList.contains('highlight'), false);
+});
+
+/* ── Inspector (design record §7.2, PR 4a) ── */
+test('Issues groups open and close, context starts closed, and a choice survives every redraw', async t => {
+  const pair = n => ({ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: n, board_a_label: 'Term 7', board_b_label: 'Term 8' });
+  const h = await modelHarness(t, { placements: [at(10, { room: 'UNASSIGNED', room_state: 'unassigned' })],
+    conflicts: { ...quiet, cross_board_conflicts: [pair(5)] } });
+  await h.select();
+  h.w.sessionStorage.clear();
+  h.w.renderRightPanel('issues');
+  const toggle = tone => h.d.querySelector(`#twRightBody .tw-issue-head[data-tone="${tone}"]`);
+  const region = tone => h.d.getElementById(toggle(tone).getAttribute('aria-controls'));
+  assert.deepEqual([toggle('critical').getAttribute('aria-expanded'), region('critical').hidden], ['true', false]);
+  assert.deepEqual([toggle('info').getAttribute('aria-expanded'), region('info').hidden], ['false', true], 'context starts closed');
+  assert.equal(toggle('info').querySelector('.tw-issue-count').textContent, '1', 'its count shows while closed');
+  toggle('critical').click();
+  assert.deepEqual([toggle('critical').getAttribute('aria-expanded'), region('critical').hidden], ['false', true]);
+  h.w.renderReadinessViews();  // a redraw: the user's choice holds
+  assert.deepEqual([toggle('critical').getAttribute('aria-expanded'), region('critical').hidden], ['false', true]);
+  toggle('info').click();
+  h.w.renderRightPanel('issues');
+  assert.equal(region('info').hidden, false);
+});
+
+test('Selection lists the section’s own issues, its teacher by the rule, and tells 0 from unknown', async t => {
+  const tbd = { name: '', status: 'tbd', reason: 'clash' };
+  const h = await modelHarness(t, { placements: [
+    at(10, { room: 'UNASSIGNED', room_state: 'unassigned', available_capacity: 0, registered_count: null, teacher: tbd,
+      meetings: [{ day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'UNASSIGNED', instructor: 'Stale Name' }] }),
+    at(11, { day: 'MON', teacher: { name: '', status: 'frozen_unknown' },
+      meetings: [{ day: 'MON', start_time: '09:00', end_time: '10:15', room: 'R1', instructor: 'Dr Meeting' }] }),
+  ], conflicts: { ...quiet, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99,
+    section_a: 'AI10', section_b: 'FE2', overlap_count: 5, board_a_label: 'Term 7', board_b_label: 'Term 8' }] } });
+  await h.select();
+  const selection = id => { card(h, id).click(); return h.d.getElementById('twRightBody'); };
+  const body = selection(10);
+  assert.match(body.querySelector('.tw-sel-issues').textContent, /No room/);
+  assert.equal(body.querySelector('.tw-sel-issues .ux-tone-icon').getAttribute('aria-label'), 'Blocks publishing');
+  const fields = Object.fromEntries([...body.querySelectorAll('.tw-sel-field')].map(f => [f.querySelector('dt').textContent, f.querySelector('dd').textContent]));
+  assert.match(fields.Teacher, /Teacher to be decided.*Every eligible teacher is teaching at this time/);
+  assert.equal(fields.Capacity, '0', 'a capacity of 0 is a capacity');
+  assert.equal(fields.Registered, '—', 'unknown is not 0');
+  assert.doesNotMatch(body.querySelector('.tw-sel-meetings').textContent, /Stale Name/, 'no stale names in the meetings list');
+  assert.match(body.querySelector('.tw-sel-issues').textContent, /AI10 S1/, 'each issue names what it is about');
+  assert.doesNotMatch(body.querySelector('.tw-sel-issues').textContent, /Possible overlap/, 'context stays in the Issues tab');
+  const other = selection(11);
+  assert.equal(other.querySelector('.tw-sel-issues'), null, 'nothing wrong: no list');
+  const teacher = [...other.querySelectorAll('.tw-sel-field')].find(f => f.querySelector('dt').textContent === 'Teacher');
+  assert.equal(teacher.querySelector('dd').textContent, 'Dr Meeting', 'a section the map does not know keeps its meeting name');
 });

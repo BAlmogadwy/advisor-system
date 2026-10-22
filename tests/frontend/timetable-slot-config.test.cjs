@@ -14,6 +14,7 @@ function moduleIn(lang = 'en') {
   const dom = new JSDOM(`<!doctype html><html lang="${lang}"><body></body></html>`, { runScripts: 'outside-only' });
   dom.window.eval(read('static/js/shared-utils.js'));  // pluralAr, as base.html loads it
   dom.window.eval(read('static/js/timetable-slot-config.js'));
+  dom.window.eval(read('static/js/timetable-section-teacher.js'));
   return { dom, SC: dom.window.TimetableSlotConfig };
 }
 
@@ -150,6 +151,7 @@ async function split(t, answer) {
   };
   w.eval(read('static/js/timetable-meeting-policy.js'));
   w.eval(read('static/js/timetable-slot-config.js'));
+  w.eval(read('static/js/timetable-section-teacher.js'));
   w.eval(read('static/js/page-timetable-workspace-split.js') + '\n;globalThis.__split = { S };');
   await settle();
   const S = w.__split.S;

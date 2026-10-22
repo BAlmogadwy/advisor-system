@@ -17,6 +17,12 @@
    TABS   `[role=tablist].ux-tabs` of `[role=tab]` buttons whose `.active` class
           marks the selected one: roving tabindex, ← → Home End (mirrored in
           Arabic), `aria-selected`, and the owned panel's `aria-labelledby`.
+   DISCLOSURE  `<button class="ux-disclosure-toggle" aria-expanded aria-controls="ID"
+          data-ux-disclosure="KEY">` opening and closing the region `#ID`
+          (its `hidden`). One delegated listener, so it survives a page that
+          redraws its markup; the choice is remembered for the session per KEY,
+          and a page drawing a group asks `UXControls.disclosure.isOpen(KEY,
+          fallback)` for its state.
 
    Generalised from the Timetable Workspace's own menu script, whose placement
    rules (preferred edge, flip, clamp, phone sheet, re-place on resize) were
@@ -229,6 +235,32 @@
     });
   }
 
+  // ── Disclosure ────────────────────────────────────────────────
+  const DISCLOSURE_STORE = 'ux-disclosure:';
+  const disclosure = {
+    isOpen(key, fallback = true) {
+      try {
+        const saved = window.sessionStorage.getItem(DISCLOSURE_STORE + key);
+        if (saved === 'open') return true;
+        if (saved === 'closed') return false;
+      } catch (_) { /* a per-session convenience only */ }
+      return fallback;
+    },
+    remember(key, open) {
+      try { window.sessionStorage.setItem(DISCLOSURE_STORE + key, open ? 'open' : 'closed'); } catch (_) { /* as above */ }
+    },
+  };
+  document.addEventListener('click', event => {
+    const toggle = event.target.closest && event.target.closest('.ux-disclosure-toggle[aria-controls]');
+    if (!toggle) return;
+    const region = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (!region) return;
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', String(open));
+    region.hidden = !open;
+    if (toggle.dataset.uxDisclosure) disclosure.remember(toggle.dataset.uxDisclosure, open);
+  });
+
   function wire(root) {
     const scope = root || document;
     scope.querySelectorAll('button[aria-haspopup="menu"][aria-controls]').forEach(wireMenu);
@@ -240,7 +272,7 @@
     entries.forEach(entry => { if (!entry.anchor.contains(event.target)) close(entry); });
   });
 
-  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)) };
+  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure };
   // base.html loads this at the end of <body>, so the page's markup is already
   // there: wire it now, and again once parsing ends for anything later (wiring
   // is idempotent per control).

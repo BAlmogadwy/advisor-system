@@ -48,6 +48,7 @@ async function harness(t, split, intercept = () => undefined, arabic = false) {
   w.eval(read('static/js/timetable-meeting-policy.js'));
   // The page loads the shared slot-column module before its own script.
   w.eval(read('static/js/timetable-slot-config.js'));
+  w.eval(read('static/js/timetable-section-teacher.js'));
   if (!split) {
     d.getElementById('twYear').value = '1448'; d.getElementById('twTerm').value = '1';
     w.eval(read('static/js/dialog.js') + '\n;window.dlg = dlg;');

@@ -8438,27 +8438,15 @@ function hasSectionTeacher(p) {
   return Boolean(p) && Object.prototype.hasOwnProperty.call(p, 'teacher');
 }
 
-const TEACHER_TBD_REASONS = {
-  d10: ['Every eligible teacher already has the most sections of this course they may teach.', 'كل المدرسين المؤهلين لديهم أقصى عدد مسموح به من شعب هذا المقرر.'],
-  weekly_ceiling: ['Every eligible teacher is at the weekly limit.', 'كل المدرسين المؤهلين بلغوا الحد الأسبوعي.'],
-  clash: ['Every eligible teacher is teaching at this time.', 'كل المدرسين المؤهلين لديهم محاضرة في هذا الوقت.'],
-  daily_cap: ['Every eligible teacher is at the daily limit on this day.', 'كل المدرسين المؤهلين بلغوا الحد اليومي في هذا اليوم.'],
-  bound: ['Any eligible teacher would get a longer week.', 'إسنادها لأي مدرس مؤهل يطيل أسبوعه.'],
-};
-
+/* The section's teacher: the shared rule (timetable-section-teacher.js). */
 function sectionTeacherHtml(p) {
-  const t = p.teacher;
-  if (t && t.status === 'tbd') {
-    const hint = (TEACHER_TBD_REASONS[t.reason] || [])[IS_AR ? 1 : 0];
-    return `<span class="tws-instr-tbd">${IS_AR ? 'يُحدَّد المدرس لاحقاً' : 'Teacher to be decided'}</span>`
-      + (hint ? `<span class="tws-instr-hint">${esc(hint)}</span>` : '');
+  const teacher = window.TimetableSectionTeacher.teacherOf(p);
+  if (teacher.state === 'tbd') {
+    return `<span class="tws-instr-tbd">${esc(window.TimetableSectionTeacher.words.tbd)}</span>`
+      + (teacher.hint ? `<span class="tws-instr-hint">${esc(teacher.hint)}</span>` : '');
   }
-  // A section the map leaves out (no linked teacher, or another scenario's
-  // section with no known teacher) keeps the name on its meetings.
-  const meetingName = (p.meetings || []).map(m => String(m.instructor || '').trim()).find(Boolean) || '';
-  const name = (t && t.name) || (!t || t.status === 'no_links' || t.status === 'frozen_unknown' ? meetingName : '');
-  if (name) return `<span class="tws-instr-chip primary">${esc(name)}</span>`;
-  return `<span class="tws-instr-none">${IS_AR ? 'لا يوجد' : 'None'}</span>`;
+  if (teacher.state === 'named') return `<span class="tws-instr-chip primary">${esc(teacher.name)}</span>`;
+  return `<span class="tws-instr-none">${esc(window.TimetableSectionTeacher.words.none)}</span>`;
 }
 
 function drawerRenderInstructorChips(p) {

@@ -2261,6 +2261,30 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
    `<div class="ux-legend" role="note">` holding `.ux-legend-item`s, each a
    swatch (or icon) and its words. One quiet line that wraps; it is read once
    and then out of the way, so it sits after the content it explains. */
+/* ── Disclosure: a group whose header opens and closes it ─────
+   `<button class="ux-disclosure-toggle" aria-expanded aria-controls>` holding
+   its label (and, if it has one, a count that stays visible when closed),
+   then the region it controls. ux-controls.js does the opening. */
+.ux-disclosure-toggle {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; margin: 0; padding: 6px 4px;
+  border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: inherit;
+  font: inherit; font-weight: 700; text-align: start;
+  cursor: pointer;
+}
+.ux-disclosure-toggle:hover { background: color-mix(in srgb, var(--t0) 5%, transparent); }
+.ux-disclosure-chevron {
+  flex: none; margin-inline-start: auto;
+  width: 8px; height: 8px;
+  border-inline-end: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(45deg); opacity: 0.7;
+  transition: transform var(--dur-fast, 0.15s) var(--ease, ease);
+}
+.ux-disclosure-toggle[aria-expanded="false"] .ux-disclosure-chevron { transform: rotate(-45deg); }
+[dir="rtl"] .ux-disclosure-toggle[aria-expanded="false"] .ux-disclosure-chevron { transform: rotate(135deg); }
+@media (prefers-reduced-motion: reduce) { .ux-disclosure-chevron { transition: none; } }
+
 .ux-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
   margin: 0; padding: 8px 2px;

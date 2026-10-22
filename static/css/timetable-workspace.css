@@ -373,6 +373,13 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-pane-empty, .tw-pane-note { margin: 12px 4px; color: var(--t3); font-size: var(--text-sm); }
 
 /* Issues */
+.tw-issue-group-head { margin: 0; font: inherit; }
+.tw-issue-group + .tw-issue-group { margin-top: 6px; }
+/* Selection: the section's own issues, one line each. */
+.tw-sel-issues { list-style: none; margin: 0 0 10px; padding: 0; }
+.tw-sel-issues li { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; font-size: var(--text-sm); }
+.tw-sel-issues .ux-tone-icon { margin-top: 2px; }
+.tw-sel-hint { display: block; margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
 .tw-issue-head {
   display: flex; align-items: center; gap: 6px;
   margin: 14px 2px 6px;

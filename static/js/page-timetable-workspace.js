@@ -2002,10 +2002,10 @@ function createPlacementCard(p) {
   card.dataset.courseKey = courseColorKey(p.course_key || p.course_code);
   if (p.is_locked) card.classList.add('locked');
 
-  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
-  // One teacher per section when the rule is on (a section still to be decided
-  // shows none: its meeting row may carry a stale name).
-  const teacher = p.teacher ? (p.teacher.status === 'tbd' ? '' : (p.teacher.name || instructor)) : instructor;
+  // One teacher per section, by the shared rule (a section still to be
+  // decided shows none: its meeting row may carry a stale name).
+  const teacherInfo = window.TimetableSectionTeacher.teacherOf(p);
+  const teacher = teacherInfo.state === 'named' ? teacherInfo.name : '';
   const courseName = compactCourseName(p.course_name);
   const showCourseName = courseName && hasDuplicateCourseCode(p.course_code);
   // Its identity; applyCardTones() puts the reason for a tone in front of it.
@@ -2419,12 +2419,22 @@ function renderRightPanel(tab) {
       return;
     }
 
-    // Three groups in severity order; inside each, by kind as the model sorts.
+    // Three groups in severity order, each one opening and closing (global
+    // disclosure; the choice holds for the session, across every redraw).
+    // Context starts closed. Inside each, rows by kind as the model sorts.
     let html = notes;
     TONE_ORDER.forEach(tone => {
       const rows = model.rows.filter(row => row.tone === tone);
       if (!rows.length) return;
-      html += `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span><span class="tw-issue-count tnum">${model.counts[tone]}</span></h3>`;
+      const key = `tw-issues:${tone}`;
+      const fallback = tone !== 'info';
+      const open = window.UXControls?.disclosure ? window.UXControls.disclosure.isOpen(key, fallback) : fallback;
+      const region = `twIssues-${tone}`;
+      html += `<section class="tw-issue-group" data-tone="${tone}"><h3 class="tw-issue-group-head">`
+        + `<button type="button" class="ux-disclosure-toggle tw-issue-head" data-tone="${tone}" data-ux-disclosure="${key}" aria-expanded="${open}" aria-controls="${region}">`
+        + `<span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span>`
+        + `<span class="tw-issue-count tnum">${model.counts[tone]}</span><span class="ux-disclosure-chevron" aria-hidden="true"></span></button></h3>`
+        + `<div class="tw-issue-group-body" id="${region}"${open ? '' : ' hidden'}>`;
       rows.forEach(row => {
         const pendingWord = checking ? (IS_AR ? 'يجري التحقق' : 'checking') : (IS_AR ? 'من قبل آخر تعديل' : 'from before your last change');
         const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
@@ -2434,6 +2444,7 @@ function renderRightPanel(tab) {
           ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
           : `<div class="tw-issue-row tw-issue-static" data-tone="${tone}">${inner}</div>`;
       });
+      html += '</div></section>';
     });
     body.innerHTML = html;
 
@@ -2458,29 +2469,46 @@ function renderRightPanel(tab) {
     const p = TW.placements.find(x => x.id === TW.selectedPlacementId);
     if (!p) { body.innerHTML = ''; return; }
     const english = globalThis.TimetableMeetingPolicy?.isEnglish(p);
-    const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
     const dayLabel = code => DAY_LABELS[DAYS.indexOf(code)] || code || '—';
     const field = (label, value) => `<div class="tw-sel-field"><dt>${label}</dt><dd>${value}</dd></div>`;
-    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi>${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi>${m.instructor ? `<bdi>${esc(m.instructor)}</bdi>` : ''}</li>`).join('');
+    // A count of 0 is a count; only a missing one is unknown.
+    const count = value => (value === null || value === undefined || value === '') ? '—' : esc(Number(value).toLocaleString());
+    // The section's teacher by the one-teacher rule (a meeting row can carry a
+    // stale name, so the meetings list below names no one).
+    const teacher = window.TimetableSectionTeacher.teacherOf(p);
+    const teacherHtml = teacher.state === 'tbd'
+      ? `${esc(window.TimetableSectionTeacher.words.tbd)}${teacher.hint ? `<span class="tw-sel-hint">${esc(teacher.hint)}</span>` : ''}`
+      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : '—';
+    // What is wrong with this section, from the board's one issue model: what
+    // blocks publishing or lowers quality (context stays in the Issues tab),
+    // each naming what it is about — a pair shows both sections.
+    const ownRows = buildBoardIssues().rows.filter(row => row.tone !== 'info' && row.ids.includes(String(p.id)));
+    const ownIssues = ownRows.length
+      ? `<h3 class="tw-sel-subhead">${IS_AR ? 'مشاكل هذه الشعبة' : 'This section’s issues'}</h3><ul class="tw-sel-issues">${ownRows.map(row =>
+        `<li data-tone="${row.tone}"><span class="ux-tone-icon" data-tone="${row.tone}" role="img" aria-label="${esc(TONE_LEAD[row.tone])}"></span>`
+        + `<span><span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}</span> <bdi class="tw-sel-issue-subject">${isolateTimes(row.subject)}</bdi>${row.detail ? `<span class="tw-sel-hint"><bdi>${isolateTimes(row.detail)}</bdi></span>` : ''}</span></li>`).join('')}</ul>`
+      : '';
+    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
     body.innerHTML = `
       <div class="tw-sel-head">
         <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
         ${p.course_name ? `<div class="tw-sel-sub">${esc(compactCourseName(p.course_name))}</div>` : ''}
-        ${p.is_locked ? `<span class="pill-status pill-b">${IS_AR ? 'مقفلة' : 'Locked'}</span>` : ''}
+        ${p.is_locked ? `<span class="pill-status pill-b">${IS_AR ? 'الوقت مقفل' : 'Time locked'}</span>` : ''}
       </div>
+      ${ownIssues}
       ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-tw-mutation ${editable ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
       <dl class="tw-sel-fields">
         ${field(IS_AR ? 'اليوم' : 'Day', esc(dayLabel(p.day)))}
         ${field(IS_AR ? 'الوقت' : 'Time', `<bdi>${esc(p.start_time)}–${esc(p.end_time)}</bdi>`)}
         ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(placementRoomText(p) || (IS_AR ? 'لم تُحدَّد' : 'Not set'))}</bdi>`)}
-        ${field(IS_AR ? 'المدرس' : 'Instructor', instructor ? `<bdi>${esc(instructor)}</bdi>` : '—')}
-        ${field(IS_AR ? 'السعة' : 'Capacity', p.available_capacity ? esc(p.available_capacity) : '—')}
-        ${field(IS_AR ? 'المسجلون' : 'Registered', p.registered_count ? esc(p.registered_count) : '—')}
+        ${field(IS_AR ? 'المدرس' : 'Teacher', teacherHtml)}
+        ${field(IS_AR ? 'السعة' : 'Capacity', count(p.available_capacity))}
+        ${field(IS_AR ? 'المسجلون' : 'Registered', count(p.registered_count))}
       </dl>
       ${meetings ? `<h3 class="tw-sel-subhead">${IS_AR ? 'جميع لقاءات الشعبة' : 'All meetings of this section'}</h3><ul class="tw-sel-meetings">${meetings}</ul>` : ''}
       <div class="tw-sel-actions">
-        <button type="button" class="btn btn-sm btn-neutral" data-tw-mutation ${editable ? '' : 'disabled'} title="${esc(T.lockHelp)}" aria-pressed="${p.is_locked ? 'true' : 'false'}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل الوقت' : 'Lock time')}</button>
+        <button type="button" class="btn btn-sm btn-neutral" data-tw-mutation ${editable ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح قفل الوقت' : 'Unlock time') : (IS_AR ? 'قفل الوقت' : 'Lock time')}</button>
         <button type="button" class="btn btn-sm btn-outline-danger" data-tw-mutation ${editable ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة من الجدول' : 'Remove from timetable'}</button>
       </div>
       <p class="tw-sel-help">${esc(T.lockHelp)}</p>
