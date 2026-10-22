@@ -433,8 +433,10 @@ findings changed the plan:
    the first `used_sections` count as used), a drop names the course (key and
    name), and a drop of a course that meets N times a week is refused before
    any request — and the server's own "complete pattern" refusal reads the
-   same — with the count in words (`pluralAr` in Arabic). Place… (5f) gives
-   such a course its whole pattern.
+   same, re-reading the budget (with no count invented when the message has
+   none) — with the count (`pluralAr` in Arabic) and, until Place… (5f), a
+   pointer to split view, which places a whole pattern; Enter on such a row
+   says the same.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens

@@ -1804,21 +1804,22 @@ test('W11 Enter on an English row of the unplaced list opens its pattern; the ke
 });
 
 /* ── Placing a planned section from the list (design record §7.3, 5b) ── */
-function dropHarness(t, { arabic = false, refuse = null, budget = () => [] } = {}) {
+function dropHarness(t, { arabic = false, refuse = null, refuseCode = 'FULL_SECTION_PATTERN_REQUIRED', budget = () => [] } = {}) {
   const posts = [];
+  const seen = { budget: 0 };
   return harness(t, (url, opts) => {
     if (url === '/ops/tw/placements/create-planned/' && opts.method === 'POST') {
       posts.push(JSON.parse(opts.body));
-      if (refuse) return { httpError: 400, error: { code: 'FULL_SECTION_PATTERN_REQUIRED', message: refuse } };
+      if (refuse) return { httpError: 400, error: { code: refuseCode, message: refuse } };
       return { placement: { id: 99, term_section_id: 199 }, validation: {} };
     }
-    if (url.includes('/budget/')) return { budget: budget() };
+    if (url.includes('/budget/')) { seen.budget++; return { budget: budget() }; }
     if (url === '/ops/tw/boards/2/') return { placements: [at(10)], slot_config: scenario.slot_config };
     if (url.includes('/conflicts/')) return quiet;
     if (url.includes('/quality/')) return noRooms;
     if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     return undefined;
-  }, {}, arabic).then(h => Object.assign(h, { posts }));
+  }, {}, arabic).then(h => Object.assign(h, { posts, seen }));
 }
 const dropOn = async (h, payload) => {
   const cell = h.d.querySelector('#twGrid [role="gridcell"][data-day="MON"]');
@@ -1842,9 +1843,17 @@ test('J2 a drop of a course that meets several times a week sends nothing and sa
     assert.equal(h.posts.length, 0, 'no request');
     const warning = h.notices.find(n => n.type === 'warning');
     assert.equal(warning?.text, arabic
-      ? 'يُدرَّس \u2066CS323\u2069 مرتين أسبوعياً، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.'
-      : '\u2066CS323\u2069 meets 2 times a week, and its meetings are placed together; a drop places one. Nothing was placed.');
+      ? 'يُدرَّس \u2066CS323\u2069 مرتين أسبوعياً، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء. «العرض المقسّم» يضع نمطاً كاملاً.'
+      : '\u2066CS323\u2069 meets 2 times a week, and its meetings are placed together; a drop places one. Nothing was placed. Split view places a whole pattern.');
   }
+  // Arabic counts: few and many.
+  const ar = await dropHarness(t, { arabic: true });
+  await ar.select();
+  await dropOn(ar, plannedPayload({ required_meetings_per_section: 3 }));
+  await dropOn(ar, plannedPayload({ required_meetings_per_section: 11 }));
+  const words = ar.notices.filter(n => n.type === 'warning').map(n => n.text);
+  assert.match(words[0], /CS323\u2069 3 مرات أسبوعياً،/);
+  assert.match(words[1], /CS323\u2069 11 مرةً أسبوعياً،/);
 });
 
 test('J3 the server’s "complete pattern" refusal reads the same, as a warning, never an error', async t => {
@@ -1854,6 +1863,43 @@ test('J3 the server’s "complete pattern" refusal reads the same, as a warning,
   assert.equal(h.posts.length, 1);
   assert.equal(h.notices.filter(n => n.type === 'error').length, 0);
   assert.match(h.notices.find(n => n.type === 'warning')?.text || '', /meets 3 times a week/);
+  // Another "complete pattern" message, with no count: none is invented; the
+  // budget is read again (the row came from an older one).
+  const other = await dropHarness(t, { refuse: 'A complete planned section pattern must use one meeting per day.' });
+  await other.select();
+  const budgets = other.seen.budget;
+  await dropOn(other, plannedPayload({}));
+  await settle();
+  const said = other.notices.find(n => n.type === 'warning')?.text || '';
+  assert.match(said, /is placed with its whole weekly pattern/);
+  assert.doesNotMatch(said, /times a week/);
+  assert.equal(other.seen.budget, budgets + 1, 'the budget is read again');
+});
+
+test('J5 any other refusal stays an error with the server’s words', async t => {
+  const h = await dropHarness(t, { refuse: 'Pattern days are not on this board.', refuseCode: 'VALIDATION_PLANNED_PATTERN' });
+  await h.select();
+  await dropOn(h, plannedPayload({}));
+  assert.deepEqual(h.notices.map(n => [n.type, n.text]), [['error', 'Pattern days are not on this board.']]);
+});
+
+test('J6 a row dragged from the list carries its meeting count: a multi-meeting drop sends nothing', async t => {
+  const row = { course_code: 'CS323', course_key: 'CS323::K', programme_term: 3, planned_sections: 1, used_sections: 0, remaining_sections: 1, total_demand: 70, required_meetings_per_section: 3, used_section_labels: [] };
+  const h = await dropHarness(t, { budget: () => [row] });
+  await h.select();
+  await wait(() => h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]'));
+  const data = {};
+  const dragstart = new h.w.Event('dragstart', { bubbles: true });
+  dragstart.dataTransfer = { setData: (type, value) => { data[type] = value; }, effectAllowed: '' };
+  h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').dispatchEvent(dragstart);
+  const payload = JSON.parse(data['text/plain']);
+  assert.deepEqual([payload.required_meetings_per_section, payload.course_key], [3, 'CS323::K']);
+  await dropOn(h, payload);
+  assert.equal(h.posts.length, 0);
+  // Enter on that row says the same, not "drag it".
+  h.d.querySelector('#twSectionList [data-focus-key="place:CS323::K|S1"]').focus();
+  keyOn(h, 'Enter');
+  assert.match(h.d.getElementById('twBoardStatus').textContent, /meets 3 times a week/);
 });
 
 test('J4 the list proposes the free section labels: with S1 and S3 placed, S2', async t => {
@@ -1863,6 +1909,11 @@ test('J4 the list proposes the free section labels: with S1 and S3 placed, S2', 
   await wait(() => h.d.querySelector('#twSectionList [data-focus-key^="place:CS323|"]'));
   assert.deepEqual([...h.d.querySelectorAll('#twSectionList [data-focus-key^="place:CS323|"]')].map(e => e.dataset.focusKey), ['place:CS323|S2']);
   assert.match(h.d.querySelector('#twSectionList [data-focus-key="place:CS323|S2"]').textContent, /CS323 S2/);
+  // Labels as the server may send them: spaced, lower case, another scheme.
+  const spaced = await dropHarness(t, { budget: () => [{ ...row, remaining_sections: 2, used_section_labels: [' s2 ', 'M1'] }] });
+  await spaced.select();
+  await wait(() => spaced.d.querySelector('#twSectionList [data-focus-key^="place:CS323|"]'));
+  assert.deepEqual([...spaced.d.querySelectorAll('#twSectionList [data-focus-key^="place:CS323|"]')].map(e => e.dataset.focusKey), ['place:CS323|S1', 'place:CS323|S3']);
   // An older server without the list: the first used labels count as used.
   const old = await dropHarness(t, { budget: () => [row] });
   await old.select();

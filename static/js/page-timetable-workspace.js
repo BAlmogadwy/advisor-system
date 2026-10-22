@@ -136,7 +136,11 @@ function activateListRow(cell) {
     });
     return;
   }
-  announceBoard(IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.');
+  // A course placed with its whole pattern cannot be dropped (5b): say so.
+  const meetings = Number(cell.dataset.meetings) || 1;
+  announceBoard(meetings > 1
+    ? multiMeetingDropWords(cell.dataset.course || '', meetings)
+    : (IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.'));
 }
 
 // Expose workspace state for the PR8 async-job UI adapter (reads
@@ -1264,6 +1268,8 @@ function renderBudgetSidebar() {
       freeSectionLabels(c).forEach(secLabel => {
         const div = listRow(termGrid, `place:${c.course_key}|${secLabel}`);
         div.className = 'tw-section-item';
+        div.dataset.course = c.course_code;
+        div.dataset.meetings = String(Number(c.required_meetings_per_section) || 1);
         div.draggable = workspaceCanEdit();
         div.dataset.twDraggable = 'true';
         div.innerHTML = `
@@ -1325,12 +1331,20 @@ function freeSectionLabels(c) {
 }
 
 /* A drop places one meeting; a course that meets several times a week is
-   placed with its whole pattern (the server refuses less). */
+   placed with its whole pattern (the server refuses less). Until Place… (5f),
+   split view's create places a whole pattern. `n` unknown (a refusal that
+   does not say it): no count is invented. */
 function multiMeetingDropWords(code, n) {
   const what = `\u2066${code}\u2069`;
-  return IS_AR
+  const where = IS_AR ? ' «العرض المقسّم» يضع نمطاً كاملاً.' : ' Split view places a whole pattern.';
+  if (!n) {
+    return (IS_AR
+      ? `تُوضع ${what} بنمطها الأسبوعي كاملاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.`
+      : `${what} is placed with its whole weekly pattern; a drop places one meeting. Nothing was placed.`) + where;
+  }
+  return (IS_AR
     ? `يُدرَّس ${what} ${pluralAr(n, { two: 'مرتين أسبوعياً', few: '{n} مرات أسبوعياً', many: '{n} مرةً أسبوعياً', other: '{n} مرة أسبوعياً' })}، وتُوضع لقاءاته معاً، والإفلات يضع لقاءً واحداً. لم يُوضع شيء.`
-    : `${what} meets ${n} times a week, and its meetings are placed together; a drop places one. Nothing was placed.`;
+    : `${what} meets ${n} times a week, and its meetings are placed together; a drop places one. Nothing was placed.`) + where;
 }
 
 /* The list's grids: one per term (or one for the unplaced sections), each row
@@ -2537,9 +2551,12 @@ async function onDrop(e) {
       // reads the same.
       _onError: body => {
         if (body?.error?.code !== 'FULL_SECTION_PATTERN_REQUIRED') return false;
-        // "needs a complete N-meeting section pattern" (the view's message).
-        const n = Number(/(\d+)-meeting/.exec(String(body.error.message || ''))?.[1]) || 2;
+        // "needs a complete N-meeting section pattern" (the view's message);
+        // the code also covers other "complete pattern" messages: no count then.
+        const n = Number(/(\d+)-meeting/.exec(String(body.error.message || ''))?.[1]) || 0;
         notify.warning(multiMeetingDropWords(payload.course_code, n));
+        // The row was offered from an older budget: read it again.
+        loadBudget();
         return true;
       },
     });
