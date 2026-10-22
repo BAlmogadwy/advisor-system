@@ -23,31 +23,32 @@ from core.services.timetable_optimizer_v2 import (
     build_student_profiles_for_scenario,
 )
 from core.services.timetable_recovery_rooming import build_recovery_room_evaluator
+from core.services.timetable_room_audit import QUALITY_REASON
 from core.services.timetable_secondary_recovery import soft_unresolved_count
 from core.services.timetable_student_assignment import decode_score
 
 logger = logging.getLogger(__name__)
 
+#: The evaluator's report list behind each verdict that ``QUALITY_REASON`` shows.
+_REPORT_IDS = {
+    "missing": "original_unassigned_demand_ids",
+    "undersized": "original_undersized_demand_ids",
+    "unsuitable": "original_unsuitable_demand_ids",
+}
+
 
 def _rooms(scenario_id: int) -> dict[str, Any]:
     oracle = build_recovery_room_evaluator(scenario_id)
     report = oracle.original_room_report
-    missing = set(report["original_unassigned_demand_ids"])
-    undersized = set(report["original_undersized_demand_ids"])
-    incompatible = set(report["original_unsuitable_demand_ids"])
-    clashes = set(report["original_room_conflict_demand_ids"])
+    # Reasons in the payload's order: the room rule's verdicts (missing,
+    # undersized, incompatible = unsuitable), then the scenario-wide clash.
+    ids_by_reason = {
+        reason: set(report[_REPORT_IDS[verdict]]) for verdict, reason in QUALITY_REASON.items()
+    }
+    ids_by_reason["clash"] = set(report["original_room_conflict_demand_ids"])
     details = []
     for demand in oracle.demands:
-        reasons = [
-            reason
-            for reason, ids in (
-                ("missing", missing),
-                ("undersized", undersized),
-                ("incompatible", incompatible),
-                ("clash", clashes),
-            )
-            if demand.demand_id in ids
-        ]
+        reasons = [reason for reason, ids in ids_by_reason.items() if demand.demand_id in ids]
         if reasons:
             details.append(
                 {
@@ -67,11 +68,11 @@ def _rooms(scenario_id: int) -> dict[str, Any]:
             )
     return {
         "assessed": True,
-        "shortages": len(missing | undersized | incompatible | clashes),
-        "missing": len(missing),
-        "undersized": len(undersized),
-        "incompatible": len(incompatible),
-        "clashes": len(clashes),
+        "shortages": len(set().union(*ids_by_reason.values())),
+        "missing": len(ids_by_reason["missing"]),
+        "undersized": len(ids_by_reason["undersized"]),
+        "incompatible": len(ids_by_reason["incompatible"]),
+        "clashes": len(ids_by_reason["clash"]),
         "physical_meetings": len(oracle.demands),
         "details": details,
     }
