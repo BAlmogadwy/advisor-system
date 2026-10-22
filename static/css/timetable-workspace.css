@@ -284,7 +284,6 @@ html[data-theme="dark"] .tw-card .ci > * + *::before { color: var(--t4); }
 html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
 .tw-card.critical { box-shadow: inset 0 0 0 2px var(--sev-critical); }
 .tw-card.warning  { box-shadow: inset 0 0 0 2px var(--sev-warning); }
-.tw-card.info     { box-shadow: inset 0 0 0 1px var(--sev-info); }
 .tw-card.has-issue::after {
   content: ''; position: absolute; top: 4px; inset-inline-end: 4px;
   width: 12px; height: 12px;
@@ -295,10 +294,6 @@ html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35);
 .tw-card.warning.has-issue::after {
   background: var(--sev-warning);
   -webkit-mask-image: var(--ux-icon-warning); mask-image: var(--ux-icon-warning);
-}
-.tw-card.info.has-issue::after {
-  background: var(--sev-info);
-  -webkit-mask-image: var(--ux-icon-info); mask-image: var(--ux-icon-info);
 }
 /* Locked: its time is frozen. A hatch, not a fade — a faded card was unreadable. */
 .tw-card.locked {
@@ -346,25 +341,28 @@ html[data-theme="dark"] .tw-card.locked {
   background: var(--surface-2); color: var(--t2);
   font-size: var(--text-2xs); font-weight: 700;
 }
+/* A row: its kind, its subject, its detail. The group heading carries the
+   tone in words and icon; the start edge repeats it. */
 .tw-issue-row {
-  display: flex; align-items: flex-start; gap: 8px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 1px;
   box-sizing: border-box; width: 100%; margin-bottom: 4px; padding: 7px 9px;
-  border: 0; border-radius: var(--radius-sm);
+  border: 0; border-inline-start: 3px solid transparent; border-radius: var(--radius-sm);
   background: var(--surface); color: var(--t1);
   font: inherit; font-size: var(--text-sm); line-height: 1.4; text-align: start;
   cursor: pointer;
 }
 .tw-issue-row:hover { background: color-mix(in srgb, var(--teal) 9%, var(--surface)); }
 .tw-issue-row:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
-/* A server blocker has nothing on the grid to point at: it is read, not clicked. */
+.tw-issue-row[data-tone="critical"] { border-inline-start-color: var(--sev-critical); }
+.tw-issue-row[data-tone="warning"]  { border-inline-start-color: var(--sev-warning); }
+.tw-issue-row[data-tone="info"]     { border-inline-start-color: var(--sev-info); }
+/* A row with nothing on the grid to point at is read, not clicked. */
 .tw-issue-row.tw-issue-static,
-.tw-issue-row.tw-issue-static:hover { background: var(--sev-critical-bg); cursor: default; }
+.tw-issue-row.tw-issue-static:hover { background: var(--surface); cursor: default; }
+.tw-issue-kind { color: var(--t3); font-size: var(--text-2xs); font-weight: 600; }
+.tw-issue-subject { font-weight: 600; }
 .tw-issue-detail { color: var(--t3); font-size: var(--text-xs); }
 .tw-issue-note { margin: 0 0 var(--space-2); padding: 6px 10px; font-size: var(--text-xs); color: var(--t3); }
-.tw-issue-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; }
-.tw-issue-dot.critical { background: var(--sev-critical); }
-.tw-issue-dot.warning  { background: var(--sev-warning); }
-.tw-issue-dot.info     { background: var(--sev-info); }
 
 /* Selection */
 .tw-sel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 2px 10px; }

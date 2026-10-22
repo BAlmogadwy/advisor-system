@@ -61,6 +61,7 @@ import json
 import logging
 import math
 import re
+from dataclasses import dataclass
 
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
@@ -119,6 +120,7 @@ from core.services.timetable_mutation_guard import (
     scenario_busy_response,
 )
 from core.services.timetable_online import OnlineCourseLookup
+from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
 from core.services.timetable_plan_lens import build_scenario_plan_lens
 from core.services.timetable_repair import (
     TimetableRepairOperationError,
@@ -343,8 +345,72 @@ def _programme_marks(scenario_id: int) -> dict | None:
     return {"scenario_id": scenario_id, "frozen": external_shared_section_ids(scenario_id)}
 
 
+_MEETING_FIELDS = ("day", "start_time", "end_time", "building", "room", "instructor")
+
+
+@dataclass
+class PlacementPayloadContext:
+    """What every placement payload of one request shares, read once.
+
+    ``meetings`` maps a section to its meeting rows (one query for a list, not
+    one per placement); ``shared`` is the set of sections another scenario
+    also places (``external_shared_section_ids``); ``online`` answers whether a
+    course is online for a board, as the publish check decides it.
+    """
+
+    meetings: dict[int, list[dict[str, object]]]
+    shared: set[int]
+    online: OnlineCourseLookup
+    boards: dict[int, DeliveryBoard]
+
+    @classmethod
+    def build(cls, scenario_id: int, placements: list[SectionPlacement]) -> PlacementPayloadContext:
+        section_ids = {p.term_section_id for p in placements}
+        meetings: dict[int, list[dict[str, object]]] = {sid: [] for sid in section_ids}
+        for row in (
+            TermSectionMeeting.objects.filter(term_section_id__in=section_ids)
+            .order_by("id")
+            .values("term_section_id", *_MEETING_FIELDS)
+        ):
+            meetings[row.pop("term_section_id")].append(row)
+        boards = {
+            b.id: b for b in DeliveryBoard.objects.filter(id__in={p.board_id for p in placements})
+        }
+        return cls(
+            meetings=meetings,
+            shared=external_shared_section_ids(scenario_id),
+            online=OnlineCourseLookup(),
+            boards=boards,
+        )
+
+
+def _room_state(room: str | None) -> str:
+    """``assigned``, ``unset`` (blank) or ``unassigned`` (the placer's marker).
+
+    Exact equality with ``UNASSIGNED``, as the publish check filters it.
+    """
+    if room == "UNASSIGNED":
+        return "unassigned"
+    return "assigned" if (room or "").strip() else "unset"
+
+
+def _placement_payloads(
+    primary: SectionPlacement, rows, teachers: dict | None, marks: dict | None
+) -> dict[str, object]:
+    """``placement`` and the board's ``placements``, from one shared context."""
+    rows = list(rows)
+    ctx = PlacementPayloadContext.build(primary.board.scenario_id, [primary, *rows])
+    return {
+        "placement": _placement_to_dict(primary, teachers, marks, ctx),
+        "placements": [_placement_to_dict(row, teachers, marks, ctx) for row in rows],
+    }
+
+
 def _placement_to_dict(
-    p: SectionPlacement, teachers: dict | None = None, marks: dict | None = None
+    p: SectionPlacement,
+    teachers: dict | None = None,
+    marks: dict | None = None,
+    ctx: PlacementPayloadContext | None = None,
 ) -> dict[str, object]:
     """Serialise a ``SectionPlacement`` with its meetings to a JSON-safe dict.
 
@@ -356,13 +422,26 @@ def _placement_to_dict(
     section's ``preferred_programme`` and whether this board may change it
     (``preferred_programme_editable``: the board's scenario owns the section
     and no other scenario places it).
+
+    Every payload also says, whatever the flags, what the publish check would
+    say about its room: ``is_online`` (online for its board), ``needs_room``
+    (not online, and no meeting policy or one that uses a shared room),
+    ``room_state`` and ``shared_with_other_scenario``. A list passes one
+    ``ctx`` (``PlacementPayloadContext.build``); a single payload builds its own.
     """
     ts = p.term_section
-    meetings = list(
-        TermSectionMeeting.objects.filter(term_section=ts).values(
-            "day", "start_time", "end_time", "building", "room", "instructor"
+    if ctx is None:
+        ctx = PlacementPayloadContext.build(p.board.scenario_id, [p])
+    meetings = ctx.meetings.get(ts.id)
+    if meetings is None:
+        meetings = list(
+            TermSectionMeeting.objects.filter(term_section=ts)
+            .order_by("id")
+            .values(*_MEETING_FIELDS)
         )
-    )
+    policy = section_policy(ts)
+    board = ctx.boards.get(p.board_id) or p.board
+    is_online = ctx.online.is_online_course_for_board(board, ts.course_code)
     out: dict[str, object] = {
         "id": p.id,
         "board_id": p.board_id,
@@ -378,11 +457,13 @@ def _placement_to_dict(
         "end_time": p.end_time,
         "room": p.room,
         "is_locked": p.is_locked,
-        **({"room_required": False, "no_room_required": True} if section_policy(ts) else {}),
+        **({"room_required": False, "no_room_required": True} if policy else {}),
         "meetings": meetings,
-        "section_policy": policy_payload(section_policy(ts), meetings)
-        if section_policy(ts)
-        else None,
+        "section_policy": policy_payload(policy, meetings) if policy else None,
+        "is_online": is_online,
+        "needs_room": not is_online and (policy is None or bool(policy.uses_shared_room)),
+        "room_state": _room_state(p.room),
+        "shared_with_other_scenario": ts.id in ctx.shared,
     }
     if teachers is not None:
         out["teacher"] = teachers.get(ts.id)
@@ -1540,7 +1621,9 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
 
-    placements = SectionPlacement.objects.filter(board=board).select_related("term_section")
+    placements = list(
+        SectionPlacement.objects.filter(board=board).select_related("term_section", "board")
+    )
     from core.models import BoardStudentLink
 
     primary_count = BoardStudentLink.objects.filter(board=board, link_type="primary").count()
@@ -1554,7 +1637,11 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
             "lab_slot_config": board.scenario.lab_slot_config,
             "effective_slot_config": effective_lecture_slots(board.scenario),
             "effective_lab_slot_config": effective_lab_slots(board.scenario),
-            "placements": [_placement_to_dict(p, teachers, marks) for p in placements],
+            "placements": [
+                _placement_to_dict(p, teachers, marks, ctx)
+                for ctx in [PlacementPayloadContext.build(board.scenario_id, placements)]
+                for p in placements
+            ],
             "primary_student_count": primary_count,
             "visitor_student_count": visitor_count,
         }
@@ -1614,6 +1701,9 @@ def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse
             **conflicts,
             "student_impact": student_impact,
             "cross_board_conflicts": cross_board,
+            # Publish readiness warns about a cross-board pair at this many
+            # shared students; the page uses the same line (no copy of its own).
+            "hard_overlap_threshold": HARD_OVERLAP_THRESHOLD,
         }
     )
 
@@ -1863,8 +1953,7 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     marks = _programme_marks(result["board"].scenario_id)
     return _ok(
         {
-            "placement": _placement_to_dict(placement, teachers, marks),
-            "placements": [_placement_to_dict(item, teachers, marks) for item in placements],
+            **_placement_payloads(placement, placements, teachers, marks),
             "validation": validation,
             "validations": validations,
             # Forwarded from the service, which already populated
@@ -1975,8 +2064,7 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         marks = _programme_marks(board.scenario_id)
         return _ok(
             {
-                "placement": _placement_to_dict(placement, teachers, marks),
-                "placements": [_placement_to_dict(row, teachers, marks) for row in placements],
+                **_placement_payloads(placement, placements, teachers, marks),
                 "section_policy": policy_payload(section_policy(ts), placements),
                 **_policy_bundle_feedback(placements),
             },
@@ -2832,8 +2920,7 @@ def _switch_policy_response(
     return _ok(
         {
             **result,
-            "placement": _placement_to_dict(result["placement"], teachers, marks),
-            "placements": [_placement_to_dict(row, teachers, marks) for row in rows],
+            **_placement_payloads(result["placement"], rows, teachers, marks),
             **_policy_bundle_feedback(rows),
         }
     )
@@ -3000,8 +3087,7 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     marks = _programme_marks(scenario_id)
     return _ok(
         {
-            "placement": _placement_to_dict(placement, teachers, marks),
-            "placements": [_placement_to_dict(row, teachers, marks) for row in rows],
+            **_placement_payloads(placement, rows, teachers, marks),
             "validation": validation,
             "instructor_clash_backstop": backstop,
         }

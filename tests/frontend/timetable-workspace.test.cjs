@@ -60,7 +60,9 @@ test('saved scenario shows evaluated scope and genuine buffered room shortages i
   assert.equal(h.d.getElementById('twQualityInstructorDays').textContent, '18');
   assert.equal(h.d.getElementById('twQualityInstructorIdle').textContent, '780');
   assert.equal(h.d.getElementById('twQualityRooms').textContent, '3');
-  assert.match(h.d.getElementById('twRightBody').textContent, /CS323.*LAB25.*undersized.*26/);
+  // In words, never the raw reason code.
+  assert.match(h.d.getElementById('twRightBody').textContent, /Room too small.*CS323 · LAB25.*needs 26 seats/);
+  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /undersized/);
   h.w.renderRightPanel('mri');
   assert.match(h.d.getElementById('twRightBody').textContent, /1 meetings lack a suitable room/);
   assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /verified shared-student/);
@@ -254,9 +256,11 @@ for (const arabic of [false, true]) test(`the inspector's Lock button says a loc
 // H15 severity is decided once on the server: a same-course overlap or one
 // that leaves students with no clash-free pair is critical; one they can route
 // round through sibling sections is a warning, and must not read as red here.
+// The Issues tab groups by what each does (blocks publishing / lowers quality),
+// and each row names its kind.
 const OVERLAP_LABELS = {
-  en: { critical: 'Same-board time clash', warning: 'Same-board overlap (non-blocking)' },
-  ar: { critical: 'تعارض زمني داخل اللوحة', warning: 'تداخل زمني داخل اللوحة لا يمنع النشر' },
+  en: { critical: 'Blocks publishing', warning: 'Lowers quality', criticalKind: 'Time clash', warningKind: 'Overlap students can route round' },
+  ar: { critical: 'يمنع النشر', warning: 'يُضعف الجودة', criticalKind: 'تعارض زمني', warningKind: 'تداخل يمكن تجاوزه' },
 };
 for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning on the board button, cards, Issues and MRI (${arabic ? 'ar' : 'en'})`, async t => {
   const at = (id, day) => ({ ...placement, id, term_section_id: id + 100, course_code: `AI${id}`, day, room: '' });
@@ -275,15 +279,17 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
   assert.ok(card(10).classList.contains('critical'));
   assert.ok(card(12).classList.contains('warning'));
   assert.equal(card(12).classList.contains('critical'), false);
-  assert.ok(card(12).title.startsWith(label.warning));
+  assert.ok(card(12).title.startsWith(`${label.warning}: ${label.warningKind}`), card(12).title);
   h.w.renderRightPanel('issues');
   const issue = text => {
     const head = [...h.d.querySelectorAll('#twRightBody .tw-issue-head')].find(node => node.children[1]?.textContent === text);
     assert.ok(head, text);
-    return [head.dataset.tone, head.querySelector('.tw-issue-count').textContent, head.nextElementSibling.querySelector('.tw-issue-dot').className, head.nextElementSibling.querySelector('.fw-semibold').textContent];
+    const row = head.nextElementSibling;
+    return [head.dataset.tone, head.querySelector('.tw-issue-count').textContent, row.dataset.tone, row.querySelector('.tw-issue-kind').textContent, row.querySelector('.tw-issue-subject').textContent];
   };
-  assert.deepEqual(issue(label.critical), ['critical', '1', 'tw-issue-dot critical', 'AI10-S1 / AI11-S1']);
-  assert.deepEqual(issue(label.warning), ['warning', '1', 'tw-issue-dot warning', 'AI12-S1 / AI13-S1']);
+  assert.deepEqual(issue(label.critical), ['critical', '1', 'critical', label.criticalKind, 'AI10-S1 / AI11-S1']);
+  // Lowers quality: the overlap, and the quality fixture's room too small for AI10.
+  assert.deepEqual(issue(label.warning), ['warning', '2', 'warning', label.warningKind, 'AI12-S1 / AI13-S1']);
   // With only the warning left, the MRI panel counts no critical and paints it amber.
   h.w.TW.conflicts = { ...conflicts, summary: { critical: 0, warning: 1 }, overlaps: [conflicts.overlaps[1]] };
   h.w.renderRightPanel('mri');
@@ -381,8 +387,8 @@ test('the Issues count follows the data while another inspector tab is open', as
   });
   await h.select();
   const counts = () => [h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twRightRailCount').textContent];
-  // Board 2: its cross-board clash and its undersized room.
-  assert.deepEqual(counts(), ['2', '2']);
+  // Board 2: its undersized room (its cross-board pair is context, never counted).
+  assert.deepEqual(counts(), ['1', '1']);
   h.d.getElementById('twTabSelection').click();
   assert.ok(h.d.getElementById('twTabSelection').classList.contains('active'));
   await h.w.selectBoard(3);
@@ -396,7 +402,7 @@ test('the Issues count follows the data while another inspector tab is open', as
   assert.deepEqual(counts(), ['1', '1']);
   assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'critical');
   await h.w.selectBoard(2);
-  assert.deepEqual(counts(), ['2', '2']);
+  assert.deepEqual(counts(), ['1', '1']);
   assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'warning');
   assert.ok(h.d.getElementById('twTabSelection').classList.contains('active'), 'Selection stayed open throughout');
   assert.deepEqual(h.errors, []);
@@ -417,7 +423,8 @@ test('a board switch never counts the previous board’s clashes while its own l
   });
   await h.select();
   const counts = () => [h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twRightRailCount').textContent];
-  assert.deepEqual(counts(), ['2', '2']);
+  // Board 2's undersized room (its cross-board pair is context, listed but never counted).
+  assert.deepEqual(counts(), ['1', '1']);
   const switching = h.w.selectBoard(3);
   await wait(() => h.w.TW.placements[0]?.id === 11);
   // Something redraws inside the window: a readiness answer lands.
@@ -462,10 +469,11 @@ test('a refused Publish redraws the board flags, the count and the open Issues t
   });
   await h.select();
   h.w.dlg = { confirm: async () => true };
-  assert.equal(h.d.getElementById('twIssuesCount').textContent, '2');
+  // Before: one thing lowers quality (the undersized room).
+  assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone], ['1', 'warning']);
   await h.w.publishScenario();
-  assert.equal(h.d.getElementById('twIssuesCount').textContent, '3');
-  assert.equal(h.d.getElementById('twIssuesCount').dataset.tone, 'critical');
+  // After: the count says what blocks publishing — the refused section.
+  assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone], ['1', 'critical']);
   assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '1');
   assert.match(h.d.getElementById('twRightBody').textContent, /Blocks publishing/);
   assert.match(h.d.getElementById('twPublishLabel').textContent, /1 blocker/);
@@ -481,7 +489,8 @@ test('a failed conflicts refresh on the same board shows them as not loaded, not
     return undefined;
   });
   await h.select();
-  assert.equal(h.d.getElementById('twIssuesCount').textContent, '2', 'its cross-board clash and its undersized room');
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '1', 'its undersized room');
+  assert.match(h.d.getElementById('twRightBody').textContent, /CS323 ↔ FE2/, 'the cross-board pair is listed while known');
   fail = true;
   await h.w.selectBoard(2);
   const body = h.d.getElementById('twRightBody').textContent;
@@ -618,4 +627,138 @@ test('a line the editor cannot read saves nothing and is named; a refused column
   dialogs(h, true, false);
   await h.w.openSlotEditor();
   assert.ok(h.notices.some(n => n.type === 'error' && n.text === 'The columns were not saved: Lectures, line 1: end must be after the start'), JSON.stringify(h.notices));
+});
+
+/* ── One issue model: cards, Issues, counts and board buttons agree with the server ── */
+const at = (id, extra = {}) => ({ ...placement, id, term_section_id: id + 100, course_code: `AI${id}`, room: 'R1',
+  needs_room: true, room_state: 'assigned', is_online: false, shared_with_other_scenario: false, ...extra });
+const quiet = { summary: { critical: 0, warning: 0 }, overlaps: [], instructor_clashes: [], room_clashes: [], cross_board_conflicts: [], hard_overlap_threshold: 20 };
+const noRooms = { ...quality, rooms: { assessed: true, shortages: 0, details: [] } };
+function modelHarness(t, { placements, conflicts = quiet, q = noRooms, boards = [board], extra = {}, readiness = null }) {
+  return harness(t, url => {
+    if (url === '/ops/tw/boards/2/') return { placements, slot_config: scenario.slot_config };
+    if (url.includes('/conflicts/')) return conflicts;
+    if (url.includes('/quality/')) return q;
+    if (url.startsWith('/ops/tw/boards/?')) return { boards };
+    if (url.includes('/readiness/')) return { readiness: readiness || { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    return undefined;
+  }, extra);
+}
+const card = (h, id) => h.d.querySelector(`.tw-card[data-placement-id="${id}"]`);
+const tone = (h, id) => ['critical', 'warning'].find(name => card(h, id).classList.contains(name)) || '';
+const issuesText = h => { h.w.renderRightPanel('issues'); return h.d.getElementById('twRightBody').textContent; };
+
+test('a room double-booked and a meeting with no room block publishing everywhere', async t => {
+  const h = await modelHarness(t, {
+    placements: [at(10, { day: 'SUN' }), at(11, { day: 'MON' }), at(12, { day: 'TUE', room: 'UNASSIGNED', room_state: 'unassigned' })],
+    conflicts: { ...quiet, summary: { critical: 0, warning: 1 }, room_clashes: [{ ids: [10, 11], room: 'R1', sections: ['AI10-S1', 'AI11-S1'] }] },
+  });
+  await h.select();
+  assert.deepEqual([tone(h, 10), tone(h, 11), tone(h, 12)], ['critical', 'critical', 'critical']);
+  assert.match(card(h, 10).title, /^Blocks publishing: Room double-booked/);
+  assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '2');
+  assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone], ['2', 'critical']);
+  const text = issuesText(h);
+  assert.match(text, /Blocks publishing2Room double-booked/);
+  assert.match(text, /No roomAI12 S1/);
+  // The placer's marker is never shown: the card says "No room".
+  assert.doesNotMatch(h.d.getElementById('twGrid').textContent + text, /UNASSIGNED/);
+  assert.match(card(h, 12).textContent, /No room/);
+  assert.deepEqual(h.errors, []);
+});
+
+test('a blank room lowers quality, an online meeting needs none, and Arabic never shows the marker', async t => {
+  for (const arabic of [false, true]) {
+    const h = await harness(t, url => url === '/ops/tw/boards/2/'
+      ? { placements: [at(10, { room: '', room_state: 'unset' }), at(11, { day: 'MON', room: '', room_state: 'unset', is_online: true, needs_room: false }), at(12, { day: 'TUE', room: 'UNASSIGNED', room_state: 'unassigned', needs_room: false })], slot_config: scenario.slot_config }
+      : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined, {}, arabic);
+    await h.select();
+    assert.deepEqual([tone(h, 10), tone(h, 11), tone(h, 12)], ['warning', '', ''], 'a room only where one is needed');
+    assert.match(card(h, 11).textContent, arabic ? /عن بُعد/ : /Online/);
+    assert.doesNotMatch(h.d.getElementById('twGrid').textContent, /UNASSIGNED/);
+    assert.match(issuesText(h), arabic ? /لم تُحدَّد القاعة بعد/ : /Room not assigned yet/);
+  }
+});
+
+test('sections sharing a time are not red by themselves, and unknown clashes tone nothing', async t => {
+  const pending = deferred();
+  let hold = false;
+  const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements: [at(10), at(11)], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? (hold ? pending.promise : quiet) : url.includes('/quality/') ? noRooms : undefined);
+  await h.select();
+  assert.equal(card(h, 10).parentElement, card(h, 11).parentElement, 'both in one cell');
+  assert.deepEqual([tone(h, 10), tone(h, 11)], ['', ''], 'no server clash: no red');
+  // The board reloads its clashes: until they answer, nothing is toned from them.
+  hold = true;
+  h.w.TW.conflicts = { ...quiet, room_clashes: [{ ids: [10, 11], room: 'R1', sections: [] }] };
+  h.w.TW.conflictsBoardId = null;
+  h.w.renderWorkspaceQuality();
+  assert.deepEqual([tone(h, 10), tone(h, 11)], ['', '']);
+  assert.match(issuesText(h), /This board’s clashes are not loaded/);
+  pending.resolve(quiet);
+});
+
+test('a grid drawn again is toned at once, before any other redraw', async t => {
+  const h = await modelHarness(t, { placements: [at(10)], q: quality });
+  await h.select();
+  h.w.renderGrid();  // a filter keystroke, a move: new cards
+  assert.equal(tone(h, 10), 'warning');
+});
+
+test('a check older than the last edit lists its rows as being checked and tones no card', async t => {
+  const h = await modelHarness(t, { placements: [at(10)], q: quality });
+  await h.select();
+  assert.equal(tone(h, 10), 'warning', 'the fresh room check tones the card');
+  const before = card(h, 10);
+  h.w.TW.dataVersion++;  // an edit: the quality answer is now about older data
+  h.w.renderWorkspaceQuality();
+  assert.equal(card(h, 10), before, 'tones change in place: the grid is not rebuilt');
+  assert.equal(tone(h, 10), '', 'a stale check tones nothing');
+  const text = issuesText(h);
+  assert.match(text, /Room too small · checking/);
+  assert.match(text, /Some items are from before your last change/);
+});
+
+test('a cross-board pair at the publish line lowers quality; below it, it is context and never counted', async t => {
+  const pair = n => ({ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: n, board_a_label: 'Term 7', board_b_label: 'Term 8' });
+  for (const [n, expected] of [[20, ['1', 'warning', 'warning']], [19, ['', '', '']]]) {
+    const h = await modelHarness(t, { placements: [at(10)], conflicts: { ...quiet, cross_board_conflicts: [pair(n)] } });
+    await h.select();
+    assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone || '', tone(h, 10)], expected, `overlap ${n}`);
+    assert.match(issuesText(h), n >= 20 ? /Lowers quality1Overlap with another board/ : /For context1Possible overlap with another board/);
+  }
+});
+
+test('a blocked time and a meeting outside the grid are listed and toned', async t => {
+  const h = await modelHarness(t, {
+    placements: [at(10), at(11, { day: 'MON', start_time: '18:30', end_time: '19:45' })],
+    extra: { blocked_slots: [{ day: 'SUN', start: '09:00' }] },
+  });
+  await h.select();
+  const text = issuesText(h);
+  assert.match(text, /On a blocked timeAI10 S1Sun 09:00–10:15/);
+  assert.match(text, /Outside the grid’s columnsAI11 S1Mon 18:30–19:45/);
+  assert.equal(tone(h, 10), 'critical');
+});
+
+test('a section another scenario owns does not drag, even after the controls are re-synced', async t => {
+  const h = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON', shared_with_other_scenario: true })] });
+  await h.select();
+  assert.deepEqual([card(h, 10).draggable, card(h, 11).draggable], [true, false]);
+  h.w.syncWorkspaceControls();
+  assert.deepEqual([card(h, 10).draggable, card(h, 11).draggable], [true, false]);
+});
+
+test('another board’s flag counts its publish-check items, not a stale list figure', async t => {
+  const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8, critical: 9 };
+  const readiness = { ready: false, blockers: ['a', 'b'], warnings: [], warning_items: [], blocker_items: [
+    { code: 'board_critical_conflicts', board_id: 3, count: 2, params: {} },
+    { code: 'missing_required_section', board_id: null, count: 1, params: { course_code: 'AI8', programme_term: 8, planned_sections: 1, used_sections: 0 } },
+  ] };
+  const h = await modelHarness(t, { placements: [at(10)], boards: [board, other], readiness });
+  await h.select();
+  const flag = () => h.d.querySelector('#twBoardTabs [data-board-id="3"] .ux-seg-flag')?.textContent;
+  assert.equal(flag(), '9', 'before any check: the board list’s own count');
+  await h.w.refreshPublishReadiness(true);
+  assert.equal(flag(), '3', 'two blocking clashes and one section placed nowhere');
 });
