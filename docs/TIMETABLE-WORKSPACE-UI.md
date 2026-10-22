@@ -143,12 +143,15 @@ padding-aware for `p-0`.
   none (jsdom); one at a time (`open` answers false while one is open); menus
   close first; focus to `initialFocus()`, else the first control that takes
   it (never a hidden input). Delegated listeners close it, as `'cancel'`, from
-  its `[data-dialog-close]` buttons (never a submit, whatever their type), the
+  its `[data-dialog-close]` buttons (never a submit, whatever their type; one
+  with no type is given `type="button"` at open, so Enter in a text field
+  never clicks it as the form's default button), the
   browser's `cancel` (stopped, then closed by the helper) and, in fallback
   mode, an Escape no control inside has used. A native close no cancel began
   (a `<form method="dialog">` submitted, page code calling `dialog.close()`)
   is bookkept as `'close'`. At close, focus goes to what `returnFocus()` gives
-  **then** (on the page, enabled, not inside `[hidden]` or `.d-none`), and
+  **then** (on the page, enabled, not a hidden input, not inside `[hidden]`
+  or `.d-none`), and
   `ux-dialog-close` fires with `{reason}`. It acts only on dialogs it opened:
   Generate and the English chooser keep their own handlers.
 - `.ux-dialog-scroll` — a dialog whose body scrolls while its head and foot
@@ -1027,7 +1030,7 @@ open(dialog, {initialFocus, returnFocus}) -> boolean
 close(dialog, reason = 'close')
 ```
 - Does nothing for a dialog the helper did not open.
-- Closes the dialog, then focuses `returnFocus()` if that element is connected, enabled and not inside `[hidden]` or `.d-none`.
+- Closes the dialog, then focuses `returnFocus()` if that element is connected, enabled, not a hidden input and not inside `[hidden]` or `.d-none`.
 - Dispatches `ux-dialog-close` with `{reason}`.
 
 ```

@@ -740,7 +740,9 @@
      gives if it can take focus (on the page, enabled, not a hidden input, not
      inside `[hidden]` or `.d-none`), then fires `ux-dialog-close` (bubbling,
      `detail.reason`). The user's ways out are 'cancel': a
-     `[data-dialog-close]` button (never a submit, whatever its type) and
+     `[data-dialog-close]` button (never a submit, whatever its type: one
+     with no type is given `type="button"` at open, so it is never the
+     form's default button that Enter in a text field clicks) and
      Escape (the browser's `cancel`, or a keydown in fallback mode). A close
      the helper did not start and no cancel began (a `<form method="dialog">`
      submitted, page code calling `dialog.close()`) is 'close'. Every listener
@@ -772,6 +774,11 @@
     }
     dialogs.set(dialog, { returnFocus });
     shownDialog = dialog;
+    // A button with no type is a submit button, and the form's first submit
+    // button is its default: Enter in a text field (a filter) would click a
+    // way out placed before the commit and close the dialog. Each way out is
+    // given the type it means; one added later is still stopped at its click.
+    dialog.querySelectorAll('button[data-dialog-close]:not([type])').forEach(button => { button.type = 'button'; });
     const wanted = typeof initialFocus === 'function' ? initialFocus() : null;
     const first = canTakeFocus(wanted) ? wanted
       : [...dialog.querySelectorAll(FOCUSABLE)].find(canTakeFocus);

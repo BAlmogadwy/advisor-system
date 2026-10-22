@@ -977,6 +977,16 @@ test('G4 opening a helper dialog closes an open menu; isOpen answers only for a 
   assert.equal(D.isOpen(h.dlg), false, 'off the page');
   assert.equal(D.open(h.$('next')), true, 'the next helper dialog opens');
   assert.equal(D.isOpen(h.$('next')), true);
+  // Forgotten for good: put back on the page, still [open], it is not the
+  // helper's, and its way out never runs the resolver it was opened with.
+  D.close(h.$('next'));
+  const closes = h.closes.length;
+  h.doc.body.append(h.dlg);
+  assert.equal(D.isOpen(h.dlg), false, 'back on the page: still forgotten');
+  h.$('opener').focus();
+  h.$('dlgCancel').click();
+  assert.deepEqual([h.closes.length, h.dlg.hasAttribute('open'), h.doc.activeElement], [closes, true, h.$('opener')],
+    'its way out is not the helper’s to run');
   await tick();  // the menu's observer answers while the window is still there
   h.dom.window.close();
 });
@@ -990,15 +1000,21 @@ test('G5 a way out with no type never submits; a fallback Escape inside a nested
   // A Close with no type is a submit button of the form: closed as a cancel,
   // and the choice it closes on is not submitted.
   h.$('dlgCancel').insertAdjacentHTML('beforebegin', '<button id="dlgBare" data-dialog-close>Close</button>');
+  // A dialog the page owns, already open, with the same untyped way out.
+  h.doc.body.insertAdjacentHTML('beforeend', '<dialog id="pageOwn" open><form method="dialog"><button id="pageBare" data-dialog-close>Close</button></form></dialog>');
   D.open(h.dlg, options);
+  // Given the type it means at open: never the form's default button, which
+  // Enter in the filter would click (the commit after it is the default).
+  assert.equal(h.$('dlgBare').getAttribute('type'), 'button');
+  h.$('dlgBare').removeAttribute('type');  // one that loses it later is still stopped at its click
   h.$('dlgBare').click();
   assert.deepEqual([D.isOpen(h.dlg), h.closes, submits], [false, ['cancel'], []], 'closed as a cancel, nothing submitted');
   assert.equal(h.doc.activeElement, h.$('opener'));
   // The same button in a dialog the page owns keeps the browser's behaviour.
-  h.doc.body.insertAdjacentHTML('beforeend', '<dialog id="pageOwn" open><form method="dialog"><button id="pageBare" data-dialog-close>Close</button></form></dialog>');
   const click = new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
   h.$('pageBare').dispatchEvent(click);
   assert.deepEqual([click.defaultPrevented, submits], [false, ['pageBare']], 'not the helper’s to stop');
+  assert.equal(h.$('pageBare').hasAttribute('type'), false, 'and its type is left alone');
   h.$('pageOwn').remove();
   // A page dialog open inside the helper's (fallback mode): an Escape in it
   // is its own, and the helper's dialog stays open.
@@ -1049,4 +1065,21 @@ test('C2 forced colours: every choice row draws a border, the chosen row a Highl
   assert.match(declared('.ux-choice:focus-within', 'outline'), /^2px solid CanvasText$/, 'the row with the keyboard: an outline');
   assert.equal(declared('.ux-choice:has(input:checked)', 'outline'), '', 'the chosen mark leaves the outline to focus');
   assert.equal(declared('.ux-choice:focus-within', 'border'), '', 'and focus leaves the border to the chosen mark');
+  // Nothing moves when a row is chosen: on every edge the border and the
+  // padding add up to the same, a tone row's thick start edge included
+  // (its width comes from the rule outside the media query).
+  const px = value => parseFloat(value) || 0;
+  const box = selector => {
+    const [block, inline = block] = declared(selector, 'padding').split(/\s+/);
+    return { block: px(block), inline: px(inline) };
+  };
+  const frame = px(declared('.ux-choice', 'border'));
+  const mark = px(declared('.ux-choice:has(input:checked)', 'border'));
+  const plain = box('.ux-choice'), chosen = box('.ux-choice:has(input:checked)');
+  assert.equal(frame + plain.block, mark + chosen.block, 'top and bottom stay put');
+  assert.equal(frame + plain.inline, mark + chosen.inline, 'the sides stay put');
+  const toneEdge = px(/^\.ux-choice\[data-tone\]\s*\{\s*border-inline-start:\s*([\d.]+px)/m.exec(css)?.[1]);
+  assert.ok(toneEdge > frame, 'a tone row has a thick start edge');
+  const toneChosenStart = px(declared('.ux-choice[data-tone]:has(input:checked)', 'padding-inline-start'));
+  assert.equal(toneEdge + plain.inline, mark + toneChosenStart, 'a tone row’s start edge stays put');
 });
