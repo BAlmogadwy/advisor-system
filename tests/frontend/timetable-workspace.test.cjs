@@ -968,3 +968,44 @@ test('the legend says what the marks mean, in both languages, under a board that
     assert.ok(legend.querySelector('.ux-icon[data-icon="lock"]') && legend.querySelector('.ux-icon[data-icon="shared"]'));
   }
 });
+
+test('two courses sharing a code are told apart on the board: colour by key, name read in its own direction', async t => {
+  const placements = [
+    at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' }),
+    at(11, { day: 'MON', course_code: 'CS112', course_key: 'CS112::PROGRAMMING_II', course_name: 'Programming II', term_section_id: 120 }),
+  ];
+  // The plan lens is where the page learns that two courses share a code.
+  const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements, slot_config: scenario.slot_config }
+    : url.includes('/plan-lens/') ? { plan_lens: { plans: [], sections: {}, courses: { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} } } }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
+  await h.select();
+  const hue = id => card(h, id).style.getPropertyValue('--tw-card-hue');
+  assert.notEqual(hue(10), hue(11), 'the card colours by course key, not by code');
+  assert.equal(card(h, 10).querySelector('.tw-card-name').getAttribute('dir'), 'auto');
+});
+
+test('the tone mark is announced, with the reason', async t => {
+  const h = await modelHarness(t, { placements: [at(10, { room: 'UNASSIGNED', room_state: 'unassigned' })] });
+  await h.select();
+  const mark = card(h, 10).querySelector('.tw-card-tone');
+  assert.equal(mark.getAttribute('role'), 'img');
+  assert.equal(mark.getAttribute('aria-label'), 'Blocks publishing: No room');
+});
+
+test('a located card lets go without an animation too, and a second locate is never cut short', async t => {
+  const h = await modelHarness(t, { placements: [at(10)] });
+  await h.select();
+  h.w.HTMLElement.prototype.scrollIntoView = () => {};
+  // Fake timers for the locate only.
+  const timers = new Map(); let next = 1;
+  const realSet = h.w.setTimeout, realClear = h.w.clearTimeout;
+  h.w.setTimeout = (fn, ms) => { const id = next++; timers.set(id, fn); return id; };
+  h.w.clearTimeout = id => timers.delete(id);
+  h.w.highlightWorkspacePlacements([10]);
+  h.w.highlightWorkspacePlacements([10]);  // again, before the first ends
+  h.w.setTimeout = realSet; h.w.clearTimeout = realClear;
+  assert.equal(timers.size, 1, 'one timer per card: the first was replaced');
+  assert.ok(card(h, 10).classList.contains('highlight'));
+  [...timers.values()].forEach(fn => fn());  // no animationend (reduced motion)
+  assert.equal(card(h, 10).classList.contains('highlight'), false);
+});

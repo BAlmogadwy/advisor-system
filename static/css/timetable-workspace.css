@@ -247,8 +247,11 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
    never colour alone. */
 .tw-card {
   --tw-card-hue: #d4e6f1;
+  /* A warning ring and mark that reach 3:1 on every course colour (the
+     shared amber reaches 2.5:1 on the greys). */
+  --tw-warning-ink: #9a3b06;
   position: relative; min-width: 0;
-  padding: 4px 6px 5px 8px;
+  padding-block: 4px 5px; padding-inline: 8px 6px;
   border-radius: var(--radius-sm);
   background: var(--tw-card-hue);
   border: 1px solid rgba(17,24,39,0.10);
@@ -274,21 +277,26 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 .tw-card-name,
 .tw-card .ci { overflow: hidden; color: #374151; font-size: var(--text-xs); white-space: nowrap; }
 .tw-card-name { text-overflow: ellipsis; }
-.tw-card .ci { display: flex; align-items: center; gap: 4px; }
-.tw-card-room { flex: 0 1 auto; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; }
+.tw-card .ci { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
+/* The room never shrinks (a cut "No r…" or "172…" says nothing); the teacher
+   gives way, and the marks go to their own line when the room needs it. */
+.tw-card-room { flex: 0 0 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* No room: bold, in the card's own text colour — the ring and the octagon
    carry the severity (red text cannot reach 4.5:1 on every course colour). */
 .tw-card-room[data-room-state="unassigned"] { font-weight: 700; }
 /* The teacher only where the card is wide enough to keep the room readable. */
-.tw-card-teacher { display: none; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tw-card-teacher { display: none; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tw-card-teacher::before { content: '· '; color: #6b7280; }
 @container tw-cell (min-width: 130px) { .tw-card-teacher { display: inline; } }
 .tw-card-marks { display: inline-flex; align-items: center; gap: 3px; flex: none; margin-inline-start: auto; }
-.tw-card-marks:empty { display: none; }
+/* No visible mark (the tone mark is there but hidden): no box, no gap. */
+.tw-card-marks:not(:has(> :not([hidden]))) { display: none; }
 .tw-card-marks .ux-tone-icon,
 .tw-card-marks .ux-icon { width: 12px; height: 12px; }
 .tw-card-marks .ux-icon { color: #374151; }
+.tw-card-marks .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
 html[data-theme="dark"] .tw-card {
+  --tw-warning-ink: var(--sev-warning);
   background: color-mix(in srgb, var(--tw-card-hue) 16%, var(--surface));
   border-color: rgba(255,255,255,0.08);
   border-inline-start-color: color-mix(in srgb, var(--tw-card-hue) 80%, transparent);
@@ -301,7 +309,7 @@ html[data-theme="dark"] .tw-card-teacher::before { color: var(--t4); }
 html[data-theme="dark"] .tw-card-marks .ux-icon { color: var(--t2); }
 html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
 .tw-card.critical { box-shadow: inset 0 0 0 2px var(--sev-critical); }
-.tw-card.warning  { box-shadow: inset 0 0 0 2px var(--sev-warning); }
+.tw-card.warning  { box-shadow: inset 0 0 0 2px var(--tw-warning-ink); }
 /* Locked: its time is frozen — said by the padlock on the meta line (a hatch
    at about 1.1:1 was invisible). */
 .tw-card.locked { cursor: default; }
@@ -324,6 +332,13 @@ html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35);
   .tw-card.is-selected { outline: 3px solid Highlight; }
 }
 .tw-legend { margin-top: 8px; border-top: 1px solid var(--line); }
+.tw-legend .ux-legend-swatch[data-swatch="critical"] { box-shadow: inset 0 0 0 2px var(--sev-critical); border-color: transparent; }
+.tw-legend .ux-legend-swatch[data-swatch="warning"]  { box-shadow: inset 0 0 0 2px var(--tw-warning-ink); border-color: transparent; }
+.tw-legend .ux-legend-swatch[data-swatch="selected"] { outline: 2px solid var(--t0); outline-offset: 1px; }
+.tw-legend .ux-legend-swatch[data-swatch="same"]     { outline: 1px dashed var(--t2); outline-offset: 1px; }
+.tw-legend .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
+.tw-legend { --tw-warning-ink: #9a3b06; }
+html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-workspace[aria-busy="true"] .tw-card,
 .tw-workspace[aria-busy="true"] .tw-section-item { cursor: progress; }
 
@@ -460,5 +475,4 @@ html[data-theme="dark"] .tw-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.35);
 @media (prefers-reduced-motion: reduce) {
   .tw-card, .tw-cell { transition: none; }
   .tw-card:hover { transform: none; }
-  .tw-card.highlight { animation: none; }
 }

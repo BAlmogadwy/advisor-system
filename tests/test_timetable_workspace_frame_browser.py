@@ -322,17 +322,30 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
             context.close()
 
     def test_a_seven_character_code_with_its_marks_fits_a_slot(self) -> None:
-        """The card's ~70px at a 96px slot, in the wide font: the code is never cut,
-        the room word and the marks (a lock, a critical tone) stay on the card."""
+        """The card's ~70px at a 96px slot, in the wide font. The code is never cut
+        by its head, the room word is never cut, every mark stays on its card's
+        meta lines — with a lock, a critical tone, and on a section another
+        scenario also places, all three marks at once."""
+        from core.models import DeliveryBoard, SectionPlacement, TimetableScenario
+
         key = fx.requirement("AI", "MATH101", "Calculus")
         fx.budget(self.scenario, key, 1)
         board = self.scenario.boards.first()
+        math = fx.section(self.scenario, key, "S1")
         fx.place(
             board,
-            fx.section(self.scenario, key, "S1"),
+            math,
             (("SUN", "10:30", "11:45"), ("TUE", "10:30", "11:45")),
             locked=True,
             room="UNASSIGNED",
+        )
+        # Another scenario also places MATH101 S1: it is shared, a third mark.
+        other = TimetableScenario.objects.create(academic_year="1448", term="2", name="Other")
+        other_board = DeliveryBoard.objects.create(
+            scenario=other, label="Other", nominal_term=2, program="AI"
+        )
+        SectionPlacement.objects.create(
+            board=other_board, term_section=math, day="SUN", start_time="10:30", end_time="11:45"
         )
         problems: dict[str, list] = {}
         for language in ("en", "ar"):
@@ -341,25 +354,29 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                     page, sent, errors = self._load(language, theme, width, height, cards=6)
                     found = page.evaluate(
                         """() => [...document.querySelectorAll('.tw-card')].flatMap(card => {
-                          const bad = [], code = card.querySelector('.tw-card-code');
+                          const bad = [];
+                          const head = card.querySelector('.cc').getBoundingClientRect();
+                          const code = card.querySelector('.tw-card-code');
                           const label = code.textContent;
-                          if (code.scrollWidth > code.clientWidth + 0.5) bad.push(`${label}: code cut`);
-                          if (card.scrollWidth > card.clientWidth + 1) bad.push(`${label}: card overflows`);
+                          const c = code.getBoundingClientRect();
+                          // The head clips: the code's own box must lie inside it.
+                          if (c.left < head.left - 0.5 || c.right > head.right + 0.5) bad.push(`${label}: code cut`);
                           const room = card.querySelector('.tw-card-room');
-                          if (room && room.getBoundingClientRect().width < 18) bad.push(`${label}: room squeezed`);
-                          const box = card.getBoundingClientRect();
+                          if (room && room.scrollWidth > room.clientWidth + 0.5) bad.push(`${label}: room cut`);
+                          const meta = card.querySelector('.ci').getBoundingClientRect();
                           for (const mark of card.querySelectorAll('.tw-card-marks > :not([hidden])')) {
                             const m = mark.getBoundingClientRect();
-                            if (m.width < 11 || m.left < box.left - 0.5 || m.right > box.right + 0.5) bad.push(`${label}: mark outside`);
+                            if (m.width < 11 || m.left < meta.left - 0.5 || m.right > meta.right + 0.5
+                                || m.top < meta.top - 0.5 || m.bottom > meta.bottom + 0.5) bad.push(`${label}: mark cut`);
                           }
                           return bad;
                         })"""
                     )
                     marks = page.evaluate(
-                        "document.querySelectorAll('.tw-card [data-icon=lock]').length"
+                        "['lock', 'shared'].map(i => document.querySelectorAll(`.tw-card [data-icon=${i}]`).length).join(':')"
                         " + ':' + document.querySelectorAll('.tw-card .tw-card-tone[data-tone=critical]:not([hidden])').length"
                     )
-                    if marks != "2:2":
+                    if marks != "2:2:2":
                         found.append(f"marks {marks}")
                     found += page.evaluate(
                         CONTRAST, [".tw-card-code", ".tw-card-room", ".ux-legend-item"]

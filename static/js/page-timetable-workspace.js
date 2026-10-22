@@ -1614,7 +1614,11 @@ function courseColorKey(code) {
 }
 /* A course's colour from its identity (course key) alone, by an FNV-1a hash:
    the same on every board and every visit — it used to depend on the order
-   courses were first drawn — and different for two courses sharing a code. */
+   courses were first drawn — and most often different for two courses
+   sharing a code (20 colours: two courses on a board can share one, so the
+   colour helps find a course; it does not identify it). Not shared-utils'
+   colorForCourse: that returns a per-theme colour at call time, while a card
+   keeps one pastel token that its CSS mixes for the dark theme. */
 function courseColor(identity) {
   const key = courseColorKey(identity);
   let hash = 0x811c9dc5;
@@ -2000,7 +2004,7 @@ function createPlacementCard(p) {
   const room = placementRoomText(p);
   const lockWords = IS_AR ? 'الوقت مقفل؛ القاعة قابلة للتغيير' : 'Time locked; its room can change';
   const sharedWords = IS_AR ? 'يملكها سيناريو آخر' : 'Another scenario owns it';
-  const marks = `<span class="tw-card-tone ux-tone-icon" hidden></span>`
+  const marks = `<span class="tw-card-tone ux-tone-icon" role="img" hidden></span>`
     + (p.is_locked ? `<span class="ux-icon" data-icon="lock" role="img" aria-label="${lockWords}" title="${lockWords}"></span>` : '')
     + (p.shared_with_other_scenario ? `<span class="ux-icon" data-icon="shared" role="img" aria-label="${sharedWords}" title="${sharedWords}"></span>` : '');
   const roomState = p.room_state === 'unassigned' && p.needs_room !== false ? 'unassigned' : '';
@@ -2049,15 +2053,15 @@ function boardLegendHtml() {
   const item = (swatch, words) => `<span class="ux-legend-item">${swatch}<span>${words}</span></span>`;
   const swatch = name => `<span class="ux-legend-swatch" data-swatch="${name}" aria-hidden="true"></span>`;
   const icon = (attr, value) => `<span class="${attr === 'tone' ? 'ux-tone-icon' : 'ux-icon'}" data-${attr}="${value}" aria-hidden="true"></span>`;
-  return `<div class="ux-legend tw-legend" id="twLegend" role="note" aria-label="${IS_AR ? 'دليل الرموز' : 'Legend'}">`
-    + `<span class="ux-legend-title">${IS_AR ? 'دليل الرموز' : 'Legend'}</span>`
-    + item(swatch('critical') + icon('tone', 'critical'), IS_AR ? 'يمنع النشر' : 'Blocks publishing')
-    + item(swatch('warning') + icon('tone', 'warning'), IS_AR ? 'يُضعف الجودة' : 'Lowers quality')
-    + item(icon('icon', 'lock'), IS_AR ? 'الوقت مقفل؛ القاعة قابلة للتغيير' : 'Time locked; room can change')
+  return `<div class="ux-legend tw-legend" id="twLegend" role="note" aria-labelledby="twLegendTitle">`
+    + `<span class="ux-legend-title" id="twLegendTitle">${IS_AR ? 'دليل الرموز' : 'Legend'}</span>`
+    + item(swatch('critical') + icon('tone', 'critical'), TONE_LEAD.critical)
+    + item(swatch('warning') + icon('tone', 'warning'), TONE_LEAD.warning)
+    + item(icon('icon', 'lock'), IS_AR ? 'الوقت مقفل؛ القاعة قابلة للتغيير' : 'Time locked; its room can change')
     + item(icon('icon', 'shared'), IS_AR ? 'يملكها سيناريو آخر' : 'Another scenario owns it')
-    + item(swatch('selected'), IS_AR ? 'المحددة' : 'Selected')
-    + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه' : 'Same course')
-    + `<span class="ux-legend-item">${IS_AR ? 'اللون يميّز المقرر' : 'Colour marks the course'}</span>`
+    + item(swatch('selected'), IS_AR ? 'الشعبة المحددة' : 'The selected section')
+    + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه' : 'The same course’s other meetings')
+    + `<span class="ux-legend-item">${IS_AR ? 'اللون يساعد على إيجاد المقرر' : 'Colour helps find a course'}</span>`
     + `</div>`;
 }
 
@@ -2718,10 +2722,14 @@ function highlightWorkspacePlacements(ids) {
   (ids || []).forEach(id => {
     const card = document.querySelector(`.tw-card[data-placement-id="${id}"]`);
     if (card) {
+      // A pulse already running restarts (the class alone would not), and
+      // one timer per card, so an earlier call cannot cut a later pulse short.
+      void card.offsetWidth;
       card.classList.add('highlight');
-      const clear = () => card.classList.remove('highlight');
+      const clear = () => { clearTimeout(card._twLocateTimer); card.classList.remove('highlight'); };
       card.addEventListener('animationend', clear, { once: true });
-      setTimeout(clear, 1600);
+      clearTimeout(card._twLocateTimer);
+      card._twLocateTimer = setTimeout(clear, 1600);
       if (!firstCard) firstCard = card;
     }
   });
@@ -3164,13 +3172,18 @@ function applyCardTones() {
     const entry = byPlacement.get(card.dataset.placementId);
     card.classList.toggle('critical', entry?.tone === 'critical');
     card.classList.toggle('warning', entry?.tone === 'warning');
-    card.classList.toggle('has-issue', Boolean(entry));
+    const reason = entry ? `${TONE_LEAD[entry.tone]}: ${entry.kinds.map(issueKindLabel).join(', ')}` : '';
     const mark = card.querySelector('.tw-card-tone');
     if (mark) {
       mark.hidden = !entry;
-      if (entry) mark.dataset.tone = entry.tone; else delete mark.dataset.tone;
+      if (entry) {
+        mark.dataset.tone = entry.tone;
+        mark.setAttribute('aria-label', reason);
+      } else {
+        delete mark.dataset.tone;
+        mark.removeAttribute('aria-label');
+      }
     }
-    const reason = entry ? `${TONE_LEAD[entry.tone]}: ${entry.kinds.map(issueKindLabel).join(', ')}` : '';
     card.title = [reason, card.dataset.identity || ''].filter(Boolean).join(' | ');
   });
 }

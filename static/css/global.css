@@ -2269,10 +2269,6 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
   flex: none; width: 16px; height: 12px; border-radius: 3px;
   background: var(--surface-2); border: 1px solid var(--btn-neutral-border, var(--line));
 }
-.ux-legend-swatch[data-swatch="critical"] { box-shadow: inset 0 0 0 2px var(--sev-critical); border-color: transparent; }
-.ux-legend-swatch[data-swatch="warning"]  { box-shadow: inset 0 0 0 2px var(--sev-warning);  border-color: transparent; }
-.ux-legend-swatch[data-swatch="selected"] { outline: 2px solid var(--t0); outline-offset: 1px; }
-.ux-legend-swatch[data-swatch="same"]     { outline: 1px dashed var(--t2); outline-offset: 1px; }
 
 /* ── Pane: a titled region that scrolls on its own ──────────── */
 .ux-pane {
