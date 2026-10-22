@@ -318,5 +318,12 @@ test('a control switched off in place while it has the keyboard gets it back whe
   lock().disabled = false;
   await tick();
   assert.equal(h.doc.activeElement.id, 'outside');
+  // ... and came back to the panel itself later: nothing is still waiting.
+  h.region.focus();
+  lock().disabled = true; lock().disabled = false;
+  await tick();
+  assert.equal(h.doc.activeElement, h.region, 'no stale hand-back on a later switch');
+  h.UX.redraw(h.region, '<button data-focus-key="lock">Lock</button><button data-focus-key="other">Other!</button>');
+  assert.equal(h.doc.activeElement, h.region, 'nor on a later redraw');
   h.dom.window.close();
 });

@@ -297,6 +297,12 @@
   function watch(region) {
     if (watched.has(region)) return;
     watched.add(region);
+    // Focus landing anywhere but the region (another control, another part
+    // of the page) means the user moved on: nothing waits for the keyboard any
+    // more. A window losing focus moves it nowhere, so the wait survives that.
+    document.addEventListener('focusin', event => {
+      if (event.target !== region && drawn.has(region)) drawn.get(region).awaiting = '';
+    });
     region.addEventListener('focusout', event => {
       const control = event.target;
       // Only a control that lost the keyboard by being switched off is held
