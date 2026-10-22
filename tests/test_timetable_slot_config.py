@@ -443,3 +443,26 @@ def test_the_main_export_lists_an_off_grid_lecture_under_its_grid() -> None:
 
         os.unlink(path)
     assert notes and "CS112 S2 Monday 18:30-19:45" in notes[0]
+
+
+def test_the_grid_rule_matches_the_shared_case_table() -> None:
+    """The same table runs against the page's isPlacementOnGrid (jsdom)."""
+    import json
+    from pathlib import Path
+
+    from core.services.timetable_course_policy import get_course_meeting_policy
+
+    table = json.loads(
+        (Path(__file__).parent / "fixtures" / "grid_rule_cases.json").read_text(encoding="utf-8")
+    )
+    for case in table["cases"]:
+        policy = get_course_meeting_policy(case["course"]) is not None
+        drawn = is_on_grid(
+            case["day"],
+            case["start"],
+            case["end"],
+            table["lecture_slots"],
+            table["lab_slots"],
+            policy_meeting=policy,
+        )
+        assert drawn is case["on_grid"], case["name"]

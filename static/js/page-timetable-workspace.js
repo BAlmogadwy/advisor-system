@@ -16,21 +16,14 @@ const IS_AR = (typeof LANGUAGE_CODE === 'string' ? LANGUAGE_CODE : 'en') === 'ar
 const T = {
   draft: IS_AR ? 'مسودة' : 'Draft',
   published: IS_AR ? 'منشور' : 'Published',
-  noIssues: IS_AR ? 'لا توجد مشاكل' : 'No issues',
   selectScenario: IS_AR ? 'اختر سيناريو' : 'Select Scenario',
   createScenario: IS_AR ? 'إنشاء سيناريو' : 'Create Scenario',
   scenarioName: IS_AR ? 'اسم السيناريو' : 'Scenario name',
   createBoard: IS_AR ? 'إنشاء لوحة' : 'Create Board',
   boardLabel: IS_AR ? 'اسم اللوحة' : 'Board label',
   placed: IS_AR ? 'موضوعة' : 'Placed',
-  conflicts: IS_AR ? 'تعارضات' : 'Conflicts',
   publishConfirm: IS_AR ? 'هل تريد نشر هذا السيناريو؟' : 'Publish this scenario?',
   published_ok: IS_AR ? 'تم النشر' : 'Published successfully',
-  overlap: IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash',
-  overlapWarning: IS_AR ? 'تداخل زمني داخل اللوحة لا يمنع النشر' : 'Same-board overlap (non-blocking)',
-  instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
-  roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
-  crossBoardClash: IS_AR ? 'تداخل محتمل في الطلب عبر اللوحات' : 'Potential cross-board demand overlap',
   lockHelp: IS_AR ? 'يثبّت أيام وأوقات هذه الشعبة؛ ويمكن تغيير القاعة.' : "Keeps this section's days and times; its room can still change.",
   publish: IS_AR ? 'نشر' : 'Publish',
   checking: IS_AR ? 'جارٍ التحقق…' : 'Checking…',
@@ -109,7 +102,7 @@ function syncWorkspaceControls() {
   if ($('twUndo')) $('twUndo').disabled = !editable || !TW.undoStack.length;
   if ($('twRedo')) $('twRedo').disabled = !editable || !TW.redoStack.length;
   document.querySelectorAll('.tw-opt-item, [data-tw-mutation]').forEach(el => { el.disabled = !editable; });
-  document.querySelectorAll('[data-tw-draggable]').forEach(el => { el.draggable = editable && !el.classList.contains('locked'); });
+  document.querySelectorAll('[data-tw-draggable]').forEach(el => { el.draggable = editable && el.dataset.twMovable !== 'false' && !el.classList.contains('locked'); });
   document.querySelector('.tw-workspace')?.setAttribute('aria-busy', String(busy));
   updateOpenLinks();
   renderPublishState();
@@ -1306,14 +1299,19 @@ let readinessRequest = null;
 let readinessTimer = null;
 function scheduleReadinessRefresh() {
   clearTimeout(readinessTimer);
+  // Scheduled is as good as running for what the page says: "checking".
+  TW.readinessLoading = true;
   readinessTimer = setTimeout(() => { refreshPublishReadiness(); }, 800);
 }
 function refreshPublishReadiness(force = false) {
   const scenarioId = TW.scenarioId;
+  // A scheduled check that turns out not to be needed is not "checking".
   if (!scenarioId || TW.scenario?.status === 'published') {
-    TW.readiness = null; renderPublishState(); return Promise.resolve(null);
+    TW.readiness = null; TW.readinessLoading = Boolean(readinessRequest); renderPublishState(); return Promise.resolve(null);
   }
-  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) return Promise.resolve(TW.readiness);
+  if (!force && TW.readiness && TW.readinessVersion === TW.dataVersion) {
+    TW.readinessLoading = Boolean(readinessRequest); renderPublishState(); return Promise.resolve(TW.readiness);
+  }
   const version = TW.dataVersion;
   // Background callers share one request per version. Publish (force) asks on
   // its own and reports a failure: joining a quiet request would make a failed
@@ -1323,6 +1321,7 @@ function refreshPublishReadiness(force = false) {
   }
   TW.readinessLoading = true;
   renderPublishState();
+  if (document.querySelector('.tw-right .tw-panel-tab.active')?.dataset.tab === 'issues') renderRightPanel('issues');
   const promise = (async () => {
     try {
       const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/readiness/`, { _quiet: !force });
@@ -1543,6 +1542,23 @@ function revealInStrip(strip, item) {
   else if (box.right > view.right) strip.scrollLeft += box.right - view.right + 4;
 }
 
+/* The open board: what the model knows, and while its clashes are unknown
+   the board list's own count for them (rather than none). */
+function activeBoardCritical(board) {
+  const model = buildBoardIssues();
+  return model.counts.critical + (model.known.conflicts ? 0 : (board.critical || 0));
+}
+/* What blocks publishing on a board that is not open: the publish check's
+   items for it (a clash or room count counts each one), or, before any check,
+   the board list's own clash count. */
+const COUNTED_READINESS_CODES = new Set(['board_critical_conflicts', 'board_room_conflicts', 'board_sections_without_rooms', 'board_blocked_slot_placements']);
+function otherBoardCritical(board) {
+  if (!TW.readiness) return board.critical || 0;
+  return readinessBlockers(TW.readiness)
+    .filter(item => readinessItemBoard(item) === board.id)
+    .reduce((sum, item) => sum + (COUNTED_READINESS_CODES.has(item.code) ? (item.count || 1) : 1), 0);
+}
+
 /* One board switcher: segmented buttons (not tabs — no arrow-key panels are
    promised). Each says what is wrong on its board — blocking issues, with the
    octagon — and how many sections are left; meetings and students are in its
@@ -1559,9 +1575,7 @@ function renderBoardTabs() {
     btn.dataset.boardId = String(b.id);
     const active = b.id === TW.boardId;
     if (active) btn.setAttribute('aria-current', 'true');
-    const clashes = active ? ((boardConflicts().summary || {}).critical ?? b.critical ?? 0) : (b.critical || 0);
-    const serverBlockers = boardReadinessBlockers(b.id).length;
-    const critical = clashes + serverBlockers;
+    const critical = active ? activeBoardCritical(b) : otherBoardCritical(b);
     const left = boardSectionsLeft(b);
     const students = `${b.primary_count || 0}${b.visitor_count ? ` + ${b.visitor_count}` : ''}`;
     const meetings = active ? TW.placements.length : (b.placement_count || 0);
@@ -1569,8 +1583,7 @@ function renderBoardTabs() {
       IS_AR ? `${students} طالب` : `${students} students`,
       IS_AR ? `${meetings} لقاء` : `${meetings} meetings`,
     ];
-    if (clashes) parts.push(IS_AR ? `${clashes} تعارضات مانعة` : `${clashes} blocking ${clashes === 1 ? 'clash' : 'clashes'}`);
-    if (serverBlockers) parts.push(IS_AR ? `${serverBlockers} موانع نشر` : `${serverBlockers} publish ${serverBlockers === 1 ? 'blocker' : 'blockers'}`);
+    if (critical) parts.push(IS_AR ? `موانع النشر: ${critical}` : `${critical} ${critical === 1 ? 'issue blocks' : 'issues block'} publishing`);
     if (left) parts.push(IS_AR ? `${left} شعب لم توضع` : `${left} sections to place`);
     btn.title = parts.join(' · ');
     btn.setAttribute('aria-label', `${b.label}: ${parts.join(', ')}`);
@@ -1711,8 +1724,9 @@ function placementSearchText(p) {
   const lensBits = lens
     ? [lens.owner, lens.owner_label, lens.role, ...(lens.filter_plans || [])].filter(Boolean).join(' ')
     : '';
+  // The words the user sees ("No room", "Online"), never the placer's marker.
   const meetingBits = (p.meetings || [])
-    .map(m => [m.instructor, m.room, m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
+    .map(m => [m.instructor, meetingRoomText(m.room, p), m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
     .join(' ');
   return [
     p.course_code,
@@ -1723,7 +1737,7 @@ function placementSearchText(p) {
     p.day,
     p.start_time,
     p.end_time,
-    p.room,
+    placementRoomText(p),
     p.instructor,
     meetingBits,
     lensBits,
@@ -1876,6 +1890,8 @@ function renderGridWithSlots(slots, labSlots) {
       gridEl.appendChild(labInner);
     }
   });
+  // New cards take their tones from the model at once, not at the next redraw.
+  applyCardTones();
 }
 
 function gridSubheading(text, kind) {
@@ -1934,16 +1950,9 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
         const card = createPlacementCard(p);
         cell.appendChild(card);
       } else if (cellPlacements.length > 1) {
-        // Conflict: multiple in same cell -- unless the server judged every
-        // stacked pair a non-blocking overlap; then the card keeps its warning.
-        cellPlacements.forEach(p => {
-        const card = createPlacementCard(p);
-        if (!stackedPairsAllWarnings(p, cellPlacements)) {
-          card.classList.add('critical');
-          card.classList.remove('info');
-        }
-        cell.appendChild(card);
-      });
+        // Sections sharing a time are not a clash by themselves (parallel
+        // sections for other cohorts): the model tones what the server calls one.
+        cellPlacements.forEach(p => cell.appendChild(createPlacementCard(p)));
       }
 
       table.appendChild(cell);
@@ -1953,64 +1962,46 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
   container.appendChild(table);
 }
 
+/* A placement's room in words, never the placer's "UNASSIGNED" marker. */
+function placementRoomText(p) {
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return TimetableMeetingPolicy.roomLabel(p, IS_AR);
+  if (p.is_online) return IS_AR ? 'عن بُعد' : 'Online';
+  // The placer's marker on a section that needs no room is not a missing room.
+  if (p.room_state === 'unassigned' || p.room === 'UNASSIGNED') return p.needs_room === false ? '' : (IS_AR ? 'بلا قاعة' : 'No room');
+  if (p.room_state === 'unset' || !String(p.room || '').trim()) return '';
+  return p.room;
+}
+function meetingRoomText(room, p = null) {
+  if (p?.is_online) return IS_AR ? 'عن بُعد' : 'Online';
+  if (room === 'UNASSIGNED') return p?.needs_room === false ? '—' : (IS_AR ? 'بلا قاعة' : 'No room');
+  return String(room || '').trim() || '—';
+}
+
 function createPlacementCard(p) {
   const card = document.createElement('div');
   card.className = 'tw-card';
-  card.draggable = workspaceCanEdit() && !p.is_locked;
+  // Another scenario owns a shared section's time and room: the server refuses
+  // its move, so it does not drag (Remove still works).
+  const movable = !p.is_locked && !p.shared_with_other_scenario;
+  card.draggable = workspaceCanEdit() && movable;
   card.dataset.twDraggable = 'true';
+  card.dataset.twMovable = String(movable);
   card.dataset.placementId = p.id;
   // The course's hue, not a fill: light mode shows the pastel, dark mode mixes
   // it into the card surface so the board is not a wall of light tiles.
   card.style.setProperty('--tw-card-hue', courseColor(p.course_code));
   if (p.is_locked) card.classList.add('locked');
 
-  // Check if this placement has conflicts
-  const conflicts = boardConflicts();
-  const overlaps = (conflicts.overlaps || []);
-  const instrClashes = (conflicts.instructor_clashes || []);
-  const roomClashes = (conflicts.room_clashes || []);
-  const crossBoardClashes = activeBoardCrossBoardClashes();
-  const placementId = String(p.id);
-  const issueLabels = [];
-  const includesPlacement = row => (row.ids || []).map(String).includes(placementId);
-  const includesCrossPlacement = row => {
-    const ids = row.ids || [row.placement_a_id, row.placement_b_id].filter(Boolean);
-    return ids.map(String).includes(placementId);
-  };
-  const placementOverlaps = overlaps.filter(includesPlacement);
-  const hasStudentClash = placementOverlaps.some(o => !isWarningOverlap(o));
-  const hasOverlapWarning = placementOverlaps.some(isWarningOverlap);
-  const hasInstructorClash = instrClashes.some(includesPlacement);
-  const hasRoomIssue = roomClashes.some(includesPlacement);
-  const hasCrossBoardClash = crossBoardClashes.some(includesCrossPlacement);
-  if (hasStudentClash) issueLabels.push(T.overlap);
-  if (hasOverlapWarning) issueLabels.push(T.overlapWarning);
-  if (hasInstructorClash) issueLabels.push(T.instrClash);
-  if (hasRoomIssue) issueLabels.push(T.roomClash);
-  if (hasCrossBoardClash) issueLabels.push(T.crossBoardClash);
-  const hasCritical = hasStudentClash || hasInstructorClash;
-  const hasWarning = hasOverlapWarning || hasRoomIssue;
-  if (hasCritical) card.classList.add('critical');
-  else if (hasWarning) card.classList.add('warning');
-  else if (hasCrossBoardClash) card.classList.add('info');
-  if (issueLabels.length) {
-    card.classList.add('has-issue');
-    card.title = issueLabels.length === 1
-      ? issueLabels[0]
-      : `${T.conflicts}: ${issueLabels.join(' | ')}`;
-  }
-
   const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
   const courseName = compactCourseName(p.course_name);
   const showCourseName = courseName && hasDuplicateCourseCode(p.course_code);
-  const identityTitle = [p.course_key, courseName].filter(Boolean).join(' | ');
-  if (identityTitle) {
-    card.title = [card.title, identityTitle].filter(Boolean).join(' | ');
-  }
+  // Its identity; applyCardTones() puts the reason for a tone in front of it.
+  card.dataset.identity = [p.course_key, courseName].filter(Boolean).join(' | ');
+  card.title = card.dataset.identity;
   // The second line is a meta list: only the parts that exist, separated by
   // the stylesheet (no stray pipes when the instructor is unknown).
   const english = globalThis.TimetableMeetingPolicy?.isEnglish(p);
-  const room = english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : p.room;
+  const room = placementRoomText(p);
   const meta = [
     room,
     p.available_capacity ? (IS_AR ? `سعة ${p.available_capacity}` : `cap ${p.available_capacity}`) : '',
@@ -2024,7 +2015,7 @@ function createPlacementCard(p) {
   `;
 
   card.addEventListener('dragstart', (e) => {
-    if (!workspaceCanEdit() || p.is_locked) { e.preventDefault(); return; }
+    if (!workspaceCanEdit() || !movable) { e.preventDefault(); return; }
     e.dataTransfer.setData('text/plain', JSON.stringify({type:'move', placement_id: p.id}));
     e.dataTransfer.effectAllowed = 'move';
   });
@@ -2358,97 +2349,51 @@ function renderRightPanel(tab) {
   const body = $('twRightBody');
 
   if (tab === 'issues') {
-    const { serverBlockers, overlaps, iClashes, rClashes, crossBoard: xConflictsEarly, roomShortages, total, critical, conflictsKnown } = boardIssues();
-    setIssuesCount(total, critical);
+    const model = buildBoardIssues();
+    setIssuesCount(issueCountOf(model), model.counts.critical);
     // With no board open (a scenario with none yet), the tab has no board to
     // speak for; the scenario's own blockers are on Publish.
     if (!TW.boardId) {
       body.innerHTML = `<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'افتح لوحة لعرض مشاكلها.' : 'Open a board to see its issues.'}</p></div>`;
       return;
     }
-    const notLoaded = conflictsKnown ? '' : `<p class="tw-issue-note">${IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.'}</p>`;
+    const note = text => `<p class="tw-issue-note">${text}</p>`;
+    let notes = '';
+    if (!model.known.conflicts) notes += note(IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.');
+    const checking = Boolean(TW.readinessLoading || TW.qualityLoading);
+    if (model.rows.some(row => row.pending)) {
+      notes += note(checking
+        ? (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ يجري التحقق منها.' : 'Some items are from before your last change; they are being checked.')
+        : (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ لم يُعَد التحقق منها بعد.' : 'Some items are from before your last change and have not been checked again.'));
+    }
+    if (TW.quality && !TW.quality.rooms?.assessed) notes += note(IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.');
 
-    if (total === 0 && !conflictsKnown) {
-      body.innerHTML = notLoaded;
+    if (!model.rows.length) {
+      body.innerHTML = model.known.conflicts
+        ? `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${IS_AR ? 'لا مشاكل في هذه اللوحة' : 'No issues on this board'}</p></div>${notes}`
+        : notes;
       return;
     }
-    if (total === 0) {
-      body.innerHTML = `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${T.noIssues}</p>${TW.quality?.rooms?.assessed ? '' : `<small>${IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.'}</small>`}</div>`;
-      return;
-    }
 
-    // Severity first: what blocks publishing, then what lowers quality, then context.
-    const heading = (text, count, tone) => `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(text)}</span><span class="tw-issue-count tnum">${count}</span></h3>`;
-    let html = notLoaded;
-    // What the server says stops publishing on this board — a section placed on
-    // no board, meetings on blocked times, an incomplete pattern — first.
-    if (serverBlockers.length) {
-      html += heading(IS_AR ? 'يمنع النشر' : 'Blocks publishing', serverBlockers.length, 'critical');
-      serverBlockers.forEach(item => {
-        html += `<div class="tw-issue-row tw-issue-static"><span class="tw-issue-dot critical"></span><div>${esc(readinessItemText(item))}</div></div>`;
+    // Three groups in severity order; inside each, by kind as the model sorts.
+    let html = notes;
+    TONE_ORDER.forEach(tone => {
+      const rows = model.rows.filter(row => row.tone === tone);
+      if (!rows.length) return;
+      html += `<h3 class="tw-issue-head" data-tone="${tone}"><span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span>${esc(TONE_LEAD[tone])}</span><span class="tw-issue-count tnum">${model.counts[tone]}</span></h3>`;
+      rows.forEach(row => {
+        const pendingWord = checking ? (IS_AR ? 'يجري التحقق' : 'checking') : (IS_AR ? 'من قبل آخر تعديل' : 'from before your last change');
+        const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
+          + `<span class="tw-issue-subject"><bdi>${isolateTimes(row.subject)}</bdi></span>`
+          + (row.detail ? `<span class="tw-issue-detail"><bdi>${isolateTimes(row.detail)}</bdi></span>` : '');
+        html += row.ids.length && row.locate !== false
+          ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
+          : `<div class="tw-issue-row tw-issue-static" data-tone="${tone}">${inner}</div>`;
       });
-    }
-    const overlapRow = (o, dot) => `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
-          <span class="tw-issue-dot ${dot}"></span>
-          <div><div class="fw-semibold"><bdi>${esc((o.sections || []).join(' / '))}</bdi></div><div class="tw-issue-detail"><bdi>${esc(o.detail || '')}</bdi></div></div>
-        </div>`;
-    const criticalOverlaps = overlaps.filter(o => !isWarningOverlap(o));
-    const warningOverlaps = overlaps.filter(isWarningOverlap);
-    if (criticalOverlaps.length) {
-      html += heading(T.overlap, criticalOverlaps.length, 'critical');
-      criticalOverlaps.forEach(o => { html += overlapRow(o, 'critical'); });
-    }
-    if (iClashes.length) {
-      html += heading(T.instrClash, iClashes.length, 'critical');
-      iClashes.forEach(c => {
-        const secs = (c.sections || []).join(' / ');
-        html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
-          <span class="tw-issue-dot critical"></span>
-          <div><div class="fw-semibold"><bdi>${esc(c.instructor || '')}</bdi> &mdash; <bdi>${esc(secs)}</bdi></div><div class="tw-issue-detail"><bdi>${esc(c.detail || '')}</bdi></div></div>
-        </div>`;
-      });
-    }
-    if (roomShortages.length) {
-      const roomsBlock = roomShortages.some(room => (room.reasons || []).some(reason => reason === 'missing' || reason === 'clash'));
-      html += heading(IS_AR ? 'اجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room', roomShortages.length, roomsBlock ? 'critical' : 'warning');
-      roomShortages.forEach(room => {
-        html += `<button type="button" class="tw-issue-row" data-ids='${JSON.stringify(room.placement_ids || [])}'><span class="tw-issue-dot warning"></span><span><span class="fw-semibold"><bdi>${esc(room.course_code || room.course_key || '')}</bdi> · <bdi>${esc(room.rooms?.join(', ') || (IS_AR ? 'بلا قاعة' : 'no room'))}</bdi></span><span class="tw-issue-detail d-block">${esc((room.reasons || []).join(', '))} · ${IS_AR ? 'السعة المطلوبة' : 'Required capacity'}: ${esc(room.required_capacity ?? '—')}</span></span></button>`;
-      });
-    }
-    if (warningOverlaps.length) {
-      html += heading(T.overlapWarning, warningOverlaps.length, 'warning');
-      warningOverlaps.forEach(o => { html += overlapRow(o, 'warning'); });
-    }
-    if (rClashes.length) {
-      html += heading(T.roomClash, rClashes.length, 'warning');
-      rClashes.forEach(c => {
-        const secs = (c.sections || []).join(' / ');
-        html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
-          <span class="tw-issue-dot warning"></span>
-          <div><div class="fw-semibold"><bdi>${esc(c.room || '')}</bdi> &mdash; <bdi>${esc(secs)}</bdi></div><div class="tw-issue-detail"><bdi>${esc(c.detail || '')}</bdi></div></div>
-        </div>`;
-      });
-    }
-    // Cross-board clashes
-    const xConflicts = activeBoardCrossBoardClashes();
-    if (xConflicts.length) {
-      html += heading(T.crossBoardClash, xConflicts.length, 'info');
-      xConflicts.forEach(c => {
-        const ids = c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean);
-        const targetBoard = c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id;
-        html += `<div class="tw-issue-row u-cursor-pointer" data-ids='${JSON.stringify(ids)}' data-board-target="${targetBoard}">
-          <span class="tw-issue-dot info"></span>
-          <div>
-            <div class="fw-semibold"><bdi>${esc(c.section_a)}</bdi> &harr; <bdi>${esc(c.section_b)}</bdi></div>
-            <div class="tw-issue-detail">${c.overlap_count} ${IS_AR ? 'طلاب يطلبون المقررين المتداخلين' : 'students requesting both overlapping courses'} · <bdi>${esc(c.board_a_label)}</bdi> &harr; <bdi>${esc(c.board_b_label)}</bdi></div>
-          </div>
-        </div>`;
-      });
-    }
-
+    });
     body.innerHTML = html;
 
-    // Wire issue rows to highlight cards on grid
+    // A row with sections takes the user to them (another board's first).
     body.querySelectorAll('.tw-issue-row[data-ids]').forEach(row => {
       row.addEventListener('click', async () => {
         const targetBoard = parseInt(row.dataset.boardTarget || '', 10);
@@ -2472,7 +2417,7 @@ function renderRightPanel(tab) {
     const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
     const dayLabel = code => DAY_LABELS[DAYS.indexOf(code)] || code || '—';
     const field = (label, value) => `<div class="tw-sel-field"><dt>${label}</dt><dd>${value}</dd></div>`;
-    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi>${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : (m.room || '—'))}</bdi>${m.instructor ? `<bdi>${esc(m.instructor)}</bdi>` : ''}</li>`).join('');
+    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi>${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi>${m.instructor ? `<bdi>${esc(m.instructor)}</bdi>` : ''}</li>`).join('');
     const editable = workspaceCanEdit();
     body.innerHTML = `
       <div class="tw-sel-head">
@@ -2484,7 +2429,7 @@ function renderRightPanel(tab) {
       <dl class="tw-sel-fields">
         ${field(IS_AR ? 'اليوم' : 'Day', esc(dayLabel(p.day)))}
         ${field(IS_AR ? 'الوقت' : 'Time', `<bdi>${esc(p.start_time)}–${esc(p.end_time)}</bdi>`)}
-        ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR, '—') || p.room || '—')}</bdi>`)}
+        ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(placementRoomText(p) || (IS_AR ? 'لم تُحدَّد' : 'Not set'))}</bdi>`)}
         ${field(IS_AR ? 'المدرس' : 'Instructor', instructor ? `<bdi>${esc(instructor)}</bdi>` : '—')}
         ${field(IS_AR ? 'السعة' : 'Capacity', p.available_capacity ? esc(p.available_capacity) : '—')}
         ${field(IS_AR ? 'المسجلون' : 'Registered', p.registered_count ? esc(p.registered_count) : '—')}
@@ -2550,8 +2495,10 @@ function renderMriPanel(body) {
   const studentDelta = Math.abs(students - avgBoardStudents);
   const criticalOverlaps = overlaps.filter(o => !isWarningOverlap(o));
   const warningOverlaps = overlaps.filter(isWarningOverlap);
-  const critical = criticalOverlaps.length + iClashes.length;
-  const warnings = warningOverlaps.length + rClashes.length + crossBoard.length + deficitCourses.length + roomShortages.length;
+  // The same counts as the Issues tab (one model); demand deficits are MRI's own.
+  const issueCounts = buildBoardIssues().counts;
+  const critical = issueCounts.critical;
+  const warnings = issueCounts.warning + deficitCourses.length;
   const affected = impact.affected_count || 0;
   const blocked = impact.blocked_count || 0;
   // A non-blocking overlap is common course demand students can route round,
@@ -2607,7 +2554,7 @@ function renderMriPanel(body) {
       label: 'Room/instructor layer',
       value: iClashes.length + rClashes.length + roomShortages.length,
       max: Math.max(1, TW.placements.length),
-      tone: iClashes.length ? 'critical' : (rClashes.length || roomShortages.length || !roomsAssessed) ? 'watch' : 'stable',
+      tone: (iClashes.length || rClashes.length) ? 'critical' : (roomShortages.length || !roomsAssessed) ? 'watch' : 'stable',
       detail: `${iClashes.length} instructor clashes, ${rClashes.length} room double-bookings; ${roomsAssessed ? roomShortages.length + ' meetings lack a suitable room' : 'room suitability unknown'}`,
     },
     {
@@ -2622,7 +2569,7 @@ function renderMriPanel(body) {
 
   const topPairs = [
     ...roomShortages.map(room => ({ kind: 'Room suitability', tone: 'watch', ids: room.placement_ids,
-      title: room.course_code || room.course_key || room.room || 'UNASSIGNED',
+      title: room.course_code || room.course_key || room.room || (IS_AR ? 'بلا قاعة' : 'No room'),
       detail: `${(room.reasons || []).join(', ')}; required capacity ${room.required_capacity ?? '—'}` })),
     ...[...criticalOverlaps, ...warningOverlaps].map(o => ({
       kind: isWarningOverlap(o) ? 'Same-board overlap (non-blocking)' : 'Same-board time clash',
@@ -2719,22 +2666,6 @@ function mriPct(value, max) {
 // warning when they can route round it. A row without one stays critical.
 function isWarningOverlap(overlap) {
   return overlap?.severity === 'warning';
-}
-
-// Sections stacked in one grid cell read as a clash unless the server reported
-// every stacked pair as a non-blocking overlap.
-function stackedPairsAllWarnings(placement, cellPlacements) {
-  const overlaps = boardConflicts().overlaps || [];
-  const id = String(placement.id);
-  return cellPlacements.every(other => {
-    if (other === placement) return true;
-    const pair = [id, String(other.id)];
-    const row = overlaps.find(o => {
-      const ids = (o.ids || []).map(String);
-      return pair.every(value => ids.includes(value));
-    });
-    return isWarningOverlap(row);
-  });
 }
 
 /* The loaded conflicts when they describe the current board, else none: between
@@ -2845,14 +2776,22 @@ async function refreshWorkspaceQuality(force = false) {
   }
   const version = TW.dataVersion;
   if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
-  const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
-  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) return;
+  TW.qualityLoading = true;
+  let data;
+  try {
+    data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
+  } finally {
+    if (revision === qualityLoadRevision) TW.qualityLoading = false;
+  }
+  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) { renderWorkspaceQuality(); return; }
   TW.quality = data?.ok ? data : null;
   TW.qualityVersion = version;
+  // Schedule the publish check first: the panel then says "checking", not
+  // "not checked again", for the debounce before it runs.
+  scheduleReadinessRefresh();
   renderWorkspaceQuality();
   const active = document.querySelector('.tw-right .tw-panel-tab.active');
   if (active) renderRightPanel(active.dataset.tab);
-  scheduleReadinessRefresh();
 }
 /* The stat strip. Two scopes (whole scenario / instructors), each number with
    its meaning in its label and its direction in its tone:
@@ -2862,7 +2801,7 @@ async function refreshWorkspaceQuality(force = false) {
    conflicts and placements, the quality, the readiness answer, a reset)
    redraws the strip. */
 function renderWorkspaceQuality() {
-  renderIssuesCount();
+  renderBoardIssueViews();
   const quality = TW.quality;
   const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
   const put = (id, value, { tone = null, title = '', danger = false } = {}) => {
@@ -2999,28 +2938,215 @@ function renderDemandTable(body) {
   </table>`;
 }
 
-/* Everything the Issues tab lists for the current board, and its count. The tab
-   and the counts read this one sum, so they can never disagree. */
-function boardIssues() {
-  const conflicts = boardConflicts();
-  const conflictsKnown = boardConflictsKnown();
-  const serverBlockers = boardReadinessBlockers(TW.boardId);
-  const overlaps = conflicts.overlaps || [];
-  const iClashes = conflicts.instructor_clashes || [];
-  const rClashes = conflicts.room_clashes || [];
-  const crossBoard = activeBoardCrossBoardClashes();
-  const roomShortages = activeBoardRoomShortages();
-  const total = serverBlockers.length + overlaps.length + iClashes.length + rClashes.length + crossBoard.length + roomShortages.length;
-  const critical = ((conflicts.summary || {}).critical || 0) + serverBlockers.length;
-  return { serverBlockers, overlaps, iClashes, rClashes, crossBoard, roomShortages, total, critical, conflictsKnown };
+/* ── The board's issues: one model (design record §7) ──
+   The cards, the Issues tab and its count, the inspector rail and the board's
+   button all read buildBoardIssues(). Severity follows what the server does:
+   critical blocks publishing, warning lowers quality, info is context. Info
+   never rings a card and is never counted.
+
+   Each source says whether it is known and fresh. The board's clashes are
+   known once loaded for this board; the quality check and the publish check
+   are fresh when they answered about the current data (dataVersion). A row
+   from a stale check is listed as being checked and gives its card no tone; a
+   meeting that needs a room and has none is read from the board itself and
+   never waits for a check. */
+const ISSUE_KINDS = {
+  time:            { tone: 'critical', en: 'Time clash',                         ar: 'تعارض زمني' },
+  instructor:      { tone: 'critical', en: 'Instructor clash',                   ar: 'تعارض مدرّس' },
+  room:            { tone: 'critical', en: 'Room double-booked',                 ar: 'القاعة محجوزة مرتين' },
+  noRoom:          { tone: 'critical', en: 'No room',                            ar: 'بلا قاعة' },
+  blocked:         { tone: 'critical', en: 'On a blocked time',                  ar: 'في وقت محجوب' },
+  server:          { tone: 'critical', en: 'Publish check',                      ar: 'فحص النشر' },
+  softOverlap:     { tone: 'warning',  en: 'Overlap students can route round',   ar: 'تداخل يمكن تجاوزه' },
+  roomUnset:       { tone: 'warning',  en: 'Room not assigned yet',              ar: 'لم تُحدَّد القاعة بعد' },
+  roomSmall:       { tone: 'warning',  en: 'Room too small',                     ar: 'القاعة أصغر من المطلوب' },
+  roomUnsuitable:  { tone: 'warning',  en: 'Room unsuitable',                    ar: 'القاعة غير مناسبة' },
+  roomElsewhere:   { tone: 'warning',  en: 'Room also booked on another board',  ar: 'القاعة محجوزة في لوحة أخرى' },
+  crossBoard:      { tone: 'warning',  en: 'Overlap with another board',         ar: 'تداخل مع لوحة أخرى' },
+  offGrid:         { tone: 'warning',  en: 'Outside the grid’s columns',         ar: 'خارج أعمدة الجدول' },
+  crossBoardMinor: { tone: 'info',     en: 'Possible overlap with another board', ar: 'تداخل محتمل مع لوحة أخرى' },
+};
+const ISSUE_KIND_ORDER = Object.keys(ISSUE_KINDS);
+const TONE_ORDER = ['critical', 'warning', 'info'];
+const TONE_LEAD = {
+  critical: IS_AR ? 'يمنع النشر' : 'Blocks publishing',
+  warning: IS_AR ? 'يُضعف الجودة' : 'Lowers quality',
+  info: IS_AR ? 'للاطلاع' : 'For context',
+};
+const issueKindLabel = kind => (IS_AR ? ISSUE_KINDS[kind].ar : ISSUE_KINDS[kind].en);
+const dayName = code => DAY_LABELS[DAYS.indexOf(String(code || '').toUpperCase().slice(0, 3))] || code || '—';
+const studentsNeedBoth = n => (IS_AR
+  ? pluralAr(n, { zero: 'لا طلاب يحتاجون كليهما', one: 'طالب واحد يحتاج كليهما', two: 'طالبان يحتاجان كليهما', few: '{n} طلاب يحتاجون كليهما', many: '{n} طالباً يحتاجون كليهما', other: '{n} طالب يحتاجون كليهما' })
+  : `${n} ${n === 1 ? 'student needs' : 'students need'} both`);
+const seatsNeeded = n => (IS_AR
+  ? pluralAr(n, { one: 'يحتاج مقعداً واحداً', two: 'يحتاج مقعدين', few: 'يحتاج {n} مقاعد', many: 'يحتاج {n} مقعداً', other: 'يحتاج {n} مقعد' })
+  : `needs ${n} ${n === 1 ? 'seat' : 'seats'}`);
+/* Escaped text with every time range isolated left to right: inside an
+   Arabic line "09:00–10:15" is otherwise painted "10:15–09:00". */
+const isolateTimes = text => esc(text).replace(/(\d{1,2}:\d{2})–(\d{1,2}:\d{2})/g, '<bdi dir="ltr">$1–$2</bdi>');
+
+/* The grid's rule (timetable_slot_config.is_on_grid): a teaching day and a
+   column start of the meeting's kind — a lab runs more than 80 minutes.
+   English meetings have their own table. */
+function isPlacementOnGrid(p) {
+  if (!DAYS.includes(String(p.day || '').toUpperCase().slice(0, 3))) return false;
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return true;
+  const minutes = t => { const [h, m] = String(t || '').split(':').map(Number); return h * 60 + m; };
+  const columns = minutes(p.end_time) - minutes(p.start_time) > 80 ? scenarioLabSlots() : scenarioLectureSlots();
+  const start = String(p.start_time || '').slice(0, 5);
+  return columns.some(slot => String(slot.start || '').slice(0, 5) === start);
 }
 
-/* The counts follow the data, whichever inspector tab is open: a card click
-   opens Selection, and the rail of a collapsed inspector exists to say how
-   much is wrong. */
-function renderIssuesCount() {
-  const { total, critical } = boardIssues();
-  setIssuesCount(total, critical);
+function computeBoardIssues() {
+  const rows = [];
+  // Between a board switch and its answer, TW.placements is still the previous
+  // board's: nothing read from the placements counts for the new one.
+  const placementsKnown = Boolean(TW.boardId) && TW.loadedBoardId === TW.boardId;
+  const placements = placementsKnown ? TW.placements : [];
+  const byId = new Map(placements.map(p => [String(p.id), p]));
+  const conflictsKnown = boardConflictsKnown();
+  const conflicts = boardConflicts();
+  const quality = TW.quality;
+  const qualityFresh = Boolean(quality) && TW.qualityVersion === TW.dataVersion;
+  const readinessFresh = Boolean(TW.readiness) && TW.readinessVersion === TW.dataVersion;
+  const name = p => `${p.course_code} ${p.section}`;
+  const when = p => `${dayName(p.day)} ${p.start_time}–${p.end_time}`;
+  const placementsOf = ids => (ids || []).map(id => byId.get(String(id))).filter(Boolean);
+  const add = (kind, ids, subject, detail = '', extra = {}) => rows.push({
+    kind, tone: ISSUE_KINDS[kind].tone, ids: (ids || []).map(String), subject, detail, pending: false, ...extra,
+  });
+
+  // The board's clashes.
+  const roomClashIds = new Set();
+  if (conflictsKnown) {
+    (conflicts.overlaps || []).forEach(o => {
+      const ps = placementsOf(o.ids);
+      const subject = (o.sections && o.sections.length ? o.sections : ps.map(name)).join(' / ');
+      const detail = [ps[0] ? when(ps[0]) : '', o.shared_students ? studentsNeedBoth(o.shared_students) : ''].filter(Boolean).join(' · ');
+      add(isWarningOverlap(o) ? 'softOverlap' : 'time', o.ids, subject, detail);
+    });
+    (conflicts.instructor_clashes || []).forEach(c => {
+      const ps = placementsOf(c.ids);
+      add('instructor', c.ids, [c.instructor, (c.sections || ps.map(name)).join(' / ')].filter(Boolean).join(' — '), ps.map(when).join(' · '));
+    });
+    (conflicts.room_clashes || []).forEach(c => {
+      const ps = placementsOf(c.ids);
+      (c.ids || []).forEach(id => roomClashIds.add(String(id)));
+      add('room', c.ids, [c.room, (c.sections || ps.map(name)).join(' / ')].filter(Boolean).join(' — '), ps.map(when).join(' · '));
+    });
+    // A pair at the publish check's line is a warning there; below it, context.
+    const line = Number.isFinite(conflicts.hard_overlap_threshold) ? conflicts.hard_overlap_threshold : Infinity;
+    activeBoardCrossBoardClashes().forEach(c => {
+      const ids = c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean);
+      const other = String(c.board_a_id) === String(TW.boardId) ? c.board_b_id : c.board_a_id;
+      add((c.overlap_count || 0) >= line ? 'crossBoard' : 'crossBoardMinor', ids,
+        `${c.section_a} ↔ ${c.section_b}`,
+        [studentsNeedBoth(c.overlap_count || 0), `${c.board_a_label || ''} ↔ ${c.board_b_label || ''}`].join(' · '),
+        { boardTarget: other });
+    });
+  }
+
+  // The board itself: rooms, blocked times, the grid's columns.
+  const blocked = new Set((TW.scenario?.blocked_slots || []).map(b => `${b.day}|${b.start}`));
+  placements.forEach(p => {
+    if (p.needs_room && p.room_state === 'unassigned') add('noRoom', [p.id], name(p), when(p));
+    else if (p.needs_room && p.room_state === 'unset') add('roomUnset', [p.id], name(p), when(p));
+    if (blocked.has(`${p.day}|${p.start_time}`)) add('blocked', [p.id], name(p), when(p));
+    // Not drawn until the grid gets its parking strip: the row cannot point at it.
+    if (!isPlacementOnGrid(p)) add('offGrid', [p.id], name(p), when(p), { locate: false });
+  });
+
+  // The quality check: room suitability. "missing" is read from the board above.
+  if (quality && placementsKnown) {
+    activeBoardRoomShortages().forEach(detail => {
+      const ids = (detail.placement_ids || []).map(String).filter(id => byId.has(id));
+      const reasons = new Set(detail.reasons || []);
+      const subject = [detail.course_code || detail.course_key || '', (detail.rooms || []).join(', ')].filter(Boolean).join(' · ');
+      const needs = detail.required_capacity != null ? seatsNeeded(detail.required_capacity) : '';
+      const pending = !qualityFresh;
+      if (reasons.has('undersized')) add('roomSmall', ids, subject, needs, { pending });
+      if (reasons.has('incompatible')) add('roomUnsuitable', ids, subject, '', { pending });
+      if (conflictsKnown && reasons.has('clash') && !ids.some(id => roomClashIds.has(id))) add('roomElsewhere', ids, subject, '', { pending });
+    });
+  }
+
+  // The publish check: what only the server knows (sections placed nowhere,
+  // section patterns). What the board shows itself is not repeated.
+  if (TW.readiness) {
+    boardReadinessBlockers(TW.boardId).forEach(item => {
+      // The board's own placements say these once loaded; until then the
+      // publish check's items stand in for them.
+      if (placementsKnown && (item.code === 'board_sections_without_rooms' || item.code === 'board_blocked_slot_placements')) return;
+      if (item.code === 'board_room_conflicts' && conflictsKnown) return;
+      // A room or blocked-time item stands for each meeting it counts, as on
+      // the other boards' buttons.
+      const weight = COUNTED_READINESS_CODES.has(item.code) ? (item.count || 1) : 1;
+      add('server', [], readinessItemText(item), '', { pending: !readinessFresh, item, weight });
+    });
+  }
+
+  rows.sort((a, b) => TONE_ORDER.indexOf(a.tone) - TONE_ORDER.indexOf(b.tone)
+    || ISSUE_KIND_ORDER.indexOf(a.kind) - ISSUE_KIND_ORDER.indexOf(b.kind));
+
+  // What tones each card: critical and warning rows from known, fresh sources.
+  const byPlacement = new Map();
+  rows.forEach(row => {
+    if (row.tone === 'info' || row.pending) return;
+    row.ids.forEach(id => {
+      const entry = byPlacement.get(id) || { tone: row.tone, kinds: [] };
+      if (row.tone === 'critical') entry.tone = 'critical';
+      if (!entry.kinds.includes(row.kind)) entry.kinds.push(row.kind);
+      byPlacement.set(id, entry);
+    });
+  });
+  const counts = { critical: 0, warning: 0, info: 0 };
+  rows.forEach(row => { counts[row.tone] += row.weight || 1; });
+  return {
+    rows, byPlacement, counts,
+    known: { conflicts: conflictsKnown, placements: placementsKnown, quality: Boolean(quality), readiness: Boolean(TW.readiness) },
+    fresh: { quality: qualityFresh, readiness: readinessFresh },
+  };
+}
+
+/* One model per state of its sources: every redraw (strip, tab, cards,
+   buttons) reads the same answer without rebuilding it. */
+let issueMemo = null;
+function buildBoardIssues() {
+  const key = [TW.boardId, TW.loadedBoardId, TW.conflicts, TW.conflictsBoardId, TW.quality, TW.qualityVersion, TW.readiness,
+    TW.readinessVersion, TW.dataVersion, TW.placements, TW.scenario, TW.qualityLoading, TW.readinessLoading];
+  if (issueMemo && issueMemo.key.every((value, i) => value === key[i])) return issueMemo.model;
+  const model = computeBoardIssues();
+  issueMemo = { key, model };
+  return model;
+}
+
+/* The count says how much blocks publishing, or else how much lowers quality;
+   context is never counted. */
+function issueCountOf(model) {
+  return model.counts.critical || model.counts.warning;
+}
+
+/* Tone every card from the model, in place: a check that answers later never
+   rebuilds the grid (a drag or a focused card survives it). */
+function applyCardTones() {
+  const { byPlacement } = buildBoardIssues();
+  document.querySelectorAll('#twGrid .tw-card[data-placement-id]').forEach(card => {
+    const entry = byPlacement.get(card.dataset.placementId);
+    card.classList.toggle('critical', entry?.tone === 'critical');
+    card.classList.toggle('warning', entry?.tone === 'warning');
+    card.classList.toggle('has-issue', Boolean(entry));
+    const reason = entry ? `${TONE_LEAD[entry.tone]}: ${entry.kinds.map(issueKindLabel).join(', ')}` : '';
+    card.title = [reason, card.dataset.identity || ''].filter(Boolean).join(' | ');
+  });
+}
+
+/* The counts and the card tones follow the data, whichever inspector tab is
+   open: a card click opens Selection, and the rail of a collapsed inspector
+   exists to say how much is wrong. */
+function renderBoardIssueViews() {
+  const model = buildBoardIssues();
+  setIssuesCount(issueCountOf(model), model.counts.critical);
+  applyCardTones();
 }
 
 /* The Issues tab's count, and the inspector rail's, so a collapsed inspector
