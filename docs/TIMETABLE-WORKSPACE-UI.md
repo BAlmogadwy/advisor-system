@@ -437,6 +437,29 @@ findings changed the plan:
    none) — with the count (`pluralAr` in Arabic) and, until Place… (5f), a
    pointer to split view, which places a whole pattern; Enter on such a row
    says the same.
+   **As built, 5d (one slot verdict, server):** both previews take
+   `include_verdict` (`verdict=1`) and the move preview `offer_manual`
+   (`offer=manual`, through `offered_move_columns` next to
+   `effective_lecture_slots`). Without them the JSON is byte-identical, key
+   order included, to an oracle recorded from `a5d8f96` before the change
+   (`tests/fixtures/tw_slot_verdict_legacy.json`, with each request's query
+   count; the verdict adds no query). Settled where the spec was silent:
+   `source` is the legacy evidence kind, else `cross_board_instructor`,
+   `blocked_slot` or `h15_effect`; `students` counts the distinct students
+   the items name (an effect's are always among them); a one-meeting planned
+   candidate's items have `meeting: null`; `verdict_rank` ranks the
+   candidates returned (Place asks for all of them, D15); an English
+   (policy) section's move preview is the planned preview, so its verdict
+   has no effects, there is no `current_verdict`, and `offer_manual` does not
+   apply. Beyond the spec: the moving section's own copy at the candidate's
+   very slot on another board is the same class (5c's rule, now
+   `_same_class`, shared with room candidates), so the verdict never reports
+   it as a room or teacher clash (the legacy evidence still does). Shared
+   rather than copied: H15's "0 if a clash-free pair exists, else shared" is
+   `_h15_blocked_students` (`detect_board_conflicts` uses it too), the
+   section masks are built by `_section_masks_by_course` (behind
+   `_placed_section_masks`), and the planned preview's teacher-on-another-board
+   rule is `_other_board_teacher_clash`, which the move verdict reuses.
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
