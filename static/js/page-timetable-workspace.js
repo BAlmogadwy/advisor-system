@@ -101,7 +101,9 @@ function syncWorkspaceControls() {
   });
   if ($('twUndo')) $('twUndo').disabled = !editable || !TW.undoStack.length;
   if ($('twRedo')) $('twRedo').disabled = !editable || !TW.redoStack.length;
-  document.querySelectorAll('.tw-opt-item, [data-tw-mutation]').forEach(el => { el.disabled = !editable; });
+  // `data-tw-hold`: a control that is off for its own reason as well (a
+  // save in flight, a section another scenario owns) stays off.
+  document.querySelectorAll('.tw-opt-item, [data-tw-mutation]').forEach(el => { el.disabled = !editable || el.hasAttribute('data-tw-hold'); });
   document.querySelectorAll('[data-tw-draggable]').forEach(el => { el.draggable = editable && el.dataset.twMovable !== 'false' && !el.classList.contains('locked'); });
   document.querySelector('.tw-workspace')?.setAttribute('aria-busy', String(busy));
   updateOpenLinks();
@@ -169,7 +171,9 @@ window.addEventListener('tw:planner-job', async event => {
 /* ── API ── */
 async function twFetch(url, opts = {}) {
   // `_quiet`: a background read whose failure only means "unknown" — no toast.
-  const { _workspaceToken, _onError, _quiet, ...requestOptions } = opts;
+  // `_changed(body)`: a write the server answers "nothing changed" leaves the
+  // data version, so every answer read before it stays current.
+  const { _workspaceToken, _onError, _quiet, _changed, ...requestOptions } = opts;
   const writes = !['GET', 'HEAD'].includes((opts.method || 'GET').toUpperCase());
   if (writes && workspaceBusy() && (!TW_ACTIVITY.owner || _workspaceToken !== TW_ACTIVITY.owner)) {
     notify.warning(IS_AR ? 'الجدول قيد التحديث؛ انتظر انتهاء العملية.' : 'The timetable is being updated; wait for the operation to finish.');
@@ -210,7 +214,7 @@ async function twFetch(url, opts = {}) {
       return null;
     }
     const body = await response.json();
-    if (writes) TW.dataVersion++;
+    if (writes && (typeof _changed !== 'function' || _changed(body))) TW.dataVersion++;
     return body;
   } catch (err) {
     if (!_quiet) notify.error(err.message || String(err));
@@ -1656,26 +1660,70 @@ function resetPlanLens() {
 /* The plan lens: who sits where, by programme — a full seating evaluation
    on the server. It is read when a scenario opens and then only on request
    (Selection's Refresh, or after a programme mark is saved), never after
-   every edit; `version` says which data it describes. */
-async function loadPlanLens() {
+   every edit; `version` says which data it describes. A second request for
+   the same data joins the read in flight; a newer read wins over an older. */
+let planLensRead = null;
+let planLensRevision = 0;
+function loadPlanLens() {
   const scenarioId = TW.scenarioId;
-  if (!TW.scenarioId) {
+  if (!scenarioId) {
+    planLensRevision++;
+    planLensRead = null;
     resetPlanLens();
-    return;
+    return Promise.resolve();
   }
   const version = TW.dataVersion;
+  if (planLensRead && planLensRead.scenarioId === scenarioId && planLensRead.version === version) return planLensRead.promise;
+  const revision = ++planLensRevision;
   TW.planLens.loading = true;
-  try {
-    const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/plan-lens/`);
-    if (TW.scenarioId !== scenarioId) return;
-    if (!data || !data.plan_lens) {
-      TW.planLens.loaded = false;
-      return;
+  const promise = (async () => {
+    try {
+      const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/plan-lens/`);
+      if (revision !== planLensRevision || TW.scenarioId !== scenarioId) return;
+      if (!data || !data.plan_lens) {
+        TW.planLens.loaded = false;
+        return;
+      }
+      TW.planLens = Object.assign({ plans: [], courses: {}, sections: {}, loaded: true }, data.plan_lens, { version });
+    } finally {
+      if (revision === planLensRevision) {
+        TW.planLens.loading = false;
+        planLensRead = null;
+      }
     }
-    TW.planLens = Object.assign({ plans: [], courses: {}, sections: {}, loaded: true }, data.plan_lens, { version });
-  } finally {
-    if (TW.scenarioId === scenarioId) TW.planLens.loading = false;
-  }
+  })();
+  planLensRead = { scenarioId, version, promise };
+  return promise;
+}
+
+/* A search by programme ("AI2") reads the lens: a new lens filters anew. */
+function reapplyPlanSearch() {
+  const tokens = [...workspaceSearchTokens(), ...sectionBudgetSearch().split(/\s+/)];
+  if (!tokens.some(token => planTokenFromSearch(token))) return;
+  renderGrid();
+  renderBudgetSidebar();
+  updateSearchStatus();
+}
+
+/* The lens on request: Selection says it is loading, then shows the answer,
+   a programme search filters anew, and a screen reader hears it arrive. */
+async function refreshPlanLens() {
+  const read = loadPlanLens();
+  redrawSelection();
+  await read;
+  redrawSelection();
+  reapplyPlanSearch();
+  announceInspector(TW.planLens.loaded
+    ? (IS_AR ? 'حُدِّث توزيع البرامج.' : 'Programme mix updated.')
+    : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
+}
+
+/* The inspector's own status line (outside the panel it redraws). */
+function announceInspector(text) {
+  const status = $('twInspectorStatus');
+  if (!status) return;
+  status.textContent = '';
+  status.textContent = text;
 }
 
 function sectionLensForPlacement(placement) {
@@ -2401,57 +2449,61 @@ $('twRedo').addEventListener('click', () => runHistoryAction(false));
 
 /* ── "Mainly for programme" (Selection) ──
    The section's programme mark (#160 parity with split view; the words and
-   parts are the shared module's). The seated mix is the plan lens this page
-   already holds; after an edit it says it is from before the change and
-   offers a Refresh — the lens is a full seating evaluation, never re-read per
-   edit. A save posts once and the lens reloads once. */
+   parts are the shared module's). The seated mix and the grouping trade-off
+   are the plan lens this page already holds: after an edit they say they are
+   from before it and offer a Refresh — the lens is a full seating evaluation,
+   never re-read per edit. A saved mark reads it once more, and the quality
+   and the publish check with it (both are about the seating). The panel's
+   redraw keeps the keyboard on the select through a save. */
 const PROGRAMME_MARK_PENDING = new Set();
 function programmeMarkHtml(p) {
   const PM = window.TimetableProgrammeMark;
   if (!PM || !PM.hasMark(p)) return '';
   const lens = TW.planLens || {};
   const pending = PROGRAMME_MARK_PENDING.has(String(p.term_section_id));
-  const disabled = TW.scenario?.status === 'published' || p.preferred_programme_editable === false || pending;
+  // Off for its own reasons (held through the page's edit guard), or by it.
+  const hold = p.preferred_programme_editable === false || pending;
+  const disabled = hold || !workspaceCanEdit();
   const nobody = lens.loaded ? PM.nobodyHtml(p, courseLensForItem(p)) : '';
+  const fresh = lens.loaded && !lens.loading && lens.version === TW.dataVersion;
+  // A section the lens does not hold (another scenario's, or new) is unknown,
+  // not empty.
+  const sectionLens = lens.loaded ? sectionLensForPlacement(p) : null;
+  const mix = !sectionLens ? '—'
+    : (PM.mixHtml(sectionLens) || esc(IS_AR ? 'لا يُقعَد فيها طلاب هذا السيناريو' : 'No student of this scenario sits here'));
   const trade = lens.loaded ? PM.tradeHtml(lens.programme_grouping) : '';
-  const stale = lens.loaded && lens.version !== TW.dataVersion;
-  const mix = lens.loading
-    ? `—<span class="tw-sel-hint">${esc(PM.words.loading)}</span>`
-    : !lens.loaded
-      ? `—<span class="tw-sel-hint">${IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'}</span>`
-      : (PM.mixHtml(sectionLensForPlacement(p)) || (IS_AR ? 'لا يُقعَد فيها طلاب هذا السيناريو' : 'No student of this scenario sits here'));
-  const refresh = (stale || !lens.loaded) && !lens.loading
-    ? `<span class="tw-sel-hint">${stale ? (IS_AR ? 'من قبل آخر تعديل.' : 'From before your last change.') : ''} <button type="button" class="btn btn-sm btn-neutral" data-tw-lens-refresh>${IS_AR ? 'تحديث' : 'Refresh'}</button></span>`
-    : '';
+  const state = lens.loading ? PM.words.loading
+    : !lens.loaded ? (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.')
+      : fresh ? '' : (IS_AR ? 'من قبل آخر تعديل.' : 'From before your last change.');
+  const refresh = fresh ? ''
+    : `<button type="button" class="btn btn-sm btn-neutral" data-tw-lens-refresh data-focus-key="lens-refresh"${lens.loading ? ' disabled aria-busy="true"' : ''}>${IS_AR ? 'تحديث' : 'Refresh'}</button>`;
   return `<h3 class="tw-sel-subhead">${IS_AR ? 'البرنامج' : 'Programme'}</h3>
     <dl class="tw-sel-fields">
-      <div class="tw-sel-field"><dt><label for="twSelProgramme">${esc(PM.words.label)}</label></dt>
-        <dd><select id="twSelProgramme" class="form-select form-select-sm tw-programme-select"${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}>${PM.optionsHtml(p, lens.plans)}</select></dd></div>
-      ${nobody ? `<p class="tw-sel-note" data-tone="warning">${nobody}</p>` : ''}
-      <div class="tw-sel-field"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${refresh}</dd></div>
-    </dl>
-    ${trade ? `<p class="tw-sel-note">${trade}</p>` : ''}`;
-}
-
-function wireProgrammeMark(body, p) {
-  body.querySelector('#twSelProgramme')?.addEventListener('change', event => saveWorkspaceProgrammeMark(p.id, event.target.value));
-  body.querySelector('[data-tw-lens-refresh]')?.addEventListener('click', async () => {
-    const promise = loadPlanLens();
-    redrawSelection();
-    await promise;
-    redrawSelection();
-  });
+      <div class="tw-sel-field tw-sel-field-stack"><dt><label for="twSelProgramme">${esc(PM.words.label)}</label></dt>
+        <dd><select id="twSelProgramme" class="form-select form-select-sm tw-programme-select" data-placement-id="${p.id}" data-tw-mutation${hold ? ' data-tw-hold' : ''}${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}${nobody ? ' aria-describedby="twSelProgrammeNote"' : ''}>${PM.optionsHtml(p, lens.plans)}</select>
+          ${nobody ? `<span class="tw-sel-note" id="twSelProgrammeNote" data-tone="warning">${nobody}</span>` : ''}</dd></div>
+      <div class="tw-sel-field tw-sel-field-stack"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${trade ? `<span class="tw-sel-hint">${trade}</span>` : ''}${state ? `<span class="tw-sel-hint">${esc(state)} ${refresh}</span>` : ''}</dd></div>
+    </dl>`;
 }
 
 function redrawSelection() {
   if (document.querySelector('.tw-right .tw-panel-tab.active')?.dataset.tab === 'selection') renderRightPanel('selection');
 }
 
+// One listener each for the panel's select and Refresh, however often it is
+// drawn. A keyboard choice saves once the arrow keys rest.
+window.TimetableProgrammeMark?.saveOnSettle($('twRightBody'), '#twSelProgramme',
+  (select, value) => saveWorkspaceProgrammeMark(Number(select.dataset.placementId), value));
+$('twRightBody').addEventListener('click', event => {
+  const button = event.target.closest && event.target.closest('[data-tw-lens-refresh]');
+  if (button && !button.disabled) refreshPlanLens();
+});
+
 async function saveWorkspaceProgrammeMark(placementId, value) {
   const p = TW.placements.find(row => row.id === placementId);
-  if (!window.TimetableProgrammeMark?.hasMark(p)) return;
+  // One write at a time (the page's edit guard): a second save waits its turn.
+  if (!window.TimetableProgrammeMark?.hasMark(p) || !workspaceCanEdit()) return;
   const key = String(p.term_section_id);
-  if (PROGRAMME_MARK_PENDING.has(key)) return;
   PROGRAMME_MARK_PENDING.add(key);
   redrawSelection();
   let changed = false;
@@ -2459,24 +2511,26 @@ async function saveWorkspaceProgrammeMark(placementId, value) {
     const data = await twFetch(`/ops/tw/placements/${placementId}/programme-preference/`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ preferred_programme: value }),
+      // The same mark again changes nothing: every answer stays current.
+      _changed: body => Boolean(body?.changed),
     });
-    if (!data || typeof data.preferred_programme !== 'string') return;
-    // Every meeting of the section takes the server's answer.
-    TW.placements.forEach(row => { if (String(row.term_section_id) === key) row.preferred_programme = data.preferred_programme; });
-    changed = Boolean(data.changed);
-    if (changed) notify.success(window.TimetableProgrammeMark.words.saved);
+    if (data && typeof data.preferred_programme === 'string') {
+      // Every meeting of the section takes the server's answer.
+      TW.placements.forEach(row => { if (String(row.term_section_id) === key) row.preferred_programme = data.preferred_programme; });
+      changed = Boolean(data.changed);
+      if (changed) notify.success(window.TimetableProgrammeMark.words.saved);
+    }
   } finally {
+    // The select comes back (with the keyboard, unless the user moved on);
+    // a refused save shows the mark the server holds.
     PROGRAMME_MARK_PENDING.delete(key);
     redrawSelection();
   }
-  // The seating changed: the lens (the seated mix) reloads once.
-  if (changed) {
-    await loadPlanLens();
-    redrawSelection();
-  }
-  // The select was disabled while it saved: give it the keyboard back.
-  const select = document.getElementById('twSelProgramme');
-  if (select && TW.selectedPlacementId === placementId && (!document.activeElement || document.activeElement === document.body)) select.focus();
+  if (!changed) return;
+  // The seating changed: the seated mix is read again, once, and then the
+  // quality and the publish check (seats and student clashes are seating).
+  await refreshPlanLens();
+  await refreshWorkspaceQuality();
 }
 
 /* ── Right Panel ── */
@@ -2594,7 +2648,7 @@ function renderRightPanel(tab) {
       : '';
     const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
-    if (draw(`
+    draw(`
       <div class="tw-sel-head">
         <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
         ${p.course_name ? `<div class="tw-sel-sub">${esc(compactCourseName(p.course_name))}</div>` : ''}
@@ -2617,7 +2671,7 @@ function renderRightPanel(tab) {
         <button type="button" class="btn btn-sm btn-outline-danger" data-focus-key="remove" data-tw-mutation ${editable ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة من الجدول' : 'Remove from timetable'}</button>
       </div>
       <p class="tw-sel-help">${esc(T.lockHelp)}</p>
-    `)) wireProgrammeMark(body, p);
+    `);
   } else if (tab === 'capacity') {
     const courses = (TW.capacityData && TW.capacityData.courses) || [];
     if (courses.length === 0) {

@@ -344,6 +344,18 @@ findings changed the plan:
    holds: after an edit it says it is from before the change and offers a
    Refresh (the lens is a full seating evaluation, never re-read per edit); a
    saved mark re-reads it once.
+   As built after review: a saved mark reads the lens, then the quality and
+   the publish check (seats and student clashes are seating), one at a time
+   on the small host; a mark saved again unchanged moves no version
+   (`twFetch`'s `_changed`), so nothing turns stale; one lens read per data
+   version, the newest answer winning; a section the lens does not hold reads
+   "—", not "nobody". The select is under the page's edit guard
+   (`data-tw-mutation`, with `data-tw-hold` keeping it off for its own
+   reasons) and keeps the keyboard through a save (the global redraw). A
+   choice made from the keyboard saves once the arrow keys rest, or on Enter
+   or on leaving — Chrome on Windows fires `change` per arrow key — in both
+   pages (`TimetableProgrammeMark.saveOnSettle`). A visually hidden status
+   line says when the mix has been read again.
 5. **Keyboard.** Grid semantics for the board (days × columns) with roving
    focus; the left list as one roving stop; `event.code` for `[` and `]`; a
    Move dialog with one ranked list whose verdict follows the server's

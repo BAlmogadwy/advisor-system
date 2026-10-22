@@ -1135,76 +1135,283 @@ test('search finds a section by the teacher its card names, never by a stale mee
 });
 
 /* ── Programme mark in Selection (PR 4b) ── */
-function markHarness(t, { lensSections, posts, lensRequests, extra = {} }) {
-  const placements = [
-    at(10, { course_key: 'CS112', preferred_programme: '', preferred_programme_editable: true }),
-    at(11, { day: 'MON', course_key: 'CS113', preferred_programme: 'CYS', preferred_programme_editable: false, term_section_id: 111 }),
-    at(12, { day: 'TUE', course_key: 'CS114' }),  // the feature off for this one: no key
-  ];
-  return harness(t, (url, opts) => {
-    if (url === '/ops/tw/boards/2/') return { placements, slot_config: scenario.slot_config };
+const LENS = sections => ({ plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } },
+  sections, programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } } });
+const markRows = () => [
+  at(10, { course_key: 'CS112', preferred_programme: '', preferred_programme_editable: true }),
+  at(13, { day: 'WED', course_key: 'CS112', term_section_id: 110, preferred_programme: '', preferred_programme_editable: true }),  // its other meeting
+  at(11, { day: 'MON', course_key: 'CS113', preferred_programme: 'CYS', preferred_programme_editable: false, term_section_id: 111 }),
+  at(12, { day: 'TUE', course_key: 'CS114' }),  // the feature off for this one: no key
+];
+async function markHarness(t, { sections = () => ({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }), lens = null,
+  answer = null, hold = {}, extra = {}, arabic = false, rows = markRows() } = {}) {
+  const seen = { posts: [], lens: 0, quality: 0, readiness: 0 };
+  const h = await harness(t, async (url, opts) => {
+    if (url === '/ops/tw/boards/2/') return { placements: rows, slot_config: scenario.slot_config };
     if (url.includes('/plan-lens/')) {
-      lensRequests.push(url);
-      return { plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } }, sections: lensSections(), programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } } };
+      const n = ++seen.lens;
+      if (hold.lens) await hold.lens(n);
+      return lens ? lens(n) : LENS(sections());
     }
     if (url.endsWith('/programme-preference/') && opts.method === 'POST') {
-      const body = JSON.parse(opts.body); posts.push(body);
-      return { term_section_id: 110, preferred_programme: body.preferred_programme, changed: true };
+      const body = JSON.parse(opts.body);
+      seen.posts.push(body);
+      if (hold.post) await hold.post();
+      return answer ? answer(body) : { term_section_id: 110, preferred_programme: body.preferred_programme, changed: true };
     }
     if (url.includes('/conflicts/')) return quiet;
-    if (url.includes('/quality/')) return noRooms;
+    if (url.includes('/quality/')) { seen.quality++; return noRooms; }
+    if (url.includes('/readiness/')) { seen.readiness++; return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } }; }
     return undefined;
-  }, extra);
+  }, extra, arabic);
+  await h.select();
+  const body = () => h.d.getElementById('twRightBody');
+  const select = () => h.d.getElementById('twSelProgramme');
+  const choose = (value, { keyed = false } = {}) => {
+    const s = select();
+    if (keyed) s.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    s.value = value;
+    s.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  };
+  return Object.assign(h, { seen, body, select, choose });
 }
 
-test('Selection carries the programme mark where the feature does, with the seated mix from the lens', async t => {
-  const posts = [], lensRequests = [];
-  const h = await markHarness(t, { posts, lensRequests, lensSections: () => ({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }) });
-  await h.select();
-  card(h, 12).click();
-  assert.equal(h.d.getElementById('twSelProgramme'), null, 'no key, no mark');
-  card(h, 10).click();
-  const select = h.d.getElementById('twSelProgramme');
-  assert.deepEqual([...select.options].map(o => o.value), ['', 'AI', 'AI2']);
-  assert.equal(select.disabled, false);
-  assert.match(h.d.getElementById('twRightBody').textContent, /38: AI2 30 · AI 6/);
-  assert.match(h.d.getElementById('twRightBody').textContent, /Grouping moved 3 students/);
-  card(h, 11).click();
-  assert.equal(h.d.getElementById('twSelProgramme').disabled, true, 'another scenario owns it');
-  assert.match(h.d.getElementById('twRightBody').textContent, /No CYS student needs this course/);
+test('Selection carries the programme mark where the feature does, with the seated mix and its trade-off', async t => {
+  for (const arabic of [false, true]) {
+    const h = await markHarness(t, { arabic });
+    card(h, 12).click();
+    assert.equal(h.select(), null, 'no key, no mark');
+    card(h, 10).click();
+    assert.deepEqual([...h.select().options].map(o => o.value), ['', 'AI', 'AI2']);
+    assert.equal(h.select().disabled, false);
+    assert.equal(h.body().querySelector('label[for="twSelProgramme"]')?.textContent, arabic ? 'مخصّصة أساساً لبرنامج' : 'Mainly for programme');
+    // The figure in one LTR isolate (an Arabic panel would paint «38: … :38» otherwise).
+    assert.equal(h.body().querySelector('.tw-sel-field bdi[dir="ltr"]')?.textContent, '38: AI2 30 · AI 6');
+    assert.match(h.body().textContent, arabic ? /نقل التجميع 3 طالباً/ : /Grouping moved 3 students/);
+    assert.equal(h.body().querySelector('[data-tw-lens-refresh]'), null, 'a fresh lens offers no Refresh');
+    // A definition list holds only its groups.
+    assert.deepEqual([...h.body().querySelectorAll('dl')].flatMap(dl => [...dl.children].filter(c => c.tagName !== 'DIV').map(c => c.tagName)), []);
+    card(h, 11).click();
+    assert.equal(h.select().disabled, true, 'another scenario owns it');
+    const note = h.d.getElementById(h.select().getAttribute('aria-describedby'));
+    assert.match(note.textContent, arabic ? /لا يحتاج أي طالب من CYS/ : /No CYS student needs this course/, 'the warning describes the select');
+    assert.deepEqual(h.errors, []);
+  }
 });
 
-test('after an edit the seated mix says how old it is; only Refresh re-reads the lens', async t => {
-  const posts = [], lensRequests = [];
+test('the mark is off while the scenario cannot be edited, and a held mark stays off when editing resumes', async t => {
+  const published = await markHarness(t, { extra: { status: 'published' } });
+  card(published, 10).click();
+  assert.equal(published.select().disabled, true, 'a published scenario');
+  const h = await markHarness(t);
+  card(h, 10).click();
+  h.w.TW.plannerJob = { job_id: 'j', status: 'running' };
+  h.w.syncWorkspaceControls();
+  assert.equal(h.select().disabled, true, 'a job is running');
+  h.w.TW.plannerJob = null;
+  h.w.syncWorkspaceControls();
+  assert.equal(h.select().disabled, false);
+  card(h, 11).click();
+  h.w.syncWorkspaceControls();
+  assert.equal(h.select().disabled, true, 'another scenario’s section stays off');
+});
+
+test('a section the lens does not hold is unknown; one it holds with nobody seated says so', async t => {
+  const h = await markHarness(t, { sections: () => ({ 111: { actual_total: 0, actual_plans: {} } }) });
+  card(h, 10).click();
+  const seated = () => [...h.body().querySelectorAll('.tw-sel-field')].find(f => /Seated/.test(f.querySelector('dt').textContent)).querySelector('dd');
+  assert.match(seated().textContent, /^—/);
+  assert.doesNotMatch(seated().textContent, /No student/);
+  card(h, 11).click();
+  assert.match(seated().textContent, /No student of this scenario sits here/);
+});
+
+test('after an edit the mix and its trade-off say how old they are; Refresh reads the lens once and says so', async t => {
   let total = 38;
-  const h = await markHarness(t, { posts, lensRequests, lensSections: () => ({ 110: { actual_total: total, actual_plans: { AI2: total } } }) });
-  await h.select();
-  const before = lensRequests.length;
+  const held = deferred();
+  let holding = false;
+  const h = await markHarness(t, { sections: () => ({ 110: { actual_total: total, actual_plans: { AI2: total } } }), hold: { lens: () => (holding ? held.promise : null) } });
+  const before = h.seen.lens;
   card(h, 10).click();
   h.w.TW.dataVersion++;  // an edit
   h.w.renderRightPanel('selection');
-  assert.equal(lensRequests.length, before, 'an edit never re-reads the lens');
-  assert.match(h.d.getElementById('twRightBody').textContent, /From before your last change/);
-  total = 40;
-  h.d.querySelector('[data-tw-lens-refresh]').click();
-  await wait(() => /40: AI2 40/.test(h.d.getElementById('twRightBody').textContent));
-  assert.equal(lensRequests.length, before + 1);
-  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /From before your last change/);
+  assert.equal(h.seen.lens, before, 'an edit never re-reads the lens');
+  assert.match(h.body().textContent, /From before your last change/);
+  total = 40; holding = true;
+  const refresh = h.body().querySelector('[data-tw-lens-refresh]');
+  refresh.focus();
+  refresh.click();
+  await settle();
+  assert.match(h.body().textContent, /Loading programme mix/);
+  const busy = h.body().querySelector('[data-tw-lens-refresh]');
+  assert.equal(busy.disabled, true, 'Refresh waits while it reads');
+  busy.disabled = false; busy.click(); h.w.loadPlanLens();  // a second ask joins the read in flight
+  await settle();
+  assert.equal(h.seen.lens, before + 1, 'one read');
+  held.resolve();
+  await wait(() => /40: AI2 40/.test(h.body().textContent));
+  assert.doesNotMatch(h.body().textContent, /From before your last change/);
+  assert.equal(h.d.getElementById('twInspectorStatus').textContent, 'Programme mix updated.');
+  assert.ok(h.body().contains(h.d.activeElement), 'the keyboard stays in the panel');
 });
 
-test('saving the mark posts once, re-reads the lens once, and gives the keyboard back', async t => {
-  const posts = [], lensRequests = [];
-  const h = await markHarness(t, { posts, lensRequests, lensSections: () => ({ 110: { actual_total: 10, actual_plans: { AI2: 10 } } }) });
-  await h.select();
+test('an older lens answer never replaces a newer one', async t => {
+  const first = deferred();
+  const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI2: n } } }),
+    hold: { lens: n => (n === 2 ? first.promise : null) } });
+  const older = h.w.loadPlanLens();  // the second read, held
+  h.w.TW.dataVersion++;
+  await h.w.loadPlanLens();  // the third, about newer data, answers first
+  first.resolve();
+  await older;
+  assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
+  assert.equal(h.w.TW.planLens.sections['110'].actual_total, 3, 'the newer read stands');
+  assert.equal(h.w.TW.planLens.loading, false);
+});
+
+test('saving posts once, keeps the keyboard, reads the lens, the quality and the publish check once each', async t => {
+  const post = deferred(), lensHeld = deferred();
+  let gateLens = false;
+  const h = await markHarness(t, { sections: () => ({ 110: { actual_total: 10, actual_plans: { AI2: 10 } } }),
+    hold: { post: () => post.promise, lens: () => (gateLens ? lensHeld.promise : null) } });
   card(h, 10).click();
-  const before = lensRequests.length;
-  const select = h.d.getElementById('twSelProgramme');
-  select.focus();
-  select.value = 'AI2';
-  select.dispatchEvent(new h.w.Event('change'));
-  await wait(() => lensRequests.length === before + 1 && h.d.getElementById('twSelProgramme')?.value === 'AI2' && !h.d.getElementById('twSelProgramme').disabled);
-  assert.deepEqual(posts.map(b => b.preferred_programme), ['AI2']);
-  assert.equal(h.w.TW.placements.find(p => p.id === 10).preferred_programme, 'AI2');
+  const [lens0, quality0] = [h.seen.lens, h.seen.quality];
+  h.select().focus();
+  h.choose('AI2');
+  await settle();
+  h.w.saveWorkspaceProgrammeMark(10, 'AI');  // a second save of the section waits its turn
+  await settle();
+  assert.equal(h.seen.posts.length, 1, 'one save at a time');
+  assert.equal(h.select().disabled, true, 'off while it saves');
+  assert.equal(h.select().getAttribute('aria-busy'), 'true');
+  assert.equal(h.d.activeElement, h.body(), 'the panel holds the keyboard meanwhile');
+  gateLens = true;
+  post.resolve();
+  await wait(() => h.seen.lens === lens0 + 1);
+  assert.equal(h.d.activeElement, h.select(), 'the select has the keyboard back before the lens answers');
+  assert.match(h.body().textContent, /Loading programme mix/);
+  assert.doesNotMatch(h.body().textContent, /From before your last change/, 'never stale while it reloads');
+  lensHeld.resolve();
+  await wait(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2']);
+  assert.deepEqual(h.w.TW.placements.filter(p => p.term_section_id === 110).map(p => p.preferred_programme), ['AI2', 'AI2'], 'every meeting of the section');
   assert.ok(h.notices.some(n => n.type === 'success'));
-  assert.equal(h.d.activeElement?.id, 'twSelProgramme');
+  assert.equal(h.seen.lens, lens0 + 1, 'the lens once');
+  assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
+  assert.equal(h.w.TW.readinessLoading, true, 'the publish check is scheduled');
+  assert.equal(h.d.activeElement, h.select());
+  assert.deepEqual(h.errors, []);
+});
+
+test('a refused save shows the server’s mark and gives the keyboard back; reading nothing again', async t => {
+  const h = await markHarness(t, { answer: () => ({ httpError: 409, error: { code: 'SCENARIO_BUSY', message: 'Busy' } }) });
+  card(h, 10).click();
+  const [lens0, quality0, version0] = [h.seen.lens, h.seen.quality, h.w.TW.dataVersion];
+  h.select().focus();
+  h.choose('AI2');
+  await wait(() => !h.select().disabled);
+  assert.equal(h.select().value, '', 'the mark the server holds');
+  assert.equal(h.d.activeElement, h.select());
+  assert.deepEqual([h.seen.lens, h.seen.quality, h.w.TW.dataVersion], [lens0, quality0, version0]);
+  assert.ok(h.notices.some(n => n.type === 'error' && n.text === 'Busy'));
+});
+
+test('the same mark again changes nothing: every answer stays current', async t => {
+  const h = await markHarness(t, { answer: body => ({ term_section_id: 110, preferred_programme: body.preferred_programme, changed: false }) });
+  card(h, 10).click();
+  const [lens0, quality0, version0] = [h.seen.lens, h.seen.quality, h.w.TW.dataVersion];
+  h.choose('');
+  await wait(() => h.seen.posts.length === 1 && !h.select().disabled);
+  assert.equal(h.w.TW.dataVersion, version0);
+  assert.deepEqual([h.seen.lens, h.seen.quality], [lens0, quality0]);
+  assert.doesNotMatch(h.body().textContent, /From before your last change/);
+  h.w.renderRightPanel('issues');
+  assert.doesNotMatch(h.body().textContent, /from before your last change/);
+});
+
+test('a user who moved on while the lens reloads keeps their place', async t => {
+  const held = deferred();
+  let gate = false;
+  const h = await markHarness(t, { hold: { lens: () => (gate ? held.promise : null) } });
+  card(h, 10).click();
+  const lens0 = h.seen.lens;
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  gate = true;
+  h.choose('AI2');
+  await wait(() => h.seen.lens === lens0 + 1);
+  const lock = () => h.body().querySelector('[data-focus-key="lock"]');
+  lock().focus();
+  held.resolve();
+  await wait(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  assert.equal(h.d.activeElement, lock());
+});
+
+test('a keyboard choice saves once the arrow keys rest, or at once on Enter or on leaving', async t => {
+  const h = await markHarness(t);
+  h.w.TimetableProgrammeMark.settleMs = 5;
+  card(h, 10).click();
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  h.choose('AI', { keyed: true });
+  h.choose('AI2', { keyed: true });
+  await settle();
+  assert.equal(h.seen.posts.length, 0, 'nothing while the keys move');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await wait(() => h.seen.posts.length === 1 && !h.select().disabled);
+  assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2'], 'only where the keys stopped');
+  h.w.TimetableProgrammeMark.settleMs = 60000;
+  h.choose('AI', { keyed: true });
+  h.select().dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await wait(() => h.seen.posts.length === 2 && !h.select().disabled);
+  h.choose('', { keyed: true });
+  h.select().dispatchEvent(new h.w.FocusEvent('focusout', { bubbles: true }));
+  await wait(() => h.seen.posts.length === 3);
+  assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2', 'AI', '']);
+  // Each save reads the lens and the quality again: let them finish.
+  await wait(() => h.seen.quality === quality0 + 3 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+});
+
+test('a programme search filters anew when the lens is read again', async t => {
+  let plans = ['AI'];
+  const h = await markHarness(t, { lens: () => ({ plan_lens: { plans: ['AI', 'AI2'], courses: {}, sections: { 110: { actual_total: 1, actual_plans: { AI: 1 }, filter_plans: plans } } } }) });
+  const search = h.d.getElementById('twSearch');
+  search.value = 'AI2';
+  search.dispatchEvent(new h.w.Event('input'));
+  await settle();
+  assert.equal(card(h, 10), null, 'not an AI2 section yet');
+  plans = ['AI', 'AI2'];
+  h.w.TW.dataVersion++;
+  await h.w.refreshPlanLens();
+  assert.ok(card(h, 10), 'the new lens puts it in AI2');
+});
+
+test('a lens that cannot be read offers Refresh and is not left loading', async t => {
+  let fail = true;
+  const h = await markHarness(t, { lens: () => (fail ? { httpError: 500, error: { message: 'down' } } : LENS({ 110: { actual_total: 2, actual_plans: { AI: 2 } } })) });
+  card(h, 10).click();
+  assert.equal(h.w.TW.planLens.loading, false);
+  assert.match(h.body().textContent, /The programme mix is not available/);
+  fail = false;
+  h.body().querySelector('[data-tw-lens-refresh]').click();
+  await wait(() => /2: AI 2/.test(h.body().textContent));
+});
+
+test('a save that ends while another inspector tab is open leaves that tab alone', async t => {
+  const post = deferred(), lensHeld = deferred();
+  let gate = false;
+  const h = await markHarness(t, { hold: { post: () => post.promise, lens: () => (gate ? lensHeld.promise : null) } });
+  card(h, 10).click();
+  const [lens0, quality0] = [h.seen.lens, h.seen.quality];
+  h.choose('AI2');
+  await settle();
+  h.d.getElementById('twTabIssues').click();
+  gate = true;
+  post.resolve();
+  await wait(() => h.seen.lens === lens0 + 1);
+  assert.equal(h.select(), null, 'Issues is still what the panel shows while the lens reloads');
+  lensHeld.resolve();
+  await wait(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  assert.equal(h.select(), null);
+  assert.ok(h.body().querySelector('.tw-empty, .tw-issue-group'), h.body().innerHTML.slice(0, 200));
 });

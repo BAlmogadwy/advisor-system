@@ -382,9 +382,9 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-sel-issues .ux-tone-icon { margin-top: 2px; }
 .tw-sel-hint { display: block; margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
 .tw-sel-hint .btn { margin-inline-start: 4px; }
-.tw-sel-note { margin: 2px 0 8px; color: var(--t2); font-size: var(--text-xs); }
+.tw-sel-note { display: block; margin: 4px 0 2px; color: var(--t2); font-size: var(--text-xs); }
 .tw-sel-note[data-tone="warning"] { color: var(--t1); border-inline-start: 3px solid var(--sev-warning); padding-inline-start: 8px; }
-.tw-programme-select { max-width: 100%; }
+.tw-programme-select { width: 100%; }
 /* The group header is the global disclosure toggle; it spans its group. */
 .tw-issue-head {
   margin: 0 0 4px;
@@ -435,6 +435,10 @@ html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 }
 .tw-sel-field dt { color: var(--t3); font-weight: 500; }
 .tw-sel-field dd { margin: 0; color: var(--t1); font-weight: 600; text-align: end; }
+/* A field that holds a control or several lines: its label above, the value
+   the full width, read from the start edge. */
+.tw-sel-field-stack { flex-direction: column; gap: 4px; }
+.tw-sel-field-stack dd { text-align: start; }
 .tw-sel-subhead { margin: 14px 2px 4px; color: var(--t2); font-size: var(--text-xs); font-weight: 700; }
 .tw-sel-meetings { margin: 0; padding: 0; list-style: none; font-size: var(--text-xs); }
 .tw-sel-meetings li { padding: 4px 2px; border-bottom: 1px solid var(--line); color: var(--t1); }

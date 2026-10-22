@@ -109,6 +109,8 @@ NEUTRAL_TEMPLATE_SITES = {
     # the publish-readiness list.
     ("static/js/page-timetable-workspace.js", "toggleLock"),
     ("static/js/page-timetable-workspace.js", "tw-readiness-go"),
+    # Selection's Refresh of the programme mix.
+    ("static/js/page-timetable-workspace.js", "lens-refresh"),
 }
 
 #: The one that styles itself inline. It was never `ButtonFace`, and the neutral
@@ -153,6 +155,7 @@ def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
         r'data-pane-toggle="([^"]+)"',
         r"(data-dialog-close)",
         r'class="[^"]*\b(tw-readiness-go)\b',
+        r'data-focus-key="([^"]+)"',
     ):
         found = re.search(probe, tag)
         if found:

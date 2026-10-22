@@ -12,7 +12,7 @@
 (function () {
   'use strict';
   const isArabic = () => (typeof LANGUAGE_CODE === 'string' ? LANGUAGE_CODE : document.documentElement.lang) === 'ar';
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const words = {
     get label() { return isArabic() ? 'مخصّصة أساساً لبرنامج' : 'Mainly for programme'; },
@@ -38,7 +38,7 @@
   function optionsHtml(placement, plans) {
     const mark = String(placement.preferred_programme || '');
     return options(placement, plans)
-      .map(([value, label]) => `<option value="${escape(value)}"${value === mark ? ' selected' : ''}>${escape(label)}</option>`)
+      .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === mark ? ' selected' : ''}>${escapeHtml(label)}</option>`)
       .join('');
   }
 
@@ -49,7 +49,7 @@
       .filter(([, count]) => Number(count) > 0)
       .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])));
     if (!sectionLens || !total || !entries.length) return '';
-    const parts = entries.map(([plan, count]) => `<bdi>${escape(plan)}</bdi> ${Number(count)}`).join(' · ');
+    const parts = entries.map(([plan, count]) => `<bdi>${escapeHtml(plan)}</bdi> ${Number(count)}`).join(' · ');
     // One LTR isolate: the figure leads with digits, which an Arabic page
     // would otherwise paint as «23 AI2 :23».
     return `<bdi dir="ltr">${total}: ${parts}</bdi>`;
@@ -61,8 +61,8 @@
     const mark = String(placement.preferred_programme || '');
     if (!mark || !courseLens || Number((courseLens.plans || {})[mark] || 0)) return '';
     return isArabic()
-      ? `لا يحتاج أي طالب من <bdi>${escape(mark)}</bdi> هذا المقرر؛ العلامة توجّه البرامج الأخرى إلى الشعب الأخرى فقط.`
-      : `No <bdi>${escape(mark)}</bdi> student needs this course; the mark only steers other programmes to the other sections.`;
+      ? `لا يحتاج أي طالب من <bdi>${escapeHtml(mark)}</bdi> هذا المقرر؛ العلامة توجّه البرامج الأخرى إلى الشعب الأخرى فقط.`
+      : `No <bdi>${escapeHtml(mark)}</bdi> student needs this course; the mark only steers other programmes to the other sections.`;
   }
 
   /* What grouping by programme cost, from the lens. */
@@ -77,5 +77,46 @@
       : `Grouping moved ${moved} student${moved === 1 ? '' : 's'}; total student waiting ${signed} min`;
   }
 
-  window.TimetableProgrammeMark = { words, hasMark, options, optionsHtml, mixHtml, nobodyHtml, tradeHtml };
+  /* The mark saves as its select changes. Chrome on Windows fires `change`
+     for every arrow key on a closed select, which would save each programme
+     passed on the way: a choice made from the keyboard saves once the keys
+     rest (or at once on Enter, or on leaving the select); a pointer choice
+     saves at once. Delegated from `root`, so a select drawn again later is
+     covered too; `save(select, value)` is called once per settled choice. */
+  const SETTLE_MS = 700;
+  function saveOnSettle(root, selector, save) {
+    const state = new WeakMap();
+    const of = select => {
+      if (!state.has(select)) state.set(select, { timer: 0, keyed: false });
+      return state.get(select);
+    };
+    const target = event => (event.target && event.target.closest ? event.target.closest(selector) : null);
+    const commit = select => {
+      const entry = of(select);
+      if (!entry.timer) return;
+      clearTimeout(entry.timer);
+      entry.timer = 0;
+      save(select, select.value);
+    };
+    root.addEventListener('pointerdown', event => { const select = target(event); if (select) of(select).keyed = false; });
+    root.addEventListener('keydown', event => {
+      const select = target(event);
+      if (!select) return;
+      of(select).keyed = true;
+      if (event.key === 'Enter') commit(select);
+    });
+    root.addEventListener('change', event => {
+      const select = target(event);
+      if (!select) return;
+      const entry = of(select);
+      clearTimeout(entry.timer);
+      entry.timer = 0;
+      if (!entry.keyed) { save(select, select.value); return; }
+      entry.timer = setTimeout(() => commit(select), api.settleMs);
+    });
+    root.addEventListener('focusout', event => { const select = target(event); if (select) commit(select); });
+  }
+
+  const api = { words, hasMark, options, optionsHtml, mixHtml, nobodyHtml, tradeHtml, saveOnSettle, settleMs: SETTLE_MS };
+  window.TimetableProgrammeMark = api;
 })();

@@ -262,6 +262,7 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
     <div class="tw-panel-body ux-pane-body" id="twRightBody" role="tabpanel" aria-labelledby="twTabIssues" tabindex="0">
       <p class="tw-pane-empty">{% if LANGUAGE_CODE == 'ar' %}لا توجد مشاكل{% else %}No issues yet{% endif %}</p>
     </div>
+    <p id="twInspectorStatus" class="visually-hidden" role="status" aria-live="polite"></p>
     <button class="tw-rail" type="button" data-pane-toggle="right" aria-controls="twRight" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار لوحة الفحص{% else %}Show the inspector{% endif %}">
       <span class="tw-rail-count tnum" id="twRightRailCount"></span>
       <span class="tw-rail-label">{% if LANGUAGE_CODE == 'ar' %}الفحص{% else %}Inspector{% endif %}</span>

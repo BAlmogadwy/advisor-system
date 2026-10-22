@@ -8281,10 +8281,6 @@ function hasProgrammeMark(p) {
   return PM.hasMark(p);
 }
 
-function programmeMarkOptions(p) {
-  return PM.options(p, S.planLens.plans);
-}
-
 function programmeMixHtml(p) {
   if (S.planLens.loading || !S.planLens.loaded) {
     return `—<span class="tws-programme-note">${esc(PM_T.loading)}</span>`;
@@ -8328,10 +8324,13 @@ function renderProgrammeMark(view) {
   // A repaint (the lens arriving) must not take focus off the select.
   const focused = host.contains(document.activeElement);
   host.innerHTML = programmeMarkInnerHtml(p, view);
-  const select = $(`${view.host}Select`);
-  select?.addEventListener('change', event => saveProgrammeMark(p.id, event.target.value));
-  if (focused) select?.focus();
+  if (focused) $(`${view.host}Select`)?.focus();
 }
+
+// One listener for every view's select, however often it is drawn; a
+// keyboard choice saves once the arrow keys rest.
+PM.saveOnSettle(document, '.tws-programme-select',
+  (select, value) => saveProgrammeMark(select.closest('[data-placement-id]')?.dataset.placementId, value));
 
 function renderDrawerProgramme() {
   renderProgrammeMark(PM_VIEWS.drawer);
