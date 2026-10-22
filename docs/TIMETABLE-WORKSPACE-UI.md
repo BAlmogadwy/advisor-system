@@ -297,6 +297,14 @@ Stage 3 (to evaluate): a time-proportional week grid.
   (`dialogWrite`), since the page's busy guard answers with a toast.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
+- The quality read (`GET …/quality/`) answers exactly as it always did.
+  `?lens=1` (exactly `"1"`) adds `plan_lens` as its last key: the plan lens
+  built from the quality read's own seating, equal to `/plan-lens/` for the
+  same data, or `null` (logged) when it cannot be built; a lens failure never
+  costs the quality keys. Quality is never on the preview lane; `/plan-lens/`
+  keeps the lane and its own seating. Both lenses end with
+  `seating: {assessed, students[, reason]}`: `assessed: false` (reason
+  `assessment_failed`) is unknown, never "nobody sits here".
 
 ## 6. Acceptance
 
@@ -1057,6 +1065,84 @@ findings changed the plan:
    server contract from PR 1.
    Specified in full in §7.4 (six sub-PRs, 6a–6f; the owner decided Q4 and
    Q5 there).
+   **As built, 6a (one seating for quality and the lens, server):**
+   `GET …/quality/?lens=1` (exactly `"1"`; `true`, `0`, `yes`, `1.0` and an
+   empty value are ignored) answers quality plus `plan_lens`, last, built
+   inside the same one-teacher scope from the quality read's own seating.
+   Without the parameter both reads are what they were: the oracle
+   `tests/fixtures/tw_quality_legacy.json`, recorded at `b376afa` before any
+   change by `tests/record_tw_quality_legacy.py`, holds the full JSON of
+   `/quality/` and `/plan-lens/` (ids named, key order kept) and each
+   request's query count in three flag modes (the settings' defaults for the
+   three production flags, production, and production with the legacy seat
+   layout); SQ1 replays it. The only change to `/plan-lens/` is `seating`,
+   its new last key. One derivation, `seating_evidence(states, grouping=)`,
+   reads a seating's `assignment_states`; no path reads the section states a
+   seating mutated. `_section_assignment_evidence` keeps its name (the
+   export's seat-once pin is untouched) and returns a frozen
+   `SeatingEvidence`. A seating that cannot be evaluated used to be a silent
+   `{}` that read as "nobody sits here"; it is now logged once and reads
+   `{assessed: false, students: 0, reason: "assessment_failed"}` on both
+   endpoints (scenarios 662 and 664 on the QA copy). The hand-over: the
+   evaluation's states when the seating ran; nobody to seat without demand
+   (assessed, 0 students); otherwise, when the instructor step failed before
+   the seating or the seating step raised (also after the seating, for
+   instance while reading its score), the lens seats on its own (SQ8, SQ8b),
+   so it always equals `/plan-lens/`. Any failure building the lens is
+   `plan_lens: null`, logged, with the quality keys untouched (SQ9).
+   Found on the way, and fixed: (1) holding the evaluation while the lens
+   read its own inputs raised the read's Python peak by 1.08 MiB (the budget
+   is +1 MiB), so the evaluation is dropped once its evidence is read; (2)
+   the lens re-read the demand the quality read had just read (10 of its
+   15 ms on 665), so the quality read now reads the demand rows itself, at the
+   point the profile builder did, hands them to the builder (a new optional
+   `demand_rows=`) and, only when the lens is asked, holds them for the lens
+   (`demands=`); plain quality lets them go before the seating, as it always
+   did. Weakref tests pin both lifetimes; SQ1 pins that plain quality's reads
+   did not change.
+   **Budget, 665** (QA copy, production flags, this machine, SQLite):
+   `lens=1` adds 4 queries to quality's 44 (the seated students' programmes,
+   the demand's programmes, budgets, sections; SQ3 pins them; with no demand,
+   2), against 59 for quality plus `/plan-lens/`. Measured directly, the
+   extra work is the derivation (2.2 ms) and the lens with its seating and
+   demand handed over (3.6 ms; 14.3 ms when it read the demand itself), on a
+   quality median of 69–79 ms. Interleaved medians (budgets ≤ 1.25× quality
+   and ≤ 0.70× quality plus `/plan-lens/`): four runs of 63 rounds (fixed or
+   rotated order, with or without garbage collected before each call) read
+   1.09–1.14× and 0.58–0.64×, and 1.08–1.11× and 0.61–0.63× at the minimum;
+   two runs of the spec's 21 rounds read 1.12–1.13× and 0.72×, just over the
+   second line. The machine is shared with other builds: the separate reads'
+   median moved by up to 30 ms between runs, while the minima did not. The
+   same probe with memory measured (tracemalloc) before the timing read
+   1.29–1.42×, an artefact of that order, which F's probe (`combined2.py`)
+   shares, so F's +34 % may overstate the cost as well; the figures above
+   were timed first. Python peak: quality 3.36–3.74 MiB, as at the base;
+   `lens=1` 3.62–4.01 MiB (+0.3 MiB, the demand rows held for the lens; 663:
+   1.19 and 1.50–1.64). JSON: 6.6 KB without the lens, 58.5 KB with it
+   (5.3 KB gzipped). Real data: on all five QA scenarios (662–666), in both
+   flag modes, quality's JSON and query counts and `/plan-lens/`'s (less
+   `seating`) equal the base commit's, and `lens=1`'s lens equals
+   `/plan-lens/` from one seating (none where the sections cannot be built).
+   Not measured: the 0.5 vCPU host (F16).
+   **Deviations from the spec:** `build_scenario_plan_lens` takes `seating=`
+   and `demands=`; its `programme_view=` comes with 6b, which gives it a
+   behaviour. SQ3's N is 4, not 5 (the demand is not read twice). SQ7 is in
+   `tests/test_tw_preview_lane.py`: the quality view is listed as never laned
+   (`UNLANED_READS`), and a full lane still answers `quality/?lens=1`.
+   **Tests:** SQ1–SQ9 and SQ8b, the derivation (non-roster ids, a roster id
+   with no student row, an id with no section, a course key holding `_`),
+   the evaluation dropped and the demand rows held only for a lens, and the
+   profile builder's `demand_rows=` (`tests/test_tw_scenario_seating.py`,
+   22 cases). Of 41 mutants (each compiled first, so none goes red on a
+   syntax error) all go red, among them: truthy `lens`, the lens laned, a
+   second seating, grouping from the wrong run, the failure read as assessed
+   or as nobody, a silent failure, the lens failure failing quality, the
+   evaluation kept alive, the demand read twice or held by plain quality, the
+   seating key out of place, and an extra query or a key moved in plain
+   quality. Not mutated, by construction: the hand-over carries only the
+   evaluation and the demand rows, so the combined path cannot read the
+   section states the seating mutated; and the lens is built inside the
+   one-teacher scope, which memoises teacher reads the lens never makes.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
