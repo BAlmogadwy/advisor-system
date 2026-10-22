@@ -391,6 +391,8 @@
   }
 
   // ── Roving focus over grids ───────────────────────────────────
+  // ROVING: one tab stop for a region of grids, the keyboard kept through
+  // redraws (design record §3.3 and §7.3, 5a).
   /* `UXControls.roving(region, options)` gives a region of ARIA grids
      (`[role=grid] > [role=row] > [role=gridcell]`, rows usually
      `.ux-grid-row`) ONE tab stop and arrow-key movement, the WAI-ARIA grid
@@ -436,7 +438,7 @@
       Object.assign(rovers.get(region).options, options);
       return rovers.get(region).nav;
     }
-    const self = { options: { ...options }, key: '', pos: null, pending: '', owned: false, nav: null };
+    const self = { options: { ...options }, key: '', pos: null, pending: '', misses: 0, owned: false, nav: null, boxed: false };
     rovers.set(region, self);
     const opt = self.options;
     const keyOf = element => (element && element.dataset ? element.dataset.focusKey || '' : '');
@@ -536,7 +538,9 @@
       let stop = null;
       if (self.pending) {
         stop = byKey(grid, self.pending);
-        if (stop) self.pending = '';
+        // A key named before it is drawn waits for the redraw that draws it,
+        // not for ever (a stale one would take the keyboard much later).
+        if (stop || ++self.misses > 1) { self.pending = ''; self.misses = 0; }
       }
       stop = stop || byKey(grid, self.key);
       if (!stop && typeof opt.initial === 'function') stop = byKey(grid, opt.initial() || '');
@@ -589,14 +593,15 @@
       if (key === 'PageDown' || key === 'PageUp') {
         const g = key === 'PageDown' ? pos.g + 1 : pos.g - 1;
         if (g < 0 || g >= grid.length) return at(grid, pos);
-        return rowAt(g, Math.min(pos.r, grid[g].length - 1), pos.c, false);
+        // A list's tables are its groups (terms): the next one from its start.
+        return rowAt(g, list ? 0 : Math.min(pos.r, grid[g].length - 1), pos.c, false);
       }
       return undefined;
     }
 
     const NAVIGATION = new Set(['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp']);
     region.addEventListener('keydown', event => {
-      if (event.isComposing || event.altKey || event.metaKey || event.shiftKey) return;
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.metaKey || event.shiftKey) return;
       const grid = layout();
       const stops = allStops(grid);
       const target = event.target;
@@ -640,7 +645,14 @@
       const grid = layout();
       const stop = allStops(grid).find(element => element === event.target || element.contains(event.target));
       if (stop) setActive(grid, stop);
-      if (opt.hint && lastInputWasKeyboard) opt.hint.hidden = false;
+      if (opt.hint && lastInputWasKeyboard && opt.hint.hidden) {
+        opt.hint.hidden = false;
+        // The line takes room below its region: keep the stop in view.
+        const shown = stop || null;
+        if (shown && typeof shown.scrollIntoView === 'function') {
+          (window.requestAnimationFrame || setTimeout)(() => shown.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+        }
+      }
     });
     region.addEventListener('focusout', event => {
       if (event.relatedTarget && !region.contains(event.relatedTarget)) {
@@ -657,13 +669,21 @@
     // R6: any redraw of the region (attributes are not watched: tones and the
     // selection never move the keyboard).
     new MutationObserver(() => { if (region.isConnected) refresh(); }).observe(region, { childList: true, subtree: true });
+    if (window.ResizeObserver) {
+      new ResizeObserver(entries => {
+        const box = entries[entries.length - 1].contentRect;
+        const boxed = box.width > 0 || box.height > 0;
+        if (boxed && !self.boxed && region.isConnected) refresh();
+        self.boxed = boxed;
+      }).observe(region);
+    }
 
     const nav = {
       active(key, { focus = false } = {}) {
         if (key === undefined) return self.key;
         const grid = layout();
         const stop = byKey(grid, key);
-        if (!stop) { self.pending = key; return key; }
+        if (!stop) { self.pending = key; self.misses = 0; return key; }
         self.pending = '';
         setActive(grid, stop);
         if (focus) moveTo(grid, stop);

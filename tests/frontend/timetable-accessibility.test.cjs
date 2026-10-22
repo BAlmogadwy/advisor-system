@@ -416,7 +416,7 @@ function rovingFixture({ rtl = false, stopsAsButtons = false } = {}) {
     </div>
     <div id="list" tabindex="-1">
       <div role="grid"><div role="row"><div role="gridcell" data-focus-key="l:1">one</div></div><div role="row"><div role="gridcell" data-focus-key="l:2" aria-disabled="true">two</div></div><div role="row" hidden><div role="gridcell" data-focus-key="l:h">hidden</div></div></div>
-      <div role="grid"><div role="row" class="d-none"><div role="gridcell" data-focus-key="l:d">d-none</div></div><div role="row"><div role="gridcell" data-focus-key="l:3">three</div></div></div>
+      <div role="grid"><div role="row" class="d-none"><div role="gridcell" data-focus-key="l:d">d-none</div></div><div role="row"><div role="gridcell" data-focus-key="l:3">three</div></div><div role="row"><div role="gridcell" data-focus-key="l:4">four</div></div></div>
     </div>
     <button id="outside">outside</button>
   </body></html>`;
@@ -551,7 +551,7 @@ test('R6 roving: a list has Home and End over the whole list, leaves left and ri
   h.press('ArrowDown'); assert.equal(h.focused(), 'l:2', 'a disabled row is reachable');
   h.press('ArrowDown'); assert.equal(h.focused(), 'l:3', 'hidden and d-none rows are skipped');
   h.press('Home'); assert.equal(h.focused(), 'l:1');
-  h.press('End'); assert.equal(h.focused(), 'l:3');
+  h.press('End'); assert.equal(h.focused(), 'l:4');
   assert.equal(h.press('ArrowLeft').defaultPrevented, false);
   assert.equal(h.press('ArrowRight').defaultPrevented, false);
   h.dom.window.close();
@@ -570,7 +570,7 @@ test('R7 roving: restore gives the keyboard back to the active stop after the us
   h.dom.window.close();
 });
 
-test('R8 roving: the keys line shows while the keyboard is in the region, not after a mouse focus', () => {
+test('R8 roving: the keys line shows while the keyboard is in the region, not after a mouse focus', async () => {
   const h = rovingFixture();
   const hint = h.doc.createElement('p');
   hint.hidden = true;
@@ -584,6 +584,14 @@ test('R8 roving: the keys line shows while the keyboard is in the region, not af
   h.doc.dispatchEvent(new h.w.Event('pointerdown', { bubbles: true }));
   h.nav.element().focus();
   assert.equal(hint.hidden, true, 'not shown on a mouse focus');
+  // The line takes room: the stop the keyboard is on is scrolled back into view.
+  h.doc.getElementById('outside').focus();
+  await new Promise(resolve => setTimeout(resolve, 30));  // the first showing's scroll lands
+  h.scrolled.length = 0;
+  h.doc.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+  h.nav.element().focus();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(h.scrolled, [h.nav.active()], 'kept in view as the line appears');
   h.dom.window.close();
 });
 
@@ -628,5 +636,70 @@ test('K2 collapsing the pane that has the keyboard moves the keyboard to its rai
   h.press({ key: 'ج', code: 'BracketLeft' }, row);
   assert.equal(h.workspace.dataset.left, 'collapsed');
   assert.equal(h.doc.activeElement, h.doc.querySelector('#twLeft .tw-rail'));
+  h.dom.window.close();
+});
+
+test('R9 roving: a new region starts where initial() says; a cell that gains cards gives its stop up; a list pages by group start', () => {
+  const h = rovingFixture();
+  const nav = h.w.UXControls.roving(h.doc.getElementById('list'), {});
+  // initial() is read for a region seen for the first time (a fresh one).
+  const fresh = h.doc.createElement('div');
+  fresh.innerHTML = '<div role="grid"><div role="row"><div role="gridcell" data-focus-key="f:1">1</div><div role="gridcell" data-focus-key="f:2">2</div></div></div>';
+  h.doc.body.appendChild(fresh);
+  h.w.UXControls.roving(fresh, { initial: () => 'f:2' });
+  assert.deepEqual(h.zeros(fresh), ['f:2']);
+  // A cell that gains stops is no longer one: its tabindex goes.
+  h.nav.active('A:SUN:570', { focus: true });
+  const cell = h.doc.querySelector('[data-focus-key="A:SUN:570"]');
+  cell.insertAdjacentHTML('beforeend', '<div class="c" data-focus-key="p:5">five</div>');
+  h.nav.refresh();
+  assert.equal(cell.hasAttribute('tabindex'), false, 'the cell gave its stop up');
+  assert.equal(h.doc.querySelector('[data-focus-key="p:5"]').getAttribute('tabindex'), '0', 'its card has it');
+  // In a list, PageDown goes to the next group's first row, wherever it was.
+  nav.active('l:2', { focus: true });
+  h.press('PageDown');
+  assert.equal(h.focused(), 'l:3');
+  h.dom.window.close();
+});
+
+test('R10 roving: keys are left alone with Ctrl (but Home/End), while composing, or when something else took them; a pending key does not wait for ever', async () => {
+  const h = rovingFixture();
+  h.nav.active('p:1', { focus: true });
+  assert.equal(h.press('ArrowDown', { ctrlKey: true }).defaultPrevented, false, 'Ctrl+arrow is not the board’s');
+  assert.equal(h.focused(), 'p:1');
+  assert.equal(h.press('ArrowDown', { isComposing: true }).defaultPrevented, false, 'an IME composition owns its keys');
+  const taken = new h.w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+  taken.preventDefault();
+  h.doc.activeElement.dispatchEvent(taken);
+  assert.equal(h.focused(), 'p:1', 'a key another handler took is not moved on');
+  // A key named but never drawn is dropped after two redraws.
+  h.nav.active('p:99');
+  const grid = h.doc.getElementById('A');
+  grid.querySelector('[data-focus-key="A:MON:660"]').innerHTML = '<div class="c" data-focus-key="p:7">7</div>';
+  h.nav.refresh();
+  h.nav.refresh();
+  grid.querySelector('[data-focus-key="A:MON:570"]').innerHTML = '<div class="c" data-focus-key="p:99">late</div>';
+  h.nav.refresh();
+  assert.notEqual(h.zeros(h.board)[0], 'p:99', 'a stale key no longer takes the stop');
+  h.dom.window.close();
+});
+
+test('K3 the pane keys read the key typed first; only another script’s letter falls back to the position; opening from the rail keeps the keyboard', () => {
+  const h = panesHarness();
+  const left = () => h.workspace.dataset.left, right = () => h.workspace.dataset.right;
+  const before = [left(), right()];
+  h.press({ key: ']', code: 'BracketLeft' });  // Hebrew: ] on the left bracket key
+  assert.deepEqual([left(), right() !== before[1]], [before[0], true], 'the key typed decides');
+  const now = [left(), right()];
+  h.press({ key: 'ü', code: 'BracketLeft' });  // German: a Latin letter there is typing
+  h.press({ key: 'ج', code: 'BracketLeft', isComposing: true });
+  assert.deepEqual([left(), right()], now);
+  // Collapsed list, keyboard on its rail: opening it puts the keyboard on its collapse button.
+  if (left() !== 'collapsed') h.press({ key: '[', code: 'BracketLeft' });
+  const rail = h.doc.querySelector('#twLeft .tw-rail');
+  rail.focus();
+  h.press({ key: '[', code: 'BracketLeft' }, rail);
+  assert.equal(left(), 'open');
+  assert.equal(h.doc.activeElement, h.doc.querySelector('#twLeft .tw-pane-collapse'));
   h.dom.window.close();
 });

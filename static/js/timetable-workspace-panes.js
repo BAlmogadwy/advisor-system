@@ -5,9 +5,10 @@
    required-sections list starts collapsed below 1600px so the board gets the
    width (a lecture slot stays at least 96px at 1366 and 1440), and the
    inspector starts open. `[` toggles the list and `]` the inspector, unless a
-   field has the keyboard — by the key's position too (event.code), so the keys
-   work on an Arabic layout (ج and د sit there). Collapsing the pane that has
-   the keyboard moves it to its rail. A click on a card opens a collapsed
+   field has the keyboard. The key typed decides; where a layout types another
+   script's letter on those keys (ج and د on Arabic), their position does.
+   Opening or collapsing the pane that has the keyboard (its rail, its list)
+   keeps the keyboard in it: its collapse button, or its rail. A click on a card opens a collapsed
    inspector for that click only (event `tw:pane-request`), without changing
    the saved choice. Arabic mirrors the panes (the grid is in logical order);
    `[` and `]` keep their meaning: list, inspector. */
@@ -71,15 +72,19 @@
   panes.right.toggle?.addEventListener('click', () => toggle('right', false));
 
   document.addEventListener('keydown', event => {
-    const side = (event.key === '[' || (event.code === 'BracketLeft' && !event.shiftKey)) ? 'left'
-      : (event.key === ']' || (event.code === 'BracketRight' && !event.shiftKey)) ? 'right' : '';
+    // A non-Latin letter on the bracket keys (Arabic, Hebrew's letters,
+    // Cyrillic): their position. A Latin letter there (German ü) is typing.
+    const otherScript = /^\p{L}$/u.test(event.key) && !/^\p{Script=Latin}$/u.test(event.key) && !event.shiftKey;
+    const side = event.key === '[' ? 'left' : event.key === ']' ? 'right'
+      : otherScript && event.code === 'BracketLeft' ? 'left'
+        : otherScript && event.code === 'BracketRight' ? 'right' : '';
     if (!side || event.repeat || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
     if (document.querySelector('dialog[open], .dlg-backdrop')) return;
     event.preventDefault();
     const holds = panes[side].el && panes[side].el.contains(document.activeElement);
-    toggle(side, holds && state[side] === 'open');
+    toggle(side, holds);
   });
 
   window.addEventListener('tw:pane-request', event => {

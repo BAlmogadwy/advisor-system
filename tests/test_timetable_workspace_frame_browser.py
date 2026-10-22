@@ -297,7 +297,7 @@ class WorkspaceFrameBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase
                         if (r.left < box.left - 1 || r.right > box.right + 1) bad.push(`column cut: ${h.textContent.trim().slice(0, 14)}`);
                         if (r.width < 95.5 && h.querySelector('.tw-slot-time')) bad.push(`column ${Math.round(r.width)}px`);
                       }
-                      const centre = document.querySelector('.tw-centre');
+                      const centre = document.getElementById('twGridWrap');  // the board's scroller
                       if (box.width > centre.clientWidth && centre.scrollWidth <= centre.clientWidth) bad.push('the board cannot scroll to it');
                       if (document.documentElement.scrollWidth > innerWidth + 0.5) bad.push('the page scrolls sideways');
                       return bad;

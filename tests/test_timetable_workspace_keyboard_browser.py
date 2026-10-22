@@ -11,11 +11,13 @@ keyboard moves to is never under the sticky header or the floating job card.
 from __future__ import annotations
 
 import pytest
-from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-
-from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin
 
 pytest.importorskip("playwright.sync_api")
+
+from django.contrib.staticfiles.testing import StaticLiveServerTestCase  # noqa: E402
+
+from tests import one_teacher_support as fx  # noqa: E402
+from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin  # noqa: E402
 
 ACTIVE = """() => {
   const a = document.activeElement;
@@ -54,7 +56,7 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
             page.keyboard.press("Shift+Tab")
             back = page.evaluate(ACTIVE)
             self.assertEqual(back["key"], moved["key"], f"{language}: back to the same stop")
-            self.assertEqual(errors, [])
+            self.assertEqual([*sent, *errors], [])
 
     def test_chrome_exposes_the_board_and_the_list_as_grids(self) -> None:
         page, sent, errors = self._load("en", "light", 1920, 1080)
@@ -77,8 +79,12 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
         )
         self.assertTrue(any(role(n) == "rowheader" and name(n) == "Sunday" for n in nodes))
         self.assertTrue(any(role(n) == "gridcell" for n in nodes))
-        self.assertTrue(any(role(n) == "button" and "AI111" in name(n) for n in nodes))
-        self.assertEqual(errors, [])
+        # A card, named with its own day and time (not an Issues row).
+        self.assertTrue(
+            any(role(n) == "button" and "AI111" in name(n) and "Sunday" in name(n) for n in nodes),
+            [name(n) for n in nodes if role(n) == "button" and "AI111" in name(n)],
+        )
+        self.assertEqual([*sent, *errors], [])
 
     def test_a_redraw_keeps_the_keyboard_and_never_scrolls_a_mouse_users_view(self) -> None:
         page, sent, errors = self._load("en", "light", 1440, 790)
@@ -97,7 +103,7 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
         )
         # A mouse user: a click, a scroll, a redraw — the view stays put.
         page.click(".tw-card")
-        centre = "document.getElementById('twCentre')"
+        centre = "document.getElementById('twGridWrap')"
         page.evaluate(f"{centre}.scrollTop = {centre}.scrollHeight")
         top = page.evaluate(f"{centre}.scrollTop")
         self.assertGreater(top, 0, "the board scrolls at this size")
@@ -112,7 +118,7 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
               return [s.outlineStyle, s.outlineColor === t0]; }"""
         )
         self.assertEqual(selected, ["solid", True], "a clicked, selected card keeps its outline")
-        self.assertEqual(errors, [])
+        self.assertEqual([*sent, *errors], [])
 
     def test_the_pane_keys_work_by_key_position_on_an_arabic_layout(self) -> None:
         page, sent, errors = self._load("ar", "light", 1440, 790)
@@ -136,7 +142,7 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
                     },
                 )
             self.assertNotEqual(page.evaluate(f"{workspace}.{side}"), before, f"{key} on {code}")
-        self.assertEqual(errors, [])
+        self.assertEqual([*sent, *errors], [])
 
     def test_a_card_the_keyboard_moves_to_is_never_under_the_header_or_the_job_card(self) -> None:
         for language in ("en", "ar"):
@@ -144,7 +150,7 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
             # ↑ from Monday to Sunday, with Sunday's row 20px under the sticky header.
             seen = page.evaluate(
                 """async () => {
-                  const centre = document.getElementById('twCentre');
+                  const centre = document.getElementById('twGridWrap');
                   const table = document.querySelector('#twGrid [role="grid"]');
                   const header = table.querySelector('.tw-grid-header').getBoundingClientRect();
                   const sun = table.querySelector('[role="gridcell"][data-day="SUN"]');
@@ -184,7 +190,7 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
                   const wed = [...table.querySelectorAll('[role="gridcell"][data-day="WED"]')].find(across);
                   const thuCell = [...table.querySelectorAll('[role="gridcell"][data-day="THU"]')].find(across);
                   (wed.querySelector('.tw-card') || wed).focus({ preventScroll: true });
-                  const centre = document.getElementById('twCentre');
+                  const centre = document.getElementById('twGridWrap');
                   // Thursday's row 30px under the job card's top edge.
                   centre.scrollTop -= job.top + 30 - thuCell.getBoundingClientRect().bottom;
                   const thu = thuCell.getBoundingClientRect();
@@ -200,4 +206,96 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
                   return { day: (a.closest('[role="gridcell"]') || a).dataset.day, clear: r.bottom <= job.top + 0.5 }; }"""
             )
             self.assertEqual(below, {"day": "THU", "clear": True}, language)
-            self.assertEqual(errors, [])
+            self.assertEqual([*sent, *errors], [])
+
+    def test_a_list_collapsed_at_load_gets_its_one_stop_when_it_opens(self) -> None:
+        # Below 1600px the list starts collapsed: its first drawing has no box.
+        page, sent, errors = self._load("en", "light", 1440, 790)
+        self.assertEqual(
+            page.evaluate("document.getElementById('twWorkspace').dataset.left"), "collapsed"
+        )
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        page.keyboard.press("BracketLeft")
+        page.wait_for_function("document.getElementById('twWorkspace').dataset.left === 'open'")
+        page.wait_for_function(
+            "document.querySelectorAll('#twSectionList [tabindex=\"0\"]').length === 1"
+        )
+        page.focus("#twSectionSearch")
+        page.keyboard.press("Tab")
+        landed = page.evaluate(
+            "[document.activeElement.getAttribute('tabindex'), document.getElementById('twSectionList').contains(document.activeElement)]"
+        )
+        self.assertEqual(landed, ["0", True])
+        self.assertEqual([*sent, *errors], [])
+
+    def test_focus_keeps_the_severity_ring_and_the_selection_and_cells_show_an_inset_ring(
+        self,
+    ) -> None:
+        from core.models import DeliveryBoard
+
+        board = DeliveryBoard.objects.get(scenario=self.scenario)
+        # A section with no room: a critical card.
+        key = fx.requirement("AI", "MATH101", "Calculus")
+        fx.budget(self.scenario, key, 1)
+        fx.place(
+            board,
+            fx.section(self.scenario, key, "S1"),
+            (("SUN", "10:30", "11:45"), ("TUE", "10:30", "11:45")),
+            room="UNASSIGNED",
+        )
+        for theme in ("light", "dark"):
+            page, sent, errors = self._load("en", theme, 1440, 790, cards=6)
+            seen = page.evaluate(
+                """() => {
+                  const probe = document.createElement('span'); document.body.appendChild(probe);
+                  const colour = value => { probe.style.color = value; return getComputedStyle(probe).color; };
+                  const critical = colour('var(--sev-critical)'), t0 = colour('var(--t0)');
+                  const toned = document.querySelector('.tw-card.critical');
+                  toned.focus();
+                  const focused = getComputedStyle(toned).boxShadow.includes(critical);
+                  toned.blur();
+                  const cell = document.querySelector('#twGrid [role="gridcell"]:not(:has(.tw-card))');
+                  cell.focus();
+                  const inset = getComputedStyle(cell).outlineOffset;
+                  probe.remove();
+                  return { focused, inset, critical, t0 };
+                }"""
+            )
+            self.assertEqual((seen["focused"], seen["inset"]), (True, "-2px"), f"{theme}: {seen}")
+            # A pointer over a toned card keeps its ring (dark mode lost it on hover).
+            page.hover(".tw-card.critical")
+            self.assertIn(
+                seen["critical"],
+                page.evaluate(
+                    "getComputedStyle(document.querySelector('.tw-card.critical')).boxShadow"
+                ),
+                theme,
+            )
+            # Selected and focused: the selection's ring inside the focus ring.
+            page.click(".tw-card.critical")
+            page.keyboard.press("ArrowRight")
+            page.keyboard.press("ArrowLeft")
+            both = page.evaluate(
+                "(() => { const s = getComputedStyle(document.activeElement); return [document.activeElement.classList.contains('is-selected'), s.outlineOffset, s.boxShadow]; })()"
+            )
+            self.assertEqual(both[:2], [True, "4px"], theme)
+            self.assertIn(seen["t0"], both[2], theme)
+            self.assertEqual([*sent, *errors], [])
+
+    def test_the_keys_line_sits_below_the_board_never_over_it_and_never_scrolled_away(self) -> None:
+        page, sent, errors = self._load("en", "light", 1366, 650)
+        self._into_board(page)
+        page.keyboard.press("ArrowRight")
+        page.evaluate("document.getElementById('twGridWrap').scrollLeft = 200")
+        seen = page.evaluate(
+            """() => {
+              const keys = document.getElementById('twGridKeys');
+              const wrap = document.getElementById('twGridWrap').getBoundingClientRect();
+              const centre = document.getElementById('twCentre').getBoundingClientRect();
+              const line = keys.getBoundingClientRect();
+              return { shown: !keys.hidden, below: line.top >= wrap.bottom - 0.5, left: Math.abs(line.left - centre.left) < 1.5,
+                       inside: line.bottom <= centre.bottom + 0.5 };
+            }"""
+        )
+        self.assertEqual(seen, {"shown": True, "below": True, "left": True, "inside": True})
+        self.assertEqual([*sent, *errors], [])

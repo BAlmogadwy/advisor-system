@@ -122,8 +122,16 @@ function activateListRow(cell) {
     announceBoard(IS_AR ? `وُضعت كل شعب ${what}.` : `Every section of ${what} is placed.`);
     return;
   }
-  const pattern = cell.querySelector('.tw-pattern-action');
-  if (pattern) { pattern.click(); return; }
+  if (typeof cell._twEnglish === 'function') {
+    if (!workspaceCanEdit()) {
+      announceBoard(TW.scenario?.status === 'published'
+        ? (IS_AR ? 'هذا السيناريو منشور ولا يمكن تعديله.' : 'This scenario is published and read-only.')
+        : (IS_AR ? 'انتظر انتهاء العملية الحالية.' : 'Wait for the current operation to finish.'));
+      return;
+    }
+    Promise.resolve(cell._twEnglish()).finally(() => listNav?.restore());
+    return;
+  }
   announceBoard(IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.');
 }
 
@@ -1102,7 +1110,7 @@ async function selectBoard(boardId) {
     }
     if (TW.loadedBoardId !== boardId) {
       TW.selectedPlacementId = null;
-      // Another board: the keyboard starts at its first card.
+      // Another board: the keyboard starts at its first stop.
       boardNav?.reset();
     }
     TW.loadedBoardId = boardId;
@@ -1282,7 +1290,8 @@ function renderBudgetSidebar() {
           // For the pointer: the keyboard reaches it with Enter on its row.
           choose.tabIndex = -1;
           choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
-          choose.addEventListener('click', () => chooseEnglishWorkspacePattern({ ...c, type: 'create_planned', section_label: secLabel }));
+          div._twEnglish = () => chooseEnglishWorkspacePattern({ ...c, type: 'create_planned', section_label: secLabel });
+          choose.addEventListener('click', () => div._twEnglish());
           div.appendChild(choose);
         }
       }
@@ -2231,11 +2240,14 @@ function createPlacementCard(p) {
     + (p.is_locked ? `<span class="ux-icon" data-icon="lock" role="img" aria-label="${lockWords}" title="${lockWords}"></span>` : '')
     + (p.shared_with_other_scenario ? `<span class="ux-icon" data-icon="shared" role="img" aria-label="${sharedWords}" title="${sharedWords}"></span>` : '');
   const roomState = p.room_state === 'unassigned' && p.needs_room !== false ? 'unassigned' : '';
+  const dayIndex = DAYS.indexOf(p.day);
+  const when = `${IS_AR ? (DAY_LABELS[dayIndex] || p.day) : (DAY_NAMES_EN[dayIndex] || p.day)} \u2066${p.start_time}–${p.end_time}\u2069`;
   card.innerHTML = `
     <div class="cc"><span class="tw-card-code">${esc(p.course_code)}</span>${TW.cardsShowSection === false ? '' : `<bdi class="tw-card-section">${esc(p.section)}</bdi>`}</div>
     ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))}</div>` : ''}
     ${showCourseName ? `<div class="tw-card-name" dir="auto">${esc(courseName)}</div>` : ''}
     <div class="ci">${room ? `<bdi class="tw-card-room"${roomState ? ` data-room-state="${roomState}"` : ''}>${esc(room)}</bdi>` : ''}${teacher ? `<bdi class="tw-card-teacher">${esc(teacher)}</bdi>` : ''}<span class="tw-card-marks">${marks}</span></div>
+    <span class="visually-hidden">${esc(when)}</span>
   `;
 
   card.addEventListener('dragstart', (e) => {
@@ -2328,7 +2340,8 @@ function renderUnplacedList() {
       const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'tw-pattern-action'; choose.dataset.twMutation = '';
       choose.disabled = !workspaceCanEdit(); choose.textContent = IS_AR ? 'اختر النمط الأسبوعي' : 'Choose weekly pattern';
       choose.tabIndex = -1;
-      choose.addEventListener('click', () => chooseEnglishWorkspacePattern({ ...s, type: 'create', section_label: s.section }));
+      div._twEnglish = () => chooseEnglishWorkspacePattern({ ...s, type: 'create', section_label: s.section });
+      choose.addEventListener('click', () => div._twEnglish());
       div.appendChild(choose);
     }
     div.addEventListener('dragstart', (e) => {
@@ -2797,7 +2810,7 @@ function renderRightPanel(tab) {
     draw(html);
   } else if (tab === 'selection') {
     if (!TW.selectedPlacementId) {
-      draw(`<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'اختر شعبة في الجدول لعرض تفاصيلها.' : 'Click a section on the grid to inspect it.'}</p></div>`);
+      draw(`<div class="tw-empty tw-empty-sm"><p>${IS_AR ? 'اختر شعبة في الجدول لعرض تفاصيلها.' : 'Select a section on the grid to inspect it.'}</p></div>`);
       return;
     }
     const p = TW.placements.find(x => x.id === TW.selectedPlacementId);

@@ -405,10 +405,23 @@ findings changed the plan:
    absolutely positioned, stretched the page until `.tw-centre` became its
    containing block; dark mode's hover hid the severity ring (now a
    `--tw-ring` variable kept by hover and focus). Browser tests share a helper
-   (`tests/timetable_workspace_browser_support.py`). Not yet done: the manual
-   NVDA/JAWS check of D6c (no screen reader on the build machine; the
-   accessibility-tree test guards Chrome's exposure, and NVDA enters focus
-   mode in a `grid` by default).
+   (`tests/timetable_workspace_browser_support.py`). After review: a region
+   that gains a box (the list, collapsed at load below 1600px) is read again,
+   so it has its one stop when it opens; the keys lines sit outside their
+   scrollers (the board's scroller is now `#twGridWrap` inside a column
+   `.tw-centre`), so they never cover a stop or scroll away sideways, and
+   the stop is kept in view as a line appears; a selected card with the
+   keyboard shows its selection ring inside the focus ring; the pane keys
+   read the key typed first and fall back to the key's position only for
+   another script's letter (ج on Arabic, never German ü), and opening a pane
+   from its rail keeps the keyboard; Enter on an English row the page cannot
+   act on says why, and the keyboard returns to the list after the chooser;
+   PageUp/PageDown in the list go to a term's first row; a pending key waits
+   for two redraws at most; a key another handler took, Ctrl+arrows and an
+   IME composition are left alone; each card names its own day and time (a
+   screen reader may not say a cell's headers while the focus is on a card).
+   Not yet done: the manual NVDA/JAWS check of D6c (no screen reader on the
+   build machine; the accessibility-tree test guards Chrome's exposure).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens

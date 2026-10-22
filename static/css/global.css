@@ -2141,12 +2141,12 @@ html[data-theme="dark"] .ux-seg-item:has(input:checked) { background: var(--surf
    technology and leaves their placement to the table. A roving grid cell
    takes an inset ring, so tiled cells and a clipped table never hide it.
    `.ux-keys`: the keys of a keyboard region, shown while the keyboard is in
-   it (the controller's `hint`). */
+   it (the controller's `hint`) — placed after the region's scroller, never
+   inside it, so it neither covers a stop nor scrolls away sideways. */
 .ux-grid-row { display: contents; }
 html body [role="gridcell"][tabindex]:focus-visible { outline-offset: -2px !important; box-shadow: none !important; }
 .ux-keys {
-  position: sticky; inset-block-end: 0; z-index: 3;
-  margin: 0; padding: 6px 10px;
+  flex: none; margin: 0; padding: 6px 10px;
   background: var(--surface); border-top: 1px solid var(--line-strong);
   color: var(--t2); font-size: var(--text-xs);
 }

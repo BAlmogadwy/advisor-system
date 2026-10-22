@@ -98,10 +98,18 @@
 .tw-workspace[data-right="collapsed"] { --tw-right-w: var(--tw-rail-w); }
 .tw-left  { border-inline-end: 1px solid var(--line-strong); }
 .tw-right { border-inline-start: 1px solid var(--line-strong); }
+/* The centre pane is a column: the board's scroller (#twGridWrap), then its
+   keys line (outside the scroller: it never covers a card or scrolls away
+   sideways). Positioned, so its visually hidden status line stays inside it
+   and never stretches the page. */
 .tw-centre {
-  /* Positioned: what it holds absolutely (its visually hidden status line)
-     stays in its own scroller, never stretching the page. */
   position: relative;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  overflow: hidden;
+}
+#twGridWrap {
+  flex: 1 1 auto;
   min-width: 0; min-height: 0;
   padding: 10px 14px 16px;
   overflow: auto; overscroll-behavior: contain;
@@ -197,7 +205,6 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 .tw-show-more { width: 100%; margin-top: 6px; }
 
 /* ── The board ──────────────────────────────────────────────────── */
-#twGridWrap { min-width: 0; }
 .tw-grid { min-width: 0; }
 .tw-group-head {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
@@ -341,6 +348,7 @@ html[data-theme="dark"] .tw-card:hover { box-shadow: var(--tw-ring), 0 2px 8px r
 .tw-card.critical { --tw-ring: inset 0 0 0 2px var(--sev-critical); box-shadow: var(--tw-ring); }
 .tw-card.warning  { --tw-ring: inset 0 0 0 2px var(--tw-warning-ink); box-shadow: var(--tw-ring); }
 html body .tw-card:focus-visible { outline-offset: 1px !important; box-shadow: var(--tw-ring), 0 0 0 4px var(--brand-glow) !important; }
+html body .tw-card.is-selected:focus-visible { outline-offset: 4px !important; box-shadow: var(--tw-ring), 0 0 0 2px var(--t0) !important; }
 /* Locked: its time is frozen — said by the padlock on the meta line (a hatch
    at about 1.1:1 was invisible). */
 .tw-card.locked { cursor: default; }
