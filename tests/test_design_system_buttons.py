@@ -111,6 +111,11 @@ NEUTRAL_TEMPLATE_SITES = {
     ("static/js/page-timetable-workspace.js", "tw-readiness-go"),
     # Selection's Refresh of the programme mix.
     ("static/js/page-timetable-workspace.js", "lens-refresh"),
+    # Change room: Selection's Change…/Choose…, and the dialog's Check again and
+    # Try again (its × and Cancel are the template's data-dialog-close).
+    ("static/js/page-timetable-workspace.js", "room"),
+    ("static/js/page-timetable-workspace.js", "room-recheck"),
+    ("static/js/page-timetable-workspace.js", "room-retry"),
 }
 
 #: The one that styles itself inline. It was never `ButtonFace`, and the neutral
@@ -147,7 +152,8 @@ def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
     """(file, stable identifier) for one control."""
     rel = path.relative_to(ROOT).as_posix()
     for probe in (
-        r'id="([^"]+)"',
+        # An id of its own, never a data-*-id (a placement's id is no identifier).
+        r'(?<![\w-])id="([^"]+)"',
         r'data-ai-action="([^"]+)"',
         r'onclick="([^"(]+)',
         r'data-pr8-action="([^"]+)"',

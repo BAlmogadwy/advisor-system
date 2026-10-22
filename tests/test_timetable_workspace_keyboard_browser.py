@@ -6,6 +6,12 @@ in Arabic), a redraw keeps the keyboard on the same section without scrolling a
 mouse user's view, Chrome exposes the grid to assistive technology, the pane
 keys work by key position (an Arabic layout types ج and د there), and a card the
 keyboard moves to is never under the sticky header or the floating job card.
+
+§7.3, 5c (RoomDialogTests): Change room from the keyboard, from Selection's
+button and by R on a card, keeps the time lock and gives the keyboard back to
+whatever opened it; a room in use can be chosen and its clash is shown; the
+dialog reads in both themes and languages, keeps its foot in view while its
+list scrolls, and follows the arrow keys down the list in either direction.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ pytest.importorskip("playwright.sync_api")
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase  # noqa: E402
 
 from tests import one_teacher_support as fx  # noqa: E402
+from tests.test_timetable_workspace_frame_browser import CONTRAST  # noqa: E402
 from tests.timetable_workspace_browser_support import WorkspaceBrowserMixin  # noqa: E402
 
 ACTIVE = """() => {
@@ -299,3 +306,232 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
         )
         self.assertEqual(seen, {"shown": True, "below": True, "left": True, "inside": True})
         self.assertEqual([*sent, *errors], [])
+
+
+CHOSEN = "[document.activeElement?.name === 'twRoomChoice' && document.activeElement.value, document.activeElement?.checked]"
+ON_BUTTON = "document.activeElement?.matches('#twRightBody [data-tw-action=\"room\"]')"
+# Text in the dialog under 11px (each element whose own text is shown).
+SMALL_TEXT = r"""() => [...document.querySelectorAll('#twRoomDialog *')].filter(el => el.getClientRects().length
+  && [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())
+  && parseFloat(getComputedStyle(el).fontSize) < 11).map(el => `${el.tagName}.${el.className} ${getComputedStyle(el).fontSize}`)"""
+# With the list scrolled to its end, the title and Assign are still on screen
+# and not covered; the dialog itself never scrolls (its body does).
+FOOT_IN_VIEW = r"""() => {
+  const dialog = document.getElementById('twRoomDialog'), body = document.getElementById('twRoomBody');
+  if (body.scrollHeight <= body.clientHeight + 1) return ['the list does not scroll at this size: the check proves nothing'];
+  body.scrollTop = body.scrollHeight;
+  const bad = [];
+  const seen = el => { const r = el.getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= innerHeight && el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)); };
+  if (!seen(document.getElementById('twRoomAssign'))) bad.push('Assign scrolled away or is covered');
+  if (!seen(document.getElementById('twRoomTitle'))) bad.push('the title scrolled away or is covered');
+  if (dialog.scrollTop !== 0) bad.push('the dialog itself scrolled');
+  if (body.scrollTop === 0) bad.push('the list did not scroll');
+  return bad;
+}"""
+
+
+class RoomDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
+    """Change room (§7.3, 5c) in a real browser. These write, to pytest's
+    database. AI111 S1 meets on Sunday 09:00 in R100, its time locked; R101 is
+    another free lecture room, R102 is held at that time on the same board (by
+    AI333), R103 is a lab and R104 has 10 seats for a section of 30."""
+
+    maxDiff = None
+
+    def setUp(self) -> None:
+        super().setUp()
+        from core.models import (
+            DeliveryBoard,
+            Room,
+            SectionPlacement,
+            TermSection,
+            TermSectionMeeting,
+        )
+
+        for code, kind, seats in (
+            ("R100", "lecture", 40),
+            ("R101", "lecture", 40),
+            ("R102", "lecture", 40),
+            ("R103", "lab", 40),
+            ("R104", "lecture", 10),
+        ):
+            Room.objects.create(room_code=code, room_type=kind, capacity=seats, section="M")
+        self.ai111 = TermSection.objects.get(scenario=self.scenario, course_code="AI111")
+        self.ai111.available_capacity = 30
+        self.ai111.save(update_fields=["available_capacity"])
+        board = DeliveryBoard.objects.get(scenario=self.scenario)
+        key = fx.requirement("AI", "AI333", "Planning")
+        fx.budget(self.scenario, key, 1)
+        fx.place(
+            board, fx.section(self.scenario, key, "S1"), (("SUN", "09:00", "10:15"),), room="R102"
+        )
+        self.placements, self.meetings = SectionPlacement.objects, TermSectionMeeting.objects
+        self.sunday = self.placements.get(term_section=self.ai111, day="SUN")
+        self.card = f'#twGrid [data-focus-key="placement:{self.sunday.id}"]'
+        self._reset()
+
+    def _reset(self) -> None:
+        self.placements.filter(term_section=self.ai111).update(room="R100", is_locked=True)
+        self.meetings.filter(term_section=self.ai111).update(room="R100")
+
+    def _saved(self, page, room: str) -> None:
+        # Closed, the board read again with the new room, and the page at rest.
+        page.wait_for_function(
+            """([id, room]) => !document.getElementById('twRoomDialog').open
+              && TW.placements.some(p => p.id === id && p.room === room)
+              && document.querySelector('.tw-workspace').dataset.busy === 'false'""",
+            arg=[self.sunday.id, room],
+        )
+
+    def _tab_to(self, page, condition: str, key: str = "Tab") -> None:
+        for _ in range(20):
+            if page.evaluate(condition):
+                return
+            page.keyboard.press(key)
+        self.fail(f"{key} never reached {condition}")
+
+    def test_change_room_from_the_keyboard_keeps_the_lock_and_gives_the_keyboard_back(
+        self,
+    ) -> None:
+        for language in ("en", "ar"):
+            self._reset()
+            page, sent, errors = self._load(language, "light", 1440, 790, cards=5)
+            page.evaluate(
+                "window.__closes = []; document.addEventListener('ux-dialog-close', e => __closes.push(e.detail.reason))"
+            )
+            # Selected from the keyboard, then Tab to Selection's Change….
+            page.focus(self.card)
+            page.keyboard.press("Enter")
+            page.wait_for_selector('#twRightBody [data-tw-action="room"]')
+            self._tab_to(page, ON_BUTTON)
+            page.keyboard.press("Enter")
+            page.wait_for_function("document.activeElement?.name === 'twRoomChoice'")
+            self.assertEqual(page.evaluate(CHOSEN), ["R100", True], f"{language}: the current room")
+            page.keyboard.press("ArrowDown")
+            self.assertEqual(page.evaluate(CHOSEN), ["R101", True], language)
+            page.keyboard.press("Enter")
+            self._saved(page, "R101")
+            page.wait_for_function(ON_BUTTON)
+            row = self.placements.get(pk=self.sunday.pk)
+            self.assertEqual(
+                (row.room, row.is_locked, row.day, row.start_time, row.end_time),
+                ("R101", True, "SUN", "09:00", "10:15"),
+                f"{language}: the room alone changed; the lock holds",
+            )
+            # Escape on a second open, with Selection drawn again meanwhile.
+            page.keyboard.press("Enter")
+            page.wait_for_function("document.activeElement?.name === 'twRoomChoice'")
+            page.evaluate(
+                f"TW.placements.find(p => p.id === {self.sunday.id}).registered_count = 7; renderRightPanel('selection')"
+            )
+            page.keyboard.press("Escape")
+            page.wait_for_function("!document.getElementById('twRoomDialog').open")
+            page.wait_for_function(ON_BUTTON)
+            self.assertEqual(page.evaluate("__closes.at(-1)"), "cancel", language)
+            # R on the card, with the board drawn again while the dialog is open.
+            self._tab_to(page, f"document.activeElement?.matches('{self.card}')", "Shift+Tab")
+            page.keyboard.press("r")
+            page.wait_for_function("document.activeElement?.name === 'twRoomChoice'")
+            page.evaluate("renderGrid()")
+            self.assertEqual(page.evaluate(CHOSEN), ["R101", True], language)
+            page.keyboard.press("ArrowUp")
+            self.assertEqual(page.evaluate(CHOSEN), ["R100", True], language)
+            page.keyboard.press("Enter")
+            self._saved(page, "R100")
+            page.wait_for_function(f"document.activeElement?.matches('{self.card}')")
+            self.assertEqual(self.placements.get(pk=self.sunday.pk).room, "R100", language)
+            move = f"/ops/tw/placements/{self.sunday.id}/move/"
+            self.assertEqual(
+                [r for r in sent if not r.endswith(move)], [], f"{language}: only the room changes"
+            )
+            self.assertEqual(len(sent), 2, language)
+            self.assertEqual(errors, [], language)
+            page.context.close()
+
+    def test_a_room_in_use_can_be_chosen_and_the_clash_it_saves_is_shown(self) -> None:
+        page, sent, errors = self._load("en", "light", 1440, 790, cards=5)
+        page.click(self.card)
+        page.click('#twRightBody [data-tw-action="room"]')
+        page.wait_for_selector('#twRoomBody input[value="R102"]', state="attached")
+        self.assertEqual(
+            page.evaluate(
+                "document.querySelector('#twRoomBody input[value=\"R102\"]').closest('.ux-choice').dataset.tone"
+            ),
+            "critical",
+        )
+        # R103 (a lab) and R104 (10 seats) are listed with their reasons, not offered.
+        self.assertEqual(
+            page.evaluate(
+                "[...document.querySelectorAll('#twRoomBody input[name=\"twRoomChoice\"]')].map(r => r.value)"
+            ),
+            ["R100", "R101", "R102"],
+        )
+        page.click('#twRoomBody label:has(input[value="R102"])')
+        page.click("#twRoomAssign")
+        self._saved(page, "R102")
+        self.assertEqual(self.placements.get(pk=self.sunday.pk).room, "R102")
+        page.click("#twTabIssues")
+        page.wait_for_function(
+            "document.getElementById('twRightBody').textContent.includes('Room double-booked')"
+        )
+        page.wait_for_function(
+            f"document.querySelector('{self.card}').classList.contains('critical')"
+        )
+        # The toast names who else uses the room (codes are isolated in it).
+        toast = (
+            page.inner_text("#toast-container").replace(chr(0x2066), "").replace(chr(0x2069), "")
+        )
+        self.assertIn("Room R102 assigned; AI333-S1 also uses it at this time.", toast)
+        self.assertEqual(errors, [])
+
+    def test_the_room_dialog_reads_keeps_its_foot_and_follows_the_arrows_in_both_directions(
+        self,
+    ) -> None:
+        from core.models import Room
+
+        # Enough rooms that the list scrolls in every window.
+        for n in range(30):
+            Room.objects.create(
+                room_code=f"R2{n:02d}", room_type="lecture", capacity=40, section="M", building="B2"
+            )
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                for width, height in ((1366, 650), (1440, 790)):
+                    page, sent, errors = self._load(language, theme, width, height, cards=5)
+                    page.click(self.card)
+                    page.click('#twRightBody [data-tw-action="room"]')
+                    page.wait_for_function("document.activeElement?.name === 'twRoomChoice'")
+                    found = page.evaluate(
+                        CONTRAST,
+                        [
+                            "#twRoomDialog .ux-choice-title",
+                            "#twRoomDialog .ux-choice-desc",
+                            "#twRoomDialog .ux-choice-status",
+                            "#twRoomDialog .tw-room-verdict",
+                            "#twRoomDialog .ux-field-label",
+                            "#twRoomDialog .ux-dialog-sub",
+                            "#twRoomDialog .tw-room-current",
+                            "#twRoomDialog .ux-dialog-foot-note",
+                            "#twRoomDialog .ux-disclosure-label",
+                        ],
+                    )
+                    found += page.evaluate(SMALL_TEXT)
+                    # The next room is the next row down, in either direction.
+                    before = page.evaluate(
+                        "[...document.querySelectorAll('#twRoomBody input[name=\"twRoomChoice\"]')].indexOf(document.activeElement)"
+                    )
+                    page.keyboard.press("ArrowDown")
+                    after = page.evaluate(
+                        "[...document.querySelectorAll('#twRoomBody input[name=\"twRoomChoice\"]')].indexOf(document.activeElement)"
+                    )
+                    if (before, after) != (0, 1):
+                        found.append(f"ArrowDown went from row {before} to row {after}")
+                    found += page.evaluate(FOOT_IN_VIEW)
+                    if sent or errors:
+                        found += [*sent, *errors]
+                    if found:
+                        problems[f"{language} {theme} {width}x{height}"] = found
+                    page.context.close()
+        self.assertEqual(problems, {})

@@ -72,15 +72,16 @@ const TW = {
    The board and the required-sections list are each ONE tab stop
    (UXControls.roving): arrows move over the cards (and the empty cells), ↑/↓
    walk the sections stacked at one time, Enter selects (Selection shows it),
-   Escape clears the selection. The keys line under each shows while the
-   keyboard is there; what a key did is said in #twBoardStatus, outside both
-   panes (a collapsed inspector would silence its own status line). */
+   Escape clears the selection, R changes the room of the card (5c; this map
+   is the only listener that reads R). The keys line under each shows while
+   the keyboard is there; what a key did is said in #twBoardStatus, outside
+   both panes (a collapsed inspector would silence its own status line). */
 const boardNav = window.UXControls?.roving?.($('twGrid'), {
   stop: '.tw-card',
   hint: $('twGridKeys'),
   initial: () => (TW.selectedPlacementId ? `placement:${TW.selectedPlacementId}` : ''),
   activate: stop => { if (stop.matches('.tw-card')) selectCardFromKeyboard(stop); },
-  keys: { Escape: () => clearSelectionFromKeyboard() },
+  keys: { Escape: () => clearSelectionFromKeyboard(), R: card => runCardKey('room', card) },
 });
 const listNav = window.UXControls?.roving?.($('twSectionList'), {
   hint: $('twListKeys'),
@@ -143,6 +144,150 @@ function activateListRow(cell) {
     : (IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.'));
 }
 
+/* ── Card actions: one gate, one seam (design record §7.3.2, 5c) ──
+   Change room (R on a card, or Selection's button) goes through
+   TW.keyActions[kind](placement, {origin}) after one gate, whose words are
+   the same wherever it refuses; Move and Place join the seam in 5e and 5f.
+   `origin` is a focus key, never a node: the page may draw the card or the
+   button again while a dialog is open, and the keyboard goes back to
+   whatever answers to that key when it closes. */
+const REFUSAL = {
+  published: IS_AR ? 'هذا السيناريو منشور ولا يمكن تعديله.' : 'This scenario is published and read-only.',
+  loading: IS_AR ? 'اللوحة ما زالت قيد التحميل.' : 'The board is still loading.',
+  job: IS_AR ? 'مهمة المخطِّط قيد التشغيل؛ يمكن التعديل بعد انتهائها.' : 'A planner job is running; edits wait until it ends.',
+  busy: IS_AR ? 'انتظر انتهاء العملية الحالية.' : 'Wait for the current operation to finish.',
+  external: IS_AR ? 'يملك سيناريو آخر وقت هذه الشعبة وقاعتها؛ عدّلها هناك.' : "Another scenario owns this section's time and room; change it there.",
+  locked: IS_AR ? 'وقت هذه الشعبة مقفل. افتح قفل الوقت لنقلها؛ ويمكن تغيير قاعتها.' : "This section's time is locked. Unlock its time to move it; its room can still change.",
+  online: IS_AR ? 'هذه الشعبة عن بُعد؛ لا تحتاج إلى قاعة.' : 'This section is online; it needs no room.',
+  noRoom: IS_AR ? 'هذه الشعبة لا تحتاج إلى قاعة.' : 'This section needs no room.',
+};
+// Not this section's action at all: Selection draws no button for it.
+const NOT_APPLICABLE = new Set(['online', 'noRoom']);
+
+/* '' or {code, text}; the first rule that applies wins. A write in flight or
+   a board refresh never refuses: opening a dialog only reads, and its commit
+   waits for them on its own (busy, through data-tw-mutation). A time lock
+   holds Move only: a lock freezes days and times, never the room. */
+function cardActionRefusal(kind, p) {
+  let code = '';
+  if (TW.scenario?.status === 'published') code = 'published';
+  else if (!TW.boardId || TW.loadedBoardId !== TW.boardId) code = 'loading';
+  else if (ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) code = 'job';
+  else if (p?.shared_with_other_scenario) code = 'external';
+  else if (kind === 'move' && p?.is_locked) code = 'locked';
+  else if (kind === 'room' && p?.is_online) code = 'online';
+  else if (kind === 'room' && p?.needs_room === false) code = 'noRoom';
+  return code ? { code, text: REFUSAL[code] } : '';
+}
+
+/* Any dialog: a template one, the shared `dlg` ones or the English chooser.
+   Keys and dialog openers wait for it to close. */
+function anyDialogOpen() {
+  return Boolean(TW.englishPicker || document.querySelector('dialog[open], .dlg-backdrop'));
+}
+
+/* A letter key on a board stop. False leaves the key alone: a dialog is
+   open, the stop is an empty cell, or the action is not built yet. A refusal
+   is a toast — no dialog is open to say it in. */
+function runCardKey(kind, card) {
+  if (anyDialogOpen()) return false;
+  const p = TW.placements.find(row => String(row.id) === card.dataset.placementId);
+  const action = TW.keyActions?.[kind];
+  if (!p || typeof action !== 'function') return false;
+  const refusal = cardActionRefusal(kind, p);
+  if (refusal) {
+    notify.warning(refusal.text);
+    return true;
+  }
+  action(p, { origin: `placement:${p.id}` });
+  return true;
+}
+TW.keyActions = { room: (p, options) => openRoomDialog(p, options) };
+
+/* The element an origin key names now, else its region's own stop (or the
+   inspector body, which takes the keyboard). */
+function resolveOrigin(origin) {
+  const key = String(origin || '');
+  if (key.startsWith('placement:')) return boardNav?.element(key) || boardNav?.element() || null;
+  if (key.startsWith('place:') || key.startsWith('ts:')) return listNav?.element(key) || listNav?.element() || null;
+  const sel = /^sel:([^:]+):(.+)$/.exec(key);
+  if (!sel) return null;
+  const body = $('twRightBody');
+  return [...body.querySelectorAll('[data-focus-key][data-placement-id]')]
+    .find(element => element.dataset.focusKey === sel[1] && element.dataset.placementId === sel[2]) || body;
+}
+
+/* Why the page cannot write now, in the gate's words (a key of REFUSAL), or ''. */
+function writeHold() {
+  if (TW.scenario?.status === 'published') return 'published';
+  if (ACTIVE_PLANNER_STATUSES.has(TW.plannerJob?.status)) return 'job';
+  return workspaceCanEdit() ? '' : 'busy';
+}
+
+/* A dialog's commit (contract C): {data}, or {code} for every failure, with
+   nothing toasted (a toast behind a modal is never seen). The keyboard goes
+   to the chosen row first, since the commit button turns off as the write
+   starts. twFetch's own busy guard would toast, so the hold is checked here
+   and answered as a code like any refusal. */
+async function dialogWrite(dialog, url, body) {
+  const hold = writeHold();
+  if (hold) return { code: hold };
+  (dialog.querySelector('input[type="radio"]:checked') || dialog.querySelector('.ux-choice-list'))?.focus({ preventScroll: true });
+  let code = '';
+  const data = await twFetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _quiet: true,
+    _onError: (answer, status) => {
+      code = answer?.error?.code || (answer ? String(status) : 'NETWORK');
+      return true;
+    },
+  });
+  return data ? { data } : { code: code || 'NETWORK' };
+}
+
+/* What a dialog's work came to: in its alert line while it is open, else a toast. */
+function dialogSay(dialog, text, tone = 'warning') {
+  const line = dialog?.querySelector('[role="alert"]');
+  if (line && window.UXControls?.dialog?.isOpen(dialog)) {
+    line.textContent = text;
+    line.hidden = !text;
+    return;
+  }
+  if (text) notify[tone](text);
+}
+
+/* Preview reads (contract E): one request in flight per key, which a second
+   open joins; none is aborted (the server's preview lane frees its token
+   only when the view returns). An answer is kept for the data version it was
+   read at, until a board answer arrives (selectBoard drops the settled
+   ones); `fresh` (Retry, Check again) skips a kept answer but still joins a
+   read in flight. A failure is not kept: the next open asks again. Each
+   read answers {data} or {code, status}. */
+const PREVIEW = new Map();
+function previewRead(key, url, { fresh = false } = {}) {
+  const memo = `${key}|${TW.dataVersion}`;
+  const known = PREVIEW.get(memo);
+  if (known && (!known.settled || !fresh)) return known.promise;
+  const entry = { settled: false, promise: null };
+  let failure = null;
+  entry.promise = twFetch(url, {
+    _quiet: true,
+    _onError: (body, status) => {
+      failure = { code: body?.error?.code || body?.code || (status ? String(status) : 'NETWORK'), status };
+      return true;
+    },
+  }).then(data => {
+    entry.settled = true;
+    if (data) return { data };
+    if (PREVIEW.get(memo) === entry) PREVIEW.delete(memo);
+    return failure || { code: 'NETWORK', status: 0 };
+  });
+  PREVIEW.set(memo, entry);
+  return entry.promise;
+}
+function dropSettledPreviews() {
+  PREVIEW.forEach((entry, memo) => { if (entry.settled) PREVIEW.delete(memo); });
+}
+
 // Expose workspace state for the PR8 async-job UI adapter (reads
 // TW.scenarioId at submit time so the Run-in-background card targets
 // whatever scenario the registrar currently has active).
@@ -185,6 +330,9 @@ function syncWorkspaceControls() {
   updateOpenLinks();
   renderPublishState();
   window.dispatchEvent(new CustomEvent('tw:planner-busy', { detail: { busy } }));
+  // Selection's actions and an open dialog's commit follow the same state.
+  syncSelectionActions();
+  syncRoomDialog();
 }
 
 /* The other views of this timetable are real links, so they open in a new tab
@@ -1159,6 +1307,9 @@ async function selectBoard(boardId) {
       // Another board: the keyboard starts at its first stop.
       boardNav?.reset();
     }
+    // Previews answered before this board answer are read again; one still
+    // in flight stays joinable (contract E).
+    dropSettledPreviews();
     TW.loadedBoardId = boardId;
     persistWorkspaceScenario(TW.scenarioId, boardId);
 
@@ -2691,6 +2842,11 @@ async function applyHistoryAction(action, undo, token) {
       day: action[`${prefix}_day`], start_time: action[`${prefix}_start`], end_time: action[`${prefix}_end`],
     }));
   }
+  // A room change goes back and forth by its room alone: no time is ever
+  // sent, so it stays room-only and a time lock holds.
+  if (action.type === 'room') {
+    return twFetch(`/ops/tw/placements/${action.placement_id}/move/`, post({ room: undo ? action.old_room : action.new_room }));
+  }
   if (!['create', 'remove'].includes(action.type)) return null;
   const recreate = (action.type === 'create') !== undo;
   return recreate
@@ -2720,6 +2876,539 @@ async function runHistoryAction(undo) {
 }
 $('twUndo').addEventListener('click', () => runHistoryAction(true));
 $('twRedo').addEventListener('click', () => runHistoryAction(false));
+
+/* ── Change room (design record §7.3, 5c) ──
+   One meeting's room, chosen in #twRoomDialog from the rooms the server
+   lists for it at its own time. No time is ever sent, so the change is
+   room-only and a time lock holds. A room that fits (type, gender, seats) can
+   be chosen even while another section holds it at that time: that saves a
+   room clash, which Issues then shows (owner ruling 2026-10-20). A room that
+   does not fit is listed with its reason and cannot be chosen. Which room is
+   which, and its words, are TimetableRoomChoice's, shared with split view. */
+const isolatedText = text => `\u2066${text}\u2069`;
+const ROOM_WORDS = IS_AR ? {
+  change: 'تغيير…', choose: 'اختيار…', changeLabel: 'تغيير القاعة', chooseLabel: 'اختيار قاعة',
+  title: 'تغيير القاعة',
+  thisMeeting: 'هذا اللقاء فقط؛ تحتفظ لقاءات الشعبة الأخرى بقاعاتها.',
+  locked: 'الوقت مقفل؛ القاعة قابلة للتغيير',
+  current: 'القاعة الحالية:', notSet: 'لم تُحدَّد',
+  timeClashes: n => `أيّاً كانت القاعة، يبقى في وقته ${pluralAr(n, { one: 'تعارض واحد', two: 'تعارضان', few: '{n} تعارضات', many: '{n} تعارضاً', other: '{n} تعارض' })}.`,
+  filter: 'تصفية القاعات', filterHint: 'رمز القاعة أو المبنى', noMatch: 'لا توجد قاعة تطابق التصفية.',
+  free: n => `متاحة ومناسبة (${n})`,
+  inUse: n => `مناسبة لكنها مستخدمة في هذا الوقت (${n})`,
+  misfits: n => `قاعات غير مناسبة (${n})`,
+  inUseHint: 'اختيار إحداها يحفظ تعارض قاعة يظهر بعدها في «المشاكل».',
+  usedBy: (who, board, when) => `تستخدمها ${who} (${board}) في ${when}`,
+  more: n => pluralAr(n, { one: 'وشعبة أخرى', two: 'وشعبتان أخريان', few: 'و{n} شعب أخرى', many: 'و{n} شعبةً أخرى', other: 'و{n} شعبة أخرى' }),
+  moreJoin: '؛ ', listJoin: '، ',
+  loading: 'جارٍ البحث عن قاعات لهذا اللقاء…', failed: 'تعذّرت قراءة القاعات.',
+  serverBusy: 'الخادم مشغول؛ أعد المحاولة بعد قليل.', retry: 'إعادة المحاولة',
+  empty: 'لا توجد قاعات مسجّلة.', noneFit: 'لا توجد قاعة مناسبة لهذا اللقاء.',
+  truncated: (shown, total) => `تُعرض أنسب ${shown} قاعة من أصل ${total}.`,
+  stale: 'تغيّر هذا اللقاء منذ قراءة قاعاته.', checkAgain: 'إعادة التحقق',
+  chooseNote: 'اختر قاعة.', currentNote: 'هذه هي القاعة الحالية.',
+  progress: c => `جارٍ تعيين القاعة ${c}…`,
+  assigned: c => `عُيّنت القاعة ${c}.`,
+  assignedInUse: (c, who) => `عُيّنت القاعة ${c}، ويستخدمها في هذا الوقت أيضاً: ${who}.`,
+  alsoChanged: n => `وتغيّرت أيضاً في ${pluralAr(n, { one: 'لوحة أخرى', two: 'لوحتين أخريين', few: '{n} لوحات أخرى', many: '{n} لوحةً أخرى', other: '{n} لوحة أخرى' })}.`,
+  gone: 'لم يعد هذا اللقاء في اللوحة.', notChanged: 'لم تتغيّر القاعة.',
+} : {
+  change: 'Change…', choose: 'Choose…', changeLabel: 'Change room', chooseLabel: 'Choose a room',
+  title: 'Change room',
+  thisMeeting: "this meeting only; the section's other meetings keep their rooms.",
+  locked: 'Time locked; its room can change',
+  current: 'Current room:', notSet: 'Not set',
+  timeClashes: n => `Whatever the room, its time keeps ${n === 1 ? '1 clash' : `${n} clashes`}.`,
+  filter: 'Filter rooms', filterHint: 'Room code or building', noMatch: 'No room matches the filter.',
+  free: n => `Free and fits (${n})`,
+  inUse: n => `Fits, but in use at this time (${n})`,
+  misfits: n => `Rooms that do not fit (${n})`,
+  inUseHint: 'Choosing one saves a room clash, which Issues then shows.',
+  usedBy: (who, board, when) => `Used by ${who} (${board}) at ${when}`,
+  more: n => (n === 1 ? 'and 1 more' : `and ${n} more`),
+  moreJoin: '; ', listJoin: ', ',
+  loading: 'Finding rooms for this meeting…', failed: 'The rooms could not be read.',
+  serverBusy: 'The server is busy; try again in a moment.', retry: 'Try again',
+  empty: 'No rooms are on record.', noneFit: 'No room fits this meeting.',
+  truncated: (shown, total) => `Showing the best ${shown} of ${total} rooms.`,
+  stale: 'This meeting changed since its rooms were read.', checkAgain: 'Check again',
+  chooseNote: 'Choose a room.', currentNote: 'This is the current room.',
+  progress: c => `Assigning room ${c}…`,
+  assigned: c => `Room ${c} assigned.`,
+  assignedInUse: (c, who, n) => `Room ${c} assigned; ${who} also ${n === 1 ? 'uses' : 'use'} it at this time.`,
+  alsoChanged: n => `It also changed on ${n === 1 ? '1 other board' : `${n} other boards`}.`,
+  gone: 'This meeting is no longer on the board.', notChanged: 'The room was not changed.',
+};
+
+/* The dialog's session: the meeting it is about, what it read, what is
+   chosen. Each open starts a new session (`token`) and each read a new
+   `read`, so a late answer or commit never lands in a later session. */
+const ROOM = {
+  token: 0, read: 0, placementId: null, scenarioId: null, boardId: null, origin: '', snapshot: null,
+  state: 'loading', answer: null, failure: null, choice: '', pending: false, blocked: '', filter: '', view: '', drawn: null,
+};
+const roomDialogOpen = () => Boolean(window.UXControls?.dialog?.isOpen($('twRoomDialog')));
+
+/* The meeting as the open board has it now; null once it is not there (the
+   scenario or the board changed, or it was removed). */
+function roomPlacement() {
+  if (TW.scenarioId !== ROOM.scenarioId || TW.boardId !== ROOM.boardId || TW.loadedBoardId !== ROOM.boardId) return null;
+  return TW.placements.find(row => row.id === ROOM.placementId) || null;
+}
+const roomDataKey = () => [TW.scenarioId, TW.boardId, TW.loadedBoardId, TW.placements];
+
+function announceRoom(text) {
+  const status = $('twRoomStatus');
+  if (!status) return;
+  status.textContent = '';
+  status.textContent = text;
+}
+
+/* Selection's Room button: none where the section needs no room; drawn off,
+   with its reason in #twSelActionNote, while the gate holds it. Opening only
+   reads, so a write in flight never holds it. */
+function roomActionHtml(p) {
+  const refusal = cardActionRefusal('room', p);
+  if (refusal && NOT_APPLICABLE.has(refusal.code)) return '';
+  const set = p.room_state ? p.room_state === 'assigned' : Boolean(String(p.room || '').trim()) && p.room !== 'UNASSIGNED';
+  return ` <button type="button" class="btn btn-sm btn-neutral tw-sel-inline" data-tw-action="room" data-focus-key="room" data-placement-id="${p.id}"`
+    + ` aria-haspopup="dialog" aria-label="${esc(set ? ROOM_WORDS.changeLabel : ROOM_WORDS.chooseLabel)}"`
+    + `${refusal ? ' disabled data-tw-hold aria-describedby="twSelActionNote"' : ''}>${esc(set ? ROOM_WORDS.change : ROOM_WORDS.choose)}</button>`;
+}
+
+/* Selection's action buttons follow the gate in place (a job starting, a
+   board loading), and the note says each reason holding them once. */
+function syncSelectionActions() {
+  const body = $('twRightBody');
+  if (!body) return;
+  const reasons = [];
+  body.querySelectorAll('[data-tw-action]').forEach(button => {
+    const p = TW.placements.find(row => String(row.id) === button.dataset.placementId);
+    const refusal = p ? cardActionRefusal(button.dataset.twAction, p) : { code: 'loading', text: REFUSAL.loading };
+    button.disabled = Boolean(refusal);
+    button.toggleAttribute('data-tw-hold', Boolean(refusal));
+    if (refusal) {
+      button.setAttribute('aria-describedby', 'twSelActionNote');
+      if (!reasons.includes(refusal.text)) reasons.push(refusal.text);
+    } else {
+      button.removeAttribute('aria-describedby');
+    }
+  });
+  const note = $('twSelActionNote');
+  if (!note) return;
+  const text = reasons.join(' ');
+  if (note.textContent !== text) note.textContent = text;
+  note.hidden = !text;
+}
+
+// One listener for Selection's actions, however often the panel is drawn.
+$('twRightBody').addEventListener('click', event => {
+  const button = event.target.closest && event.target.closest('[data-tw-action]');
+  if (!button || button.disabled) return;
+  const kind = button.dataset.twAction;
+  const p = TW.placements.find(row => String(row.id) === button.dataset.placementId);
+  if (p && typeof TW.keyActions?.[kind] === 'function') TW.keyActions[kind](p, { origin: `sel:${kind}:${p.id}` });
+});
+
+/* Opened from a card (R) or from Selection; `origin` names where the
+   keyboard goes back to at close. The gate first, then the open guard. */
+function openRoomDialog(p, { origin = '' } = {}) {
+  const refusal = cardActionRefusal('room', p);
+  if (refusal) {
+    notify.warning(refusal.text);
+    return false;
+  }
+  const dialog = $('twRoomDialog');
+  if (!dialog || !window.TimetableRoomChoice || !window.UXControls?.dialog || anyDialogOpen()) return false;
+  Object.assign(ROOM, {
+    token: ROOM.token + 1, placementId: p.id, scenarioId: TW.scenarioId, boardId: TW.boardId, origin, snapshot: p,
+    state: 'loading', answer: null, failure: null, choice: '', pending: false, blocked: '', filter: '', drawn: null,
+  });
+  const alert = $('twRoomAlert');
+  if (alert) { alert.textContent = ''; alert.hidden = true; }
+  drawRoomDialog();
+  if (!window.UXControls.dialog.open(dialog, { initialFocus: () => $('twRoomBody'), returnFocus: () => resolveOrigin(origin) })) return false;
+  readRoomCandidates();
+  return true;
+}
+
+/* The rooms at the meeting's own time (no slot is sent), drawn if the answer
+   is still this session's. The keyboard then goes from the body to the chosen
+   row, or the first one, unless the user has moved it. */
+async function readRoomCandidates({ fresh = false } = {}) {
+  const session = ROOM.token;
+  const read = ++ROOM.read;
+  Object.assign(ROOM, { state: 'loading', answer: null, failure: null, choice: '' });
+  announceRoom(ROOM_WORDS.loading);
+  drawRoomDialog();
+  const id = ROOM.placementId;
+  const answer = await previewRead(`room|${id}`, `/ops/tw/placements/${id}/room-candidates/`, { fresh });
+  if (session !== ROOM.token || read !== ROOM.read || !roomDialogOpen()) return;
+  if (answer.data) {
+    Object.assign(ROOM, { state: 'ready', answer: answer.data });
+    ROOM.choice = initialRoomChoice(answer.data);
+  } else {
+    Object.assign(ROOM, { state: 'error', failure: answer });
+    announceRoom(roomFailureWords(answer));
+  }
+  drawRoomDialog();
+  const body = $('twRoomBody');
+  if (document.activeElement === body) {
+    const radios = [...body.querySelectorAll('input[name="twRoomChoice"]')];
+    (radios.find(radio => radio.checked) || radios[0])?.focus({ preventScroll: true });
+  }
+}
+
+function roomFailureWords(failure) {
+  if (failure?.code === 'NOT_FOUND') return ROOM_WORDS.gone;
+  return failure?.code === 'SERVER_BUSY' || failure?.status === 503 ? ROOM_WORDS.serverBusy : ROOM_WORDS.failed;
+}
+
+/* The rooms in their groups, in the server's order: free, in use at this
+   time, and those that do not fit. A code listed twice (an M and an F room)
+   is one row, the first; the placer's UNASSIGNED marker is not a room. */
+function roomGroups(answer, p) {
+  const RC = window.TimetableRoomChoice;
+  const groups = { free: [], inUse: [], misfit: [] };
+  const seen = new Set();
+  (answer?.candidates || []).forEach(room => {
+    const key = RC.codeKey(room?.room_code);
+    if (!key || key === 'UNASSIGNED' || seen.has(key)) return;
+    seen.add(key);
+    const verdict = RC.verdict(room, p);
+    groups[verdict.group].push({ room, verdict });
+  });
+  return groups;
+}
+
+/* The current room is chosen at first when it can be chosen (Assign holds
+   on it until another is chosen). */
+function initialRoomChoice(answer) {
+  const p = roomPlacement();
+  if (!p) return '';
+  const RC = window.TimetableRoomChoice;
+  const current = RC.codeKey(p.room);
+  const { free, inUse } = roomGroups(answer, p);
+  const row = [...free, ...inUse].find(item => RC.codeKey(item.room.room_code) === current);
+  return row ? String(row.room.room_code).trim() : '';
+}
+
+/* What the dialog shows: the read, unless the meeting is gone, moved since
+   its rooms were read (stale), or needs no room after all (stale flags). */
+function roomDialogView() {
+  const live = roomPlacement();
+  const p = live || ROOM.snapshot;
+  if (!live) return { state: 'gone', p };
+  if (ROOM.state !== 'ready') return { state: ROOM.state, p };
+  const target = ROOM.answer?.target || {};
+  if (target.is_online) return { state: 'online', p };
+  if (target.no_room_required) return { state: 'noRoom', p };
+  const same = String(target.day || '').toUpperCase() === String(p.day || '').toUpperCase()
+    && String(target.start || '') === String(p.start_time || '') && String(target.end || '') === String(p.end_time || '');
+  return { state: same ? 'ready' : 'stale', p };
+}
+
+/* Who holds a room at this time: the first class, then how many more (a
+   class on several boards at once is one). */
+function roomOccupantsHtml(entries) {
+  const seen = new Set();
+  const classes = (entries || []).filter(entry => {
+    const key = String(entry?.term_section_id ?? entry?.section ?? entry?.placement_id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const first = classes[0];
+  if (!first) return '';
+  const lead = ROOM_WORDS.usedBy(`<bdi>${esc(first.section || '')}</bdi>`, `<bdi>${esc(first.board_label || '')}</bdi>`,
+    `<bdi dir="ltr">${esc(first.start || '')}–${esc(first.end || '')}</bdi>`);
+  return classes.length > 1 ? `${lead}${ROOM_WORDS.moreJoin}${esc(ROOM_WORDS.more(classes.length - 1))}` : lead;
+}
+
+function roomSubHtml(p) {
+  const day = (IS_AR ? DAY_LABELS : DAY_NAMES_EN)[DAYS.indexOf(p.day)] || p.day || '';
+  const parts = [`${esc(day)} <bdi dir="ltr">${esc(p.start_time)}–${esc(p.end_time)}</bdi>`];
+  // Only this meeting changes: the section's other meetings keep their rooms.
+  if ((p.meetings || []).length > 1) parts.push(esc(ROOM_WORDS.thisMeeting));
+  if (p.is_locked) parts.push(esc(ROOM_WORDS.locked));
+  return parts.join(' · ');
+}
+
+/* The body, in order: the current room; the time's own clashes, which stay
+   whatever the room; the filter; the rooms that can be chosen (free, then in
+   use); the rooms that do not fit, closed unless nothing fits; and how many
+   the server left out. Every other state is one line (and its way on). */
+function roomDialogHtml(view) {
+  const W = ROOM_WORDS;
+  const p = view.p;
+  const line = (text, extra = '') => `<p class="ux-choice-status"${extra}>${esc(text)}</p>`;
+  let html = `<p class="tw-room-current">${esc(W.current)} <bdi>${esc(placementRoomText(p) || W.notSet)}</bdi></p>`;
+  if (view.state === 'loading') return `${html}${line(W.loading)}<div class="ux-choice-list" id="twRoomChoices" aria-busy="true"></div>`;
+  if (view.state === 'gone') return html + line(W.gone);
+  if (view.state === 'online' || view.state === 'noRoom') return html + line(REFUSAL[view.state]);
+  if (view.state === 'stale') {
+    return html + line(W.stale)
+      + `<p class="tw-room-action"><button type="button" class="btn btn-sm btn-neutral" data-tw-room-recheck data-focus-key="room-recheck">${esc(W.checkAgain)}</button></p>`;
+  }
+  if (view.state === 'error') {
+    return html + line(roomFailureWords(ROOM.failure)) + (ROOM.failure?.code === 'NOT_FOUND' ? ''
+      : `<p class="tw-room-action"><button type="button" class="btn btn-sm btn-neutral" data-tw-room-retry data-focus-key="room-retry">${esc(W.retry)}</button></p>`);
+  }
+  const RC = window.TimetableRoomChoice;
+  const answer = ROOM.answer || {};
+  const target = answer.target || {};
+  const groups = roomGroups(answer, p);
+  // Student and teacher clashes belong to the time: no room changes them.
+  const clashes = Number(answer.candidates?.[0]?.validation?.critical_count) || 0;
+  if (clashes > 0) html += `<p class="tw-room-note">${esc(W.timeClashes(clashes))}</p>`;
+  const choosable = groups.free.length + groups.inUse.length;
+  if (!choosable && !groups.misfit.length) return html + line(W.empty);
+  const chosen = RC.codeKey(ROOM.choice);
+  const filterText = room => [room.room_code, room.building, room.wing].map(value => String(value ?? '').trim()).join(' ').toUpperCase();
+  let index = 0;
+  const row = ({ room, verdict }) => {
+    const id = `twRoomRow${index++}`;
+    const code = String(room.room_code).trim();
+    const use = verdict.group === 'inUse' ? roomOccupantsHtml(room.occupied_by) : '';
+    return `<label class="ux-choice" data-tone="${verdict.tone}" data-filter="${esc(filterText(room))}">`
+      + `<input type="radio" name="twRoomChoice" value="${esc(code)}" data-focus-key="room-choice:${esc(RC.codeKey(code))}"`
+      + ` aria-labelledby="${id}-code" aria-describedby="${id}-verdict ${id}-facts${use ? ` ${id}-use` : ''}"${RC.codeKey(code) === chosen ? ' checked' : ''}>`
+      + `<span class="ux-choice-title"><span class="ux-tone-icon" data-tone="${verdict.tone}" aria-hidden="true"></span>`
+      + `<bdi id="${id}-code">${esc(code)}</bdi><span class="tw-room-verdict" id="${id}-verdict">${esc(verdict.words)}</span></span>`
+      + `<span class="ux-choice-desc" id="${id}-facts">${RC.factsHtml(room, target, IS_AR)}</span>`
+      + (use ? `<span class="ux-choice-status" id="${id}-use">${use}</span>` : '')
+      + '</label>';
+  };
+  // A room that does not fit is a row with its reason, never a radio.
+  const misfit = ({ room }) => {
+    const reasons = RC.misfitReasons(room, target, IS_AR);
+    return `<div class="ux-choice ux-choice-static" data-filter="${esc(filterText(room))}">`
+      + `<span class="ux-choice-title"><bdi>${esc(String(room.room_code).trim())}</bdi></span>`
+      + (reasons.length ? `<span class="ux-choice-desc">${esc(reasons.join(' · '))}</span>` : '')
+      + `<span class="ux-choice-desc">${RC.factsHtml(room, target, IS_AR)}</span></div>`;
+  };
+  const group = (key, legend, hint, rows) => `<fieldset class="ux-choice-list tw-room-group" data-ux-submit data-group="${key}"`
+    + `${hint ? ` aria-describedby="twRoomHint-${key}"` : ''}><legend class="ux-field-label">${esc(legend)}</legend>`
+    + `${hint ? `<p class="ux-field-hint" id="twRoomHint-${key}">${esc(hint)}</p>` : ''}${rows.map(row).join('')}</fieldset>`;
+  html += `<div class="ux-field"><label class="ux-field-label" for="twRoomFilter">${esc(W.filter)}</label>`
+    + `<input type="search" id="twRoomFilter" class="tw-search" dir="auto" autocomplete="off" aria-controls="twRoomChoices"`
+    + ` placeholder="${esc(W.filterHint)}" value="${esc(ROOM.filter)}"></div>`;
+  html += '<div class="tw-room-choices" id="twRoomChoices">';
+  if (!choosable) html += line(W.noneFit);
+  if (groups.free.length) html += group('free', W.free(groups.free.length), '', groups.free);
+  if (groups.inUse.length) html += group('inUse', W.inUse(groups.inUse.length), W.inUseHint, groups.inUse);
+  html += `${line(W.noMatch, ' id="twRoomNoMatch" hidden')}</div>`;
+  if (groups.misfit.length) {
+    const open = !choosable || Boolean(window.UXControls?.disclosure?.isOpen('tw-room:misfits', false));
+    html += `<div class="tw-room-misfits"><button type="button" class="ux-disclosure-toggle" data-ux-disclosure="tw-room:misfits" aria-expanded="${open}" aria-controls="twRoomMisfits">`
+      + `<span class="ux-disclosure-label">${esc(W.misfits(groups.misfit.length))}</span><span class="ux-disclosure-chevron" aria-hidden="true"></span></button>`
+      + `<div class="ux-choice-list" id="twRoomMisfits"${open ? '' : ' hidden'}>${groups.misfit.map(misfit).join('')}</div></div>`;
+  }
+  // The server lists the best rooms only (and the current room past them).
+  const total = Number(answer.summary?.total) || 0;
+  const listed = (answer.candidates || []).length;
+  if (total > listed) html += line(W.truncated(listed, total));
+  return html;
+}
+
+const setRoomHead = (id, html) => {
+  const element = $(id);
+  if (element && element._twHtml !== html) { element.innerHTML = html; element._twHtml = html; }
+};
+/* The whole dialog from ROOM and the board, through the global redraw: the
+   same content leaves the nodes (and the keyboard) alone. */
+function drawRoomDialog() {
+  const body = $('twRoomBody');
+  if (!body || ROOM.placementId == null) return;
+  const view = roomDialogView();
+  ROOM.view = view.state;
+  setRoomHead('twRoomTitle', `${esc(ROOM_WORDS.title)} · <bdi>${esc(view.p.course_code)}</bdi> <bdi>${esc(view.p.section)}</bdi>`);
+  setRoomHead('twRoomSub', roomSubHtml(view.p));
+  const html = roomDialogHtml(view);
+  if (window.UXControls?.redraw) window.UXControls.redraw(body, html);
+  else body.innerHTML = html;
+  ROOM.drawn = roomDataKey();
+  applyRoomFilter();
+  syncRoomDialog();
+}
+
+/* Assign and its note, in place: cheap, as it runs with every control sync.
+   New board data draws the dialog first (the meeting may have moved or gone).
+   Assign is held until a room other than the current one is chosen from a
+   fresh list, and while a commit is pending or was refused for good; it is
+   off while the page cannot write (busy comes back on by itself). */
+function syncRoomDialog() {
+  if (!roomDialogOpen()) return;
+  if (!ROOM.drawn || roomDataKey().some((value, i) => value !== ROOM.drawn[i])) {
+    drawRoomDialog();
+    return;
+  }
+  const RC = window.TimetableRoomChoice;
+  const p = roomPlacement();
+  const chosen = RC.codeKey(ROOM.choice);
+  const current = p ? RC.codeKey(p.room) : '';
+  const held = ROOM.view !== 'ready' || !chosen || chosen === current || ROOM.pending || Boolean(ROOM.blocked);
+  const assign = $('twRoomAssign');
+  assign.toggleAttribute('data-tw-hold', held);
+  assign.disabled = held || !workspaceCanEdit();
+  const hold = writeHold();
+  const note = ROOM.pending ? ROOM_WORDS.progress(isolatedText(ROOM.choice))
+    : hold ? REFUSAL[hold]
+      : ROOM.view !== 'ready' || ROOM.blocked ? ''
+        : !chosen ? ROOM_WORDS.chooseNote
+          : chosen === current ? ROOM_WORDS.currentNote : '';
+  const line = $('twRoomNote');
+  if (line.textContent !== note) line.textContent = note;
+  // The lists are busy while the commit is out; the status lines are not.
+  $('twRoomDialog').querySelectorAll('.ux-choice-list[data-ux-submit]').forEach(list => {
+    if (ROOM.pending) list.setAttribute('aria-busy', 'true');
+    else list.removeAttribute('aria-busy');
+  });
+}
+
+/* The filter hides rows in place by code, building or wing (no redraw). A
+   chosen row it hides is no longer chosen. */
+function applyRoomFilter() {
+  const body = $('twRoomBody');
+  if (!body) return;
+  const needle = ROOM.filter.trim().toUpperCase();
+  let shown = 0;
+  body.querySelectorAll('[data-filter]').forEach(row => {
+    row.hidden = Boolean(needle) && !row.dataset.filter.includes(needle);
+    if (!row.hidden) shown++;
+  });
+  body.querySelectorAll('.tw-room-group').forEach(group => { group.hidden = !group.querySelector('.ux-choice:not([hidden])'); });
+  const none = $('twRoomNoMatch');
+  if (none) none.hidden = !needle || shown > 0;
+  const chosen = body.querySelector('input[name="twRoomChoice"]:checked');
+  if (chosen && chosen.closest('[hidden]')) {
+    chosen.checked = false;
+    ROOM.choice = '';
+    syncRoomDialog();
+  }
+}
+
+/* The meeting changed since its rooms were read: read the board, then its
+   rooms (fresh). */
+async function checkRoomAgain() {
+  const session = ROOM.token;
+  ROOM.state = 'loading';
+  drawRoomDialog();
+  if (TW.boardId) await selectBoard(TW.boardId);
+  if (session !== ROOM.token || !roomDialogOpen()) return;
+  if (!roomPlacement()) { drawRoomDialog(); return; }
+  readRoomCandidates({ fresh: true });
+}
+
+/* What a saved change came to, read after the board: the room, who else uses
+   it at this time (a clash is saved, not refused), and the other boards
+   where the same class changed with it. */
+function roomAssignedWords(p, choice, chosenRow, data) {
+  const changed = (data?.placements || []).map(row => String(row.id));
+  const others = changed.filter(id => id !== String(p.id)).length;
+  const users = [...new Set((chosenRow?.occupied_by || [])
+    .filter(entry => !changed.includes(String(entry.placement_id)))
+    .map(entry => String(entry.section || '').trim()).filter(Boolean))];
+  const room = isolatedText(choice);
+  let text = users.length
+    ? ROOM_WORDS.assignedInUse(room, users.map(isolatedText).join(ROOM_WORDS.listJoin), users.length)
+    : ROOM_WORDS.assigned(room);
+  if (others) text += ` ${ROOM_WORDS.alsoChanged(others)}`;
+  return { text, tone: users.length ? 'warning' : 'success' };
+}
+
+/* Assign: the room alone is sent (the lock holds). A refusal stays in the
+   dialog; one that asking again cannot change (another scenario's section,
+   published, gone) holds Assign. On success the dialog closes, the board's
+   tab stop moves to the card, the board is read again, and then the toast.
+   Escape while the write is out closes the dialog; the write still ends,
+   and says how as a toast. */
+async function commitRoom() {
+  const dialog = $('twRoomDialog');
+  const p = roomPlacement();
+  if (!roomDialogOpen() || !p || ROOM.pending || ROOM.view !== 'ready' || ROOM.blocked) return;
+  const RC = window.TimetableRoomChoice;
+  const choice = ROOM.choice;
+  if (!RC.codeKey(choice) || RC.codeKey(choice) === RC.codeKey(p.room)) return;
+  const chosenRow = (ROOM.answer?.candidates || []).find(room => RC.codeKey(room.room_code) === RC.codeKey(choice));
+  const session = ROOM.token;
+  const scenarioAtStart = TW.scenarioId;
+  const oldRoom = p.room ?? '';
+  ROOM.pending = true;
+  dialogSay(dialog, '');
+  announceRoom(ROOM_WORDS.progress(isolatedText(choice)));
+  syncRoomDialog();
+  const result = await dialogWrite(dialog, `/ops/tw/placements/${p.id}/move/`, { room: choice });
+  const here = session === ROOM.token;
+  if (here) ROOM.pending = false;
+  if (result.code) {
+    const words = {
+      PLACEMENT_EXTERNALLY_OWNED: REFUSAL.external, SCENARIO_PUBLISHED: REFUSAL.published, NOT_FOUND: ROOM_WORDS.gone,
+      SCENARIO_BUSY: REFUSAL.busy, published: REFUSAL.published, job: REFUSAL.job, busy: REFUSAL.busy,
+    }[result.code] || ROOM_WORDS.notChanged;
+    if (here && ['PLACEMENT_EXTERNALLY_OWNED', 'SCENARIO_PUBLISHED', 'NOT_FOUND'].includes(result.code)) ROOM.blocked = result.code;
+    if (here) dialogSay(dialog, words, 'warning');
+    else notify.warning(words);
+    syncRoomDialog();
+    return;
+  }
+  TW.undoStack.push({ type: 'room', placement_id: p.id, old_room: oldRoom, new_room: choice });
+  TW.redoStack = [];
+  if (here) window.UXControls.dialog.close(dialog, 'close');
+  boardNav?.active(`placement:${p.id}`);
+  if (TW.scenarioId === scenarioAtStart) await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+  const said = roomAssignedWords(p, choice, chosenRow, result.data);
+  notify[said.tone](said.text);
+}
+
+(function wireRoomDialog() {
+  const dialog = $('twRoomDialog');
+  if (!dialog) return;
+  // A <form method="dialog"> closes itself on submit: the page commits, and
+  // closes it once the room is saved.
+  $('twRoomForm').addEventListener('submit', event => {
+    event.preventDefault();
+    commitRoom();
+  });
+  dialog.addEventListener('change', event => {
+    if (event.target.name !== 'twRoomChoice') return;
+    ROOM.choice = event.target.value;
+    syncRoomDialog();
+  });
+  dialog.addEventListener('input', event => {
+    if (event.target.id !== 'twRoomFilter') return;
+    ROOM.filter = event.target.value;
+    applyRoomFilter();
+  });
+  // In the filter, Enter takes the one row left (never a submit), and Escape
+  // with text clears it, the dialog staying open.
+  dialog.addEventListener('keydown', event => {
+    const field = event.target;
+    if (field.id !== 'twRoomFilter' || event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const shown = [...dialog.querySelectorAll('input[name="twRoomChoice"]')].filter(radio => !radio.closest('[hidden]'));
+      if (shown.length !== 1) return;
+      if (!shown[0].checked) {
+        shown[0].checked = true;
+        shown[0].dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      shown[0].focus();
+    } else if (event.key === 'Escape' && field.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      field.value = '';
+      ROOM.filter = '';
+      applyRoomFilter();
+    }
+  });
+  dialog.addEventListener('click', event => {
+    if (!event.target.closest) return;
+    if (event.target.closest('[data-tw-room-retry]')) readRoomCandidates({ fresh: true });
+    else if (event.target.closest('[data-tw-room-recheck]')) checkRoomAgain();
+  });
+})();
 
 /* ── "Mainly for programme" (Selection) ──
    The section's programme mark (#160 parity with split view; the words and
@@ -2943,6 +3632,9 @@ function renderRightPanel(tab) {
       : '';
     const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
+    // Change room (5c), and why it is held when it is.
+    const roomAction = roomActionHtml(p);
+    const roomHeld = roomAction ? cardActionRefusal('room', p) : '';
     draw(`
       <div class="tw-sel-head">
         <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
@@ -2954,11 +3646,12 @@ function renderRightPanel(tab) {
       <dl class="tw-sel-fields">
         ${field(IS_AR ? 'اليوم' : 'Day', esc(dayLabel(p.day)))}
         ${field(IS_AR ? 'الوقت' : 'Time', `<bdi>${esc(p.start_time)}–${esc(p.end_time)}</bdi>`)}
-        ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(placementRoomText(p) || (IS_AR ? 'لم تُحدَّد' : 'Not set'))}</bdi>`)}
+        ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(placementRoomText(p) || (IS_AR ? 'لم تُحدَّد' : 'Not set'))}</bdi>${roomAction}`)}
         ${field(IS_AR ? 'المدرس' : 'Teacher', teacherHtml)}
         ${field(IS_AR ? 'السعة' : 'Capacity', count(p.available_capacity))}
         ${field(IS_AR ? 'المسجلون' : 'Registered', count(p.registered_count))}
       </dl>
+      ${roomAction ? `<p class="tw-sel-help" id="twSelActionNote"${roomHeld ? '' : ' hidden'}>${esc(roomHeld ? roomHeld.text : '')}</p>` : ''}
       ${programmeMarkHtml(p)}
       ${meetings ? `<h3 class="tw-sel-subhead">${IS_AR ? 'جميع لقاءات الشعبة' : 'All meetings of this section'}</h3><ul class="tw-sel-meetings">${meetings}</ul>` : ''}
       <div class="tw-sel-actions">
@@ -2967,6 +3660,9 @@ function renderRightPanel(tab) {
       </div>
       <p class="tw-sel-help">${esc(T.lockHelp)}</p>
     `);
+    // A redraw of the same content leaves the nodes as they were: bring the
+    // actions in line with the gate now.
+    syncSelectionActions();
   } else if (tab === 'capacity') {
     const courses = (TW.capacityData && TW.capacityData.courses) || [];
     if (courses.length === 0) {

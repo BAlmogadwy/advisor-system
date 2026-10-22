@@ -286,6 +286,10 @@ Stage 3 (to evaluate): a time-proportional week grid.
 - Dialogs opened through `UXControls.dialog` resolve `returnFocus` at close:
   it is a function (from an origin key), never a node kept from the opening,
   because the page may redraw the opener while the dialog is open.
+- While such a dialog is open, what its work came to is said inside it (its
+  `role=alert` line), never as a toast: a toast sits behind a modal, unseen.
+  Its commit checks the page's edit hold itself before it writes
+  (`dialogWrite`), since the page's busy guard answers with a toast.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
 
@@ -474,6 +478,45 @@ findings changed the plan:
    none) — with the count (`pluralAr` in Arabic) and, until Place… (5f), a
    pointer to split view, which places a whole pattern; Enter on such a row
    says the same.
+   **As built, 5c (dialog layer, Change room, R):** the global parts came
+   first, in their own commits: `UXControls.dialog`, the choice-list keys and
+   `.ux-dialog-scroll`/`.ux-choice-list` (§3.3); `twFetch` handing every
+   failure to `_onError` once (contract C); `TimetableRoomChoice`, split
+   view's rules and the words, held to split view by a parity test; and the
+   server's room candidates (#173). The page has one gate,
+   `cardActionRefusal`, whose words are `REFUSAL`, for R and for Selection's
+   Room button (Change…, or Choose… with no room yet; none for a section
+   online or needing no room; drawn off with its reason under the fields,
+   and kept in step with the gate in place); one seam, `TW.keyActions.room`
+   (Move and Place join it in 5e and 5f); origins as focus keys, resolved at
+   close; `dialogWrite`, `dialogSay` and `previewRead` as contracts C and E
+   say (an answer is kept per meeting and data version until a board answer
+   arrives; a failed read is not kept, so the next open asks again). The
+   dialog reads the rooms at the meeting's own time and sends `{room}` alone,
+   undo and redo too, so a time lock holds; the current room is chosen at
+   first and holds Assign; a fitting room in use can be chosen (its row says
+   who uses it, and the toast after the save says so again); misfits are
+   rows with their reasons, in a group closed unless nothing fits; the
+   filter hides rows in place. After a save the dialog closes, the board's
+   tab stop moves to the card, the board is read again, then the toast.
+   Where it differs from the spec, and why: the "also changes on N other
+   boards" line is not shown before the save — the page holds only the open
+   board's placements, so the count comes after it, in the toast, from the
+   answer's `placements` (the spec's own fallback); the "this meeting only"
+   words are the sub-line's, as the Strings table has them, not repeated in
+   the body; a refusal of the save is said in a `role=alert` line
+   (`#twRoomAlert`, page-local `.tw-dialog-alert`) between the scrolling
+   body and the foot, which contract C needs and the template sketch lacked;
+   after the save the board on show is read again, as a drop does (the same
+   board unless the user switched boards while a save the dialog was closed
+   on was out); the toast leaves out the instructor backstop, since a room
+   changes no teacher; a class held on several boards counts once in "and N
+   more"; a group with no rows is left out; a row's description also points
+   at its occupants. Two mutants are equivalent, and recorded so: Assign
+   without `data-tw-mutation` (the dialog's own sync turns it off whenever
+   the page cannot write while it is open; dropping both is caught), and
+   `dialogWrite`'s `_onError` answering false (the request is quiet, so no
+   toast follows either way, and the code is taken before the answer).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens
