@@ -1532,6 +1532,13 @@ function boardSectionsLeft(board) {
 function revealInStrip(strip, item) {
   const view = strip.getBoundingClientRect();
   const box = item.getBoundingClientRect();
+  // Wider than the strip: always show its start (alternating ends on every
+  // reveal — each resize step fires several — would make it flicker).
+  if (box.width > view.width - 8) {
+    if (getComputedStyle(strip).direction === 'rtl') strip.scrollLeft += box.right - view.right + 4;
+    else strip.scrollLeft -= view.left - box.left + 4;
+    return;
+  }
   if (box.left < view.left) strip.scrollLeft -= view.left - box.left + 4;
   else if (box.right > view.right) strip.scrollLeft += box.right - view.right + 4;
 }

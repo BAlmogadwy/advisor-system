@@ -310,7 +310,7 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                 page.goto(f"{self.live_server_url}{self.path}")
                 page.wait_for_function(
                     f"document.querySelector('#twBoardTabs [aria-current=\"true\"]')?.dataset.boardId === '{last.id}'"
-                    " && /\d/.test(document.getElementById('twPublishLabel').textContent)"
+                    " && /\\d/.test(document.getElementById('twPublishLabel').textContent)"
                 )
                 # A long filter count, as when every meeting matches.
                 page.evaluate(
@@ -336,9 +336,10 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
                         const r = el.getBoundingClientRect();
                         if (r.width && (r.left < main.left - 1 || r.right > main.right + 1)) bad.push(`${el.id || el.className} cut off`);
                       }
-                      const rows = new Set(shown.filter(el => el.getBoundingClientRect().height > 20)
-                        .map(el => { const r = el.getBoundingClientRect(); return Math.round((r.top + r.height / 2) / 4); }));
-                      if (oneRow && rows.size > 1) bad.push(`${rows.size} rows`);
+                      const centres = shown.filter(el => el.getBoundingClientRect().height > 20)
+                        .map(el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+                      const spread = Math.max(...centres) - Math.min(...centres);
+                      if (oneRow && spread > 2) bad.push(`not one row (centres ${Math.round(spread)}px apart)`);
                       if (document.getElementById('main-content').scrollTop) bad.push('the page scrolled');
                       return bad;
                     }""",
