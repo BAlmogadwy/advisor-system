@@ -62,6 +62,26 @@ def effective_lab_slots(scenario: Any) -> list[dict]:
     ]
 
 
+def offered_move_columns(slots: list[dict], meeting_start: Any) -> list[dict]:
+    """The columns of one kind a manual move of a meeting is offered.
+
+    ``slots`` are the kind's effective columns. A policy column is never
+    offered (a course-scoped bundle moves by its own patterns). An online-only
+    (evening) window is offered only when the meeting already starts in one,
+    so an online class can move between evening windows while a class that
+    needs a room is never put where nothing is open. This is the rule of
+    ``offeredColumns`` in ``static/js/timetable-slot-config.js``, which the
+    pages apply to the columns they draw; the two must agree.
+    """
+    start = str(meeting_start or "")[:5]
+    in_online = any(slot.get("online_only") and slot.get("start") == start for slot in slots)
+    return [
+        slot
+        for slot in slots
+        if not slot.get("policy_only") and (not slot.get("online_only") or in_online)
+    ]
+
+
 def _minutes(value: Any) -> int | None:
     match = _TIME.match(str(value)) if value is not None else None
     if not match:

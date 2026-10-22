@@ -1822,7 +1822,10 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @require_GET
 @preview_lane
 def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -> JsonResponse:
-    """Return ranked read-only target slots for a missing planned section."""
+    """Return ranked read-only target slots for a missing planned section.
+
+    ``verdict=1`` adds the slot verdict (the Place dialog's) to each candidate.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1847,6 +1850,7 @@ def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -
             max_per_section=_optional_int("max_per_section"),
             kind=str(request.GET.get("kind") or "").strip(),
             limit=_optional_int("limit") or 80,
+            include_verdict=request.GET.get("verdict") == "1",
         )
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
@@ -2154,12 +2158,21 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
 @preview_lane
 @_one_teacher_request
 def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
-    """Return student-aware move candidates for a placement without mutating data."""
+    """Return student-aware move candidates for a placement without mutating data.
+
+    ``verdict=1`` adds the slot verdict (the Move dialog's); ``offer=manual``
+    offers the columns a manual move may use (an evening window only to a
+    meeting already in one).
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
     try:
-        preview = preview_placement_slot_candidates(placement_id)
+        preview = preview_placement_slot_candidates(
+            placement_id,
+            include_verdict=request.GET.get("verdict") == "1",
+            offer_manual=request.GET.get("offer") == "manual",
+        )
     except SectionPlacement.DoesNotExist:
         return _err("Placement not found", code="NOT_FOUND", status=404)
     return _ok(preview)
