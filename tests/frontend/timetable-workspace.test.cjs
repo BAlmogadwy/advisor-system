@@ -1558,3 +1558,24 @@ test('a select taken off the page as the browser blurs it is not "leaving": its 
   h.w.renderRightPanel('selection');
   await waitTimed(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
 });
+
+test('a settled choice is saved once: leaving after it, or a pointer choice over a waiting key, saves nothing more', async t => {
+  const h = await markHarness(t);
+  h.w.TimetableProgrammeMark.settleMs = 20;
+  card(h, 10).click();
+  const quality0 = h.seen.quality;
+  h.select().focus();
+  h.choose('AI2', { keyed: true });
+  await waitTimed(() => h.seen.posts.length === 1 && !h.select().disabled);
+  await waitTimed(() => h.seen.quality === quality0 + 1 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+  h.select().dispatchEvent(new h.w.FocusEvent('focusout', { bubbles: true }));  // leaving after the save
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(h.seen.posts.length, 1, 'leaving after a settled save saves nothing again');
+  h.choose('AI', { keyed: true });  // a key waits ...
+  h.select().dispatchEvent(new h.w.Event('pointerdown', { bubbles: true }));
+  h.choose('');  // ... and the mouse chooses before it rests
+  await waitTimed(() => h.seen.posts.length === 2 && !h.select().disabled);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2', ''], 'the waiting key never lands');
+  await waitTimed(() => h.seen.quality === quality0 + 2 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+});
