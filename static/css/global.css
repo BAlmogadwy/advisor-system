@@ -2151,6 +2151,25 @@ html body [role="gridcell"][tabindex]:focus-visible { outline-offset: -2px !impo
   color: var(--t2); font-size: var(--text-xs);
 }
 
+/* ── Courses that left students without a section (TimetableHotspots) ──
+   An optimise result's ranked list: the code isolated (an LTR code in an RTL
+   line), the course name, and how many students it left out, pushed to the
+   line's end. A critical start bar marks the list, with its count in words. */
+.ux-hotspots { margin: 0 0 10px; }
+.ux-hotspots-title { margin: 0; font-size: var(--text-sm); font-weight: 700; color: var(--sev-critical); }
+.ux-hotspots-help { margin: 2px 0 6px; color: var(--t2); font-size: var(--text-xs); }
+.ux-hotspots-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.ux-hotspots-row {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  padding: 4px 8px; border-radius: var(--radius-sm);
+  border-inline-start: 3px solid var(--sev-critical); background: var(--surface);
+  font-size: var(--text-sm); color: var(--ink);
+}
+.ux-hotspots-code { font-weight: 700; flex: none; }
+.ux-hotspots-name { min-width: 0; color: var(--t2); overflow-wrap: anywhere; }
+.ux-hotspots-count { margin-inline-start: auto; flex: none; font-weight: 600; color: var(--sev-critical); white-space: nowrap; }
+@media (forced-colors: active) { .ux-hotspots-row { border-inline-start-color: CanvasText; } }
+
 /* ── Tabs (a real tablist: arrow keys, owned panels) ─────── */
 .ux-tabs {
   display: flex; align-items: stretch; gap: 2px;
