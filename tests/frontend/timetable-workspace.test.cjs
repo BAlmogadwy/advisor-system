@@ -306,8 +306,8 @@ test('the Issues tab lists the board’s publish blockers first and counts them'
   ], warning_items: [] };
   const h = await harness(t, url => url.includes('/readiness/') ? { readiness } : undefined);
   await h.select();
+  // No hand-drawn panel: the readiness answer itself must redraw the open Issues tab.
   await h.w.refreshPublishReadiness(true);
-  h.w.renderRightPanel('issues');
   const head = h.d.querySelector('#twRightBody .tw-issue-head');
   assert.equal(head.dataset.tone, 'critical');
   assert.equal(head.children[1].textContent, 'Blocks publishing');
@@ -316,6 +316,12 @@ test('the Issues tab lists the board’s publish blockers first and counts them'
   const flag = h.d.querySelector('#twBoardTabs .ux-seg-item[aria-current="true"] .ux-seg-flag');
   assert.equal(flag.textContent, '1');
   assert.match(h.d.getElementById('twPublishLabel').textContent, /Publish · 1 blocker/);
+  // The section is placed: the next answer clears the group from the open tab.
+  readiness.ready = true; readiness.blockers = []; readiness.blocker_items = [];
+  h.w.TW.dataVersion++;
+  await h.w.refreshPublishReadiness(true);
+  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /Blocks publishing/);
+  assert.equal(h.d.querySelector('#twBoardTabs .ux-seg-item[aria-current="true"] .ux-seg-flag'), null);
 });
 
 test('an older readiness answer never replaces a newer one', async t => {
@@ -342,4 +348,19 @@ test('re-rendering the board buttons keeps the keyboard on the same board', asyn
   h.w.renderBoardTabs();
   assert.equal(h.d.activeElement.dataset.boardId, '3');
   assert.ok(h.d.getElementById('twBoardTabs').contains(h.d.activeElement));
+});
+
+test('a newly generated scenario never shows the previous scenario’s publish blockers', async t => {
+  const readiness = { ready: false, blockers: ['x'], warnings: [], blocker_items: [{ code: 'no_boards' }], warning_items: [] };
+  const h = await harness(t, url => url.includes('/readiness/') ? { readiness }
+    : url === '/ops/tw/generate-workspace/' ? { scenario: { ...scenario, id: 9, name: 'Generated' }, boards: [board], build_job_id: null } : undefined);
+  await h.select();
+  await h.w.refreshPublishReadiness(true);
+  assert.match(h.d.getElementById('twPublishLabel').textContent, /1 blocker/);
+  const generated = h.w.runGenerate('classic', GENERATE);
+  // As soon as the new scenario is open, the old answer is gone.
+  await wait(() => h.w.TW.scenarioId === 9);
+  assert.equal(h.w.TW.readiness, null);
+  assert.doesNotMatch(h.d.getElementById('twPublishLabel').textContent, /blocker/);
+  await generated;
 });

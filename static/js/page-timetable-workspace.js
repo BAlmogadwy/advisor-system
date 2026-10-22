@@ -687,7 +687,9 @@ async function runGenerate(engine = 'classic', request = {}) {
     TW.loadedBoardId = null;
     TW.selectedPlacementId = null;
     TW.undoStack = []; TW.redoStack = [];
-    TW.quality = null;
+    TW.quality = null; TW.qualityVersion = -1;
+    // The new scenario's readiness is unknown: never show the previous one's.
+    TW.readiness = null; TW.readinessVersion = -1;
     TW.plannerJob = null;
     if (data.build_job_id) announcePlannerJob({ job_id: data.build_job_id, status: 'queued' }, token.scenarioId, data.build_job_id);
 
@@ -1310,6 +1312,10 @@ function refreshPublishReadiness(force = false) {
       renderPublishState();
       renderWorkspaceQuality();
       renderBoardTabs();
+      // The Issues tab lists the board's publish blockers: redraw it with the
+      // answer, or it shows the previous one (fixed blockers, missing new ones).
+      const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+      if (activeTab?.dataset.tab === 'issues') renderRightPanel('issues');
     }
   })();
   if (!force) readinessRequest = { scenarioId, version, promise };

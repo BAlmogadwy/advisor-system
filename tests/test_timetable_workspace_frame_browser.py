@@ -304,7 +304,7 @@ class WorkspaceFrameBrowserTests(StaticLiveServerTestCase):
             page.goto(f"{self.live_server_url}{self.path}")
             page.wait_for_function(
                 f"document.querySelector('#twBoardTabs [aria-current=\"true\"]')?.dataset.boardId === '{last.id}'"
-                " && /\d/.test(document.getElementById('twPublishLabel').textContent)"
+                " && /\\d/.test(document.getElementById('twPublishLabel').textContent)"
             )
             page.wait_for_timeout(600)
             seen = page.evaluate(
