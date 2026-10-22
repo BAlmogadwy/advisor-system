@@ -46,6 +46,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
       else if (url.includes('/unplaced/')) answer = { unplaced: [] };
       else assert.fail(`Unexpected request ${url}`);
     }
+    // A real Response, for a body read only once or one that is not JSON.
+    if (answer instanceof Response) return answer;
     return { ok: !answer.httpError, status: answer.httpError || 200, json: async () => answer };
   };
   d.getElementById('twYear').value = '1448'; d.getElementById('twTerm').value = '1';
@@ -166,6 +168,84 @@ test('failed Undo and Redo retain original history and never create an inverse a
   h.w.TW.redoStack.push({ type: 'remove', placement_id: 10 });
   h.w.updateUndoRedoButtons(); h.d.getElementById('twRedo').click(); await wait(() => h.notices.length === 2);
   assert.equal(h.w.TW.redoStack.length, 1); assert.equal(h.w.TW.undoStack.length, 1);
+});
+
+/* ── Failed requests reach the caller (design record §7.3.2 C, 5c) ──
+   A dialog keeps its messages inside itself (a toast behind a modal is never
+   seen), so twFetch hands every failure to the caller's handler, and still
+   announces a planner job that holds the scenario whoever takes the refusal. */
+const MOVE_URL = '/ops/tw/placements/10/move/';
+const ROOMS_URL = '/ops/tw/placements/10/room-candidates/';
+
+test('F1 a busy refusal the caller takes still announces the planner job, and edits wait for it', async t => {
+  const job = { job_id: 'other-tab', scenario_id: 1, status: 'running' };
+  const h = await harness(t, (url, opts) => (url === MOVE_URL && opts.method === 'POST'
+    ? { httpError: 409, error: { code: 'SCENARIO_BUSY', message: 'Busy', details: { scenario_id: 1, active_job: job } } } : undefined));
+  await h.select();
+  assert.equal(h.d.getElementById('twOptimise').disabled, false);
+  const heard = [], told = [], toasts = h.notices.length;
+  h.w.addEventListener('tw:planner-job', event => heard.push([event.detail.jobId, event.detail.scenarioId]));
+  // As a dialog commits: quiet, and its handler takes the refusal.
+  const answer = await h.w.twFetch(MOVE_URL, {
+    method: 'POST', body: '{"room":"R2"}', _quiet: true,
+    _onError: (body, status) => (told.push([body?.error?.code, status]), true),
+  });
+  assert.equal(answer, null);
+  assert.deepEqual(told, [['SCENARIO_BUSY', 409]], 'a quiet request still hands its refusal to the handler');
+  assert.deepEqual(heard, [['other-tab', 1]]);
+  assert.equal(h.w.TW.plannerJob?.job_id, 'other-tab');
+  assert.equal(h.d.getElementById('twOptimise').disabled, true, 'the page holds its edits while the job runs');
+  assert.equal(h.notices.length, toasts);
+});
+
+test('F2 an answer that is not JSON, or no answer, reaches the handler with no body; otherwise the toast reads as before', async t => {
+  let fail = null;
+  const h = await harness(t, url => (url === MOVE_URL && fail ? fail() : undefined));
+  await h.select();
+  const proxyPage = () => new Response('<html><body><h1>502 Bad Gateway</h1></body></html>', { status: 502, headers: { 'Content-Type': 'text/html' } });
+  const offline = () => { throw new TypeError('Failed to fetch'); };
+  const told = [], toasts = h.notices.length;
+  const post = taken => h.w.twFetch(MOVE_URL, { method: 'POST', body: '{}', _onError: (body, status) => (told.push([body, status]), taken) });
+  fail = proxyPage;
+  assert.equal(await post(true), null);
+  fail = offline;
+  assert.equal(await post(true), null);
+  assert.deepEqual(told, [[null, 502], [null, 0]]);
+  assert.equal(h.notices.length, toasts, 'the handler took both: no toast');
+  // A handler that does not take them (Publish's, for anything but its own
+  // refusal) leaves the toasts as they were.
+  fail = proxyPage;
+  assert.equal(await post(false), null);
+  fail = offline;
+  assert.equal(await post(false), null);
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: '502' }, { type: 'error', text: 'Failed to fetch' }]);
+  assert.equal(h.d.getElementById('twOptimise').disabled, false, 'every failed write lets go of the page');
+});
+
+test('F3 a handler is asked once: one that throws is not asked again as if the network had failed', async t => {
+  const h = await harness(t, (url, opts) => (url === MOVE_URL && opts.method === 'POST'
+    ? { httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } } : undefined));
+  await h.select();
+  const told = [];
+  const answer = await h.w.twFetch(MOVE_URL, {
+    method: 'POST', body: '{"room":"R2"}', _quiet: true,
+    _onError: (body, status) => { told.push([body?.error?.code, status]); throw new Error('a handler bug'); },
+  });
+  assert.equal(answer, null);
+  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409]], 'the server’s refusal is the last word the handler heard');
+  assert.equal(h.d.getElementById('twOptimise').disabled, false);
+});
+
+test('F4 a read refused with 503 that is not the busy lane hands the handler the body the retry loop already read', async t => {
+  const h = await harness(t, url => (url === ROOMS_URL
+    ? new Response(JSON.stringify({ error: { code: 'MAINTENANCE', message: 'Down for maintenance' } }), { status: 503, headers: { 'Content-Type': 'application/json' } })
+    : undefined));
+  await h.select();
+  const told = [];
+  const answer = await h.w.twFetch(ROOMS_URL, { _quiet: true, _onError: (body, status) => (told.push([body?.error?.code, status]), true) });
+  assert.equal(answer, null);
+  assert.deepEqual(told, [['MAINTENANCE', 503]]);
+  assert.equal(h.requests.filter(row => row.url === ROOMS_URL).length, 1, 'not the busy lane: asked once');
 });
 
 test('older board responses cannot replace the currently selected board', async t => {
