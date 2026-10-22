@@ -2395,7 +2395,10 @@ test('RC6 the gate: published, loading, a planner job, another scenario’s sect
   await live.select();
   card(live, 10).click();
   const button = live.d.querySelector('#twRightBody [data-tw-action="room"]');
-  assert.deepEqual([button.disabled, live.d.getElementById('twSelActionNote').hidden], [false, true]);
+  // The room can change on a time-locked meeting; only Move… (5e) is held,
+  // and the note says why.
+  assert.deepEqual([button.disabled, live.d.getElementById('twSelActionNote').hidden], [false, false]);
+  assert.equal(live.d.getElementById('twSelActionNote').textContent, "This section's time is locked. Unlock its time to move it; its room can still change.");
   live.w.TW.englishPicker = true;
   assert.equal(roomByKey(live).defaultPrevented, false, 'a dialog is open: the key is not the board’s');
   live.w.TW.englishPicker = false;
@@ -3241,4 +3244,1060 @@ test('RC21 a room in use and outside the programme rooms keeps its clash, says b
   assert.deepEqual(roomRadios(only).map(radio => radio.value), ['R7']);
   assert.doesNotMatch(only.d.getElementById('twRoomBody').textContent, /No room fits this meeting\./);
   assert.equal(only.d.getElementById('twRoomMisfits').hidden, true);
+});
+
+/* ── Move: M, Selection's Move… and the dialog (design record §7.3, 5e) ──
+   The page reads the times the server offers a manual move with its verdict
+   (what the publish check will say once the move is saved), lists them in
+   the verdict's order, and sends {day, start_time, end_time} alone, through
+   the one commitPlacementMove a drop uses too. CS323 S1 meets on Sunday
+   09:00 in LAB25; the server's array order (the legacy one) differs from
+   the verdict's on purpose. */
+const MOVE_COLUMNS = [{ label: '09:00', start: '09:00', end: '10:15' }, { label: '10:30', start: '10:30', end: '11:45' }, { label: '13:00', start: '13:00', end: '14:15' }];
+const vItem = (issue_kind, severity, extra = {}) => ({ issue_kind, severity, source: issue_kind, meeting: null, other: null, room: null,
+  teacher: null, students: null, blocked_students: null, ...extra });
+const otherAt = (code, section, day, start, end, extra = {}) => ({ course_code: code, section, board_id: 2, board_label: 'Term 7', day, start, end, ...extra });
+const verdictOf = (items = [], extra = {}) => {
+  const counts = { critical: 0, warning: 0, info: 0 };
+  items.forEach(item => { counts[item.severity]++; });
+  return { severity: ['critical', 'warning', 'info'].find(s => counts[s]) || 'ok', counts, students: 0,
+    items: items.slice(0, 8), more: Math.max(0, items.length - 8), own_section_meeting: false, ...extra };
+};
+const slotAt = (day, start, end, rank, verdict = verdictOf(), extra = {}) => ({ kind: 'lect', day, start, end, score: rank * 10, tone: 'clean',
+  critical_count: 0, warning_count: 0, rank, verdict, verdict_rank: rank, ...extra });
+const ROOM_AT_MON = vItem('room', 'critical', { other: otherAt('AI222', 'S1', 'MON', '13:00', '14:15'), room: 'LAB25' });
+const SOFT_AT_WED = vItem('softOverlap', 'warning', { source: 'students', other: otherAt('AI555', 'S1', 'WED', '10:30', '11:45'), students: 12, blocked_students: 0 });
+// In the server's (legacy) order: a room clash, a time it calls "avoid" that
+// the verdict finds clean, an overlap students can route round, and a time
+// where the section already meets.
+const MOVE_SET = [
+  slotAt('MON', '13:00', '14:15', 3, verdictOf([ROOM_AT_MON]), { tone: 'risky' }),
+  slotAt('TUE', '09:00', '10:15', 1, verdictOf(), { tone: 'avoid', critical_count: 1 }),
+  slotAt('WED', '10:30', '11:45', 2, verdictOf([SOFT_AT_WED])),
+  slotAt('SUN', '13:00', '14:15', 4, verdictOf([], { own_section_meeting: true })),
+];
+const movesAnswer = (candidates = MOVE_SET, extra = {}) => ({ ok: true,
+  placement: { id: 10, course_code: 'CS323', section: 'S1', board_id: 2, board_label: 'Term 7', day: 'SUN', start: '09:00', end: '10:15' },
+  current_verdict: verdictOf(), hard_student_threshold: 20, candidates, ...extra });
+const moveRow = extra => at(10, { course_code: 'CS323', room: 'LAB25', board_id: 2, ...extra });
+const timesOf = body => ({ day: body.day, start_time: body.start_time, end_time: body.end_time });
+// Unless a test says otherwise, the server answers for the meeting where it
+// is now (a saved move included), as the real preview does.
+function moveHarness(t, { rows = () => [moveRow()], moves = null, move = null, conflicts = () => quiet, more = () => undefined, arabic = false, extra = {} } = {}) {
+  const posts = [], reads = [];
+  const saved = new Map();
+  const where = id => {
+    const row = { ...rows().find(r => r.id === id), ...(saved.get(id) || {}) };
+    return { id, course_code: row.course_code, section: row.section, board_id: 2, board_label: 'Term 7', day: row.day, start: row.start_time, end: row.end_time };
+  };
+  return harness(t, async (url, opts) => {
+    const own = await more(url, opts);
+    if (own !== undefined) return own;
+    if (url.includes('/slot-candidates/')) {
+      reads.push(url);
+      return moves ? moves(reads.length, url) : movesAnswer(MOVE_SET, { placement: where(Number(/placements\/(\d+)\//.exec(url)[1])) });
+    }
+    const moving = /^\/ops\/tw\/placements\/(\d+)\/move\/$/.exec(url);
+    if (moving && opts.method === 'POST') {
+      const body = JSON.parse(opts.body);
+      posts.push(body);
+      if (move) return move(body, posts.length, saved);
+      saved.set(Number(moving[1]), timesOf(body));
+      const row = { ...rows().find(r => r.id === Number(moving[1])), ...timesOf(body) };
+      return { ok: true, placement: row, placements: [row], validation: { critical_count: 0 } };
+    }
+    if (url === '/ops/tw/boards/2/') return { placements: rows().map(row => (saved.has(row.id) ? { ...row, ...saved.get(row.id) } : row)), slot_config: MOVE_COLUMNS };
+    if (url.includes('/conflicts/')) return conflicts();
+    if (url.includes('/quality/')) return noRooms;
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    return undefined;
+  }, extra, arabic).then(h => Object.assign(h, { posts, reads, saved }));
+}
+const moveDialogEl = h => h.d.getElementById('twMoveDialog');
+const moveRadios = h => [...h.d.querySelectorAll('#twMoveBody input[name="twMoveChoice"]')];
+const moveRadio = (h, key) => moveRadios(h).find(radio => radio.value === key);
+const moveNote = h => [h.d.getElementById('twMoveCommit').disabled, h.d.getElementById('twMoveNote').textContent];
+const moveStatus = h => h.d.getElementById('twMoveStatus').textContent;
+const moveAlert = h => (h.d.getElementById('twMoveAlert').hidden ? '' : h.d.getElementById('twMoveAlert').textContent);
+const moveSaid = (h, radio, index) => h.d.getElementById(radio.getAttribute('aria-describedby').split(' ')[index]).textContent;
+const moveName = (h, radio) => h.d.getElementById(radio.getAttribute('aria-labelledby')).textContent;
+// M on the card (a letter as the keyboard gives it: lower case).
+const moveByKey = (h, id = 10) => { card(h, id).focus(); return keyOn(h, 'm'); };
+const movesSettled = h => wait(() => moveRadios(h).length > 0);
+const atRest = h => h.d.querySelector('.tw-workspace').dataset.busy === 'false';
+const LOCKED_WORDS = "This section's time is locked. Unlock its time to move it; its room can still change.";
+const EXTERNAL_WORDS = "Another scenario owns this section's time and room; change it there.";
+const BUSY_WORDS = 'Wait for the current operation to finish.';
+
+test('M1 one read with the verdict; the times in the verdict’s order and words (never the legacy tone); the best time chosen, the keyboard on it', async t => {
+  const h = await moveHarness(t);
+  await h.select();
+  assert.equal(moveByKey(h).defaultPrevented, true);
+  await movesSettled(h);
+  assert.deepEqual(h.reads, ['/ops/tw/placements/10/slot-candidates/?verdict=1&offer=manual']);
+  assert.equal(h.d.getElementById('twMoveTitle').textContent, 'Move CS323 S1');
+  assert.equal(h.d.getElementById('twMoveSub').textContent, 'Sunday 09:00–10:15. Its room stays LAB25.');
+  assert.deepEqual(moveRadios(h).map(radio => [radio.value, radio.closest('.ux-choice').dataset.tone, radio.dataset.focusKey]),
+    [['TUE|09:00', 'ok', 'move-choice:TUE|09:00'], ['WED|10:30', 'warning', 'move-choice:WED|10:30'], ['MON|13:00', 'critical', 'move-choice:MON|13:00']]);
+  assert.deepEqual(moveRadios(h).map(radio => moveName(h, radio)), ['Tuesday 09:00–10:15', 'Wednesday 10:30–11:45', 'Monday 13:00–14:15']);
+  assert.deepEqual(moveRadios(h).map(radio => moveSaid(h, radio, 0)),
+    ['No clash found', 'Lowers quality: Overlap students can route round', 'Blocks publishing: Room double-booked']);
+  assert.deepEqual(moveRadios(h).map(radio => radio.closest('.ux-choice').querySelector('.ux-tone-icon').dataset.tone), ['ok', 'warning', 'critical']);
+  assert.equal(moveSaid(h, moveRadio(h, 'MON|13:00'), 1), 'Room double-booked: LAB25 — AI222 S1 · Mon 13:00–14:15');
+  assert.equal(moveSaid(h, moveRadio(h, 'WED|10:30'), 1), 'Overlap students can route round: AI555 S1 · Wed 10:30–11:45 · 12 students need both');
+  // A time the section already meets at: last, a row with its reason, never a radio.
+  const rows = [...h.d.querySelectorAll('#twMoveChoices > .ux-choice')];
+  assert.equal(rows.length, 4);
+  assert.deepEqual([rows[3].matches('.ux-choice-static'), rows[3].querySelector('input'), rows[3].textContent],
+    [true, null, 'Sunday 13:00–14:15Another meeting of this section is at this time.']);
+  // Now: the meeting's own time, by the current verdict, and the legend.
+  const now = h.d.querySelector('#twMoveBody .tw-move-now');
+  assert.deepEqual([now.matches('.ux-choice-static'), now.dataset.tone, now.textContent], [true, 'ok', 'NowSunday 09:00–10:15No clash found']);
+  assert.equal(h.d.querySelector('#twMoveBody fieldset > legend').textContent, 'Other times on the grid, best first');
+  assert.ok(h.d.getElementById('twMoveChoices').matches('.ux-choice-list[data-ux-submit]'));
+  // The best time that can be chosen is chosen, the keyboard goes to it,
+  // and the note says what it brings.
+  assert.equal(moveRadio(h, 'TUE|09:00').checked, true);
+  assert.equal(h.d.activeElement, moveRadio(h, 'TUE|09:00'));
+  assert.deepEqual(moveNote(h), [false, 'Chosen: No clash found']);
+  // The commit's words, in both languages (the template's).
+  assert.match(template, /id="twMoveCommit"[^>]*>{% if LANGUAGE_CODE == 'ar' %}نقل إلى هذا الوقت{% else %}Move to this time{% endif %}<\/button>/);
+  assert.equal(moveStatus(h), '');
+  moveRadio(h, 'MON|13:00').click();
+  assert.deepEqual(moveNote(h), [false, 'Chosen: Blocks publishing: Room double-booked']);
+  // Three lines at most, then how many more; context kinds only when nothing
+  // worse is there.
+  const many = [1, 2, 3, 4].map(n => vItem('time', 'critical', { source: 'students', other: otherAt(`AI${n}`, 'S1', 'TUE', '09:00', '10:15'), students: 20 + n, blocked_students: 20 + n }));
+  const busy = await moveHarness(t, { moves: () => movesAnswer([
+    slotAt('TUE', '09:00', '10:15', 1, verdictOf([...many, vItem('crossBoardMinor', 'info', { other: otherAt('AI9', 'S2', 'TUE', '09:00', '10:15', { board_id: 3, board_label: 'Term 4' }), students: 4 })], { more: 2 })),
+    slotAt('WED', '10:30', '11:45', 2, verdictOf([vItem('crossBoardMinor', 'info', { other: otherAt('AI9', 'S2', 'WED', '10:30', '11:45', { board_id: 3, board_label: 'Term 4' }), students: 4 })])),
+  ]) });
+  await busy.select();
+  moveByKey(busy);
+  await movesSettled(busy);
+  const first = moveRadio(busy, 'TUE|09:00');
+  assert.deepEqual(first.getAttribute('aria-describedby').split(' ').map(id => busy.d.getElementById(id).textContent), [
+    'Blocks publishing: Time clash',
+    'Time clash: AI1 S1 · Tue 09:00–10:15 · 21 students need both',
+    'Time clash: AI2 S1 · Tue 09:00–10:15 · 22 students need both',
+    'Time clash: AI3 S1 · Tue 09:00–10:15 · 23 students need both',
+    'and 4 more',
+  ]);
+  const minor = moveRadio(busy, 'WED|10:30');
+  assert.deepEqual([minor.closest('.ux-choice').dataset.tone, moveSaid(busy, minor, 0), moveSaid(busy, minor, 1)],
+    ['info', 'For context: Possible overlap with another board', 'Possible overlap with another board: AI9 S2 (Term 4) · Wed 10:30–11:45 · 4 students need both']);
+  // The first time that can be chosen is chosen, whatever the rank of a
+  // time where the section already meets.
+  const own = await moveHarness(t, { moves: () => movesAnswer([slotAt('TUE', '09:00', '10:15', 2), slotAt('SUN', '13:00', '14:15', 1, verdictOf([], { own_section_meeting: true }))]) });
+  await own.select();
+  moveByKey(own);
+  await movesSettled(own);
+  assert.deepEqual([moveRadios(own).map(radio => [radio.value, radio.checked]), moveNote(own)], [[['TUE|09:00', true]], [false, 'Chosen: No clash found']]);
+});
+
+test('M2 the move sends {day, start_time, end_time} alone and is undone as a drop is; a drop goes through the same commitPlacementMove', async t => {
+  const h = await moveHarness(t);
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  moveRadio(h, 'WED|10:30').click();
+  h.w.TW.redoStack.push({ type: 'room', placement_id: 10, old_room: 'X', new_room: 'Y' });
+  h.d.getElementById('twMoveCommit').click();
+  await wait(() => h.notices.some(n => n.type === 'success') && atRest(h));
+  assert.deepEqual(h.posts, [{ day: 'WED', start_time: '10:30', end_time: '11:45' }], 'the time alone: no room, no override');
+  const entry = plainOf(h.w.TW.undoStack.at(-1));
+  assert.deepEqual(entry, { type: 'move', placement_id: 10, old_day: 'SUN', old_start: '09:00', old_end: '10:15', new_day: 'WED', new_start: '10:30', new_end: '11:45' });
+  assert.equal(h.w.TW.redoStack.length, 0);
+  assert.equal(moveDialogEl(h).hasAttribute('open'), false);
+  assert.deepEqual(h.notices.at(-1), { type: 'success', text: 'Moved to Wednesday \u206610:30–11:45\u2069.' });
+  assert.equal(h.reads.length, 1);
+  // Undo sends the old time back as the board had it, Redo the new one.
+  h.d.getElementById('twUndo').click();
+  await wait(() => h.posts.length === 2 && !h.d.getElementById('twRedo').disabled);
+  h.d.getElementById('twRedo').click();
+  await wait(() => h.posts.length === 3 && !h.d.getElementById('twUndo').disabled);
+  assert.deepEqual(h.posts.slice(1), [{ day: 'SUN', start_time: '09:00', end_time: '10:15' }, { day: 'WED', start_time: '10:30', end_time: '11:45' }]);
+  // The dialog's own choice, moved to with Enter: the write that lands
+  // reads nothing more while the dialog closes.
+  const a = await moveHarness(t);
+  await a.select();
+  moveByKey(a);
+  await movesSettled(a);
+  keyOn(a, 'Enter');
+  await wait(() => a.notices.some(n => n.type === 'success') && atRest(a));
+  assert.deepEqual([a.posts, a.reads.length], [[{ day: 'TUE', start_time: '09:00', end_time: '10:15' }], 1], 'nothing read again while moving');
+  // A drop: the same function, the same body, the same undo entry, the same report.
+  const d = await moveHarness(t);
+  await d.select();
+  const calls = [];
+  const shared = d.w.commitPlacementMove;
+  d.w.commitPlacementMove = (...args) => { calls.push(plainOf(args)); return shared(...args); };
+  const cell = d.d.querySelector('#twGrid [role="gridcell"][data-day="WED"][data-start="10:30"]');
+  await d.w.onDrop({ preventDefault() {}, currentTarget: cell, dataTransfer: { getData: () => JSON.stringify({ type: 'move', placement_id: 10 }) } });
+  assert.deepEqual(calls, [[10, { day: 'WED', start_time: '10:30', end_time: '11:45' }]]);
+  assert.deepEqual(d.posts, [{ day: 'WED', start_time: '10:30', end_time: '11:45' }]);
+  assert.deepEqual(plainOf(d.w.TW.undoStack.at(-1)), entry);
+  assert.deepEqual(d.notices.at(-1), { type: 'success', text: 'Moved to Wednesday \u206610:30–11:45\u2069.' });
+  // A refused drop is twFetch's toast, as it always was: nothing undoable.
+  const r = await moveHarness(t, { move: () => ({ httpError: 409, error: { code: 'PLACEMENT_DUPLICATE', message: 'Duplicate placement at new position' } }) });
+  await r.select();
+  await r.w.onDrop({ preventDefault() {}, currentTarget: r.d.querySelector('#twGrid [role="gridcell"][data-day="WED"][data-start="10:30"]'), dataTransfer: { getData: () => JSON.stringify({ type: 'move', placement_id: 10 }) } });
+  assert.deepEqual([r.notices.at(-1), r.w.TW.undoStack.length], [{ type: 'error', text: 'Duplicate placement at new position' }, 0]);
+});
+
+test('M3 a time-locked meeting is refused before anything is read and Move… is held with the words through any sync; another scenario’s section says so first', async t => {
+  for (const [row, words] of [[{ is_locked: true }, LOCKED_WORDS], [{ shared_with_other_scenario: true }, EXTERNAL_WORDS], [{ is_locked: true, shared_with_other_scenario: true }, EXTERNAL_WORDS]]) {
+    const h = await moveHarness(t, { rows: () => [moveRow(row)] });
+    await h.select();
+    card(h, 10).click();
+    const button = h.d.querySelector('#twRightBody [data-tw-action="move"]');
+    const note = h.d.getElementById('twSelActionNote');
+    const state = () => [button.disabled, button.hasAttribute('data-tw-hold'), button.getAttribute('aria-describedby'), note.textContent, note.hidden];
+    assert.deepEqual([button.textContent, button.getAttribute('aria-haspopup')], ['Move…', 'dialog']);
+    assert.deepEqual(state(), [true, true, 'twSelActionNote', words, false], JSON.stringify(row));
+    h.w.syncWorkspaceControls();
+    assert.deepEqual(state(), [true, true, 'twSelActionNote', words, false], `${JSON.stringify(row)}: held through a sync`);
+    const toasts = h.notices.length;
+    assert.equal(moveByKey(h).defaultPrevented, true);
+    assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning', text: words }], JSON.stringify(row));
+    assert.deepEqual([h.reads, moveDialogEl(h).hasAttribute('open')], [[], false], JSON.stringify(row));
+    // The seam itself refuses too (Selection's button is off; a call is not).
+    assert.equal(h.w.TW.keyActions.move(h.w.TW.placements[0], { origin: 'sel:move:10' }), false);
+    assert.deepEqual(h.reads, []);
+  }
+  // Free to move: Selection's Move… sits before Lock, and opens the dialog.
+  const h = await moveHarness(t);
+  await h.select();
+  card(h, 10).click();
+  const keys = [...h.d.querySelectorAll('#twRightBody .tw-sel-actions button')].map(button => button.dataset.focusKey);
+  assert.deepEqual(keys, ['move', 'lock', 'remove']);
+  const button = h.d.querySelector('#twRightBody [data-tw-action="move"]');
+  assert.deepEqual([button.disabled, button.hasAttribute('data-tw-hold'), button.hasAttribute('aria-describedby'), h.d.getElementById('twSelActionNote').hidden], [false, false, false, true]);
+  button.click();
+  await movesSettled(h);
+  assert.deepEqual(h.reads, ['/ops/tw/placements/10/slot-candidates/?verdict=1&offer=manual']);
+});
+
+test('M4 an English section goes to its pattern chooser, after the gate: no Move… and no move dialog; after a switch the board’s stop is on the new row', async t => {
+  const eng = (id, day) => at(id, { course_code: 'ENG101', course_key: 'ENG101', section: 'S1', term_section_id: 300, day, start_time: '09:00', end_time: '12:00', room: '', needs_room: false });
+  const english = [eng(30, 'SUN'), eng(31, 'MON'), eng(32, 'WED'), eng(33, 'THU')];
+  const englishHarness = (extra = {}) => {
+    let rows = english;
+    const seen = { choose: 0, switched: [] };
+    return moveHarness(t, {
+      extra,
+      rows: () => rows,
+      more: (url, opts) => {
+        if (url === '/ops/tw/placements/30/slot-candidates/') return { section_policy: { current_pattern_id: 'ENG_INTENSIVE_V1_AM' }, candidates: [] };
+        if (url === '/ops/tw/placements/30/switch-pattern/' && opts.method === 'POST') {
+          seen.switched.push(JSON.parse(opts.body));
+          rows = english.map((row, i) => ({ ...row, id: 40 + i, start_time: '13:00', end_time: '16:00' }));
+          return { ok: true, placements: [{ ...rows[0], board_id: 9, id: 49 }, ...rows], before_placements: english };
+        }
+        return undefined;
+      },
+    }).then(h => {
+      h.w.TimetableMeetingPolicy.choose = async () => { seen.choose++; return h.w.TimetableMeetingPolicy.patterns[1]; };
+      return Object.assign(h, { seen });
+    });
+  };
+  const h = await englishHarness();
+  await h.select();
+  card(h, 30).click();
+  assert.equal(h.d.querySelector('#twRightBody [data-tw-action="move"]'), null, 'no Move…: the section has its pattern');
+  assert.ok(h.d.querySelector('#twRightBody [data-focus-key="pattern"]'));
+  assert.equal(moveByKey(h, 30).defaultPrevented, true);
+  assert.equal(h.d.getElementById('twBoardStatus').textContent, 'Finding patterns…', 'said before the read');
+  await wait(() => h.seen.switched.length === 1 && atRest(h) && card(h, 40));
+  assert.deepEqual([h.seen.choose, h.reads, moveDialogEl(h).hasAttribute('open')], [1, [], false], 'the chooser, never the move dialog');
+  assert.deepEqual(h.seen.switched, [{ pattern_id: 'ENG_INTENSIVE_V1_PM' }]);
+  // The new row of the meeting's day on this board (not a copy elsewhere)
+  // holds the board's stop, and the keyboard with it.
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')].map(element => element.dataset.focusKey), ['placement:40']);
+  assert.equal(h.d.activeElement, card(h, 40));
+  // Published: the gate speaks first, from the key and from the seam itself;
+  // the chooser is never asked.
+  const p = await englishHarness({ status: 'published' });
+  await p.select();
+  const toasts = p.notices.length;
+  moveByKey(p, 30);
+  assert.equal(p.w.TW.keyActions.move(p.w.TW.placements[0], { origin: 'placement:30' }), false);
+  await settle();
+  const published = { type: 'warning', text: 'This scenario is published and read-only.' };
+  assert.deepEqual([p.notices.slice(toasts), p.seen.choose, p.d.getElementById('twBoardStatus').textContent], [[published, published], 0, '']);
+  // Busy: the chooser saves as soon as a pattern is chosen, so it waits, and says why.
+  const b = await englishHarness();
+  await b.select();
+  const write = deferred();
+  b.w.fetch = (fetch => async (url, opts) => (url === '/ops/tw/x/' ? { ok: true, status: 200, json: async () => write.promise } : fetch(url, opts)))(b.w.fetch);
+  const writing = b.w.twFetch('/ops/tw/x/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const before = b.notices.length;
+  moveByKey(b, 30);
+  assert.deepEqual([b.notices.slice(before), b.seen.choose, b.d.getElementById('twBoardStatus').textContent], [[{ type: 'warning', text: BUSY_WORDS }], 0, '']);
+  write.resolve({ ok: true });
+  await writing;
+  // The chooser gives the keyboard back to the node it was opened from; a
+  // card drawn again meanwhile is gone, and the board's stop takes it.
+  const c = await englishHarness();
+  await c.select();
+  c.w.TimetableMeetingPolicy.choose = async () => {
+    const away = c.d.createElement('button');
+    c.d.body.append(away);
+    const previous = c.d.activeElement;
+    away.focus();
+    c.w.renderGrid();
+    away.remove();
+    previous.focus();
+    return null;
+  };
+  moveByKey(c, 30);
+  await wait(() => !c.w.TW.englishPicker);
+  assert.equal(c.d.activeElement, card(c, 30), 'the card drawn now');
+});
+
+test('M5 a write in flight never holds the dialog: it opens, Commit is held with the busy note, and comes back on by itself', async t => {
+  const write = deferred();
+  const h = await moveHarness(t, { more: url => (url === '/ops/tw/x/' ? write.promise : undefined) });
+  await h.select();
+  const writing = h.w.twFetch('/ops/tw/x/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  await settle();
+  assert.equal(moveByKey(h).defaultPrevented, true);
+  await movesSettled(h);
+  assert.equal(moveDialogEl(h).hasAttribute('open'), true);
+  assert.deepEqual(moveNote(h), [true, BUSY_WORDS]);
+  assert.equal(h.d.getElementById('twMoveCommit').hasAttribute('data-tw-hold'), false, 'held by the page, not by the dialog');
+  write.resolve({ ok: true });
+  await writing;
+  // The write moved the data: the times are read again, and Commit is back.
+  await wait(() => h.reads.length === 2 && moveRadios(h).length > 0);
+  assert.deepEqual(moveNote(h), [false, 'Chosen: No clash found']);
+});
+
+test('M6 the keyboard goes back to whatever opened the dialog: an unselected card while another is selected, the selected card, Selection’s Move…', async t => {
+  const h = await moveHarness(t, { rows: () => [moveRow(), at(11, { day: 'MON' })] });
+  await h.select();
+  card(h, 11).click();
+  moveByKey(h, 10);
+  await movesSettled(h);
+  keyOn(h, 'Escape');
+  assert.equal(moveDialogEl(h).hasAttribute('open'), false);
+  assert.equal(h.d.activeElement, card(h, 10), 'the card M was pressed on');
+  moveByKey(h, 11);
+  await movesSettled(h);
+  keyOn(h, 'Escape');
+  assert.equal(h.d.activeElement, card(h, 11));
+  const button = h.d.querySelector('#twRightBody [data-tw-action="move"]');
+  button.focus();
+  button.click();
+  await movesSettled(h);
+  h.w.renderRightPanel('selection');
+  moveDialogEl(h).querySelector('.ux-dialog-foot [data-dialog-close]').click();
+  assert.equal(h.d.activeElement, h.d.querySelector('#twRightBody [data-tw-action="move"][data-placement-id="11"]'));
+  // Moved from Selection while the board's tab stop is on another card: the
+  // keyboard goes back to Move…, and the board's stop to the moved card.
+  const s = await moveHarness(t, { rows: () => [moveRow(), at(11, { day: 'MON' })] });
+  await s.select();
+  card(s, 11).focus();
+  card(s, 10).click();
+  const move = s.d.querySelector('#twRightBody [data-tw-action="move"]');
+  move.focus();
+  move.click();
+  await movesSettled(s);
+  s.d.getElementById('twMoveCommit').click();
+  await wait(() => s.notices.some(n => n.type === 'success') && atRest(s));
+  assert.deepEqual([...s.d.querySelectorAll('#twGrid [tabindex="0"]')].map(element => element.dataset.focusKey), ['placement:10']);
+  assert.equal(s.d.activeElement, s.d.querySelector('#twRightBody [data-tw-action="move"][data-placement-id="10"]'));
+});
+
+test('M7 committing: the keyboard is on the chosen row before Commit turns off; the list is busy, the status line is not', async t => {
+  const answer = deferred();
+  let seen = null;
+  const h = await moveHarness(t, { move: () => answer.promise });
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  moveRadio(h, 'WED|10:30').click();
+  const commit = h.d.getElementById('twMoveCommit');
+  commit.focus();
+  const fetch = h.w.fetch;
+  h.w.fetch = async (url, opts) => {
+    if (opts?.method === 'POST') seen = [h.d.activeElement, commit.disabled];
+    return fetch(url, opts);
+  };
+  // Where the keyboard is at the very moment Commit turns off.
+  let atOff = null;
+  const original = Object.getOwnPropertyDescriptor(h.w.HTMLButtonElement.prototype, 'disabled');
+  Object.defineProperty(commit, 'disabled', {
+    configurable: true,
+    get() { return original.get.call(this); },
+    set(value) { if (value && !atOff) atOff = h.d.activeElement; original.set.call(this, value); },
+  });
+  commit.click();
+  await settle();
+  assert.equal(atOff, moveRadio(h, 'WED|10:30'), 'the keyboard is on the chosen row when Commit turns off');
+  assert.deepEqual(seen, [moveRadio(h, 'WED|10:30'), true], 'the keyboard on the chosen row as the request leaves');
+  assert.equal(h.d.getElementById('twMoveChoices').getAttribute('aria-busy'), 'true');
+  assert.deepEqual([moveStatus(h), h.d.getElementById('twMoveStatus').closest('[aria-busy="true"]')], ['Moving…', null]);
+  assert.deepEqual(moveNote(h), [true, '']);
+  answer.resolve({ ok: true, placement: moveRow(), placements: [moveRow()] });
+  await wait(() => !moveDialogEl(h).hasAttribute('open') && atRest(h));
+});
+
+test('M8 a refused move is said in the dialog, never as a toast; what asking again cannot change holds Commit; Escape during a commit closes it and the result is a toast', async t => {
+  const cases = [
+    ['PLACEMENT_LOCKED', 400, LOCKED_WORDS, true],
+    ['PLACEMENT_EXTERNALLY_OWNED', 409, EXTERNAL_WORDS, true],
+    ['PLACEMENT_DUPLICATE', 409, 'Another meeting of this section is at this time.', false],
+    ['SCENARIO_PUBLISHED', 400, 'This scenario is published and read-only.', true],
+    ['SCENARIO_BUSY', 409, BUSY_WORDS, false],
+    ['NOT_FOUND', 404, 'This meeting is no longer on the board.', true],
+  ];
+  for (const [code, status, words, held] of cases) {
+    const h = await moveHarness(t, { move: () => ({ httpError: status, error: { code, message: 'Refused' } }) });
+    await h.select();
+    moveByKey(h);
+    await movesSettled(h);
+    const toasts = h.notices.length;
+    const boards = h.requests.filter(r => r.url === '/ops/tw/boards/2/').length;
+    h.d.getElementById('twMoveCommit').click();
+    await wait(() => moveAlert(h) && atRest(h));
+    await settle();
+    assert.deepEqual([moveAlert(h), h.d.getElementById('twMoveAlert').dataset.tone], [words, 'warning'], code);
+    assert.equal(h.d.getElementById('twMoveCommit').disabled, held, code);
+    assert.deepEqual([h.notices.slice(toasts), h.w.TW.undoStack.length, moveDialogEl(h).hasAttribute('open')], [[], 0, true], code);
+    assert.equal(h.requests.filter(r => r.url === '/ops/tw/boards/2/').length, boards, `${code}: a known refusal reads nothing`);
+  }
+  // Escape while the write is out closes the dialog; its refusal, then a
+  // success, arrive as toasts.
+  let answer = deferred();
+  const h = await moveHarness(t, { move: () => answer.promise });
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  const toasts = h.notices.length;
+  h.d.getElementById('twMoveCommit').click();
+  await settle();
+  keyOn(h, 'Escape');
+  assert.equal(moveDialogEl(h).hasAttribute('open'), false, 'Escape is never blocked by a commit');
+  assert.equal(h.d.activeElement, card(h, 10));
+  answer.resolve({ httpError: 400, error: { code: 'PLACEMENT_LOCKED', message: 'Locked' } });
+  await wait(() => h.notices.length > toasts);
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning', text: LOCKED_WORDS }]);
+  answer = deferred();
+  moveByKey(h);
+  await movesSettled(h);
+  h.d.getElementById('twMoveCommit').click();
+  await settle();
+  keyOn(h, 'Escape');
+  answer.resolve({ ok: true, placement: moveRow({ day: 'TUE' }), placements: [moveRow({ day: 'TUE' })] });
+  await wait(() => h.notices.some(n => n.type === 'success') && atRest(h));
+  assert.deepEqual(h.notices.at(-1), { type: 'success', text: 'Moved to Tuesday \u206609:00–10:15\u2069.' });
+  assert.equal(h.w.TW.undoStack.length, 1);
+});
+
+test('M9 a meeting that changed under the list is not moved: each field of its snapshot stops the commit; a lost answer reads the board, which then stops a second move', async t => {
+  const h = await moveHarness(t);
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  const p = h.w.TW.placements[0];
+  const changes = [
+    ['day', () => { p.day = 'MON'; }, () => { p.day = 'SUN'; }],
+    ['start', () => { p.start_time = '09:30'; }, () => { p.start_time = '09:00'; }],
+    ['end', () => { p.end_time = '10:45'; }, () => { p.end_time = '10:15'; }],
+    ['a lock since', () => { p.is_locked = true; }, () => { p.is_locked = false; }],
+    ['another scenario’s claim since', () => { p.shared_with_other_scenario = true; }, () => { p.shared_with_other_scenario = false; }],
+    ['gone', () => { h.w.TW.placements = []; }, () => { h.w.TW.placements = [p]; }],
+    ['another board', () => { h.w.TW.boardId = 3; }, () => { h.w.TW.boardId = 2; }],
+    ['another scenario', () => { h.w.TW.scenarioId = 9; }, () => { h.w.TW.scenarioId = 1; }],
+  ];
+  const alert = h.d.getElementById('twMoveAlert');
+  for (const [name, change, undo] of changes) {
+    change();
+    h.d.getElementById('twMoveForm').requestSubmit();
+    await settle();
+    assert.deepEqual([alert.textContent, alert.hidden, h.posts.length], ['This section changed while the list was open. Nothing was moved.', false, 0], name);
+    undo();
+    alert.textContent = '';
+    alert.hidden = true;
+    h.w.drawMoveDialog();
+    // As read again (a meeting off the board is read again once back).
+    await wait(() => moveNote(h)[0] === false);
+  }
+  // As it was read: the move goes.
+  await wait(() => moveNote(h)[0] === false);
+  assert.deepEqual(moveNote(h), [false, 'Chosen: No clash found']);
+  h.d.getElementById('twMoveForm').requestSubmit();
+  await wait(() => h.posts.length === 1);
+  // The list shows it too: the times are stale, Check again reads the
+  // board, then the times, and the choice starts again.
+  let day = 'SUN';
+  const s = await moveHarness(t, { rows: () => [moveRow({ day })] });
+  await s.select();
+  moveByKey(s);
+  await movesSettled(s);
+  moveRadio(s, 'MON|13:00').click();
+  day = 'MON';
+  await s.w.selectBoard(2);
+  assert.equal(moveStatus(s), 'The timetable changed since these times were read.');
+  assert.deepEqual([moveRadios(s).length, moveNote(s)], [0, [true, '']]);
+  s.d.getElementById('twMoveForm').requestSubmit();
+  await settle();
+  assert.equal(s.posts.length, 0);
+  const boards = s.requests.filter(r => r.url === '/ops/tw/boards/2/').length;
+  s.d.querySelector('#twMoveBody [data-tw-move-recheck]').click();
+  await wait(() => s.reads.length === 2 && moveRadios(s).length > 0);
+  assert.equal(s.requests.filter(r => r.url === '/ops/tw/boards/2/').length, boards + 1, 'the board, read again');
+  assert.equal(s.reads.at(-1), '/ops/tw/placements/10/slot-candidates/?verdict=1&offer=manual');
+  // A lost answer: "not saved", and the board is read; this one did move,
+  // so a second move from the old list is stopped.
+  const n = await moveHarness(t, { move: (body, count, saved) => { saved.set(10, timesOf(body)); throw new TypeError('Failed to fetch'); } });
+  await n.select();
+  moveByKey(n);
+  await movesSettled(n);
+  const before = n.requests.length;
+  n.d.getElementById('twMoveCommit').click();
+  await wait(() => moveAlert(n) && atRest(n));
+  assert.equal(moveAlert(n), 'The move was not saved.');
+  const after = n.requests.slice(before).map(r => `${r.opts.method || 'GET'} ${r.url}`);
+  assert.ok(after.indexOf('GET /ops/tw/boards/2/') > after.indexOf('POST /ops/tw/placements/10/move/'), after.join('\n'));
+  assert.equal(moveStatus(n), 'The timetable changed since these times were read.');
+  n.d.getElementById('twMoveForm').requestSubmit();
+  await settle();
+  assert.deepEqual([n.posts.length, moveAlert(n)], [1, 'This section changed while the list was open. Nothing was moved.']);
+  assert.equal(n.w.TW.undoStack.length, 0, 'an answer that never came is not undoable');
+  // Any other refusal says the same and reads the board; nothing moved, so
+  // the user may try again.
+  const v = await moveHarness(t, { move: () => ({ httpError: 400, error: { code: 'VALIDATION_ERROR', message: 'Bad time' } }) });
+  await v.select();
+  moveByKey(v);
+  await movesSettled(v);
+  const read = v.requests.filter(r => r.url === '/ops/tw/boards/2/').length;
+  v.d.getElementById('twMoveCommit').click();
+  await wait(() => moveAlert(v) && atRest(v) && v.requests.filter(r => r.url === '/ops/tw/boards/2/').length === read + 1);
+  assert.deepEqual([moveAlert(v), moveNote(v)], ['The move was not saved.', [false, 'Chosen: No clash found']]);
+});
+
+test('M10 in Arabic: times isolated left to right, counts in their forms, course codes as text', async t => {
+  const board4 = { board_id: 4, board_label: 'المستوى 4' };
+  const effect = vItem('time', 'critical', { source: 'h15_effect', other: otherAt('AI7', 'S2', 'TUE', '09:00', '10:15', board4), students: 20, blocked_students: 20 });
+  const teacher = vItem('instructorElsewhere', 'warning', { source: 'cross_board_instructor', other: otherAt('AI8', 'S1', 'TUE', '09:00', '10:15', board4), teacher: 'د. أحمد' });
+  const crossing = vItem('crossBoard', 'warning', { source: 'cross_board_students', other: otherAt('AI9', 'S1', 'TUE', '09:00', '10:15', board4), students: 1 });
+  // In the server's order: severity, then kind.
+  const items = [
+    vItem('time', 'critical', { source: 'students', other: otherAt('<img src=x>', 'S1', 'TUE', '09:00', '10:15'), students: 3, blocked_students: 3 }),
+    effect, vItem('blocked', 'critical', { source: 'blocked_slot' }), teacher, crossing,
+  ];
+  const h = await moveHarness(t, {
+    arabic: true,
+    rows: () => [moveRow({ meetings: [{ day: 'SUN', start_time: '09:00', end_time: '10:15' }, { day: 'TUE', start_time: '09:00', end_time: '10:15' }] })],
+    moves: () => movesAnswer([slotAt('TUE', '09:00', '10:15', 1, verdictOf(items)), slotAt('WED', '10:30', '11:45', 2, verdictOf([teacher, crossing])), MOVE_SET[3]]),
+  });
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  const dialog = moveDialogEl(h);
+  const lines = key => moveRadio(h, key).getAttribute('aria-describedby').split(' ').map(id => h.d.getElementById(id).textContent);
+  assert.equal(h.d.getElementById('twMoveTitle').textContent, 'نقل CS323 S1');
+  assert.equal(h.d.getElementById('twMoveSub').innerHTML,
+    'هذا اللقاء فقط: الأحد <bdi dir="ltr">09:00–10:15</bdi>. تبقى لقاءات الشعبة الأخرى في أماكنها. وتبقى قاعته <bdi>LAB25</bdi>.');
+  const times = [...dialog.querySelectorAll('bdi[dir="ltr"]')];
+  assert.ok(times.length >= 6, String(times.length));
+  assert.deepEqual(times.filter(bdi => !/^\d\d:\d\d–\d\d:\d\d$/.test(bdi.textContent)).map(bdi => bdi.textContent), []);
+  // Every row's name holds its time in one.
+  assert.deepEqual(moveRadios(h).map(radio => h.d.getElementById(radio.getAttribute('aria-labelledby')).innerHTML),
+    ['الثلاثاء <bdi dir="ltr">09:00–10:15</bdi>', 'الأربعاء <bdi dir="ltr">10:30–11:45</bdi>']);
+  assert.deepEqual(lines('TUE|09:00'), [
+    'يمنع النشر: تعارض زمني, في وقت محجوب, المدرّس يدرّس في لوحة أخرى في الوقت نفسه, تداخل مع لوحة أخرى',
+    'تعارض زمني: <img src=x> S1 · الثلاثاء 09:00–10:15 · 3 طلاب يحتاجون كليهما',
+    'تعارض زمني: AI7 S2 (المستوى 4) · الثلاثاء 09:00–10:15 · لا يجد 20 طالباً شعبتين بلا تعارض',
+    'في وقت محجوب',
+    'وبندان آخران',
+  ]);
+  assert.deepEqual(lines('WED|10:30'), [
+    'يُضعف الجودة: المدرّس يدرّس في لوحة أخرى في الوقت نفسه, تداخل مع لوحة أخرى',
+    'المدرّس يدرّس في لوحة أخرى في الوقت نفسه: د. أحمد — AI8 S1 (المستوى 4) · الثلاثاء 09:00–10:15',
+    'تداخل مع لوحة أخرى: AI9 S1 (المستوى 4) · الثلاثاء 09:00–10:15 · طالب واحد يحتاج كليهما',
+  ]);
+  assert.equal(dialog.querySelector('img'), null, 'a course code is text');
+  assert.deepEqual([...h.d.querySelectorAll('#twMoveBody .tw-move-now > .ux-choice-title > span:not(.ux-tone-icon)')].map(span => span.textContent),
+    ['الآن', 'الأحد 09:00–10:15', 'لا تعارض']);
+  assert.equal(h.d.querySelector('#twMoveBody fieldset > legend').textContent, 'أوقات أخرى في الجدول، الأفضل أولاً');
+  assert.match(h.d.querySelector('#twMoveChoices .ux-choice-static').textContent, /^الأحد 13:00–14:15لقاء آخر لهذه الشعبة في هذا الوقت\.$/);
+  assert.equal(h.d.getElementById('twMoveNote').textContent, 'المختار: يمنع النشر: تعارض زمني, في وقت محجوب, المدرّس يدرّس في لوحة أخرى في الوقت نفسه, تداخل مع لوحة أخرى');
+  // Every count form, as drawn: a time whose first item leaves n students
+  // with no clash-free pair, with n more items past the three shown.
+  const counts = async (arabic, forms) => {
+    const c = await moveHarness(t, { arabic, moves: () => movesAnswer(forms.map((n, i) => slotAt(['SUN', 'MON', 'TUE', 'WED', 'THU'][i], '10:30', '11:45', i + 1,
+      verdictOf([{ ...effect, blocked_students: n }, items[2], items[2]], { more: n })))) });
+    await c.select();
+    moveByKey(c);
+    await movesSettled(c);
+    return moveRadios(c).map(radio => {
+      const said = radio.getAttribute('aria-describedby').split(' ').map(id => c.d.getElementById(id).textContent);
+      return [said[1].split(' · ').at(-1), said.at(-1)];
+    });
+  };
+  assert.deepEqual(await counts(true, [1, 2, 3, 11, 100]), [
+    ['لا يجد طالب واحد شعبتين بلا تعارض', 'وبند آخر'],
+    ['لا يجد طالبان شعبتين بلا تعارض', 'وبندان آخران'],
+    ['لا يجد 3 طلاب شعبتين بلا تعارض', 'و3 بنود أخرى'],
+    ['لا يجد 11 طالباً شعبتين بلا تعارض', 'و11 بنداً آخر'],
+    ['لا يجد 100 طالب شعبتين بلا تعارض', 'و100 بند آخر'],
+  ]);
+  assert.deepEqual(await counts(false, [1, 2]), [
+    ['leaves 1 student with no clash-free pair of sections', 'and 1 more'],
+    ['leaves 2 students with no clash-free pair of sections', 'and 2 more'],
+  ]);
+  // The report and the "changed" words, in Arabic.
+  assert.equal(h.w.movedWords('MON', '13:00', '14:15'), 'نُقلت إلى الاثنين \u206613:00–14:15\u2069.');
+  h.w.TW.placements[0].start_time = '09:30';
+  h.d.getElementById('twMoveForm').requestSubmit();
+  await settle();
+  assert.equal(moveAlert(h), 'تغيّرت هذه الشعبة أثناء فتح القائمة. لم يُنقل شيء.');
+  assert.equal(moveStatus(h), 'تغيّر الجدول منذ قراءة هذه الأوقات.');
+  // English: one student, one more, and an effect on this board named without one.
+  const e = await moveHarness(t, { moves: () => movesAnswer([slotAt('TUE', '09:00', '10:15', 1, verdictOf([
+    { ...effect, other: { ...effect.other, board_id: 2, board_label: 'Term 7' }, blocked_students: 1, students: 1 }, teacher, crossing]))]) });
+  await e.select();
+  moveByKey(e);
+  await movesSettled(e);
+  assert.deepEqual(moveRadio(e, 'TUE|09:00').getAttribute('aria-describedby').split(' ').slice(1).map(id => e.d.getElementById(id).textContent), [
+    'Time clash: AI7 S2 · Tue 09:00–10:15 · leaves 1 student with no clash-free pair of sections',
+    'Teacher also teaching on another board: د. أحمد — AI8 S1 (المستوى 4) · Tue 09:00–10:15',
+    'Overlap with another board: AI9 S1 (المستوى 4) · Tue 09:00–10:15 · 1 student needs both',
+  ]);
+});
+
+test('M11 the report reads Issues once the board is read again: what the moved meeting has now, with R’s hint where its room is the clash; a drop says the same', async t => {
+  const clash = { ...quiet, room_clashes: [{ ids: [10, 12], room: 'LAB25', sections: ['CS323 S1', 'AI222 S1'] }] };
+  const rows = () => [moveRow(), at(12, { course_code: 'AI222', day: 'MON', start_time: '13:00', end_time: '14:15', room: 'LAB25' })];
+  const movedHarness = (options = {}) => {
+    let moved = false;
+    return moveHarness(t, {
+      rows,
+      conflicts: () => (moved ? clash : quiet),
+      move: (body, n, saved) => {
+        moved = true;
+        saved.set(10, timesOf(body));
+        const row = moveRow(timesOf(body));
+        return { ok: true, placement: row, placements: [row], ...options };
+      },
+    });
+  };
+  const h = await movedHarness();
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  moveRadio(h, 'MON|13:00').click();
+  moveRadio(h, 'MON|13:00').focus();
+  const before = h.notices.length;
+  keyOn(h, 'Enter');
+  await wait(() => h.notices.length > before && atRest(h));
+  assert.deepEqual(h.notices.slice(before), [{ type: 'warning',
+    text: 'Moved to Monday \u206613:00–14:15\u2069. · Blocks publishing: Room double-booked · Press R on the card to change its room.' }]);
+  assert.equal(card(h, 10).closest('[role="gridcell"]').dataset.day, 'MON');
+  assert.equal(tone(h, 10), 'critical');
+  assert.equal(h.d.activeElement, card(h, 10), 'the keyboard on the moved card, at its new time');
+  // A drop: the same report, without the hint (it read no verdict), and its
+  // teacher backstop as its own toast, as before.
+  const d = await movedHarness({ instructor_clash_backstop: { checked: true, involving_this_section: [{ id: 1 }, { id: 2 }] } });
+  await d.select();
+  const dropped = d.notices.length;
+  await d.w.onDrop({ preventDefault() {}, currentTarget: d.d.querySelector('#twGrid [role="gridcell"][data-day="MON"][data-start="13:00"]'),
+    dataTransfer: { getData: () => JSON.stringify({ type: 'move', placement_id: 10 }) } });
+  assert.deepEqual(d.notices.slice(dropped), [
+    { type: 'warning', text: 'Moved to Monday \u206613:00–14:15\u2069. · Blocks publishing: Room double-booked' },
+    { type: 'warning', text: 'Instructor double-booked — 2 overlapping session(s) across boards' },
+  ]);
+  // Only fresh rows about the moved meeting count: a check older than the
+  // edit is not, nor context; a fresh warning is.
+  Object.assign(h.w.TW, {
+    conflicts: { ...quiet, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'CS323', section_b: 'AI9', overlap_count: 3 }] },
+    quality: { ...noRooms, rooms: { assessed: true, shortages: 1, details: [{ course_code: 'CS323', placement_ids: [10], rooms: ['LAB25'], reasons: ['undersized'], required_capacity: 50 }] } },
+    qualityVersion: h.w.TW.dataVersion - 1,
+  });
+  assert.deepEqual(plainOf(h.w.editReport('Moved.', [10])), { text: 'Moved.', tone: 'success' });
+  h.w.TW.qualityVersion = h.w.TW.dataVersion;
+  assert.deepEqual(plainOf(h.w.editReport('Moved.', [10])), { text: 'Moved. · Lowers quality: Room too small', tone: 'warning' });
+  assert.deepEqual(plainOf(h.w.editReport('Moved.', [12])), { text: 'Moved.', tone: 'success' }, 'another meeting’s rows are not this move’s');
+  // R's hint only beside a room problem the report names: a room row, yes;
+  // none (the clash the verdict saw has gone), or another kind only, no.
+  const hint = 'Press R on the card to change its room.';
+  assert.equal(plainOf(h.w.editReport('Moved.', [10], hint)).text, `Moved. · Lowers quality: Room too small · ${hint}`);
+  h.w.TW.quality = { ...noRooms, rooms: { assessed: true, shortages: 0, details: [] } };
+  assert.deepEqual(plainOf(h.w.editReport('Moved.', [10], hint)), { text: 'Moved.', tone: 'success' });
+  h.w.TW.conflicts = { ...quiet, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'CS323', section_b: 'AI9', overlap_count: 30 }] };
+  assert.doesNotMatch(plainOf(h.w.editReport('Moved.', [10], hint)).text, /Press R/);
+});
+
+test('M12 a move the user left (Escape, then R or M again) ends where the user is: in the dialog open by then, named when that dialog is about another meeting; a refusal of the same meeting holds Commit there', async t => {
+  const rows = () => [moveRow(), at(11, { day: 'MON' })];
+  const rooms = url => (url.includes('/room-candidates/') ? roomsAnswer(ROOM_SET, { target: { day: 'MON' } }) : undefined);
+  // Saved while Change room is open on another meeting: said there, named,
+  // with the teacher backstop in the same line; no toast behind it.
+  for (const arabic of [false, true]) {
+    const landed = deferred();
+    const h = await moveHarness(t, {
+      arabic, rows, more: rooms,
+      move: async (body, n, saved) => {
+        await landed.promise;
+        saved.set(10, timesOf(body));
+        const row = moveRow(timesOf(body));
+        return { ok: true, placement: row, placements: [row], instructor_clash_backstop: { checked: true, involving_this_section: [{ id: 1 }] } };
+      },
+    });
+    await h.select();
+    moveByKey(h);
+    await movesSettled(h);
+    moveRadio(h, 'WED|10:30').click();
+    h.d.getElementById('twMoveCommit').click();
+    await settle();
+    keyOn(h, 'Escape');
+    roomByKey(h, 11);
+    await settled(h);
+    const toasts = h.notices.length;
+    const line = h.d.getElementById('twRoomAlert');
+    landed.resolve();
+    await wait(() => !line.hidden && atRest(h));
+    assert.deepEqual([line.textContent, line.dataset.tone], arabic
+      ? ['\u2066CS323\u2069 \u2066S1\u2069: نُقلت إلى الأربعاء \u206610:30–11:45\u2069. · تعارض للمحاضر: 1 حصة متداخلة عبر اللوحات', 'warning']
+      : ['\u2066CS323\u2069 \u2066S1\u2069: Moved to Wednesday \u206610:30–11:45\u2069. · Instructor double-booked — 1 overlapping session(s) across boards', 'warning']);
+    assert.deepEqual(h.notices.slice(toasts), [], 'no toast behind the dialog');
+    assert.equal(h.w.TW.undoStack.length, 1);
+  }
+  // Saved while Move is open again on the same meeting: said there as it is,
+  // and that dialog reads its times again (the data moved, nothing chosen).
+  const landed = deferred();
+  const s = await moveHarness(t, { move: async (body, n, saved) => { await landed.promise; saved.set(10, timesOf(body)); return { ok: true, placement: moveRow(timesOf(body)) }; } });
+  await s.select();
+  moveByKey(s);
+  await movesSettled(s);
+  moveRadio(s, 'WED|10:30').click();
+  s.d.getElementById('twMoveCommit').click();
+  await settle();
+  keyOn(s, 'Escape');
+  moveByKey(s);
+  await movesSettled(s);
+  assert.deepEqual([s.reads.length, moveNote(s)], [1, [true, BUSY_WORDS]], 'the reopen takes the answer kept for this data; the page is busy');
+  landed.resolve();
+  await wait(() => moveAlert(s) && atRest(s) && s.reads.length === 2 && moveRadios(s).length > 0);
+  assert.deepEqual([moveAlert(s), s.d.getElementById('twMoveAlert').dataset.tone], ['Moved to Wednesday \u206610:30–11:45\u2069.', 'success']);
+  assert.equal(moveDialogEl(s).hasAttribute('open'), true, 'the dialog the user opened stays open');
+  assert.equal(s.d.getElementById('twMoveSub').textContent, 'Wednesday 10:30–11:45. Its room stays LAB25.', 'about the meeting where it is now');
+  // Refused instead, with Move open again on the same meeting: said there,
+  // and Commit holds whatever is chosen.
+  const refused = deferred();
+  const r = await moveHarness(t, { move: () => refused.promise });
+  await r.select();
+  moveByKey(r);
+  await movesSettled(r);
+  r.d.getElementById('twMoveCommit').click();
+  await settle();
+  keyOn(r, 'Escape');
+  moveByKey(r);
+  await movesSettled(r);
+  const quietly = r.notices.length;
+  refused.resolve({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  await wait(() => moveAlert(r) && atRest(r));
+  await settle();
+  assert.deepEqual([moveAlert(r), r.d.getElementById('twMoveAlert').dataset.tone, r.notices.slice(quietly)], [EXTERNAL_WORDS, 'warning', []]);
+  moveRadio(r, 'WED|10:30').click();
+  assert.equal(r.d.getElementById('twMoveCommit').disabled, true, 'asking again would change nothing');
+  // Open on another meeting meanwhile: named, and its own Commit is not held.
+  const elsewhere = deferred();
+  const m = await moveHarness(t, { rows, move: () => elsewhere.promise });
+  await m.select();
+  moveByKey(m);
+  await movesSettled(m);
+  m.d.getElementById('twMoveCommit').click();
+  await settle();
+  keyOn(m, 'Escape');
+  moveByKey(m, 11);
+  await movesSettled(m);
+  elsewhere.resolve({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  await wait(() => moveAlert(m) && atRest(m));
+  await settle();
+  assert.equal(m.d.getElementById('twMoveTitle').textContent, 'Move AI11 S1');
+  assert.equal(moveAlert(m), `\u2066CS323\u2069 \u2066S1\u2069: ${EXTERNAL_WORDS}`);
+  assert.equal(m.d.getElementById('twMoveCommit').disabled, false, 'another meeting: asking is still the user’s');
+});
+
+test('M13 data that moves under an open dialog: nothing chosen reads again by itself; a chosen time waits for Check again; an overtaken read is never drawn; a lock since refuses inside', async t => {
+  const rows = () => [moveRow(), at(11, { day: 'MON' })];
+  const lockOk11 = url => (url.endsWith('/lock/') ? { placement_id: 11, is_locked: true } : undefined);
+  // Nothing chosen by the user: read again, the keyboard with the dialog's choice.
+  const h = await moveHarness(t, { rows, more: lockOk11 });
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  assert.equal(h.d.activeElement, moveRadio(h, 'TUE|09:00'));
+  await h.w.toggleLock(11);
+  await wait(() => h.reads.length === 2 && moveRadios(h).length > 0);
+  assert.deepEqual(moveNote(h), [false, 'Chosen: No clash found']);
+  assert.equal(h.d.activeElement, moveRadio(h, 'TUE|09:00'));
+  assert.equal(h.reads[1], '/ops/tw/placements/10/slot-candidates/?verdict=1&offer=manual');
+  // A time the user chose waits: stale, Commit held, nothing sent; Check
+  // again reads the board, then the times, and the choice starts again.
+  const c = await moveHarness(t, { rows, more: lockOk11 });
+  await c.select();
+  moveByKey(c);
+  await movesSettled(c);
+  moveRadio(c, 'WED|10:30').click();
+  await c.w.toggleLock(11);
+  assert.deepEqual([moveStatus(c), moveRadios(c).length, moveNote(c), c.reads.length],
+    ['The timetable changed since these times were read.', 0, [true, ''], 1]);
+  c.d.getElementById('twMoveForm').requestSubmit();
+  await settle();
+  assert.deepEqual([c.posts.length, moveAlert(c)], [0, ''], 'the meeting itself did not change: nothing to say, nothing sent');
+  const boards = c.requests.filter(r => r.url === '/ops/tw/boards/2/').length;
+  c.d.querySelector('#twMoveBody [data-tw-move-recheck]').click();
+  await wait(() => c.reads.length === 2 && moveRadios(c).length > 0);
+  assert.equal(c.requests.filter(r => r.url === '/ops/tw/boards/2/').length, boards + 1);
+  assert.deepEqual([moveNote(c), moveStatus(c)], [[false, 'Chosen: No clash found'], '']);
+  // Check again finds the meeting locked since: refused inside; once the
+  // board shows it free again, its times are read by themselves.
+  let lockedNow = false;
+  const r = await moveHarness(t, { rows: () => [moveRow({ is_locked: lockedNow }), at(11, { day: 'MON' })], more: lockOk11 });
+  await r.select();
+  moveByKey(r);
+  await movesSettled(r);
+  moveRadio(r, 'WED|10:30').click();
+  await r.w.toggleLock(11);
+  lockedNow = true;
+  r.d.querySelector('#twMoveBody [data-tw-move-recheck]').click();
+  await wait(() => moveStatus(r) === LOCKED_WORDS && atRest(r));
+  assert.equal(r.reads.length, 1, 'nothing read for a meeting that cannot move');
+  lockedNow = false;
+  await r.w.selectBoard(2);
+  await wait(() => r.reads.length === 2 && moveRadios(r).length > 0);
+  assert.deepEqual(moveNote(r), [false, 'Chosen: No clash found']);
+  // A write out as the dialog opens: its read is overtaken as the write
+  // lands, read again at once, and the first answer is never drawn.
+  const lock = deferred();
+  const first = deferred();
+  const o = await moveHarness(t, {
+    rows,
+    moves: n => (n === 1 ? first.promise : movesAnswer([MOVE_SET[0]])),
+    more: url => (url.endsWith('/lock/') ? lock.promise : undefined),
+  });
+  await o.select();
+  const locking = o.w.toggleLock(11);
+  await settle();
+  moveByKey(o);
+  await settle();
+  assert.equal(o.reads.length, 1);
+  lock.resolve({ placement_id: 11, is_locked: true });
+  await locking;
+  await wait(() => moveRadios(o).length > 0);
+  assert.equal(o.reads.length, 2, 'read again without waiting for the first answer');
+  first.resolve(movesAnswer());
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual(moveRadios(o).map(radio => radio.value), ['MON|13:00'], 'the overtaken answer is not drawn');
+  // Locked since it opened (the board read again says so): refused inside,
+  // nothing to choose, and a commit is stopped by the snapshot.
+  let locked = false;
+  const k = await moveHarness(t, { rows: () => [moveRow({ is_locked: locked })], more: url => (url === '/ops/tw/x/' ? { ok: true } : undefined) });
+  await k.select();
+  moveByKey(k);
+  await movesSettled(k);
+  locked = true;
+  await k.w.selectBoard(2);
+  assert.deepEqual([moveStatus(k), moveRadios(k).length, moveNote(k)], [LOCKED_WORDS, 0, [true, '']]);
+  k.d.getElementById('twMoveForm').requestSubmit();
+  await settle();
+  assert.deepEqual([k.posts.length, moveAlert(k)], [0, 'This section changed while the list was open. Nothing was moved.']);
+  // A write elsewhere then reads nothing for a meeting that cannot move.
+  await k.w.twFetch('/ops/tw/x/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual([k.reads.length, moveStatus(k)], [1, LOCKED_WORDS]);
+  // The scenario read again (a planner job ended): the meeting leaves the
+  // board and comes back, and its times are read again once it is back.
+  let back = null;
+  const g = await moveHarness(t, { more: url => (back && url === '/ops/tw/boards/2/' ? back.promise : undefined) });
+  await g.select();
+  moveByKey(g);
+  await movesSettled(g);
+  back = deferred();
+  const reloading = g.w.onScenarioChange();
+  await wait(() => moveStatus(g) === 'This meeting is no longer on the board.');
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(g.reads.length, 1, 'nothing is read for a meeting not on the board');
+  back.resolve({ placements: [moveRow()], slot_config: MOVE_COLUMNS });
+  back = null;
+  await reloading;
+  await wait(() => g.reads.length === 2 && moveRadios(g).length > 0);
+  assert.equal(moveDialogEl(g).hasAttribute('open'), true);
+});
+
+test('M14 reads: a failure says so with Try again and is not kept, a meeting the server no longer has says so without, no other time is said, and an answer never takes the keyboard', async t => {
+  const failing = await moveHarness(t, { moves: n => (n === 1 ? { httpError: 500, error: { code: 'BOOM', message: 'Broken' } } : movesAnswer()) });
+  await failing.select();
+  moveByKey(failing);
+  await wait(() => failing.d.querySelector('#twMoveBody [data-tw-move-retry]'));
+  assert.deepEqual([moveStatus(failing), moveNote(failing), failing.notices.filter(n => n.type === 'error')], ['The times could not be loaded.', [true, ''], []]);
+  assert.equal(failing.d.querySelector('#twMoveBody [data-tw-move-retry]').textContent, 'Try again');
+  // Not kept: Escape and M again asks again.
+  keyOn(failing, 'Escape');
+  moveByKey(failing);
+  await movesSettled(failing);
+  assert.equal(failing.reads.length, 2);
+  // Retry reads again (fresh, past a kept answer).
+  const retry = await moveHarness(t, { moves: n => (n === 1 ? { httpError: 500, error: { code: 'BOOM', message: 'Broken' } } : movesAnswer()) });
+  await retry.select();
+  moveByKey(retry);
+  await wait(() => retry.d.querySelector('#twMoveBody [data-tw-move-retry]'));
+  retry.d.querySelector('#twMoveBody [data-tw-move-retry]').click();
+  await movesSettled(retry);
+  assert.deepEqual([retry.reads.length, moveStatus(retry)], [2, '']);
+  // A server that cannot answer now.
+  const busy = await moveHarness(t, { moves: () => ({ httpError: 503, error: { code: 'MAINTENANCE', message: 'Down' } }) });
+  await busy.select();
+  moveByKey(busy);
+  await wait(() => busy.d.querySelector('#twMoveBody [data-tw-move-retry]'));
+  assert.equal(moveStatus(busy), 'The server is busy; try again in a moment.');
+  // The server no longer has the meeting: no Try again.
+  const gone = await moveHarness(t, { moves: () => ({ httpError: 404, error: { code: 'NOT_FOUND', message: 'Gone' } }) });
+  await gone.select();
+  moveByKey(gone);
+  await wait(() => moveStatus(gone) === 'This meeting is no longer on the board.');
+  assert.deepEqual([gone.d.querySelector('#twMoveBody [data-tw-move-retry]'), gone.d.getElementById('twMoveCommit').disabled], [null, true]);
+  // No other time: said, with the meeting's own time as it stands.
+  const empty = await moveHarness(t, { moves: () => movesAnswer([]) });
+  await empty.select();
+  moveByKey(empty);
+  await wait(() => moveStatus(empty) === 'No other time of this kind is on the grid.');
+  assert.deepEqual([empty.d.querySelectorAll('#twMoveBody .tw-move-now').length, empty.d.querySelector('#twMoveBody fieldset'), moveNote(empty)], [1, null, [true, '']]);
+  // Loading: said, the list busy, the keyboard on the body; moved by the
+  // user meanwhile, it stays where they put it.
+  const reply = deferred();
+  const slow = await moveHarness(t, { moves: () => reply.promise });
+  await slow.select();
+  moveByKey(slow);
+  await settle();
+  assert.deepEqual([moveStatus(slow), slow.d.getElementById('twMoveChoices').getAttribute('aria-busy'), moveNote(slow), slow.d.activeElement],
+    ['Finding times…', 'true', [true, ''], slow.d.getElementById('twMoveBody')]);
+  const close = moveDialogEl(slow).querySelector('.ux-dialog-head [data-dialog-close]');
+  close.focus();
+  reply.resolve(movesAnswer());
+  await movesSettled(slow);
+  assert.equal(slow.d.activeElement, close);
+  // One read per meeting and data version: a reopen joins it, in flight or answered.
+  const first = deferred();
+  const j = await moveHarness(t, { moves: n => (n === 1 ? first.promise : movesAnswer()) });
+  await j.select();
+  moveByKey(j);
+  keyOn(j, 'Escape');
+  moveByKey(j);
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(j.reads.length, 1, 'a reopen joins the read in flight');
+  first.resolve(movesAnswer());
+  await movesSettled(j);
+  keyOn(j, 'Escape');
+  moveByKey(j);
+  await movesSettled(j);
+  assert.equal(j.reads.length, 1, 'open, Esc, open: the answer is kept');
+  // The sub-line says what happens to the room.
+  const sub = row => { const div = j.d.createElement('div'); div.innerHTML = j.w.moveSubHtml(at(10, { room: 'LAB25', ...row })); return div.textContent; };
+  assert.deepEqual([
+    sub({}), sub({ is_online: true, needs_room: false }), sub({ room: 'UNASSIGNED', room_state: 'unassigned' }), sub({ room: '', room_state: 'unset' }), sub({ needs_room: false }),
+    sub({ meetings: [{}, {}] }),
+  ], [
+    'Sunday 09:00–10:15. Its room stays LAB25.', 'Sunday 09:00–10:15. It is online and needs no room.', 'Sunday 09:00–10:15. It has no room yet.',
+    'Sunday 09:00–10:15. It has no room yet.', 'Sunday 09:00–10:15.',
+    "This meeting only: Sunday 09:00–10:15. The section's other meetings stay where they are. Its room stays LAB25.",
+  ]);
+});
+
+test('M15 the gate’s first condition wins for Move; the note gives the first hold (published, a planner job, busy) before what the chosen time brings; the keys line names M; the seam waits for an open dialog', async t => {
+  const h = await moveHarness(t);
+  await h.select();
+  // Every condition at once, then each lifted in turn: the next one speaks.
+  const p = { ...h.w.TW.placements[0], shared_with_other_scenario: true, is_locked: true };
+  Object.assign(h.w.TW, { loadedBoardId: 99, plannerJob: { job_id: 'job-1', status: 'running' } });
+  h.w.TW.scenario.status = 'published';
+  const ladder = [
+    ['published', () => { h.w.TW.scenario.status = 'draft'; }],
+    ['loading', () => { h.w.TW.loadedBoardId = h.w.TW.boardId; }],
+    ['job', () => { h.w.TW.plannerJob = null; }],
+    ['external', () => { p.shared_with_other_scenario = false; }],
+    ['locked', () => { p.is_locked = false; }],
+  ];
+  const words = {
+    published: 'This scenario is published and read-only.', loading: 'The board is still loading.',
+    job: 'A planner job is running; edits wait until it ends.', external: EXTERNAL_WORDS, locked: LOCKED_WORDS,
+  };
+  for (const [code, lift] of ladder) {
+    assert.deepEqual(plainOf(h.w.cardActionRefusal('move', p)), { code, text: words[code] }, code);
+    lift();
+  }
+  assert.equal(h.w.cardActionRefusal('move', p), '');
+  h.w.syncWorkspaceControls();
+  // The seam opens nothing while any dialog is open.
+  h.w.TW.englishPicker = true;
+  assert.equal(h.w.TW.keyActions.move(h.w.TW.placements[0], { origin: 'placement:10' }), false);
+  assert.equal(moveByKey(h).defaultPrevented, false, 'a dialog is open: the key is not the board’s');
+  assert.deepEqual([moveDialogEl(h).hasAttribute('open'), h.reads.length], [false, 0]);
+  h.w.TW.englishPicker = false;
+  // The note: the first hold, then the choice.
+  let refresh = null;
+  const n = await moveHarness(t, { more: url => (refresh && url === '/ops/tw/boards/2/' ? refresh.promise : undefined) });
+  await n.select();
+  moveByKey(n);
+  await movesSettled(n);
+  assert.deepEqual(moveNote(n), [false, 'Chosen: No clash found']);
+  refresh = deferred();
+  const refreshing = n.w.selectBoard(2);
+  await settle();
+  assert.deepEqual(moveNote(n), [true, BUSY_WORDS]);
+  n.w.dispatchEvent(new n.w.CustomEvent('tw:planner-job', { detail: { scenarioId: 1, job: { job_id: 'job-3', status: 'running' }, source: 'adapter' } }));
+  assert.deepEqual(moveNote(n), [true, 'A planner job is running; edits wait until it ends.']);
+  n.w.TW.scenario.status = 'published';
+  n.w.syncWorkspaceControls();
+  assert.deepEqual(moveNote(n), [true, 'This scenario is published and read-only.']);
+  // A commit asked for all the same is answered inside, and its words go
+  // when that hold ends.
+  const toasts = n.notices.length;
+  n.d.getElementById('twMoveForm').requestSubmit();
+  await settle();
+  assert.deepEqual([moveAlert(n), n.posts.length, n.notices.slice(toasts)], ['This scenario is published and read-only.', 0, []]);
+  n.w.TW.scenario.status = 'draft';
+  n.w.TW.plannerJob = null;
+  refresh.resolve({ placements: [moveRow()], slot_config: MOVE_COLUMNS });
+  refresh = null;
+  await refreshing;
+  assert.deepEqual([moveAlert(n), moveNote(n)], ['', [false, 'Chosen: No clash found']]);
+  // The keys line says what M does, in both languages, before R.
+  const keys = /<p id="twGridKeys"[^>]*>{% if LANGUAGE_CODE == 'ar' %}([^{]*){% else %}([^{]*){% endif %}<\/p>/.exec(template);
+  assert.ok(keys, 'the keys line, with its two languages');
+  assert.match(keys[1], / · Esc: إلغاء التحديد · M: النقل · R: تغيير القاعة$/);
+  assert.match(keys[2], / · Esc: clear the selection · M: move · R: change the room$/);
+});
+
+test('M16 the pattern chooser gives the keyboard back where it was opened: a list row drawn again meanwhile is the list’s, never the board’s', async t => {
+  const h = await harness(t, url => (url.includes('/budget/') ? { budget: budgetRows }
+    : url.includes('/planned-slot-candidates/') ? { candidates: [] }
+    : url === '/ops/tw/boards/2/' ? { placements: [at(10)], slot_config: scenario.slot_config }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined));
+  await h.select();
+  await wait(() => h.d.querySelector('#twSectionList [data-focus-key="place:ENG101|S1"]'));
+  let asked = 0;
+  h.w.TimetableMeetingPolicy.choose = async () => {
+    asked++;
+    const away = h.d.createElement('button');
+    h.d.body.append(away);
+    const previous = h.d.activeElement;
+    away.focus();
+    h.w.renderBudgetSidebar();
+    away.remove();
+    previous.focus();
+    return null;
+  };
+  // The board had a stop the keyboard was not on.
+  card(h, 10).focus();
+  h.d.querySelector('#twSectionList [data-focus-key="place:ENG101|S1"]').focus();
+  keyOn(h, 'Enter');
+  await wait(() => asked === 1 && !h.w.TW.englishPicker);
+  await settle();
+  assert.equal(h.d.activeElement?.dataset.focusKey, 'place:ENG101|S1', 'back on the list row drawn now');
 });

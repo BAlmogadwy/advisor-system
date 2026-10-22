@@ -698,6 +698,103 @@ findings changed the plan:
    `?audit=1`, what the quality audit will say once each room is saved; the
    audit's room rule moved into one module both use (§7.3, 5c-audit). No
    client change yet.
+   **As built, 5e (Move and M):** M on a card and Selection's Move… (before
+   Lock; none for an English section, which has "Change section pattern")
+   go through the seam after the one gate (published, loading, job,
+   external, locked: the first wins), and an English section to its
+   pattern chooser after "Finding patterns…". The dialog reads
+   `/slot-candidates/?verdict=1&offer=manual` through `previewRead`, draws
+   "Now" from `current_verdict` and the other times in `verdict_rank` order,
+   worded and toned by the verdict (never the legacy tone), and chooses the
+   best time that can be chosen. Its body is exactly `{day, start_time,
+   end_time}`, sent by `commitPlacementMove`, which a drop now uses too: one
+   body, one undo entry holding the board's raw times, the redo stack
+   cleared. The report (`reportEdit`, contract D) runs once the board has
+   been read again and names the issue model's fresh critical and warning
+   rows for the moved meeting; a drop shares it, so a drop's toast is what
+   the card's ring and Issues say, no longer the board-scoped "Moved with N
+   conflict(s)".
+   Where it differs from the spec, and why:
+   - The open guard comes before the gate and before the English route
+     (contract A: every opener returns early while a dialog is open; a
+     refusal toast would sit behind it, and the chooser is a dialog). An
+     English section on a busy page says "Wait for the current operation to
+     finish." rather than nothing: its chooser saves as soon as a pattern is
+     chosen, and `chooseEnglishWorkspacePattern` returned silently.
+   - `#twMoveStatus` is a visible line above the scrolling body, not inside
+     it: what the list is doing (finding times, a failure, no other time, the
+     data moved, the meeting gone or refused since, moving) stays in view
+     wherever the list is scrolled, and is said (the line is always in the
+     page, empty and with no height when there is nothing to say, so every
+     change is announced); the body holds the rows and the way on (Try
+     again, Check again). "Moving…" is that line's; the foot
+     note gives the first hold (published, a planner job, busy), else
+     "Chosen: {verdict}".
+   - The sub-line opens with "This meeting only:" and says the other meetings
+     stay only when the section has other meetings (Change room's rule);
+     otherwise it is the time, then the room clause (none for a section that
+     needs no room).
+   - The snapshot a commit checks is taken as the times arrive: its day,
+     start and end are the answer's own `placement` (what the server computed
+     them for: the board may not yet show a write that landed while the read
+     was out), with the scenario, the board, the lock and another scenario's
+     claim as the page has them. Any change stops the commit with "This
+     section changed while the list was open. Nothing was moved." (M9 pins
+     each field), and the list says "The timetable changed since these times
+     were read." with Check again (new words: the data that moved need not be
+     this meeting's).
+   - Data that moves under an open dialog follows Change room as built: with
+     no time chosen by the user the times are read again by themselves (never
+     while the dialog's own move is out: that write lands just before the
+     dialog closes, and must not cost a preview read); a time the user chose
+     waits for Check again; a read the write overtook is never drawn; a
+     meeting off the board (a scenario reload) is read again once back; a
+     meeting the board shows locked or claimed since says so and reads
+     nothing until it is free, Check again included.
+   - NOT_FOUND holds Commit, as Change room's does, beside the lock, another
+     scenario's section and published; a duplicate and a busy scenario do
+     not. A failure that does not say whether the move happened ("The move
+     was not saved.") reads the board, whose answer stops a second move if it
+     did (M9).
+   - After a move the board's tab stop goes to the card whatever the origin
+     (contract B, as Change room), not only from a card: from Selection the
+     keyboard goes back to Move…, and Tab into the board reaches the meeting
+     where it now is.
+   - The verdict line names context kinds only when the verdict holds nothing
+     worse (no card ever rings for context); an H15 effect's line names its
+     board when it is another (its pair can be on any board).
+   - A report or refusal of a move the user left with Escape goes where
+     `dialogSay` puts words (the helper dialog open by then, led by the
+     meeting's course and section when that dialog is about another), the
+     instructor backstop in the same line; with no dialog open both are toasts
+     as before.
+   - The chooser gives the board's stop the keyboard back (`boardNav.restore`)
+     only when it was opened from the board and the keyboard is nowhere after
+     it, so a list row's chooser stays the list's (M16, W10). After a pattern
+     switch the stop goes to the new row of the meeting's day on the open
+     board (the switch can answer with copies on other boards).
+   - Busy while open is the direct call in `syncWorkspaceControls`, as for
+     Change room, not a `tw:planner-busy` listener; the "not committing" it
+     asked for is the skipped re-read above.
+   M1–M16 (jsdom) and MB1–MB3 (Chrome, `MoveDialogTests`) pin these; RC6 now
+   expects Selection's note to give Move…'s lock reason on a locked meeting.
+   Of 105 jsdom mutants all go red but two, both equivalent: Retry without
+   `fresh` (a failed read is never kept, so Retry asks again either way) and
+   Move…'s held attributes dropped from its markup (Selection's sync puts
+   them on right after every draw); the 7 Chrome mutants (the scroll shell,
+   the isolated times, focus back to a redrawn Move… and a redrawn card, the
+   legacy tone, a room sent, the lock check) all go red.
+   **After review (5e):** the keyboard moves to the chosen time before
+   Commit turns off; R's hint is added only beside a room problem the
+   report itself names (the clash the verdict saw may be gone after the
+   save). The report lists every fresh critical or warning row of the
+   moved meeting (contract D), so it can name a row that was there before
+   the move as well as the one the chosen time's verdict showed. A drop
+   whose scenario changed while the write was out reports nothing (the
+   page shows another scenario by then). Equivalent, not pinned:
+   `ISSUE_KINDS.instructorElsewhere`'s tone (no code reads it: the board
+   model never produces the kind, the dialog takes severity from the
+   server) and Retry's `{fresh:true}` (a failed read is never kept).
 6. **What the grid shows.** The lens from one server function shared with the
    per-plan export (roles including out-of-plan), its cost measured first and
    one evaluation per data fingerprint shared with quality; filter and lens

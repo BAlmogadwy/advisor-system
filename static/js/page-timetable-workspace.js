@@ -72,8 +72,9 @@ const TW = {
    The board and the required-sections list are each ONE tab stop
    (UXControls.roving): arrows move over the cards (and the empty cells), ↑/↓
    walk the sections stacked at one time, Enter selects (Selection shows it),
-   Escape clears the selection, R changes the room of the card (5c; this map
-   is the only listener that reads R). The keys line under each shows while
+   Escape clears the selection, M moves the card's meeting (5e) and R changes
+   its room (5c; this map is the only listener that reads M or R). The keys
+   line under each shows while
    the keyboard is there; what a key did is said in #twBoardStatus, outside
    both panes (a collapsed inspector would silence its own status line). */
 const boardNav = window.UXControls?.roving?.($('twGrid'), {
@@ -81,7 +82,7 @@ const boardNav = window.UXControls?.roving?.($('twGrid'), {
   hint: $('twGridKeys'),
   initial: () => (TW.selectedPlacementId ? `placement:${TW.selectedPlacementId}` : ''),
   activate: stop => { if (stop.matches('.tw-card')) selectCardFromKeyboard(stop); },
-  keys: { Escape: () => clearSelectionFromKeyboard(), R: card => runCardKey('room', card) },
+  keys: { Escape: () => clearSelectionFromKeyboard(), M: card => runCardKey('move', card), R: card => runCardKey('room', card) },
 });
 const listNav = window.UXControls?.roving?.($('twSectionList'), {
   hint: $('twListKeys'),
@@ -144,10 +145,11 @@ function activateListRow(cell) {
     : (IS_AR ? 'اسحب الشعبة إلى الجدول لوضعها.' : 'Drag the section onto the board to place it.'));
 }
 
-/* ── Card actions: one gate, one seam (design record §7.3.2, 5c) ──
-   Change room (R on a card, or Selection's button) goes through
-   TW.keyActions[kind](placement, {origin}) after one gate, whose words are
-   the same wherever it refuses; Move and Place join the seam in 5e and 5f.
+/* ── Card actions: one gate, one seam (design record §7.3.2, 5c, 5e) ──
+   Move (M on a card, or Selection's Move…) and Change room (R, or
+   Selection's button) go through TW.keyActions[kind](placement, {origin})
+   after one gate, whose words are the same wherever it refuses; Place joins
+   the seam in 5f.
    `origin` is a focus key, never a node: the page may draw the card or the
    button again while a dialog is open, and the keyboard goes back to
    whatever answers to that key when it closes. */
@@ -202,7 +204,7 @@ function runCardKey(kind, card) {
   action(p, { origin: `placement:${p.id}` });
   return true;
 }
-TW.keyActions = { room: (p, options) => openRoomDialog(p, options) };
+TW.keyActions = { move: (p, options) => openMoveDialog(p, options), room: (p, options) => openRoomDialog(p, options) };
 
 /* The element an origin key names now, else its region's own stop (or the
    inspector body, which takes the keyboard). */
@@ -254,8 +256,7 @@ async function dialogWrite(dialog, url, body) {
    as that dialog's own. The line takes the tone, so a saved change never
    reads as a refusal. Clearing is only ever about the dialog itself. */
 function dialogSay(dialog, text, tone = 'warning', about = null) {
-  const shown = element => Boolean(element && window.UXControls?.dialog?.isOpen(element));
-  const open = shown(dialog) ? dialog : text ? [...document.querySelectorAll('dialog[open]')].find(shown) : null;
+  const open = sayingDialog(dialog, text);
   const line = open?.querySelector('[role="alert"]');
   if (line) {
     line.textContent = text && about && open.dataset.twAbout !== about.key ? `${about.name}: ${text}` : text;
@@ -264,6 +265,13 @@ function dialogSay(dialog, text, tone = 'warning', about = null) {
     return;
   }
   if (text) notify[tone](text);
+}
+/* The helper dialog whose alert line would carry `text` (dialogSay's
+   choice), or null when it would be a toast. */
+function sayingDialog(dialog, text) {
+  const shown = element => Boolean(element && window.UXControls?.dialog?.isOpen(element));
+  const open = shown(dialog) ? dialog : text ? [...document.querySelectorAll('dialog[open]')].find(shown) : null;
+  return open?.querySelector('[role="alert"]') ? open : null;
 }
 
 /* Preview reads (contract E): one request in flight per key, which a second
@@ -343,6 +351,7 @@ function syncWorkspaceControls() {
   window.dispatchEvent(new CustomEvent('tw:planner-busy', { detail: { busy } }));
   // Selection's actions and an open dialog's commit follow the same state.
   syncSelectionActions();
+  syncMoveDialog();
   syncRoomDialog();
 }
 
@@ -2641,6 +2650,8 @@ async function chooseEnglishWorkspacePattern(payload) {
   const source = placement || payload;
   if (!policy?.isEnglish(source)) return null;
   const scenarioId = TW.scenarioId, boardId = TW.boardId;
+  // M on a card (5e): the keyboard comes back to the board after the chooser.
+  const fromBoard = Boolean(placement) && $('twGrid').contains(document.activeElement);
   TW.englishPicker = true;
   try {
     const bundle = placement ? TW.placements.filter(row => row.term_section_id === placement.term_section_id) : [];
@@ -2652,6 +2663,11 @@ async function chooseEnglishWorkspacePattern(payload) {
     const current = choices.section_policy?.current_pattern_id || policy.identify(bundle);
     if (placement && !current) { notify.warning(IS_AR ? 'هذا الجدول المحفوظ لا يستخدم نمط الإنجليزية الجديد.' : 'This saved section does not use the new English pattern.'); return null; }
     const selected = await policy.choose(source.course_code, { arabic: IS_AR, candidates: choices.candidates || [], currentPatternId: current });
+    // The chooser gives the keyboard back to the node it was opened from;
+    // a card the board drew again meanwhile is no longer there, and the
+    // board's own stop takes it (D16b).
+    const active = document.activeElement;
+    if (fromBoard && (!active || active === document.body || !active.isConnected)) boardNav?.restore();
     if (!selected || TW.scenarioId !== scenarioId || TW.boardId !== boardId || !workspaceCanEdit()) return null;
     if (selected.pattern_id === current) return null;
     const token = beginWorkspaceOperation(placement ? 'switch-pattern' : 'create-pattern');
@@ -2675,6 +2691,14 @@ async function chooseEnglishWorkspacePattern(payload) {
         term_section_id: data.placement.term_section_id, day: rows[0].day, start_time: rows[0].start_time,
         end_time: rows[0].end_time, room: rows[0].room || '', meetings: policy.snapshot(rows) });
       TW.redoStack = []; notifyInstructorClashBackstop(data);
+      // The switch recreates the section's rows: the board's stop goes to
+      // the new row of the meeting's day on this board (the keyboard with
+      // it, when it was on the old card).
+      if (placement) {
+        const here = rows.filter(row => String(row.board_id ?? boardId) === String(boardId));
+        const next = here.find(row => row.day === placement.day) || here[0] || rows[0];
+        if (next?.id != null) boardNav?.active(`placement:${next.id}`);
+      }
       await selectBoard(boardId); updateUndoRedoButtons();
       notify.success(IS_AR ? 'تم حفظ نمط الشعبة كاملاً.' : 'Full section pattern saved.');
       return data;
@@ -2697,13 +2721,77 @@ function onDragLeave(e) {
 // board-scoped and free-text-instructor keyed, so a cross-board instructor
 // double-booking is invisible to it. Scoped to the section just touched.
 function notifyInstructorClashBackstop(data) {
+  const words = instructorBackstopWords(data);
+  if (words) notify.warning(words);
+}
+function instructorBackstopWords(data) {
   const b = (data && data.instructor_clash_backstop) || {};
-  if (!b.checked) return;
+  if (!b.checked) return '';
   const rows = b.involving_this_section || [];
-  if (!rows.length) return;
-  notify.warning(IS_AR
+  if (!rows.length) return '';
+  return IS_AR
     ? `تعارض للمحاضر: ${rows.length} حصة متداخلة عبر اللوحات`
-    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`);
+    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`;
+}
+
+/* ── After an edit (design record §7.3.2 D, 5e) ──
+   What a move left behind, read from the board's one issue model once the
+   board has been read again (selectBoard), so the report says what the card's
+   ring and Issues say: the edit's words, then the worst lead and the kinds of
+   every fresh critical or warning row about these placements (a row from a
+   check older than the edit is not counted; info never is). Drag and the
+   Move dialog share it. A dialog's report goes where dialogSay puts words —
+   the alert line of the helper dialog open by then, named when that dialog
+   is about another meeting — and the instructor backstop with it (a toast
+   behind a modal is never seen); otherwise each is a toast, as before. */
+function editReport(verbWords, ids, hint = '') {
+  const wanted = (ids || []).map(String);
+  const rows = buildBoardIssues().rows.filter(row => !row.pending && row.tone !== 'info' && row.ids.some(id => wanted.includes(id)));
+  const worst = rows.some(row => row.tone === 'critical') ? 'critical' : rows.length ? 'warning' : '';
+  let text = verbWords;
+  if (worst) text += ` · ${TONE_LEAD[worst]}: ${[...new Set(rows.map(row => row.kind))].map(issueKindLabel).join(', ')}`;
+  // A room hint only beside a room problem this report names.
+  if (hint && rows.some(row => String(row.kind).startsWith('room'))) text += ` · ${hint}`;
+  return { text, tone: worst ? 'warning' : 'success' };
+}
+function reportEdit(verbWords, ids, { dialog = null, about = null, hint = '', data = null } = {}) {
+  const said = editReport(verbWords, ids, hint);
+  const backstop = instructorBackstopWords(data);
+  if (dialog && sayingDialog(dialog, said.text)) {
+    dialogSay(dialog, backstop ? `${said.text} · ${backstop}` : said.text, backstop ? 'warning' : said.tone, about);
+    return;
+  }
+  notify[said.tone](said.text);
+  if (backstop) notify.warning(backstop);
+}
+/* "Moved to Monday 13:00–14:15." — the time isolated (plain text). */
+function movedWords(day, start, end) {
+  const name = (IS_AR ? DAY_LABELS : DAY_NAMES_EN)[DAYS.indexOf(String(day || '').toUpperCase())] || day || '';
+  return IS_AR ? `نُقلت إلى ${name} ${isolatedText(`${start}–${end}`)}.` : `Moved to ${name} ${isolatedText(`${start}–${end}`)}.`;
+}
+
+/* One move of one meeting, for drag and the Move dialog alike: the body is
+   exactly {day, start_time, end_time} (no room: the meeting keeps its room),
+   and a saved move is undone by the same entry whichever sent it, holding
+   the raw times the board had before. With a dialog the failure is its own
+   {code} (dialogWrite: nothing toasted); without one twFetch says it, as a
+   drop always did. */
+async function commitPlacementMove(id, { day, start_time, end_time }, { dialog = null } = {}) {
+  const before = TW.placements.find(row => row.id === id);
+  const url = `/ops/tw/placements/${id}/move/`;
+  const body = { day, start_time, end_time };
+  let result;
+  if (dialog) result = await dialogWrite(dialog, url, body);
+  else {
+    const data = await twFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    result = data ? { data } : { code: 'FAILED' };
+  }
+  if (result.code) return result;
+  TW.undoStack.push({ type: 'move', placement_id: id,
+    old_day: before ? before.day : '', old_start: before ? before.start_time : '', old_end: before ? before.end_time : '',
+    new_day: day, new_start: start_time, new_end: end_time });
+  TW.redoStack = [];
+  return result;
 }
 
 async function onDrop(e) {
@@ -2800,29 +2888,15 @@ async function onDrop(e) {
     }
     notifyInstructorClashBackstop(data);
   } else if (payload.type === 'move') {
-    // Find old position before move
-    const oldP = TW.placements.find(x => x.id === payload.placement_id);
-    const oldDay = oldP ? oldP.day : '';
-    const oldStart = oldP ? oldP.start_time : '';
-    const oldEnd = oldP ? oldP.end_time : '';
-
-    const data = await twFetch(`/ops/tw/placements/${payload.placement_id}/move/`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ day, start_time: startTime, end_time: endTime }),
-    });
-    if (!data) return;
-    TW.undoStack.push({ type: 'move', placement_id: payload.placement_id,
-      old_day: oldDay, old_start: oldStart, old_end: oldEnd,
-      new_day: day, new_start: startTime, new_end: endTime });
-    TW.redoStack = [];
-    const v = data.validation || {};
-    if (v.critical_count > 0) {
-      notify.warning(IS_AR ? 'تم النقل مع تعارضات' : `Moved with ${v.critical_count} conflict(s)`);
-    } else {
-      notify.success(IS_AR ? 'تم النقل' : 'Moved');
-    }
-    notifyInstructorClashBackstop(data);
+    // One write and one report for every move of a meeting (5e): one body,
+    // one undo shape, and a report read from the board once it has been
+    // read again.
+    const moved = await commitPlacementMove(payload.placement_id, { day, start_time: startTime, end_time: endTime });
+    if (moved.code || TW.scenarioId !== scenarioAtStart) return;
+    await selectBoard(TW.boardId);
+    updateUndoRedoButtons();
+    reportEdit(movedWords(day, startTime, endTime), [payload.placement_id], { data: moved.data });
+    return;
   }
 
   // Refresh board
@@ -3253,7 +3327,7 @@ function roomDialogHtml(view) {
   return html;
 }
 
-const setRoomHead = (id, html) => {
+const setDialogHead = (id, html) => {
   const element = $(id);
   if (element && element._twHtml !== html) { element.innerHTML = html; element._twHtml = html; }
 };
@@ -3265,8 +3339,8 @@ function drawRoomDialog() {
   const view = roomDialogView();
   ROOM.view = view.state;
   if (!ROOM.picked) ROOM.choice = initialRoomChoice(ROOM.answer);
-  setRoomHead('twRoomTitle', `${esc(ROOM_WORDS.title)} · <bdi>${esc(view.p.course_code)}</bdi> <bdi>${esc(view.p.section)}</bdi>`);
-  setRoomHead('twRoomSub', roomSubHtml(view.p));
+  setDialogHead('twRoomTitle', `${esc(ROOM_WORDS.title)} · <bdi>${esc(view.p.course_code)}</bdi> <bdi>${esc(view.p.section)}</bdi>`);
+  setDialogHead('twRoomSub', roomSubHtml(view.p));
   const html = roomDialogHtml(view);
   if (window.UXControls?.redraw) window.UXControls.redraw(body, html);
   else body.innerHTML = html;
@@ -3495,6 +3569,475 @@ async function commitRoom() {
   });
 })();
 
+/* ── Move (design record §7.3, 5e) ──
+   One meeting to another time on the grid, in #twMoveDialog, from M on a
+   card or Selection's Move…: the times the server offers a manual move
+   (/slot-candidates/?verdict=1&offer=manual), in the order of its verdict —
+   what the publish check will say once the move is saved — with the
+   meeting's own time as the reference ("Now"). The meeting keeps its room:
+   the body is exactly {day, start_time, end_time}, as a drop sends
+   (commitPlacementMove), so a room clash at a time is part of that time's
+   verdict, and the report then points at R. A time lock or another
+   scenario's section refuses before anything is read; an English section
+   goes to its pattern chooser (its move preview is a place verdict, blind to
+   what leaving the old pattern does). */
+const MOVE_WORDS = IS_AR ? {
+  action: 'نقل…', title: 'نقل',
+  onlyThis: 'هذا اللقاء فقط:', othersStay: 'تبقى لقاءات الشعبة الأخرى في أماكنها.',
+  roomStays: c => `وتبقى قاعته ${c}.`, online: 'وهو عن بُعد ولا يحتاج إلى قاعة.', noRoomYet: 'وليست له قاعة بعد.',
+  now: 'الآن', legend: 'أوقات أخرى في الجدول، الأفضل أولاً',
+  loading: 'جارٍ البحث عن الأوقات…', empty: 'لا يوجد وقت آخر من هذا النوع في الجدول.', failed: 'تعذّر تحميل الأوقات.',
+  stale: 'تغيّر الجدول منذ قراءة هذه الأوقات.',
+  noClash: 'لا تعارض', ownSection: 'لقاء آخر لهذه الشعبة في هذا الوقت.',
+  blockedNoPair: n => pluralAr(n, { one: 'لا يجد طالب واحد شعبتين بلا تعارض', two: 'لا يجد طالبان شعبتين بلا تعارض', few: 'لا يجد {n} طلاب شعبتين بلا تعارض', many: 'لا يجد {n} طالباً شعبتين بلا تعارض', other: 'لا يجد {n} طالب شعبتين بلا تعارض' }),
+  more: n => pluralAr(n, { one: 'وبند آخر', two: 'وبندان آخران', few: 'و{n} بنود أخرى', many: 'و{n} بنداً آخر', other: 'و{n} بند آخر' }),
+  chosen: text => `المختار: ${text}`,
+  progress: 'جارٍ النقل…',
+  changed: 'تغيّرت هذه الشعبة أثناء فتح القائمة. لم يُنقل شيء.', notSaved: 'لم يُحفظ النقل.',
+  roomHint: 'اضغط R على البطاقة لتغيير قاعتها.', findingPatterns: 'جارٍ البحث عن الأنماط…',
+} : {
+  action: 'Move…', title: 'Move',
+  onlyThis: 'This meeting only:', othersStay: "The section's other meetings stay where they are.",
+  roomStays: c => `Its room stays ${c}.`, online: 'It is online and needs no room.', noRoomYet: 'It has no room yet.',
+  now: 'Now', legend: 'Other times on the grid, best first',
+  loading: 'Finding times…', empty: 'No other time of this kind is on the grid.', failed: 'The times could not be loaded.',
+  stale: 'The timetable changed since these times were read.',
+  noClash: 'No clash found', ownSection: 'Another meeting of this section is at this time.',
+  blockedNoPair: n => `leaves ${n === 1 ? '1 student' : `${n} students`} with no clash-free pair of sections`,
+  more: n => (n === 1 ? 'and 1 more' : `and ${n} more`),
+  chosen: text => `Chosen: ${text}`,
+  progress: 'Moving…',
+  changed: 'This section changed while the list was open. Nothing was moved.', notSaved: 'The move was not saved.',
+  roomHint: 'Press R on the card to change its room.', findingPatterns: 'Finding patterns…',
+};
+// The same words as the room dialog's where the two say the same thing.
+Object.assign(MOVE_WORDS, { serverBusy: ROOM_WORDS.serverBusy, retry: ROOM_WORDS.retry, gone: ROOM_WORDS.gone, checkAgain: ROOM_WORDS.checkAgain });
+
+/* The dialog's session, as the room dialog's: the meeting, what it read and
+   what is chosen. `snapshot` is what its times were read for (null until
+   they arrive); `seen`, the meeting as it was last on the board (its title
+   once it is gone); `words`, what the status line says about the list. */
+const MOVE = {
+  token: 0, read: 0, placementId: null, scenarioId: null, boardId: null, origin: '', snapshot: null, seen: null,
+  state: 'loading', answer: null, failure: null, choice: '', picked: false, version: null, pending: false,
+  blocked: '', held: '', view: '', words: '', drawn: null,
+};
+function moveDialogOpen() {
+  return Boolean(window.UXControls?.dialog?.isOpen($('twMoveDialog')));
+}
+function movePlacement() {
+  if (TW.scenarioId !== MOVE.scenarioId || TW.boardId !== MOVE.boardId || TW.loadedBoardId !== MOVE.boardId) return null;
+  return TW.placements.find(row => row.id === MOVE.placementId) || null;
+}
+const moveDataKey = () => [TW.scenarioId, TW.boardId, TW.loadedBoardId, TW.placements, TW.dataVersion];
+const moveReadOutdated = () => MOVE.version != null && MOVE.version !== TW.dataVersion;
+/* What the times were read for, taken as they arrive: the meeting's day,
+   start and end as the server had them (the answer's own placement: the
+   board may not have caught up with a write yet), with the scenario, the
+   board and the meeting's lock and claim as the page has them. */
+function moveSnapshotOf(p, read = {}) {
+  return { scenarioId: TW.scenarioId, boardId: TW.boardId, id: p.id, day: String(read.day || p.day || '').toUpperCase(),
+    start: String(read.start || p.start_time || ''), end: String(read.end || p.end_time || ''),
+    locked: Boolean(p.is_locked), shared: Boolean(p.shared_with_other_scenario) };
+}
+/* Whether the meeting is not, now, what its times were read for: another
+   scenario or board, the meeting gone, another day, start or end, or a lock
+   or another scenario's claim since. A commit stops on any of them. */
+function moveSnapshotChanged() {
+  const s = MOVE.snapshot;
+  if (!s || TW.scenarioId !== s.scenarioId || TW.boardId !== s.boardId || TW.loadedBoardId !== s.boardId) return true;
+  const p = TW.placements.find(row => row.id === s.id);
+  if (!p) return true;
+  return String(p.day || '').toUpperCase() !== s.day || p.start_time !== s.start || p.end_time !== s.end
+    || Boolean(p.is_locked) !== s.locked || Boolean(p.shared_with_other_scenario) !== s.shared;
+}
+/* The gate's refusals that belong to the meeting itself (a lock, another
+   scenario's section), as they stand now. */
+function moveRefusal(p) {
+  const refusal = p ? cardActionRefusal('move', p) : '';
+  return refusal && ['external', 'locked'].includes(refusal.code) ? refusal : null;
+}
+const moveDayWord = day => (IS_AR ? DAY_LABELS : DAY_NAMES_EN)[DAYS.indexOf(String(day || '').toUpperCase())] || day || '';
+const moveKey = candidate => `${candidate.day}|${candidate.start}`;
+const moveChoosable = candidate => !candidate.verdict?.own_section_meeting;
+/* The candidates in the verdict's order (verdict_rank), not the legacy one. */
+function rankedMoves(answer) {
+  const rank = candidate => (Number.isFinite(Number(candidate.verdict_rank)) && candidate.verdict_rank !== null ? Number(candidate.verdict_rank) : Infinity);
+  return (answer?.candidates || []).map((candidate, index) => ({ candidate, index }))
+    .sort((a, b) => (rank(a.candidate) - rank(b.candidate)) || (a.index - b.index))
+    .map(entry => entry.candidate);
+}
+function chosenMove() {
+  if (!MOVE.choice) return null;
+  return rankedMoves(MOVE.answer).find(candidate => moveChoosable(candidate) && moveKey(candidate) === MOVE.choice) || null;
+}
+
+/* A verdict in words: its lead and the kinds it names (context kinds only
+   when it holds nothing worse), or "No clash found". */
+function moveVerdictWords(verdict) {
+  if (!verdict) return '';
+  if (verdict.severity === 'ok') return MOVE_WORDS.noClash;
+  const items = (verdict.items || []).filter(item => ISSUE_KINDS[item.issue_kind]);
+  const weighed = items.filter(item => item.severity !== 'info');
+  const kinds = [...new Set((weighed.length ? weighed : items).map(item => item.issue_kind))];
+  const lead = TONE_LEAD[verdict.severity] || '';
+  return kinds.length ? `${lead}: ${kinds.map(issueKindLabel).join(', ')}` : lead;
+}
+/* One item of a verdict as a line (HTML): what it is, who or what it meets,
+   where (another board named), when, and how many students it costs. */
+function moveDetailHtml(item) {
+  const label = esc(issueKindLabel(item.issue_kind));
+  if (item.issue_kind === 'blocked') return label;
+  const other = item.other || {};
+  const course = `<bdi>${esc([other.course_code, other.section].filter(Boolean).join(' '))}</bdi>`;
+  const board = other.board_label ? ` (<bdi>${esc(other.board_label)}</bdi>)` : '';
+  const elsewhere = other.board_id != null && String(other.board_id) !== String(MOVE.boardId) ? board : '';
+  const when = other.day ? `${esc(dayName(other.day))} <bdi dir="ltr">${esc(other.start || '')}–${esc(other.end || '')}</bdi>` : '';
+  const count = n => (n === null || n === undefined || !Number.isFinite(Number(n)) ? '' : Number(n));
+  const parts = [];
+  if (item.issue_kind === 'instructor' || item.issue_kind === 'instructorElsewhere') {
+    parts.push(`${item.teacher ? `<bdi>${esc(item.teacher)}</bdi> — ` : ''}${course}${elsewhere}`, when);
+  } else if (item.issue_kind === 'room' || item.issue_kind === 'roomElsewhere') {
+    parts.push(`${item.room ? `<bdi>${esc(item.room)}</bdi> — ` : ''}${course}${elsewhere}`, when);
+  } else if (item.issue_kind === 'crossBoard' || item.issue_kind === 'crossBoardMinor') {
+    const students = count(item.students);
+    parts.push(`${course}${board}`, when, students === '' ? '' : esc(studentsNeedBoth(students)));
+  } else {
+    // time and softOverlap; an H15 effect counts the students it leaves
+    // with no clash-free pair.
+    const effect = item.source === 'h15_effect';
+    const students = count(effect ? item.blocked_students : item.students);
+    parts.push(`${course}${elsewhere}`, when, students === '' ? '' : esc(effect ? MOVE_WORDS.blockedNoPair(students) : studentsNeedBoth(students)));
+  }
+  return `${label}: ${parts.filter(Boolean).join(' · ')}`;
+}
+/* At most three lines, then how many more the verdict holds. */
+function moveLines(verdict, id) {
+  const items = (verdict?.items || []).filter(item => ISSUE_KINDS[item.issue_kind]);
+  const shown = items.slice(0, 3);
+  const lines = shown.map((item, index) => ({ id: `${id}-d${index}`, html: moveDetailHtml(item) }));
+  const rest = items.length - shown.length + (Number(verdict?.more) || 0);
+  if (rest > 0) lines.push({ id: `${id}-more`, html: esc(MOVE_WORDS.more(rest)) });
+  return lines;
+}
+const moveLinesHtml = lines => lines.map(line => `<span class="ux-choice-desc" id="${line.id}">${line.html}</span>`).join('');
+const moveToneIcon = tone => (tone ? `<span class="ux-tone-icon" data-tone="${esc(tone)}" aria-hidden="true"></span>` : '');
+
+function moveSubHtml(p) {
+  const W = MOVE_WORDS;
+  const when = `${esc(moveDayWord(p.day))} <bdi dir="ltr">${esc(p.start_time)}–${esc(p.end_time)}</bdi>`;
+  // "This meeting only" where the section has other meetings to stay put.
+  const parts = [(p.meetings || []).length > 1 ? `${esc(W.onlyThis)} ${when}. ${esc(W.othersStay)}` : `${when}.`];
+  const noRoom = p.room_state === 'unassigned' || p.room_state === 'unset' || p.room === 'UNASSIGNED' || !String(p.room || '').trim();
+  if (p.is_online) parts.push(esc(W.online));
+  else if (p.needs_room !== false) parts.push(noRoom ? esc(W.noRoomYet) : W.roomStays(`<bdi>${esc(p.room)}</bdi>`));
+  return parts.join(' ');
+}
+
+/* What the dialog shows: the meeting gone, refused now (a lock or another
+   scenario's claim since it opened), the read's state, or its times — stale
+   once the data moved (a write since they were asked for) or the meeting is
+   not what they were read for. */
+function moveDialogView() {
+  const live = movePlacement();
+  if (live) MOVE.seen = live;
+  const p = live || MOVE.seen;
+  if (!live) return { state: 'gone', p };
+  const refusal = moveRefusal(live);
+  if (refusal) return { state: 'refused', p, refusal };
+  if (MOVE.state !== 'ready') return { state: MOVE.state, p };
+  if (moveReadOutdated() || moveSnapshotChanged()) return { state: 'stale', p };
+  return { state: (MOVE.answer?.candidates || []).length ? 'ready' : 'empty', p };
+}
+const moveGoneFailure = failure => failure?.code === 'NOT_FOUND' || failure?.status === 404;
+function moveFailureWords(failure) {
+  if (moveGoneFailure(failure)) return MOVE_WORDS.gone;
+  return failure?.code === 'SERVER_BUSY' || failure?.status === 503 ? MOVE_WORDS.serverBusy : MOVE_WORDS.failed;
+}
+function moveViewWords(view) {
+  return {
+    loading: MOVE_WORDS.loading, error: moveFailureWords(MOVE.failure), gone: MOVE_WORDS.gone, refused: view.refusal?.text || '',
+    stale: MOVE_WORDS.stale, empty: MOVE_WORDS.empty,
+  }[view.state] || '';
+}
+
+/* The body: "Now" (the meeting's own time and its verdict), then the other
+   times, best first; a time where the section already meets is a row with
+   its reason, never a radio. Every other state is its words in the status
+   line (above the body), with its way on here. */
+function moveDialogHtml(view) {
+  const W = MOVE_WORDS;
+  if (view.state === 'loading') return '<div class="ux-choice-list" id="twMoveChoices" aria-busy="true"></div>';
+  if (view.state === 'stale') {
+    return `<p class="tw-move-action"><button type="button" class="btn btn-sm btn-neutral" data-tw-move-recheck data-focus-key="move-recheck">${esc(W.checkAgain)}</button></p>`;
+  }
+  if (view.state === 'error') {
+    return moveGoneFailure(MOVE.failure) ? ''
+      : `<p class="tw-move-action"><button type="button" class="btn btn-sm btn-neutral" data-tw-move-retry data-focus-key="move-retry">${esc(W.retry)}</button></p>`;
+  }
+  if (view.state !== 'ready' && view.state !== 'empty') return '';
+  const p = view.p;
+  const now = MOVE.answer?.current_verdict || null;
+  const nowLines = moveLines(now, 'twMoveNow');
+  let html = `<div class="ux-choice ux-choice-static tw-move-now"${now ? ` data-tone="${esc(now.severity)}"` : ''}>`
+    + `<span class="ux-choice-title">${moveToneIcon(now?.severity)}<span>${esc(W.now)}</span>`
+    + `<span>${esc(moveDayWord(p.day))} <bdi dir="ltr">${esc(p.start_time)}–${esc(p.end_time)}</bdi></span>`
+    + `<span class="tw-move-verdict">${esc(moveVerdictWords(now))}</span></span>${moveLinesHtml(nowLines)}</div>`;
+  if (view.state === 'empty') return html;
+  const rows = rankedMoves(MOVE.answer).map((candidate, index) => {
+    const id = `twMoveRow${index}`;
+    const key = moveKey(candidate);
+    const time = `${esc(moveDayWord(candidate.day))} <bdi dir="ltr">${esc(candidate.start)}–${esc(candidate.end)}</bdi>`;
+    if (!moveChoosable(candidate)) {
+      return `<div class="ux-choice ux-choice-static"><span class="ux-choice-title"><span>${time}</span></span>`
+        + `<span class="ux-choice-desc">${esc(W.ownSection)}</span></div>`;
+    }
+    const verdict = candidate.verdict || null;
+    const lines = moveLines(verdict, id);
+    return `<label class="ux-choice"${verdict ? ` data-tone="${esc(verdict.severity)}"` : ''}>`
+      + `<input type="radio" name="twMoveChoice" value="${esc(key)}" data-focus-key="move-choice:${esc(key)}" aria-labelledby="${id}-time"`
+      + ` aria-describedby="${[`${id}-verdict`, ...lines.map(line => line.id)].join(' ')}"${key === MOVE.choice ? ' checked' : ''}>`
+      + `<span class="ux-choice-title">${moveToneIcon(verdict?.severity)}<span id="${id}-time">${time}</span>`
+      + `<span class="tw-move-verdict" id="${id}-verdict">${esc(moveVerdictWords(verdict))}</span></span>${moveLinesHtml(lines)}</label>`;
+  }).join('');
+  return `${html}<fieldset class="ux-field"><legend class="ux-field-label">${esc(W.legend)}</legend>`
+    + `<div class="ux-choice-list" id="twMoveChoices" data-ux-submit>${rows}</div></fieldset>`;
+}
+
+/* The whole dialog from MOVE and the board, through the global redraw (the
+   same content leaves the nodes, and the keyboard, alone). Until the user
+   chooses, the choice is the best time that can be chosen. */
+function drawMoveDialog() {
+  const body = $('twMoveBody');
+  if (!body || MOVE.placementId == null) return;
+  const view = moveDialogView();
+  MOVE.view = view.state;
+  MOVE.words = moveViewWords(view);
+  if (!MOVE.picked) MOVE.choice = view.state === 'ready' ? (rankedMoves(MOVE.answer).filter(moveChoosable).map(moveKey)[0] || '') : '';
+  setDialogHead('twMoveTitle', `${esc(MOVE_WORDS.title)} <bdi>${esc(view.p.course_code)}</bdi> <bdi>${esc(view.p.section)}</bdi>`);
+  setDialogHead('twMoveSub', moveSubHtml(view.p));
+  const html = moveDialogHtml(view);
+  if (window.UXControls?.redraw) window.UXControls.redraw(body, html);
+  else body.innerHTML = html;
+  body.querySelectorAll('input[name="twMoveChoice"]').forEach(radio => { radio.checked = radio.value === MOVE.choice; });
+  // The keyboard on a row the dialog (not the user) chose goes with its choice.
+  if (!MOVE.picked && document.activeElement?.matches('#twMoveBody input[name="twMoveChoice"]')) {
+    body.querySelector('input[name="twMoveChoice"]:checked')?.focus({ preventScroll: true });
+  }
+  MOVE.drawn = moveDataKey();
+  syncMoveDialog();
+}
+
+/* Commit, its note and the status line, in place (cheap: it runs with every
+   control sync). Times asked for before the data moved are asked for again
+   at once while the user has chosen none of them and nothing is being
+   moved; a choice made from them waits for Check again. Commit is held
+   until a time can be moved to; it is off while the page cannot write, and
+   the note says why, in the order the page's holds come (published, a
+   planner job, busy), else what the chosen time will bring. */
+function syncMoveDialog() {
+  if (!moveDialogOpen()) return;
+  // Shown as gone (a scenario reload takes every meeting off the board for a
+  // moment): times read before it left are out of date if it comes back.
+  if (MOVE.view === 'gone') MOVE.version = -1;
+  const live = movePlacement();
+  if (!MOVE.pending && moveReadOutdated() && !MOVE.picked && live && !moveRefusal(live)) {
+    readMoveCandidates();
+    return;
+  }
+  if (MOVE.held && writeHold() !== MOVE.held) {
+    MOVE.held = '';
+    dialogSay($('twMoveDialog'), '');
+  }
+  if (!MOVE.drawn || moveDataKey().some((value, i) => value !== MOVE.drawn[i])) {
+    drawMoveDialog();
+    return;
+  }
+  const chosen = chosenMove();
+  const held = MOVE.view !== 'ready' || !chosen || MOVE.pending || Boolean(MOVE.blocked);
+  const commit = $('twMoveCommit');
+  commit.toggleAttribute('data-tw-hold', held);
+  commit.disabled = held || !workspaceCanEdit();
+  const hold = writeHold();
+  const note = MOVE.pending ? '' : hold ? REFUSAL[hold] : held || !chosen.verdict ? '' : MOVE_WORDS.chosen(moveVerdictWords(chosen.verdict));
+  const line = $('twMoveNote');
+  if (line.textContent !== note) line.textContent = note;
+  const words = MOVE.pending ? MOVE_WORDS.progress : MOVE.words;
+  const status = $('twMoveStatus');
+  if (status.textContent !== words) status.textContent = words;
+  // The list is busy while the move is out; the status lines are not.
+  $('twMoveDialog').querySelectorAll('.ux-choice-list[data-ux-submit]').forEach(list => {
+    if (MOVE.pending) list.setAttribute('aria-busy', 'true');
+    else list.removeAttribute('aria-busy');
+  });
+}
+
+/* Opened from a card (M) or from Selection; `origin` names where the
+   keyboard goes back to at close. Any open dialog first, then the gate,
+   then an English section's own route (its chooser, after "Finding
+   patterns…"), then the dialog and its read. */
+function openMoveDialog(p, { origin = '' } = {}) {
+  if (anyDialogOpen()) return false;
+  const refusal = cardActionRefusal('move', p);
+  if (refusal) {
+    notify.warning(refusal.text);
+    return false;
+  }
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) {
+    // The chooser saves as soon as a pattern is chosen: it waits for the page.
+    if (!workspaceCanEdit()) {
+      notify.warning(REFUSAL.busy);
+      return false;
+    }
+    announceBoard(MOVE_WORDS.findingPatterns);
+    chooseEnglishWorkspacePattern({ type: 'move', placement_id: p.id });
+    return true;
+  }
+  const dialog = $('twMoveDialog');
+  if (!dialog || !window.UXControls?.dialog) return false;
+  Object.assign(MOVE, {
+    token: MOVE.token + 1, placementId: p.id, scenarioId: TW.scenarioId, boardId: TW.boardId, origin, snapshot: null, seen: p,
+    state: 'loading', answer: null, failure: null, choice: '', picked: false, version: null, pending: false,
+    blocked: '', held: '', view: '', words: '', drawn: null,
+  });
+  const alert = $('twMoveAlert');
+  if (alert) { alert.textContent = ''; alert.hidden = true; }
+  // What it is about, for the words a write of another meeting says in it.
+  dialog.dataset.twAbout = `placement:${p.id}`;
+  drawMoveDialog();
+  if (!window.UXControls.dialog.open(dialog, { initialFocus: () => $('twMoveBody'), returnFocus: () => resolveOrigin(origin) })) return false;
+  readMoveCandidates();
+  return true;
+}
+
+/* The times, drawn if the answer is still this session's latest read, and
+   what they were read for (the snapshot a commit checks), taken as they
+   arrive. A new list is a new choice. The keyboard then goes from the body
+   to the chosen row, unless the user has moved it. */
+async function readMoveCandidates({ fresh = false } = {}) {
+  const session = MOVE.token;
+  const read = ++MOVE.read;
+  Object.assign(MOVE, { state: 'loading', answer: null, failure: null, choice: '', picked: false, version: TW.dataVersion, snapshot: null });
+  drawMoveDialog();
+  const id = MOVE.placementId;
+  const answer = await previewRead(`slot|${id}`, `/ops/tw/placements/${id}/slot-candidates/?verdict=1&offer=manual`, { fresh });
+  if (session !== MOVE.token || read !== MOVE.read || !moveDialogOpen()) return;
+  const live = movePlacement();
+  if (answer.data) Object.assign(MOVE, { state: 'ready', answer: answer.data, snapshot: live ? moveSnapshotOf(live, answer.data.placement) : null });
+  else Object.assign(MOVE, { state: 'error', failure: answer });
+  drawMoveDialog();
+  const body = $('twMoveBody');
+  if (document.activeElement === body) body.querySelector('input[name="twMoveChoice"]:checked')?.focus({ preventScroll: true });
+}
+
+/* The data changed since the times were read: read the board, then the
+   times (fresh), the choice made from the old ones dropped. A meeting the
+   board then shows gone or refused is read by itself once it is back and
+   free (its times count as out of date until then). */
+async function checkMoveAgain() {
+  const session = MOVE.token;
+  Object.assign(MOVE, { state: 'loading', version: null, picked: false });
+  drawMoveDialog();
+  if (TW.boardId) await selectBoard(TW.boardId);
+  if (session !== MOVE.token || !moveDialogOpen()) return;
+  const live = movePlacement();
+  if (!live || moveRefusal(live)) {
+    MOVE.version = -1;
+    drawMoveDialog();
+    return;
+  }
+  readMoveCandidates({ fresh: true });
+}
+
+/* Move to this time. Nothing is sent when the meeting is not what its times
+   were read for. A refusal is said in the dialog; one that asking again
+   cannot change (a lock, another scenario's section, published, gone)
+   holds Commit; a failure that does not say whether the move happened reads
+   the board, whose answer then stops a second move if it did. On success the
+   dialog closes, the board's tab stop moves to the card, the board is read
+   again, and the report follows (with R's hint when the time's verdict had
+   a room clash: the meeting kept its room). Escape while the write is out
+   closes the dialog; the write still ends, and says how where the user is
+   (dialogSay, reportEdit). */
+const MOVE_FINAL_REFUSALS = ['PLACEMENT_LOCKED', 'PLACEMENT_EXTERNALLY_OWNED', 'SCENARIO_PUBLISHED', 'NOT_FOUND'];
+async function commitMove() {
+  const dialog = $('twMoveDialog');
+  if (!moveDialogOpen() || MOVE.pending) return;
+  if (moveSnapshotChanged()) {
+    dialogSay(dialog, MOVE_WORDS.changed);
+    drawMoveDialog();
+    return;
+  }
+  const p = movePlacement();
+  const chosen = chosenMove();
+  if (!p || !chosen || MOVE.view !== 'ready' || MOVE.blocked) return;
+  const session = MOVE.token;
+  const at = { scenarioId: TW.scenarioId, boardId: TW.boardId };
+  const about = { key: `placement:${p.id}`, name: `${isolatedText(p.course_code)} ${isolatedText(p.section)}` };
+  const hint = (chosen.verdict?.items || []).some(item => item.issue_kind === 'room') ? MOVE_WORDS.roomHint : '';
+  const target = { day: chosen.day, start_time: chosen.start, end_time: chosen.end };
+  // The keyboard goes to the chosen time before Commit turns off under it.
+  dialog.querySelector('input[name="twMoveChoice"]:checked')?.focus({ preventScroll: true });
+  MOVE.pending = true;
+  dialogSay(dialog, '');
+  syncMoveDialog();
+  const result = await commitPlacementMove(p.id, target, { dialog });
+  if (session === MOVE.token) MOVE.pending = false;
+  if (result.code) {
+    const known = {
+      PLACEMENT_LOCKED: REFUSAL.locked, PLACEMENT_EXTERNALLY_OWNED: REFUSAL.external, PLACEMENT_DUPLICATE: MOVE_WORDS.ownSection,
+      SCENARIO_PUBLISHED: REFUSAL.published, SCENARIO_BUSY: REFUSAL.busy, NOT_FOUND: MOVE_WORDS.gone,
+      published: REFUSAL.published, job: REFUSAL.job, busy: REFUSAL.busy,
+    }[result.code];
+    // The meeting this session is about (a later one too, opened while the
+    // write was out): a refusal asking again cannot change holds Commit.
+    if (MOVE.placementId === p.id && MOVE_FINAL_REFUSALS.includes(result.code)) MOVE.blocked = result.code;
+    // The page's own hold (dialogWrite's check): it ends by itself, and its
+    // words go with it.
+    if (['published', 'job', 'busy'].includes(result.code)) MOVE.held = result.code;
+    dialogSay(dialog, known || MOVE_WORDS.notSaved, 'warning', about);
+    syncMoveDialog();
+    if (!known && TW.scenarioId === at.scenarioId && TW.boardId === at.boardId) await selectBoard(at.boardId);
+    return;
+  }
+  if (session === MOVE.token) window.UXControls.dialog.close(dialog, 'close');
+  boardNav?.active(`placement:${p.id}`);
+  if (TW.scenarioId === at.scenarioId) await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+  reportEdit(movedWords(target.day, target.start_time, target.end_time), [p.id], { dialog, about, hint, data: result.data });
+}
+
+(function wireMoveDialog() {
+  const dialog = $('twMoveDialog');
+  if (!dialog) return;
+  // A <form method="dialog"> closes itself on submit: the page commits, and
+  // closes it once the meeting has moved.
+  $('twMoveForm').addEventListener('submit', event => {
+    event.preventDefault();
+    commitMove();
+  });
+  dialog.addEventListener('change', event => {
+    if (event.target.name !== 'twMoveChoice') return;
+    Object.assign(MOVE, { choice: event.target.value, picked: true });
+    syncMoveDialog();
+  });
+  dialog.addEventListener('click', event => {
+    if (!event.target.closest) return;
+    if (event.target.closest('[data-tw-move-retry]')) readMoveCandidates({ fresh: true });
+    else if (event.target.closest('[data-tw-move-recheck]')) checkMoveAgain();
+  });
+})();
+
+/* Selection's Move…: none for an English section (it has "Change section
+   pattern"); drawn off, with its reason in #twSelActionNote, while the gate
+   holds it. Opening only reads, so a write in flight never holds it. */
+function moveActionHtml(p) {
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return '';
+  const refusal = cardActionRefusal('move', p);
+  return `<button type="button" class="btn btn-sm btn-neutral" data-tw-action="move" data-focus-key="move" data-placement-id="${p.id}" aria-haspopup="dialog"`
+    + `${refusal ? ' disabled data-tw-hold aria-describedby="twSelActionNote"' : ''}>${esc(MOVE_WORDS.action)}</button>`;
+}
+
 /* ── "Mainly for programme" (Selection) ──
    The section's programme mark (#160 parity with split view; the words and
    parts are the shared module's). The seated mix and the grouping trade-off
@@ -3717,9 +4260,10 @@ function renderRightPanel(tab) {
       : '';
     const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
-    // Change room (5c), and why it is held when it is.
+    // Change room (5c) and Move… (5e); why each is held is written into
+    // #twSelActionNote by syncSelectionActions, right after this draw.
     const roomAction = roomActionHtml(p);
-    const roomHeld = roomAction ? cardActionRefusal('room', p) : '';
+    const moveAction = moveActionHtml(p);
     draw(`
       <div class="tw-sel-head">
         <div class="tw-sel-title"><bdi>${esc(p.course_code)}</bdi> <bdi>${esc(p.section)}</bdi></div>
@@ -3736,10 +4280,11 @@ function renderRightPanel(tab) {
         ${field(IS_AR ? 'السعة' : 'Capacity', count(p.available_capacity))}
         ${field(IS_AR ? 'المسجلون' : 'Registered', count(p.registered_count))}
       </dl>
-      ${roomAction ? `<p class="tw-sel-help" id="twSelActionNote"${roomHeld ? '' : ' hidden'}>${esc(roomHeld ? roomHeld.text : '')}</p>` : ''}
+      ${roomAction || moveAction ? '<p class="tw-sel-help" id="twSelActionNote" hidden></p>' : ''}
       ${programmeMarkHtml(p)}
       ${meetings ? `<h3 class="tw-sel-subhead">${IS_AR ? 'جميع لقاءات الشعبة' : 'All meetings of this section'}</h3><ul class="tw-sel-meetings">${meetings}</ul>` : ''}
       <div class="tw-sel-actions">
+        ${moveAction}
         <button type="button" class="btn btn-sm btn-neutral" data-focus-key="lock" data-tw-mutation ${editable ? '' : 'disabled'} title="${esc(T.lockHelp)}" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح قفل الوقت' : 'Unlock time') : (IS_AR ? 'قفل الوقت' : 'Lock time')}</button>
         <button type="button" class="btn btn-sm btn-outline-danger" data-focus-key="remove" data-tw-mutation ${editable ? '' : 'disabled'} onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة من الجدول' : 'Remove from timetable'}</button>
       </div>
@@ -4287,6 +4832,8 @@ const ISSUE_KINDS = {
   crossBoard:      { tone: 'warning',  en: 'Overlap with another board',         ar: 'تداخل مع لوحة أخرى' },
   offGrid:         { tone: 'warning',  en: 'Outside the grid’s columns',         ar: 'خارج أعمدة الجدول' },
   crossBoardMinor: { tone: 'info',     en: 'Possible overlap with another board', ar: 'تداخل محتمل مع لوحة أخرى' },
+  // The Move dialog's verdict only (5e): the board's model has no such row.
+  instructorElsewhere: { tone: 'warning', en: 'Teacher also teaching on another board', ar: 'المدرّس يدرّس في لوحة أخرى في الوقت نفسه' },
 };
 const ISSUE_KIND_ORDER = Object.keys(ISSUE_KINDS);
 const TONE_ORDER = ['critical', 'warning', 'info'];
