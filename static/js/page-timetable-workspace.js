@@ -5493,15 +5493,8 @@ async function runOptimiseV2(mode = 'current') {
       }
     }
 
-    // Hotspot courses
-    if (o.hotspot_courses && o.hotspot_courses.length > 0) {
-      body += `<div class="mb-2"><span class="fs-sm fw-bold text-caps text-danger">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot Courses'}</span>`;
-      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
-      o.hotspot_courses.forEach(c => {
-        body += `<span class="text-danger fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(192,48,48,.1)">${c}</span>`;
-      });
-      body += `</div></div>`;
-    }
+    // Courses that left students without a section (shared with split view).
+    body += window.TimetableHotspots?.html(o, IS_AR) || '';
 
     // Reserve-heavy sections
     if (o.reserve_heavy_sections && o.reserve_heavy_sections.length > 0) {
