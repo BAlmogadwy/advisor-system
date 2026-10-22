@@ -23,6 +23,18 @@
           redraws its markup; the choice is remembered for the session per KEY,
           and a page drawing a group asks `UXControls.disclosure.isOpen(KEY,
           fallback)` for its state.
+   DIALOG `UXControls.dialog.open(dialog, {initialFocus, returnFocus})`,
+          `.close(dialog, reason)` and `.isOpen(dialog)` for a template
+          `<dialog>`: modal (or `[open]` plus `data-ux-dialog="fallback"`
+          where the browser has no showModal), closed by its
+          `[data-dialog-close]` buttons and Escape, with focus sent at close
+          to wherever `returnFocus()` says THEN, and a `ux-dialog-close`
+          event ({reason}). It acts only on dialogs it opened, so a page's
+          own dialogs keep their own handlers.
+   CHOICE LIST  `.ux-choice-list[data-ux-submit]` of `label.ux-choice` rows,
+          each a native radio: Home, End, PageUp and PageDown (10 rows) on top
+          of the native arrows; Enter submits the form once, only while its
+          submit button is on.
 
    Generalised from the Timetable Workspace's own menu script, whose placement
    rules (preferred edge, flip, clamp, phone sheet, re-place on resize) were
@@ -712,6 +724,187 @@
     return nav;
   }
 
+  // ── Dialogs (UXControls.dialog) ───────────────────────────────
+  /* One layer for the template dialogs that choose something (design record
+     §7.3, 5c). A page opens one with
+     `UXControls.dialog.open(dialog, {initialFocus, returnFocus})`:
+     - false when a dialog of this helper is already open (they are modal:
+       one at a time), or the dialog is open by other code;
+     - menus close, then the dialog opens modal; a browser without
+       showModal (jsdom) gets `[open]` plus `data-ux-dialog="fallback"`;
+     - focus goes to `initialFocus()`, else the first control that takes it;
+     - `returnFocus` is a function, kept and called only at close: the page
+       may have redrawn the control that opened the dialog while it was open,
+       and the new node is the one that should get the keyboard back.
+     `close(dialog, reason = 'close')` closes it, focuses what `returnFocus()`
+     gives if it can take focus (on the page, enabled, not a hidden input, not
+     inside `[hidden]` or `.d-none`), then fires `ux-dialog-close` (bubbling,
+     `detail.reason`). The user's ways out are 'cancel': a
+     `[data-dialog-close]` button (never a submit, whatever its type) and
+     Escape (the browser's `cancel`, or a keydown in fallback mode). A close
+     the helper did not start and no cancel began (a `<form method="dialog">`
+     submitted, page code calling `dialog.close()`) is 'close'. Every listener
+     acts only on dialogs in `dialogs`, so the Generate dialog and the English
+     chooser, which wire their own closing, are never touched. */
+  const dialogs = new WeakMap();
+  let shownDialog = null;
+  const FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+  const canTakeFocus = element => Boolean(element) && typeof element.focus === 'function'
+    && element.isConnected && !element.disabled && !(element.tagName === 'INPUT' && element.type === 'hidden')
+    && !element.closest('[hidden], .d-none');
+  const dialogIsOpen = dialog => Boolean(dialog) && dialogs.has(dialog)
+    && dialog.isConnected && dialog.hasAttribute('open');
+
+  function openDialog(dialog, { initialFocus, returnFocus } = {}) {
+    if (!dialog) return false;
+    if (shownDialog && dialogIsOpen(shownDialog)) return false;
+    // A dialog taken off the page (or closed by other code without an event)
+    // while open is forgotten, so it can never block the next one.
+    if (shownDialog) dialogs.delete(shownDialog);
+    shownDialog = null;
+    if (dialog.hasAttribute('open')) return false;
+    entries.forEach(entry => close(entry));
+    if (typeof dialog.showModal === 'function') {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute('open', '');
+      dialog.dataset.uxDialog = 'fallback';
+    }
+    dialogs.set(dialog, { returnFocus });
+    shownDialog = dialog;
+    const wanted = typeof initialFocus === 'function' ? initialFocus() : null;
+    const first = canTakeFocus(wanted) ? wanted
+      : [...dialog.querySelectorAll(FOCUSABLE)].find(canTakeFocus);
+    if (first) first.focus();
+    return true;
+  }
+
+  function closeDialog(dialog, reason = 'close') {
+    const entry = dialog ? dialogs.get(dialog) : null;
+    if (!entry) return;
+    // Forget it first: closing a modal dialog fires the browser's own
+    // `close`, which must find nothing left to do.
+    dialogs.delete(dialog);
+    if (shownDialog === dialog) shownDialog = null;
+    if (dialog.dataset.uxDialog === 'fallback') {
+      dialog.removeAttribute('open');
+      delete dialog.dataset.uxDialog;
+    } else if (dialog.open && typeof dialog.close === 'function') {
+      dialog.close();
+    }
+    const target = typeof entry.returnFocus === 'function' ? entry.returnFocus() : null;
+    if (canTakeFocus(target)) {
+      // As the roving restores: scroll to it only for a keyboard user.
+      target.focus({ preventScroll: true });
+      if (lastInputWasKeyboard && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    dialog.dispatchEvent(new CustomEvent('ux-dialog-close', { bubbles: true, detail: { reason } }));
+  }
+
+  document.addEventListener('click', event => {
+    const button = event.target.closest && event.target.closest('[data-dialog-close]');
+    const dialog = button && button.closest('dialog');
+    if (!dialog || !dialogs.has(dialog)) return;
+    // A button with no type in the form is a submit button: it closes, and
+    // never submits the choice it is closing on.
+    event.preventDefault();
+    closeDialog(dialog, 'cancel');
+  });
+  // Escape in a modal dialog: the browser fires `cancel` (it does not
+  // bubble, so only a capturing listener on the document hears it). The
+  // helper closes the dialog itself, so focus and the event are its own, and
+  // lets it go before the browser's own `close` arrives.
+  document.addEventListener('cancel', event => {
+    if (!dialogs.has(event.target)) return;
+    event.preventDefault();
+    closeDialog(event.target, 'cancel');
+  }, true);
+  // So a `close` that still finds the dialog the helper's is one no cancel
+  // began: a `<form method="dialog">` submitted with nothing stopping it, or
+  // page code calling dialog.close(). It is closed; only the bookkeeping is
+  // left, as 'close'. Chromium (145) fires `cancel` on every Escape, a second
+  // one with no click in between included (a cancel it no longer lets the
+  // page stop), so no Escape lands here there; the listener is a guard for a
+  // browser that would close without one. The event comes a moment after
+  // the closing; a dialog open again by then is not the one it means.
+  document.addEventListener('close', event => {
+    const dialog = event.target;
+    if (dialogs.has(dialog) && !dialog.hasAttribute('open')) closeDialog(dialog, 'close');
+  }, true);
+  // No showModal, so no `cancel` either: Escape itself, unless a control
+  // inside used it (a filter clearing its text stops it).
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+    const dialog = shownDialog;
+    if (!dialog || dialog.dataset.uxDialog !== 'fallback' || !dialogs.has(dialog)) return;
+    const owner = event.target.closest ? event.target.closest('dialog') : null;
+    if (owner && owner !== dialog) return;
+    event.preventDefault();
+    closeDialog(dialog, 'cancel');
+  });
+
+  // ── Choice lists: radios as a list of rows ────────────────────
+  /* A `.ux-choice-list[data-ux-submit]` holds `label.ux-choice` rows, each a
+     native radio (a row that cannot be chosen is `.ux-choice-static`, with
+     no radio). The arrows stay the browser's. Home, End, PageUp and PageDown
+     (10 rows, held at the ends) check and focus a radio of the same group,
+     skipping hidden rows (a filter hides them in place), and fire `input`
+     and `change` as an arrow does. Enter submits the form once, and only
+     while its submit button is on: the page holds that button while a choice
+     cannot be committed. A list without `data-ux-submit` is left alone. */
+  const choiceHidden = input => Boolean(input.closest('[hidden], .d-none'))
+    || (typeof input.checkVisibility === 'function' && input.checkVisibility() === false);
+  // The radio's group as the browser sees it: same form, same name (matched
+  // in JS, so no name needs escaping into a selector).
+  function choiceGroup(radio) {
+    if (!radio.name) return [radio];
+    const scope = radio.form ? [...radio.form.elements] : [...radio.ownerDocument.querySelectorAll('input')];
+    return scope.filter(input => input.tagName === 'INPUT' && input.type === 'radio' && input.name === radio.name
+      && input.form === radio.form && !input.disabled && !choiceHidden(input));
+  }
+  // The commit button: the first submit button that is not a way out (a
+  // `[data-dialog-close]` button with no type is a submit button too).
+  const submitButtonOf = form => [...form.elements].find(element => !element.matches('[data-dialog-close]')
+    && ((element.tagName === 'BUTTON' && element.type === 'submit')
+      || (element.tagName === 'INPUT' && (element.type === 'submit' || element.type === 'image'))));
+  const CHOICE_KEYS = new Set(['Home', 'End', 'PageUp', 'PageDown', 'Enter']);
+  document.addEventListener('keydown', event => {
+    if (!CHOICE_KEYS.has(event.key) || event.defaultPrevented || event.isComposing
+      || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const radio = event.target;
+    if (!radio || radio.tagName !== 'INPUT' || radio.type !== 'radio'
+      || !radio.closest('.ux-choice-list[data-ux-submit]')) return;
+    if (event.key === 'Enter') {
+      // The browser's own Enter (implicit submission) would be a second
+      // submit, and a held key repeats: one press, one submit.
+      event.preventDefault();
+      const form = radio.form;
+      const submit = form ? submitButtonOf(form) : null;
+      // Off by itself or by a disabled fieldset around it.
+      if (event.repeat || !submit || submit.matches(':disabled')) return;
+      form.requestSubmit(submit);
+      return;
+    }
+    const group = choiceGroup(radio);
+    const index = group.indexOf(radio);
+    if (index < 0) return;
+    event.preventDefault();
+    const last = group.length - 1;
+    const next = group[event.key === 'Home' ? 0 : event.key === 'End' ? last
+      : Math.max(0, Math.min(last, index + (event.key === 'PageDown' ? 10 : -10)))];
+    const changed = !next.checked;
+    next.checked = true;
+    next.focus({ preventScroll: true });
+    // The radio is a clipped 1px box at its row's top: bring the whole row
+    // into view, not only that pixel.
+    const row = next.closest('.ux-choice') || next;
+    if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' });
+    if (changed) {
+      next.dispatchEvent(new Event('input', { bubbles: true }));
+      next.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+
   // The floating job card: content kept clear of it (scroll padding) reads its
   // height from --ux-job-block.
   if (window.ResizeObserver) {
@@ -736,7 +929,10 @@
     entries.forEach(entry => { if (!entry.anchor.contains(event.target)) close(entry); });
   });
 
-  window.UXControls = { wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw, roving, letterOf };
+  window.UXControls = {
+    wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw, roving, letterOf,
+    dialog: { open: openDialog, close: closeDialog, isOpen: dialogIsOpen },
+  };
   // base.html loads this at the end of <body>, so the page's markup is already
   // there: wire it now, and again once parsing ends for anything later (wiring
   // is idempotent per control).

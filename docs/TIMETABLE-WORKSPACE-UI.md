@@ -136,6 +136,37 @@ padding-aware for `p-0`.
 - `.ux-pane`, `.ux-pane-head`, `.ux-rail` — titled, independently scrolling,
   collapsible panes whose rail shows a count.
 - `.ux-dialog` — native `<dialog>` form surface.
+- `UXControls.dialog` (`open(dialog, {initialFocus, returnFocus})`,
+  `close(dialog, reason)`, `isOpen(dialog)`): one layer for the template
+  dialogs that choose something (Move, Place, Change room). Modal through
+  `showModal`, or `[open]` plus `data-ux-dialog="fallback"` where there is
+  none (jsdom); one at a time (`open` answers false while one is open); menus
+  close first; focus to `initialFocus()`, else the first control that takes
+  it (never a hidden input). Delegated listeners close it, as `'cancel'`, from
+  its `[data-dialog-close]` buttons (never a submit, whatever their type), the
+  browser's `cancel` (stopped, then closed by the helper) and, in fallback
+  mode, an Escape no control inside has used. A native close no cancel began
+  (a `<form method="dialog">` submitted, page code calling `dialog.close()`)
+  is bookkept as `'close'`. At close, focus goes to what `returnFocus()` gives
+  **then** (on the page, enabled, not inside `[hidden]` or `.d-none`), and
+  `ux-dialog-close` fires with `{reason}`. It acts only on dialogs it opened:
+  Generate and the English chooser keep their own handlers.
+- `.ux-dialog-scroll` — a dialog whose body scrolls while its head and foot
+  stay in view (`> form` a flex column, `.ux-dialog-body` the scroller).
+  `.ux-dialog-foot-note` is the foot's reason line, before its buttons.
+- `.ux-choice-list` — rows of `label.ux-choice`, one native radio each, with
+  `aria-busy` on the list alone while it reads. With `data-ux-submit`, a
+  delegated key handler adds Home, End and PageUp/PageDown (10 rows, held at
+  the ends) over the radio group's rows not hidden, on top of the native
+  arrows, and Enter submits the form once, only while its submit button (the
+  first that is not `[data-dialog-close]`) is on, a disabled fieldset around
+  it counting as off. Forced colours give each row a border, the chosen row a
+  thick Highlight one and the row with the keyboard an outline.
+  `.ux-choice[data-tone]` (`critical`, `warning`, `info`, `ok`) adds a
+  start-edge bar (CanvasText in forced colours) beside the verdict in words;
+  `.ux-choice-static` is a row that cannot be chosen, its reason written in it
+  (no disabled radios); `.ux-choice-title` is a flex line (icon, code, words);
+  `.ux-choice-status` is a row's small status line.
 - `.ux-job` — the shared planner job card, floating at the window's end edge.
 - `.pill-n` — neutral status pill.
 
@@ -249,6 +280,9 @@ Stage 3 (to evaluate): a time-proportional week grid.
   `display`. Tablists exist only where they behave as tabs.
 - Template copy stays `{% if LANGUAGE_CODE == 'ar' %}…{% else %}…{% endif %}`.
 - `.fb-search` capsules stay inside a `.fb-fit` row.
+- Dialogs opened through `UXControls.dialog` resolve `returnFocus` at close:
+  it is a function (from an origin key), never a node kept from the opening,
+  because the page may redraw the opener while the dialog is open.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
 
@@ -985,15 +1019,15 @@ isOpen(dialog)
 ```
 
 Delegated listeners on `document`, acting **only on dialogs in the WeakMap**:
-- `click` on `[data-dialog-close]` → close with reason `'cancel'`;
+- `click` on `[data-dialog-close]` → `preventDefault` (a button with no type is a submit button), then close with reason `'cancel'`;
 - capture-phase `cancel` → `preventDefault`, then close with `'cancel'`;
-- capture-phase native `close` while the dialog is still in the map (Chrome's close watcher) → do the close bookkeeping;
+- capture-phase native `close` while the dialog is still in the map → do the close bookkeeping with reason `'close'`: no cancel began it (a cancel closes the dialog and leaves the map first), so it is a `<form method="dialog">` submitted or page code calling `dialog.close()`. Chromium 145 fires `cancel` on every Escape (a second one with no click between as a cancel it cannot stop), so this listener is a guard, not the Escape path;
 - in fallback mode, `keydown` Escape not `defaultPrevented` → close.
 
 **Choice list** (one delegated `keydown` in UXC):
 - For a radio inside `.ux-choice-list[data-ux-submit]`, among radios of the same name that are not hidden (filtered in JS, no `CSS.escape`):
   - Home, End, PgUp and PgDn (±10, clamped) check, focus and `scrollIntoView?.()` the radio, then dispatch a bubbling `change`.
-  - Enter: `preventDefault`, then `form.requestSubmit()` once, and only when the form's submit button is enabled.
+  - Enter: `preventDefault`, then `form.requestSubmit()` once, and only when the form's submit button (the first not `[data-dialog-close]`) is not `:disabled` (a disabled fieldset around it included).
 - The arrow keys stay native.
 
 **CSS (GCSS, after `.ux-choice` at :2373):**
@@ -1163,9 +1197,12 @@ Rows:
 | Test | What it checks | Mutants it must kill |
 |---|---|---|
 | G1 | Fallback mode: open sets `[open]` and honours `initialFocus`; `[data-dialog-close]` and an Escape `keydown` close it; focus goes to the element `returnFocus()` gives **at close**, after the opener node was replaced. | Resolver read at open |
-| G2 | A cancelable `cancel` is `defaultPrevented`; the dialog closes; `ux-dialog-close` fires with `reason 'cancel'`. A native `close` without `cancel` runs the same bookkeeping. | No capture listener; close watcher ignored |
+| G2 | A cancelable `cancel` is `defaultPrevented`; the dialog closes; `ux-dialog-close` fires with `reason 'cancel'`. A native `close` without `cancel` runs the same bookkeeping, with reason `'close'`. | No capture listener; close watcher ignored; a native close reported as `'cancel'` |
 | G3 | A disabled or detached target throws nothing and does not take focus. A dialog the helper did not open (`#twGenerateDialog`): its × and Escape behave natively, and the helper's handler never runs. | Listeners not scoped to the helper's dialogs |
-| C1 | `.ux-choice-list[data-ux-submit]`: End, Home and PgDn (clamped) check, focus and fire `change`; hidden radios are skipped; Enter submits once (the spy counts `submit` events); Enter with the submit button disabled submits nothing; a list without `data-ux-submit` never submits. | End off by one; no clamp; hidden included; double submit; submit not opt-in |
+| C1 | `.ux-choice-list[data-ux-submit]`: End, Home and PgDn (clamped) check, focus and fire `change`; hidden radios are skipped; Enter submits once (the spy counts `submit` events); Enter with the submit button disabled, or inside a disabled fieldset, submits nothing; the submitter is the commit button, past a leading `type=button` and a `[data-dialog-close]` with no type; the Page keys scroll the row, not the radio, into view; a list without `data-ux-submit` never submits. | End off by one; no clamp; hidden included; double submit; submit not opt-in; `.disabled` only; any button taken as the submitter; the radio scrolled |
+| C2 | Forced colours (pinned from `global.css`, seen in Chromium with forced colours emulated): every `.ux-choice` has a `CanvasText` border, the checked row a thicker `Highlight` border, the focused row a `CanvasText` outline; the two marks never share a property. | No frame; no checked mark; checked by colour only; checked as an outline; no focus mark |
+| G4 | Opening a helper dialog closes an open menu. `isOpen` is false for a dialog its page opened and for a helper dialog taken off the page, which does not block the next. | Menus left open; `isOpen` unscoped; `isOpen` ignores `isConnected` |
+| G5 | A `[data-dialog-close]` with no type closes as `'cancel'` and submits nothing (the same button in a page's own dialog is left alone). A fallback Escape inside a nested page dialog leaves the helper's open. The first control skips a hidden input, a disabled button and `[hidden]`/`.d-none` content, also when `initialFocus()` is a hidden input. | No `preventDefault`; `preventDefault` unscoped; owner check dropped; any of the focus filters dropped |
 | F1 | `twFetch` with `_onError` returning true on a 409 `SCENARIO_BUSY` with `active_job`: `tw:planner-job` still fires. | Announce left after `_onError` |
 | F2 | A 502 with an HTML body calls `_onError(null, 502)` and fires no toast. A rejected fetch calls `_onError(null, 0)`. | Non-JSON path skips `_onError`; rejection path skips it |
 
