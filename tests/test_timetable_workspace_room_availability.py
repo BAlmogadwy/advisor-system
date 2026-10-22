@@ -31,6 +31,7 @@ from core.services.timetable_v2_runner import (
 from core.services.timetable_workspace import (
     apply_bulk_clean_room_assignments,
     apply_bulk_safe_time_moves,
+    assign_physical_meeting_room,
     check_publish_readiness,
     compute_incomplete_section_patterns,
     compute_scenario_safety_summary,
@@ -1243,3 +1244,282 @@ def test_bulk_safe_time_moves_skip_an_externally_owned_section(monkeypatch, stal
     expected = "externally_owned_after_preview" if stale else "externally_owned"
     assert [row["reason"] for row in result["skipped"]] == [expected]
     assert _section_snapshot(term_section.id) == before
+
+
+# ── Change room: a section's own copies, the current room, the reasons ───────
+#
+# Design record 7.3, sub-PR 5c (server half). The page's "Change room" sends only
+# {room}, a room-only change that assign_physical_meeting_room applies to every
+# copy of the section at that slot, so those copies are not other occupants.
+
+
+def _placed(
+    board: DeliveryBoard,
+    term_section: TermSection,
+    room: str,
+    *,
+    day: str = "SUN",
+    start: str = "09:00",
+    end: str = "10:15",
+) -> SectionPlacement:
+    return SectionPlacement.objects.create(
+        board=board,
+        term_section=term_section,
+        day=day,
+        start_time=start,
+        end_time=end,
+        room=room,
+    )
+
+
+def _third_board(scenario: TimetableScenario) -> DeliveryBoard:
+    return DeliveryBoard.objects.create(
+        scenario=scenario, label="Term 5", nominal_term=5, program="AI", display_order=3
+    )
+
+
+def test_rs1_a_sections_own_copy_at_the_slot_is_not_an_occupant_of_its_room() -> None:
+    scenario, board_a, board_b = _workspace()
+    section = _term_section(scenario, "AI101", "S1")
+    _lecture_room("R100")
+    subject = _placed(board_a, section, "R100")
+    _placed(board_b, section, "R100")
+
+    preview = preview_placement_room_candidates(subject.id)
+    by_room = {row["room_code"]: row for row in preview["candidates"]}
+
+    assert by_room["R100"]["occupied_by"] == []
+    assert by_room["R100"]["available"] is True
+    assert "room occupied at this time" not in by_room["R100"]["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("09:30", "10:45"),  # starts and ends later
+        ("09:00", "10:45"),  # same start, ends later
+        ("09:30", "10:15"),  # starts later, same end
+    ],
+)
+def test_rs1_the_same_section_at_another_time_is_still_an_occupant(start: str, end: str) -> None:
+    scenario, board_a, _board_b = _workspace()
+    board_c = _third_board(scenario)
+    section = _term_section(scenario, "AI101", "S1")
+    _lecture_room("R100")
+    subject = _placed(board_a, section, "R100")
+    other_time = _placed(board_c, section, "R100", start=start, end=end)
+
+    preview = preview_placement_room_candidates(subject.id)
+    by_room = {row["room_code"]: row for row in preview["candidates"]}
+
+    occupied = by_room["R100"]["occupied_by"]
+    assert [row["placement_id"] for row in occupied] == [other_time.id]
+    assert occupied[0]["term_section_id"] == section.id
+    assert by_room["R100"]["available"] is False
+    assert "room occupied at this time" in by_room["R100"]["reasons"]
+
+
+def test_rs1_an_occupant_names_its_section_by_id() -> None:
+    scenario, board_a, board_b = _workspace()
+    section_a = _term_section(scenario, "AI101", "S1")
+    section_b = _term_section(scenario, "DS201", "S1")
+    _lecture_room("R100")
+    _lecture_room("R200")
+    subject = _placed(board_a, section_a, "R100")
+    holder = _placed(board_b, section_b, "R200")
+
+    preview = preview_placement_room_candidates(subject.id)
+    by_room = {row["room_code"]: row for row in preview["candidates"]}
+
+    assert by_room["R200"]["available"] is False
+    assert by_room["R200"]["occupied_by"] == [
+        {
+            "placement_id": holder.id,
+            "board_id": board_b.id,
+            "board_label": "Term 3",
+            "term_section_id": section_b.id,
+            "section": "DS201-S1",
+            "day": "SUN",
+            "start": "09:00",
+            "end": "10:15",
+        }
+    ]
+
+
+def test_rs1_the_skipped_copy_is_the_one_a_room_change_moves() -> None:
+    # Why the skip is right: the room change writes exactly the copies the
+    # preview no longer lists as occupants, and leaves the other-time copy alone.
+    scenario, board_a, board_b = _workspace()
+    board_c = _third_board(scenario)
+    section = _term_section(scenario, "AI101", "S1")
+    _lecture_room("R100")
+    _lecture_room("R200")
+    subject = _placed(board_a, section, "R100")
+    own_copy = _placed(board_b, section, "R100")
+    other_time = _placed(board_c, section, "R100", start="09:30", end="10:45")
+
+    candidates = preview_placement_room_candidates(subject.id)["candidates"]
+    occupants = {
+        occupant["placement_id"]
+        for room in candidates
+        if room["room_code"] == "R100"
+        for occupant in room["occupied_by"]
+    }
+    assign_physical_meeting_room(subject, "R200")
+
+    own_copy.refresh_from_db()
+    other_time.refresh_from_db()
+    assert own_copy.room == "R200"
+    assert other_time.room == "R100"
+    assert occupants == {other_time.id}
+
+
+def _crowded_rooms(count: int) -> None:
+    """``count`` ordinary 30-seat lecture rooms, R000 up: every one scores the same."""
+    for n in range(count):
+        Room.objects.create(
+            room_code=f"R{n:03d}", capacity=30, room_type="lecture", section="", department="AI"
+        )
+
+
+def test_rs2_the_current_room_is_listed_even_when_it_ranks_past_the_cap() -> None:
+    scenario, board_a, _board_b = _workspace()
+    section = _term_section(scenario, "AI101", "S1")  # needs 25 seats
+    _crowded_rooms(68)
+    # A 200-seat hall is the worst fit (score = seats to spare, 175 against 5),
+    # and two rows carry its code, one for each side.
+    for side in ("M", "F"):
+        Room.objects.create(
+            room_code="HALL", capacity=200, room_type="lecture", section=side, department="AI"
+        )
+    subject = _placed(board_a, section, "hall ")  # spelled as the data may have it
+
+    preview = preview_placement_room_candidates(subject.id)
+    candidates = preview["candidates"]
+
+    hall = [row for row in candidates if row["room_code"] == "HALL"]
+    others = [row for row in candidates if row["room_code"] != "HALL"]
+    assert preview["summary"]["total"] == 70
+    # It ranks last for real: the 60 listed are all other rooms, all scoring less.
+    assert len(others) == 60
+    assert {row["score"] for row in others} == {5}
+    assert [row["score"] for row in hall] == [175, 175]
+    # ...and is listed after them, every row that carries its code.
+    assert [row["room_code"] for row in candidates[-2:]] == ["HALL", "HALL"]
+    assert {row["section"] for row in hall} == {"M", "F"}
+
+
+def test_rs2_the_current_room_is_not_added_when_a_row_with_its_code_made_the_cut() -> None:
+    scenario, board_a, _board_b = _workspace()
+    section = _term_section(scenario, "AI101", "S1")  # needs 25 seats
+    _crowded_rooms(68)
+    # Two rows carry the code HALL: the male side fits exactly (score 0, ranks
+    # first), the female side has 175 seats to spare (ranks past the cap).
+    Room.objects.create(
+        room_code="HALL", capacity=25, room_type="lecture", section="M", department="AI"
+    )
+    Room.objects.create(
+        room_code="HALL", capacity=200, room_type="lecture", section="F", department="AI"
+    )
+    subject = _placed(board_a, section, "HALL")
+
+    preview = preview_placement_room_candidates(subject.id)
+    candidates = preview["candidates"]
+
+    assert preview["summary"]["total"] == 70
+    assert len(candidates) == 60
+    assert [row["section"] for row in candidates if row["room_code"] == "HALL"] == ["M"]
+
+
+def _reason_flags(room: dict) -> dict[str, bool]:
+    """The fit and availability flags a candidate carries, one per possible reason."""
+    return {
+        "type": not room["fits_type"],
+        "gender": not room["fits_gender"],
+        "capacity": not room["fits_capacity"],
+        "pool": not room["department_fit"],
+        "occupied": bool(room["occupied_by"]),
+        "time": bool(room["validation"]["critical_count"]),
+    }
+
+
+def _reason_texts(room: dict, target: dict) -> dict[str, str]:
+    return {
+        "type": f"needs {target['required_type']} room",
+        "gender": f"needs {target['required_gender']} room",
+        "capacity": f"capacity {room['capacity']} < {target['required_capacity']}",
+        "pool": "outside board programme pool",
+        "occupied": "room occupied at this time",
+        "time": f"{room['validation']['critical_count']} time/instructor issue(s)",
+    }
+
+
+def _assert_every_reason_follows_its_flag(preview: dict) -> set[str]:
+    """Each candidate says one thing per raised flag, and nothing else."""
+    raised: set[str] = set()
+    for room in preview["candidates"]:
+        flags = _reason_flags(room)
+        texts = _reason_texts(room, preview["target"])
+        expected = [texts[name] for name, on in flags.items() if on]
+        assert room["reasons"] == expected, room["room_code"]
+        assert len(room["reasons"]) == sum(flags.values()), room["room_code"]
+        raised |= {name for name, on in flags.items() if on}
+    return raised
+
+
+def test_rs3_every_room_reason_is_one_raised_flag() -> None:
+    scenario, board_a, board_b = _workspace()
+    section = _term_section(scenario, "AI101", "M1")  # a male section: needs 25 seats
+    rival = _term_section(scenario, "AI101", "M2")  # same course: a critical overlap
+    holder_a = _term_section(scenario, "DS201", "S1")
+    holder_b = _term_section(scenario, "DS202", "S1")
+    for code, room_type, capacity, side, department in [
+        ("OK1", "lecture", 35, "", "AI"),
+        ("LAB1", "lab", 35, "", "AI"),  # type
+        ("FEM1", "lecture", 35, "F", "AI"),  # gender
+        ("SMALL1", "lecture", 20, "", "AI"),  # capacity
+        ("POOL1", "lecture", 35, "", "DS"),  # programme pool
+        ("BUSY1", "lecture", 35, "", "AI"),  # occupied
+        ("ALL1", "lab", 10, "F", "DS"),  # every room flag at once
+    ]:
+        Room.objects.create(
+            room_code=code,
+            capacity=capacity,
+            room_type=room_type,
+            section=side,
+            department=department,
+        )
+    subject = _placed(board_a, section, "UNASSIGNED")
+    clash = _placed(board_a, rival, "UNASSIGNED", start="09:30", end="10:45")
+    _placed(board_b, holder_a, "BUSY1")
+    _placed(board_b, holder_b, "ALL1")
+
+    # All six reasons arise, one room carries all of them, and the length of
+    # each list is the number of flags raised.
+    preview = preview_placement_room_candidates(subject.id)
+    by_room = {row["room_code"]: row for row in preview["candidates"]}
+    assert _assert_every_reason_follows_its_flag(preview) == {
+        "type",
+        "gender",
+        "capacity",
+        "pool",
+        "occupied",
+        "time",
+    }
+    assert len(by_room["ALL1"]["reasons"]) == 6
+    assert len(by_room["OK1"]["reasons"]) == 1  # only the time issue, shared by every room
+    assert len(by_room["BUSY1"]["reasons"]) == 2
+
+    # Without the same-course rival there is no time issue, and no reason for it.
+    clash.delete()
+    calm = preview_placement_room_candidates(subject.id)
+    assert _assert_every_reason_follows_its_flag(calm) == {
+        "type",
+        "gender",
+        "capacity",
+        "pool",
+        "occupied",
+    }
+    calm_by_room = {row["room_code"]: row for row in calm["candidates"]}
+    assert calm_by_room["OK1"]["reasons"] == []
+    assert len(calm_by_room["ALL1"]["reasons"]) == 5
