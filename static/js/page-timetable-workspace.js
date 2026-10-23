@@ -2173,14 +2173,22 @@ const LENS_UNKNOWN = IS_AR ? '(جارٍ التحقق)' : '(checking)';
 
 /* The lens on request (Selection's Refresh, a saved mark): one quality read
    with the lens. Selection says it is loading, then shows the answer (the
-   read draws the open tab again), and a screen reader hears it arrive. */
+   read draws the open tab again), and a screen reader hears what landed:
+   "updated" only for a lens of the data now. A read overtaken by a plain
+   one (an edit made meanwhile, with no programme in the filter) brings no
+   lens, so the mix held is from before that edit, as Selection says. */
 async function refreshPlanLens() {
   const read = refreshWorkspaceQuality(true, { lens: true });
   redrawSelection();
   await read;
-  announceInspector(TW.planLens.loaded && !TW.planLens.failed
+  const lens = TW.planLens;
+  // Not of the data now: older than it, unless a read failed for it (or
+  // none is held), as Selection says.
+  announceInspector(lens.loaded && !lens.failed && lens.version === TW.dataVersion
     ? (IS_AR ? 'حُدِّث توزيع البرامج.' : 'Programme mix updated.')
-    : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
+    : lens.loaded && lens.failedVersion !== TW.dataVersion
+      ? (IS_AR ? 'توزيع البرامج من قبل آخر تعديل.' : 'The programme mix is from before your last change.')
+      : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
 }
 
 /* After a quality read that asked for the lens: the left list filters anew

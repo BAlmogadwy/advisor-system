@@ -1745,6 +1745,31 @@ findings changed the plan:
    holds by `programme_view`; each scenario made one `quality/?lens=1` read
    and no other quality or `/plan-lens/` read across its five boards and
    forty filters.
+   **After review (6d):** a Refresh (or a saved mark) overtaken by a plain
+   read, an edit made while it read with no programme in the filter,
+   brought no lens and still said "Programme mix updated.": the lens held
+   was loaded and not failed, though from before the edit (the old
+   `/plan-lens/` code said the same). `refreshPlanLens` now says it only
+   for a lens of the data now. A lens held that is older than the data,
+   with no read failed for the data now, is "The programme mix is from
+   before your last change." ("توزيع البرامج من قبل آخر تعديل."), as
+   Selection says with its Refresh; a read failed for the data now, or no
+   lens held (a reset), is "The programme mix is not available." as before.
+   LN12 pins the three, in English and Arabic: overtaken by a plain read,
+   by a read with the lens (a programme typed meanwhile: updated), and by a
+   reset. Mutation-checked: 9 mutants of the announcement (each term of
+   both conditions, the words in both languages) all go red, in LN12 or
+   LN5c.
+   Recorded, not changed: after a re-read of the same data that fails,
+   Selection keeps the mix it had ("could not be read again") while the
+   board drops every lens dim, as `lensView` says `failed` though the held
+   roles still describe the data. That is the spec's state table ("Read
+   failed → none for the lens", pinned by LN5c); a follow-up may align the
+   two. The reviewer's surviving mutant, `resetPlanLens` no longer clearing
+   `TW.lensKeyShown`, is equivalent: after a reset the lens is unloaded, so
+   `lensView` holds no view and says `checking`, and the first lens answer
+   runs `applyGridView`, which writes `lensKeyShown` before anything reads
+   the old key. The line stays as a guard.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any

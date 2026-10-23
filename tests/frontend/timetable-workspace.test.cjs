@@ -2188,6 +2188,68 @@ test('after an edit the mix and its trade-off say how old they are; Refresh read
   assert.ok(h.body().contains(h.d.activeElement), 'the keyboard stays in the panel');
 });
 
+test('LN12 a Refresh overtaken by a plain read (an edit made meanwhile) never says the mix was updated, but how old it is; by a read with the lens, it was; by a reset, none is held', async t => {
+  for (const arabic of [false, true]) {
+    const holds = {};
+    // A programme view, so that AI2 typed is a programme.
+    const view = { programmes: ['AI', 'AI2'], roles: { AI2: { main: [10, 13] } }, shared_roles: {}, placement_ids: [10, 11, 12, 13], seating_assessed: true };
+    const h = await markHarness(t, { arabic, lens: () => LENS({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }, view),
+      hold: { lens: n => holds[n]?.promise } });
+    const status = h.d.getElementById('twInspectorStatus');
+    card(h, 10).click();
+    h.w.TW.dataVersion++;  // an edit
+    h.w.renderRightPanel('selection');
+    const [lens0, quality0] = [h.seen.lens, h.seen.quality];
+    holds[lens0 + 1] = deferred();
+    status.textContent = '';
+    h.body().querySelector('[data-tw-lens-refresh]').click();
+    await settle();
+    assert.equal(h.seen.lens, lens0 + 1, 'the Refresh reads the lens');
+    // Another edit while it reads, with no programme in the filter: the
+    // board's read is plain and overtakes it.
+    h.w.TW.dataVersion++;
+    assert.equal(h.w.lensWanted(), false);
+    await h.w.refreshWorkspaceQuality(false, { lens: h.w.lensWanted() });
+    assert.deepEqual([h.seen.lens, h.seen.quality], [lens0 + 1, quality0 + 2], 'a plain read');
+    holds[lens0 + 1].resolve();
+    await wait(() => status.textContent !== '');
+    assert.equal(status.textContent, arabic ? 'توزيع البرامج من قبل آخر تعديل.' : 'The programme mix is from before your last change.');
+    assert.notEqual(h.w.TW.planLens.version, h.w.TW.dataVersion, 'the mix held is from before the edit');
+    assert.match(h.body().textContent, arabic ? /من قبل آخر تعديل/ : /From before your last change/, 'as Selection says');
+    assert.equal(h.body().querySelector('[data-tw-lens-refresh]')?.disabled, false, 'with its Refresh');
+    // Overtaken by a read with the lens (a programme typed meanwhile), the
+    // mix is of the data now: updated.
+    holds[lens0 + 2] = deferred();
+    status.textContent = '';
+    h.body().querySelector('[data-tw-lens-refresh]').click();
+    await settle();
+    h.w.TW.dataVersion++;
+    await findText(h, 'AI2');
+    await wait(() => h.seen.lens === lens0 + 3 && h.w.TW.planLens.version === h.w.TW.dataVersion);
+    assert.equal(status.textContent, '', 'nothing said before the Refresh ends');
+    holds[lens0 + 2].resolve();
+    await wait(() => status.textContent !== '');
+    assert.equal(status.textContent, arabic ? 'حُدِّث توزيع البرامج.' : 'Programme mix updated.');
+    // Overtaken by a reset (a reload after a planner job forgets the lens and
+    // the read in flight): no mix is held, as Selection says.
+    h.w.TW.dataVersion++;
+    h.w.renderRightPanel('selection');
+    holds[lens0 + 4] = deferred();
+    status.textContent = '';
+    h.body().querySelector('[data-tw-lens-refresh]').click();
+    await settle();
+    assert.equal(h.seen.lens, lens0 + 4);
+    h.w.resetPlanLens();
+    holds[lens0 + 4].resolve();
+    await wait(() => status.textContent !== '');
+    const none = arabic ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.';
+    assert.equal(status.textContent, none);
+    h.w.renderRightPanel('selection');
+    assert.ok(h.body().textContent.includes(none), h.body().textContent);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
 test('an older lens answer never replaces a newer one', async t => {
   const first = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI2: n } } }),
