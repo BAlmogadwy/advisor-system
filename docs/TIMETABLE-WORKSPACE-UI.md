@@ -334,6 +334,16 @@ Stage 3 (to evaluate): a time-proportional week grid.
   roles follow the allocation and the marks. A view that cannot be built is
   `null` (logged), never at the cost of the lens or the quality keys.
   `/plan-lens/` does not carry it.
+- The workspace (not split view) reads the plan lens only with the quality
+  (`quality/?lens=1`, 6d), while it is wanted: the first quality read of an
+  opened or reset scenario, while the filter holds a programme or SHARED, on
+  Selection's Refresh and after a saved mark; every other read is plain. One
+  quality read is in flight; a request joins it when it is about the same
+  scenario and data and has the lens or needs none. The lens is never part of
+  `TW.quality`. A programme in the filter dims by `programme_view`'s roles
+  (any role, over the union; `shared_roles` with SHARED); the page holds no
+  copy of the per-plan rule, and a meeting the roles never saw is unknown,
+  never dimmed.
 
 ## 6. Acceptance
 
@@ -1593,6 +1603,148 @@ findings changed the plan:
    the fold's cell spans `numSlots + 1` columns: a screen reader may give
    their column positions loosely (the keyboard, by `data-ux-col`, is right
    and tested).
+   **As built, 6d (the lens from the quality read):** the page reads the plan
+   lens only through `quality/?lens=1` and never reads `/plan-lens/` (split
+   view still does, E22). `loadPlanLens`, its read record and its revision
+   are gone; `resetPlanLens` stays and now also forgets the quality read in
+   flight, which carries the lens (a reload after a planner job keeps the
+   data version, not the timetable). One read is in flight at a time
+   (`qualityRead = {scenarioId, version, lens, promise}`, contract C): a
+   request joins it when the scenario and data match and it has the lens or
+   none is needed; any other starts a new read and only the newest lands. A
+   read overtaken by a newer one resolves with the newer one, so a board's
+   load (`boardLoading`) holds until the quality it will show (LN9); a
+   caller of the older read used to resume while the newer read was still
+   out. `refreshWorkspaceQuality(force, {lens = lensWanted()})`: the
+   board's read passes `lensWanted()` explicitly, as the spec says, and every
+   other caller gets it by default, so the Generate path asks for it too.
+   `lensWanted()` is true while no lens answer (or failure) has come since the
+   scenario opened or the lens was reset, or while the filter holds a
+   programme or SHARED; Refresh and a saved mark pass `{lens: true}`. A
+   non-forced read reuses the held quality only when the lens is not wanted
+   or is current (`lensCurrent`). The answer is split
+   (`const {plan_lens, ...quality} = data`): the lens never sits in
+   `TW.quality`. Every path that opens another scenario resets the lens
+   (`onScenarioChange`, `resetWorkspace`, and now Generate's in-place
+   switch to the scenario it made, which kept the previous scenario's lens
+   until a reload: LN1b), so the lens is always this scenario's.
+   A lens read that fails, or answers `plan_lens: null`, keeps what the lens
+   had and marks it `failed`, with `failedVersion` the data it was about;
+   `programme_view: null` is a lens without a view. Neither is asked again
+   by typing or by a board switch for the same data (the spec's "stale"
+   would re-read on every keystroke and every switch while the lens cannot
+   be built); the next edit asks again, and so does Selection's Refresh.
+   **Dims by the server's roles.** `lensRoles(p, query, view)` reads
+   `programme_view`: for each programme of the filter (SHARED alone: every
+   programme of the view), the role its per-plan file gives the meeting
+   (`shared_roles` under SHARED), or null when the meeting is unknown (no
+   programme or SHARED, no roles, an id not in `placement_ids`). `inLens` is
+   "any role" over the union; the interim allocation rule of 6c
+   (`itemMatchesPlanToken`'s section branch) is gone, and what is left of it,
+   the course branch, is the left list's own question ("does P need this
+   course", E12) as `courseMatchesPlanToken`. The programme tokens are the
+   view's `programmes`; before a view is held, the boards' programmes
+   (upper-cased, board order; those the lens knows when a lens without a view
+   is held), as E5b says. The states (`lensView`): `fresh`; `updating`, the
+   data moved on since the board was dimmed for these same programmes, so
+   the old roles stay (a new meeting is unknown, so not dimmed) until the
+   new ones land; `checking`, no roles to show for these programmes yet (a
+   programme typed while its roles are read, or after an edit made without
+   it: nothing is dimmed for the lens, as the spec's table says); `failed`,
+   the last read gave no view: nothing is dimmed. "The same programmes" is
+   `TW.lensKeyShown`, written by `applyGridView` (the programmes and SHARED
+   the cards were last dimmed for from roles that were current, or kept), so
+   switching programmes while roles are read shows "checking", not roles the
+   user never saw. A card's title adds its role words for each programme
+   ("AI2: its own section", "… mixed section (5 of 12)", "… seats 2 of 30;
+   mainly another programme's", "… outside its plan; its file lists the
+   course as placed"; c and t from its section's lens row, the numbers the
+   server classified it by), "(checking)" when unknown, and nothing while
+   the view could not be read. The count's sentence is unchanged and the lens
+   follows it as its own sentence(s): "{P}: {n} of {total} meetings in its
+   timetable" per programme (n counted over the board, by the roles),
+   "{P}: checking…", "{P}: updating…", or "The programme view could not be
+   read; nothing is dimmed for {P}." With the seating unassessed the
+   allocation sentence follows. Roles arriving change attributes and text
+   only: the same cards, the focus kept, no node added or removed (LN4).
+   **Deviations from the spec's words**, each to keep a sentence true: the
+   shared note names its programmes ("Not a shared section in AI2's
+   timetable", "… in these timetables: AI, AI2") and SHARED alone says "Not a
+   shared section in any programme's timetable" (the spec's "these
+   timetables" had nothing to point at); the count's lens part is a sentence
+   after the count's, not the 6c clause "programme filter: {P}"; under
+   SHARED it reads "{P} (shared sections only): …", and SHARED alone
+   "Shared sections: {n} of {total} meetings in the programmes' timetables";
+   the Arabic count after من keeps 6c's genitive plural (لقاء واحد، لقاءين، 3
+   لقاءات، 11 لقاءً) where the spec wrote "{total} لقاء"; the Arabic failure
+   for several programmes or SHARED is "لم يُبهَت شيء لتصفية البرامج: …" (the
+   spec's "للبرنامج {P}" names one); the seating words come in three forms
+   (one programme, several, none: Selection's, which is about a section, not
+   a programme). The legend has two dim lines: 6c's "Dimmed: outside the
+   filter" for a text dim, and `#twLegendDimLens` for a lens dim, "Dimmed: "
+   and the lens's note ("Dimmed: not in AI2's timetable"), its words
+   rewritten in place (a text node, so typing a programme adds no node to the
+   board). The export scope names the programmes ("Programme AI2 only",
+   "Programmes AI2, DS only"), "Shared sections only" and the text, joined
+   by " · ", each programme isolated.
+   **Selection (E20):** the 4b words; "—" plus "The seating could not be
+   evaluated: sections follow the plan's allocation, as the per-plan files
+   do." when the seating is unassessed (never "No student of this scenario
+   sits here"); a read again that failed keeps the mix it had and says "The
+   programme mix could not be read again.", then "From before your last
+   change." when it is older than the data, with Refresh. A saved mark makes
+   one quality read with the lens and then the publish check (LN7: one
+   quality read in all, none of `/plan-lens/`, no Refresh after).
+   **Names (E19):** `duplicatedCodes()` is computed once per lens (it was a
+   scan of every course key per card); the board records the set it was
+   drawn with (`TW.drawnDupKey`) and a lens answer draws it again only when
+   the set changed (LN8: on open, drawn without names, then once with them;
+   the same set again, no redraw).
+   Versions: PAGE ?v=59 (`timetable-workspace.css`, `global.css` and
+   `ux-controls.js` unchanged).
+   **Tests:** LN1–LN11 with LN1b, LN5b–LN5d (`timetable-workspace.test.cjs`);
+   FL10 now dims by the roles (a spec change); the 4b and lens-mechanics
+   tests (older answer, joins, reset, older read finishing, Refresh, the
+   programme filter read anew) are re-pinned on the quality read, and
+   "older read finishing" now also pins that its caller waits for the newer
+   read (a behaviour change); the board harness answers no `/plan-lens/`, so
+   any read of it fails a test; `timetable-outcomes` gives the sliced
+   Generate a `resetPlanLens`; the copy and integration harnesses serve the
+   lens with the quality. Chrome: `LensTests`
+   (`tests/test_timetable_workspace_lens_browser.py`; the browser support
+   records every URL a page asks for). FL2 (6c) watched the board with a
+   MutationObserver whose callback was handed, and so emptied, the queue
+   before `takeRecords()` read it, after an await: it could see nothing.
+   FL2 and LN4 now keep every record they are handed.
+   Mutation-checked: 78 jsdom mutants of the page (the reading rule, the
+   joins and the newest-wins rule, failures, the roles and SHARED, the
+   states, every new string's form, the legend, the export scope,
+   Selection, the mark save, names) and 6 Chrome mutants (the roles by the
+   allocation, "other" dimmed, a `/plan-lens/` read kept, the legend line
+   for the wrong dim or faded, the scope as text). 73 jsdom mutants went
+   red at once. Of the 5 that survived, 3 now go red on a stronger test: a
+   reset that kept the read in flight (the reset test now lets the
+   forgotten read land before any other starts), the lens folding a table
+   whose text matches only a meeting the lens dims (LN3, "ds cs1"), and the
+   legend's words rebuilt as a node (LN4, once its observer kept its
+   records). 2 were equivalent by construction, and their code is gone: a
+   scenario tag on the lens (every path that opens another scenario resets
+   it) and a `failedVersion` for a lens with no view (its own version
+   already says it is current). Re-running the changed lines found a third
+   equivalent, a loading flag the failure wrote after the read had cleared
+   it, also gone (its mutant, the read's own clear, goes red). The 76 that
+   remain, and the 6 Chrome mutants, all go red.
+   Follow-up (recorded, not done): a lens whose programme view alone could
+   not be built (`programme_view: null`, the lens itself current) offers no
+   Refresh in Selection, whose mix is current; the dims say so in the
+   count's description and are read again by the next edit.
+   **Real data** (a copy of the QA database, production flags, the page on
+   a dev server, Chrome): on scenarios 663, 665 and 666, every board and
+   every board programme, with and without SHARED (120 cases), the count
+   "{n} of {total}" equals the meetings of that board the programme's file
+   holds by `programme_view`; each scenario made one `quality/?lens=1` read
+   and no other quality or `/plan-lens/` read across its five boards and
+   forty filters.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
