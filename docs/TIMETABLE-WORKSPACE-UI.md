@@ -1918,7 +1918,8 @@ findings changed the plan:
    holds, inert, one save at a time, the open's refusals; SD9 Arabic (times
    left to right, `pluralAr` lengths, isolated names and review times, the
    template's arms); SD10 a save the user left; SD11 a draft older than
-   the saved columns; SD12 a time typed in Arabic digits. Chrome
+   the saved columns, SD11b one whose column's label, start or end alone
+   changed (the confirm's ask; each field's mutant goes red); SD12 a time typed in Arabic digits. Chrome
    (`tests/test_timetable_workspace_slot_dialog_browser.py`,
    `SlotDialogTests`): SDB1 at 1366×650 and 1440×790, light and dark, en
    and ar, wide font (the head and Save in view while the rows scroll, no
