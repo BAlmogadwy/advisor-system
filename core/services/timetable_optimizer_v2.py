@@ -224,6 +224,40 @@ def _compute_pattern_id(meetings: list[SectionMeeting]) -> str:
     return generate_pattern_id(sig)
 
 
+class IncompletePolicyPattern(ValueError):
+    """An English (meeting-policy) section whose board copies do not share one
+    complete weekly pattern: some copy is not a complete pattern, or two
+    copies are different ones.
+
+    A ``ValueError`` with the same words as before, so every engine that
+    raised it still raises it; it also says which section (``term_section_id``,
+    its display ``course_code`` and ``section``) and which boards it sits on
+    (``board_ids``, ascending), so a display path can name them.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        term_section_id: int | None = None,
+        course_code: str = "",
+        section: str = "",
+        board_ids: tuple[int, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.term_section_id = term_section_id
+        self.course_code = course_code
+        self.section = section
+        self.board_ids = tuple(board_ids)
+
+
+#: ``build_section_states_for_scenario(incomplete=...)``: an engine raises on
+#: an incomplete English section; a display path collects it and goes on.
+INCOMPLETE_RAISE = "raise"
+INCOMPLETE_COLLECT = "collect"
+INCOMPLETE_MODES = (INCOMPLETE_RAISE, INCOMPLETE_COLLECT)
+
+
 def _validated_policy_placement_pattern(
     policy: CourseMeetingPolicy,
     placements: list[SectionPlacement],
@@ -232,26 +266,53 @@ def _validated_policy_placement_pattern(
     copies: dict[int, list[SectionPlacement]] = defaultdict(list)
     for placement in placements:
         copies[placement.board_id].append(placement)
+
+    def incomplete(message: str) -> IncompletePolicyPattern:
+        ts = placements[0].term_section if placements else None
+        return IncompletePolicyPattern(
+            message,
+            term_section_id=placements[0].term_section_id if placements else None,
+            course_code=(
+                course_display_code(ts.course_key, ts.course_code, ts.course_number) if ts else ""
+            ),
+            section=ts.section if ts else "",
+            board_ids=tuple(sorted(copies)),
+        )
+
     pattern = None
     for rows in copies.values():
         current = policy.pattern_for(rows)
         if current is None or (pattern is not None and current != pattern):
-            raise ValueError("English board copies must each use the same complete weekly pattern")
+            raise incomplete("English board copies must each use the same complete weekly pattern")
         pattern = current
     if pattern is None:
-        raise ValueError("English section requires a complete weekly pattern")
+        raise incomplete("English section requires a complete weekly pattern")
     return pattern
 
 
 def build_section_states_for_scenario(
     scenario_id: int,
+    *,
+    incomplete: str = INCOMPLETE_RAISE,
+    collected: list[IncompletePolicyPattern] | None = None,
 ) -> list[SectionState]:
     """Convert current SectionPlacement rows → list[SectionState].
 
     Groups placements by TermSection, converts day/time strings to
     SectionMeeting bitmasks, fills capacity from ScenarioSectionBudget,
     and computes pattern_family + pattern_id for local search.
+
+    An English section whose board copies do not share one complete weekly
+    pattern raises :class:`IncompletePolicyPattern` (``incomplete="raise"``,
+    every engine). ``incomplete="collect"`` (the display paths: the one-teacher
+    map a page or an export reads) leaves that section out and appends its
+    error to ``collected`` instead; every other section is built as usual and
+    any other error still raises.
     """
+    if incomplete not in INCOMPLETE_MODES:
+        raise ValueError(f"incomplete must be one of {INCOMPLETE_MODES}, not {incomplete!r}")
+    if incomplete == INCOMPLETE_COLLECT and collected is None:
+        raise TypeError("incomplete='collect' needs a list to collect into")
     placements = (
         SectionPlacement.objects.filter(board__scenario_id=scenario_id)
         .select_related("term_section", "board")
@@ -294,7 +355,14 @@ def build_section_states_for_scenario(
         course_code = ts.course_key or ts.course_code
         budget = budgets.get(course_code)
         policy = get_course_meeting_policy(ts.course_code, ts.course_key, ts.course_number)
-        permitted = _validated_policy_placement_pattern(policy, pls) if policy else None
+        try:
+            permitted = _validated_policy_placement_pattern(policy, pls) if policy else None
+        except IncompletePolicyPattern as exc:
+            if incomplete == INCOMPLETE_RAISE:
+                raise
+            assert collected is not None  # checked above
+            collected.append(exc)
+            continue
         # Online-ness is a COURSE property keyed by the BARE code; course_code
         # above is the planner ``CODE::NAME`` identity, so pass ts.course_code.
         delivery_is_online = online_lookup.is_online_course_for_board(
@@ -396,7 +464,9 @@ def build_section_states_for_scenario(
     return sections
 
 
-def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, frozenset[int]]:
+def build_section_instructor_map_for_scenario(
+    scenario_id: int, *, incomplete: str = INCOMPLETE_RAISE
+) -> dict[str, frozenset[int]]:
     """``{section_id: frozenset[instructor_id]}`` for the instructor idle-gap term.
 
     Keys use the **same** ``section_id`` convention as
@@ -414,13 +484,16 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
     With one teacher per section (``is_one_teacher_active``) every charged
     section maps to the singleton of its one teacher, pinned and frozen ones
     included; a section still to be decided charges nobody and is absent.
+    ``incomplete`` is ``load_assignment``'s: an engine raises on an English
+    section without one complete weekly pattern; the clash backstop
+    (``"collect"``) leaves it absent and checks every other section.
     """
     from core.services.timetable_flags import is_one_teacher_active
 
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        return load_assignment(scenario_id).v2_map()
+        return load_assignment(scenario_id, incomplete=incomplete).v2_map()
 
     scenario = TimetableScenario.objects.filter(id=scenario_id).first()
     if scenario is None:

@@ -10,6 +10,7 @@ from django.contrib.auth.models import Group, User
 from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
+from django.utils.html import escapejs
 
 from core.models import ProgrammeRequirement, Student, TimetableScenario
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, ensure_role_groups
@@ -112,6 +113,47 @@ def test_requested_scope_values_do_not_break_the_rendered_javascript(path, year,
         check=False,
     )
     assert parsed.returncode == 0, parsed.stderr
+
+
+# A ?board= value reaches split view's inline config script. Without escapejs a
+# backslash or a newline ended that script with a syntax error, so LANGUAGE_CODE
+# and the rest of the config were never defined and the page died (SW-05, N-12).
+SPLIT_BOARD_VALUES = {
+    "backslash": chr(92),
+    "quote": 'a"b',
+    "newline": "x" + chr(10) + "y",
+    "script": "</script><script>window.__x=1</script>",
+}
+
+
+@pytest.mark.parametrize("board", SPLIT_BOARD_VALUES.values(), ids=SPLIT_BOARD_VALUES.keys())
+def test_split_page_initial_values_are_javascript_escaped(board, http):
+    scenario = TimetableScenario.objects.create(academic_year="1448", term="2")
+    response = http.get("/timetable-workspace/split/", {"scenario": scenario.id, "board": board})
+    assert response.status_code == 200
+    rendered = response.content.decode()
+    assert f'const INITIAL_BOARD = "{escapejs(board)}";' in rendered
+    assert f'const INITIAL_SCENARIO = "{scenario.id}";' in rendered
+    assert "<script>window.__x=1" not in rendered
+    node = shutil.which("node")
+    if not node:
+        return
+    config = next(
+        script
+        for script in re.findall(r"<script[^>]*>(.*?)</script>", rendered, flags=re.S)
+        if "INITIAL_BOARD" in script
+    )
+    # The script parses, and it hands the page exactly the requested value.
+    ran = subprocess.run(
+        [node, "-"],
+        input=config + ";process.stdout.write(JSON.stringify([INITIAL_BOARD, LANGUAGE_CODE]));",
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert json.loads(ran.stdout) == [board, "en"]
 
 
 def test_workspace_page_lists_the_programmes_that_have_a_degree_plan(http):

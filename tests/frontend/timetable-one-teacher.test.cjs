@@ -18,7 +18,7 @@ const slice = (source, begin, end) => source.slice(source.indexOf(begin), source
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-async function drawer(t, teacher, { arabic = false, meetingName = '' } = {}) {
+async function drawer(t, teacher, { arabic = false, meetingName = '', route = null } = {}) {
   const html = read('core/templates/core/timetable_workspace_split.html')
     .replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://split.test/', pretendToBeVisual: true });
@@ -41,6 +41,14 @@ async function drawer(t, teacher, { arabic = false, meetingName = '' } = {}) {
   w.HTMLElement.prototype.scrollIntoView = () => {};
   w.fetch = async url => {
     requests.push(url);
+    // A test's own answer: {status, body}; no body is a page that is not JSON.
+    const own = route && route(url);
+    if (own) {
+      return {
+        ok: own.status < 400, status: own.status,
+        json: async () => { if (own.body === undefined) throw new SyntaxError('not JSON'); return own.body; },
+      };
+    }
     let body;
     if (url.startsWith('/ops/tw/scenarios/?')) body = { scenarios: [] };
     else if (url === '/ops/tw/boards/2/') body = boardData();
@@ -50,6 +58,8 @@ async function drawer(t, teacher, { arabic = false, meetingName = '' } = {}) {
     else body = { ok: true, candidates: [], instructors: [], summary: {} };
     return { ok: true, status: 200, json: async () => body };
   };
+  // base.html loads shared-utils.js (esc, safeHtml, pluralAr) on every page, first.
+  w.eval(read('static/js/shared-utils.js'));
   w.eval(read('static/js/timetable-meeting-policy.js'));
   // The page loads the shared slot-column module before its own script.
   w.eval(read('static/js/timetable-slot-config.js'));
@@ -65,7 +75,15 @@ async function drawer(t, teacher, { arabic = false, meetingName = '' } = {}) {
   requests.length = 0;
   w.openDrawer(0, 10);
   await settle();
-  return { d, requests, chips: d.getElementById('twsDrawerInstrChips') };
+  return { w, d, state, requests, chips: d.getElementById('twsDrawerInstrChips') };
+}
+
+/* The right panel's Selection tab for the drawer's placement. */
+async function selection(h) {
+  h.state.selectedPlacementId = 10;
+  h.w.openSelectionInspector();
+  await settle();
+  return h.d.getElementById('twsRpanelBody');
 }
 
 test('the drawer names the section\'s own teacher and hides the dead link editor', async t => {
@@ -89,7 +107,113 @@ for (const arabic of [false, true]) {
     const h = await drawer(t, { id: null, name: null, status: 'no_links', source: null, reason: null }, { arabic });
     assert.equal(h.chips.textContent.trim(), arabic ? 'لا يوجد' : 'None');
   });
+  // B2 (stage 3): an English section with no one complete weekly pattern.
+  test(`the drawer shows an unknown teacher as a dash and why, never the meeting's name (${arabic ? 'ar' : 'en'})`, async t => {
+    const h = await drawer(t, { id: null, name: null, status: 'unknown', source: null, reason: 'incomplete_english_pattern' }, { arabic, meetingName: 'Registrar Name' });
+    assert.equal(h.chips.querySelector('.tws-instr-none').textContent, '—');
+    assert.equal(h.chips.querySelector('.tws-instr-hint').textContent, arabic
+      ? 'لم يُعرض المدرّس: ليس لهذه الشعبة الإنجليزية نمط أسبوعي كامل واحد على كل اللوحات. احذفها وضعها من جديد.'
+      : 'Teacher not shown: this English section does not have one complete weekly pattern on every board. Remove it and place it again.');
+    assert.doesNotMatch(h.chips.textContent, /Registrar Name/);
+    assert.equal(h.d.querySelector('.tws-drawer-instr-edit'), null);
+  });
 }
+
+for (const arabic of [false, true]) {
+  // Review of B2: split's Selection tab and the drawer's meeting rows printed
+  // the meeting row's name beside the drawer's "—".
+  test(`split's Selection tab shows an unknown teacher as a dash and why, and protects no one (${arabic ? 'ar' : 'en'})`, async t => {
+    const h = await drawer(t, { id: null, name: null, status: 'unknown', source: null, reason: 'incomplete_english_pattern' }, { arabic, meetingName: 'Registrar Name' });
+    const body = await selection(h);
+    const field = body.querySelector('#twsSelInstructor');
+    assert.equal(field.querySelector('.tws-instr-none').textContent, '—');
+    assert.match(field.querySelector('.tws-instr-hint').textContent, arabic ? /^لم يُعرض المدرّس:/ : /^Teacher not shown: this English section/);
+    assert.doesNotMatch(body.textContent, /Registrar Name/);
+    assert.equal(body.querySelector('[data-protect="instructor"]').disabled, true);
+  });
+}
+
+test('split\'s Selection tab names the rule\'s teacher and protects that teacher, never a stale meeting name', async t => {
+  const h = await drawer(t, { id: 7, name: 'Dr B', status: 'engine', source: 'engine', reason: null }, { meetingName: 'stale' });
+  const body = await selection(h);
+  assert.equal(body.querySelector('#twsSelInstructor').textContent.trim(), 'Dr B');
+  assert.doesNotMatch(body.textContent, /stale/);
+  const protect = body.querySelector('[data-protect="instructor"]');
+  assert.equal(protect.disabled, false);
+  protect.click();
+  await settle();
+  assert.deepEqual([...h.state.protections.instructors], ['DR B']);
+  assert.match(h.d.getElementById('twsRpanelBody').querySelector('.tws-protect-note').textContent, /protected instructor Dr B/);
+});
+
+test('split\'s Selection tab without the rule keeps the meeting\'s name', async t => {
+  const h = await drawer(t, undefined, { meetingName: 'Registrar Name' });
+  const body = await selection(h);
+  assert.equal(body.querySelector('#twsSelInstructor').textContent, 'Registrar Name');
+  assert.equal(body.querySelector('[data-protect="instructor"]').disabled, false);
+});
+
+test('the drawer\'s meeting rows name no one with the rule on, as classic; without it, the meeting\'s name', async t => {
+  for (const teacher of [{ id: null, name: null, status: 'unknown', source: null, reason: 'incomplete_english_pattern' }, { id: 7, name: 'Dr B', status: 'engine', source: 'engine', reason: null }]) {
+    const h = await drawer(t, teacher, { meetingName: 'Registrar Name' });
+    const rows = [...h.d.querySelectorAll('#twsDrawerBody .meeting-row')].map(row => row.textContent);
+    assert.equal(rows.length, 1);
+    assert.doesNotMatch(rows[0], /Registrar Name/);
+    assert.match(rows[0], /R1$/);
+  }
+  const off = await drawer(t, undefined, { meetingName: 'Registrar Name' });
+  assert.match(off.d.querySelector('#twsDrawerBody .meeting-row').textContent, /R1 · Registrar Name$/);
+});
+
+for (const arabic of [false, true]) {
+  // Review of B2: the 409 in words never reached the page; the Students panel
+  // said "Calculating..." for ever.
+  test(`the Students panel shows the server's words when it refuses, and asks again next time (${arabic ? 'ar' : 'en'})`, async t => {
+    const words = arabic
+      ? 'تحتاج تعارضات الطلاب الفعلية إلى نمط أسبوعي كامل واحد لكل شعبة إنجليزية، والشعبة ENG102 S1 ليست كذلك. احذفها وضعها من جديد.'
+      : 'Student blockers need every English section on one complete weekly pattern; ENG102 S1 is not. Remove it and place it again.';
+    const route = url => (url.endsWith('/student-blockers/')
+      ? { status: 409, body: { ok: false, error: { code: 'INCOMPLETE_ENGLISH_PATTERN', message: `${words}<b>` } } }
+      : null);
+    const h = await drawer(t, undefined, { arabic, route });
+    h.w.toggleRpanel(true);
+    h.w.setRpanelTab('students');
+    await settle();
+    const body = h.d.getElementById('twsRpanelBody');
+    assert.equal(body.querySelector('[role="status"]').textContent, `ⓘ${words}<b>`, 'escaped, never markup');
+    assert.equal(body.querySelector('b'), null);
+    assert.doesNotMatch(body.textContent, /Calculating|جاري حساب/);
+    assert.equal(h.d.getElementById('twsRpCountStudents').textContent, '—');
+    h.w.setRpanelTab('issues');
+    h.w.setRpanelTab('students');
+    await settle();
+    assert.equal(h.requests.filter(url => url.endsWith('/student-blockers/')).length, 2, 'a refusal is not cached');
+  });
+  test(`the Students panel says so in its own words when the answer is not JSON (${arabic ? 'ar' : 'en'})`, async t => {
+    const h = await drawer(t, undefined, { arabic, route: url => (url.endsWith('/student-blockers/') ? { status: 500 } : null) });
+    h.w.toggleRpanel(true);
+    h.w.setRpanelTab('students');
+    await settle();
+    assert.equal(h.d.getElementById('twsRpanelBody').textContent, arabic
+      ? 'ⓘتعذّر حساب تعارضات الطلاب الفعلية. حاول مرة أخرى.'
+      : 'ⓘStudent blockers could not be calculated. Try again.');
+  });
+}
+
+test('the shared rule reads an unknown teacher as its own state, in the page’s language', () => {
+  for (const [lang, hint] of [['en', /^Teacher not shown: this English section/], ['ar', /^لم يُعرض المدرّس:/]]) {
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only' });
+    dom.window.LANGUAGE_CODE = lang;
+    dom.window.eval(read('static/js/timetable-section-teacher.js'));
+    const rule = dom.window.TimetableSectionTeacher;
+    const seen = rule.teacherOf({ teacher: { status: 'unknown', reason: 'incomplete_english_pattern', name: 'Stale' }, meetings: [{ instructor: 'Registrar Name' }] });
+    assert.equal(seen.state, 'unknown');
+    assert.equal(seen.name, '');
+    assert.match(seen.hint, hint);
+    assert.equal(rule.words.unknown, '—');
+    dom.window.close();
+  }
+});
 
 test('a section the map leaves out keeps its meeting name', async t => {
   for (const teacher of [null, { id: null, name: null, status: 'no_links', source: null, reason: null }]) {

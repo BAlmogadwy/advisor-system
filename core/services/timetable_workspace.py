@@ -587,7 +587,9 @@ def detect_board_conflicts(board_id: int) -> dict:
         board_courses = {item.course_key for item in items}
         overlap_matrix = build_overlap_matrix(board.scenario_id, board_courses)
         if is_instructor_links_enabled():
-            link_map = build_section_instructor_ids(board.scenario)
+            # The board's checks are a display read: an English section with
+            # no one complete pattern is left out, never a 500 (B2).
+            link_map = build_section_instructor_ids(board.scenario, incomplete="collect")
     except DeliveryBoard.DoesNotExist:
         overlap_matrix = {}
 
@@ -780,7 +782,9 @@ def _load_section_teachers(scenario_id: int) -> _SectionTeachers:
     from core.models import Instructor
     from core.services.section_teacher_assignment import CHARGED, STATUS_TBD, load_assignment
 
-    assignment = load_assignment(scenario_id)
+    # A display read (previews, the manual checks, the publish check): an
+    # unknown English section is left out (B2), so its meeting name decides.
+    assignment = load_assignment(scenario_id, incomplete="collect")
     names = dict(
         Instructor.objects.filter(
             pk__in={t for t in assignment.teacher.values() if t is not None}

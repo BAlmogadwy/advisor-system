@@ -225,11 +225,13 @@ class TestSiblingSectionsAreNotPhantomClashes:
         )
         monkeypatch.setattr(
             "core.services.timetable_optimizer_v2.build_section_instructor_map_for_scenario",
-            lambda _sid: links,
+            # The backstop reads in "collect" mode (B2): an English section with
+            # no one complete weekly pattern is left out, not a failed check.
+            lambda _sid, **_mode: links,
         )
         monkeypatch.setattr(
             "core.services.timetable_optimizer_v2.build_section_states_for_scenario",
-            lambda _sid: list(sections.values()),
+            lambda _sid, **_mode: list(sections.values()),
         )
         return backstop.scenario_instructor_clash_report(1)
 

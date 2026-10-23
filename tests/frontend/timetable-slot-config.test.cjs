@@ -333,6 +333,8 @@ async function split(t, answer) {
     else body = { ok: true, placements: [], candidates: [], boards: [] };
     return { ok: !body.httpError, status: body.httpError || 200, json: async () => body };
   };
+  // base.html loads shared-utils.js (esc, safeHtml, pluralAr) on every page, first.
+  w.eval(read('static/js/shared-utils.js'));
   w.eval(read('static/js/timetable-meeting-policy.js'));
   w.eval(read('static/js/timetable-slot-config.js'));
   w.eval(read('static/js/timetable-section-teacher.js'));
