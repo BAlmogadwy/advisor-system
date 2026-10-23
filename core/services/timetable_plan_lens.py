@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.models import ScenarioSectionBudget, Student, TermSection
+from core.models import ScenarioSectionBudget, Student, TermSection, TimetableScenario
+from core.services import timetable_programme_view
 from core.services import timetable_student_assignment as ssa
 from core.services.timetable_assignment_models import StudentAssignmentState
 from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
@@ -299,6 +300,7 @@ def build_scenario_plan_lens(
     *,
     seating: SeatingEvidence | None = None,
     demands: list[StudentCourseDemand] | None = None,
+    programme_view: bool = False,
 ) -> dict[str, Any]:
     """Build a read-only programme/plan lens over one shared scenario pool.
 
@@ -306,7 +308,10 @@ def build_scenario_plan_lens(
     the lens does not seat again; without it the lens seats on its own.
     ``demands``: this scenario's ``load_scenario_course_demands`` rows, when
     the caller has read them already. The payload ends with ``seating``
-    (``SeatingEvidence.payload``).
+    (``SeatingEvidence.payload``), then, with ``programme_view`` (only
+    ``quality/?lens=1`` asks), ``programme_view``: what each board programme's
+    per-plan file shows (``timetable_programme_view.programme_view``), or
+    ``None`` when it cannot be built.
     """
     if demands is None:
         demands = load_scenario_course_demands(scenario_id)
@@ -427,4 +432,17 @@ def build_scenario_plan_lens(
     if marks_on:
         lens["programme_grouping"] = grouping or None
     lens["seating"] = seating.payload()
+    if programme_view:
+        lens["programme_view"] = _programme_view(scenario_id, lens)
     return lens
+
+
+def _programme_view(scenario_id: int, lens: dict[str, Any]) -> dict[str, Any] | None:
+    """The lens's programme view, or ``None`` when it cannot be built: logged
+    once, and never at the cost of the lens or of the read that asked."""
+    try:
+        scenario = TimetableScenario.objects.get(id=scenario_id)
+        return timetable_programme_view.programme_view(scenario, lens)
+    except Exception:
+        logger.exception("Could not build the programme view of scenario %s", scenario_id)
+        return None

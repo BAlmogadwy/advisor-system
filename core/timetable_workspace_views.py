@@ -1022,7 +1022,9 @@ def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResp
 
     ``?lens=1`` (exactly ``"1"``) adds ``plan_lens``, last: the plan lens from
     the quality read's own seating, so the page pays one seating for both, or
-    ``null`` when it cannot be built. No preview lane, with or without it.
+    ``null`` when it cannot be built. That lens ends with ``programme_view``,
+    what each board programme's per-plan file shows (``null`` when it cannot
+    be built). No preview lane, with or without it.
     """
     deny = _require_general_advisor(request)
     if deny:

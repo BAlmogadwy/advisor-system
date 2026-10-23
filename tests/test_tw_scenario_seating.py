@@ -7,7 +7,9 @@ included), except that the lens payload ends with ``seating``. The lens reads
 its evidence from a seating's states through one derivation
 (``seating_evidence``) and says whether the seating was assessed: a failure is
 logged and never reads as "nobody sits here". A lens that cannot be built never
-costs the quality read.
+costs the quality read. From 6b the lens of ``?lens=1`` ends with
+``programme_view`` (``tests/test_tw_programme_view.py``): without it, it
+equals ``/plan-lens/``.
 """
 
 from __future__ import annotations
@@ -58,11 +60,23 @@ PROGRAMMES = (
 )
 BUDGETS = 'SELECT "scenario_section_budgets"."id", "scenario_section_budgets"."scenario_id"'
 SECTIONS = 'SELECT "term_sections"."id", "term_sections"."scenario_id"'
+SCENARIO = 'SELECT "timetable_scenarios"."id"'
+BOARDS = 'SELECT "delivery_boards"."id"'
+PLACEMENTS = 'SELECT "section_placements"."id"'
+REQUIREMENTS = 'SELECT "programme_requirements"."id"'
+MAPPINGS = 'SELECT "elective_term_mappings"."id"'
+#: The programme view's own reads (6b): the scenario row (the elective
+#: mappings need its year and term), its boards, its placements and its course
+#: keys (budgets, sections), then, per board programme, its plan rows and its
+#: elective mappings (the fixture has one board programme, AI2).
+VIEW_READS = [SCENARIO, BOARDS, PLACEMENTS, BUDGETS, SECTIONS]
+PER_PROGRAMME = [REQUIREMENTS, MAPPINGS]
 #: The reads ``?lens=1`` adds to the plain quality read, in order, when the
 #: quality read hands over its seating and its demand rows: the seated
 #: students' programmes, then the lens's own inputs (the demand's programmes,
-#: budgets, sections). Never the demand again, never a second seating.
-LENS_READS = [PROGRAMMES, PROGRAMMES, BUDGETS, SECTIONS]
+#: budgets, sections), then the programme view's. Never the demand again,
+#: never a second seating.
+LENS_READS = [PROGRAMMES, PROGRAMMES, BUDGETS, SECTIONS, *VIEW_READS, *PER_PROGRAMME]
 
 
 @pytest.fixture
@@ -96,6 +110,16 @@ def _logs(caplog, logger: str) -> int:
 
 def _boom(*_args, **_kwargs):
     raise ValueError("English board copies must each use the same complete weekly pattern")
+
+
+def _lens_and_view(lens: dict) -> tuple[dict, dict]:
+    """``?lens=1``'s lens split: what ``/plan-lens/`` answers, and the
+    programme view it ends with (6b)."""
+    assert list(lens)[-1] == "programme_view"
+    rest = dict(lens)
+    view = rest.pop("programme_view")
+    assert view is not None
+    return rest, view
 
 
 # ── SQ1: without the parameter, nothing changed ──────────────────────────────
@@ -134,9 +158,10 @@ def test_sq2_the_lens_from_quality_equals_plan_lens_from_one_seating(settings, h
         both, _ = read(http, quality_url(fx, "?lens=1"))
     assert seat.call_count == 1
     assert list(both)[-1] == "plan_lens"
-    lens = both.pop("plan_lens")
+    lens, view = _lens_and_view(both.pop("plan_lens"))
     assert _text(both) == _text(plain)
     assert _text(lens) == _text(alone["plan_lens"])
+    assert view["seating_assessed"] is True
     # Not a vacuous equality: students sit, and the mark's grouping shows
     # exactly when the flag is on.
     assert lens["seating"] == SEATED
@@ -164,7 +189,8 @@ def test_sq2b_with_nothing_marked_the_lens_from_quality_reports_no_grouping(sett
     with mock.patch.object(ssa, "assign_students_to_sections", wraps=real) as seat:
         both, _ = read(http, quality_url(fx, "?lens=1"))
     assert seat.call_count == 1  # the lens came from quality's evaluation
-    lens = both["plan_lens"]
+    lens, view = _lens_and_view(both["plan_lens"])
+    assert view["seating_assessed"] is True
     assert lens["seating"] == SEATED
     assert "programme_grouping" in lens and lens["programme_grouping"] is None
     assert alone["plan_lens"]["programme_grouping"] is None
@@ -210,9 +236,10 @@ def test_sq4_a_seating_that_cannot_be_built_is_unknown_on_both_reads(
     caplog.clear()
     both, _ = read(http, quality_url(fx, "?lens=1"))
     assert _logs(caplog, LENS_LOGGER) == 1
-    lens = both.pop("plan_lens")
+    lens, view = _lens_and_view(both.pop("plan_lens"))
     assert _text(both) == _text(plain)
     assert lens["seating"] == FAILED
+    assert view["seating_assessed"] is False
     assert all(row["actual_total"] == 0 for row in lens["sections"].values())
 
     caplog.clear()
@@ -247,8 +274,9 @@ def test_sq4b_a_demand_read_that_raises_leaves_only_the_seats_unknown(
     with mock.patch.object(ssa, "assign_students_to_sections", wraps=real) as seat:
         both, _ = read(http, quality_url(fx, "?lens=1"))
     assert seat.call_count == 1  # quality never seated: the lens seated once
-    lens = both.pop("plan_lens")
+    lens, view = _lens_and_view(both.pop("plan_lens"))
     assert _text(both) == _text(plain)
+    assert view["seating_assessed"] is True
     assert lens["seating"] == SEATED
     assert _text(lens) == _text(alone["plan_lens"])
 
@@ -264,12 +292,15 @@ def test_sq5_no_demand_is_assessed_with_nobody_seated(settings, http):
     both, both_queries = read(http, quality_url(fx, "?lens=1"))
     alone, _ = read(http, lens_url(fx))
     assert both["seats"]["reason"] == "no_student_demand"
-    assert both["plan_lens"]["seating"] == NOBODY
+    lens, view = _lens_and_view(both["plan_lens"])
+    assert lens["seating"] == NOBODY
     assert alone["plan_lens"]["seating"] == NOBODY
-    assert _text(both["plan_lens"]) == _text(alone["plan_lens"])
+    assert _text(lens) == _text(alone["plan_lens"])
+    assert view["seating_assessed"] is True
     # Nobody to seat: the lens reads only budgets and sections (no programme
-    # of nobody), never the demand or the seating's inputs again.
-    own_reads = [BUDGETS, SECTIONS]
+    # of nobody), never the demand or the seating's inputs again; then the
+    # programme view its own.
+    own_reads = [BUDGETS, SECTIONS, *VIEW_READS, *PER_PROGRAMME]
     added = both_queries[len(plain_queries) :]
     assert [q["sql"][: len(p)] for q, p in zip(added, own_reads, strict=True)] == own_reads
 
@@ -324,8 +355,9 @@ def test_sq8_an_instructor_failure_still_gives_the_lens_its_own_seating(
     assert both["instructor"]["reason"] == "assessment_failed"
     assert both["seats"]["assessed"] is False
     assert seat.call_count == 1  # quality never seated: the lens seated once
-    assert both["plan_lens"]["seating"] == SEATED
-    assert _text(both["plan_lens"]) == _text(alone["plan_lens"])
+    lens, _view = _lens_and_view(both["plan_lens"])
+    assert lens["seating"] == SEATED
+    assert _text(lens) == _text(alone["plan_lens"])
 
 
 def test_sq8b_a_failure_after_the_seating_makes_the_lens_seat_on_its_own(
@@ -343,8 +375,9 @@ def test_sq8b_a_failure_after_the_seating_makes_the_lens_seat_on_its_own(
         both, _ = read(http, quality_url(fx, "?lens=1"))
     assert both["seats"]["reason"] == "assessment_failed"
     assert seat.call_count == 2
-    assert both["plan_lens"]["seating"] == SEATED
-    assert _text(both["plan_lens"]) == _text(alone["plan_lens"])
+    lens, _view = _lens_and_view(both["plan_lens"])
+    assert lens["seating"] == SEATED
+    assert _text(lens) == _text(alone["plan_lens"])
 
 
 # ── SQ9: a lens failure never costs the quality read ─────────────────────────
