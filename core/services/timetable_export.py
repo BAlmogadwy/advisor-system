@@ -119,8 +119,13 @@ def _merge_english_spans(ws, row: int, slots: list[dict], placements: list) -> N
 
 
 # One teacher per section: what a grid cell prints for a section whose teacher
-# is still to be decided.
+# is still to be decided, and for one whose teacher is not shown (an English
+# section without one complete weekly pattern: its meetings are not known, so
+# the export names no teacher for it and its first sheet says why).
 TEACHER_TBD = "TBD"
+TEACHER_UNKNOWN = "\u2014"
+#: Teacher texts that name nobody: the Instructors sheet leaves such a section out.
+_NO_TEACHER = frozenset({"", TEACHER_UNKNOWN})
 
 
 def section_teacher_texts(scenario_id: int) -> dict[int, str] | None:
@@ -130,26 +135,163 @@ def section_teacher_texts(scenario_id: int) -> dict[int, str] | None:
 
     ``engine``, ``pinned`` and ``frozen`` sections give their teacher's name; a
     section to be decided gives ``""`` (the grid prints ``TEACHER_TBD``, the
-    Instructors sheet leaves it out). No-links and unknown frozen sections are
+    Instructors sheet leaves it out); an unknown one (an English section
+    without one complete weekly pattern) gives ``TEACHER_UNKNOWN``, left out
+    of the Instructors sheet too. No-links and unknown frozen sections are
     absent and keep their meeting name. None with the rule off.
     """
+    return export_section_teachers(scenario_id)[0]
+
+
+def export_section_teachers(scenario_id: int) -> tuple[dict[int, str] | None, list[dict]]:
+    """``section_teacher_texts`` and the sections it could not name
+    (``unknown_teacher_sections``), from one read of the map."""
     from core.services.timetable_flags import is_one_teacher_active
 
     if not is_one_teacher_active():
-        return None
+        return None, []
     from core.services.section_teacher_assignment import (
         CHARGED,
         STATUS_TBD,
-        section_teacher_display,
+        STATUS_UNKNOWN,
+        section_teacher_view,
     )
 
+    rows, incomplete = section_teacher_view(scenario_id)
     out: dict[int, str] = {}
-    for ts_id, row in section_teacher_display(scenario_id).items():
+    for ts_id, row in rows.items():
         if row["status"] in CHARGED and row["name"]:
             out[ts_id] = row["name"]
         elif row["status"] == STATUS_TBD:
             out[ts_id] = ""
-    return out
+        elif row["status"] == STATUS_UNKNOWN:
+            out[ts_id] = TEACHER_UNKNOWN
+    return out, unknown_teacher_sections(incomplete)
+
+
+def unknown_teacher_sections(incomplete) -> list[dict]:
+    """``[{"course_code", "section", "boards"}]``: each English section whose
+    teacher an export does not show (``IncompletePolicyPattern`` errors), with
+    the labels of the boards it sits on in board order; sorted by course, then
+    section number."""
+    if not incomplete:
+        return []
+    board_ids = {board_id for exc in incomplete for board_id in exc.board_ids}
+    boards = {
+        pk: (order, label)
+        for pk, order, label in DeliveryBoard.objects.filter(pk__in=board_ids).values_list(
+            "pk", "display_order", "label"
+        )
+    }
+
+    def section_order(label: str) -> tuple[int, str]:
+        digits = "".join(ch for ch in label if ch.isdigit())
+        return (int(digits) if digits else 10**6, label)
+
+    out = [
+        {
+            "course_code": exc.course_code,
+            "section": exc.section,
+            "boards": [
+                boards[pk][1]
+                for pk in sorted(
+                    (pk for pk in exc.board_ids if pk in boards),
+                    key=lambda pk: (boards[pk][0], boards[pk][1], pk),
+                )
+            ],
+        }
+        for exc in incomplete
+    ]
+    return sorted(out, key=lambda row: (row["course_code"], section_order(row["section"])))
+
+
+#: The notice's sheet; it is put first.
+TEACHER_NOTICE_SHEET = "Notice"
+
+
+def teacher_notice_lines(sections: list[dict]) -> tuple[str, str]:
+    """The notice in English and in Arabic: which sections have no teacher shown,
+    on which boards, why, and what to do. Codes, sections and board labels are
+    left-to-right runs inside the Arabic sentence (``xlsx_bidi.ltr_run``)."""
+    from core.services.xlsx_bidi import ltr_run
+
+    def named(row: dict, *, arabic: bool) -> str:
+        labels = [ltr_run(label) if arabic else label for label in row["boards"]]
+        boards = ("\u060c " if arabic else ", ").join(labels)
+        who = f"{row['course_code']} {row['section']}"
+        who = ltr_run(who) if arabic else who
+        return f"{who} ({boards})" if boards else who
+
+    n = len(sections)
+    en_list = ", ".join(named(row, arabic=False) for row in sections)
+    ar_list = "\u060c ".join(named(row, arabic=True) for row in sections)
+    if n == 1:
+        en = (
+            f"Teacher not shown for: {en_list}. This English section does not have one "
+            "complete weekly pattern on every board. Remove it and place it again, then "
+            "export again."
+        )
+        ar = f"{AR_ONE_LEAD} {ar_list}. {AR_ONE_REST}"
+    else:
+        en = (
+            f"Teachers not shown for: {en_list}. These English sections do not have one "
+            "complete weekly pattern on every board. Remove each one and place it again, "
+            "then export again."
+        )
+        lead, rest = (AR_TWO_LEAD, AR_TWO_REST) if n == 2 else (AR_MANY_LEAD, AR_MANY_REST)
+        ar = f"{lead} {ar_list}. {rest}"
+    return en, ar
+
+
+# The Arabic notice, by how many sections it names (one, two, more).
+AR_ONE_LEAD = "لم يُعرض المدرّس لـ:"
+AR_ONE_REST = (
+    "ليس لهذه الشعبة الإنجليزية نمط أسبوعي كامل واحد على كل اللوحات. "
+    "احذفها وضعها من جديد، ثم صدّر من جديد."
+)
+AR_TWO_LEAD = "لم يُعرض المدرّسان لـ:"
+AR_TWO_REST = (
+    "ليس لهاتين الشعبتين الإنجليزيتين نمط أسبوعي كامل واحد على كل اللوحات. "
+    "احذف كلًّا منهما وضعها من جديد، ثم صدّر من جديد."
+)
+AR_MANY_LEAD = "لم يُعرض المدرّسون لـ:"
+AR_MANY_REST = (
+    "ليس لهذه الشعب الإنجليزية نمط أسبوعي كامل واحد على كل اللوحات. "
+    "احذف كل شعبة منها وضعها من جديد، ثم صدّر من جديد."
+)
+
+
+def write_teacher_notice(wb, sections: list[dict]) -> None:
+    """Put the notice first in ``wb`` and open the workbook on it: a workbook
+    whose grid prints a dash (``TEACHER_UNKNOWN``) for a teacher must say so
+    before anyone reads it as final. No-op without unknown sections (the
+    workbook is as before)."""
+    if not sections:
+        return
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    en, ar = teacher_notice_lines(sections)
+    ws = wb.create_sheet(title=TEACHER_NOTICE_SHEET, index=0)
+    ws.sheet_properties.tabColor = "E0A800"
+    ws.column_dimensions["A"].width = 110
+    fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
+    for row, text, arabic in ((1, en, False), (3, ar, True)):
+        cell = ws.cell(row=row, column=1, value=text)
+        cell.font = Font(bold=True, size=11)
+        cell.fill = fill
+        cell.alignment = Alignment(
+            wrap_text=True,
+            vertical="top",
+            horizontal="right" if arabic else "left",
+            readingOrder=2 if arabic else 1,
+        )
+        ws.row_dimensions[row].height = 16 * (len(text) // 95 + 1)
+    # Open on it, as the only selected tab: inserting at 0 keeps the active
+    # INDEX, so a workbook active on a later sheet would open there, and a
+    # second selected tab opens the sheets grouped (an edit lands on both).
+    wb.active = 0
+    for sheet in wb.worksheets:
+        sheet.sheet_view.tabSelected = sheet is ws
 
 
 def export_scenario_xlsx(scenario_id: int) -> Path:
@@ -183,7 +325,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     boards = list(
         DeliveryBoard.objects.filter(scenario=scenario).order_by("display_order", "label")
     )
-    teachers = section_teacher_texts(scenario_id)
+    teachers, unknown_teachers = export_section_teachers(scenario_id)
 
     # ── Styles ───────────────────────────────────────────────────
     hdr_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")
@@ -1100,6 +1242,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     _render_instructors_sheet(
         wb, scenario, lambda cc: _course_fill(cc, course_color_map), teachers=teachers
     )
+    write_teacher_notice(wb, unknown_teachers)
 
     # ── Save ─────────────────────────────────────────────────────
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -1140,10 +1283,10 @@ def _render_instructors_sheet(wb, scenario, fill_for, *, teachers=None) -> None:
         if name and ts_id not in ts_instructor:
             ts_instructor[ts_id] = name
     for ts_id, name in (teachers or {}).items():
-        if name:
-            ts_instructor[ts_id] = name
-        else:
+        if name in _NO_TEACHER:
             ts_instructor.pop(ts_id, None)
+        else:
+            ts_instructor[ts_id] = name
     if not ts_instructor:
         return
 

@@ -91,6 +91,14 @@ STATUS_FROZEN = "frozen"
 STATUS_FROZEN_UNKNOWN = "frozen_unknown"
 STATUS_TBD = "tbd"
 STATUS_NO_LINKS = "no_links"
+#: An English section whose board copies do not share one complete weekly
+#: pattern, read for display (``incomplete="collect"``): its meetings are not
+#: known, so its teacher is not shown ("—" with ``REASON_INCOMPLETE_PATTERN``).
+#: Its stored teacher, if any, stays as it is and counts as fixed load; the map
+#: leaves the section out (as a frozen section with no known teacher), so the
+#: clash checks read its meeting name.
+STATUS_UNKNOWN = "unknown"
+REASON_INCOMPLETE_PATTERN = "incomplete_english_pattern"
 CHARGED = frozenset({STATUS_ENGINE, STATUS_PINNED, STATUS_FROZEN})
 
 #: TBD reasons, in the order a teacher's first blocker is looked for.
@@ -222,6 +230,10 @@ class TeacherAssignment:
     universe: frozenset[int]
     report: dict[str, Any] = field(default_factory=dict)
     slots: tuple[Slot, ...] = ()
+    #: The English sections a display read left out (``IncompletePolicyPattern``
+    #: errors, ``load_assignment(incomplete="collect")``); their slots are
+    #: ``STATUS_UNKNOWN``. Always empty for an engine read, which raises instead.
+    incomplete: tuple = ()
 
     def v2_map(self) -> dict[str, frozenset[int]]:
         """``{section_id: frozenset({teacher})}`` for every charged section."""
@@ -525,8 +537,15 @@ def _collect(
     *,
     sections=None,
     placed_filter: set[int] | None = None,
+    incomplete: str = "raise",
 ) -> tuple[list[Slot], dict[str, Any]]:
-    """Slots plus the collection report (see :func:`collect_slots`)."""
+    """Slots plus the collection report (see :func:`collect_slots`).
+
+    ``incomplete`` is ``build_section_states_for_scenario``'s, used when
+    ``sections`` is not given: ``"collect"`` (a display read) gives each English
+    section without one complete weekly pattern a ``STATUS_UNKNOWN`` slot and
+    lists its error in ``info["incomplete"]``; ``"raise"`` raises.
+    """
     from core.models import SectionPlacement, TermSection, TermSectionMeeting
     from core.services.board_ownership import teacher_frozen_section_ids
     from core.services.course_identity import course_display_code
@@ -541,6 +560,7 @@ def _collect(
         "frozen_unknown": [],
         "stale_row_keys": [],
         "engine_rows": {},
+        "incomplete": [],
     }
     static = _static(scenario_id)
     if static is None or not static.gender:
@@ -550,7 +570,10 @@ def _collect(
     if sections is None:
         from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
 
-        sections = build_section_states_for_scenario(scenario_id)
+        sections = build_section_states_for_scenario(
+            scenario_id, incomplete=incomplete, collected=info["incomplete"]
+        )
+    unknown_ids = {exc.term_section_id for exc in info["incomplete"]}
 
     # Physical sections behind the keys: this scenario's own first, then any
     # section placed on its boards (another scenario's, or a global one).
@@ -599,6 +622,11 @@ def _collect(
             label = section_id[len(prefix) :] if section_id.startswith(prefix) else section_id
             pair = (state.course_code, label)
         universe[section_id] = pair
+    # A display read left these placed English sections out of the states:
+    # they still get a slot (STATUS_UNKNOWN below), budgeted or not.
+    for (ck, label), row in ts_by_key.items():
+        if row[0] in unknown_ids:
+            universe.setdefault(f"{ck}_{label}", (ck, label))
 
     ts_ids = [row[0] for key, row in ts_by_key.items() if f"{key[0]}_{key[1]}" in universe]
     meeting_names: dict[int, list[str]] = defaultdict(list)
@@ -726,6 +754,16 @@ def _collect(
                 else:
                     by_name = name_teacher(ts_id)
                     current = by_name if by_name in eligible else None
+            if ts_id is not None and ts_id in unknown_ids:
+                # Placed, but with no one complete weekly pattern, so its
+                # meetings are not known: its teacher is not shown. The teacher
+                # it holds (pin, frozen owner, or a valid stored engine row)
+                # stays fixed load, so no other section takes that load; its
+                # stored row is neither re-picked nor dropped (_validated_rows).
+                held = fixed
+                if held is None and stored is not None and stored in eligible:
+                    held = stored if stored in static.active else None
+                fixed, fixed_kind, current, options = held, STATUS_UNKNOWN, None, ()
             slots.append(
                 Slot(
                     course_key=course_key,
@@ -1460,6 +1498,8 @@ def _assemble(
             teacher[slot.key], status[slot.key] = slot.fixed, STATUS_FROZEN
         elif slot.fixed_kind == STATUS_FROZEN_UNKNOWN:
             teacher[slot.key], status[slot.key] = None, STATUS_FROZEN_UNKNOWN
+        elif slot.fixed_kind == STATUS_UNKNOWN:
+            teacher[slot.key], status[slot.key] = None, STATUS_UNKNOWN
         elif not slot.eligible:
             teacher[slot.key], status[slot.key] = None, STATUS_NO_LINKS
         else:
@@ -1471,6 +1511,8 @@ def _assemble(
     for slot in slots:
         if teacher.get(slot.key) is not None:
             ledger.add(slot, teacher[slot.key])
+        elif slot.fixed_kind == STATUS_UNKNOWN and slot.fixed is not None:
+            ledger.add(slot, slot.fixed)  # held load, as the fill counted it
     reasons: dict[str, str] = {}
     blockers: dict[str, dict[str, str | None]] = {}
     for slot in slots:
@@ -1820,6 +1862,10 @@ def _validated_rows(slots: list[Slot], info: Mapping[str, Any]) -> tuple[dict[st
     valid: dict[str, int] = {}
     for key, teacher in info.get("engine_rows", {}).items():
         slot = by_key.get(key)
+        if slot is not None and slot.fixed_kind == STATUS_UNKNOWN:
+            # Kept as stored: neither a seed (its load is already fixed) nor
+            # ignored (an ignored row is deleted by the next persist).
+            continue
         if slot is None or not slot.is_choice or teacher not in slot.eligible:
             ignored.append(list(slot.row_key) if slot else [key, ""])
             continue
@@ -1862,7 +1908,17 @@ def _layout_fingerprint(scenario_id: int) -> tuple:
     )
 
 
-def load_assignment(scenario_id: int, *, ignore_pin: bool = False) -> TeacherAssignment:
+def _in_mode(assignment: TeacherAssignment, incomplete: str) -> TeacherAssignment:
+    """``assignment`` as a read in ``incomplete`` mode sees it: an engine read
+    (``"raise"``) of a map with unknown sections raises the first one's error."""
+    if incomplete == "raise" and assignment.incomplete:
+        raise assignment.incomplete[0]
+    return assignment
+
+
+def load_assignment(
+    scenario_id: int, *, ignore_pin: bool = False, incomplete: str = "raise"
+) -> TeacherAssignment:
     """The map in force for ``scenario_id`` on its current layout. Never writes.
 
     Pinned inside a run (``ignore_pin`` reads what is stored instead). Otherwise:
@@ -1870,7 +1926,18 @@ def load_assignment(scenario_id: int, *, ignore_pin: bool = False) -> TeacherAss
     policy cap/the weekly ceiling — every check ignores the layout), pins and
     frozen teachers as fixed load, and the layout-aware greedy closure for the
     sections without a valid row.
+
+    An English section without one complete weekly pattern raises
+    ``IncompletePolicyPattern`` (``incomplete="raise"``, every engine). A
+    display read (``incomplete="collect"``: the board, the exports, the checks
+    a manual edit runs) gets it as ``STATUS_UNKNOWN`` instead, and every other
+    section keeps its teacher. One request's memo serves both: a collected map
+    re-raises for an engine read.
     """
+    from core.services.timetable_optimizer_v2 import INCOMPLETE_MODES
+
+    if incomplete not in INCOMPLETE_MODES:
+        raise ValueError(f"incomplete must be one of {INCOMPLETE_MODES}, not {incomplete!r}")
     pinned = None if ignore_pin else current_pin(scenario_id)
     if pinned is not None:
         return pinned
@@ -1880,8 +1947,8 @@ def load_assignment(scenario_id: int, *, ignore_pin: bool = False) -> TeacherAss
         fingerprint = _layout_fingerprint(scenario_id)
         hit = cache.get("assignment")
         if hit is not None and hit[0] == fingerprint:
-            return hit[1]
-    slots, info = _collect(scenario_id)
+            return _in_mode(hit[1], incomplete)
+    slots, info = _collect(scenario_id, incomplete=incomplete)
     valid, ignored = _validated_rows(slots, info)
     filled, added = _closure(slots, valid)
     report = dict(filled.report)
@@ -1903,6 +1970,7 @@ def load_assignment(scenario_id: int, *, ignore_pin: bool = False) -> TeacherAss
         universe=filled.universe,
         report=report,
         slots=filled.slots,
+        incomplete=tuple(info["incomplete"]),
     )
     if cache is not None:
         cache["assignment"] = (fingerprint, assignment)
@@ -2108,16 +2176,21 @@ def _frozen_row_keys(scenario_id: int) -> set[tuple[str, str]]:
 
 
 def persist_assignment(
-    scenario_id: int, assignment: TeacherAssignment, *, only_missing: bool = False
+    scenario_id: int,
+    assignment: TeacherAssignment,
+    *,
+    only_missing: bool = False,
+    incomplete: str = "raise",
 ) -> dict[str, Any]:
     """Store the engine's picks as ``source="engine"`` primary rows.
 
     The map is first closure-completed on the saved layout, so it reads back
     exactly. A full persist replaces every engine row of a non-frozen section;
     ``only_missing`` deletes only the rows the read path ignored and inserts
-    only what the closure filled. Pins and frozen sections are never written.
+    only what the closure filled. Pins and frozen sections are never written,
+    and neither is an unknown section (``incomplete="collect"``): its row stays.
     """
-    return _persist(scenario_id, assignment, only_missing=only_missing)[1]
+    return _persist(scenario_id, assignment, only_missing=only_missing, incomplete=incomplete)[1]
 
 
 def persist_and_read(
@@ -2131,19 +2204,26 @@ def persist_and_read(
 
 
 def _persist(
-    scenario_id: int, assignment: TeacherAssignment, *, only_missing: bool
+    scenario_id: int,
+    assignment: TeacherAssignment,
+    *,
+    only_missing: bool,
+    incomplete: str = "raise",
 ) -> tuple[TeacherAssignment, dict[str, Any]]:
     from core.models import SectionInstructor
 
     with transaction.atomic():
-        slots, info = _collect(scenario_id)
+        slots, info = _collect(scenario_id, incomplete=incomplete)
         seed = {
             key: teacher
             for key, teacher in assignment.teacher.items()
             if teacher is not None and assignment.status.get(key) == STATUS_ENGINE
         }
         final, _added = _closure(slots, seed)
-        frozen_keys = _frozen_row_keys(scenario_id)
+        # An unknown section's row is held, like a frozen one's: never deleted.
+        frozen_keys = _frozen_row_keys(scenario_id) | {
+            slot.row_key for slot in slots if slot.fixed_kind == STATUS_UNKNOWN
+        }
         pinned_keys = _non_engine_primary_keys(info.get("rows", []))
         existing = _engine_rows_by_key(info.get("rows", []))
         if only_missing:
@@ -2234,7 +2314,9 @@ def delete_engine_rows(scenario_id: int) -> int:
     return deleted
 
 
-def prepare_section_teachers(scenario_id: int, *, phase: str, sections=None) -> dict[str, Any]:
+def prepare_section_teachers(
+    scenario_id: int, *, phase: str, sections=None, incomplete: str = "raise"
+) -> dict[str, Any]:
     """The run hooks (section 3 of the Phase 1 spec).
 
     ``rebuild``: after the ownership check, keep the previous map, drop the
@@ -2243,6 +2325,10 @@ def prepare_section_teachers(scenario_id: int, *, phase: str, sections=None) -> 
     the saved layout, stable against the map in force and keeping its
     violations, persist it and re-write the names. ``ensure``: persist the read
     path's closure for the sections that have no row yet, and name only those.
+
+    ``incomplete`` (``load_assignment``'s) is read by ``ensure`` only: a manual
+    edit names its section with ``"collect"`` (an English section elsewhere
+    without one complete pattern is left as it is); a run's phases raise.
     """
     from core.services.board_ownership import assert_rebuild_ownership
     from core.services.timetable_board_persistence import locked_physical_section_ids
@@ -2266,8 +2352,8 @@ def prepare_section_teachers(scenario_id: int, *, phase: str, sections=None) -> 
         write_names(scenario_id, chosen)
         return {"assignment": chosen, "previous": current, "persist": written}
     if phase == "ensure":
-        current = load_assignment(scenario_id)
-        written = persist_assignment(scenario_id, current, only_missing=True)
+        current = load_assignment(scenario_id, incomplete=incomplete)
+        written = persist_assignment(scenario_id, current, only_missing=True, incomplete=incomplete)
         keys = set((current.report or {}).get("closure_keys") or [])
         write_names(scenario_id, current, only_keys=keys)
         return {"assignment": current, "persist": written}
@@ -2301,11 +2387,15 @@ def run_placer(scenario_id: int, place, *, rebuild: bool):
 def name_new_section(scenario_id: int, term_section, board) -> dict:
     """After a manual create (3.4): store the closure for the sections that have
     no teacher yet — the layout-aware closure picks a teacher with no clash or
-    over-cap day when there is one — and name the new section."""
+    over-cap day when there is one — and name the new section.
+
+    A manual edit: an English section elsewhere in the scenario without one
+    complete weekly pattern does not stop it (``incomplete="collect"``); that
+    section keeps its stored teacher and its names untouched."""
     from core.services.course_identity import course_display_code
     from core.services.course_instructor_assignment import apply_primary_instructor
 
-    prepared = prepare_section_teachers(scenario_id, phase="ensure")
+    prepared = prepare_section_teachers(scenario_id, phase="ensure", incomplete="collect")
     apply_primary_instructor(
         term_section,
         board.scenario,
@@ -2377,11 +2467,20 @@ def section_teacher_display(scenario_id: int) -> dict[int, dict[str, Any]]:
     ``engine`` and ``pinned`` (``derived`` for a teacher the read path chose
     that no row stores yet), ``owner`` or ``meeting`` for ``frozen``; for
     ``frozen_unknown`` the name is the meeting's free text. ``reason`` is the
-    TBD reason.
+    TBD reason, or ``REASON_INCOMPLETE_PATTERN`` for an ``unknown`` section (an
+    English section without one complete weekly pattern: a display read never
+    raises for it, and every other section keeps its teacher).
     """
+    return section_teacher_view(scenario_id)[0]
+
+
+def section_teacher_view(scenario_id: int) -> tuple[dict[int, dict[str, Any]], tuple]:
+    """``section_teacher_display``'s rows and the unknown sections' errors
+    (``IncompletePolicyPattern``: section and boards), from one read — what an
+    export needs to print "—" and say why."""
     from core.models import Instructor
 
-    assignment = load_assignment(scenario_id)
+    assignment = load_assignment(scenario_id, incomplete="collect")
     names = dict(
         Instructor.objects.filter(
             pk__in={t for t in assignment.teacher.values() if t is not None}
@@ -2408,7 +2507,18 @@ def section_teacher_display(scenario_id: int) -> dict[int, dict[str, Any]]:
             "source": source,
             "reason": assignment.tbd_reason.get(slot.key),
         }
-    return out
+    # Every unknown section, slot or not (a foreign one sharing a local label
+    # has none), reads unknown with its reason, never another's teacher.
+    for exc in assignment.incomplete:
+        if exc.term_section_id is not None:
+            out[exc.term_section_id] = {
+                "id": None,
+                "name": None,
+                "status": STATUS_UNKNOWN,
+                "source": None,
+                "reason": REASON_INCOMPLETE_PATTERN,
+            }
+    return out, assignment.incomplete
 
 
 def bridge_section_teachers(

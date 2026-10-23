@@ -106,7 +106,8 @@ jobs:
     # This job is not a duplicate of the suite; it is the only place those
     # guarantees are tested. Deliberately narrow: migrations, the planner
     # lifecycle, the five real threaded planner concurrency tests, the timetable-delta
-    # lock regression, and the three elective publication lock regressions. Widening it to the
+    # lock regression, the three elective publication lock regressions, and the two
+    # Timetable Workspace section-label races (stage 3, B1). Widening it to the
     # full suite on PostgreSQL is a separate decision with its own cost.
     # The one-teacher-per-section storage tests run here too: they rest on the
     # section_instructors unique constraints (one primary per section, one row
@@ -167,11 +168,12 @@ jobs:
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             tests/test_exam_jobs_postgres.py \
+            tests/test_tw_write_guards_postgres.py \
             tests/test_one_teacher_ownership.py \
             tests/test_section_teacher_assignment.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all twelve
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all fourteen
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
@@ -179,10 +181,11 @@ jobs:
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             tests/test_exam_jobs_postgres.py \
+            tests/test_tw_write_guards_postgres.py \
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 12 || { echo "expected 12 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 14 || { echo "expected 14 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

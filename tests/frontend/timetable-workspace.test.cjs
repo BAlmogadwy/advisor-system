@@ -237,16 +237,16 @@ test('F3 a handler that throws has not taken the failure: it is asked once, and 
     method: 'POST', body: '{"room":"R2"}', _quiet: quiet,
     _onError: (body, status) => { told.push([body?.error?.code ?? null, status]); throw new Error('a handler bug'); },
   });
-  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  fail = () => ({ httpError: 409, error: { code: 'VALIDATION_PLACEMENT', message: 'Refused by the server' } });
   assert.equal(await post(false), null);
   fail = () => { throw new TypeError('Failed to fetch'); };
   assert.equal(await post(false), null, 'a handler that throws on a lost answer still lets twFetch answer null');
-  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409], [null, 0]], 'each failure is told once, never again as a network failure');
-  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: 'Owned elsewhere' }, { type: 'error', text: 'Failed to fetch' }],
+  assert.deepEqual(told, [['VALIDATION_PLACEMENT', 409], [null, 0]], 'each failure is told once, never again as a network failure');
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: 'Refused by the server' }, { type: 'error', text: 'Failed to fetch' }],
     'the server’s message (or the network’s), never the handler’s exception');
   assert.deepEqual(slips, ['a handler bug', 'a handler bug'], 'the slip is not lost: it is logged');
   // A quiet request stays quiet when its handler throws.
-  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  fail = () => ({ httpError: 409, error: { code: 'VALIDATION_PLACEMENT', message: 'Refused by the server' } });
   assert.equal(await post(true), null);
   assert.equal(told.length, 3);
   assert.equal(h.notices.length, toasts + 2);
@@ -301,10 +301,10 @@ test('F6 a write held by the busy guard never reaches the handler; a handler tha
   hang.resolve({ placement: { id: 11 } });
   await first;
   // A handler that answers nothing (undefined) has not taken the failure.
-  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  fail = () => ({ httpError: 409, error: { code: 'VALIDATION_PLACEMENT', message: 'Refused by the server' } });
   assert.equal(await h.w.twFetch(MOVE_URL, { method: 'POST', body: '{}', _onError: (body, status) => { told.push([body?.error?.code, status]); } }), null);
-  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409]]);
-  assert.deepEqual(h.notices.slice(toasts + 1), [{ type: 'error', text: 'Owned elsewhere' }]);
+  assert.deepEqual(told, [['VALIDATION_PLACEMENT', 409]]);
+  assert.deepEqual(h.notices.slice(toasts + 1), [{ type: 'error', text: 'Refused by the server' }]);
 });
 
 test('the Optimise result names the courses that left students without a section, with their students', async t => {
@@ -1162,6 +1162,65 @@ test('Selection lists the section’s own issues, its teacher by the rule, and t
   assert.equal(other.querySelector('.tw-sel-issues'), null, 'nothing wrong: no list');
   const teacher = [...other.querySelectorAll('.tw-sel-field')].find(f => f.querySelector('dt').textContent === 'Teacher');
   assert.equal(teacher.querySelector('dd').textContent, 'Dr Meeting', 'a section the map does not know keeps its meeting name');
+});
+
+/* B2 (stage 3): an English section with no one complete weekly pattern has
+   no teacher shown — "—" and why — never its meeting's name, in en and ar. */
+for (const arabic of [false, true]) {
+  test(`Selection shows an unknown teacher as a dash with its reason, never the meeting's name (${arabic ? 'ar' : 'en'})`, async t => {
+    const unknown = { id: null, name: null, status: 'unknown', source: null, reason: 'incomplete_english_pattern' };
+    const h = await modelHarness(t, { arabic, placements: [
+      at(10, { teacher: unknown, meetings: [{ day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'R1', instructor: 'Registrar Name' }] }),
+    ] });
+    await h.select();
+    assert.equal(card(h, 10).querySelector('.tw-card-teacher'), null, 'the card names nobody');
+    card(h, 10).click();
+    const field = [...h.d.querySelectorAll('#twRightBody .tw-sel-field')].find(f => f.querySelector('dt').textContent === (arabic ? 'المدرس' : 'Teacher'));
+    assert.ok(field, [...h.d.querySelectorAll('#twRightBody .tw-sel-field dt')].map(dt => dt.textContent).join('|'));
+    const dd = field.querySelector('dd');
+    assert.equal(dd.firstChild.textContent, '—');
+    assert.equal(dd.querySelector('.tw-sel-hint').textContent, arabic
+      ? 'لم يُعرض المدرّس: ليس لهذه الشعبة الإنجليزية نمط أسبوعي كامل واحد على كل اللوحات. احذفها وضعها من جديد.'
+      : 'Teacher not shown: this English section does not have one complete weekly pattern on every board. Remove it and place it again.');
+    assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, /Registrar Name/);
+  });
+}
+
+/* B2 (stage 3): exports download on the page. A file is saved through a link
+   named by the server; an error answers in words; window.open is never used. */
+test('Export downloads on the page and never opens a tab; a failed export is a toast in the server’s words', async t => {
+  const h = await harness(t, url => {
+    if (url.includes('/export-per-plan')) return new Response('PK', { status: 200, headers: { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="Real_scenario_copy__per_plan.zip"' } });
+    if (url.endsWith('/export.xlsx')) return new Response(JSON.stringify({ ok: false, error: { code: 'EXPORT_FAILED', message: 'The export could not be built. Try again.' } }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return undefined;
+  });
+  await h.select();
+  h.w.eval(fs.readFileSync(path.join(root, 'static/js/safe-fetch.js'), 'utf8'));
+  const opened = [], saved = [], errors = [];
+  h.w.open = (...args) => { opened.push(args); return null; };
+  h.w.URL.createObjectURL = () => 'blob:export';
+  h.w.URL.revokeObjectURL = () => {};
+  h.w.HTMLAnchorElement.prototype.click = function () { saved.push({ href: this.href, download: this.download }); };
+  h.w.notify.error = (title, sub) => errors.push([title, sub]);
+  const button = h.d.getElementById('twExport');
+  const label = button.textContent;
+
+  button.click();
+  assert.equal(button.getAttribute('aria-busy'), 'true', 'busy while the file is built');
+  assert.equal(button.getAttribute('aria-disabled'), 'true');
+  assert.match(button.textContent, /Exporting…/);
+  await wait(() => button.getAttribute('aria-busy') === null);
+  assert.deepEqual(saved, [{ href: 'blob:export', download: 'Real_scenario_copy__per_plan.zip' }]);
+  assert.equal(button.textContent, label, 'the label comes back');
+  assert.equal(button.getAttribute('aria-disabled'), null);
+
+  h.d.querySelector('.tw-export-item[data-mode="combined"]').click();
+  await wait(() => errors.length === 1 && button.getAttribute('aria-busy') === null);
+  assert.deepEqual(errors, [['Export failed', 'The export could not be built. Try again.']]);
+  assert.equal(saved.length, 1, 'an error saves nothing');
+  assert.deepEqual(opened, [], 'window.open is never used by an export');
+  const exportCalls = h.requests.filter(r => r.url.includes('/export')).map(r => r.url);
+  assert.deepEqual(exportCalls, ['/ops/tw/scenarios/1/export-per-plan', '/ops/tw/scenarios/1/export.xlsx']);
 });
 
 test('the keyboard stays on an Issues group or row through every redraw', async t => {

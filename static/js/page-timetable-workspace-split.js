@@ -29,6 +29,47 @@ const T = {
   moveOk: IS_AR ? 'تم النقل' : 'Moved',
 };
 
+/* The server's refusals of a write that this page says in its own words
+   (stage 3, B1), for a caller with no handler of its own (a create, a
+   remove, an undo or a redo; a move too), where they used to reach the
+   console only: a section another scenario owns, and a section label already
+   placed in the scenario, named with the first free label the server found.
+   The words are classic's (serverRefusalWords in
+   page-timetable-workspace.js), copied: the test "classic and split say the
+   same words…" pins the two copies together until stage 3 gives them one
+   home (E2's timetable-section-labels.js, D5's timetable-remove-flow.js),
+   which deletes both copies and that test. '' for any other refusal, which
+   stays in the console, as before. */
+const ltrIsolate = text => `${String.fromCharCode(0x2066)}${text}${String.fromCharCode(0x2069)}`;
+function serverRefusalWords(error) {
+  const code = error && typeof error === 'object' ? error.code : '';
+  if (code === 'PLACEMENT_EXTERNALLY_OWNED') {
+    return IS_AR ? 'يملك سيناريو آخر وقت هذه الشعبة وقاعتها؛ عدّلها هناك.' : "Another scenario owns this section's time and room; change it there.";
+  }
+  if (code !== 'SECTION_LABEL_IN_USE') return '';
+  const { course_code: course = '', label = '', next_free: next = '' } = error.details || {};
+  // One isolate around the pair, so Arabic never shows it as “S1 CS112”.
+  const pair = [course, label].filter(Boolean).join(' ');
+  const name = pair ? ltrIsolate(pair) : '';
+  if (IS_AR) {
+    const placed = name ? `الشعبة ${name} موضوعة بالفعل في هذا السيناريو.` : 'هذه الشعبة موضوعة بالفعل في هذا السيناريو.';
+    return next ? `${placed} أول شعبة متاحة: ${ltrIsolate(next)}.` : placed;
+  }
+  const placed = `${name || 'This section'} is already placed in this scenario.`;
+  return next ? `${placed} The next free section is ${ltrIsolate(next)}.` : placed;
+}
+/* Says such a refusal (a warning: a rule refused the write, nothing failed).
+   A label in use reads the budget again, so the list counts it. True when it
+   spoke: api() then tells a caller that asked (`_worded`), so the caller does
+   not say its own "failed" over it. */
+function sayServerRefusal(body) {
+  const words = serverRefusalWords(body?.error);
+  if (!words) return false;
+  notify.warning(words);
+  if (body.error.code === 'SECTION_LABEL_IN_USE') loadSidebarBudget();
+  return true;
+}
+
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
 const DAY_LABELS = IS_AR
   ? ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس']
@@ -266,8 +307,11 @@ async function previewFetch(url, options, { kind = '', debounce = false } = {}) 
     if (kind && PREVIEW.inflight.get(kind) === controller) PREVIEW.inflight.delete(kind);
   }
 }
+/* `_worded(code)`: told when a write with no onError was refused for a rule
+   the page says in its own words (sayServerRefusal, B1), so a caller that
+   says its own "failed" on null stays quiet instead of repeating it. */
 async function api(url, opts = {}, onError = null) {
-  const { _copyToken, _preview, ...requestOptions } = opts;
+  const { _copyToken, _preview, _worded, ...requestOptions } = opts;
   if (_preview) {
     // A preview reads: it neither waits for nor blocks a scenario copy.
     const o = Object.assign({ credentials: 'same-origin', headers: {} }, requestOptions);
@@ -314,6 +358,7 @@ async function api(url, opts = {}, onError = null) {
       console.error('api error', url, msg);
       // The body and status too, for a caller that can say more than the message.
       if (onError) onError(msg, body, r.status);
+      else if (sayServerRefusal(body) && typeof _worded === 'function') _worded(body.error.code);
       return null;
     }
     return await r.json();
@@ -806,6 +851,16 @@ function placementInstructor(p) {
   return ((p && p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '') || '';
 }
 
+/* Whose section this is for instructor protection: with one teacher per
+   section, the teacher the shared rule shows (none while it is to be decided
+   or not shown: a meeting row can carry a stale name, and an unknown
+   section's is never shown); otherwise the meeting's name, as before. */
+function placementTeacherName(p) {
+  if (!hasSectionTeacher(p)) return placementInstructor(p);
+  const teacher = window.TimetableSectionTeacher.teacherOf(p);
+  return teacher.state === 'named' ? teacher.name : '';
+}
+
 function sectionRank(section) {
   const m = String(section || '').match(/\d+/);
   return m ? Number(m[0]) : 999;
@@ -885,11 +940,11 @@ function toggleProtection(kind, value) {
 function placementProtectionReasons(placement) {
   if (!placement) return [];
   const reasons = [];
-  const instructor = protectionValue(placementInstructor(placement));
+  const instructor = protectionValue(placementTeacherName(placement));
   const room = protectionValue(placement.room);
   const time = timeProtectionKey(placement.day, placement.start_time);
   if (placement.is_locked) reasons.push(IS_AR ? 'مقفلة' : 'locked section');
-  if (instructor && S.protections.instructors.has(instructor)) reasons.push(`${IS_AR ? 'مدرس محمي' : 'protected instructor'} ${placementInstructor(placement)}`);
+  if (instructor && S.protections.instructors.has(instructor)) reasons.push(`${IS_AR ? 'مدرس محمي' : 'protected instructor'} ${placementTeacherName(placement)}`);
   if (room && room !== 'UNASSIGNED' && S.protections.rooms.has(room)) reasons.push(`${IS_AR ? 'قاعة محمية' : 'protected room'} ${placement.room}`);
   if (S.protections.times.has(time)) reasons.push(`${IS_AR ? 'وقت محمي' : 'protected time'} ${placement.day} ${placement.start_time}`);
   return reasons;
@@ -3224,12 +3279,20 @@ async function movePlacementToSlot({
 
   const payload = { day, start_time: start, end_time: end };
   if (room !== undefined) payload.room = room;
+  // A refusal api() said in the page's words (a section another scenario
+  // owns, B1; this page has no gate for it) is the whole answer: "Move
+  // failed" over it would say the same thing again, as an error.
+  let worded = false;
   const data = await api(`/ops/tw/placements/${placementId}/move/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    _worded: () => { worded = true; },
   });
-  if (!data) { notify.error(T.moveFail); return null; }
+  if (!data) {
+    if (!worded) notify.error(T.moveFail);
+    return null;
+  }
 
   const undoAction = {
     type: 'move',
@@ -5457,12 +5520,29 @@ function renderRpanelStudentBlockers(body) {
   }
   const token = ++RP.studentBlockers.token;
   body.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'جاري حساب تعارضات الطلاب الفعلية...' : 'Calculating actual student blockers...'}</div>`;
-  api(`/ops/tw/scenarios/${scenarioId}/student-blockers/`).then(data => {
+  api(`/ops/tw/scenarios/${scenarioId}/student-blockers/`, {}, (_message, errorBody) => {
+    // Not cached: the next visit asks again (the section may be fixed by then).
+    if (token !== RP.studentBlockers.token || S.scenarioId !== scenarioId) return;
+    if (RP.open && RP.tab === 'students') renderStudentBlockersFailure($('twsRpanelBody'), errorBody);
+  }).then(data => {
     if (!data || token !== RP.studentBlockers.token || S.scenarioId !== scenarioId) return;
     RP.studentBlockers.scenarioId = scenarioId;
     RP.studentBlockers.data = data;
     if (RP.open && RP.tab === 'students') renderStudentBlockersNow($('twsRpanelBody'), data);
   });
+}
+
+/* The server's words when it answered in words (e.g. 409
+   INCOMPLETE_ENGLISH_PATTERN: an English section with no one complete weekly
+   pattern, in the page's language); otherwise ours. The count is not known. */
+function renderStudentBlockersFailure(body, errorBody) {
+  if (!body) return;
+  const el = $('twsRpCountStudents');
+  if (el) el.textContent = '—';
+  const said = errorBody?.error?.message;
+  const words = (typeof said === 'string' && said)
+    || (IS_AR ? 'تعذّر حساب تعارضات الطلاب الفعلية. حاول مرة أخرى.' : 'Student blockers could not be calculated. Try again.');
+  body.innerHTML = `<div class="tws-empty-state" role="status"><span class="ic" aria-hidden="true">ⓘ</span>${esc(words)}</div>`;
 }
 
 function renderStudentBlockersNow(body, data) {
@@ -7226,7 +7306,10 @@ function renderRpanelSelection(body) {
   const located = findPlacement(S.selectedPlacementId);
   if (!located) { body.innerHTML = `<div class="tws-empty-state"><span class="ic">◉</span>${IS_AR ? 'غير موجود' : 'Not found'}</div>`; return; }
   const p = located.placement;
-  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '—';
+  // With one teacher per section, the section's teacher by the shared rule
+  // (as the drawer and classic show it): never a meeting row's name.
+  const instructor = placementTeacherName(p);
+  const instructorHtml = hasSectionTeacher(p) ? sectionTeacherHtml(p) : safeHtml`${instructor || '—'}`;
   const board = S.boards.find(b => b.id === S.panes[located.paneIdx].boardId) || { label: '—' };
   const pending = S.slotAssist.pendingMove && String(S.slotAssist.pendingMove.placementId) === String(p.id)
     ? S.slotAssist.pendingMove
@@ -7256,7 +7339,7 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
-    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value" id="twsSelInstructor">${safeHtml`${instructorHtml}`}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
     ${selectionConflictEvidenceHtml(selectedIssues)}
@@ -7985,21 +8068,22 @@ async function loadElectivesInto(listEl) {
     if (!mapLookup[m.placeholder_code]) mapLookup[m.placeholder_code] = new Set();
     mapLookup[m.placeholder_code].add(m.course_code);
   });
+  // Catalogue and plan text are data: safeHtml escapes every value.
   listEl.innerHTML = placeholders.map(ph => {
     const selected = mapLookup[ph.course_code] || new Set();
-    return `<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+    return safeHtml`<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
       <div style="font-weight:700;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:6px">
-        ${esc(ph.course_code)}
+        ${ph.course_code}
         <span style="font-weight:400;color:var(--t4);font-size:10px">· T${ph.programme_term || '?'} · ${ph.type || 'Elective'} · ${ph.credit_hours || 3}cr</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 12px">
-        ${catalogue.map(c => `
+        ${catalogue.map(c => safeHtml`
           <label style="display:flex;gap:6px;align-items:center;font-size:11px;cursor:pointer;padding:2px 0">
-            <input type="checkbox" class="elec-chk" data-ph="${esc(ph.course_code)}" data-code="${esc(c.course_code)}"${selected.has(c.course_code) ? ' checked' : ''}>
-            <span style="font-family:'JetBrains Mono',monospace;font-weight:700">${esc(c.course_code)}</span>
-            <span style="color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.course_name || '')}</span>
+            <input type="checkbox" class="elec-chk" data-ph="${ph.course_code}" data-code="${c.course_code}"${selected.has(c.course_code) ? ' checked' : ''}>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700">${c.course_code}</span>
+            <span style="color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.course_name || ''}</span>
           </label>
-        `).join('')}
+        `)}
       </div>
     </div>`;
   }).join('');
@@ -8188,8 +8272,12 @@ function openDrawer(paneIdx, placementId) {
       ? '<span class="pill clash">⚠ Conflict</span>'
       : '<span class="pill ok">● Clean</span>';
 
+  // With one teacher per section the Instructors field above names the
+  // section's teacher; a meeting row can carry a stale name (or, for an
+  // unknown section, one never shown), so the rows name no one then.
+  const meetingTeacher = m => (hasSectionTeacher(p) ? '' : safeHtml` · ${m.instructor || '—'}`);
   const meetings = (p.meetings || []).map(m =>
-    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')} · ${esc(m.instructor || '—')}</span></div>`
+    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')}${safeHtml`${meetingTeacher(m)}`}</span></div>`
   ).join('') || '<div class="meeting-row"><span class="r">—</span></div>';
 
   $('twsDrawerBody').innerHTML = `
@@ -8413,14 +8501,18 @@ function hasSectionTeacher(p) {
 }
 
 /* The section's teacher: the shared rule (timetable-section-teacher.js). */
+// Markup by safeHtml (shared-utils.js): every value is escaped once.
 function sectionTeacherHtml(p) {
   const teacher = window.TimetableSectionTeacher.teacherOf(p);
-  if (teacher.state === 'tbd') {
-    return `<span class="tws-instr-tbd">${esc(window.TimetableSectionTeacher.words.tbd)}</span>`
-      + (teacher.hint ? `<span class="tws-instr-hint">${esc(teacher.hint)}</span>` : '');
+  const words = window.TimetableSectionTeacher.words;
+  const hint = teacher.hint ? safeHtml`<span class="tws-instr-hint">${teacher.hint}</span>` : '';
+  if (teacher.state === 'tbd') return safeHtml`<span class="tws-instr-tbd">${words.tbd}</span>${hint}`;
+  if (teacher.state === 'unknown') {
+    // Not shown, and why (an English section with no one complete pattern).
+    return safeHtml`<span class="tws-instr-none">${words.unknown}</span>${hint}`;
   }
-  if (teacher.state === 'named') return `<span class="tws-instr-chip primary">${esc(teacher.name)}</span>`;
-  return `<span class="tws-instr-none">${esc(window.TimetableSectionTeacher.words.none)}</span>`;
+  if (teacher.state === 'named') return safeHtml`<span class="tws-instr-chip primary">${teacher.name}</span>`;
+  return safeHtml`<span class="tws-instr-none">${words.none}</span>`;
 }
 
 function drawerRenderInstructorChips(p) {
@@ -9252,7 +9344,8 @@ function doExport() {
   const query = parts.join(' ').trim();
   if (query) params.set('search', query);
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  window.open(`/ops/tw/scenarios/${S.scenarioId}/export-per-plan${suffix}`, '_blank');
+  // Downloaded on the page (safe-fetch.js), as the classic page does.
+  return safeDownload(`/ops/tw/scenarios/${S.scenarioId}/export-per-plan${suffix}`, { busyEl: $('twsExport'), kind: 'export' });
 }
 
 const DISMISSIBLE_DETAILS = ['twsViewMenu', 'twsMoreMenu'];

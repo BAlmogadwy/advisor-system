@@ -133,6 +133,16 @@ COURSE_COLORS = [
 ]
 
 
+class PerPlanExportRefused(RuntimeError):
+    """A refusal the user can act on: its words in English (``str``) and in
+    Arabic (``ar``). The export view answers in the page's language; a
+    ``RuntimeError`` still, so every caller that caught one still does."""
+
+    def __init__(self, message: str, *, ar: str) -> None:
+        super().__init__(message)
+        self.ar = ar
+
+
 def _slugify(value: str) -> str:
     """Filesystem-safe slug for filenames (preserves commas-as-underscores)."""
     s = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
@@ -381,7 +391,8 @@ def export_scenario_per_plan(
     Raises
     ------
     RuntimeError
-        If ``openpyxl`` is not installed or no programs are found.
+        If ``openpyxl`` is not installed; ``PerPlanExportRefused`` (a
+        ``RuntimeError``) if no programs are found or the filter matches none.
     TimetableScenario.DoesNotExist
         If the scenario id is invalid.
     """
@@ -393,7 +404,10 @@ def export_scenario_per_plan(
     scenario = TimetableScenario.objects.get(id=scenario_id)
     programs = get_scenario_programs(scenario)
     if not programs:
-        raise RuntimeError("Scenario has no boards with a configured program")
+        raise PerPlanExportRefused(
+            "Scenario has no boards with a configured program",
+            ar="لا توجد في هذا السيناريو لوحة مرتبطة ببرنامج.",
+        )
 
     export_filter = _build_export_filter(search, programs)
     selected_programs = [
@@ -402,12 +416,18 @@ def export_scenario_per_plan(
         if not export_filter.program_tokens or _upper(program) in export_filter.program_tokens
     ]
     if not selected_programs:
-        raise RuntimeError("The export filter did not match any scenario program")
+        raise PerPlanExportRefused(
+            "The export filter did not match any scenario program",
+            ar="لم يطابق مرشّح التصدير أي برنامج في هذا السيناريو.",
+        )
 
     plan_lens = build_scenario_plan_lens(scenario_id)
-    from core.services.timetable_export import section_teacher_texts
+    from core.services.timetable_export import export_section_teachers
 
-    teachers = section_teacher_texts(scenario_id)  # one read for every program
+    # One read for every program; the sections it could not name go on each
+    # workbook's first sheet (their teachers are missing from its Instructors
+    # sheet, which covers the whole scenario).
+    teachers, unknown_teachers = export_section_teachers(scenario_id)
     safe_name = _slugify(scenario.name)
     filter_suffix = (
         f"__filtered_{_slugify(export_filter.original)}" if export_filter.original else ""
@@ -427,6 +447,7 @@ def export_scenario_per_plan(
             elective_fills=elective_fills,
             elective_terms=elective_terms,
             teachers=teachers,
+            unknown_teachers=unknown_teachers,
         )
         filename = f"{_slugify(prog)}.xlsx"
         workbook_paths.append((filename, wb_path))
@@ -467,6 +488,7 @@ def _build_program_workbook(
     elective_fills: dict[str, list[str]] | None = None,
     elective_terms: dict[str, set[int]] | None = None,
     teachers: dict[int, str] | None = None,
+    unknown_teachers: list[dict] | None = None,
 ) -> Path:
     """Produce one XLSX file for a single program's plan view.
 
@@ -476,7 +498,8 @@ def _build_program_workbook(
     its own term; a course is in place on any of its slots' terms.
     ``teachers`` (``timetable_export.section_teacher_texts``, one teacher per
     section only) names each section's teacher in the grid and the Instructors
-    sheet.
+    sheet; ``unknown_teachers`` (``export_section_teachers``) are the sections
+    it prints a dash for, named on a notice sheet put first.
     """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -780,9 +803,10 @@ def _build_program_workbook(
 
     # Instructor timetables (each assigned instructor's full weekly grid),
     # mirroring the Rooms sheet. Reuses the single-workbook renderer.
-    from core.services.timetable_export import _render_instructors_sheet
+    from core.services.timetable_export import _render_instructors_sheet, write_teacher_notice
 
     _render_instructors_sheet(wb, scenario, _course_fill, teachers=teachers)
+    write_teacher_notice(wb, unknown_teachers or [])
 
     # Save
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)

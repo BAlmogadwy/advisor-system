@@ -1,0 +1,19 @@
+{
+  "about": "The free-label rule, stated once for both implementations: core/services/timetable_workspace.first_free_section_labels (Python; the server's next_free is its first label) and freeSectionLabels (static/js/page-timetable-workspace.js, fed a budget row's used_section_labels and remaining_sections). The next sections of a course take the first S-numbers no placed section holds: S1 and S3 placed, the next are S2 then S4, never S3 again. A label is compared trimmed and upper-cased; a label that is not S followed by a plain number (M1, A, S01) takes no S-number. A count that is not a whole number of at least 1 asks for none.",
+  "cases": [
+    {"name": "nothing placed", "used": [], "count": 3, "free": ["S1", "S2", "S3"]},
+    {"name": "a gap is filled first", "used": ["S1", "S3"], "count": 2, "free": ["S2", "S4"]},
+    {"name": "a run, then the next", "used": ["S1", "S2", "S3"], "count": 1, "free": ["S4"]},
+    {"name": "the next free after a gap is the gap", "used": ["S1", "S2", "S4", "S5"], "count": 1, "free": ["S3"]},
+    {"name": "labels in any order", "used": ["S3", "S1"], "count": 1, "free": ["S2"]},
+    {"name": "trimmed and upper-cased", "used": [" s1 ", "s2"], "count": 1, "free": ["S3"]},
+    {"name": "other letters take no S-number", "used": ["M1", "F2", "A"], "count": 2, "free": ["S1", "S2"]},
+    {"name": "S01 is not S1", "used": ["S01"], "count": 1, "free": ["S1"]},
+    {"name": "S10 in natural order", "used": ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S11"], "count": 2, "free": ["S10", "S12"]},
+    {"name": "a label used twice counts once", "used": ["S1", "S1"], "count": 1, "free": ["S2"]},
+    {"name": "none wanted", "used": ["S1"], "count": 0, "free": []},
+    {"name": "a negative count", "used": [], "count": -2, "free": []},
+    {"name": "no count", "used": ["S1"], "count": null, "free": []},
+    {"name": "a count given as text", "used": ["S2"], "count": "2", "free": ["S1", "S3"]}
+  ]
+}

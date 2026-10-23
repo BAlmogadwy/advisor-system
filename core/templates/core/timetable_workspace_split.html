@@ -382,15 +382,15 @@
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
-  const INITIAL_SCENARIO = "{{ initial_scenario }}";
-  const INITIAL_BOARD = "{{ initial_board }}";
+  const INITIAL_SCENARIO = "{{ initial_scenario|escapejs }}";
+  const INITIAL_BOARD = "{{ initial_board|escapejs }}";
   const DEFAULT_YEAR = "{{ default_year|default:''|escapejs }}";
   const DEFAULT_TERM = "{{ default_term|default:''|escapejs }}";
 </script>
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=4"></script>
 <script src="{% static 'js/timetable-slot-config.js' %}?v=5"></script>
-<script src="{% static 'js/timetable-section-teacher.js' %}?v=1"></script>
+<script src="{% static 'js/timetable-section-teacher.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=137"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=140"></script>
 {% endblock %}

@@ -180,6 +180,33 @@ const REFUSAL = {
 // Not this section's action at all: Selection draws no button for it.
 const NOT_APPLICABLE = new Set(['online', 'noRoom']);
 
+/* The server's refusals of a write that the page says in its own words
+   (stage 3, B1), wherever they land: twFetch's toast, or a dialog's line. A
+   section another scenario owns (Remove, Undo of a create; Move and a
+   pattern switch too) says where to change it, as the card's gate does; a
+   section label already placed in the scenario (a create, Redo) names the
+   section and the first free label the server found. '' for any other
+   refusal: the server's own message is said then, as before.
+   Split view has a copy (page-timetable-workspace-split.js), pinned to this
+   one by the test "classic and split say the same words…" until stage 3
+   gives the words one home (E2's timetable-section-labels.js, D5's
+   timetable-remove-flow.js), which deletes both copies and that test. */
+function serverRefusalWords(error) {
+  const code = error && typeof error === 'object' ? error.code : '';
+  if (code === 'PLACEMENT_EXTERNALLY_OWNED') return REFUSAL.external;
+  if (code !== 'SECTION_LABEL_IN_USE') return '';
+  const { course_code: course = '', label = '', next_free: next = '' } = error.details || {};
+  // One isolate around the pair, so Arabic never shows it as “S1 CS112”.
+  const pair = [course, label].filter(Boolean).join(' ');
+  const name = pair ? isolatedText(pair) : '';
+  if (IS_AR) {
+    const placed = name ? `الشعبة ${name} موضوعة بالفعل في هذا السيناريو.` : 'هذه الشعبة موضوعة بالفعل في هذا السيناريو.';
+    return next ? `${placed} أول شعبة متاحة: ${isolatedText(next)}.` : placed;
+  }
+  const placed = `${name || 'This section'} is already placed in this scenario.`;
+  return next ? `${placed} The next free section is ${isolatedText(next)}.` : placed;
+}
+
 /* '' or {code, text}; the first rule that applies wins. A write in flight or
    a board refresh never refuses: opening a dialog only reads, and its commit
    waits for them on its own (busy, through data-tw-mutation). A time lock
@@ -509,6 +536,13 @@ async function twFetch(url, opts = {}) {
       // Publish lists the server's blockers; a dialog keeps the refusal inside itself.
       if (handled(d, response.status)) return null;
       if (_quiet) return null;
+      // A rule's refusal the page words itself is a warning (B1); any other
+      // failure is the server's own message.
+      const worded = serverRefusalWords(e);
+      if (worded) {
+        notify.warning(worded);
+        return null;
+      }
       let msg = (e && typeof e === 'object') ? (e.message || e.code || JSON.stringify(e)) : (e || d?.message || `${response.status}`);
       const seedLabel = runSeedText(e?.details || d);
       if (seedLabel) msg += ` · ${seedLabel}`;
@@ -1895,7 +1929,9 @@ function exportScenario(mode) {
   const url = mode === 'per-plan'
     ? `/ops/tw/scenarios/${TW.scenarioId}/export-per-plan${suffix}`
     : `/ops/tw/scenarios/${TW.scenarioId}/export.xlsx`;
-  window.open(url, '_blank');
+  // Downloaded on the page (safe-fetch.js): an error is a toast in words,
+  // never a raw server page in a new tab; the Export button says it is busy.
+  return safeDownload(url, { busyEl: $('twExport'), kind: 'export' });
 }
 
 /* ── Rendering ── */
@@ -3288,8 +3324,15 @@ async function chooseEnglishWorkspacePattern(payload) {
         section_label: source.section_label, capacity: source.max_per_section || 40, pattern_id: selected.pattern_id,
         meetings: selected.meetings.map(row => ({ ...row, room: payload.default_room || '' })),
       };
-      const data = await twFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _workspaceToken: token });
-      if (!data || data.ok === false) return null;
+      // A refusal is twFetch's toast; a label placed meanwhile (B1) also has
+      // the list read again, so it names the next free label.
+      let refused = '';
+      const data = await twFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _workspaceToken: token,
+        _onError: answer => { refused = answer?.error?.code || ''; return false; } });
+      if (!data || data.ok === false) {
+        if (refused === 'SECTION_LABEL_IN_USE' && TW.scenarioId === scenarioId) loadBudget();
+        return null;
+      }
       const rows = data.placements || [data.placement].filter(Boolean);
       if (placement) TW.undoStack.push({ type: 'pattern', placement_id: placement.id,
         old_pattern_id: data.before_section_policy?.current_pattern_id || current, new_pattern_id: selected.pattern_id,
@@ -3420,8 +3463,10 @@ function plannedCreateBody(request, boardId, label, meetings) {
    server stored them (raw days and times), so Undo removes every meeting
    and Redo creates them all again (D23). With a dialog every failure is its
    own {code, status} (dialogWrite: nothing toasted); without one the
-   server's "complete pattern" refusal is the caller's {code} (a drop then
-   opens Place…), and any other is twFetch's toast, as a drop always did. */
+   server's "complete pattern" refusal is the caller's to say (a drop then
+   opens Place…), and any other is twFetch's toast, as a drop always did;
+   either way the refusal's code is the answer's {code} (a label already
+   placed: the drop reads the budget again, B1). */
 async function commitPlannedCreate(body, { dialog = null } = {}) {
   const url = '/ops/tw/placements/create-planned/';
   let result;
@@ -3431,9 +3476,8 @@ async function commitPlannedCreate(body, { dialog = null } = {}) {
     const data = await twFetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       _onError: answer => {
-        if (answer?.error?.code !== 'FULL_SECTION_PATTERN_REQUIRED') return false;
-        code = answer.error.code;
-        return true;
+        code = answer?.error?.code || '';
+        return code === 'FULL_SECTION_PATTERN_REQUIRED';
       },
     });
     result = data ? { data } : { code: code || 'FAILED' };
@@ -3488,12 +3532,22 @@ async function onDrop(e) {
       place();
       return;
     }
+    // The label was placed meanwhile (another tab, split view): twFetch said
+    // so, with the free label; the list names it once the budget is read again.
+    if (created.code === 'SECTION_LABEL_IN_USE' && TW.scenarioId === scenarioAtStart) {
+      loadBudget();
+      return;
+    }
     if (created.code || TW.scenarioId !== scenarioAtStart) return;
     await selectBoard(TW.boardId);
     updateUndoRedoButtons();
     reportEdit(placedWords(request.course_code, request.section_label), created.rows.map(row => row.id), { data: created.data });
     return;
   } else if (payload.type === 'create') {
+    // A refusal is twFetch's toast. Another section of the course holding
+    // this section's label (B1) also has the list read again, as a planned
+    // drop does, so it shows the labels as they are now.
+    let refused = '';
     const data = await twFetch('/ops/tw/placements/create/', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -3505,8 +3559,12 @@ async function onDrop(e) {
         end_time: endTime,
         room: payload.default_room || '',
       }),
+      _onError: answer => { refused = answer?.error?.code || ''; return false; },
     });
-    if (!data) return;
+    if (!data) {
+      if (refused === 'SECTION_LABEL_IN_USE' && TW.scenarioId === scenarioAtStart) loadBudget();
+      return;
+    }
     TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
       board_id: boardAtStart, term_section_id: payload.term_section_id,
       day: day, start_time: startTime, end_time: endTime, room: payload.default_room || '' });
@@ -3542,9 +3600,12 @@ function updateUndoRedoButtons() {
 
 /* History retains the original action in both stacks. Recreated rows receive
  * their new ID without losing the board/section/time data for another cycle. */
-async function applyHistoryAction(action, undo, token) {
+async function applyHistoryAction(action, undo, token, refused = () => {}) {
+  // A refusal is twFetch's toast (in the page's words for a rule it knows,
+  // B1); `refused` hears its code, so the caller can read again what it names.
   const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body), _workspaceToken: token });
+    body: JSON.stringify(body), _workspaceToken: token,
+    _onError: answer => { refused(answer?.error?.code || ''); return false; } });
   if (action.type === 'pattern') {
     return twFetch(`/ops/tw/placements/${action.placement_id}/switch-pattern/`, post({
       pattern_id: undo ? action.old_pattern_id : action.new_pattern_id,
@@ -3606,11 +3667,16 @@ async function runHistoryAction(undo) {
   const token = beginWorkspaceOperation(undo ? 'undo' : 'redo');
   if (!token) return;
   try {
-    const data = await applyHistoryAction(action, undo, token);
+    let refusal = '';
+    const data = await applyHistoryAction(action, undo, token, code => { refusal = code; });
     if (!data || data.ok === false || TW.scenarioId !== token.scenarioId) {
       // Part of a section's create undone: the entry stays with what is
       // left, and the board shows what went (D23).
       if (data?.partial && TW.scenarioId === token.scenarioId) await selectBoard(TW.boardId);
+      // A section put back (Redo of a create, Undo of a Remove) whose label
+      // another section took meanwhile (B1): the entry stays, and the list
+      // names the labels as they are now.
+      else if (refusal === 'SECTION_LABEL_IN_USE' && TW.scenarioId === token.scenarioId) loadBudget();
       return;
     }
     from.pop();
@@ -5348,10 +5414,15 @@ async function placeRefused(result, { dialog, here, session, about, request, lab
     else if (PLACE.state === 'error') dialogSay(dialog, PLACE_WORDS.nothingPlaced, 'warning');
     return;
   }
-  if (code === 'PLACEMENT_DUPLICATE') {
+  // The label was taken meanwhile: the server's duplicate on this board and
+  // time, or its label rule (B1: the label is placed anywhere in the
+  // scenario). The dialog moves on to the next free label and says so.
+  if (code === 'PLACEMENT_DUPLICATE' || code === 'SECTION_LABEL_IN_USE') {
     await loadBudget();
     if (left) {
-      dialogSay(dialog, PLACE_WORDS.boardChanged, 'warning', about);
+      // The label words name the section themselves.
+      if (code === 'SECTION_LABEL_IN_USE') dialogSay(dialog, serverRefusalWords(result.error), 'warning');
+      else dialogSay(dialog, PLACE_WORDS.boardChanged, 'warning', about);
       return;
     }
     // The budget read may already have moved the dialog on (its sync).
@@ -5622,9 +5693,12 @@ function renderRightPanel(tab) {
     // The section's teacher by the one-teacher rule (a meeting row can carry a
     // stale name, so the meetings list below names no one).
     const teacher = window.TimetableSectionTeacher.teacherOf(p);
-    const teacherHtml = teacher.state === 'tbd'
-      ? `${esc(window.TimetableSectionTeacher.words.tbd)}${teacher.hint ? `<span class="tw-sel-hint">${esc(teacher.hint)}</span>` : ''}`
-      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : esc(window.TimetableSectionTeacher.words.none);
+    const teacherWords = window.TimetableSectionTeacher.words;
+    const teacherHint = teacher.hint ? `<span class="tw-sel-hint">${esc(teacher.hint)}</span>` : '';
+    const teacherHtml = teacher.state === 'tbd' ? `${esc(teacherWords.tbd)}${teacherHint}`
+      // Not shown, and why (an English section with no one complete pattern).
+      : teacher.state === 'unknown' ? `${esc(teacherWords.unknown)}${teacherHint}`
+      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : esc(teacherWords.none);
     // What is wrong with this section, from the board's one issue model: what
     // blocks publishing or lowers quality (context stays in the Issues tab),
     // each naming what it is about — a pair shows both sections. An item from
@@ -6985,31 +7059,30 @@ $('twMapElectives').addEventListener('click', async () => {
     mapLookup[m.placeholder_code].push(m.course_code);
   });
 
-  // Build dialog body
-  let body = `<div class="fs-md text-t3 mb-2">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
-  body += `<div style="max-height:400px;overflow-y:auto">`;
-
   // Build placeholder info lookup
   const phInfo = {};
   placeholderCodes.forEach(p => { phInfo[p.course_code] = p; });
 
-  relevantPlaceholders.forEach(ph => {
+  // Build dialog body. Catalogue and plan text are data, so every piece is
+  // safeHtml (it escapes each value); the pieces join with no added space.
+  const rows = relevantPlaceholders.map(ph => {
     const info = phInfo[ph] || {};
     const selected = mapLookup[ph] || [];
-    body += `<div class="u-border" style="margin-bottom:12px; padding:8px; border-radius:var(--radius-sm)">`;
-    body += `<div class="fw-bold" style="color:var(--royal); margin-bottom:4px">${ph} <span class="fs-sm text-t4" style="font-weight:400">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`;
-    catalogue.forEach(c => {
-      const checked = selected.includes(c.course_code) ? 'checked' : '';
-      body += `<label class="d-flex align-items-center fs-md u-cursor-pointer" style="gap:6px; padding:2px 0">`;
-      body += `<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${checked}>`;
-      body += `<span class="font-mono fw-semibold">${c.course_code}</span>`;
-      body += `<span class="text-t3">${c.course_name}</span>`;
-      body += `<span class="text-t4 fs-xs" style="margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`;
-      body += `</label>`;
-    });
-    body += `</div>`;
+    return [
+      safeHtml`<div class="u-border" style="margin-bottom:12px; padding:8px; border-radius:var(--radius-sm)">`,
+      safeHtml`<div class="fw-bold" style="color:var(--royal); margin-bottom:4px">${ph} <span class="fs-sm text-t4" style="font-weight:400">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`,
+      catalogue.map(c => [
+        safeHtml`<label class="d-flex align-items-center fs-md u-cursor-pointer" style="gap:6px; padding:2px 0">`,
+        safeHtml`<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${selected.includes(c.course_code) ? 'checked' : ''}>`,
+        safeHtml`<span class="font-mono fw-semibold">${c.course_code}</span>`,
+        safeHtml`<span class="text-t3">${c.course_name}</span>`,
+        safeHtml`<span class="text-t4 fs-xs" style="margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`,
+        safeHtml`</label>`,
+      ]),
+      safeHtml`</div>`,
+    ];
   });
-  body += `</div>`;
+  const body = safeHtml`<div class="fs-md text-t3 mb-2">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div><div style="max-height:400px;overflow-y:auto">${rows}</div>`;
 
   const result = await dlg.confirm({
     title: IS_AR ? `ربط الاختيارية — ${programme} ${year}/${term}` : `Map Electives — ${programme} ${year}/${term}`,
@@ -7295,14 +7368,7 @@ async function runOptimiseV2(mode = 'current') {
     body += window.TimetableHotspots?.html(o, IS_AR) || '';
 
     // Reserve-heavy sections
-    if (o.reserve_heavy_sections && o.reserve_heavy_sections.length > 0) {
-      body += `<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span>`;
-      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
-      o.reserve_heavy_sections.slice(0, 8).forEach(s => {
-        body += `<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">${s.section} ${Math.round(s.ratio*100)}%</span>`;
-      });
-      body += `</div></div>`;
-    }
+    body += reservePressureHtml(o);
 
     body += `</div>`;
 
@@ -7355,5 +7421,13 @@ async function runOptimiseV2(mode = 'current') {
     // window — this closes it again.
     finishWorkspaceOperation(token);
   }
+}
+
+/* The Optimise result's reserve-pressure chips. A section label is data, so
+   it goes through safeHtml; nothing when no section leans on reserve seats. */
+function reservePressureHtml(o) {
+  const heavy = o.reserve_heavy_sections;
+  if (!heavy || !(heavy.length > 0)) return safeHtml``;
+  return safeHtml`<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span><div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">${heavy.slice(0, 8).map(s => safeHtml`<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">${s.section} ${Math.round(s.ratio*100)}%</span>`)}</div></div>`;
 }
 /* End V2 optimiser. */
