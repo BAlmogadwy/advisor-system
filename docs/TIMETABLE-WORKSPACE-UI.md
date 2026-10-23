@@ -4120,7 +4120,7 @@ Chrome (`SlotDialogTests`):
 - **F11.** One meeting-policy rule for the page and the server in the grid rule.
 - **F12.** Move `.im-form-error`, the exam repeater and `.field-error` onto `.ux-field-error` and `.ux-rows`.
 - **F13.** Split view's slot editor on the 6f dialog.
-- **F14.** A 503 retry in MRI's `api`; then decide whether quality takes the lane.
+- ~~**F14.** A 503 retry in MRI's `api`; then decide whether quality takes the lane.~~ Dropped (owner, 2026-10-23: no work on the MRI page).
 - **F15.** Compress JSON answers.
 - **F16.** Measure `lens=1` on the 0.5 vCPU host and on a scenario larger than 665, before any default change to E2a.
 - **F17.** (Found in 6b.) With one teacher per section on, the per-plan export raises on a scenario whose sections cannot be built (QA 662 and 664: "English board copies must each use the same complete weekly pattern", from `section_teacher_texts`), so the download fails where the quality read says "unassessed". Decide the export's answer (a refusal naming the boards, or files without teachers).
@@ -4145,9 +4145,11 @@ of `4f33b23` and drift: each PR re-verifies the ones it relies on.
 > (`timetable_workspace_mri.html`, `page-timetable-mri.js`) and the classic
 > inspector's MRI tab stay exactly as they are. M1, D-8 and D-11 are withdrawn
 > (M1 was built and reviewed but is not merged); MRI-01, MRI-03 and F14 are
-> dropped; Q7 is answered. Stage 3 PRs change nothing on the MRI page, and
-> global changes (C1's colour tokens) keep it excluded. The entries below are
-> kept for the record, marked withdrawn.
+> dropped; Q7 is answered. No stage 3 PR edits the MRI page's own files or the
+> classic MRI tab, and no PR is made for MRI. Global files it loads
+> (`base.html`, `global.css`, `shared-utils.js`) change for every page; C1
+> leaves MRI's own two `color: var(--teal)` declarations alone. The entries
+> below are kept for the record, marked withdrawn.
 
 ### Summary
 
@@ -4158,7 +4160,7 @@ of `4f33b23` and drift: each PR re-verifies the ones it relies on.
    - B1 refuses a section label that is already placed (with a row lock), and refuses removal of externally owned sections.
    - B2 turns F17 into "—" with a reason and downloads exports on the page.
    - ~~M1 makes the MRI page read-only now.~~ Withdrawn: the owner keeps the MRI page as it is.
-5. The plan is 25 unconditional PRs, down from 31, plus 3 PRs gated on owner question Q6. The longest serial chain is 8 PRs, and CI costs about 13–19 CI-hours before re-runs (unverified per-run time).
+5. The plan is 24 unconditional PRs (25 listed; M1 withdrawn by the owner), down from 31, plus 3 PRs gated on owner question Q6. The longest serial chain is 8 PRs, and CI costs about 12–18 CI-hours before re-runs (unverified per-run time).
 6. Classic critical path: A1 → C3 → D2 → D3a → D3b → D4 → D5 → E2. The global PRs C1, C2, C4 and C5 run beside it.
 7. The online-only windows get their own "Online only" table, like the English table; they hold 0 meetings on 662–666 today. A room-needing class placed there gets a server-side readiness warning and is never refused.
 8. The owner is asked now:
@@ -4289,10 +4291,10 @@ Re-verified from the draft: L01's four sites (PAGE:4063, 4554, 5057, 5646); SPL-
 | D-5 | **F10: export search uses the grid's words**, in the page's language. One case table with a language column pins parity. | The menu promises "Only what matches"; today ONLINE gives 0. |
 | D-6 | **One dialog engine.**<br>• `dlg.confirm`/`prompt` render `<dialog class="ux-dialog">` with their own stack, so a confirm can open over an open `ux-dialog`.<br>• `waitForClose` defaults to true; the default flip is audited per caller.<br>• The `.btn-confirm`, `.btn-cancel` and `.dlg-input` hooks are kept.<br>• "Is a dialog open?" becomes `UXControls.dialog.isOpen()`.<br>• `.dlg-*` CSS is kept while the dashboard's `_modals.html` uses it. | One engine for 40 call sites (SW-06, L13). The coupling is measured in PAGE:202, 1836-1837, panes:84 and exam:1626. |
 | D-7 | **The online-only windows are their own "Online only" table**, like the English table.<br>• It is shown when a meeting sits in a window or the board has an online course.<br>• It uses normal 96 px columns; Labs go back to 5 columns.<br>• A meeting of a non-online course in a window gets a **server readiness warning** (`ONLINE_WINDOW_ROOM_CLASS`).<br>• Sideways scroll with a sticky day column stays the fallback for wide custom slot lists. | 0 meetings in windows today (N-15). One rule, read by the classic page, split, Publish and MRI. A compact 72 px card would need a second card design for an empty feature. |
-| D-8 | **Withdrawn (owner, 2026-10-23).** ~~Remove the classic inspector's MRI tab.~~ "Full MRI" stays in Open ▾. | MRI-01, L05; principle 6. |
+| D-8 | **Withdrawn (owner, 2026-10-23).** ~~Remove the classic inspector's MRI tab.~~ The MRI tab and "Full MRI" in Open ▾ both stay. | MRI-01, L05; principle 6. |
 | D-9 | Merge Capacity into Demand, with a labelled demand/seats bar and a Total that sums its column. | L08, N-5. |
 | D-10 | **No page sends `override` on Remove, undo or redo.** A locked meeting reads "Its time is locked. Unlock its time first." and has no destructive button. | A lock freezes time; removal changes it. SPL-10, N-10. |
-| D-11 | **Withdrawn (owner, 2026-10-23).** ~~The MRI page becomes read-only now.~~ Its "Move" links to classic. | MRI-02 (a non-atomic bundle writer). |
+| D-11 | **Withdrawn (owner, 2026-10-23).** ~~The MRI page becomes read-only now. Its "Move" links to classic.~~ | MRI-02 (a non-atomic bundle writer). |
 | D-12 | **Split view: safety and shared rules first, reskin later.**<br>• E1–E3 ship in stage 3.<br>• E0, E4 and E5 (shared models, grid, verdict) wait for Q6.<br>• If they go ahead, split gets classic's **renderer**, not just its model. | The split-only tools have seen no use since 2026-05-29 on the QA copy (N-16). A third renderer would be rewritten again (design critique). |
 | D-13 | Selecting a card in split never starts a repair run. "Find repairs" is a button, and a click paints no slot assist. | SPL-13 (an audited CP-SAT run on click). |
 | D-14 | **Compress JSON only**: a subclass of Django's `GZipMiddleware` filtered to `/ops/tw/`, `application/json`, at least 1 KB, never file responses. | Measured 349,243 → 8,268 B in 1.4 ms. Django's middleware already carries the BREACH mitigation. |
@@ -4318,7 +4320,7 @@ Tiers:
 | 1 | A1 | `safeHtml` tag, fingerprinted ratchet, workspace sinks, stage-3 record | P0 | M | low | Security | — | N-1, N-2, N-12, SW-05 |
 | 2 | B1 | Server write guards: label in use; no removal of externally owned placements | P0 | M | med | Server | — | (e), SPL-05, N-6, N-7 |
 | 3 | B2 | F17 degrades at the source; exports download on the page | P0 | M | med | Server + global | — | F17, N-3, N-9 |
-| 4 | ~~M1~~ | **Withdrawn (owner, 2026-10-23).** MRI read-only; Move links to classic | P0 | S | low | MRI | — | MRI-02 |
+| 4 | ~~M1~~ | **Withdrawn (owner, 2026-10-23).** ~~MRI read-only; Move links to classic~~ | P0 | S | low | MRI | — | MRI-02 |
 | 5 | A2 | DB-admin and dashboard sinks | P0 | M | low | Security | A1 | SW-01 |
 | 6 | A3 | Planner and portfolio sinks, delegated handlers | P0 | M | low | Security | A1 | SW-01, SW-02 |
 | 7 | E1 | Split safety: no override anywhere, typing guard, no repair on click | P0 | M | low | Split | B1 | SPL-10, SPL-13, N-10, N-11 |
@@ -4336,7 +4338,7 @@ Tiers:
 | 19 | E3 | Split rooms on `TimetableRoomChoice` | P1 | M | med | Split | E1 | F3, F6, SPL-06, Q1 |
 | 20 | D3a | Online-only table, grid fit, column names | P1 | M | med | Classic | D2, B4 | L03, N1, N-15 |
 | 21 | D3b | Cards, legend popover, no-match, programme control | P1 | M | med | Classic | D3a, C4 | L11, L12, L15, L26, L34 |
-| 22 | D4 | Inspector: three tabs, Demand, Issues list, one count unit | P1 | M | med | Classic | D3b, C2 | L05, L07, L08, L20–L22, N-5 |
+| 22 | D4 | Inspector: Capacity merged into Demand, Issues list, one count unit (the MRI tab stays) | P1 | M | med | Classic | D3b, C2 | L05, L07, L08, L20–L22, N-5 |
 | 23 | D5 | Shared Remove and Publish flows, Delete key, Electives dialog | P1 | L | med | Classic → shared | D4, C3, B1 | L02, L13, F7, D-10, D-17, N-6 |
 | 24 | E2 | Split on shared labels, flows and dialogs | P1 | M | low | Split | D5, E3, D6 | SPL-05, SPL-12, SW-07 |
 | 25 | D7 | P2 polish: hotspots, engine details, stat meanings, small truths | P2 | M | low | Classic + global | D4, D6, C4, C5 | (g), (i), (j), L10 (meanings), L28, L35 |
@@ -4344,7 +4346,7 @@ Tiers:
 | 27 | E4 | Split grid and Issues on the shared renderer; one quality read | P1\* | L | high | Split | E0, E2 | SPL-01, SPL-02, SPL-07, SPL-09, SPL-14–16, F8 |
 | 28 | E5 | Split assists from the server verdict, per board | P1\* | M | med | Split | E4, B5 | SPL-03, SPL-04 |
 
-**25 unconditional PRs plus 3 gated on Q6.** Changes from the draft:
+**24 unconditional PRs (25 listed; M1 withdrawn by the owner) plus 3 gated on Q6.** Changes from the draft:
 - E0a and E0b merge into E0; E6 merges into E4.
 - D6 is split by tier; D7 and D8 merge into D7.
 - A4 moves to stage 4, since the ratchet already blocks new sinks.
@@ -4470,6 +4472,8 @@ The weak escapers move out of A1. `page-planner.js:47` goes to A3. `shared-timet
 **Risk.** Medium. The board payload is additive; the engine still raises.
 
 ##### M1: MRI read-only (withdrawn by the owner, 2026-10-23; kept for the record)
+
+**Withdrawn — do not build.** The owner keeps the MRI page exactly as it is, writes included.
 **Scope**
 - MRI: delete `applySelectedMove`, `undoLastMove` and the move panel's apply (:2619-2770; the writes are at :2683 and :2743). The template drops the writer controls.
 - "Move" becomes a link to `/timetable-workspace/?scenario=&board=&placement=&action=move`. Classic honours `scenario` and `board` today (PAGE:952-959), and `placement` and `action` from D2, so MRI needs no second edit.
@@ -4826,7 +4830,7 @@ As drafted:
 
 **Mutants.** Programme control writes a different string (lens parity red); legend becomes modal (red).
 
-##### D4: Inspector: three tabs, Demand, Issues list, one count unit
+##### D4: Inspector: Capacity merged into Demand, Issues list, one count unit (the MRI tab stays)
 **Scope**
 - ~~Delete the MRI tab and its model (:5703-5890).~~ Withdrawn: the MRI tab stays (owner decision).
 - Merge Capacity into Demand: a labelled demand/seats bar, Short in its severity colour, Total Sections = the column's sum, and a separate "N courses" line.
@@ -4994,7 +4998,7 @@ As drafted:
 - **One reviewer per PR**, never Fable 5. Sonnet by default; a stronger model for A1, B1, B2, C3, D5 and E4.
 - **As-built notes** go in `docs/stage3/<ID>.md`.
 
-**Cost.** 25 PRs × about 30–45 min of CI comes to about 13–19 CI-hours before re-runs (the per-run time is unverified; master CI was about 28 min). The critical path is 8 PRs.
+**Cost.** 24 PRs (M1 withdrawn) × about 30–45 min of CI comes to about 12–18 CI-hours before re-runs (the per-run time is unverified; master CI was about 28 min). The critical path is 8 PRs.
 
 ---
 
@@ -5048,8 +5052,9 @@ As drafted:
    - **Default: E0, E4 and E5 are not started.**
    - Please name the split-only tools the department uses.
 4. **Q7: the MRI page.** **Answered by the owner (2026-10-23): never do anything for the MRI page; keep it as it is.**
-   - **Recommended:** keep the Board Map / graph only if it is used; otherwise retire the page into classic's Issues, hotspots and Demand.
-   - **Default: read-only, unchanged.**
+   - ~~**Recommended:** keep the Board Map / graph only if it is used; otherwise retire the page into classic's Issues, hotspots and Demand.~~
+   - ~~**Default: read-only, unchanged.**~~
+   - **Answer:** the page stays exactly as it is (still writable): no retirement, no read-only change.
 
 ---
 
