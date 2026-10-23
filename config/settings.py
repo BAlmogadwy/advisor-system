@@ -70,6 +70,10 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Gzips the Timetable Workspace's JSON answers only (/ops/tw/, JSON, >= 1 KB,
+    # never a file or a stream). High in the list, so it compresses last, after
+    # every middleware below has finished with the body. Revert = this one line.
+    "config.middleware.TwJsonGZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     # Must be after SessionMiddleware and before CommonMiddleware.
     "django.middleware.locale.LocaleMiddleware",
