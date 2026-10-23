@@ -104,8 +104,12 @@ padding-aware for `p-0`.
   delegated listener in `ux-controls.js`; with `data-ux-disclosure="key"` the
   choice is kept for the session (in memory where storage is unavailable).
   The chevron points down when open and along the reading direction when
-  closed. (Section planning's `.sp-chev` predates it and is a candidate to
-  move onto it.)
+  closed. After each toggle the button fires a bubbling `ux-disclosure`
+  event (`{open, key}`, key null without `data-ux-disclosure`): showing rows
+  changes no node, so a region whose keyboard depends on what is shown hears
+  it from the event. A toggle without the key keeps no choice (the board's
+  folds keep their own, per board and text). (Section planning's `.sp-chev`
+  predates it and is a candidate to move onto it.)
 - `UXControls.roving(region, options)` (and `UXControls.letterOf(event)`):
   the WAI-ARIA grid pattern for a region of `[role=grid] > [role=row] >
   [role=gridcell]` — one tab stop, arrows (mirrored in RTL; ↑/↓ also walk the
@@ -114,10 +118,14 @@ padding-aware for `p-0`.
   Latin letter typed, or the key's letter where it types another script's).
   It keeps the active stop (by `data-focus-key`) through any redraw and gives
   the keyboard back when it was in the region; a restore scrolls only after a
-  key. `.ux-grid-row` (display: contents) is a row on a CSS grid; a roving
-  cell takes an inset focus ring; `.ux-keys` is the keys line shown while the
-  keyboard is in a region. `--ux-job-block` is the floating job card's height,
-  for scroll padding.
+  key. It reads its stops again on a redraw (`childList`), on a
+  `ux-disclosure` event inside it, and when the page calls `nav.refresh()`
+  after hiding or showing rows itself — never on attributes (a tone, a dim),
+  so they never move the keyboard. A stop inside `[hidden]` is no stop, and a
+  stop's `tabindex` is the controller's alone. `.ux-grid-row` (display:
+  contents) is a row on a CSS grid; a roving cell takes an inset focus ring;
+  `.ux-keys` is the keys line shown while the keyboard is in a region.
+  `--ux-job-block` is the floating job card's height, for scroll padding.
 - `UXControls.redraw(region, html)`: draws a region again without losing the
   keyboard — unchanged content keeps its nodes; changed content gives focus
   back to the same control (`data-focus-key`, `data-ux-disclosure` or id), or
@@ -295,6 +303,14 @@ Stage 3 (to evaluate): a time-proportional week grid.
   section, isolated), so they never read as that dialog's own.
   Its commit checks the page's edit hold itself before it writes
   (`dialogWrite`), since the page's busy guard answers with a toast.
+- The filter and the programme lens are a view over the board
+  (`applyGridView`, §7.2 item 6, 6c): they change attributes and text only —
+  `data-dim`, `aria-describedby`, titles, a fold row's and rowgroup's
+  `hidden` — and never the board's nodes, so a drag, a focused card and the
+  keyboard's stop survive typing. Every meeting is drawn.
+- Every meeting is drawn exactly once (§7.2 item 6, 6e): in the cell its key
+  names — `cellKey`, one key for the renderer and the grid's rule, reading a
+  time as the server does — or in the parking strip under its own table.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
 - The quality read (`GET …/quality/`) answers exactly as it always did.
@@ -331,8 +347,15 @@ Stage 3 (to evaluate): a time-proportional week grid.
   confirms first.
 - Full test suite green.
 
-Pinned by `tests/test_timetable_workspace_frame_browser.py` (frame, slot width,
-chrome height, type floor, contrast, blocked Publish never posts),
+Pinned by `tests/test_timetable_workspace_grid_view_browser.py` (the
+filter's dims and folds: contrast, the ring, the echo told apart, the
+keyboard into a fold), `tests/test_timetable_workspace_parking_browser.py`
+(the parking strip: under its table and across its columns, its header in
+whole words at 12px, contrast, the teacher in a wide enough cell, every
+table's days one to a row in the day column even with no slot column, M
+moving a parked meeting onto the grid), `tests/test_timetable_workspace_frame_browser.py`
+(frame, slot width, chrome height, type floor, contrast, blocked Publish
+never posts),
 `tests/test_design_system_tokens.py` (token contrast in both themes),
 `tests/test_timetable_toolbar_menus_browser.py` (every menu, eight widths, both
 languages, phone rotation) and the jsdom suites under `tests/frontend/`.
@@ -1334,6 +1357,242 @@ findings changed the plan:
    roles alone read from every scenario; the grid order by id alone, by
    label alone, as placed or reversed, and the later section winning R2's
    tie; and 6a's three on SQ2b and SQ4b. **Follow-ups:** F18 and F19.
+   Specified in six sub-PRs (6a–6f; the spec and its critique: E1–E24,
+   contracts A–D). **Owner decisions (2026-10-23)** on the spec's two
+   questions: Q4 — the slot dialog shows the online-only mark read-only and
+   never sets or removes it (E15b); Q5 — a list always keeps one row, and
+   there is no "Use the default columns" button (E15c).
+   **As built, 6c (the text filter folds and dims, in place):** every meeting
+   is drawn and typing never draws the board again. `applyGridView` (after a
+   draw, a keystroke, a tone answer and a lens answer) writes attributes and
+   text only: each card's `data-dim` (`filter`, `lens`, or both), its
+   `aria-describedby` (`twDimNoteFilter`, `twDimNoteLens`: visually hidden
+   notes in `.tw-centre`, outside `#twGrid`, whose words the page writes),
+   its title (the tone's reason, its identity, then why it is dimmed); each
+   table's fold; each group heading's "· N matches"; the legend's
+   "Dimmed: outside the filter" line; and the count. A fold's tone counts are
+   text nodes rewritten in place, so neither typing nor a tone answer adds or
+   removes a node under `#twGrid` (FL2, FL3 watch for it), and the board's
+   roving reads its stops again only when a table folds or opens: the page's
+   `nav.refresh()` then, and the global `ux-disclosure` event a toggle (or a
+   locate, `openFoldOf`) fires. A dimmed card is an ordinary card: it keeps
+   its ring and marks, drags, and takes Enter, M and R (FL8).
+   Each table's first row is its fold (contract D): one gridcell holding the
+   global `.ux-disclosure-toggle` (no `data-ux-disclosure`, so no session
+   key), drawn with `tabindex=-1` and a roving stop (`'.tw-card,
+   .tw-fold-toggle'`), its cell spanning the table (`aria-colspan`); the
+   header and day rows sit in a `display: contents` rowgroup it hides. Its
+   label counts the cards drawn in the table ("Labs · no match · 0
+   meetings"; an off-grid meeting is drawn from 6e). The open
+   folds are page memory keyed `{group}|{kind}`, cleared when the text **or
+   the board** changes — another board's "S1 lectures" is another table
+   (an addition to the spec, FL4). The count stays "{n} of {total}", n the
+   meetings neither filter nor lens dims; the field is described by
+   `#twSearchNote` (its `aria-describedby`, was the count) and titled with
+   the sentence "… tables folded for no match: {k}; programme filter: {P}",
+   k the folds still shut (one the user opened is no longer folded), each
+   clause left out when empty (6d gives the programme its role words). The
+   Arabic sentence is "المطابق للتصفية: {n} من {meetings}" with the noun after
+   من in the genitive plural (لقاء واحد، لقاءين، 3 لقاءات، 11 لقاءً): the spec's
+   "{n} من {total} لقاء مطابق" left the noun singular after every number.
+   The group heading's Arabic course count takes `pluralAr` too (it read
+   "1 مقررات").
+   The interim lens (until 6d): a programme the held lens knows and SHARED
+   dim (`data-dim="lens"`) and never fold, through today's allocation rule
+   (`itemMatchesPlanToken`), in contract D's shape: a union over the
+   programmes, SHARED narrowing it (alone: every shared section). Today's
+   search took several tokens as an intersection ("AI2 DS" kept only
+   sections allocated to both). Its note: "Outside the programme filter:
+   {P}, …" (isolated). A lens answer with a programme token in the filter
+   dims anew in place (`reapplyPlanSearch` no longer redraws); names for
+   duplicated codes still come from the lens read on open (E19 is 6d's).
+   The text matches what cards and Selection show, never the lens's words
+   (`placementText`: "UNALLOCATED" or "core" finds nothing, FL6). The left
+   list keeps its own finder (E12); split view's chips, repair's plan scope
+   and the export's free-text search keep their rules (E22, E23; F8–F10).
+   Dark mode needed two rules beyond the spec's CSS: `html[data-theme=dark]
+   .tw-card` and its `.cc` set the ink and outrank `.tw-card[data-dim]`, so
+   the dark dim rule sets the ink and the code's colour too. Forced colours:
+   a dotted GrayText border; a toned dimmed card keeps the 2px CanvasText
+   weight, dotted. Global: the disclosure listener fires `ux-disclosure`
+   (`{open, key}`, key null without one) and `UXControls.roving` refreshes on
+   it (§3.3); `ux-controls.js` ?v=6, PAGE ?v=57, TWCSS ?v=17 (`global.css`
+   unchanged). timetable-copy's harness now loads shared-utils, as base.html
+   does (its Arabic draw needed `pluralAr`).
+   Tests: D1 (accessibility); FL1–FL10 (workspace); W1 and the three filter
+   tests (rooms in words, the teacher, a programme search read anew) now pin
+   the fold row and `data-dim`, not absence (a spec change), and the keyboard
+   browser test's empty-cell probe picks a `.tw-cell` (a table's first
+   gridcell is now its fold, hidden while unfiltered); Chrome FB1 and
+   FB2 (`tests/test_timetable_workspace_grid_view_browser.py`).
+   Mutation-checked: 44 jsdom mutants (5 global, 39 page) and 8 Chrome
+   mutants all go red (escaping the page-made course count in the group
+   heading is belt and braces: no test can tell); one
+   Chrome mutant first survived — a fold label in `--t4` at 60 % opacity:
+   `--t4` passes 4.5:1 and the shared contrast helper reads colours, not
+   opacity — and was replaced by a failing colour, which goes red.
+   Measured (a copy of the QA database, scenario 665, its largest board: 44
+   cards in 14 tables; Chrome, the time forced through style and layout, 24
+   keystrokes): a keystroke (`applyGridView` and the left list) takes a
+   median 2.0 ms (max 3.5); at 4× CPU throttling, about the 0.5 vCPU host,
+   10.0 ms (max 16.7). Drawing the whole board again — what an edit does,
+   and what the old filter did on every keystroke over the cards it kept —
+   takes 16.2 ms, and 95 ms throttled.
+   **After review (6c):** a tone update builds the issue model once:
+   `applyCardTones` hands its `byPlacement` to `applyGridView`, which builds
+   the model itself only when no caller gives it (FL3 counts the builds).
+   The warning ink (`#9a3b06`; dark mode the shared `--sev-warning`) is one
+   custom property, `--tw-warning-ink` on `.tw-grid`, which the cards, the
+   folds and the legend all read (each set its own copy); Chrome computes the
+   same ring, mark and icon colours before and after. Four reviewer mutants
+   had survived; each test below now fails on its mutant. FL4: when a user
+   has opened a fold and new text still matches nothing in that table, its
+   rows hide while its fold row stays, and the board's stop leaves the
+   hidden rows. Only the `moved` flag on the rows does this, because the
+   fold row does not change. FL10: under a lens dim alone, a group heading
+   does not count the card as a match, and the legend's dim line shows.
+   FL10 also checks that adding or removing a programme token keeps an
+   opened fold open, since the memory is keyed on the board and the text
+   only. FB1: the fold label's effective opacity (its own times its boxes')
+   must be 1. The contrast helper cannot see opacity.
+   Follow-ups (recorded, not done): the fold label spans its table and
+   starts at the inline start. If the board scrolls sideways (a wide slot set
+   at a narrow width), the label scrolls out of view while the day column
+   stays sticky; it could be sticky at `inset-inline-start`. The legend's
+   "Dimmed: outside the filter" also covers a programme-lens dim, which it
+   fits only loosely; 6d decides its words along with the lens's roles.
+   **As built, 6e (the parking strip):** a meeting no column of its kind has
+   is drawn, under its own table, and was drawn nowhere before. One cell key
+   for the renderer and the grid's rule (E14): `cellKey(day, start)` is the
+   day upper-cased to three letters and the start read as the server reads a
+   stored time (`_TIME`, `_hhmm`: H:MM or HH:MM, seconds allowed, hours
+   0–23), null for anything else, so "9:00", "09:00:00" and "sun" are drawn
+   where the server says they are (the renderer compared raw strings, the
+   rule `slice(0, 5)`). The lab rule is one function for both too
+   (`isLabMeeting`, as `is_lab_meeting`: over 80 minutes, never English; it
+   was a copy inside the renderer). A table draws each meeting in the first
+   column whose key is its own, and every other one of its meetings — no
+   teaching day, or no column of its kind at its start — in its strip, so
+   every meeting is drawn exactly once: two lecture columns with one start
+   (the server keeps both when their ends differ) used to draw a meeting
+   there twice, with one focus key (PK5b). A lab table is drawn when there
+   are lab columns or a lab to park, laying out at least one column. The
+   English table's columns come from its meetings on the grid, so a weekend
+   English meeting adds none and is parked under English.
+   The markup is the spec's: the strip is the table's last row inside the
+   rowgroup its fold hides (a fold counts its parked meetings, and a locate
+   opens it); "Off grid" in the day column with the rest of its name
+   visually hidden; one gridcell per meeting, a `tw-cell` container,
+   `data-ux-col` its start in minutes and `data-focus-key`
+   `park:{group}:{kind}|{id}`. The order is day (SUN…SAT, then any other
+   value by its text), start (a start that is no time last, its column
+   1440), course, then id (one course twice at one time). The keyboard needs nothing new from roving:
+   ↓ from the last day lands on the parked card nearest in time, ←/→ walk the
+   strip, ↑ goes back to the nearest column, PageDown to the next table
+   (PK4). No drag listener is on the strip; a parked card drags onto a cell
+   as any card does (PK4c), and M opens Move with the manual offer (Chrome).
+   Three departures from the spec's text, each for a rule of the design
+   record: the when-line is `{day} <bdi dir="ltr">{t}</bdi>`, the day in the
+   line's own direction and only the time left to right, as Selection,
+   Issues and Move write a meeting's time (the spec's `<bdi dir="ltr">{day}
+   {t}</bdi>` paints an Arabic day to the left of its time, the one place
+   on the page that would); it is `--text-xs`, the design system's floor for
+   data (global.css), not `--text-2xs`; and the strip's header has a 4px
+   inline inset, not the day labels' 8px, because "الشبكة" in the wide font
+   was cut in two inside the 56px column (Chrome found it; its test now
+   fails a word broken across lines). A parked card does not repeat its day
+   and time in the card's visually hidden words (its line says them).
+   Days: SUN–THU as the grid's words, Friday and Saturday named (Fri/Sat,
+   الجمعة/السبت, Friday/Saturday where English uses full names), any other
+   value escaped and isolated — one helper (`dayWord`, `dayText`, `dayHtml`)
+   wherever a parked meeting's day is shown: its card, Issues, the locate's
+   words, Selection's Day and meetings, and Move's lines. For SUN–THU every
+   output is unchanged: an oracle of the grid, Issues and Selection (en and
+   ar, a board with stacked, locked, lab, online and English meetings) and
+   of the slot module, recorded before the edits, is byte-identical after.
+   Issues: `offGrid` locates (its `locate: false` and the renderer's check
+   for it are gone) and its detail ends "· under its table" / "· أسفل
+   جدوله"; the card keeps its warning. The legend has one line
+   (`#twLegendPark`, a swatch of the strip's tint) while any strip is drawn.
+   `timetable-slot-config.js`: `confirmationHtml(details, {parked})`, the
+   workspace passing true; without it the output is the one recorded before
+   6e, to the byte (PK6), and split view's confirmation keeps its words.
+   Versions: PAGE ?v=58, TWCSS ?v=18, the slot module ?v=4 in its three
+   templates; `global.css` unchanged.
+   Tests: the issue-row test now locates the parked meeting (a spec change);
+   PK1–PK5 and PK7, with PK4b (order), PK4c (a drop) and PK5b (one start, two
+   columns), in `timetable-workspace.test.cjs`; PK6 in
+   `timetable-slot-config.test.cjs`, with the workspace's and split view's
+   confirmations pinned; `grid_rule_cases.json` gains "9:00", "09:00:00",
+   "sun", a weekend English meeting and "9am" (the server's rule passes them
+   as it is); PK8 and the Chrome checks in
+   `tests/test_timetable_workspace_parking_browser.py` (`ParkingTests`, an
+   ORM meeting at Monday 18:30: 1366×650 and 1440×790, light and dark, en and
+   ar — the strip under its table and across its columns, the header at
+   12px in whole words and unclipped, contrast of the header, the card's
+   code, room and day and time and the legend line, nothing faded, the
+   frame's acceptance, the teacher shown in a cell at least 130px wide; and
+   M → Monday 09:00 moves the card into its cell and the strip and its
+   legend line go). Mutation-checked: 64 jsdom mutants and 12 Chrome
+   mutants all go red. Three first survived and were strengthened: a parked
+   card made undraggable is made draggable again by the page's own control
+   sync (a mutant the sync cannot undo goes red); a faded header passed the
+   contrast helper, which reads colours, not opacity; and a strip no longer
+   spanning its columns still gave each card 140px. The Chrome check now
+   measures the strip's span and every opacity. Not pinned, as decoration: the strip's tint and the legend
+   swatch (no text sits on the tint), and `overflow-wrap: anywhere` on the
+   header (both words now fit whole; it only keeps a longer word from
+   clipping).
+   Measured on a copy of the QA database: 788 placements in 5 scenarios,
+   none parked by the server's rule, and the page's old rule and old
+   renderer agreed with the new on every one (every stored time is HH:MM, on
+   SUN–THU); no scenario has two columns with one start. Nothing on the QA
+   data changes: the strip shows for what the old editors could save (Risk
+   1: fixtures and an ORM meeting only).
+   Follow-up: `TimetableMeetingPolicy.gridSlots` (shared with split view)
+   tells columns apart by their raw start and end, so an English meeting
+   stored at "9:00" is drawn once, in the 09:00–12:00 column, beside an
+   empty "9:00–12:00" one; it should key columns by `_hhmm` too. F11 (the
+   page's `isEnglish` against the server's policy) stands.
+   **After review (6e):** a table with no slot column, drawn only for its
+   strip, flowed its day labels two to a row (Chrome: Sun beside the
+   corner, then Mon and Tue, Wed and Thu, then "Off grid"), since its one
+   laid-out column took every other label. A row's label
+   (`.tw-grid-slot-label`, the days and the strip's header) is now pinned
+   to the day column (`grid-column: 1`); the server
+   always sends lab columns, so only the page could draw such a table. The
+   Chrome test `test_a_table_with_no_columns_keeps_each_day_on_its_own_row`
+   draws the lab table with none and checks every table's labels (each in
+   the day column, under the row before) and its strip (beside its header,
+   clear of the day column); it fails without the pin, and the first Chrome
+   test runs the same check on every table at every size. Three surviving
+   reviewer mutants now fail: PK4b has a later course that starts earlier
+   on the same day (the strip's start order), and PK7b asserts Selection's
+   meetings list (each day as the grid names it: `dayHtml`, not the raw
+   value) and the dash for an empty day on the card, in Issues, Selection
+   and Move (`dayHtml` and `dayText`). The fold's label counts the strip's
+   cards: PK1's "2 meetings" fails if it counts only cells' cards or is
+   written before the strip is drawn. 6c's R-fold-label-all-cards (the
+   table's meetings, not its drawn cards) is equivalent now, as every
+   meeting is drawn exactly once (§5). Nothing is left of the `locate`
+   option: `add()` spreads its `extra` (a board target, `pending`, a
+   readiness item and its weight) and nothing reads `locate`, so re-adding
+   it to `offGrid` is an equivalent mutant.
+   Follow-ups (recorded, not done): the `blocked` issue still keys on the
+   raw `${day}|${start}`, so a meeting stored as "9:00" or "sun" is drawn in
+   its cell but a blocked time there misses it; it should use `cellKey`
+   (older than 6e). An English meeting on a teaching day with a start that
+   is no time ("9am") is parked, but `isPlacementOnGrid` (and the server's
+   `policy_meeting`) calls every such English meeting on the grid, so it has
+   no Issues row; garbage data only, with the `gridSlots` `_hhmm` follow-up
+   above. Python's `\d` in `_TIME` matches any Unicode digit ("٠٩:٠٠")
+   where the page's `SERVER_TIME` reads ASCII only: in theory the server
+   calls such a meeting on the grid while the page parks it (every stored
+   time is HH:MM; E14's "one cell key" holds for them). The strip's
+   gridcells sit in a plain `.tw-park` box with no `aria-colindex`, while
+   the fold's cell spans `numSlots + 1` columns: a screen reader may give
+   their column positions loosely (the keyboard, by `data-ux-col`, is right
+   and tested).
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any

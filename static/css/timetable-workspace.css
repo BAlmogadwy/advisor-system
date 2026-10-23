@@ -218,7 +218,11 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 [draggable="false"] .tw-place-hint { display: none; }
 
 /* ── The board ──────────────────────────────────────────────────── */
-.tw-grid { min-width: 0; }
+/* The board's warning ink, one for its cards, its folds and its legend: a
+   ring and mark that reach 3:1 on every course colour (the shared amber
+   reaches 2.5:1 on the greys); dark mode keeps the shared amber. */
+.tw-grid { min-width: 0; --tw-warning-ink: #9a3b06; }
+html[data-theme="dark"] .tw-grid { --tw-warning-ink: var(--sev-warning); }
 .tw-group-head {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
   margin: 16px 0 6px;
@@ -260,7 +264,11 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 .tw-grid-corner { inset-inline-start: 0; z-index: 3; }
 .tw-slot-no { color: var(--t3); font-size: var(--text-2xs); font-weight: 700; }
 .tw-slot-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A row's label (a day, or the strip's "Off grid") is always in the day
+   column: a table with no slot column, drawn only for its strip (6e), would
+   otherwise flow its days two to a row. */
 .tw-grid-slot-label {
+  grid-column: 1;
   position: sticky; inset-inline-start: 0; z-index: 1;
   display: flex; align-items: center;
   padding: 6px 8px;
@@ -294,9 +302,6 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
    never colour alone. */
 .tw-card {
   --tw-card-hue: #d4e6f1;
-  /* A warning ring and mark that reach 3:1 on every course colour (the
-     shared amber reaches 2.5:1 on the greys). */
-  --tw-warning-ink: #9a3b06;
   position: relative; min-width: 0;
   padding-block: 4px 5px; padding-inline: 8px 6px;
   border-radius: var(--radius-sm);
@@ -344,7 +349,6 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 .tw-card-marks .ux-icon { color: #374151; }
 .tw-card-marks .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
 html[data-theme="dark"] .tw-card {
-  --tw-warning-ink: var(--sev-warning);
   background: color-mix(in srgb, var(--tw-card-hue) 16%, var(--surface));
   border-color: rgba(255,255,255,0.08);
   border-inline-start-color: color-mix(in srgb, var(--tw-card-hue) 80%, transparent);
@@ -389,10 +393,60 @@ html body .tw-card.is-selected:focus-visible { outline-offset: 4px !important; b
 .tw-legend .ux-legend-swatch[data-swatch="selected"] { outline: 2px solid var(--t0); outline-offset: 1px; }
 .tw-legend .ux-legend-swatch[data-swatch="same"]     { outline: 1px dashed var(--t2); outline-offset: 1px; }
 .tw-legend .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
-.tw-legend { --tw-warning-ink: #9a3b06; }
-html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-workspace[data-busy="true"] .tw-card,
 .tw-workspace[data-busy="true"] .tw-section-item { cursor: progress; }
+
+/* ── The filter's view (design record §7.2 item 6, 6c) ──────────────
+   Dimmed (outside the filter or the programme lens): the course hue mixed
+   down, the theme's secondary ink and a lighter code — never opacity, never
+   dashed (the same-course echo is the dashed outline). The severity ring,
+   the marks, the selection, the echo and the focus ring all stay. */
+.tw-card[data-dim] { background: color-mix(in srgb, var(--tw-card-hue) 30%, var(--surface)); color: var(--t2); }
+.tw-card[data-dim] .cc { color: var(--t2); font-weight: 500; }
+.tw-card[data-dim] .ci, .tw-card[data-dim] .tw-card-name { color: var(--t2); }
+html[data-theme="dark"] .tw-card[data-dim] { background: color-mix(in srgb, var(--tw-card-hue) 6%, var(--surface)); color: var(--t2); }
+html[data-theme="dark"] .tw-card[data-dim] .cc { color: var(--t2); }
+@media (forced-colors: active) {
+  .tw-card[data-dim] { border: 1px dotted GrayText; }
+  /* A toned card keeps its severity weight; dotted still says dimmed. */
+  .tw-card.critical[data-dim], .tw-card.warning[data-dim] { border: 2px dotted CanvasText; }
+}
+.tw-legend .ux-legend-swatch[data-swatch="dim"] { background: color-mix(in srgb, #d4e6f1 30%, var(--surface)); }
+html[data-theme="dark"] .tw-legend .ux-legend-swatch[data-swatch="dim"] { background: color-mix(in srgb, #d4e6f1 6%, var(--surface)); }
+/* A table the filter's text matches nothing in: one row across it, the
+   global disclosure toggle, which opens its rows (they sit in a
+   `display: contents` rowgroup, so the grid lays them out as before). */
+.tw-fold-body { display: contents; }
+.tw-fold-cell { grid-column: 1 / -1; padding: 4px 8px; background: var(--surface); }
+.tw-fold-toggle { width: 100%; justify-content: flex-start; gap: 8px; font-size: var(--text-xs); }
+.tw-fold-tones { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
+.tw-fold-tone { display: inline-flex; align-items: center; gap: 3px; }
+.tw-fold-tone .ux-tone-icon { width: 12px; height: 12px; }
+.tw-fold-tone[data-tone="warning"] .ux-tone-icon { color: var(--tw-warning-ink); }
+
+/* ── The parking strip (design record §7.2 item 6, 6e) ─────────────
+   A table's meetings whose day or start no column of their kind has: its
+   last row, "Off grid" in the day column (the 56px header wraps), then one
+   cell per meeting, each a card container like a slot (the teacher shows
+   where the cell is wide enough). A warning tint says the cards are out of
+   place; each card carries its own warning ring and its day and time. */
+.tw-park {
+  grid-column: 2 / -1;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 3px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--sev-warning) 6%, var(--card));
+  border-bottom: 1px solid var(--line);
+}
+.tw-park-cell { container: tw-cell / inline-size; min-width: 0; }
+/* Two short words in the 56px day column: a narrower inset keeps each word
+   whole ("الشبكة" in the wide font); a longer one still breaks, never clips. */
+.tw-park-head { padding-inline: 4px; white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
+/* Day and time: data, so the design system's data floor (--text-xs). */
+.tw-card-when { overflow: hidden; font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; }
+.tw-legend .ux-legend-swatch[data-swatch="park"] {
+  background: color-mix(in srgb, var(--sev-warning) 6%, var(--card));
+  border-color: color-mix(in srgb, var(--sev-warning) 45%, var(--line));
+}
 
 /* ── Inspector ──────────────────────────────────────────────────── */
 /* The tab strip and the collapse button share one row; the button is not a
