@@ -2902,6 +2902,111 @@ def _normalise_planned_meeting_rows(rows: list[dict]) -> list[dict[str, str]]:
     return meetings
 
 
+class SectionLabelInUse(ValueError):
+    """A placement would give the scenario a second section under one label.
+
+    Section labels are unique per scenario (stage 3, decision D-3): a label is
+    in use while any board of the scenario places a section of the course under
+    it, whichever section that is (the scenario's own or a global one). It
+    carries the label and the first free one, so the page can say both.
+    """
+
+    code = "SECTION_LABEL_IN_USE"
+
+    def __init__(self, *, course_code: str, label: str, next_free: str) -> None:
+        super().__init__(
+            f"{course_code} {label} is already placed in this scenario. "
+            f"The next free section is {next_free}."
+        )
+        self.course_code = course_code
+        self.label = label
+        self.next_free = next_free
+
+
+def normalise_section_label(value: object) -> str:
+    """A section label (or a course key) as the page compares it: trimmed, upper case."""
+
+    return str(value or "").strip().upper()
+
+
+def first_free_section_labels(used: Iterable[object], count: object) -> list[str]:
+    """The first ``count`` labels S1, S2, … that ``used`` does not hold.
+
+    The page's rule (``freeSectionLabels`` in page-timetable-workspace.js): with
+    S1 and S3 used the next are S2 and S4, never S3 again. A label is compared
+    trimmed and upper-cased; any other label (M1, A, S01) takes no S-number.
+    ``tests/fixtures/section_label_cases.json`` runs both against one table.
+    """
+
+    taken = {normalise_section_label(label) for label in used}
+    try:
+        wanted = max(int(count), 0)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        wanted = 0
+    free: list[str] = []
+    number = 1
+    while len(free) < wanted:
+        label = f"S{number}"
+        if label not in taken:
+            free.append(label)
+        number += 1
+    return free
+
+
+def placed_section_labels(scenario_id: int, course_key: str) -> dict[str, set[int]]:
+    """The labels of one course placed on any board of the scenario, with their sections.
+
+    The course of a placement is its section's ``course_key`` (its
+    ``course_code`` when it has none), as ``compute_scenario_budget`` counts
+    ``used_section_labels``, so the label the page proposes and the label the
+    server accepts follow one list. Keys and labels are compared trimmed and
+    upper-cased. Every placed section counts: the scenario's own, a global one,
+    another scenario's.
+    """
+
+    wanted = normalise_section_label(course_key)
+    holders: dict[str, set[int]] = defaultdict(set)
+    rows = SectionPlacement.objects.filter(board__scenario_id=scenario_id).values_list(
+        "term_section_id",
+        "term_section__course_key",
+        "term_section__course_code",
+        "term_section__section",
+    )
+    for term_section_id, key, code, label in rows:
+        if (normalise_section_label(key) or normalise_section_label(code)) == wanted:
+            holders[normalise_section_label(label)].add(term_section_id)
+    return holders
+
+
+def assert_section_label_free(
+    scenario_id: int,
+    *,
+    course_key: str,
+    course_code: str,
+    label: str,
+    term_section_id: int | None = None,
+) -> None:
+    """Refuse a placement that would give the scenario a second section with ``label``.
+
+    ``term_section_id`` names the section being placed when it exists already:
+    placing it again (on another board, or back where it was) adds no second
+    section, so its own placements do not hold the label against it. A planned
+    create passes none: any section placed under the label holds it, the one
+    the create would reuse too. Raises ``SectionLabelInUse`` with the first
+    free label.
+    """
+
+    holders = placed_section_labels(scenario_id, course_key)
+    wanted = normalise_section_label(label)
+    others = holders.get(wanted, set()) - {term_section_id}
+    if others:
+        raise SectionLabelInUse(
+            course_code=str(course_code or course_key).strip().upper(),
+            label=wanted,
+            next_free=first_free_section_labels(holders, 1)[0],
+        )
+
+
 def _drop_stale_workspace_meetings(term_section: TermSection, scenario_id: int) -> None:
     """Clear the meeting rows an earlier section of this label left behind.
 
@@ -2940,7 +3045,16 @@ def create_planned_section_placements(
     capacity: int,
     meetings: list[dict],
 ) -> dict:
-    """Create a planned section and all required placement rows atomically."""
+    """Create a planned section and all required placement rows atomically.
+
+    A label already placed anywhere in the scenario is refused
+    (``SectionLabelInUse``), whichever section holds it; a label whose section
+    has no placement left (an undone create, read back by Redo) is free, and
+    its section is reused. The check runs under a row lock on that section, so
+    two creates of one label wait for each other and the second sees the
+    first's placements. (Over HTTP the manual-write guard's scenario lock
+    already serialises them; the row lock keeps the service safe on its own.)
+    """
 
     board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     if board.scenario.status == "published":
@@ -2992,6 +3106,13 @@ def create_planned_section_placements(
                 "available_capacity": capacity,
                 "source_tag": PLANNED_SECTION_SOURCE_TAG,
             },
+        )
+        # One section per label in the scenario (D-3): lock the section's row
+        # first, so a concurrent create of this label waits here until this one
+        # commits, then checks against its placements. Checked, then written.
+        term_section = TermSection.objects.select_for_update().get(pk=term_section.pk)
+        assert_section_label_free(
+            board.scenario_id, course_key=key, course_code=code, label=section
         )
         if not _created:
             _drop_stale_workspace_meetings(term_section, board.scenario_id)

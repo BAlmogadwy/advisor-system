@@ -11,7 +11,9 @@ Two server facts behind the "required sections" list:
   A's rows and B's. The leftovers go, but only for a section the workspace made
   (``tw_planned``, or ``tw_auto`` from the engines) that this scenario owns and
   that is on no board of any scenario. A registrar's, imported or scraped
-  section, a section owned elsewhere, or one still placed, keeps its rows.
+  section, a section owned elsewhere, or one another scenario still places,
+  keeps its rows. One this scenario still places is never created again: its
+  label is in use (stage 3, B1; tests/test_tw_write_guards.py).
 """
 
 from __future__ import annotations
@@ -204,15 +206,19 @@ def test_recreating_a_removed_planned_section_holds_only_the_new_pattern():
     assert TermSection.objects.filter(scenario=sc, course_key=key, section="S2").count() == 1
 
 
-def test_a_section_still_placed_elsewhere_in_the_scenario_keeps_its_rows():
+def test_a_section_still_placed_elsewhere_in_the_scenario_is_never_created_again():
+    # Still on `board`; the same label asked for again on the other board. Since
+    # stage 3 (B1) the label is in use, so the create is refused before anything
+    # is swept or written: the section keeps its rows and its placements.
     sc, board, other, key = _workspace()
     term_section = _create(board, key, "S2", PATTERN_A)["term_section"]
-    # Still on `board`; the same label is created again on the other board.
 
-    _create(other, key, "S2", PATTERN_B)
+    with pytest.raises(tws.SectionLabelInUse):
+        _create(other, key, "S2", PATTERN_B)
 
     assert SectionPlacement.objects.filter(term_section=term_section, board=board).count() == 3
-    assert _meeting_rows(term_section) == _rows(PATTERN_A + PATTERN_B)
+    assert not SectionPlacement.objects.filter(board=other).exists()
+    assert _meeting_rows(term_section) == _rows(PATTERN_A)
 
 
 def test_one_teacher_mode_rows_are_replaced_and_the_teacher_is_named_again(settings):

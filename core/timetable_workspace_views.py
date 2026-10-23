@@ -163,8 +163,10 @@ from core.services.timetable_slot_config import (
 )
 from core.services.timetable_student_blockers import build_scenario_student_blockers
 from core.services.timetable_workspace import (
+    SectionLabelInUse,
     apply_bulk_clean_room_assignments,
     apply_bulk_safe_time_moves,
+    assert_section_label_free,
     assign_physical_meeting_room,
     build_scenario_builder_actions,
     check_publish_readiness,
@@ -222,6 +224,20 @@ def _err(
     if details:
         payload["error"]["details"] = details  # type: ignore[index]
     return JsonResponse(payload, status=status)
+
+
+def _section_label_in_use(exc: SectionLabelInUse) -> JsonResponse:
+    """409 ``SECTION_LABEL_IN_USE``: the label, its course and the first free label.
+
+    The page says it in its own words from ``details`` (stage 3, B1).
+    """
+
+    return _err(
+        str(exc),
+        code=SectionLabelInUse.code,
+        status=409,
+        details={"course_code": exc.course_code, "label": exc.label, "next_free": exc.next_free},
+    )
 
 
 def _require_general_advisor(request: HttpRequest) -> JsonResponse | None:
@@ -1879,7 +1895,11 @@ def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -
 @guard_manual_scenario_write
 @_one_teacher_request
 def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
-    """Create one planned section, including full multi-meeting patterns."""
+    """Create one planned section, including full multi-meeting patterns.
+
+    A label already placed in the scenario is refused with 409
+    ``SECTION_LABEL_IN_USE`` and ``details`` ``{course_code, label, next_free}``.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1924,6 +1944,8 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
         )
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
+    except SectionLabelInUse as exc:
+        return _section_label_in_use(exc)
     except ValueError as exc:
         message = str(exc)
         code = (
@@ -1996,6 +2018,9 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
 
     Validates the placement for conflicts before persisting but still creates
     it even if warnings exist (the validation result is returned alongside).
+    The section itself may be placed again (on another board, or back where an
+    Undo puts it), but not beside another section of its course placed under
+    the same label in the scenario: 409 ``SECTION_LABEL_IN_USE``.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -2043,6 +2068,20 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             code="SECTION_NOT_AVAILABLE_TO_BOARD",
             status=409,
         )
+
+    # One section per label in the scenario (D-3). Over HTTP this runs under
+    # the manual-write guard's scenario row lock, so no other write of the
+    # scenario lands between the check and the placement.
+    try:
+        assert_section_label_free(
+            board.scenario_id,
+            course_key=ts.course_key or ts.course_code,
+            course_code=ts.course_code,
+            label=ts.section,
+            term_section_id=ts.id,
+        )
+    except SectionLabelInUse as exc:
+        return _section_label_in_use(exc)
 
     if OnlineCourseLookup().is_online_course_for_board(board, ts.course_code):
         room = ""
@@ -3134,7 +3173,10 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
 def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonResponse:
     """Remove a placement from its board.
 
-    Locked placements require ``override: true`` in the payload.
+    A section another scenario also places is owned there and fully frozen
+    here: 409 ``PLACEMENT_EXTERNALLY_OWNED``, override or not (stage 3, D-17),
+    as on the move, pattern-switch and programme-preference endpoints. Locked
+    placements require ``override: true`` in the payload.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -3152,6 +3194,14 @@ def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonRes
 
     if placement.board.scenario.status == "published":
         return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
+
+    # Before the lock: an override unlocks a lock, never another scenario's section.
+    if placement.term_section_id in external_shared_section_ids(placement.board.scenario_id):
+        return _err(
+            "This section is also placed by another scenario, which owns its time and room.",
+            code="PLACEMENT_EXTERNALLY_OWNED",
+            status=409,
+        )
 
     if placement.is_locked and not payload.get("override"):
         return _err(
