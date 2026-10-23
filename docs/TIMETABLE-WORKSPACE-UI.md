@@ -5107,3 +5107,4 @@ adds its row here when it lands.
 | PR | As-built note |
 |---|---|
 | A1 | [`docs/stage3/A1.md`](stage3/A1.md): the build spec and the As-built note |
+| B4 | [`docs/stage3/B4.md`](stage3/B4.md): the As-built note. The readiness code is `online_window_room_class` (lower case, like every readiness code) and carries `placement_id` |
