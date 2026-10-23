@@ -6985,31 +6985,30 @@ $('twMapElectives').addEventListener('click', async () => {
     mapLookup[m.placeholder_code].push(m.course_code);
   });
 
-  // Build dialog body
-  let body = `<div class="fs-md text-t3 mb-2">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
-  body += `<div style="max-height:400px;overflow-y:auto">`;
-
   // Build placeholder info lookup
   const phInfo = {};
   placeholderCodes.forEach(p => { phInfo[p.course_code] = p; });
 
-  relevantPlaceholders.forEach(ph => {
+  // Build dialog body. Catalogue and plan text are data, so every piece is
+  // safeHtml (it escapes each value); the pieces join with no added space.
+  const rows = relevantPlaceholders.map(ph => {
     const info = phInfo[ph] || {};
     const selected = mapLookup[ph] || [];
-    body += `<div class="u-border" style="margin-bottom:12px; padding:8px; border-radius:var(--radius-sm)">`;
-    body += `<div class="fw-bold" style="color:var(--royal); margin-bottom:4px">${ph} <span class="fs-sm text-t4" style="font-weight:400">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`;
-    catalogue.forEach(c => {
-      const checked = selected.includes(c.course_code) ? 'checked' : '';
-      body += `<label class="d-flex align-items-center fs-md u-cursor-pointer" style="gap:6px; padding:2px 0">`;
-      body += `<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${checked}>`;
-      body += `<span class="font-mono fw-semibold">${c.course_code}</span>`;
-      body += `<span class="text-t3">${c.course_name}</span>`;
-      body += `<span class="text-t4 fs-xs" style="margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`;
-      body += `</label>`;
-    });
-    body += `</div>`;
+    return [
+      safeHtml`<div class="u-border" style="margin-bottom:12px; padding:8px; border-radius:var(--radius-sm)">`,
+      safeHtml`<div class="fw-bold" style="color:var(--royal); margin-bottom:4px">${ph} <span class="fs-sm text-t4" style="font-weight:400">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`,
+      catalogue.map(c => [
+        safeHtml`<label class="d-flex align-items-center fs-md u-cursor-pointer" style="gap:6px; padding:2px 0">`,
+        safeHtml`<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${selected.includes(c.course_code) ? 'checked' : ''}>`,
+        safeHtml`<span class="font-mono fw-semibold">${c.course_code}</span>`,
+        safeHtml`<span class="text-t3">${c.course_name}</span>`,
+        safeHtml`<span class="text-t4 fs-xs" style="margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`,
+        safeHtml`</label>`,
+      ]),
+      safeHtml`</div>`,
+    ];
   });
-  body += `</div>`;
+  const body = safeHtml`<div class="fs-md text-t3 mb-2">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div><div style="max-height:400px;overflow-y:auto">${rows}</div>`;
 
   const result = await dlg.confirm({
     title: IS_AR ? `ربط الاختيارية — ${programme} ${year}/${term}` : `Map Electives — ${programme} ${year}/${term}`,
@@ -7295,14 +7294,7 @@ async function runOptimiseV2(mode = 'current') {
     body += window.TimetableHotspots?.html(o, IS_AR) || '';
 
     // Reserve-heavy sections
-    if (o.reserve_heavy_sections && o.reserve_heavy_sections.length > 0) {
-      body += `<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span>`;
-      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
-      o.reserve_heavy_sections.slice(0, 8).forEach(s => {
-        body += `<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">${s.section} ${Math.round(s.ratio*100)}%</span>`;
-      });
-      body += `</div></div>`;
-    }
+    body += reservePressureHtml(o);
 
     body += `</div>`;
 
@@ -7355,5 +7347,13 @@ async function runOptimiseV2(mode = 'current') {
     // window — this closes it again.
     finishWorkspaceOperation(token);
   }
+}
+
+/* The Optimise result's reserve-pressure chips. A section label is data, so
+   it goes through safeHtml; nothing when no section leans on reserve seats. */
+function reservePressureHtml(o) {
+  const heavy = o.reserve_heavy_sections;
+  if (!heavy || !(heavy.length > 0)) return safeHtml``;
+  return safeHtml`<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span><div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">${heavy.slice(0, 8).map(s => safeHtml`<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">${s.section} ${Math.round(s.ratio*100)}%</span>`)}</div></div>`;
 }
 /* End V2 optimiser. */

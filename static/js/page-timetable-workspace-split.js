@@ -7985,21 +7985,22 @@ async function loadElectivesInto(listEl) {
     if (!mapLookup[m.placeholder_code]) mapLookup[m.placeholder_code] = new Set();
     mapLookup[m.placeholder_code].add(m.course_code);
   });
+  // Catalogue and plan text are data: safeHtml escapes every value.
   listEl.innerHTML = placeholders.map(ph => {
     const selected = mapLookup[ph.course_code] || new Set();
-    return `<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+    return safeHtml`<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
       <div style="font-weight:700;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:6px">
-        ${esc(ph.course_code)}
+        ${ph.course_code}
         <span style="font-weight:400;color:var(--t4);font-size:10px">· T${ph.programme_term || '?'} · ${ph.type || 'Elective'} · ${ph.credit_hours || 3}cr</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 12px">
-        ${catalogue.map(c => `
+        ${catalogue.map(c => safeHtml`
           <label style="display:flex;gap:6px;align-items:center;font-size:11px;cursor:pointer;padding:2px 0">
-            <input type="checkbox" class="elec-chk" data-ph="${esc(ph.course_code)}" data-code="${esc(c.course_code)}"${selected.has(c.course_code) ? ' checked' : ''}>
-            <span style="font-family:'JetBrains Mono',monospace;font-weight:700">${esc(c.course_code)}</span>
-            <span style="color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.course_name || '')}</span>
+            <input type="checkbox" class="elec-chk" data-ph="${ph.course_code}" data-code="${c.course_code}"${selected.has(c.course_code) ? ' checked' : ''}>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700">${c.course_code}</span>
+            <span style="color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.course_name || ''}</span>
           </label>
-        `).join('')}
+        `)}
       </div>
     </div>`;
   }).join('');

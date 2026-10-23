@@ -214,6 +214,17 @@ back. A viewer who may not save sees no way to add. Chromium at 1440px and
 up, where Cancel and Add must stay in reach), is covered by
 `tests/test_exam_add_courses_browser.py`.
 
+`html-sinks.test.cjs`, run through `tests/test_html_sinks_frontend.py`, checks
+the global `safeHtml` tag (`static/js/shared-utils.js`) and runs the safe-HTML
+ratchet, `template-scan.cjs`, over every `static/js/*.js`. Each interpolation
+in HTML that the scanner cannot prove safe is a fingerprint (the file and the
+expression, never a line number); `tests/fixtures/html_sink_allowlist.json`
+holds today's, with counts that may only fall. When it fails on a new one,
+build that HTML with safeHtml instead of adding to the list; when it reports
+stale entries, run `node tests/frontend/template-scan.cjs --lower`, which never
+adds one. `tests/test_frontend_suites_wired.py` fails when a `*.test.cjs` here
+is not run by a pytest wrapper.
+
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect
 downloaded workbooks; backend and export suites cover those contracts separately.
