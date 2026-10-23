@@ -250,10 +250,12 @@ def test_next_free_is_the_first_label_no_placed_section_holds(http, ws):
     _sc, term2, term4 = ws
     for label, day in (("S1", "SUN"), ("S2", "MON"), ("S4", "TUE")):
         assert create(http, term2, label, day=day).status_code == 201
+    before = written()
 
     error = refusal(create(http, term4, "S2", day="WED"))
 
     assert error["details"] == {"course_code": "AI201", "label": "S2", "next_free": "S3"}
+    assert written() == before
 
 
 def test_labels_and_course_keys_are_compared_trimmed_and_upper_cased(http, ws):
@@ -274,12 +276,17 @@ def test_labels_and_course_keys_are_compared_trimmed_and_upper_cased(http, ws):
     )
     placed_at(term2, keyless, day="MON")
     assert placed_section_labels(sc.id, "AI201") == {"S1": {odd.id}, "S2": {keyless.id}}
+    before = written()
 
     error = refusal(create(http, term4, "S1", day="TUE"))
 
     assert error["code"] == "SECTION_LABEL_IN_USE"
     assert error["details"]["next_free"] == "S3"
+    # Neither the odd " s1 " nor the keyless S2 is the exact row the create
+    # looks up, so each refused create made a section first: none is left.
+    assert written() == before
     assert refusal(create(http, term4, "s2 ", day="TUE"))["details"]["label"] == "S2"
+    assert written() == before
 
 
 def test_a_label_of_another_course_or_another_scenario_is_free(http, ws):
@@ -319,9 +326,11 @@ def test_the_service_raises_a_value_error_naming_the_free_label(ws):
         )
 
     make(term2, "SUN")
+    before = written()
     with pytest.raises(SectionLabelInUse) as caught:
         make(term4, "MON")
 
+    assert written() == before
     assert isinstance(caught.value, ValueError)
     assert (caught.value.label, caught.value.next_free) == ("S1", "S2")
     assert str(caught.value) == (
@@ -488,8 +497,10 @@ def test_a_published_scenario_still_answers_first(http, external):
     mine = placed_at(board, section)
     placed_at(owner_board, section)
     TimetableScenario.objects.filter(pk=board.scenario_id).update(status="published")
+    before = written()
 
     response = remove(http, mine.id)
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "SCENARIO_PUBLISHED"
+    assert written() == before

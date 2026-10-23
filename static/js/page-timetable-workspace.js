@@ -186,7 +186,11 @@ const NOT_APPLICABLE = new Set(['online', 'noRoom']);
    pattern switch too) says where to change it, as the card's gate does; a
    section label already placed in the scenario (a create, Redo) names the
    section and the first free label the server found. '' for any other
-   refusal: the server's own message is said then, as before. */
+   refusal: the server's own message is said then, as before.
+   Split view has a copy (page-timetable-workspace-split.js), pinned to this
+   one by the test "classic and split say the same words…" until stage 3
+   gives the words one home (E2's timetable-section-labels.js, D5's
+   timetable-remove-flow.js), which deletes both copies and that test. */
 function serverRefusalWords(error) {
   const code = error && typeof error === 'object' ? error.code : '';
   if (code === 'PLACEMENT_EXTERNALLY_OWNED') return REFUSAL.external;
@@ -3538,6 +3542,10 @@ async function onDrop(e) {
     reportEdit(placedWords(request.course_code, request.section_label), created.rows.map(row => row.id), { data: created.data });
     return;
   } else if (payload.type === 'create') {
+    // A refusal is twFetch's toast. Another section of the course holding
+    // this section's label (B1) also has the list read again, as a planned
+    // drop does, so it shows the labels as they are now.
+    let refused = '';
     const data = await twFetch('/ops/tw/placements/create/', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -3549,8 +3557,12 @@ async function onDrop(e) {
         end_time: endTime,
         room: payload.default_room || '',
       }),
+      _onError: answer => { refused = answer?.error?.code || ''; return false; },
     });
-    if (!data) return;
+    if (!data) {
+      if (refused === 'SECTION_LABEL_IN_USE' && TW.scenarioId === scenarioAtStart) loadBudget();
+      return;
+    }
     TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
       board_id: boardAtStart, term_section_id: payload.term_section_id,
       day: day, start_time: startTime, end_time: endTime, room: payload.default_room || '' });

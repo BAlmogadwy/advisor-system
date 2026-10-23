@@ -8,9 +8,11 @@
  * server's English message (classic) or nothing at all (split view, whose
  * writes logged a refusal to the console only):
  *
- * - classic: a drop, the Place dialog (it moves on to the next free label),
- *   the English pattern chooser, Remove, Undo and Redo;
- * - split view: a drop, Remove, Undo and Redo.
+ * - classic: a drop (a planned section, or an existing one from the unplaced
+ *   list), the Place dialog (it moves on to the next free label), the
+ *   English pattern chooser, Remove, Undo and Redo;
+ * - split view: a drop, Remove, Undo and Redo. A move's own "Move failed"
+ *   stays quiet when the refusal was said in words (no double toast).
  * MRI calls neither endpoint (it only moves; stage 3's M1 makes it read-only).
  *
  * The free-label rule itself runs against tests/fixtures/section_label_cases.json,
@@ -150,6 +152,33 @@ for (const lang of ['en', 'ar']) test(`classic (${lang}): a drop refused for a l
   await wait(() => h.budgetReads() === budgets + 1 && h.atRest());
   assert.deepEqual(h.notices.slice(toasts).map(n => ({ ...n, text: strip(n.text) })), [{ type: 'warning', text: WORDS[lang].label }]);
   assert.deepEqual([h.w.TW.undoStack.length, h.w.TW.redoStack.length], [0, 0], 'nothing to undo');
+});
+
+// A section from the unplaced list (an existing section, placed through /placements/create/).
+const existingDrop = { type: 'create', term_section_id: 300, course_code: 'AI201', course_key: 'AI201', course_name: 'Data Structures', section_label: 'S1', default_room: '' };
+
+for (const lang of ['en', 'ar']) test(`classic (${lang}): a drop of an existing section whose label another section holds says so and reads the budget again`, async t => {
+  const h = await classic(t, { arabic: lang === 'ar', answer: url => (url === '/ops/tw/placements/create/' ? LABEL_IN_USE() : undefined) });
+  const budgets = h.budgetReads();
+  const toasts = h.notices.length;
+  const writes = h.writes().length;
+  await h.dropAt(existingDrop);
+  await wait(() => h.budgetReads() === budgets + 1 && h.atRest());
+  assert.deepEqual(h.writes().slice(writes).map(r => [r.url, JSON.parse(r.opts.body).term_section_id]), [['/ops/tw/placements/create/', 300]]);
+  assert.deepEqual(h.notices.slice(toasts).map(n => ({ ...n, text: strip(n.text) })), [{ type: 'warning', text: WORDS[lang].label }]);
+  assert.deepEqual([h.w.TW.undoStack.length, h.w.TW.redoStack.length], [0, 0], 'nothing to undo');
+});
+
+test('classic: a drop of an existing section refused for a reason the page does not word reads nothing again', async t => {
+  const h = await classic(t, { answer: url => (url === '/ops/tw/placements/create/'
+    ? { httpError: 400, error: { code: 'VALIDATION_PLACEMENT', message: 'Invalid placement time.' } } : undefined) });
+  const budgets = h.budgetReads();
+  const toasts = h.notices.length;
+  await h.dropAt(existingDrop);
+  await wait(() => h.atRest());
+  for (let i = 0; i < 6; i++) await settle();
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: 'Invalid placement time.' }]);
+  assert.equal(h.budgetReads(), budgets, 'nothing to read again');
 });
 
 test('classic: a refusal the page does not word is still the server’s message, as an error', async t => {
@@ -357,6 +386,28 @@ for (const lang of ['en', 'ar']) test(`split (${lang}): Remove of a section anot
   await h.w.doRemove(10, 0);
   assert.deepEqual(h.notices.slice(toasts), [{ kind: 'warning', message: WORDS[lang].external }], 'the refusal, never “Removed”');
   assert.deepEqual([h.state.undoStack.length, h.state.redoStack.length], [0, 0]);
+});
+
+/* api() says a worded refusal for any write with no handler, a move too:
+   the move's own "Move failed" must not repeat it (B1 review). This page has
+   no external gate, so a move of an external section reaches the server. */
+const splitMove = h => h.w.movePlacementToSlot({ placementId: 10, targetPaneIdx: 0, sourcePaneIdx: 0, day: 'MON', start: '09:00', end: '10:15' });
+
+for (const lang of ['en', 'ar']) test(`split (${lang}): a move refused for a section another scenario owns is said once, in the page’s words`, async t => {
+  const h = await split(t, { arabic: lang === 'ar', answer: url => (url === '/ops/tw/placements/10/move/' ? OWNED : undefined) });
+  const toasts = h.notices.length;
+  assert.equal(await splitMove(h), null);
+  assert.deepEqual(h.posts().map(r => r.url), ['/ops/tw/placements/10/move/']);
+  assert.deepEqual(h.notices.slice(toasts), [{ kind: 'warning', message: WORDS[lang].external }], 'never also “Move failed”');
+  assert.deepEqual([h.state.undoStack.length, h.state.redoStack.length], [0, 0]);
+});
+
+test('split: a move refused for a reason the page does not word still says “Move failed”', async t => {
+  const h = await split(t, { answer: url => (url === '/ops/tw/placements/10/move/'
+    ? { httpError: 400, error: { code: 'VALIDATION_PLACEMENT', message: 'Invalid placement time.' } } : undefined) });
+  const toasts = h.notices.length;
+  assert.equal(await splitMove(h), null);
+  assert.deepEqual(h.notices.slice(toasts), [{ kind: 'error', message: 'Move failed' }]);
 });
 
 test('split: Undo of a create whose section another scenario now owns keeps the entry and says why', async t => {

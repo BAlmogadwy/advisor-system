@@ -35,8 +35,10 @@ const T = {
    console only: a section another scenario owns, and a section label already
    placed in the scenario, named with the first free label the server found.
    The words are classic's (serverRefusalWords in
-   page-timetable-workspace.js; a parity test pins the two pages together
-   until stage 3's E2 gives them one home). '' for any other refusal, which
+   page-timetable-workspace.js), copied: the test "classic and split say the
+   same words…" pins the two copies together until stage 3 gives them one
+   home (E2's timetable-section-labels.js, D5's timetable-remove-flow.js),
+   which deletes both copies and that test. '' for any other refusal, which
    stays in the console, as before. */
 const ltrIsolate = text => `${String.fromCharCode(0x2066)}${text}${String.fromCharCode(0x2069)}`;
 function serverRefusalWords(error) {
@@ -57,7 +59,9 @@ function serverRefusalWords(error) {
   return next ? `${placed} The next free section is ${ltrIsolate(next)}.` : placed;
 }
 /* Says such a refusal (a warning: a rule refused the write, nothing failed).
-   A label in use reads the budget again, so the list counts it. */
+   A label in use reads the budget again, so the list counts it. True when it
+   spoke: api() then tells a caller that asked (`_worded`), so the caller does
+   not say its own "failed" over it. */
 function sayServerRefusal(body) {
   const words = serverRefusalWords(body?.error);
   if (!words) return false;
@@ -303,8 +307,11 @@ async function previewFetch(url, options, { kind = '', debounce = false } = {}) 
     if (kind && PREVIEW.inflight.get(kind) === controller) PREVIEW.inflight.delete(kind);
   }
 }
+/* `_worded(code)`: told when a write with no onError was refused for a rule
+   the page says in its own words (sayServerRefusal, B1), so a caller that
+   says its own "failed" on null stays quiet instead of repeating it. */
 async function api(url, opts = {}, onError = null) {
-  const { _copyToken, _preview, ...requestOptions } = opts;
+  const { _copyToken, _preview, _worded, ...requestOptions } = opts;
   if (_preview) {
     // A preview reads: it neither waits for nor blocks a scenario copy.
     const o = Object.assign({ credentials: 'same-origin', headers: {} }, requestOptions);
@@ -351,7 +358,7 @@ async function api(url, opts = {}, onError = null) {
       console.error('api error', url, msg);
       // The body and status too, for a caller that can say more than the message.
       if (onError) onError(msg, body, r.status);
-      else sayServerRefusal(body);
+      else if (sayServerRefusal(body) && typeof _worded === 'function') _worded(body.error.code);
       return null;
     }
     return await r.json();
@@ -3262,12 +3269,20 @@ async function movePlacementToSlot({
 
   const payload = { day, start_time: start, end_time: end };
   if (room !== undefined) payload.room = room;
+  // A refusal api() said in the page's words (a section another scenario
+  // owns, B1; this page has no gate for it) is the whole answer: "Move
+  // failed" over it would say the same thing again, as an error.
+  let worded = false;
   const data = await api(`/ops/tw/placements/${placementId}/move/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    _worded: () => { worded = true; },
   });
-  if (!data) { notify.error(T.moveFail); return null; }
+  if (!data) {
+    if (!worded) notify.error(T.moveFail);
+    return null;
+  }
 
   const undoAction = {
     type: 'move',
