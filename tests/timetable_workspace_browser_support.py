@@ -87,6 +87,9 @@ class WorkspaceBrowserMixin:
         page = context.new_page()
         sent: list[str] = []
         errors: list[str] = []
+        # Every URL this page asked for, reads included (the lens tests count them).
+        self.requested: list[str] = []
+        page.on("request", lambda r: self.requested.append(r.url))
         page.on(
             "request", lambda r: sent.append(f"{r.method} {r.url}") if r.method != "GET" else None
         )
