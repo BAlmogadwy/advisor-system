@@ -5,7 +5,12 @@
 A board read is about 67 KB of JSON and a three-meeting Place read about 1 MB;
 both compress more than tenfold, and the app sent them uncompressed.
 
-It is Django's own ``GZipMiddleware`` with a filter in front. A response is
+It is Django's own ``GZipMiddleware`` with a switch and a filter in front.
+**The switch** is ``settings.TIMETABLE_WORKSPACE_JSON_GZIP``, default off and
+kept off in production (render.yaml): Render documents that its load balancers
+already compress app responses with Brotli and gzip, so gzip here would only
+repeat that work on the 0.5-CPU host. It is read on every response, so turning
+it on or off needs no new middleware chain. With the switch on, a response is
 compressed only when **all** of these hold:
 
 * its path is under ``/ops/tw/`` (the workspace API; no HTML page lives there);
@@ -26,20 +31,22 @@ random-length file name (up to ``max_random_bytes``) into every gzip header, so
 the compressed length does not track a secret in the body. This subclass does
 not change ``max_random_bytes``.
 
-Revert: remove this middleware's one line from ``settings.MIDDLEWARE``.
+Off: set ``TIMETABLE_WORKSPACE_JSON_GZIP`` false (the default). Revert: remove
+this middleware's one line from ``settings.MIDDLEWARE``.
 """
 
 from __future__ import annotations
 
 from typing import cast
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
 from django.middleware.gzip import GZipMiddleware
 
 
 class TwJsonGZipMiddleware(GZipMiddleware):
-    """``GZipMiddleware`` for the workspace API's JSON only (D-14)."""
+    """``GZipMiddleware`` for the workspace API's JSON only (D-14), behind a switch."""
 
     path_prefix = "/ops/tw/"
     media_type = "application/json"
@@ -49,6 +56,10 @@ class TwJsonGZipMiddleware(GZipMiddleware):
     def process_response(
         self, request: HttpRequest, response: HttpResponseBase
     ) -> HttpResponseBase:
+        # Off (the default, and production's setting): the response leaves as it
+        # came, before the parent can add ``Vary: Accept-Encoding``.
+        if not settings.TIMETABLE_WORKSPACE_JSON_GZIP:
+            return response
         if not self.should_compress(request, response):
             return response
         return super().process_response(request, response)

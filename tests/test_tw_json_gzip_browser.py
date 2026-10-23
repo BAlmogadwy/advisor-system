@@ -3,7 +3,9 @@ answers, in English and Arabic (the [CI] twin of the QA 665 probe in
 ``docs/stage3/B5.md``).
 
 Chromium asks for gzip on every request, and the live server runs every
-middleware in ``settings.MIDDLEWARE``. Resource Timing tells what came over the
+middleware in ``settings.MIDDLEWARE``, with ``TIMETABLE_WORKSPACE_JSON_GZIP`` on
+(production keeps it off, because Render's load balancers already compress;
+``tests/test_tw_json_gzip.py`` pins that). Resource Timing tells what came over the
 wire: a gzipped answer's ``encodedBodySize`` is smaller than its
 ``decodedBodySize``; an answer sent as it is has the two equal. So:
 
@@ -40,6 +42,7 @@ WIRE = """() => ({
 })"""
 
 
+@override_settings(TIMETABLE_WORKSPACE_JSON_GZIP=True)
 class WorkspaceGzipBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
     def _assert_drawn_from_gzip(self) -> None:
         for language in ("en", "ar"):

@@ -1,10 +1,16 @@
 """Stage 3, B5: the Timetable Workspace's JSON answers are gzipped (D-14).
 
 ``config.middleware.TwJsonGZipMiddleware`` is Django's ``GZipMiddleware``
-behind a filter. It compresses an answer only when its path is under
+behind a switch and a filter. The switch, ``TIMETABLE_WORKSPACE_JSON_GZIP``, is
+off by default and production keeps it off (render.yaml, pinned by the
+blueprint contract), because Render's load balancers already compress. With it
+on, the middleware compresses an answer only when its path is under
 ``/ops/tw/``, its media type is ``application/json``, it is not a stream and
 not a file, and its body is at least 1 KB. Everything else passes through
 untouched, without ``Vary: Accept-Encoding``.
+
+The switch is on for every test here (``switched_on``) except the ones that
+pin it off: the default, production's blueprint, and the real stack with it off.
 
 Two layers:
 
@@ -28,10 +34,14 @@ from __future__ import annotations
 import gzip
 import io
 import json
+import os
 import random
-import statistics
+import subprocess
+import sys
 import time
 from collections.abc import Callable
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group, User
@@ -46,18 +56,30 @@ from django.test import Client, RequestFactory
 
 from config.middleware import TwJsonGZipMiddleware
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
+from scripts.validate_render_blueprint import load_blueprint, validate_blueprint
 from tests.one_teacher_support import budget, place, scenario, section
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SWITCH = "TIMETABLE_WORKSPACE_JSON_GZIP"
 
 # What Chrome sends.
 GZIP = "gzip, deflate, br, zstd"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-# The flags production runs with (render.yaml).
+# The engine flags production runs with (render.yaml). Production also runs
+# with SWITCH off; the feature's tests below turn it on.
 PRODUCTION_FLAGS = {
     "TIMETABLE_ONE_TEACHER_PER_SECTION": True,
     "TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY": True,
     "TIMETABLE_SECTION_PROGRAMME_PREFERENCE": True,
 }
+
+
+@pytest.fixture(autouse=True)
+def switched_on(settings):
+    """The feature's tests run with the switch on, as it will be wherever
+    nothing in front of the app compresses. Tests that pin it off set it."""
+    setattr(settings, SWITCH, True)
 
 
 def json_bytes(length: int) -> bytes:
@@ -267,18 +289,34 @@ def test_the_filter_decides_each_answer_by_one_rule(name, path, make, compressed
         assert _identity_bytes(out) == original, name
 
 
+# Every case a mutant in docs/stage3/B5.md depends on, with the outcome it
+# pins: the rule (or the edge of a rule) that it alone decides.
+PINNED_CASES = {
+    "workspace JSON": True,  # every rule holds
+    "exactly 1 KB": True,  # the size floor is inclusive
+    "one byte under 1 KB": False,  # the size floor
+    "under a script prefix, the API path still counts": True,  # path_info
+    "JSON outside /ops/tw/": False,  # the path
+    "a path that only starts like /ops/tw": False,  # the path, with its slash
+    "media type with a charset parameter": True,  # parameters ignored
+    "media type in another case": True,  # case ignored
+    "HTML under /ops/tw/": False,  # the media type
+    "a workbook held in memory under /ops/tw/": False,  # the media type (a file type)
+    "a media type that only starts like JSON": False,  # the media type, exactly
+    "JSON a response names as an attachment": False,  # a named file
+    "JSON a response names as an inline file": False,  # any named file
+    "streamed JSON": False,  # a stream
+    "a FileResponse of JSON": False,  # a file is a stream
+}
+
+
 def test_the_filter_cases_cover_every_predicate():
-    """Each rule has a case that it alone refuses (the table's own guard)."""
-    refused = {name for name, _path, _make, compressed, _env in FILTER_CASES if not compressed}
-    assert {
-        "one byte under 1 KB",  # size
-        "JSON outside /ops/tw/",  # path
-        "a path that only starts like /ops/tw",  # path, exactly
-        "HTML under /ops/tw/",  # media type
-        "a workbook held in memory under /ops/tw/",  # media type (a file type)
-        "JSON a response names as an attachment",  # a file
-        "streamed JSON",  # a stream
-    } <= refused
+    """Each rule keeps the cases that it alone decides (the table's own
+    guard): deleting one, or flipping its outcome, turns this red."""
+    table = {name: compressed for name, _path, _make, compressed, _env in FILTER_CASES}
+
+    assert len(table) == len(FILTER_CASES), "case names are unique"
+    assert {name: table.get(name) for name in PINNED_CASES} == PINNED_CASES
 
 
 def test_an_eligible_answer_varies_on_accept_encoding_even_when_not_compressed():
@@ -426,6 +464,70 @@ def test_a_small_json_answer_is_left_alone(flags, http):
     assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
+# ── The switch: off by default and in production ─────────────────────────
+
+
+@pytest.mark.django_db
+def test_with_the_switch_off_nothing_is_compressed(flags, http, board, settings):
+    """Production today: the board read leaves the app as before B5, without
+    ``Content-Encoding`` and without ``Vary: Accept-Encoding``."""
+    setattr(settings, SWITCH, False)
+
+    identity = http.get(f"/ops/tw/boards/{board.id}/")
+    response = http.get(f"/ops/tw/boards/{board.id}/", HTTP_ACCEPT_ENCODING=GZIP)
+
+    assert response.status_code == 200
+    assert len(response.content) >= 1024, "eligible, so only the switch keeps it plain"
+    assert "Content-Encoding" not in response
+    assert "accept-encoding" not in vary(response)
+    assert {"accept-language", "cookie"} <= vary(response)
+    assert response.content == identity.content
+    assert len(response.json()["placements"]) == 20
+
+
+def test_the_switch_is_off_by_default():
+    """The real settings module, imported with the variable unset."""
+    env = {key: value for key, value in os.environ.items() if key != SWITCH}
+    env.update(DJANGO_SECRET_KEY="ci-only-settings-import", DJANGO_DEBUG="true")
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and fixed import.
+        [sys.executable, "-c", f"import config.settings as s; print(repr(s.{SWITCH}))"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "False"
+
+
+def _web_env(blueprint: dict) -> list[dict]:
+    web = next(s for s in blueprint["services"] if s["name"] == "advisor-system")
+    return web["envVars"]
+
+
+def test_production_keeps_the_switch_off_until_the_host_gate():
+    """render.yaml sets it off for the web service, and the blueprint contract
+    (CI runs it before every deploy) refuses a blueprint that turns it on or
+    drops it, so turning it on is a reviewed change with the gate's evidence."""
+    blueprint = dict(load_blueprint(PROJECT_ROOT / "render.yaml"))
+
+    assert {"key": SWITCH, "value": "false"} in _web_env(blueprint)
+    assert validate_blueprint(blueprint, project_root=PROJECT_ROOT) == []
+
+    turned_on = deepcopy(blueprint)
+    next(e for e in _web_env(turned_on) if e["key"] == SWITCH)["value"] = "true"
+    errors = validate_blueprint(turned_on, project_root=PROJECT_ROOT)
+    assert any(SWITCH in error for error in errors), errors
+
+    dropped = deepcopy(blueprint)
+    env = _web_env(dropped)
+    env[:] = [e for e in env if e["key"] != SWITCH]
+    errors = validate_blueprint(dropped, project_root=PROJECT_ROOT)
+    assert any(SWITCH in error for error in errors), errors
+
+
 # ── The cost ─────────────────────────────────────────────────────────────
 
 
@@ -513,7 +615,11 @@ def test_compressing_the_largest_answer_costs_milliseconds():
     """The [CI] twin of the probe (p50 over 20 reads of 665 rises by at most
     10 ms). On the probe machine this body takes about 7 ms (the real 1 MB
     read, more repetitive, 4.4 ms); the budget, 50 ms, leaves room for a slow
-    CI runner. It is a ceiling against a pathological change, not the claim."""
+    CI runner. It is a ceiling against a pathological change, not the claim.
+
+    The fastest of seven runs is held to it, not their median: a busy runner
+    only ever adds time to a run, so one quiet run is enough, while a change
+    that makes every compression slower still fails every run."""
     body = _place_read_sized_answer()
     assert 800_000 < len(body) < 1_300_000, len(body)
     timings = []
@@ -524,5 +630,5 @@ def test_compressing_the_largest_answer_costs_milliseconds():
         timings.append(time.perf_counter() - started)
         assert out["Content-Encoding"] == "gzip"
 
-    assert statistics.median(timings) < 0.050, timings
+    assert min(timings) < 0.050, timings
     assert gzip.decompress(out.content) == body
