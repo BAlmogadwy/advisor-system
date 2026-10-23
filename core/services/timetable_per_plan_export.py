@@ -133,6 +133,16 @@ COURSE_COLORS = [
 ]
 
 
+class PerPlanExportRefused(RuntimeError):
+    """A refusal the user can act on: its words in English (``str``) and in
+    Arabic (``ar``). The export view answers in the page's language; a
+    ``RuntimeError`` still, so every caller that caught one still does."""
+
+    def __init__(self, message: str, *, ar: str) -> None:
+        super().__init__(message)
+        self.ar = ar
+
+
 def _slugify(value: str) -> str:
     """Filesystem-safe slug for filenames (preserves commas-as-underscores)."""
     s = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
@@ -381,7 +391,8 @@ def export_scenario_per_plan(
     Raises
     ------
     RuntimeError
-        If ``openpyxl`` is not installed or no programs are found.
+        If ``openpyxl`` is not installed; ``PerPlanExportRefused`` (a
+        ``RuntimeError``) if no programs are found or the filter matches none.
     TimetableScenario.DoesNotExist
         If the scenario id is invalid.
     """
@@ -393,7 +404,10 @@ def export_scenario_per_plan(
     scenario = TimetableScenario.objects.get(id=scenario_id)
     programs = get_scenario_programs(scenario)
     if not programs:
-        raise RuntimeError("Scenario has no boards with a configured program")
+        raise PerPlanExportRefused(
+            "Scenario has no boards with a configured program",
+            ar="لا توجد في هذا السيناريو لوحة مرتبطة ببرنامج.",
+        )
 
     export_filter = _build_export_filter(search, programs)
     selected_programs = [
@@ -402,7 +416,10 @@ def export_scenario_per_plan(
         if not export_filter.program_tokens or _upper(program) in export_filter.program_tokens
     ]
     if not selected_programs:
-        raise RuntimeError("The export filter did not match any scenario program")
+        raise PerPlanExportRefused(
+            "The export filter did not match any scenario program",
+            ar="لم يطابق مرشّح التصدير أي برنامج في هذا السيناريو.",
+        )
 
     plan_lens = build_scenario_plan_lens(scenario_id)
     from core.services.timetable_export import export_section_teachers

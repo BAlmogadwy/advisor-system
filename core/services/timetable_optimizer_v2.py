@@ -464,7 +464,9 @@ def build_section_states_for_scenario(
     return sections
 
 
-def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, frozenset[int]]:
+def build_section_instructor_map_for_scenario(
+    scenario_id: int, *, incomplete: str = INCOMPLETE_RAISE
+) -> dict[str, frozenset[int]]:
     """``{section_id: frozenset[instructor_id]}`` for the instructor idle-gap term.
 
     Keys use the **same** ``section_id`` convention as
@@ -482,13 +484,16 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
     With one teacher per section (``is_one_teacher_active``) every charged
     section maps to the singleton of its one teacher, pinned and frozen ones
     included; a section still to be decided charges nobody and is absent.
+    ``incomplete`` is ``load_assignment``'s: an engine raises on an English
+    section without one complete weekly pattern; the clash backstop
+    (``"collect"``) leaves it absent and checks every other section.
     """
     from core.services.timetable_flags import is_one_teacher_active
 
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        return load_assignment(scenario_id).v2_map()
+        return load_assignment(scenario_id, incomplete=incomplete).v2_map()
 
     scenario = TimetableScenario.objects.filter(id=scenario_id).first()
     if scenario is None:

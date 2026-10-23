@@ -22,6 +22,7 @@ import zipfile
 import pytest
 
 from core.models import (
+    SectionInstructor,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
@@ -218,20 +219,74 @@ def test_create_planned_answers_201_and_leaves_the_broken_sections_as_they_are(
 
     assert response.status_code == 201, response.content
     assert response.json()["placement"]["teacher"]["name"] == "Dr C"
-    # The clash check after the write could not read the broken section's
-    # meetings: it says so (never a clean board), without a traceback.
+    # The clash check after the write checked every other section and says
+    # which it could not (their meetings are not known), without a traceback.
     backstop = response.json()["instructor_clash_backstop"]
-    assert (backstop["checked"], backstop["reason"]) == (False, "incomplete_english_pattern")
+    assert (backstop["checked"], backstop["partial"], backstop["reason"]) == (
+        True,
+        True,
+        "incomplete_english_pattern",
+    )
+    assert _unchecked(backstop) == {("ENG101", "S1"), ("ENG102", "S1")}
     assert not [r for r in caplog.records if r.name.endswith("instructor_backstop") and r.exc_info]
     assert SectionPlacement.objects.filter(board__scenario=fx.sc).count() == before + 1
     rows = engine_rows(fx.sc)
-    # The broken section's stored teacher is kept (not re-picked, not dropped).
+    # The broken sections' stored teachers are kept (not re-picked, not
+    # dropped), budgeted (ENG102 S1) or not (ENG101 S1).
     assert rows[(fx.eng.upper(), "S1")] == "Dr E"
+    assert rows[("ENG101", "S1")] == "Dr F"
     assert rows[(fx.eng.upper(), "S2")] == "Dr E"
     assert rows[(other.upper(), "S1")] == "Dr C"
     after = _meeting_names(fx.sc)
     for ts in (fx.s1, fx.legacy, fx.s2):
         assert after[ts.id] == names[ts.id], ts
+
+
+def _unchecked(backstop: dict) -> set[tuple[str, str]]:
+    return {(row["course_code"], row["section"]) for row in backstop["unchecked"]}
+
+
+@pytest.mark.django_db
+def test_the_clash_backstop_still_checks_every_other_section(production) -> None:
+    """A manual move that double-books a teacher is saved and SHOWN (owner
+    rule), even while an English section elsewhere cannot be checked: the
+    backstop leaves out only that section."""
+    fx = Fx()
+    for ts in (fx.a1, fx.a2):
+        SectionInstructor.objects.create(
+            scenario=fx.sc,
+            course_key=ts.course_key.upper(),
+            section=ts.section,
+            instructor=fx.dr_a,
+            role="primary",
+            source="department",
+        )
+    a2 = SectionPlacement.objects.get(term_section=fx.a2)
+
+    response = _admin_client().post(
+        f"/ops/tw/placements/{a2.id}/move/",
+        data=json.dumps({"day": "TUE", "start_time": "09:00", "end_time": "10:15"}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200, response.content
+    backstop = response.json()["instructor_clash_backstop"]
+    assert backstop["checked"] is True and backstop["partial"] is True
+    assert _unchecked(backstop) == {("ENG101", "S1"), ("ENG102", "S1")}
+    involving = backstop["involving_this_section"]
+    assert [set(row["sections"]) for row in involving] == [{f"{fx.ai}_S1", f"{fx.ai}_S2"}]
+
+
+@pytest.mark.django_db
+def test_a_consistent_scenarios_backstop_is_not_partial(production) -> None:
+    from core.services.timetable_instructor_backstop import scenario_instructor_clash_report
+
+    fx = Fx(broken=False)
+
+    report = scenario_instructor_clash_report(fx.sc.id)
+
+    assert report["checked"] is True
+    assert "partial" not in report and "unchecked" not in report
 
 
 @pytest.mark.django_db
@@ -308,14 +363,55 @@ def test_create_move_and_switch_answer_in_words(production) -> None:
 @pytest.mark.django_db
 def test_student_blockers_refuse_in_words(production) -> None:
     fx = Fx()
+    client = _admin_client()
 
-    response = _admin_client().get(f"/ops/tw/scenarios/{fx.sc.id}/student-blockers/")
+    response = client.get(f"/ops/tw/scenarios/{fx.sc.id}/student-blockers/")
+    arabic = client.get(
+        f"/ops/tw/scenarios/{fx.sc.id}/student-blockers/", HTTP_ACCEPT_LANGUAGE="ar"
+    )
 
     assert response.status_code == 409
     error = response.json()["error"]
     assert error["code"] == "INCOMPLETE_ENGLISH_PATTERN"
-    assert "ENG102 S1" in error["message"]
+    assert error["message"] == (
+        "Student blockers need every English section on one complete weekly pattern; "
+        "ENG102\u00a0S1 is not. Remove it and place it again."
+    )
     assert error["details"]["board_ids"] == [fx.b1.id, fx.b2.id]
+    assert arabic.status_code == 409
+    assert arabic.json()["error"]["message"] == (
+        "تحتاج تعارضات الطلاب الفعلية إلى نمط أسبوعي كامل واحد لكل شعبة إنجليزية، "
+        "والشعبة ENG102\u00a0S1 ليست كذلك. احذفها وضعها من جديد."
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_the_student_outcome_preview_refuses_in_words(production, language) -> None:
+    """It re-seats every student after each candidate move, so like the
+    student blockers it needs every section's meetings: a refusal in words in
+    the page's language, never a raw 500 (the page keeps its own candidates)."""
+    fx = Fx()
+    plain = SectionPlacement.objects.get(term_section=fx.a1)
+
+    response = _admin_client().post(
+        f"/ops/tw/placements/{plain.id}/student-outcome-candidates/",
+        data=json.dumps({"candidates": [{"day": "TUE", "start": "13:00", "end": "14:15"}]}),
+        content_type="application/json",
+        HTTP_ACCEPT_LANGUAGE=language,
+    )
+
+    assert response.status_code == 409, response.content[:300]
+    error = response.json()["error"]
+    assert error["code"] == "INCOMPLETE_ENGLISH_PATTERN"
+    assert error["details"]["section"] == "S1"
+    assert error["message"] == (
+        "Student outcomes need every English section on one complete weekly pattern; "
+        "ENG102\u00a0S1 is not. Remove it and place it again."
+        if language == "en"
+        else "تحتاج نتائج الطلاب إلى نمط أسبوعي كامل واحد لكل شعبة إنجليزية، "
+        "والشعبة ENG102\u00a0S1 ليست كذلك. احذفها وضعها من جديد."
+    )
 
 
 # ── The exports: a dash, the notice, and words for a failure ───────────────
@@ -384,6 +480,7 @@ def test_both_exports_answer_200_with_dashes_and_the_notice(production, kind) ->
         ]
         assert not any("\u2014" == text for text in instructors), "a dash is nobody"
         assert not any("ENG102 S1" in text or "ENG101 S1" in text for text in instructors)
+        assert not any("Dr F" in text for text in instructors), "held, never shown"
         assert any("ENG102 S2" in text for text in instructors)
     # Each section's teacher line on the grid (ENG101 is in no plan of the
     # programme, so only the combined workbook draws it).
@@ -423,6 +520,26 @@ def test_the_notice_agrees_in_number_in_both_languages() -> None:
     assert not any(ch in many[1] for ch in "\u2066\u2067\u2068\u2069"), "Excel paints isolates"
 
 
+def test_the_notice_opens_the_workbook_whatever_was_active() -> None:
+    """The notice sheet is the one Excel opens on, and the only selected tab
+    (two selected tabs open grouped, and an edit then lands on both)."""
+    from openpyxl import Workbook
+
+    from core.services.timetable_export import write_teacher_notice
+
+    wb = Workbook()
+    wb.active.title = "Term 2"
+    instructors = wb.create_sheet("Instructors")
+    wb.active = 1
+    instructors.sheet_view.tabSelected = True
+
+    write_teacher_notice(wb, [{"course_code": "ENG102", "section": "S1", "boards": ["Term 2"]}])
+
+    assert wb.sheetnames == ["Notice", "Term 2", "Instructors"]
+    assert wb.active.title == "Notice"
+    assert [ws.title for ws in wb.worksheets if ws.sheet_view.tabSelected] == ["Notice"]
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("url", "target", "error"),
@@ -454,19 +571,27 @@ def test_an_export_that_fails_answers_json_in_words_and_is_logged(
     assert body["error"]["code"] == "EXPORT_FAILED"
     assert body["error"]["message"].startswith("The export could not be built.")
     assert any(r.exc_info for r in caplog.records), "logged with its traceback"
+    arabic = _admin_client().get(f"/ops/tw/scenarios/{fx.sc.id}/{url}", HTTP_ACCEPT_LANGUAGE="ar")
+    assert arabic.json()["error"] == {
+        "code": "EXPORT_FAILED",
+        "message": "تعذّر إنشاء ملف التصدير. حاول مرة أخرى، وإن تكرّر ذلك فأبلغ مسؤول الجداول.",
+    }
 
 
 @pytest.mark.django_db
 def test_the_per_plan_exports_own_refusals_keep_their_words(production) -> None:
     sc, _board = scenario(board_program="")
+    client = _admin_client()
 
-    response = _admin_client().get(f"/ops/tw/scenarios/{sc.id}/export-per-plan")
+    response = client.get(f"/ops/tw/scenarios/{sc.id}/export-per-plan")
+    arabic = client.get(f"/ops/tw/scenarios/{sc.id}/export-per-plan", HTTP_ACCEPT_LANGUAGE="ar")
 
     assert response.status_code == 500
     assert response.json()["error"] == {
         "code": "EXPORT_FAILED",
         "message": "Scenario has no boards with a configured program",
     }
+    assert arabic.json()["error"]["message"] == "لا توجد في هذا السيناريو لوحة مرتبطة ببرنامج."
 
 
 # ── The engine path still raises ─────────────────────────────────────────
@@ -543,15 +668,21 @@ def test_one_requests_memo_serves_both_modes(production) -> None:
 
 
 @pytest.mark.django_db
-def test_no_persist_drops_an_unknown_sections_row(production) -> None:
-    """Even a full persist (a run's) keeps the row a display read could not
-    check: the section's meetings are not known."""
+@pytest.mark.parametrize("only_missing", [False, True], ids=["full", "only-missing"])
+def test_no_persist_drops_an_unknown_sections_row(production, only_missing) -> None:
+    """No persist keeps fewer rows than it found for a section a display read
+    could not check (its meetings are not known): a full one (a run's) or the
+    only-missing one a manual create runs (``ensure``), for a budgeted
+    unknown section (ENG102 S1) and an unbudgeted one (ENG101 S1)."""
     fx = Fx()
     assignment = sta.load_assignment(fx.sc.id, incomplete="collect")
 
-    sta.persist_assignment(fx.sc.id, assignment, only_missing=False, incomplete="collect")
+    sta.persist_assignment(fx.sc.id, assignment, only_missing=only_missing, incomplete="collect")
+    sta.prepare_section_teachers(fx.sc.id, phase="ensure", incomplete="collect")
 
-    assert engine_rows(fx.sc)[(fx.eng.upper(), "S1")] == "Dr E"
+    rows = engine_rows(fx.sc)
+    assert rows[(fx.eng.upper(), "S1")] == "Dr E"
+    assert rows[("ENG101", "S1")] == "Dr F"
 
 
 @pytest.mark.django_db
@@ -560,8 +691,16 @@ def test_a_held_row_is_neither_a_seed_nor_reported_stale(production) -> None:
     persist drops them): an unknown section's row is held, not stale."""
     fx = Fx()
 
-    report = sta.load_assignment(fx.sc.id, incomplete="collect").report
+    assignment = sta.load_assignment(fx.sc.id, incomplete="collect")
 
+    report = assignment.report
     assert report["stale_rows_ignored"] == 0
     assert report["ignored_row_keys"] == []
     assert f"{fx.eng}_S1" not in report["closure_keys"]
+    assert "ENG101_S1" not in report["closure_keys"]
+    # Each unknown section has a slot that holds its stored teacher as fixed
+    # load, budgeted or not (ENG101 has no budget).
+    held = {
+        slot.key: slot.fixed for slot in assignment.slots if slot.fixed_kind == sta.STATUS_UNKNOWN
+    }
+    assert held == {f"{fx.eng}_S1": fx.dr_e.id, "ENG101_S1": fx.dr_f.id}

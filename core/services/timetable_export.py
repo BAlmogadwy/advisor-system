@@ -286,7 +286,12 @@ def write_teacher_notice(wb, sections: list[dict]) -> None:
             readingOrder=2 if arabic else 1,
         )
         ws.row_dimensions[row].height = 16 * (len(text) // 95 + 1)
+    # Open on it, as the only selected tab: inserting at 0 keeps the active
+    # INDEX, so a workbook active on a later sheet would open there, and a
+    # second selected tab opens the sheets grouped (an edit lands on both).
     wb.active = 0
+    for sheet in wb.worksheets:
+        sheet.sheet_view.tabSelected = sheet is ws
 
 
 def export_scenario_xlsx(scenario_id: int) -> Path:

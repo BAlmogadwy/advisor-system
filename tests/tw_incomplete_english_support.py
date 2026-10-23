@@ -33,8 +33,11 @@ class IncompleteEnglishScenario:
     - ENG102 S2: complete PM on Term 2; stored engine row Dr E. Keeps Dr E.
     - ENG102 S3: complete AM on Term 4; no row. Dr E is the course's only
       teacher and holds two sections (S1, S2), the English cap: TBD (d10).
-    - ENG101 S1: QA's legacy shape on Term 2, no links, a registrar name on its
-      meetings. Unknown, never its meeting name.
+    - ENG101 S1: QA's legacy shape on Term 2, a registrar name on its meetings,
+      and NO budget; linked to Dr F (ENG101 only), stored engine row Dr F.
+      Unknown, never its meeting name nor Dr F; Dr F stays held load, and no
+      persist reports or drops the row (an unbudgeted unknown section still
+      gets a slot).
     - AI201 S1, S2 on Term 2: Dr A (no row yet: derived). Keep Dr A.
 
     ``broken=False``: ENG102 S1 is AM on both boards and ENG101 S1 is not
@@ -68,8 +71,18 @@ class IncompleteEnglishScenario:
             section="S1",
             source_tag="tw_auto",
         )
+        self.dr_f = instructor("Dr F")
+        link("AI", "ENG101", self.dr_f)
         if broken:
             place(self.b1, self.legacy, LEGACY, instructor_name="Registrar Name")
+            SectionInstructor.objects.create(
+                scenario=self.sc,
+                course_key=self.legacy.course_key.upper(),
+                section=self.legacy.section,
+                instructor=self.dr_f,
+                role="primary",
+                source="engine",
+            )
         self.a1, self.a2 = section(self.sc, ai, "S1"), section(self.sc, ai, "S2")
         place(self.b1, self.a1, [("TUE", "09:00", "10:15")])
         place(self.b1, self.a2, [("TUE", "10:30", "11:45")])

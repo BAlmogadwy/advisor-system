@@ -806,6 +806,16 @@ function placementInstructor(p) {
   return ((p && p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '') || '';
 }
 
+/* Whose section this is for instructor protection: with one teacher per
+   section, the teacher the shared rule shows (none while it is to be decided
+   or not shown: a meeting row can carry a stale name, and an unknown
+   section's is never shown); otherwise the meeting's name, as before. */
+function placementTeacherName(p) {
+  if (!hasSectionTeacher(p)) return placementInstructor(p);
+  const teacher = window.TimetableSectionTeacher.teacherOf(p);
+  return teacher.state === 'named' ? teacher.name : '';
+}
+
 function sectionRank(section) {
   const m = String(section || '').match(/\d+/);
   return m ? Number(m[0]) : 999;
@@ -885,11 +895,11 @@ function toggleProtection(kind, value) {
 function placementProtectionReasons(placement) {
   if (!placement) return [];
   const reasons = [];
-  const instructor = protectionValue(placementInstructor(placement));
+  const instructor = protectionValue(placementTeacherName(placement));
   const room = protectionValue(placement.room);
   const time = timeProtectionKey(placement.day, placement.start_time);
   if (placement.is_locked) reasons.push(IS_AR ? 'مقفلة' : 'locked section');
-  if (instructor && S.protections.instructors.has(instructor)) reasons.push(`${IS_AR ? 'مدرس محمي' : 'protected instructor'} ${placementInstructor(placement)}`);
+  if (instructor && S.protections.instructors.has(instructor)) reasons.push(`${IS_AR ? 'مدرس محمي' : 'protected instructor'} ${placementTeacherName(placement)}`);
   if (room && room !== 'UNASSIGNED' && S.protections.rooms.has(room)) reasons.push(`${IS_AR ? 'قاعة محمية' : 'protected room'} ${placement.room}`);
   if (S.protections.times.has(time)) reasons.push(`${IS_AR ? 'وقت محمي' : 'protected time'} ${placement.day} ${placement.start_time}`);
   return reasons;
@@ -5457,12 +5467,29 @@ function renderRpanelStudentBlockers(body) {
   }
   const token = ++RP.studentBlockers.token;
   body.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'جاري حساب تعارضات الطلاب الفعلية...' : 'Calculating actual student blockers...'}</div>`;
-  api(`/ops/tw/scenarios/${scenarioId}/student-blockers/`).then(data => {
+  api(`/ops/tw/scenarios/${scenarioId}/student-blockers/`, {}, (_message, errorBody) => {
+    // Not cached: the next visit asks again (the section may be fixed by then).
+    if (token !== RP.studentBlockers.token || S.scenarioId !== scenarioId) return;
+    if (RP.open && RP.tab === 'students') renderStudentBlockersFailure($('twsRpanelBody'), errorBody);
+  }).then(data => {
     if (!data || token !== RP.studentBlockers.token || S.scenarioId !== scenarioId) return;
     RP.studentBlockers.scenarioId = scenarioId;
     RP.studentBlockers.data = data;
     if (RP.open && RP.tab === 'students') renderStudentBlockersNow($('twsRpanelBody'), data);
   });
+}
+
+/* The server's words when it answered in words (e.g. 409
+   INCOMPLETE_ENGLISH_PATTERN: an English section with no one complete weekly
+   pattern, in the page's language); otherwise ours. The count is not known. */
+function renderStudentBlockersFailure(body, errorBody) {
+  if (!body) return;
+  const el = $('twsRpCountStudents');
+  if (el) el.textContent = '—';
+  const said = errorBody?.error?.message;
+  const words = (typeof said === 'string' && said)
+    || (IS_AR ? 'تعذّر حساب تعارضات الطلاب الفعلية. حاول مرة أخرى.' : 'Student blockers could not be calculated. Try again.');
+  body.innerHTML = `<div class="tws-empty-state" role="status"><span class="ic" aria-hidden="true">ⓘ</span>${esc(words)}</div>`;
 }
 
 function renderStudentBlockersNow(body, data) {
@@ -7226,7 +7253,10 @@ function renderRpanelSelection(body) {
   const located = findPlacement(S.selectedPlacementId);
   if (!located) { body.innerHTML = `<div class="tws-empty-state"><span class="ic">◉</span>${IS_AR ? 'غير موجود' : 'Not found'}</div>`; return; }
   const p = located.placement;
-  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '—';
+  // With one teacher per section, the section's teacher by the shared rule
+  // (as the drawer and classic show it): never a meeting row's name.
+  const instructor = placementTeacherName(p);
+  const instructorHtml = hasSectionTeacher(p) ? sectionTeacherHtml(p) : esc(instructor || '—');
   const board = S.boards.find(b => b.id === S.panes[located.paneIdx].boardId) || { label: '—' };
   const pending = S.slotAssist.pendingMove && String(S.slotAssist.pendingMove.placementId) === String(p.id)
     ? S.slotAssist.pendingMove
@@ -7256,7 +7286,7 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
-    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value" id="twsSelInstructor">${instructorHtml}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
     ${selectionConflictEvidenceHtml(selectedIssues)}
@@ -8188,8 +8218,12 @@ function openDrawer(paneIdx, placementId) {
       ? '<span class="pill clash">⚠ Conflict</span>'
       : '<span class="pill ok">● Clean</span>';
 
+  // With one teacher per section the Instructors field above names the
+  // section's teacher; a meeting row can carry a stale name (or, for an
+  // unknown section, one never shown), so the rows name no one then.
+  const meetingTeacher = m => (hasSectionTeacher(p) ? '' : ` · ${esc(m.instructor || '—')}`);
   const meetings = (p.meetings || []).map(m =>
-    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')} · ${esc(m.instructor || '—')}</span></div>`
+    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')}${meetingTeacher(m)}</span></div>`
   ).join('') || '<div class="meeting-row"><span class="r">—</span></div>';
 
   $('twsDrawerBody').innerHTML = `

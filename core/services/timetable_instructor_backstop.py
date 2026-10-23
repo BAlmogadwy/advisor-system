@@ -96,6 +96,12 @@ def scenario_instructor_clash_report(scenario_id: int) -> dict[str, Any]:
     instructor assignments, or an internal error. That is NOT the same as a
     clean board and callers must never render it as one.
 
+    An English section with no one complete weekly pattern has no known
+    meetings, so it cannot be checked; every other section still is (B2). The
+    report then adds ``partial: True``, ``reason: "incomplete_english_pattern"``
+    and ``unchecked`` (each such section: ``course_code``, ``section``,
+    ``board_ids``), so a clean count is never read as a clean board there.
+
     **Never raises.** Every caller invokes this immediately before or after a
     write, so an exception here would break persists that worked fine before this
     module existed — turning a safety net into an outage. The guard lives at this
@@ -110,16 +116,24 @@ def scenario_instructor_clash_report(scenario_id: int) -> dict[str, Any]:
             return _unchecked("links_disabled")
 
         from core.services.timetable_optimizer_v2 import (
+            INCOMPLETE_COLLECT,
+            IncompletePolicyPattern,
             build_section_instructor_map_for_scenario,
             build_section_states_for_scenario,
         )
 
-        section_instructor_ids = build_section_instructor_map_for_scenario(scenario_id)
+        section_instructor_ids = build_section_instructor_map_for_scenario(
+            scenario_id, incomplete=INCOMPLETE_COLLECT
+        )
         if not section_instructor_ids:
             return _unchecked("no_instructor_links")
 
+        incomplete: list[IncompletePolicyPattern] = []
         sections_by_id = {
-            state.section_id: state for state in build_section_states_for_scenario(scenario_id)
+            state.section_id: state
+            for state in build_section_states_for_scenario(
+                scenario_id, incomplete=INCOMPLETE_COLLECT, collected=incomplete
+            )
         }
         from core.services.timetable_flags import is_one_teacher_active
 
@@ -132,22 +146,30 @@ def scenario_instructor_clash_report(scenario_id: int) -> dict[str, Any]:
             for row in list_instructor_clashes(sections_by_id, section_instructor_ids)
             if one_teacher or not _is_sibling_pair(sections_by_id, row)
         ]
-        return {"count": len(clashes), "clashes": clashes, "checked": True}
-    except Exception as exc:  # defensive; see docstring
-        from core.services.timetable_optimizer_v2 import IncompletePolicyPattern
-
-        if isinstance(exc, IncompletePolicyPattern):
-            # Not a failure: an English section has no one complete weekly
-            # pattern, so its meetings (and who clashes with them) are not
-            # known. Said as such, without a traceback on every manual edit.
+        report: dict[str, Any] = {"count": len(clashes), "clashes": clashes, "checked": True}
+        if incomplete:
+            # Not a failure: these English sections have no one complete
+            # weekly pattern, so their meetings (and who clashes with them) are
+            # not known. Every other section was checked; said as such,
+            # without a traceback on every manual edit.
+            unchecked = [
+                {
+                    "course_code": exc.course_code,
+                    "section": exc.section,
+                    "board_ids": list(exc.board_ids),
+                }
+                for exc in incomplete
+            ]
             logger.warning(
-                "Instructor clash backstop not run for scenario %s: %s %s has no one "
-                "complete English weekly pattern",
+                "Instructor clash backstop for scenario %s left out %d English section(s) "
+                "with no one complete weekly pattern: %s",
                 scenario_id,
-                exc.course_code,
-                exc.section,
+                len(unchecked),
+                [f"{row['course_code']} {row['section']}" for row in unchecked[:5]],
             )
-            return _unchecked("incomplete_english_pattern")
+            report.update(partial=True, reason="incomplete_english_pattern", unchecked=unchecked)
+        return report
+    except Exception:  # pragma: no cover - defensive; see docstring
         logger.exception("Instructor clash backstop failed for scenario %s", scenario_id)
         return _unchecked("backstop_error")
 
