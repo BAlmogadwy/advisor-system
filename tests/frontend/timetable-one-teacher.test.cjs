@@ -165,6 +165,21 @@ test('the drawer\'s meeting rows name no one with the rule on, as classic; witho
   assert.match(off.d.querySelector('#twsDrawerBody .meeting-row').textContent, /R1 · Registrar Name$/);
 });
 
+// A1's safeHtml: a teacher's name is data, shown as text and escaped once.
+test("split's drawer and Selection show a teacher name holding markup as text, escaped once", async t => {
+  const name = `A&B <img src=x onerror="window.__x=1"> "q" 'z'`;
+  const h = await drawer(t, { id: 7, name, status: 'engine', source: 'engine', reason: null });
+  assert.equal(h.chips.textContent, name);
+  assert.equal((await selection(h)).querySelector('#twsSelInstructor').textContent, name);
+  const off = await drawer(t, undefined, { meetingName: name });
+  assert.equal(off.d.querySelector('#twsDrawerBody .meeting-row .r').textContent, `R1 · ${name}`);
+  assert.equal((await selection(off)).querySelector('#twsSelInstructor').textContent, name);
+  for (const x of [h, off]) {
+    assert.equal(x.d.querySelectorAll('img').length, 0);
+    assert.equal(x.w.__x, undefined);
+  }
+});
+
 for (const arabic of [false, true]) {
   // Review of B2: the 409 in words never reached the page; the Students panel
   // said "Calculating..." for ever.
