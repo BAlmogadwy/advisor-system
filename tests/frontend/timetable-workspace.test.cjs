@@ -237,16 +237,16 @@ test('F3 a handler that throws has not taken the failure: it is asked once, and 
     method: 'POST', body: '{"room":"R2"}', _quiet: quiet,
     _onError: (body, status) => { told.push([body?.error?.code ?? null, status]); throw new Error('a handler bug'); },
   });
-  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  fail = () => ({ httpError: 409, error: { code: 'VALIDATION_PLACEMENT', message: 'Refused by the server' } });
   assert.equal(await post(false), null);
   fail = () => { throw new TypeError('Failed to fetch'); };
   assert.equal(await post(false), null, 'a handler that throws on a lost answer still lets twFetch answer null');
-  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409], [null, 0]], 'each failure is told once, never again as a network failure');
-  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: 'Owned elsewhere' }, { type: 'error', text: 'Failed to fetch' }],
+  assert.deepEqual(told, [['VALIDATION_PLACEMENT', 409], [null, 0]], 'each failure is told once, never again as a network failure');
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'error', text: 'Refused by the server' }, { type: 'error', text: 'Failed to fetch' }],
     'the server’s message (or the network’s), never the handler’s exception');
   assert.deepEqual(slips, ['a handler bug', 'a handler bug'], 'the slip is not lost: it is logged');
   // A quiet request stays quiet when its handler throws.
-  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  fail = () => ({ httpError: 409, error: { code: 'VALIDATION_PLACEMENT', message: 'Refused by the server' } });
   assert.equal(await post(true), null);
   assert.equal(told.length, 3);
   assert.equal(h.notices.length, toasts + 2);
@@ -301,10 +301,10 @@ test('F6 a write held by the busy guard never reaches the handler; a handler tha
   hang.resolve({ placement: { id: 11 } });
   await first;
   // A handler that answers nothing (undefined) has not taken the failure.
-  fail = () => ({ httpError: 409, error: { code: 'PLACEMENT_EXTERNALLY_OWNED', message: 'Owned elsewhere' } });
+  fail = () => ({ httpError: 409, error: { code: 'VALIDATION_PLACEMENT', message: 'Refused by the server' } });
   assert.equal(await h.w.twFetch(MOVE_URL, { method: 'POST', body: '{}', _onError: (body, status) => { told.push([body?.error?.code, status]); } }), null);
-  assert.deepEqual(told, [['PLACEMENT_EXTERNALLY_OWNED', 409]]);
-  assert.deepEqual(h.notices.slice(toasts + 1), [{ type: 'error', text: 'Owned elsewhere' }]);
+  assert.deepEqual(told, [['VALIDATION_PLACEMENT', 409]]);
+  assert.deepEqual(h.notices.slice(toasts + 1), [{ type: 'error', text: 'Refused by the server' }]);
 });
 
 test('the Optimise result names the courses that left students without a section, with their students', async t => {

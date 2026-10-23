@@ -29,6 +29,43 @@ const T = {
   moveOk: IS_AR ? 'تم النقل' : 'Moved',
 };
 
+/* The server's refusals of a write that this page says in its own words
+   (stage 3, B1), for a caller with no handler of its own (a create, a
+   remove, an undo or a redo; a move too), where they used to reach the
+   console only: a section another scenario owns, and a section label already
+   placed in the scenario, named with the first free label the server found.
+   The words are classic's (serverRefusalWords in
+   page-timetable-workspace.js; a parity test pins the two pages together
+   until stage 3's E2 gives them one home). '' for any other refusal, which
+   stays in the console, as before. */
+const ltrIsolate = text => `${String.fromCharCode(0x2066)}${text}${String.fromCharCode(0x2069)}`;
+function serverRefusalWords(error) {
+  const code = error && typeof error === 'object' ? error.code : '';
+  if (code === 'PLACEMENT_EXTERNALLY_OWNED') {
+    return IS_AR ? 'يملك سيناريو آخر وقت هذه الشعبة وقاعتها؛ عدّلها هناك.' : "Another scenario owns this section's time and room; change it there.";
+  }
+  if (code !== 'SECTION_LABEL_IN_USE') return '';
+  const { course_code: course = '', label = '', next_free: next = '' } = error.details || {};
+  // One isolate around the pair, so Arabic never shows it as “S1 CS112”.
+  const pair = [course, label].filter(Boolean).join(' ');
+  const name = pair ? ltrIsolate(pair) : '';
+  if (IS_AR) {
+    const placed = name ? `الشعبة ${name} موضوعة بالفعل في هذا السيناريو.` : 'هذه الشعبة موضوعة بالفعل في هذا السيناريو.';
+    return next ? `${placed} أول شعبة متاحة: ${ltrIsolate(next)}.` : placed;
+  }
+  const placed = `${name || 'This section'} is already placed in this scenario.`;
+  return next ? `${placed} The next free section is ${ltrIsolate(next)}.` : placed;
+}
+/* Says such a refusal (a warning: a rule refused the write, nothing failed).
+   A label in use reads the budget again, so the list counts it. */
+function sayServerRefusal(body) {
+  const words = serverRefusalWords(body?.error);
+  if (!words) return false;
+  notify.warning(words);
+  if (body.error.code === 'SECTION_LABEL_IN_USE') loadSidebarBudget();
+  return true;
+}
+
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
 const DAY_LABELS = IS_AR
   ? ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس']
@@ -314,6 +351,7 @@ async function api(url, opts = {}, onError = null) {
       console.error('api error', url, msg);
       // The body and status too, for a caller that can say more than the message.
       if (onError) onError(msg, body, r.status);
+      else sayServerRefusal(body);
       return null;
     }
     return await r.json();
