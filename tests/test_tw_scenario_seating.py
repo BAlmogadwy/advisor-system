@@ -24,7 +24,7 @@ import pytest
 from django.contrib.auth.models import Group, User
 from django.test import Client
 
-from core.models import ScenarioStudentCourseRequest, Student
+from core.models import Student, TermSection
 from core.services import timetable_plan_lens as plan_lens
 from core.services import timetable_scenario_quality as quality
 from core.services import timetable_student_assignment as ssa
@@ -32,6 +32,7 @@ from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.timetable_assignment_models import StudentAssignmentState
 from tests.tw_scenario_seating_support import (
     FLAG_MODES,
+    NO_DEMAND,
     STUDENTS,
     apply_flags,
     build_seating_fixture,
@@ -39,6 +40,7 @@ from tests.tw_scenario_seating_support import (
     quality_url,
     read,
     record_legacy_reads,
+    remove_demand,
 )
 
 pytestmark = pytest.mark.django_db
@@ -150,6 +152,25 @@ def test_sq2_the_lens_from_quality_equals_plan_lens_from_one_seating(settings, h
         assert "programme_grouping" not in lens
 
 
+def test_sq2b_with_nothing_marked_the_lens_from_quality_reports_no_grouping(settings, http):
+    """Production flags, no section marked: the grouping did nothing, so the
+    lens from quality's seating says ``programme_grouping: null``, as
+    ``/plan-lens/`` does, never a report of its own."""
+    apply_flags(settings, "production")
+    fx = build_seating_fixture()
+    TermSection.objects.filter(scenario=fx.scenario).update(preferred_programme="")
+    alone, _ = read(http, lens_url(fx))
+    real = ssa.assign_students_to_sections
+    with mock.patch.object(ssa, "assign_students_to_sections", wraps=real) as seat:
+        both, _ = read(http, quality_url(fx, "?lens=1"))
+    assert seat.call_count == 1  # the lens came from quality's evaluation
+    lens = both["plan_lens"]
+    assert lens["seating"] == SEATED
+    assert "programme_grouping" in lens and lens["programme_grouping"] is None
+    assert alone["plan_lens"]["programme_grouping"] is None
+    assert _text(lens) == _text(alone["plan_lens"])
+
+
 # ── SQ3: exactly the lens's own reads ────────────────────────────────────────
 
 
@@ -202,13 +223,43 @@ def test_sq4_a_seating_that_cannot_be_built_is_unknown_on_both_reads(
     assert _text(lens) == _text(alone["plan_lens"])
 
 
+def test_sq4b_a_demand_read_that_raises_leaves_only_the_seats_unknown(
+    settings, http, monkeypatch, caplog
+):
+    """The quality read's own demand read raises: HTTP 200, the three seat
+    parts unknown (``assessment_failed``), logged once, the instructor part
+    assessed. With the lens, quality hands it nothing, so it seats on its own
+    and equals ``/plan-lens/``."""
+    apply_flags(settings, "production")
+    fx = build_seating_fixture()
+    alone, _ = read(http, lens_url(fx))
+    monkeypatch.setattr(quality, "load_scenario_course_demands", _boom)
+    caplog.set_level(logging.ERROR)
+    caplog.clear()
+    plain, _ = read(http, quality_url(fx))  # 200, or ``read`` fails
+    assert _logs(caplog, QUALITY_LOGGER) == 1
+    for part in ("soft_seats", "seats", "assigned_student_clashes"):
+        assert plain[part]["assessed"] is False, part
+        assert plain[part]["reason"] == "assessment_failed", part
+    assert plain["instructor"]["assessed"] is True
+
+    real = ssa.assign_students_to_sections
+    with mock.patch.object(ssa, "assign_students_to_sections", wraps=real) as seat:
+        both, _ = read(http, quality_url(fx, "?lens=1"))
+    assert seat.call_count == 1  # quality never seated: the lens seated once
+    lens = both.pop("plan_lens")
+    assert _text(both) == _text(plain)
+    assert lens["seating"] == SEATED
+    assert _text(lens) == _text(alone["plan_lens"])
+
+
 # ── SQ5: nobody to seat is assessed ──────────────────────────────────────────
 
 
 def test_sq5_no_demand_is_assessed_with_nobody_seated(settings, http):
     apply_flags(settings, "production")
     fx = build_seating_fixture()
-    ScenarioStudentCourseRequest.objects.filter(scenario=fx.scenario).delete()
+    remove_demand(fx)
     _, plain_queries = read(http, quality_url(fx))
     both, both_queries = read(http, quality_url(fx, "?lens=1"))
     alone, _ = read(http, lens_url(fx))
@@ -223,10 +274,29 @@ def test_sq5_no_demand_is_assessed_with_nobody_seated(settings, http):
     assert [q["sql"][: len(p)] for q, p in zip(added, own_reads, strict=True)] == own_reads
 
 
+def test_sq5b_without_lens_a_read_with_no_demand_equals_the_oracle(settings, http):
+    """Nobody to seat, no ``lens``: both reads equal the base commit's, query
+    counts included. Quality reads the (empty) demand once and hands it to the
+    profile builder, which never reads it again."""
+    expected = json.loads(ORACLE.read_text(encoding="utf-8"))[NO_DEMAND]
+    apply_flags(settings, "production")
+    fx = build_seating_fixture()
+    remove_demand(fx)
+    now = record_legacy_reads(http, fx)
+    assert _text(now["quality"]) == _text(expected["quality"])
+    lens = now["plan_lens"]["plan_lens"]
+    assert list(lens)[-1] == "seating"
+    assert lens.pop("seating") == NOBODY
+    assert _text(now["plan_lens"]) == _text(expected["plan_lens"])
+    assert now["queries"] == expected["queries"]
+
+
 # ── SQ6: the parameter counts only when it is exactly "1" ────────────────────
 
 
-@pytest.mark.parametrize("query", ["?lens=true", "?lens=0", "?lens=", "?lens=yes", "?lens=1.0"])
+@pytest.mark.parametrize(
+    "query", ["?lens=true", "?lens=0", "?lens=", "?lens=yes", "?lens=1.0", "?lens=%201"]
+)
 def test_sq6_only_lens_1_adds_the_lens(settings, http, query):
     apply_flags(settings, "production")
     fx = build_seating_fixture()

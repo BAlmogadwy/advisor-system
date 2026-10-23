@@ -1143,6 +1143,38 @@ findings changed the plan:
    evaluation and the demand rows, so the combined path cannot read the
    section states the seating mutated; and the lens is built inside the
    one-teacher scope, which memoises teacher reads the lens never makes.
+   **After review (approved; its non-blocking items fixed):** (1) SQ4b: when
+   the quality read's own demand read raises, the read still answers 200, the
+   three seat parts read `assessment_failed` (logged once), and `lens=1`'s
+   lens seats on its own and equals `/plan-lens/`. It kills the demand read
+   moved out of its `try`, which would make the read a 500. (2) SQ5b: with no
+   demand and no `lens`, both reads equal the base commit's, query counts
+   included. The oracle gained a fourth entry, `production_no_demand`,
+   recorded by the same recorder from `b376afa`'s code (a worktree at
+   `f518662`); the three earlier entries came out byte-identical. It kills
+   `if demand_rows is None` → `if not demand_rows` in the profile builder
+   (one more query). (3) SQ2b: with production flags and nothing marked, the
+   lens from quality's seating and `/plan-lens/` both say
+   `programme_grouping: null`; it kills a non-empty default for the
+   evaluation's grouping. (4) SQ6 also ignores `lens=%201`, a padded `1`.
+   (5) The failure path is not cheap, as the docstring said and §7.4's
+   "fails cheaply" says. When quality's seating never ran, the lens seats on
+   its own, and that seating reads the demand and builds every student's
+   profile before the sections fail; the lens then reads the demand again.
+   Measured on the QA copy (production flags, interleaved, 63 rounds,
+   medians): on 662, plain quality 17.7 ms and `lens=1` 44.1 ms (2.49×). The
+   extra 26 ms is the profiles with their demand read (12.9 ms), the failing
+   section build (3.3 ms) and the lens's own demand read (7.6 ms). That
+   equals quality plus `/plan-lens/` (0.99×). On 664: 22.7 against 59.5 ms
+   (2.62×, 1.00×). Python peak: quality 0.65 MiB, `lens=1` 3.62 MiB,
+   `/plan-lens/` alone 3.53 MiB (664: 0.83, 5.05 and 4.95). Queries: 20 + 10
+   = 30, with the demand read twice. So on such a scenario `lens=1` costs what
+   the two reads cost apart: no more, and no saving. The docstring now says
+   so. Building the sections before the profiles would make the failure
+   cheap; the triage kept the code and fixed the wording.
+   **Tests:** 26 cases; the six mutants of these fixes (the four above, the
+   seat failure left unlogged, and `remove_demand` removing nothing) all go
+   red on the intended test. Follow-ups: none.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
