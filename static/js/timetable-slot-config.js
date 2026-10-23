@@ -104,15 +104,23 @@
   }
 
   /* What the change asks the user to accept, for the confirm dialog: the
-     meetings it leaves off the grid, and the flagged columns it removes. */
-  function confirmationHtml(details) {
+     meetings it leaves off the grid, and the flagged columns it removes.
+     `parked`: the page draws a meeting off the grid in a strip under its
+     table (the workspace, design record §7.2 item 6, 6e), so the lead says
+     where it will be; without it the words are the ones a page that does not
+     draw such a meeting needs (split view). */
+  function confirmationHtml(details, { parked = false } = {}) {
     const hidden = details.hidden || [];
     const count = details.hidden_count ?? hidden.length;
     let html = '';
     if (count) {
-      const lead = AR
-        ? `هذا التغيير يترك ${meetingsText(count)} خارج أعمدة الجدول. تبقى في الجدول وتُنشر، لكن لا يظهر أي منها في الشبكة حتى تعود أعمدة بأوقاتها:`
-        : `This change leaves ${meetingsText(count)} outside the grid's columns. They stay in the timetable and are still published, but none is drawn on the grid until a column has its time again:`;
+      const lead = parked
+        ? (AR
+          ? `هذا التغيير يترك ${meetingsText(count)} خارج أعمدة الجدول. تبقى في الجدول وتُنشر، ويظهر كلٌّ منها أسفل جدوله حتى يعود عمود بوقته:`
+          : `This change leaves ${meetingsText(count)} outside the grid's columns. They stay in the timetable and are still published; each is shown under its table until a column has its time again:`)
+        : AR
+          ? `هذا التغيير يترك ${meetingsText(count)} خارج أعمدة الجدول. تبقى في الجدول وتُنشر، لكن لا يظهر أي منها في الشبكة حتى تعود أعمدة بأوقاتها:`
+          : `This change leaves ${meetingsText(count)} outside the grid's columns. They stay in the timetable and are still published, but none is drawn on the grid until a column has its time again:`;
       const rows = hidden.map(item => {
         const locked = item.is_locked ? (AR ? ' · الوقت مقفل' : ' · time locked') : '';
         return `<li><bdi>${escape(item.board_label)}</bdi> · <bdi>${escape(item.course_code)} ${escape(item.section)}</bdi> · ${escape(DAY[item.day] || item.day)} ${time(item.start_time, item.end_time)}${locked}</li>`;

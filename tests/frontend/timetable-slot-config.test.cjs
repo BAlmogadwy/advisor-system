@@ -127,6 +127,47 @@ test('the MRI move pool offers the effective columns, never an evening one to a 
   assert.deepEqual(pool({ start_time: '15:50', end_time: '17:30' }), ['09:00', '15:50', '17:40']);
 });
 
+/* PK6 (design record §7.2 item 6, 6e): the workspace draws a meeting off the
+   grid in a strip under its table, so its confirmation says so; split view
+   draws none there and keeps its words. Recorded before 6e, to the byte. */
+const PK6_DETAILS = {
+  hidden: [
+    { board_label: 'Term <2>', course_code: 'CS112', section: 'S1', day: 'MON', start_time: '10:50', end_time: '12:05', is_locked: false },
+    { board_label: 'Term 3', course_code: 'AI"1', section: 'S2', day: 'SUN', start_time: '09:00', end_time: '10:15', is_locked: true },
+  ],
+  hidden_count: 5,
+  dropped_flags: [
+    { list: 'lab_slot_config', label: 'Online 3', start: '19:30', end: '21:10', flags: ['online_only'] },
+    { list: 'slot_config', label: 'P', start: '13:00', end: '16:00', flags: ['policy_only'] },
+  ],
+};
+const PK6_BEFORE = {
+  en: "<p class=\"tw-readiness-lead\">This change leaves 5 meetings outside the grid's columns. They stay in the timetable and are still published, but none is drawn on the grid until a column has its time again:</p><ul class=\"tw-readiness-list\"><li><bdi>Term &lt;2&gt;</bdi> · <bdi>CS112 S1</bdi> · Mon <bdi dir=\"ltr\">10:50–12:05</bdi></li><li><bdi>Term 3</bdi> · <bdi>AI&quot;1 S2</bdi> · Sun <bdi dir=\"ltr\">09:00–10:15</bdi> · time locked</li></ul><p class=\"tw-readiness-lead\">And 3 meetings more.</p><p class=\"tw-readiness-lead\">And these columns lose their rule; a column that is no longer online-only is one the automatic placers may put room-using classes in:</p><ul class=\"tw-readiness-list\"><li>Labs · <bdi>Online 3</bdi> <bdi dir=\"ltr\">19:30–21:10</bdi> · online-only</li><li>Lectures · <bdi>P</bdi> <bdi dir=\"ltr\">13:00–16:00</bdi> · policy display column</li></ul>",
+  ar: "<p class=\"tw-readiness-lead\">هذا التغيير يترك 5 لقاءات خارج أعمدة الجدول. تبقى في الجدول وتُنشر، لكن لا يظهر أي منها في الشبكة حتى تعود أعمدة بأوقاتها:</p><ul class=\"tw-readiness-list\"><li><bdi>Term &lt;2&gt;</bdi> · <bdi>CS112 S1</bdi> · الاثنين <bdi dir=\"ltr\">10:50–12:05</bdi></li><li><bdi>Term 3</bdi> · <bdi>AI&quot;1 S2</bdi> · الأحد <bdi dir=\"ltr\">09:00–10:15</bdi> · الوقت مقفل</li></ul><p class=\"tw-readiness-lead\">عدد إضافي غير معروض: 3.</p><p class=\"tw-readiness-lead\">وهذه الأعمدة تفقد قيدها؛ العمود الذي لم يعد «عن بُعد فقط» يمكن أن يضع فيه المُجدول الآلي محاضرات تحتاج قاعة:</p><ul class=\"tw-readiness-list\"><li>المعامل · <bdi>Online 3</bdi> <bdi dir=\"ltr\">19:30–21:10</bdi> · عن بُعد فقط</li><li>المحاضرات · <bdi>P</bdi> <bdi dir=\"ltr\">13:00–16:00</bdi> · عمود عرض للسياسة</li></ul>",
+};
+const PK6_LEAD = {
+  en: ["but none is drawn on the grid until a column has its time again:", "each is shown under its table until a column has its time again:", "They stay in the timetable and are still published, ", "They stay in the timetable and are still published; "],
+  ar: ["لكن لا يظهر أي منها في الشبكة حتى تعود أعمدة بأوقاتها:", "ويظهر كلٌّ منها أسفل جدوله حتى يعود عمود بوقته:", "تبقى في الجدول وتُنشر، ", "تبقى في الجدول وتُنشر، "],
+};
+
+test('PK6 the parked lead says each meeting is shown under its table; without the option the words are as before, to the byte', () => {
+  for (const lang of ['en', 'ar']) {
+    const { SC } = moduleIn(lang);
+    const plain = SC.confirmationHtml(PK6_DETAILS);
+    assert.equal(plain, PK6_BEFORE[lang], `${lang}: unchanged without the option (split view)`);
+    assert.equal(SC.confirmationHtml(PK6_DETAILS, {}), plain);
+    assert.equal(SC.confirmationHtml(PK6_DETAILS, { parked: false }), plain);
+    const [oldEnd, newEnd, oldJoin, newJoin] = PK6_LEAD[lang];
+    const parked = SC.confirmationHtml(PK6_DETAILS, { parked: true });
+    assert.equal(parked, plain.replace(oldJoin + oldEnd, newJoin + newEnd), `${lang}: only the lead's end changes`);
+    assert.match(parked, lang === 'en'
+      ? /^<p class="tw-readiness-lead">This change leaves 5 meetings outside the grid's columns\. They stay in the timetable and are still published; each is shown under its table until a column has its time again:<\/p>/
+      : /^<p class="tw-readiness-lead">هذا التغيير يترك 5 لقاءات خارج أعمدة الجدول\. تبقى في الجدول وتُنشر، ويظهر كلٌّ منها أسفل جدوله حتى يعود عمود بوقته:<\/p>/);
+    // Nothing hidden: no lead, either way.
+    assert.equal(SC.confirmationHtml({ hidden: [], hidden_count: 0 }, { parked: true }), '');
+  }
+});
+
 /* ── The split view ── */
 async function split(t, answer) {
   const html = read('core/templates/core/timetable_workspace_split.html')
@@ -183,5 +224,8 @@ test('the split editor shows the effective columns and saves only after the hidd
   assert.equal(h.posts.length, 2);
   assert.equal(h.posts[1].confirm, 'fp9');
   assert.match(asked[0], /AI201 S1/);
+  // Split view draws no strip: its words say the meeting is not drawn (6e, PK6).
+  assert.match(asked[0], /none is drawn on the grid/);
+  assert.doesNotMatch(asked[0], /under its table/);
   assert.ok(h.notices.some(n => n.kind === 'success'));
 });
