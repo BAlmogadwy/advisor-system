@@ -37,6 +37,12 @@ html body.tws-root {
   --t3: #aeb4c8;
   --t4: #9098b0;
   --t5: #727b94;
+  /* This page is dark in both themes, so the text tokens it reads from the
+     global sheet take their dark values here: --text-brand light (#067858) is
+     3.2:1 on this card, the dark value 8.4:1. And it says it is dark, so the
+     browser's own controls, popups and scrollbars are dark too. */
+  --text-brand: #2ec9a0;
+  color-scheme: dark;
   background:
     radial-gradient(ellipse 80% 60% at 20% -10%, rgba(10, 142, 110, 0.08), transparent 60%),
     radial-gradient(ellipse 60% 50% at 90% 100%, rgba(80, 104, 240, 0.06), transparent 60%),

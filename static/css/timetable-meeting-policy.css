@@ -10,7 +10,7 @@
 .tw-pattern-choice:hover, .tw-pattern-action:hover { background: var(--brand-soft); }
 .tw-pattern-choice:disabled, .tw-pattern-action:disabled { opacity: .5; cursor: not-allowed; }
 .tw-pattern-choice:focus-visible, .tw-pattern-cancel:focus-visible, .tw-pattern-action:focus-visible { outline: 2px solid var(--royal); outline-offset: 3px; }
-.tw-english-heading { padding: 10px 4px 6px; color: var(--teal); font-size: .8rem; font-weight: 700; }
+.tw-english-heading { padding: 10px 4px 6px; color: var(--text-brand); font-size: .8rem; font-weight: 700; }
 .tw-english-grid .tw-card, .english-grid .cell.filled { min-height: 66px; }
 .english-grid .slbl { font-size: var(--text-2xs, .6875rem); white-space: normal; line-height: 1.35; }
 .tw-pattern-label { display: block; font-size: var(--text-2xs, .6875rem); font-weight: 600; margin: 4px 0; }

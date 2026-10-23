@@ -109,13 +109,13 @@
 
 .tg-btn:hover {
   border-color: color-mix(in srgb, var(--teal) 48%, transparent);
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-btn-primary {
-  background: linear-gradient(135deg, var(--teal), #2672d9);
+  background: linear-gradient(135deg, var(--btn-primary-bg), var(--btn-primary-hover));
   border-color: transparent;
-  color: white;
+  color: var(--btn-primary-ink);
 }
 
 .tg-btn-secondary {
@@ -175,7 +175,7 @@
 .tg-pill[data-tone="good"] {
   border-color: color-mix(in srgb, var(--teal) 45%, transparent);
   background: color-mix(in srgb, var(--teal) 12%, transparent);
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-pill[data-tone="warn"] {
@@ -320,7 +320,8 @@
 .tg-node-student {
   left: 10%;
   top: 34%;
-  background: linear-gradient(135deg, var(--teal), #18b698);
+  background: linear-gradient(135deg, var(--btn-primary-bg), var(--btn-primary-hover));
+  color: var(--btn-primary-ink);
 }
 
 .tg-node-course {
@@ -439,7 +440,7 @@
 .tg-mode-switch button.active {
   border-color: color-mix(in srgb, var(--teal) 52%, transparent);
   background: color-mix(in srgb, var(--teal) 14%, transparent);
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-plan-controls {
@@ -563,7 +564,7 @@
 
 .tg-tool-btn:hover {
   border-color: rgba(45, 212, 191, .48);
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-tool-btn:disabled {
@@ -582,7 +583,7 @@
 }
 
 .tg-tool-status[data-tone="good"] {
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-tool-status[data-tone="warn"] {
@@ -730,7 +731,7 @@
 .tg-detail-actions a:hover,
 .tg-detail-row:hover {
   border-color: rgba(45, 212, 191, .48);
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-detail-section {
@@ -865,7 +866,7 @@
 
 .tg-candidate-head button:hover {
   border-color: rgba(45, 212, 191, .48);
-  color: var(--teal);
+  color: var(--text-brand);
 }
 
 .tg-candidate-row dl {
@@ -1118,7 +1119,7 @@
 }
 
 .tg-sample-row strong {
-  color: var(--teal);
+  color: var(--text-brand);
   font-size: .7rem;
 }
 

@@ -102,3 +102,67 @@ def test_the_small_type_steps_never_go_under_their_px_floor() -> None:
     root = THEMES["light"]
     assert re.search(r"--text-2xs:\s*max\(11px,", root)
     assert re.search(r"--text-xs:\s*max\(12px,", root)
+
+
+# ── Stage 3, C1 (docs/stage3/C1.md): the pairs the remap now relies on ───────
+
+
+def _mix(ink: str, percent: float, base: str) -> str:
+    """`color-mix(in srgb, ink percent%, base)` as an opaque hex colour."""
+    a = [int(ink[i : i + 2], 16) for i in (1, 3, 5)]
+    b = [int(base[i : i + 2], 16) for i in (1, 3, 5)]
+    w = percent / 100
+    return "#" + "".join(f"{round(x * w + y * (1 - w)):02x}" for x, y in zip(a, b, strict=True))
+
+
+def _pill_tint_percent() -> float:
+    found = re.search(
+        r"\.pill-g, \.pill-r, \.pill-a, \.pill-b \{[^}]*?"
+        r"color-mix\(in srgb, var\(--pill-ink\) (\d+(?:\.\d+)?)%, var\(--card\)\)",
+        CSS,
+    )
+    assert found, "the status pills' shared tint rule is gone"
+    return float(found.group(1))
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+@pytest.mark.parametrize("sev", ["--sev-ok", "--sev-critical", "--sev-warning", "--sev-info"])
+def test_a_status_pill_ink_clears_4_5_on_its_own_tint(theme: str, sev: str) -> None:
+    # The pill's background is an opaque tint of the card, so this pair is what
+    # the user sees wherever the pill sits (the workspace's "Draft" was 4.17:1).
+    ink = _hex(theme, sev)
+    tint = _mix(ink, _pill_tint_percent(), _hex(theme, "--card"))
+    ratio = _ratio(ink, tint)
+    assert ratio >= 4.5, f"{theme} {sev} on its {_pill_tint_percent()}% tint: {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_placeholder_text_clears_4_5_on_the_second_surface_too(theme: str) -> None:
+    # Every placeholder reads --t4 (global.css `::placeholder`); fields sit on
+    # the card, the page, the surface and the second surface.
+    ratio = _ratio(_hex(theme, "--t4"), _hex(theme, "--surface-2"))
+    assert ratio >= 4.5, f"{theme} --t4 on --surface-2: {ratio:.2f}:1"
+
+
+SPLIT_CSS = (
+    pathlib.Path(__file__).resolve().parents[1] / "static/css/timetable-workspace-split.css"
+).read_text(encoding="utf-8")
+
+
+def _split(token: str) -> str:
+    start = SPLIT_CSS.index("html body.tws-root {")
+    block = SPLIT_CSS[start : SPLIT_CSS.index("\n}", start)]
+    found = re.search(rf"{re.escape(token)}:\s*(#[0-9a-fA-F]{{6}})\b", block)
+    assert found, f"split view's token block has no plain hex {token}"
+    return found.group(1)
+
+
+@pytest.mark.parametrize("surface", ["--card", "--bg"])
+def test_split_views_dark_palette_gives_brand_text_its_dark_value(surface: str) -> None:
+    # Split view is dark in both themes, so the shared rules it renders in
+    # --text-brand (the English heading) must not take the light value, which
+    # is 3.23:1 on its card; teal, before C1, was 4.29:1 there.
+    ratio = _ratio(_split("--text-brand"), _split(surface))
+    assert ratio >= 4.5, f"split --text-brand on {surface}: {ratio:.2f}:1"
+    light = _ratio(_hex("light", "--text-brand"), _split(surface))
+    assert light < 4.5, "the light value passes here now: the split override may go"
