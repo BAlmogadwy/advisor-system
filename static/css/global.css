@@ -45,7 +45,7 @@
 
   /* Taibah University brand — primary teal */
   --brand:          #0A8E6E;
-  --brand-dark:     #067858;
+  --brand-dark:     #05664b; /* = --text-brand: a text colour only */
   --brand-soft:     rgba(10,142,110,0.06);
   --brand-glow:     rgba(10, 142, 110, 0.18);
 
@@ -87,10 +87,13 @@
      --teal (#0A8E6E) is a brand colour, not a text colour: as text on white it is
      4.11:1 and as a fill under white text the same 4.11:1, both under the 4.5:1
      that 12–14px text needs. These tokens are the passing pair for each job.
-     --text-brand: teal TEXT (links, active labels, codes) — 5.48:1 on --card.
+     --text-brand: teal TEXT (links, active labels, codes) — 6.98:1 on --card,
+     and ≥ 4.9:1 on a teal wash of up to 16% over every surface (chips, active
+     rows: #067858 was 4.31:1 on --teal-dim over --surface-2).
      --btn-primary-*: the one filled primary — white on #067858 is 5.48:1, and the
-     hover goes DARKER (6.98:1) instead of brighter, so it never fails mid-hover. */
-  --text-brand:       #067858;
+     hover and pressed states go DARKER (6.98:1) instead of brighter, so they
+     never fail mid-hover. */
+  --text-brand:       #05664b;
   --btn-primary-bg:   #067858;
   --btn-primary-ink:  #ffffff;
   --btn-primary-hover:#05664b;
@@ -4464,7 +4467,7 @@ pre, .pre-output {
 }
 
 .dlg-footer .btn-confirm.primary:hover {
-  background: var(--teal-bright);
+  background: var(--btn-primary-hover);
   box-shadow: 4px 4px 12px color-mix(in srgb, var(--teal) 40%, transparent),
               -2px -2px 8px rgba(255,255,255,0.3);
 }
@@ -10887,13 +10890,13 @@ body:has(.login-wrap) {
     position: relative; overflow: hidden;
   }
   .neu-btn:hover {
-    background: var(--teal-bright);
+    background: var(--btn-primary-hover);
     box-shadow:
       4px 4px 10px rgba(163,177,198,0.32),
       -4px -4px 10px rgba(255,255,255,0.8);
   }
   .neu-btn:active {
-    background: var(--teal-deep);
+    background: var(--btn-primary-hover);
     transform: translateY(0);
     box-shadow:
       inset 3px 3px 7px color-mix(in srgb, var(--teal) 30%, transparent),
@@ -13162,7 +13165,7 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
   width: 1.9rem;
   height: 1.9rem;
   flex: 0 0 auto;
-  background: linear-gradient(135deg, var(--brand), var(--teal));
+  background: linear-gradient(135deg, var(--btn-primary-bg), var(--btn-primary-hover));
   box-shadow: 0 5px 14px color-mix(in srgb, var(--teal) 18%, transparent);
   font-size: .58rem;
 }

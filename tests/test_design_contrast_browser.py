@@ -2,14 +2,19 @@
 
 Seven staff pages in a real browser, light and dark: the Timetable Workspace,
 split view, the dashboard, the planner, user management, the profile and the
-database admin page. What C1 changed is measured as the user sees it, against
-the backgrounds it actually sits on (translucent layers composited; a gradient
-is not measured):
+database admin page; and (after review) the timetable graph, the two sign-in
+pages signed out, and the student portal's home and adviser signed in as a
+student. What C1 changed is measured as the user sees it, against the
+backgrounds it actually sits on (translucent layers composited; a gradient at
+each of its stops, the worst counting):
 
 - every text painted in a C1 token passes 4.5:1 (3:1 when large): brand text
   (`--text-brand`), a severity ink (`--sev-*`), and the primary pair
   (`--btn-primary-ink` on `--btn-primary-bg`);
 - the skip link passes (it was 4.11:1 light, 3.04:1 dark, on every page);
+- every control drawn in the primary pair still passes with :hover and with
+  :active forced (the sign-in button's hover was 3.04:1, the graph's Sync 1:1),
+  and so do the confirm dialog's primary and the student adviser's avatar;
 - no text is painted in the `--teal` fill any more, outside split view's own
   stylesheet (left for stage 4);
 - the sidebar's text never goes under 11px, at 1440, 1100 and in the phone
@@ -57,7 +62,14 @@ PAGES = {
     "user-management": "/user-management/",
     "profile": "/profile/",
     "db-admin": "/db-admin/",
+    "graph": "/timetable-workspace/graph/?scenario={sc}",
 }
+#: Signed out: the staff and student sign-in pages (their button is the only
+#: filled primary a visitor meets, and its hover was white on --teal-bright).
+SIGNED_OUT = {"login": "/login/", "student-login": "/student/login/"}
+#: Signed in as a student: the portal (light by default, with its own toggle).
+STUDENT = {"student-home": "/student/", "student-advisor": "/student/advisor/"}
+STUDENT_ID = 4410001
 
 # Shared by every measurement: parse a computed colour, composite a translucent
 # one over what is under it, and the WCAG contrast of two colours. The
@@ -72,22 +84,34 @@ const lum = c => { const f = v => { v /= 255; return v <= 0.03928 ? v/12.92 : Ma
   return 0.2126*f(c.r) + 0.7152*f(c.g) + 0.0722*f(c.b); };
 const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 const white = {r:255, g:255, b:255, a:1};
-const bgOf = el => {
-  const stack = [];
+// Every opaque colour the element's text may sit on: its own and its
+// ancestors' colours composited down to the first opaque one, and a gradient
+// on the way at each of its stops, over what is under it (an image: null).
+const bgsOf = el => {
+  const layers = [];
+  let bases = null;
   for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-    const cs = getComputedStyle(n);
-    if (cs.backgroundImage !== 'none') return null;
-    const c = parse(cs.backgroundColor);
-    if (c && c.a > 0) { stack.push(c); if (c.a === 1) break; }
+    const cs = getComputedStyle(n), c = parse(cs.backgroundColor);
+    if (cs.backgroundImage !== 'none') {
+      if (/url\(/.test(cs.backgroundImage)) return null;
+      const under = c && c.a === 1 ? [c]
+        : (bgsOf(n.parentElement) || []).map(b => (c && c.a > 0 ? over(c, b) : b));
+      const stops = (cs.backgroundImage.match(/rgba?\([^)]+\)/g) || []).map(parse).filter(Boolean);
+      bases = under.flatMap(b => (stops.length ? stops.map(s => over(s, b)) : [b]));
+      if (!bases.length) return null;
+      break;
+    }
+    if (c && c.a > 0) { if (c.a === 1) { bases = [c]; break; } layers.push(c); }
   }
-  let acc = stack.length && stack[stack.length - 1].a === 1 ? stack.pop() : white;
-  while (stack.length) acc = over(stack.pop(), acc);
-  return acc;
+  return (bases || [white]).map(b => layers.reduceRight((acc, layer) => over(layer, acc), b));
 };
+// One background, where there is exactly one (no gradient on the way).
+const bgOf = el => { const all = bgsOf(el); return all && all.length === 1 ? all[0] : null; };
+// The worst contrast of the element's text over everything it may sit on.
 const contrastOf = (el, pseudo) => {
-  const fg = parse(getComputedStyle(el, pseudo || null).color), bg = bgOf(el);
-  if (!fg || !bg) return null;
-  return +ratio(fg.a < 1 ? over(fg, bg) : fg, bg).toFixed(2);
+  const fg = parse(getComputedStyle(el, pseudo || null).color), bgs = bgsOf(el);
+  if (!fg || !bgs) return null;
+  return Math.min(...bgs.map(bg => +ratio(fg.a < 1 ? over(fg, bg) : fg, bg).toFixed(2)));
 };
 const shown = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el);
   return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity > 0.05; };
@@ -122,14 +146,23 @@ NAMED = ", ".join(
         ".dlg-footer .btn-confirm.primary",
         ".tw-english-heading",
         "#twValidationBadge",
+        ".avatar",
+        ".neu-btn-text",
+        ".va-avatar",
+        ".pl-btn-teal",
+        ".tg-btn-primary",
     )
 )
 #: What each page must have measured among the named controls (so a page that
-#: stops drawing one cannot pass by measuring nothing).
+#: stops drawing one cannot pass by measuring nothing). The sidebar's initials
+#: sit on a gradient of the primary pair, measured at both of its stops.
 MEASURED = {
-    "workspace": ("#twValidationBadge", "tw-english-heading"),
-    "planner": ("wf-step.active", "span.wf-num", "pl-btn-primary", "wf-next"),
+    "workspace": ("#twValidationBadge", "tw-english-heading", "div.avatar"),
+    "planner": ("wf-step.active", "span.wf-num", "pl-btn-primary", "wf-next", "pl-btn-teal"),
     "user-management": ("um-create-btn",),
+    "graph": ("#tgSync",),
+    "login": ("neu-btn-text",),
+    "student-login": ("neu-btn-text",),
 }
 AUDIT = (
     "() => {"
@@ -142,11 +175,12 @@ AUDIT = (
     const cs = getComputedStyle(el);
     const at = value => value ? rgbOf(value) : null;
     const hit = INKS.filter(t => at(cs.getPropertyValue(t).trim()) === cs.color);
-    // The primary pair: its ink on its fill (white alone is not the pair).
-    const fill = bgOf(el);
-    const fillRgb = fill && `rgb(${Math.round(fill.r)}, ${Math.round(fill.g)}, ${Math.round(fill.b)})`;
-    if (at(cs.getPropertyValue('--btn-primary-ink').trim()) === cs.color
-        && [at(cs.getPropertyValue('--btn-primary-bg').trim()), at(cs.getPropertyValue('--btn-primary-hover').trim())].includes(fillRgb))
+    // The primary pair: its ink on its fill, flat or a gradient of the pair's
+    // two fills (white alone is not the pair).
+    const fills = bgsOf(el) || [];
+    const pair = [at(cs.getPropertyValue('--btn-primary-bg').trim()), at(cs.getPropertyValue('--btn-primary-hover').trim())];
+    if (at(cs.getPropertyValue('--btn-primary-ink').trim()) === cs.color && fills.length
+        && fills.every(f => pair.includes(`rgb(${Math.round(f.r)}, ${Math.round(f.g)}, ${Math.round(f.b)})`)))
       hit.push('--btn-primary-ink');
     if (at(cs.getPropertyValue('--teal').trim()) === cs.color) teal.push(label(el));
     if (el.matches(NAMED)) hit.push('named');
@@ -201,6 +235,25 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
         self.cards = SectionPlacement.objects.filter(board=board).count()
         self.scenario = sc
 
+    def _student_session(self) -> str:
+        """A signed-in student, provisioned as the OTP sign-in does."""
+        from django.utils import timezone
+
+        from core.models import Student
+        from core.services import student_otp
+        from core.services.rbac import ensure_role_groups
+
+        ensure_role_groups()
+        Student.objects.get_or_create(
+            student_id=STUDENT_ID, defaults={"name": "Contrast", "program": "AI", "section": "M"}
+        )
+        client = Client()
+        client.force_login(student_otp.provision_student_user(STUDENT_ID))
+        session = client.session
+        session[student_otp.STUDENT_AUTHENTICATED_AT_SESSION_KEY] = int(timezone.now().timestamp())
+        session.save()
+        return session.session_key
+
     def _open(
         self,
         name: str,
@@ -220,28 +273,32 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
             forced_colors="active" if forced else "none",
         )
         self.addCleanup(context.close)
-        context.add_cookies(
-            [
+        cookies = [
+            {"name": settings.LANGUAGE_COOKIE_NAME, "value": language, "url": self.live_server_url}
+        ]
+        session = None if name in SIGNED_OUT else self.session
+        if name in STUDENT:
+            session = self._student_session()
+        if session:
+            cookies.append(
                 {
                     "name": settings.SESSION_COOKIE_NAME,
-                    "value": self.session,
+                    "value": session,
                     "url": self.live_server_url,
-                },
-                {
-                    "name": settings.LANGUAGE_COOKIE_NAME,
-                    "value": language,
-                    "url": self.live_server_url,
-                },
-            ]
-        )
+                }
+            )
+        context.add_cookies(cookies)
+        # The student portal keeps its theme under its own key.
         context.add_init_script(
-            f"try {{ localStorage.setItem('theme', '{theme}'); }} catch (e) {{}}"
+            f"try {{ localStorage.setItem('theme', '{theme}');"
+            f" localStorage.setItem('student-theme', '{theme}'); }} catch (e) {{}}"
         )
         context.add_init_script(WIDE_FONT)
         page = context.new_page()
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.goto(self.live_server_url + PAGES[name].format(sc=self.scenario.id))
+        path = {**PAGES, **SIGNED_OUT, **STUDENT}[name]
+        page.goto(self.live_server_url + path.format(sc=self.scenario.id))
         page.add_style_tag(
             content="*, *::before, *::after { transition: none !important; animation: none !important; }"
         )
@@ -261,21 +318,158 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
 
     # ── every page ──────────────────────────────────────────────────────────
 
+    def _audit(self, name: str, page) -> dict:
+        seen = page.evaluate(AUDIT)
+        self.assertGreaterEqual(seen["skip"], 4.5, "the skip link")
+        self.assertEqual(seen["failed"], [])
+        self.assertGreater(seen["checked"], 0, "nothing in a C1 token was measured")
+        for part in MEASURED.get(name, ()):
+            self.assertTrue(any(part in line for line in seen["named"]), f"{part} not measured")
+        if name != "split":  # split's own sheet keeps teal (stage 4)
+            self.assertEqual(seen["teal"], [])
+        self._assert_primaries_keep_the_pair_in_every_state(name, page)
+        return seen
+
+    # Every control the page draws in the primary pair, with :hover and then
+    # :active forced on all of them: a state rule may repaint its fill or its
+    # label, never so that the label stops reading (the graph's Sync went 1:1
+    # on hover; the sign-in button 3.04:1).
+    PRIMARIES = (
+        "() => {"
+        + MEASURE
+        + r"""
+  const ink = rgbOf(getComputedStyle(document.body).getPropertyValue('--btn-primary-ink').trim());
+  const pair = ['--btn-primary-bg', '--btn-primary-hover'].map(t => rgbOf(getComputedStyle(document.body).getPropertyValue(t).trim()));
+  const key = f => `rgb(${Math.round(f.r)}, ${Math.round(f.g)}, ${Math.round(f.b)})`;
+  let n = 0;
+  for (const el of document.querySelectorAll('button, a[href], [role=tab], input[type=submit]')) {
+    const text = [el, ...el.querySelectorAll('*')].find(x => ownText(x) && shown(x));
+    const fills = text && bgsOf(text);
+    if (text && fills && fills.length && getComputedStyle(text).color === ink
+        && fills.every(f => pair.includes(key(f)))) el.setAttribute('data-c1-primary', String(n++));
+  }
+  return n;
+}"""
+    )
+    PRIMARY_STATE = (
+        "() => {"
+        + MEASURE
+        + r"""
+  document.getAnimations().forEach(a => { try { a.finish(); } catch (e) { /* endless */ } });
+  return [...document.querySelectorAll('[data-c1-primary]')].map(el => {
+    const text = [el, ...el.querySelectorAll('*')].find(x => ownText(x) && shown(x));
+    return [label(el), text ? contrastOf(text) : null];
+  });
+}"""
+    )
+
+    def _assert_primaries_keep_the_pair_in_every_state(self, name: str, page) -> None:
+        if not page.evaluate(self.PRIMARIES):
+            return
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("DOM.enable")
+        cdp.send("CSS.enable")
+        root = cdp.send("DOM.getDocument", {"depth": -1})["root"]["nodeId"]
+        nodes = cdp.send("DOM.querySelectorAll", {"nodeId": root, "selector": "[data-c1-primary]"})
+        for state in ("hover", "active"):
+            for node in nodes["nodeIds"]:
+                cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": [state]})
+            low = [
+                f"{where} {ratio}:1"
+                for where, ratio in page.evaluate(self.PRIMARY_STATE)
+                if ratio is None or ratio < 4.5
+            ]
+            self.assertEqual(low, [], f"{name}: primary controls on :{state}")
+        for node in nodes["nodeIds"]:
+            cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": []})
+        cdp.detach()
+
     def test_every_page_paints_its_tokens_at_4_5_and_no_text_in_the_teal_fill(self) -> None:
         for name in PAGES:
             for theme in THEMES:
                 with self.subTest(page=name, theme=theme):
+                    self._audit(name, self._open(name, theme))
+
+    # ── states: hover and pressed ───────────────────────────────────────────
+    # A state rule that repaints only the fill keeps the ink the element already
+    # has: the sign-in button's hover and the confirm dialog's were white on
+    # --teal-bright (3.06:1 in light). The state is forced through the
+    # inspector protocol, so nothing is clicked and no form is sent.
+
+    def _forced(self, page, selector: str, state: str | None) -> float:
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("DOM.enable")
+        cdp.send("CSS.enable")
+        root = cdp.send("DOM.getDocument")["root"]["nodeId"]
+        node = cdp.send("DOM.querySelector", {"nodeId": root, "selector": selector})["nodeId"]
+        self.assertTrue(node, selector)
+        cdp.send(
+            "CSS.forcePseudoState",
+            {"nodeId": node, "forcedPseudoClasses": [state] if state else []},
+        )
+        ratio = page.evaluate(
+            "sel => {"
+            + MEASURE
+            + r"""
+  // A transition the page keeps (an !important one) ends now, not mid-way.
+  document.getAnimations().forEach(a => { try { a.finish(); } catch (e) { /* endless */ } });
+  const el = document.querySelector(sel);
+  const text = [el, ...el.querySelectorAll('*')].find(n => ownText(n) && shown(n));
+  return text ? contrastOf(text) : null;
+}""",
+            selector,
+        )
+        cdp.send("CSS.forcePseudoState", {"nodeId": node, "forcedPseudoClasses": []})
+        cdp.detach()
+        return ratio
+
+    def test_the_sign_in_pages_keep_the_primary_pair_at_rest_on_hover_and_pressed(self) -> None:
+        for name in SIGNED_OUT:
+            for theme in THEMES:
+                page = self._open(name, theme)
+                with self.subTest(page=name, theme=theme):
+                    self._audit(name, page)
+                for state in (None, "hover", "active"):
+                    with self.subTest(page=name, theme=theme, state=state):
+                        ratio = self._forced(page, "#loginBtn", state)
+                        self.assertIsNotNone(ratio, "the sign-in button's text is not shown")
+                        self.assertGreaterEqual(ratio, 4.5)
+
+    def test_the_confirm_dialogs_primary_keeps_the_pair_on_hover(self) -> None:
+        for theme in THEMES:
+            page = self._open("dashboard", theme)
+            page.evaluate("() => { dlg.confirm({title: 'Contrast'}); }")
+            page.wait_for_selector(".dlg-footer .btn-confirm.primary")
+            for state in (None, "hover"):
+                with self.subTest(theme=theme, state=state):
+                    ratio = self._forced(page, ".dlg-footer .btn-confirm.primary", state)
+                    self.assertIsNotNone(ratio)
+                    self.assertGreaterEqual(ratio, 4.5)
+
+    # ── the student portal ──────────────────────────────────────────────────
+
+    def test_the_student_portal_paints_its_tokens_at_4_5(self) -> None:
+        for name in STUDENT:
+            for theme in THEMES:
+                with self.subTest(page=name, theme=theme):
                     page = self._open(name, theme)
-                    seen = page.evaluate(AUDIT)
-                    self.assertGreaterEqual(seen["skip"], 4.5, "the skip link")
-                    self.assertEqual(seen["failed"], [])
-                    self.assertGreater(seen["checked"], 0, "nothing in a C1 token was measured")
-                    for part in MEASURED.get(name, ()):
-                        self.assertTrue(
-                            any(part in line for line in seen["named"]), f"{part} not measured"
-                        )
-                    if name != "split":  # split's own sheet keeps teal (stage 4)
-                        self.assertEqual(seen["teal"], [])
+                    self._audit(name, page)
+                    if name != "student-advisor":
+                        continue
+                    # The adviser's avatar on the conversation (re-painted by
+                    # `.sa-main .va-avatar`: white on --brand to --teal, 4.11:1).
+                    ratio = page.evaluate(
+                        "() => {"
+                        + MEASURE
+                        + r"""
+  const avatar = document.createElement('div');
+  avatar.className = 'va-avatar';
+  avatar.textContent = 'AI';
+  document.querySelector('.sa-main').append(avatar);
+  return contrastOf(avatar);
+}"""
+                    )
+                    self.assertGreaterEqual(ratio, 4.5, "the adviser's avatar")
 
     # ── the sidebar ─────────────────────────────────────────────────────────
 

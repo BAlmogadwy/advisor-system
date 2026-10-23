@@ -38,8 +38,8 @@ html body.tws-root {
   --t4: #9098b0;
   --t5: #727b94;
   /* This page is dark in both themes, so the text tokens it reads from the
-     global sheet take their dark values here: --text-brand light (#067858) is
-     3.2:1 on this card, the dark value 8.4:1. And it says it is dark, so the
+     global sheet take their dark values here: --text-brand light (#05664b) is
+     2.5:1 on this card, the dark value 8.4:1. And it says it is dark, so the
      browser's own controls, popups and scrollbars are dark too. */
   --text-brand: #2ec9a0;
   color-scheme: dark;

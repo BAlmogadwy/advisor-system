@@ -69,7 +69,10 @@ padding-aware for `p-0`.
 
 ### 3.2 Tokens
 - `--t4`: light `#66667f` (5.57 card / 4.92 bg), dark `#8c92aa` (5.72 / 6.19).
-- `--text-brand`: light `#067858`, dark `#2ec9a0`.
+- `--text-brand`: light `#05664b` (6.98:1 on card, and ≥ 4.9:1 on a teal
+  wash of up to 16% over any surface; `#067858` until stage 3 C1, 4.31:1 on
+  `--teal-dim` over `--surface-2`), dark `#2ec9a0`. `--brand-dark` is the same
+  value, for text only.
 - Primary: `--btn-primary-bg/-ink/-hover`: light `#067858` / white (5.48:1),
   hover `#05664b`; dark `#2ec9a0` / `#04201a` (8.13:1), hover `#4dd9b4`.
   `.btn-primary` and `.btn-success` use them; `.btn-outline-primary` text uses

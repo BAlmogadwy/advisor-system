@@ -118,6 +118,14 @@
   color: var(--btn-primary-ink);
 }
 
+/* `.tg-btn:hover` paints its label in brand text, which on this fill is the
+   fill's own colour (1:1 since before C1): the primary keeps its pair. */
+.tg-btn-primary:hover {
+  background: var(--btn-primary-hover);
+  border-color: transparent;
+  color: var(--btn-primary-ink);
+}
+
 .tg-btn-secondary {
   background: rgba(255, 255, 255, .04);
 }
