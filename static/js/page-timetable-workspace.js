@@ -2546,11 +2546,11 @@ const minutesOf = time => { const [h, m] = String(time || '0:0').split(':').map(
    a stored time (timetable_slot_config._TIME, _minutes and _hhmm): H:MM or
    HH:MM, seconds allowed, hours 0–23 — "9:00" and "09:00:00" are 09:00 —
    and anything else is no time; the day upper-cased to three letters ("sun"
-   is SUN). A meeting with no cell is parked under its table, never lost. */
-const SERVER_TIME = /^\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*$/;
+   is SUN). A meeting with no cell is parked under its table, never lost.
+   The time rule is the slot module's `minutes` (loaded before this script),
+   which the slot dialog's lengths read too (6f): one client copy. */
 function timeMinutes(value) {
-  const match = SERVER_TIME.exec(value == null ? '' : String(value));
-  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+  return window.TimetableSlotConfig.minutes(value);
 }
 function hhmm(value) {
   const minutes = timeMinutes(value);

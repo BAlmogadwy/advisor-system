@@ -11,11 +11,29 @@
    - SLOT_EDIT_NEEDS_CONFIRMATION: the meetings the change would leave off the
      grid, and the flagged columns it would remove. The user sees them by name
      and confirms, and the save is repeated with the server's fingerprint of
-     exactly that list. */
+     exactly that list.
+
+   The workspace's slot dialog (design record §7.2 item 6, 6f) edits the
+   columns as rows: `editorRows` makes them, `rowsToPayload` is what a save
+   sends, and `rowWords`, `lengthText` and `fieldErrorText` are the words of a
+   row. `minutes` reads a time as the server does; the workspace's grid reads
+   its cells with it too (6e). */
 (function () {
   'use strict';
   const AR = document.documentElement.lang === 'ar';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Plain text (an aria-label) keeps a name the user typed apart from the words around it.
+  const isolate = text => `\u2066${text}\u2069`;
+
+  /* A stored time as the server reads it (timetable_slot_config._TIME and
+     _minutes): H:MM or HH:MM, seconds allowed, hours 0–23 — "9:00" and
+     "09:00:00" are 09:00 — and anything else is no time (null). The one
+     client copy of that rule. */
+  const SERVER_TIME = /^\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*$/;
+  function minutes(value) {
+    const match = SERVER_TIME.exec(value == null ? '' : String(value));
+    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+  }
   const DAY = AR
     ? { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس' }
     : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu' };
@@ -90,6 +108,71 @@
     }[message] || message;
   };
 
+  /* ── The slot dialog's rows (6f) ──
+     One row per column, {key, label, start, end, flags}. The key is the
+     row's own for the dialog's life: rows move and go while it is open, and
+     the server names a wrong column by the index it was sent at. The flags
+     are the column's (online_only, policy_only): shown, never edited and
+     never sent, since the server carries each over by start and end. */
+  const FLAGS = ['online_only', 'policy_only'];
+  let rowSerial = 0;
+  function editorRows(slots) {
+    return (slots || []).map(slot => ({
+      key: `r${++rowSerial}`,
+      label: String(slot?.label ?? ''),
+      start: String(slot?.start ?? ''),
+      end: String(slot?.end ?? ''),
+      flags: FLAGS.filter(flag => slot?.[flag]),
+    }));
+  }
+
+  /* The rows as a save sends them: label, start and end, trimmed, an empty
+     value kept (the server names an empty time; an empty label is its
+     "start-end"), and no flag. */
+  function rowsToPayload(rows) {
+    const text = value => String(value ?? '').trim();
+    return (rows || []).map(row => ({ label: text(row.label), start: text(row.start), end: text(row.end) }));
+  }
+
+  /* A row's length, for display only: nothing is checked here (the server
+     marks a wrong time); a start or end that is no time, or an end not after
+     the start, has no length. */
+  function lengthText(start, end) {
+    const from = minutes(start);
+    const to = minutes(end);
+    if (from === null || to === null || to <= from) return '—';
+    const n = to - from;
+    return AR
+      ? pluralAr(n, { one: 'دقيقة واحدة', two: 'دقيقتان', few: '{n} دقائق', many: '{n} دقيقةً', other: '{n} دقيقة' })
+      : `${n} min`;
+  }
+
+  /* A row's words: the table's headers, the row header's hidden lead, a
+     flag, and the row's buttons, each named by the row (`name`: its label, or
+     its list's word and number). */
+  const ROW_WORDS = AR ? {
+    headers: { label: 'الاسم', start: 'البداية', end: 'النهاية', length: 'المدة', rule: 'القيد' },
+    column: { slot_config: 'عمود محاضرات', lab_slot_config: 'عمود معامل' },
+    flag: { online_only: 'عن بُعد فقط', policy_only: 'عمود سياسة' },
+    up: name => `نقل ${isolate(name)} إلى الأعلى`,
+    down: name => `نقل ${isolate(name)} إلى الأسفل`,
+    remove: name => `حذف ${isolate(name)}`,
+  } : {
+    headers: { label: 'Label', start: 'Start', end: 'End', length: 'Length', rule: 'Rule' },
+    column: { slot_config: 'Lecture column', lab_slot_config: 'Lab column' },
+    flag: { online_only: 'Online only', policy_only: 'Policy column' },
+    up: name => `Move ${isolate(name)} up`,
+    down: name => `Move ${isolate(name)} down`,
+    remove: name => `Remove ${isolate(name)}`,
+  };
+
+  /* One wrong field of a VALIDATION_SLOTS answer, under its row:
+     "{field}: {problem}", the field named as its column header. */
+  function fieldErrorText(error) {
+    const field = ROW_WORDS.headers[error.field] || FIELD[error.field] || error.field;
+    return `${field}: ${problemText(error.message)}`;
+  }
+
   /* A VALIDATION_SLOTS answer as one sentence per wrong column. */
   function errorsText(errors) {
     const lines = (errors || []).slice(0, 6).map(error => {
@@ -149,15 +232,22 @@
      above (any other failure is reported by the page's own fetch helper and
      resolves to {data: null}). confirm(details) asks the user and resolves to
      true to go on. report(text) shows why nothing was saved.
+     invalid(errors), when given, hears a VALIDATION_SLOTS answer's columns
+     ({list, index, field, message}) first, so a page can mark the fields it
+     sent; report follows with the same answer as a sentence.
      Resolves to the saved answer, or null. */
-  async function save({ send, confirm, report }) {
+  async function save({ send, confirm, report, invalid }) {
     let extra = {};
     // Another answer after a confirmation means the list changed while the
     // user read it (another edit landed): show the new list, a few times.
     for (let attempt = 0; attempt < 4; attempt++) {
       const { data, error } = await send(extra);
       if (!error) return data || null;
-      if (error.code === 'VALIDATION_SLOTS') { report(errorsText(error.details?.errors)); return null; }
+      if (error.code === 'VALIDATION_SLOTS') {
+        if (typeof invalid === 'function') invalid(error.details?.errors || []);
+        report(errorsText(error.details?.errors));
+        return null;
+      }
       if (error.code !== 'SLOT_EDIT_NEEDS_CONFIRMATION') return null;
       if (!(await confirm(error.details || {}))) return null;
       extra = { confirm: error.details?.fingerprint };
@@ -179,5 +269,6 @@
   window.TimetableSlotConfig = {
     rowsToText, parseText, parseLines, rejectedText, flaggedColumnsText, errorsText,
     confirmationHtml, save, offeredColumns, meetingsText,
+    minutes, editorRows, rowsToPayload, lengthText, fieldErrorText, rowWords: ROW_WORDS,
   };
 })();
