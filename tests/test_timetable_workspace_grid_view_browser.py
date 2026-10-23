@@ -10,8 +10,9 @@ same-course echo is the dashed outline).
 FB1 (1366×650 and 1440×790, light and dark, English and Arabic, the wide
 font): a dimmed card's code and room read at 4.5:1 and a dimmed critical
 card's ring at 3:1 against the dimmed card; the fold's label is at least
-12px and reads at 4.5:1; a dimmed card is not drawn like an echoed one; the
-frame keeps its acceptance (no sideways scroll, nothing under 11px).
+12px, reads at 4.5:1 and is not faded by opacity; a dimmed card is not
+drawn like an echoed one; the frame keeps its acceptance (no sideways
+scroll, nothing under 11px).
 
 FB2: from the keyboard alone, ↓ reaches a folded table's toggle, Enter opens
 it and ↓ goes into the table; Chrome exposes the toggle as an expandable
@@ -75,7 +76,14 @@ DIMMED = r"""() => {
   if (!dimmed.some(card => card.classList.contains('critical'))) bad.push('no dimmed critical card to measure');
   const label = document.querySelector('#twGrid .tw-fold-row:not([hidden]) .ux-disclosure-label');
   if (!label) bad.push('no fold shown');
-  else if (parseFloat(getComputedStyle(label).fontSize) < 11.95) bad.push(`fold label ${getComputedStyle(label).fontSize}`);
+  else {
+    if (parseFloat(getComputedStyle(label).fontSize) < 11.95) bad.push(`fold label ${getComputedStyle(label).fontSize}`);
+    // Faded by opacity (its own or a box around it), the label still passes
+    // the contrast helper, which reads colours, not opacity.
+    let opacity = 1;
+    for (let e = label; e; e = e.parentElement) opacity *= parseFloat(getComputedStyle(e).opacity);
+    if (opacity < 1) bad.push(`fold label at opacity ${opacity}`);
+  }
   if (document.documentElement.scrollWidth > innerWidth + 0.5) bad.push('page scrolls sideways');
   return bad;
 }"""

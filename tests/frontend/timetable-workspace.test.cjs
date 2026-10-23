@@ -1446,7 +1446,13 @@ test('FL3 a fold counts its toned meetings with the icon and the words; a later 
   assert.equal(fold().fold, row, 'the same row');
   assert.deepEqual(observer.takeRecords(), [], 'counts written in place, no node added or removed');
   assert.equal(refreshes, 0, 'tones never make the board read its stops again');
+  // A tone update builds the issue model once: applyGridView takes its byPlacement.
+  const build = h.w.buildBoardIssues;
+  let builds = 0;
+  h.w.buildBoardIssues = () => { builds++; return build(); };
   h.w.applyCardTones();
+  h.w.buildBoardIssues = build;
+  assert.equal(builds, 1, 'one issue model per tone update');
   assert.equal(refreshes, 0);
   assert.equal(h.d.getElementById('twSearchCount').textContent, '2 of 5');
   assert.deepEqual(live.takeRecords(), [], 'the count was not read out again');
@@ -1467,8 +1473,17 @@ test('FL4 a fold the user opens stays open through tone redraws and a redraw; ne
   assert.deepEqual(fold4().state, OPENED, 'a tone redraw keeps it open');
   h.w.renderGrid();
   assert.deepEqual(fold4().state, OPENED, 'the same table and text, drawn again: still open');
+  // The board's stop inside the opened table: new text that still matches
+  // nothing there hides its rows (its fold row stays), and the stop moves.
+  // (The redraw's own refresh runs first, as it does long before a key.)
+  await settle();
+  boardNavOf(h).active('placement:12');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')], [card(h, 12)]);
   await findText(h, 'cs10');
   assert.deepEqual(fold4().state, FOLDED, 'new text: folded again');
+  const zero = [...h.d.querySelectorAll('#twGrid [tabindex="0"]')];
+  assert.equal(zero.length, 1, 'one stop');
+  assert.equal(zero[0].closest('[hidden]'), null, 'a stop that is shown: Tab still reaches the board');
   await findText(h, 'cs1');
   assert.deepEqual(fold4().state, FOLDED, 'and the memory is gone with the old text');
   // Opened, then shut by the user: shut it stays.
@@ -1663,6 +1678,10 @@ test('FL10 a programme token (the interim lens) dims, by the union of the progra
     assert.equal(h.d.getElementById('twSearch').title, arabic
       ? 'المطابق للتصفية: 2 من 4 لقاءات؛ تصفية البرامج: \u2066AI2\u2069.' : '2 of 4 meetings match; programme filter: \u2066AI2\u2069.',
       'the count’s words say the programme filter');
+    // A lens dim is a dim: a heading does not count it a match, and the legend says what it is.
+    assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-group-meta')].map(m => m.textContent), arabic
+      ? ['3 مقررات · مطابقتان', 'مقرر واحد · لا شيء مطابق'] : ['3 courses · 2 matches', '1 course · 0 matches']);
+    assert.equal(h.d.getElementById('twLegendDim').hidden, false, 'the legend’s dim line, for a lens dim alone');
     await findText(h, 'ai ai2');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['', '', '', 'lens'], 'several programmes: a union');
     assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
@@ -1681,6 +1700,14 @@ test('FL10 a programme token (the interim lens) dims, by the union of the progra
     assert.equal(h.d.getElementById('twSearch').title, arabic
       ? 'المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1؛ تصفية البرامج: \u2066AI2\u2069.'
       : '1 of 4 meetings match; tables folded for no match: 1; programme filter: \u2066AI2\u2069.');
+    // An opened fold is kept for the board and its TEXT: a programme token
+    // removed or added, the text the same, keeps it open.
+    foldOf(h, 'S2', 'lecture').toggle.click();
+    assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED);
+    await findText(h, 'math');
+    assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED, 'a programme removed: still open');
+    await findText(h, 'math ai');
+    assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED, 'a programme added: still open');
   }
 });
 
