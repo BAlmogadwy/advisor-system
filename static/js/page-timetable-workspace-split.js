@@ -7256,7 +7256,7 @@ function renderRpanelSelection(body) {
   // With one teacher per section, the section's teacher by the shared rule
   // (as the drawer and classic show it): never a meeting row's name.
   const instructor = placementTeacherName(p);
-  const instructorHtml = hasSectionTeacher(p) ? sectionTeacherHtml(p) : esc(instructor || '—');
+  const instructorHtml = hasSectionTeacher(p) ? sectionTeacherHtml(p) : safeHtml`${instructor || '—'}`;
   const board = S.boards.find(b => b.id === S.panes[located.paneIdx].boardId) || { label: '—' };
   const pending = S.slotAssist.pendingMove && String(S.slotAssist.pendingMove.placementId) === String(p.id)
     ? S.slotAssist.pendingMove
@@ -7286,7 +7286,7 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(globalThis.TimetableMeetingPolicy?.roomLabel(p, IS_AR) || p.room || '—')}</span></div>
-    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value" id="twsSelInstructor">${instructorHtml}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value" id="twsSelInstructor">${safeHtml`${instructorHtml}`}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
     ${selectionConflictEvidenceHtml(selectedIssues)}
@@ -8222,9 +8222,9 @@ function openDrawer(paneIdx, placementId) {
   // With one teacher per section the Instructors field above names the
   // section's teacher; a meeting row can carry a stale name (or, for an
   // unknown section, one never shown), so the rows name no one then.
-  const meetingTeacher = m => (hasSectionTeacher(p) ? '' : ` · ${esc(m.instructor || '—')}`);
+  const meetingTeacher = m => (hasSectionTeacher(p) ? '' : safeHtml` · ${m.instructor || '—'}`);
   const meetings = (p.meetings || []).map(m =>
-    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')}${meetingTeacher(m)}</span></div>`
+    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(globalThis.TimetableMeetingPolicy?.isEnglish(p) ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : m.room || '—')}${safeHtml`${meetingTeacher(m)}`}</span></div>`
   ).join('') || '<div class="meeting-row"><span class="r">—</span></div>';
 
   $('twsDrawerBody').innerHTML = `
@@ -8448,19 +8448,18 @@ function hasSectionTeacher(p) {
 }
 
 /* The section's teacher: the shared rule (timetable-section-teacher.js). */
+// Markup by safeHtml (shared-utils.js): every value is escaped once.
 function sectionTeacherHtml(p) {
   const teacher = window.TimetableSectionTeacher.teacherOf(p);
-  if (teacher.state === 'tbd') {
-    return `<span class="tws-instr-tbd">${esc(window.TimetableSectionTeacher.words.tbd)}</span>`
-      + (teacher.hint ? `<span class="tws-instr-hint">${esc(teacher.hint)}</span>` : '');
-  }
+  const words = window.TimetableSectionTeacher.words;
+  const hint = teacher.hint ? safeHtml`<span class="tws-instr-hint">${teacher.hint}</span>` : '';
+  if (teacher.state === 'tbd') return safeHtml`<span class="tws-instr-tbd">${words.tbd}</span>${hint}`;
   if (teacher.state === 'unknown') {
     // Not shown, and why (an English section with no one complete pattern).
-    return `<span class="tws-instr-none">${esc(window.TimetableSectionTeacher.words.unknown)}</span>`
-      + (teacher.hint ? `<span class="tws-instr-hint">${esc(teacher.hint)}</span>` : '');
+    return safeHtml`<span class="tws-instr-none">${words.unknown}</span>${hint}`;
   }
-  if (teacher.state === 'named') return `<span class="tws-instr-chip primary">${esc(teacher.name)}</span>`;
-  return `<span class="tws-instr-none">${esc(window.TimetableSectionTeacher.words.none)}</span>`;
+  if (teacher.state === 'named') return safeHtml`<span class="tws-instr-chip primary">${teacher.name}</span>`;
+  return safeHtml`<span class="tws-instr-none">${words.none}</span>`;
 }
 
 function drawerRenderInstructorChips(p) {
