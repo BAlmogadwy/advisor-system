@@ -19,7 +19,8 @@
           Arabic), `aria-selected`, and the owned panel's `aria-labelledby`.
    OVERFLOW  `.ux-overflow` around one `.ux-seg` or `.ux-tabs` whose items may
           not fit: scroll buttons and an edge cue at the ends with more to
-          see, and the active item kept in view (see "Overflow" below).
+          see, and the focused or active item kept in view (see "Overflow"
+          below).
    DISCLOSURE  `<button class="ux-disclosure-toggle" aria-expanded aria-controls="ID"
           data-ux-disclosure="KEY">` opening and closing the region `#ID`
           (its `hidden`). One delegated listener, so it survives a page that
@@ -261,19 +262,26 @@
      - `data-overflow-start` / `data-overflow-end` on the wrapper while there
        is more to see that way (global.css shows that end's button and fades
        the items into it);
-     - the active item (aria-current, aria-selected or aria-checked true,
-       `.active`, or holding a checked input) wholly in view and clear of the
-       cue, whenever it changes, the items change, a font arrives or the
-       strip changes size - by moving the strip only, never the page (a
-       page that scrolls below 1025px must not jump while the user types).
-       An item too wide for the room between the cues is centred; one wider
-       than the strip shows its start.
+     - the item that has focus, or else the active one (aria-current,
+       aria-selected or aria-checked true, `.active`, or holding a checked
+       input), wholly in view and clear of the cue whenever the active item
+       changes, the items change, a font arrives or the strip changes size -
+       by moving the strip only, never the page (a page that scrolls below
+       1025px must not jump while the user types). An item too wide for the
+       room between the cues is centred; one wider than the strip shows its
+       start, clear of the start cue where the strip can move that far;
+     - an item the keyboard focuses (Tab walks every item of a `.ux-seg`)
+       revealed the same way at once: Chromium's own focus scroll left a
+       board under the start button, and another cut 13px past the strip's
+       end, where they were (stage 3, C2 review). Only focus the browser
+       shows (`:focus-visible`): a pointer press that focuses an item half
+       under the cue must not move the strip before its click lands (the
+       click then marks it active, which reveals it).
      A button pages the strip by its width less the two cues, smoothly unless
-     the user asks for reduced motion. It is for a pointer: every item is
-     reached by the keyboard, and focus scrolls it into view clear of the cue
-     (the scroller's scroll-padding), so the buttons take no Tab stop, are
-     hidden from assistive technology, and a press never moves focus. Their
-     tooltip follows `<html lang>`. */
+     the user asks for reduced motion. It is for a pointer: the keyboard
+     reaches every item, so the buttons take no Tab stop, are hidden from
+     assistive technology, and a press never moves focus. Their tooltip
+     follows `<html lang>`. */
   const OVERFLOW_WORDS = {
     en: { start: 'Show previous', end: 'Show next' },
     ar: { start: 'عرض السابق', end: 'عرض التالي' },
@@ -281,6 +289,17 @@
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const overflows = new WeakMap();
   const scrollerOf = wrapper => [...wrapper.children].find(child => !child.classList.contains('ux-overflow-btn')) || null;
+  // The scroller's child holding `node`, or null when it is not inside one.
+  const itemOf = (scroller, node) => {
+    let item = node;
+    while (item && item.parentElement !== scroller) item = item.parentElement;
+    return item;
+  };
+  // Focus the browser shows (the keyboard's, not a pointer press's); a
+  // browser without `:focus-visible` counts every focus as shown.
+  const focusShown = element => {
+    try { return element.matches(':focus-visible'); } catch (_) { return true; }
+  };
   const isActiveItem = item => {
     const current = item.getAttribute('aria-current');
     return (current !== null && current !== 'false')
@@ -308,7 +327,10 @@
   function overflowReveal(wrapper, item) {
     const scroller = scrollerOf(wrapper);
     if (!scroller) return;
-    const target = item || [...scroller.children].find(isActiveItem);
+    // The keyboard's place first: a redraw while it is on an item that is
+    // not the active one must not take that item away from under it.
+    const focused = scroller.contains(document.activeElement) ? itemOf(scroller, document.activeElement) : null;
+    const target = item || focused || [...scroller.children].find(isActiveItem);
     if (!target || !target.getClientRects().length) return;
     if (scroller.scrollWidth - scroller.clientWidth <= 1) return;
     const view = scroller.getBoundingClientRect();
@@ -318,8 +340,10 @@
     let delta = 0;
     if (room < 0) {
       // Wider than the strip: always its start (alternating ends on each
-      // resize step would make it flicker).
-      delta = rtlOf(scroller) ? box.right - view.right : box.left - view.left;
+      // resize step would make it flicker), one cue in, so the start's
+      // button does not cover it; where the strip cannot move that far it
+      // stops at its own start, which has no button.
+      delta = rtlOf(scroller) ? box.right - (view.right - cue) : box.left - (view.left + cue);
     } else {
       const margin = room >= 2 * cue ? cue : room / 2;
       if (box.left < view.left + margin) delta = box.left - (view.left + margin);
@@ -389,6 +413,14 @@
       });
     };
     scroller.addEventListener('scroll', () => schedule(false), { passive: true });
+    // At once, inside the focus change (the browser's own focus scroll then
+    // finds the item in view and leaves it); the scroll this makes updates
+    // the flags in the next frame.
+    scroller.addEventListener('focusin', event => {
+      const item = itemOf(scroller, event.target);
+      if (!item || !focusShown(event.target)) return;
+      overflowReveal(wrapper, item);
+    });
     new MutationObserver(() => schedule(true)).observe(scroller, {
       childList: true, subtree: true, characterData: true,
       attributes: true, attributeFilter: ['aria-current', 'aria-selected', 'aria-checked', 'class', 'hidden'],
@@ -1107,9 +1139,9 @@
   window.UXControls = {
     wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw, roving, letterOf,
     dialog: { open: openDialog, close: closeDialog, isOpen: dialogIsOpen },
-    // `refresh(wrapper)`: measure again now (and keep the active item in
-    // view) after a change no observer sees, as a style switched by a class
-    // on an ancestor.
+    // `refresh(wrapper)`: measure again now (and keep the focused or active
+    // item in view) after a change no observer sees, as a style switched by
+    // a class on an ancestor.
     overflow: {
       wire: wireOverflow,
       refresh(wrapper) {

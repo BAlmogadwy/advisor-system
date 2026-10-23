@@ -1,7 +1,8 @@
 /* The design system's overflow strip (static/js/ux-controls.js, `.ux-overflow`;
  * stage 3, C2): a `.ux-seg` or `.ux-tabs` whose items may not fit gets a
  * scroll button at each inline end, flags for the ends with more to see, and
- * its active item kept in view clear of the cue — by moving the strip only.
+ * the item the keyboard is on, else its active item, kept in view clear of
+ * the cue — by moving the strip only.
  * jsdom has no layout, so the strip's geometry is a model: N items of fixed
  * widths in a 300px strip, scrollLeft clamped as a browser clamps it (0..max
  * left to right, -max..0 right to left). The real layout is pinned in
@@ -19,7 +20,10 @@ const CUE = 52;
 const wait = (ms = 40) => new Promise(resolve => setTimeout(resolve, ms));
 
 /* A strip of `widths.length` items; `active` marks one item the way `mark`
-   says (aria-current, aria-selected, .active or a checked radio). */
+   says (aria-current, aria-selected, .active or a checked radio). jsdom
+   never matches `:focus-visible`; `model.modality` stands in for the
+   browser's rule: the focused element shows focus after a key
+   ('keyboard'), not after a pointer press ('pointer'). */
 function harness({ lang = 'en', dir = 'ltr', widths = [100, 100, 100, 100, 100, 100, 100, 100], active = -1, kind = 'seg', mark = 'current' } = {}) {
   const items = widths.map((_, i) => (kind === 'tabs'
     ? `<button type="button" role="tab" class="ux-tab" id="t${i}">Tab ${i}</button>`
@@ -40,7 +44,12 @@ function harness({ lang = 'en', dir = 'ltr', widths = [100, 100, 100, 100, 100, 
     const direction = (element.closest && element.closest('[dir]') && element.closest('[dir]').getAttribute('dir')) || 'ltr';
     return new Proxy(style, { get: (target, key) => (key === 'direction' ? direction : typeof target[key] === 'function' ? target[key].bind(target) : target[key]) });
   };
-  const model = { widths: [...widths], left: 0, view: VIEW };
+  const model = { widths: [...widths], left: 0, view: VIEW, modality: 'keyboard' };
+  const matches = window.Element.prototype.matches;
+  window.Element.prototype.matches = function (selector) {
+    if (selector === ':focus-visible') return this === doc.activeElement && model.modality === 'keyboard';
+    return matches.call(this, selector);
+  };
   const total = () => model.widths.reduce((sum, w) => sum + w, 0);
   const max = () => Math.max(0, total() - model.view);
   Object.defineProperty(strip, 'clientWidth', { get: () => model.view });
@@ -205,7 +214,7 @@ test('O6 a new active item, or the items drawn again, is revealed again; scrolli
   h.dom.window.close();
 });
 
-test('O7 an item too wide for the room between the cues is centred; one wider than the strip shows its start', async () => {
+test('O7 an item too wide for the room between the cues is centred; one wider than the strip shows its start clear of the start cue', async () => {
   const tight = harness({ widths: [100, 100, 250, 100, 100], active: 2 });
   await wait();
   // 250 in 300: 25px each side.
@@ -213,12 +222,23 @@ test('O7 an item too wide for the room between the cues is centred; one wider th
   tight.dom.window.close();
 
   for (const dir of ['ltr', 'rtl']) {
+    // There is more to see before it: its start sits one cue in, so the
+    // start's button and fade do not cover it.
     const wide = harness({ widths: [100, 100, 420, 100], active: 2, dir });
     await wait();
     const box = wide.boxOf(wide.itemsOf()[2]);
-    if (dir === 'ltr') assert.equal(box.left, 0);
-    else assert.equal(box.right, VIEW);
+    if (dir === 'ltr') assert.equal(box.left, CUE);
+    else assert.equal(box.right, VIEW - CUE);
+    assert.deepEqual(wide.flags(), ['start', 'end'], dir);
     wide.dom.window.close();
+    // The first item: the strip cannot move before it, and that end has no button.
+    const first = harness({ widths: [420, 100, 100], active: 0, dir });
+    await wait();
+    const start = first.boxOf(first.itemsOf()[0]);
+    if (dir === 'ltr') assert.equal(start.left, 0);
+    else assert.equal(start.right, VIEW);
+    assert.deepEqual(first.flags(), ['end'], dir);
+    first.dom.window.close();
   }
 });
 
@@ -232,5 +252,59 @@ test('O8 refresh() measures again at once; a strip that fits keeps no flags and 
   // Item 1 (200..400) wants 152px; the strip goes as far as it can, 100px.
   assert.equal(h.strip.scrollLeft, 100);
   assert.deepEqual(h.flags(), ['start']);
+  h.dom.window.close();
+});
+
+test('O9 an item the keyboard focuses is revealed clear of the cue at once; a redraw keeps it; away from the strip, the active item again', async () => {
+  for (const dir of ['ltr', 'rtl']) {
+    const sign = dir === 'rtl' ? -1 : 1;
+    const h = harness({ active: 0, dir });
+    await wait();
+    assert.equal(h.strip.scrollLeft, 0);
+    // Item 3 (300..400 along the strip) is past the end: Tab lands on it.
+    h.itemsOf()[3].focus();
+    assert.equal(h.strip.scrollLeft, sign * (400 - (VIEW - CUE)), `${dir}: revealed inside the focus change`);
+    // Moved by hand to 90, the strip holds item 1 (100..200) wholly, 10px
+    // from its start: under the start button (the review's case).
+    h.strip.scrollLeft = sign * 90;
+    h.strip.dispatchEvent(new h.window.Event('scroll'));
+    await wait();
+    assert.deepEqual(h.flags(), ['start', 'end']);
+    h.itemsOf()[1].focus();
+    assert.equal(h.strip.scrollLeft, sign * (100 - CUE), `${dir}: clear of the start cue`);
+    await wait();
+    assert.equal(h.strip.scrollLeft, sign * (100 - CUE), `${dir}: the frame keeps it`);
+    // The page draws the items again and puts the keyboard back on item 5;
+    // the active item is still item 0, at the strip's start.
+    h.itemsOf()[5].focus();
+    const along = h.strip.scrollLeft;
+    h.strip.innerHTML = h.model.widths.map((_, i) => `<button type="button" class="ux-seg-item"${i === 0 ? ' aria-current="true"' : ''}>Item ${i}</button>`).join('');
+    h.stub();
+    h.itemsOf()[5].focus({ preventScroll: true });
+    await wait();
+    assert.equal(h.strip.scrollLeft, along, `${dir}: a redraw keeps the keyboard's item in view, not the active one`);
+    // The keyboard leaves the strip: the next redraw shows the active item.
+    h.doc.getElementById('field').focus();
+    h.itemsOf()[0].textContent = 'Item 0 (2)';
+    await wait();
+    assert.equal(h.strip.scrollLeft, 0, `${dir}: the active item once focus is elsewhere`);
+    h.dom.window.close();
+  }
+});
+
+test('O10 a pointer press that focuses an item half under the cue moves nothing until its click marks it active', async () => {
+  const h = harness({ active: 0 });
+  await wait();
+  h.model.modality = 'pointer';
+  // Item 2 (200..300) runs under the end cue: a press focuses it.
+  h.itemsOf()[2].focus();
+  assert.equal(h.strip.scrollLeft, 0, 'the strip stays under the pointer');
+  await wait();
+  assert.equal(h.strip.scrollLeft, 0, 'and in the next frame');
+  // The click lands and the page marks the item active: it is revealed.
+  h.itemsOf()[0].removeAttribute('aria-current');
+  h.itemsOf()[2].setAttribute('aria-current', 'true');
+  await wait();
+  assert.equal(h.strip.scrollLeft, 300 - (VIEW - CUE));
   h.dom.window.close();
 });

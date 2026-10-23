@@ -246,11 +246,20 @@ class WorkspaceFrameBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase
                       const strip = document.getElementById('twBoardTabs');
                       const chosen = strip.querySelector('[aria-current="true"]').getBoundingClientRect();
                       const s = strip.getBoundingClientRect();
-                      // As much of the chosen board as the strip can show: a board
-                      // wider than a narrow strip cannot be wholly inside it, and
-                      // the strip's own padding (3px each side) is never covered.
-                      const seen = Math.min(chosen.right, s.right) - Math.max(chosen.left, s.left);
-                      if (seen < Math.min(chosen.width, s.width - 8)) bad.push(`chosen board out of view (${Math.round(seen)}px of ${Math.round(chosen.width)}px seen; strip ${Math.round(s.width)}px)`);
+                      // As much of the chosen board as the strip can show clear of
+                      // its overflow cues (a scroll button and the fade into it, at
+                      // each end that has more to see; stage 3, C2): nothing under a
+                      // cue counts as seen. A board wider than the room between the
+                      // cues cannot be wholly in it, and the strip's own padding
+                      // (3px each side) is never covered.
+                      const wrap = strip.parentElement;
+                      const cue = parseFloat(getComputedStyle(wrap).getPropertyValue('--ux-overflow-cue')) || 0;
+                      const rtl = getComputedStyle(strip).direction === 'rtl';
+                      const cueStart = wrap.hasAttribute('data-overflow-start') ? cue : 0;
+                      const cueEnd = wrap.hasAttribute('data-overflow-end') ? cue : 0;
+                      const clearLeft = s.left + (rtl ? cueEnd : cueStart), clearRight = s.right - (rtl ? cueStart : cueEnd);
+                      const seen = Math.min(chosen.right, clearRight) - Math.max(chosen.left, clearLeft);
+                      if (seen < Math.min(chosen.width, clearRight - clearLeft - 8)) bad.push(`chosen board out of view (${Math.round(seen)}px of ${Math.round(chosen.width)}px seen clear of the cues; strip ${Math.round(s.width)}px)`);
                       if (bar.scrollWidth > bar.clientWidth + 1) bad.push(`bar overflows ${bar.scrollWidth - bar.clientWidth}px`);
                       const shown = [...bar.children].filter(el => el.getClientRects().length);
                       for (const el of shown) {

@@ -2153,15 +2153,17 @@ html[data-theme="dark"] .ux-seg-item:has(input:checked) { background: var(--surf
    Markup: `.ux-overflow` wrapping ONE scroller, a `.ux-seg` or a `.ux-tabs`.
    ux-controls.js adds a scroll button at each inline end and keeps on the
    wrapper `data-overflow-start` / `data-overflow-end` while there is more to
-   see that way; it keeps the active item (aria-current, aria-selected,
-   aria-checked, .active, a checked radio) in view, clear of the cue, by
-   scrolling the strip only. The cue is the button over the cut edge plus a
-   fade of the items into it. The wrapper takes the scroller's place in the
-   layout: size it, not the scroller. The buttons are for a pointer (every
-   item is reached by the keyboard, which scrolls it into view clear of the
-   cue: scroll-padding), so they take no Tab stop and no focus; their 1px
-   edge is a real border, so it shows in forced colours too (stage 3, L07,
-   L16). */
+   see that way; it keeps the item that has focus, else the active item
+   (aria-current, aria-selected, aria-checked, .active, a checked radio), in
+   view, clear of the cue, by scrolling the strip only; an item the keyboard
+   focuses is revealed at once (the browser's own focus scroll leaves it
+   under the cue). The cue is the button over the cut edge plus a fade of the items into it. The
+   wrapper takes the scroller's place in the layout: size it, not the
+   scroller. The buttons are for a pointer (the keyboard reaches every
+   item), so they take no Tab stop and no focus; their 1px edge is a real
+   border, so it shows in forced colours too (stage 3, L07, L16). The
+   scroller's scroll-padding makes a script's scrollIntoView stop clear of
+   the cue too (measured: 52px from the end edge with it, 0 without). */
 .ux-overflow {
   --ux-overflow-cue: 52px;          /* the button (24px) and the fade beyond it */
   --ux-overflow-inset-block: 3px;
@@ -2479,14 +2481,15 @@ html[dir="rtl"] .ux-stat-scope { letter-spacing: 0; text-transform: none; }
 }
 .ux-dialog::backdrop { background: rgba(12,20,35,0.5); }
 /* The head's first child (the title, or the block holding the title and its
-   sub-line) takes the row, so the close button sits at the end edge in either
-   language. The flex item is that child, not the title inside it: the close
-   button used to float right after the sub-line, 236px from the edge of the
-   slot dialog (stage 3, L14). A close button always keeps its size and the
-   end, whatever comes before it. */
+   sub-line) takes the row, so the close button after it sits at the end edge
+   in either language. The flex item is that child, not the title inside it:
+   the close button used to float right after the sub-line, 236px from the
+   edge of the slot dialog (stage 3, L14). It may also be narrower than its
+   longest word, which then breaks: a scenario name or label with no space in
+   it wraps beside the close button instead of pushing it out of the dialog
+   or running under it. */
 .ux-dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 6px; }
-.ux-dialog-head > :first-child { flex: 1 1 auto; min-width: 0; }
-.ux-dialog-head > [data-dialog-close] { flex: none; margin-inline-start: auto; }
+.ux-dialog-head > :first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
 .ux-dialog-title { margin: 0; color: var(--t0); font-size: var(--text-md); font-weight: 700; }
 .ux-dialog-sub { margin: 4px 0 0; color: var(--t3); font-size: var(--text-xs); font-weight: 500; }
 .ux-dialog-body { display: grid; gap: 16px; padding: 10px 20px 18px; }

@@ -14,11 +14,18 @@ A real draft scenario in a real browser, in English and Arabic:
   in them is clipped or overlapped;
 - a dialog body that takes focus draws its ring inside itself, and the
   status line is outside the scroller (L33);
+- a dialog title with no space in it wraps beside the close button: the
+  button keeps its size and the end edge, and no word runs under it;
 - the board strip and the inspector's tabs show their overflow control at
   1366x650 when they do not fit; the chosen board and tab are wholly in view,
   clear of it; the buttons page the strip, take no Tab stop and no focus,
   have edges of at least 3:1 in both themes and show in forced colours
-  (L07, L16).
+  (L07, L16);
+- every board Tab or Shift+Tab lands on is wholly in view and clear of the
+  cue, at both ends of the strip (Chromium's own focus scroll left one under
+  the start button); a redraw keeps the keyboard's board in view; a pointer
+  press on a board half under the start cue still chooses it; a script's
+  scrollIntoView stops clear of the cue too.
 
 Nothing is sent but reads, and nothing leaves the machine
 (tests/browser_isolation.py).
@@ -162,14 +169,22 @@ SPACING_CHECK = r"""() => {
 }"""
 
 # One overflow strip: what it can scroll, which ends show a button, and
-# where the active item sits: inside the strip, under no button, clear of the
-# cue at each end that has more to see.
-STRIP = r"""(selector) => {
+# where an item sits: inside the strip, under no button, clear of the cue at
+# each end that has more to see. The item is the active one; with
+# [selector, "focused"] the one that has focus (null when focus is not in
+# the strip); with [selector, item selector] that item.
+STRIP = r"""(arg) => {
+  const [selector, which] = Array.isArray(arg) ? arg : [arg, 'active'];
   const wrapper = document.querySelector(selector);
   const scroller = [...wrapper.children].find(c => !c.classList.contains('ux-overflow-btn'));
   const buttons = [...wrapper.querySelectorAll(':scope > .ux-overflow-btn')];
   const shown = buttons.filter(b => getComputedStyle(b).display !== 'none' && b.getClientRects().length);
-  const active = [...scroller.children].find(i => i.getAttribute('aria-current') === 'true' || i.getAttribute('aria-selected') === 'true');
+  const active = which === 'focused'
+    ? [...scroller.children].find(i => i.contains(document.activeElement))
+    : which === 'active'
+      ? [...scroller.children].find(i => i.getAttribute('aria-current') === 'true' || i.getAttribute('aria-selected') === 'true')
+      : scroller.querySelector(which);
+  if (!active) return { item: null, focus: document.activeElement.id || document.activeElement.tagName };
   const v = scroller.getBoundingClientRect(), a = active.getBoundingClientRect();
   const rtl = getComputedStyle(scroller).direction === 'rtl';
   const cue = parseFloat(getComputedStyle(wrapper).getPropertyValue('--ux-overflow-cue'));
@@ -180,10 +195,11 @@ STRIP = r"""(selector) => {
     shown: shown.map(b => b.dataset.uxOverflowDir),
     sizes: shown.map(b => [Math.round(b.getBoundingClientRect().width), Math.round(b.getBoundingClientRect().height)]),
     unreachable: buttons.filter(b => b.tabIndex !== -1 || b.getAttribute('aria-hidden') !== 'true' || b.type !== 'button').length,
-    active: active.id || active.dataset.boardId,
-    activeInside: a.left >= v.left - 0.5 && a.right <= v.right + 0.5,
-    activeUnderButton: shown.some(b => { const q = b.getBoundingClientRect(); return q.left < a.right && q.right > a.left; }),
-    activeUnderCue: (wrapper.hasAttribute('data-overflow-start') && fromStart < cue - 0.5)
+    item: active.id || active.dataset.boardId,
+    fromStart: Math.round(fromStart),
+    inside: a.left >= v.left - 0.5 && a.right <= v.right + 0.5,
+    underButton: shown.some(b => { const q = b.getBoundingClientRect(); return q.left < a.right && q.right > a.left; }),
+    underCue: (wrapper.hasAttribute('data-overflow-start') && fromStart < cue - 0.5)
       || (wrapper.hasAttribute('data-overflow-end') && fromEnd < cue - 0.5),
   };
 }"""
@@ -212,6 +228,69 @@ EDGES = r"""(selector) => {
 
 BOARDS = ".ux-overflow.tw-boards"
 TABS = ".tw-inspector-head > .ux-overflow"
+
+# Two frames: the controller's frame pass has run.
+FRAMES = "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+# Moves the board strip by hand so that a board that is not the chosen one
+# starts 10px in from the strip's start, wholly in the strip but under the
+# start button, then answers where to press it: just past the button, on
+# the part of it the fade still shows.
+PRESS_POINT = r"""async () => {
+  const wrapper = document.querySelector('.ux-overflow.tw-boards');
+  const strip = document.getElementById('twBoardTabs');
+  const rtl = getComputedStyle(strip).direction === 'rtl';
+  const board = strip.children[4];
+  const v = strip.getBoundingClientRect(), a = board.getBoundingClientRect();
+  strip.scrollLeft += rtl ? a.right - (v.right - 10) : a.left - (v.left + 10);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const button = wrapper.querySelector('.ux-overflow-btn[data-ux-overflow-dir="start"]');
+  const b = button.getBoundingClientRect(), box = board.getBoundingClientRect();
+  const x = rtl ? b.left - 6 : b.right + 6, y = (box.top + box.bottom) / 2;
+  const under = document.elementFromPoint(x, y);
+  return { id: board.dataset.boardId, shown: getComputedStyle(button).display !== 'none',
+           fromStart: Math.round(rtl ? v.right - box.right : box.left - v.left), x, y,
+           onBoard: under && under.closest('[data-board-id]') ? under.closest('[data-board-id]').dataset.boardId : null };
+}"""
+
+# A script's scrollIntoView of a board out of view before the strip's start
+# (the strip at its end): which board it was.
+INTO_VIEW = r"""async () => {
+  const strip = document.getElementById('twBoardTabs');
+  strip.scrollLeft = getComputedStyle(strip).direction === 'rtl' ? -strip.scrollWidth : strip.scrollWidth;
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  strip.children[2].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return strip.children[2].dataset.boardId;
+}"""
+
+# Every template dialog with a title and sub-line that have no space in them
+# (a scenario name, a label): where the close button sits, whether it kept
+# its size, and any line of the title block that runs under it or out of the
+# dialog.
+LONG_TITLE = r"""(word) => [...document.querySelectorAll('dialog.ux-dialog')].map(d => {
+  const block = d.querySelector('.ux-dialog-head > :first-child');
+  const title = block.querySelector('.ux-dialog-title'), sub = block.querySelector('.ux-dialog-sub');
+  const kept = [title.textContent, sub ? sub.textContent : null];
+  title.textContent = word;
+  if (sub) sub.textContent = word.toLowerCase();
+  d.showModal();
+  const close = d.querySelector('.ux-dialog-head [data-dialog-close]');
+  const a = d.getBoundingClientRect(), c = close.getBoundingClientRect();
+  const rtl = getComputedStyle(d).direction === 'rtl';
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  const lines = [...range.getClientRects()].filter(r => r.width > 0.5);
+  const found = { id: d.id, gap: Math.round(rtl ? c.left - a.left : a.right - c.right), width: Math.round(c.width),
+                  lines: lines.length,
+                  underClose: lines.filter(r => r.left < c.right - 0.5 && r.right > c.left + 0.5 && r.top < c.bottom - 0.5 && r.bottom > c.top + 0.5).length,
+                  outside: lines.filter(r => r.left < a.left - 0.5 || r.right > a.right + 0.5).length,
+                  sideways: d.scrollWidth - d.clientWidth };
+  d.close();
+  title.textContent = kept[0];
+  if (sub) sub.textContent = kept[1];
+  return found;
+})"""
 
 
 class LayoutPrimitivesBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
@@ -282,6 +361,31 @@ class LayoutPrimitivesBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCa
             bad = [d for d in found if d["gap"] > 24 or not d["inHead"]]
             if bad or errors:
                 problems[f"{language} instructors"] = [*bad, *errors]
+        self.assertEqual(problems, {})
+
+    def test_a_title_with_no_space_wraps_beside_the_close_button(self) -> None:
+        """The title block may be narrower than its longest word, which then
+        breaks: the close button keeps its size and the end edge, and no word
+        runs under it or out of the dialog."""
+        word = "Scenario_1448T1_" + "AI2M1_" * 24
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            page, sent, errors = self._load(language, "light", 1366, 650)
+            found = page.evaluate(LONG_TITLE, word)
+            self.assertGreaterEqual(len(found), 5, found)
+            bad = [
+                d
+                for d in found
+                if not 0 <= d["gap"] <= 24
+                or d["width"] < 32
+                or d["lines"] < 3
+                or d["underClose"]
+                or d["outside"]
+                or d["sideways"] > 1
+            ]
+            if bad or sent or errors:
+                problems[language] = [*bad, *sent, *errors]
+            page.context.close()
         self.assertEqual(problems, {})
 
     def test_a_wrapped_meta_line_never_starts_with_its_dot(self) -> None:
@@ -388,11 +492,7 @@ class LayoutPrimitivesBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCa
                 for name, strip in (("boards", boards), ("tabs", tabs)):
                     if strip["range"] < 2 or not strip["shown"]:
                         found.append(f"{name}: no overflow control ({strip})")
-                    if (
-                        not strip["activeInside"]
-                        or strip["activeUnderButton"]
-                        or strip["activeUnderCue"]
-                    ):
+                    if not strip["inside"] or strip["underButton"] or strip["underCue"]:
                         found.append(f"{name}: the chosen item is not wholly in view ({strip})")
                     if strip["unreachable"]:
                         found.append(f"{name}: a button takes a Tab stop or is exposed ({strip})")
@@ -427,15 +527,89 @@ class LayoutPrimitivesBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCa
                 page.wait_for_timeout(300)
                 tabs = page.evaluate(STRIP, TABS)
                 if (
-                    tabs["active"] != "twTabDemand"
-                    or not tabs["activeInside"]
-                    or tabs["activeUnderButton"]
-                    or tabs["activeUnderCue"]
+                    tabs["item"] != "twTabDemand"
+                    or not tabs["inside"]
+                    or tabs["underButton"]
+                    or tabs["underCue"]
                 ):
                     found.append(f"tabs after choosing Demand: {tabs}")
                 if found or sent or errors:
                     problems[f"{language} {theme}"] = [*found, *sent, *errors]
                 page.context.close()
+        self.assertEqual(problems, {})
+
+    def test_every_board_the_keyboard_reaches_is_clear_of_the_cue_and_a_press_still_lands(
+        self,
+    ) -> None:
+        self._many_boards()
+        chosen = "document.querySelector('#twBoardTabs [aria-current=\"true\"]')?.dataset.boardId"
+        problems: dict[str, list] = {}
+        for language in ("en", "ar"):
+            page, sent, errors = self._load(language, "light", 1366, 650, cards=0)
+            page.wait_for_function(f"{chosen} === '{self.last_board.id}'")
+            page.wait_for_timeout(300)
+            found: list = []
+            count = page.evaluate("document.getElementById('twBoardTabs').children.length")
+            # Every board is a Tab stop: from the chosen (last) one back to the
+            # first, then forward again; each one wholly in view, clear of the cue.
+            page.focus("#twBoardTabs [aria-current='true']")
+            visited = set()
+            for key in ["Shift+Tab"] * (count - 1) + ["Tab"] * (count - 1):
+                page.keyboard.press(key)
+                page.evaluate(FRAMES)
+                strip = page.evaluate(STRIP, [BOARDS, "focused"])
+                visited.add(strip["item"])
+                if (
+                    not strip["item"]
+                    or not strip["inside"]
+                    or strip["underButton"]
+                    or strip["underCue"]
+                ):
+                    found.append(f"{key}: {strip}")
+            if len(visited - {None}) != count:
+                found.append(f"Tab reached {len(visited - {None})} of {count} boards")
+            # The page draws the strip again while the keyboard is on the first
+            # board, far from the chosen one: it stays in view.
+            for _ in range(count - 1):
+                page.keyboard.press("Shift+Tab")
+            page.evaluate(FRAMES)
+            first = page.evaluate(STRIP, [BOARDS, "focused"])
+            page.evaluate("renderBoardTabs()")
+            page.evaluate(FRAMES)
+            page.evaluate(FRAMES)
+            redrawn = page.evaluate(STRIP, [BOARDS, "focused"])
+            if (
+                redrawn["item"] != first["item"]
+                or not redrawn["inside"]
+                or redrawn["underButton"]
+                or redrawn["underCue"]
+            ):
+                found.append(f"after a redraw: {redrawn} (before: {first})")
+            # A script's scrollIntoView stops clear of the cue (scroll-padding).
+            page.focus("#twSearch")
+            board = page.evaluate(INTO_VIEW)
+            placed = page.evaluate(STRIP, [BOARDS, f'[data-board-id="{board}"]'])
+            if not placed["inside"] or placed["underButton"] or placed["underCue"]:
+                found.append(f"scrollIntoView: {placed}")
+            # A pointer press just past the start button, on a board half under
+            # the cue: the strip must not move before the click lands.
+            target = page.evaluate(PRESS_POINT)
+            if not target["shown"] or target["onBoard"] != target["id"] or target["fromStart"] > 12:
+                found.append(f"the press set-up: {target}")
+            else:
+                page.mouse.click(target["x"], target["y"])
+                try:
+                    page.wait_for_function(f"{chosen} === '{target['id']}'", timeout=5000)
+                except Exception:  # the click was lost: reported below
+                    found.append(f"a press did not choose the board under it: {target}")
+                else:
+                    page.wait_for_timeout(300)
+                    after = page.evaluate(STRIP, BOARDS)
+                    if not after["inside"] or after["underButton"] or after["underCue"]:
+                        found.append(f"the pressed board: {after}")
+            if found or sent or errors:
+                problems[language] = [*found, *sent, *errors]
+            page.context.close()
         self.assertEqual(problems, {})
 
     def test_the_overflow_buttons_show_in_forced_colours(self) -> None:

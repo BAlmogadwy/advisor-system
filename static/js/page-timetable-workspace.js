@@ -838,7 +838,8 @@ async function showSchedulerOutcome(jobId) {
   $('twPublish').addEventListener('click', publishScenario);
 
   // Board bar. The strip is the global `.ux-overflow` (ux-controls.js): it
-  // keeps the chosen board in view through every render and resize.
+  // keeps the focused, else the chosen, board in view through every render
+  // and resize.
   $('twNewBoard').addEventListener('click', createBoardPrompt);
   // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
   // place (applyGridView, which also writes the count), never redraws it, so
@@ -2004,9 +2005,10 @@ function renderBoardTabs() {
     btn.addEventListener('click', () => selectBoard(b.id));
     wrap.appendChild(btn);
   });
-  // The chosen board is kept in view by the strip's `.ux-overflow` (it scrolls
-  // the STRIP only, after this and every later render; scrollIntoView also
-  // scrolled the page, on every keystroke).
+  // The strip's `.ux-overflow` keeps the board that has the keyboard (the one
+  // focused again here), else the chosen board, in view after this and every
+  // later render. It scrolls the STRIP only: scrollIntoView also scrolled the
+  // page, on every keystroke.
   if (focusedBoard) wrap.querySelector(`[data-board-id="${focusedBoard}"]`)?.focus({ preventScroll: true });
 }
 
