@@ -1,0 +1,1495 @@
+{
+ "grouping/every_main_group": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "77d94afb784fdc85",
+     "Term 2": "6badd5e97d256e5b"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "eddf0563e7204486",
+     "Term 2": "393952b4a9c5fc0c"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "5f1a40e50412439a"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "bb134e05b96954b2"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "77d94afb784fdc85",
+     "Term 2": "6badd5e97d256e5b"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "0959424197d7050c"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/group_count": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "8589e64ced6bd555",
+     "Term 2": "05bbcffd066309d6"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "de6328fd513eb656",
+     "Term 2": "1fe428e261b25218"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "89c64be51ffa298a"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "53c5670dc1dd6826"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "8589e64ced6bd555",
+     "Term 2": "05bbcffd066309d6"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "f320ed045a95930c"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/scenario_38": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "658655caf2da42eb",
+     "Term 2": "543be04c8fa5cec0"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "b7e0db737c6ae5e8",
+     "Term 2": "527c3ffc640b2131"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "bcaad6b0d32bd0c6"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "507adca58eee8fb1"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "658655caf2da42eb",
+     "Term 2": "543be04c8fa5cec0"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "19bd238564b32862"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/scenario_38_two_courses": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "fb22a5cc580c63cb",
+     "Term 2": "7c6ca950e1fdaf9c"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "5d1ed6b81770c7e8",
+     "Term 2": "9d46cd00d4ca7b80"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "524a041f45ed561a"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "9ba6d38cc87904a8"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "fb22a5cc580c63cb",
+     "Term 2": "7c6ca950e1fdaf9c"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/allocated_elsewhere": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "9c16a4279b8bd58d",
+     "Term 2": "4c12fb465817e597"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "f306b8e3cf33709a",
+     "Term 2": "0fff8b4899c6c886"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "b58823e3c6a1a15a"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "716d8425a0ef2cdf"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "9c16a4279b8bd58d",
+     "Term 2": "4c12fb465817e597"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "7a5bb1a9abc9e039"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/mixed_cell": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "658655caf2da42eb",
+     "Term 2": "e9b50be2a42b5bf5",
+     "Rooms": "6cb75d995bd4a80e",
+     "Instructors": "df2cee5acf27b300"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "b7e0db737c6ae5e8",
+     "Term 2": "a12cc1291686e024",
+     "Rooms": "6cb75d995bd4a80e",
+     "Instructors": "df2cee5acf27b300"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "bcaad6b0d32bd0c6",
+     "Rooms": "9f2f87dfa6eecd1f",
+     "Instructors": "fe9b94b93cf32599"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "507adca58eee8fb1",
+     "Rooms": "9f2f87dfa6eecd1f",
+     "Instructors": "fe9b94b93cf32599"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "658655caf2da42eb",
+     "Term 2": "e9b50be2a42b5bf5",
+     "Rooms": "6cb75d995bd4a80e",
+     "Instructors": "df2cee5acf27b300"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "19bd238564b32862",
+     "Rooms": "c557b787bdadf77c",
+     "Instructors": "ed4a171506736895"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9",
+     "Rooms": "9f2f87dfa6eecd1f",
+     "Instructors": "fe9b94b93cf32599"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9",
+     "Rooms": "9f2f87dfa6eecd1f",
+     "Instructors": "fe9b94b93cf32599"
+    }
+   }
+  }
+ },
+ "grouping/each_programme_file": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "699eeeec7f757ef2",
+     "Term 2": "31ae72503a140735"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "835f5a42612196f1",
+     "Term 2": "d45199be6f01d6ad"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "7ab5582083c9b603"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "4ba94d3b441de1d3"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "699eeeec7f757ef2",
+     "Term 2": "31ae72503a140735"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/cs112_two_boards": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "e1d87b3ff1e0c0ea"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "226562b05b82b612",
+     "Term 4": "412332308ef2a2d1"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "de3747e4a6a55022"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "94e67d6fda87d6d3"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "e1d87b3ff1e0c0ea"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "e1d87b3ff1e0c0ea"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/cs112_two_boards_room": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "4b6d22ff1e27f406",
+     "Rooms": "df17707ab4f8f31d"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "226562b05b82b612",
+     "Term 4": "ceaca61cb68a8be9",
+     "Rooms": "df17707ab4f8f31d"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "de3747e4a6a55022",
+     "Rooms": "df17707ab4f8f31d"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "94e67d6fda87d6d3",
+     "Rooms": "df17707ab4f8f31d"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "4b6d22ff1e27f406",
+     "Rooms": "df17707ab4f8f31d"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "4b6d22ff1e27f406",
+     "Rooms": "df17707ab4f8f31d"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9",
+     "Rooms": "df17707ab4f8f31d"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9",
+     "Rooms": "df17707ab4f8f31d"
+    }
+   }
+  }
+ },
+ "grouping/real_lens_two_boards": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "fd043c9477298c5c",
+     "Term 2": "5ccaf6e283719e23",
+     "Term 3": "a3fbf6c0ee7fc16a"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "99245e75f68c1623",
+     "Term 2": "14d6c8b81a038e54",
+     "Term 3": "8ee8bad76e7b23ec"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "637c36eb147e6dbb"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "93124e63e723a292"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "fd043c9477298c5c",
+     "Term 2": "5ccaf6e283719e23",
+     "Term 3": "a3fbf6c0ee7fc16a"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3bac9bcd8e80ee6c",
+     "Term 3": "877bff1bfc9323a7"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "grouping/marked_flag_on": {
+  "": {
+   "name": "Programme_marks__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "1da2c12165d9bbba",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "365dfa2380998484",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Programme_marks__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "1da2c12165d9bbba",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "365dfa2380998484",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "1da2c12165d9bbba",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "c41ca036b0ea452e",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "365dfa2380998484",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  }
+ },
+ "grouping/marked_flag_on_is124_marked": {
+  "": {
+   "name": "Programme_marks__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "67c0549599fa3f6f",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "365dfa2380998484",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Programme_marks__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "67c0549599fa3f6f",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "365dfa2380998484",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "67c0549599fa3f6f",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "c41ca036b0ea452e",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "365dfa2380998484",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  }
+ },
+ "grouping/marked_flag_off": {
+  "": {
+   "name": "Programme_marks__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "085db1d0b9f309ff",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "fbff2c7a3001dd69",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Programme_marks__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "085db1d0b9f309ff",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "fbff2c7a3001dd69",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "085db1d0b9f309ff",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "c41ca036b0ea452e",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "fbff2c7a3001dd69",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  }
+ },
+ "grouping/marked_flag_off_unmarked": {
+  "": {
+   "name": "Programme_marks__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "085db1d0b9f309ff",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "fbff2c7a3001dd69",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Programme_marks__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "085db1d0b9f309ff",
+     "Rooms": "ab5c91fcd6d3c555"
+    },
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "fbff2c7a3001dd69",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "3abf443c4a257aa0",
+     "Term 2": "085db1d0b9f309ff",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "c41ca036b0ea452e",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "d3369ff3d2919f89",
+     "Term 2": "fbff2c7a3001dd69",
+     "Rooms": "ab5c91fcd6d3c555"
+    }
+   }
+  }
+ },
+ "slot_config/off_grid": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "201238013bde28a0"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "5640dd54dcd4da3e",
+     "Term 2": "3be4e37472455cb8"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "de3747e4a6a55022"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "1eaf37a657afb71f"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "201238013bde28a0"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "201238013bde28a0"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "electives/mapped_on_slot_term": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "7d48b6471b92a8ba",
+     "Term 10": "9b50948dc9256b9c"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "5dd50332d784ab1f"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "9825f7ebe3da0f42",
+     "Term 10": "b2b1be5dc1021938"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/slot_row_covered": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f8384f463a50032e",
+     "Term 10": "aec874d14123ba8b"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "8a0c07fc68ed6ae2"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "9825f7ebe3da0f42",
+     "Term 10": "b1722bb4934fb2b8"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/without_mapping": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "c2e88d31052e4b23",
+     "Term 10": "ea17a8f6c5f4a2b3"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "d95d072e112d89c2"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/mapping_other_term": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "c2e88d31052e4b23",
+     "Term 10": "ea17a8f6c5f4a2b3"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "d95d072e112d89c2"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/second_cohort": {
+  "": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "d79b23eb510ec2c3",
+     "Term 9": "9a92e055109cf7a9"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "dc40ca535e612bc8"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "d79b23eb510ec2c3",
+     "Term 9": "9a92e055109cf7a9"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "1a10c248b970350c"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "1a10c248b970350c"
+    }
+   }
+  }
+ },
+ "electives/two_slots": {
+  "": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "7abf1939079a28d3"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "7abf1939079a28d3"
+    }
+   }
+  },
+  "AI2": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "656666c707529760"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "656666c707529760"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "7abf1939079a28d3"
+    }
+   }
+  }
+ },
+ "electives/later_slot_board": {
+  "": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "f71a46a741091f6f",
+     "Term 8": "35d6ed960bd05199",
+     "Term 10": "e19c4b8ace435db0"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "ebce56d89ec178e2"
+    }
+   }
+  },
+  "AI2": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "656666c707529760"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "656666c707529760"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "ebce56d89ec178e2"
+    }
+   }
+  }
+ },
+ "electives/search_slot": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "97e68eb165a3be0a",
+     "Term 10": "55b8cef63aa2cbc4"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "13e85be0847e082c"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "d5a2915dacba7b74",
+     "Term 10": "d1091a570a3cd2e1"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/course_in_plan": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "211f0f130fd82bc8"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "211f0f130fd82bc8"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/plan_course_by_code": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "266e5dc7a7c3631c"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "266e5dc7a7c3631c"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/only_scenario_courses": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "2bb9b9c19577eaac"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "electives/board_none_of_slots": {
+  "": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "20d8f4c38315aa1e",
+     "Term 10": "5205c352b5c44cd5"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "ce929d01da2d49bf"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "20d8f4c38315aa1e",
+     "Term 10": "5205c352b5c44cd5"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "AI.xlsx",
+   "files": {
+    "AI.xlsx": {
+     "Plan Coverage": "f6760609fda2301e"
+    }
+   }
+  }
+ },
+ "extra/shared_roles": {
+  "": {
+   "name": "Seated_groups__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "0fda5cc18d44a65e",
+     "Term 2": "5554ec2f3f0d84ee"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "c7daaf8a3470fdf4",
+     "Term 2": "5e79a65e5cc83f5a"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "Seated_groups__filtered_SHARED__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "fe30a87cf223ee6c",
+     "Term 2": "42bf3553a66322cb"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "aa4ecf00b8237c48",
+     "Term 2": "50aec680c0da544a"
+    }
+   }
+  },
+  "AI2": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "0fda5cc18d44a65e",
+     "Term 2": "5554ec2f3f0d84ee"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "AI2.xlsx",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "08df4c1bdd6b4dbb",
+     "Term 2": "d527def28451ae88"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "Seated_groups__filtered_SHARED_DS__per_plan.zip",
+   "files": {
+    "AI2.xlsx": {
+     "Plan Coverage": "2c4f2c091a1cfda9"
+    },
+    "DS2.xlsx": {
+     "Plan Coverage": "fd3880f6d4ee3eb9"
+    }
+   }
+  }
+ },
+ "extra/elective_two_sheets": {
+  "": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "25060c2084661e81",
+     "Term 8": "c1cf3c5fc6caf2df",
+     "Term 10": "725bef7426d126d7"
+    }
+   }
+  },
+  "SHARED": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "ebce56d89ec178e2"
+    }
+   }
+  },
+  "AI2": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "656666c707529760"
+    }
+   }
+  },
+  "AI2 CS1": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "656666c707529760"
+    }
+   }
+  },
+  "SHARED DS": {
+   "name": "DS.xlsx",
+   "files": {
+    "DS.xlsx": {
+     "Plan Coverage": "ebce56d89ec178e2"
+    }
+   }
+  }
+ }
+}
