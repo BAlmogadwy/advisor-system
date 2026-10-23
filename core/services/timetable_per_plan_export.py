@@ -54,11 +54,56 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
-from core.services.course_identity import display_course_label, planner_course_key
-from core.services.section_programme_preference import normalise_programme
+from core.services.course_identity import display_course_label
 from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_plan_lens import build_scenario_plan_lens
+
+# The programme roles, their plan terms and the course-key helpers moved to
+# timetable_programme_view (6b), one rule for this export and the workspace's
+# programme lens. Every moved name is still importable from here.
+from core.services.timetable_programme_view import (
+    MAIN_SECTION_SHARE as MAIN_SECTION_SHARE,
+)
+from core.services.timetable_programme_view import (
+    ROLE_MAIN,
+    ROLE_MIXED,
+    ROLE_OTHER,
+    ROLE_OUTSIDE,
+    SectionSeat,
+    _budget_course_key,
+    _course_code_from_key,
+    _norm,
+    _placement_plan_term,
+    _requirement_course_key,
+    _section_passes_search,
+    _term_section_course_key,
+    _upper,
+    get_scenario_programs,
+    programme_context,
+    programme_placement_roles,
+    scenario_course_keys,
+)
+from core.services.timetable_programme_view import (
+    _classify_placement_term as _classify_placement_term,
+)
+from core.services.timetable_programme_view import (
+    _course_key_from_values as _course_key_from_values,
+)
+from core.services.timetable_programme_view import _lens_seating as _lens_seating
+from core.services.timetable_programme_view import (
+    _section_allocated_to_plan as _section_allocated_to_plan,
+)
+from core.services.timetable_programme_view import (
+    _section_matches_plan_filter as _section_matches_plan_filter,
+)
+from core.services.timetable_programme_view import (
+    classify_course_sections as classify_course_sections,
+)
+from core.services.timetable_programme_view import (
+    get_plan_elective_terms as get_plan_elective_terms,
+)
+from core.services.timetable_programme_view import get_plan_term_map as get_plan_term_map
 
 DAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU"]
 DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
@@ -94,23 +139,6 @@ def _slugify(value: str) -> str:
     return s or "scenario"
 
 
-def get_scenario_programs(scenario: TimetableScenario) -> list[str]:
-    """Return the unique list of programs targeted by a scenario's boards.
-
-    Boards may carry comma-separated program lists (e.g. ``"DS,AI,AI2,DS2"``).
-    Programs are returned in board ``display_order`` then alphabetical order
-    of first appearance, so DS,AI,AI2,DS2 stays in the registrar's intended
-    sequence rather than shuffling alphabetically.
-    """
-    seen: list[str] = []
-    for b in DeliveryBoard.objects.filter(scenario=scenario).order_by("display_order"):
-        for token in (b.program or "").split(","):
-            p = token.strip()
-            if p and p not in seen:
-                seen.append(p)
-    return seen
-
-
 @dataclass(frozen=True)
 class ExportFilter:
     """Normalized filter passed from the timetable workspace search box."""
@@ -119,42 +147,6 @@ class ExportFilter:
     program_tokens: frozenset[str] = frozenset()
     text_tokens: tuple[str, ...] = ()
     shared_only: bool = False
-
-
-def _norm(value: object | None) -> str:
-    return str(value or "").replace("\u00a0", " ").strip()
-
-
-def _upper(value: object | None) -> str:
-    return _norm(value).upper()
-
-
-def _course_key_from_values(course_code: object | None, course_name: object | None = None) -> str:
-    return planner_course_key(course_code, course_name)
-
-
-def _requirement_course_key(req: ProgrammeRequirement) -> str:
-    return _course_key_from_values(req.course_code, req.course_name)
-
-
-def _budget_course_key(budget: ScenarioSectionBudget) -> str:
-    return _norm(budget.course_key) or _course_key_from_values(
-        budget.course_code,
-        budget.course_name,
-    )
-
-
-def _term_section_course_key(section) -> str:
-    if not section:
-        return ""
-    return _norm(getattr(section, "course_key", "")) or _course_key_from_values(
-        getattr(section, "course_code", ""),
-        getattr(section, "course_name", ""),
-    )
-
-
-def _course_code_from_key(course_key: str) -> str:
-    return _upper(course_key.split("::", 1)[0])
 
 
 def _name_from_key(course_key: str) -> str:
@@ -217,144 +209,6 @@ def _build_export_filter(search: object | None, programs: list[str]) -> ExportFi
         text_tokens=tuple(text_tokens),
         shared_only=shared_only,
     )
-
-
-def _section_passes_search(
-    term_section_id: int | None,
-    plan_lens: dict[str, Any],
-    export_filter: ExportFilter,
-) -> bool:
-    """The ``SHARED`` search token: only sections the lens shares. A section
-    with no lens row passes."""
-    section_lens = (plan_lens.get("sections") or {}).get(str(term_section_id or ""))
-    if not section_lens:
-        return True
-    return not (export_filter.shared_only and not section_lens.get("shared"))
-
-
-def _section_allocated_to_plan(
-    term_section_id: int | None,
-    program: str,
-    plan_lens: dict[str, Any],
-) -> bool:
-    """The lens's demand allocation gives this section to ``program`` (or to
-    nobody in particular). A section with no lens row passes."""
-    section_lens = (plan_lens.get("sections") or {}).get(str(term_section_id or ""))
-    if not section_lens:
-        return True
-    filter_plans = {_upper(plan) for plan in section_lens.get("filter_plans") or []}
-    return _upper(program) in filter_plans if filter_plans else True
-
-
-def _section_matches_plan_filter(
-    term_section_id: int | None,
-    program: str,
-    plan_lens: dict[str, Any],
-    export_filter: ExportFilter,
-) -> bool:
-    """Search and allocation together; used for out-of-plan placements only
-    (in-plan ones are kept by who sits in them, see
-    :func:`classify_course_sections`)."""
-    return _section_passes_search(
-        term_section_id, plan_lens, export_filter
-    ) and _section_allocated_to_plan(term_section_id, program, plan_lens)
-
-
-# ── who sits in each section (owner 2026-10-21) ──────────────────────────────
-
-#: R1: a section is MAIN for programme P when at least this share of the
-#: students the evaluator seats in it are P's (or it is marked for P).
-MAIN_SECTION_SHARE = 0.70
-
-ROLE_MAIN = "main"  # R1 (mark or share), or R2's no-one-seated fallback
-ROLE_MIXED = "mixed"  # R2: no section is main, so the one seating most P stands in
-ROLE_OTHER = "other"  # R4: not main, but seats at least one P student
-
-
-@dataclass(frozen=True)
-class SectionSeat:
-    """One section's role in one programme's file, and the seating behind it."""
-
-    role: str
-    programme_count: int  # the programme's students the evaluator seats here
-    total: int  # everyone it seats here, UNKNOWN programme included
-
-
-def _lens_seating(
-    plan_lens: dict[str, Any], term_section_id: int, program: str
-) -> tuple[int, int, str]:
-    """``(program's students seated, everyone seated, mark)`` for one section.
-
-    Read only from the lens row: ``actual_plans`` is the evaluator's seating
-    (the course payload's ``plans`` is demand, not seating), and the row
-    carries ``preferred_programme`` only under the flag, so with it off a
-    stored mark is inert here as everywhere else. A section with no row
-    (another scenario's, or a registrar section placed on our boards) seats
-    nobody the workspace shows, so it reads as empty.
-    """
-    row = (plan_lens.get("sections") or {}).get(str(term_section_id))
-    if not isinstance(row, dict):
-        return 0, 0, ""
-    target = normalise_programme(program)
-    count = sum(
-        int(n or 0)
-        for plan, n in (row.get("actual_plans") or {}).items()
-        if normalise_programme(plan) == target
-    )
-    mark = normalise_programme(row.get("preferred_programme"))
-    return count, int(row.get("actual_total") or 0), mark
-
-
-def classify_course_sections(
-    program: str, section_ids: list[int], plan_lens: dict[str, Any]
-) -> dict[int, SectionSeat]:
-    """Each section's role for ``program`` in one course on one plan-term sheet.
-
-    ``section_ids`` are the course's sections on that sheet in grid order
-    (label, then id). A section missing from the result is not in the file.
-
-    * R1 main: marked for the programme, or at least ``MAIN_SECTION_SHARE`` of
-      the students seated in it are the programme's. Literal: a section marked
-      for another programme that is 70% this one's is main here too, so one
-      section may be main in two programmes' files.
-    * R2 no course disappears: with the programme seated in the course but no
-      main section, the section seating most of its students (then the higher
-      share, then grid order) is main, labelled mixed. With none of its
-      students seated anywhere in the course, the sections the lens allocates
-      to it (and any marked for it) are main, as before seating counted.
-    * R4 other: any other section seating at least one of its students.
-    """
-    target = normalise_programme(program)
-    seats = {ts_id: _lens_seating(plan_lens, ts_id, program) for ts_id in section_ids}
-
-    def marked(mark: str) -> bool:
-        return bool(target) and mark == target
-
-    out: dict[int, SectionSeat] = {}
-    if not any(count for count, _total, _mark in seats.values()):
-        for ts_id, (count, total, mark) in seats.items():
-            if marked(mark) or _section_allocated_to_plan(ts_id, program, plan_lens):
-                out[ts_id] = SectionSeat(ROLE_MAIN, count, total)
-        return out
-
-    for ts_id, (count, total, mark) in seats.items():
-        if marked(mark) or (total and count / total >= MAIN_SECTION_SHARE):
-            out[ts_id] = SectionSeat(ROLE_MAIN, count, total)
-    if not out:
-        grid_order = {ts_id: idx for idx, ts_id in enumerate(section_ids)}
-        best = max(
-            (ts_id for ts_id, (count, _total, _mark) in seats.items() if count),
-            key=lambda ts_id: (
-                seats[ts_id][0],
-                seats[ts_id][0] / max(seats[ts_id][1], 1),
-                -grid_order[ts_id],
-            ),
-        )
-        out[best] = SectionSeat(ROLE_MIXED, seats[best][0], seats[best][1])
-    for ts_id, (count, total, _mark) in seats.items():
-        if ts_id not in out and count:
-            out[ts_id] = SectionSeat(ROLE_OTHER, count, total)
-    return out
 
 
 def _seat_note(seat: SectionSeat | None, program: str) -> str:
@@ -467,7 +321,7 @@ def _plan_lens_visible_section_count(
         if _norm(section_lens.get("course_key")) != course_key:
             continue
         saw_course = True
-        if export_filter.shared_only and not section_lens.get("shared"):
+        if not _section_passes_search(_raw_id, plan_lens, export_filter.shared_only):
             continue
         filter_plans = {_upper(plan) for plan in section_lens.get("filter_plans") or []}
         if program_key in filter_plans:
@@ -502,120 +356,6 @@ def _section_cell_label(section, duplicate_course_codes: set[str]) -> str:
     if _upper(section.course_code) in duplicate_course_codes and _norm(section.course_name):
         text += f"\n{section.course_name}"
     return text
-
-
-def get_plan_term_map(program: str) -> dict[str, int]:
-    """Return ``{course_code -> programme_term}`` for one program's plan.
-
-    Course codes are upper-cased so that comparisons against
-    ``term_section.course_code`` are case-insensitive.  Duplicate rows in the
-    requirement table (the same course appearing more than once for the same
-    program) keep the smallest term — a defensive choice that lands the
-    course earliest in the plan view.
-    """
-    out: dict[str, int] = {}
-    for r in ProgrammeRequirement.objects.filter(program=program):
-        if not r.course_code or r.programme_term is None:
-            continue
-        course_key = _requirement_course_key(r)
-        if course_key not in out or (r.programme_term < out[course_key]):
-            out[course_key] = r.programme_term
-    return out
-
-
-def get_plan_elective_terms(
-    program: str,
-    scenario: TimetableScenario,
-    course_keys: set[str],
-    plan_map: dict[str, int],
-) -> tuple[dict[str, set[int]], dict[str, list[str]]]:
-    """Place this term's real electives on the plan term of the slot they fill.
-
-    A plan lists elective *slots* (AI1, AI2, ...), never the courses; the
-    department's ElectiveTermMapping says which real courses fill each slot this
-    term (e.g. 1448 T2: AI2 -> AI441, AI3 -> AI462). Without this the export
-    filed those sections as "not in this plan" and no term sheet showed them.
-    Build applies the same principle (a real elective inherits its slot's term);
-    the mappings are read exactly as the elective resolver reads them.
-
-    Returns ``(elective_terms, fills)``: ``{course key: {slot plan terms}}`` for
-    every mapped elective the scenario actually has - a section on any of those
-    terms is in place, so DS482 filling DS1 (T8) and DS3 (T10) is right on
-    either board - and ``{slot key: [course keys filling it]}``. A course whose
-    code is already in the plan keeps its own row and term.
-    """
-    from core.services.elective_resolver import elective_courses_by_placeholder
-
-    mapped = elective_courses_by_placeholder(
-        program, academic_year=scenario.academic_year, term=scenario.term
-    )
-    if not mapped:
-        return {}, {}
-    codes_by_slot = {_upper(slot): {_upper(c) for c in codes} for slot, codes in mapped.items()}
-
-    slot_rows: dict[str, tuple[str, int]] = {}
-    for r in ProgrammeRequirement.objects.filter(program=program):
-        slot = _upper(r.course_code)
-        if slot in codes_by_slot and r.programme_term is not None:
-            slot_rows[slot] = (_requirement_course_key(r), r.programme_term)
-
-    plan_codes = {_course_code_from_key(key) for key in plan_map}
-    keys_by_code: dict[str, set[str]] = defaultdict(set)
-    for key in course_keys:
-        keys_by_code[_course_code_from_key(key)].add(key)
-
-    elective_terms: dict[str, set[int]] = defaultdict(set)
-    fills: dict[str, list[str]] = defaultdict(list)
-    for slot, (slot_key, slot_term) in sorted(slot_rows.items(), key=lambda kv: kv[1][1]):
-        for code in sorted(codes_by_slot[slot] - plan_codes):
-            for key in sorted(keys_by_code.get(code, ())):
-                elective_terms[key].add(slot_term)
-                fills[slot_key].append(key)
-    return dict(elective_terms), dict(fills)
-
-
-def _classify_placement_term(
-    course_key: str, board_term: int | None, plan_map: dict[str, int]
-) -> tuple[int | None, str]:
-    """Decide which sheet a placement belongs to and tag its plan-vs-board status.
-
-    Returns ``(plan_term, status)`` where ``status`` is one of:
-
-    * ``"matched"`` — the course is in this program's plan AND the board's
-      ``nominal_term`` matches the plan term (correctly placed).
-    * ``"misplaced"`` — the course is in the plan but the board term differs
-      (e.g. AI113 in DS2's plan at term 5 but on the scenario's term-3 board).
-    * ``"out-of-plan"`` — the course is not in this program's plan at all
-      (will be skipped when filtering, but kept for the audit sheet).
-    """
-    key = _norm(course_key)
-    plan_term = plan_map.get(key)
-    if plan_term is None:
-        return None, "out-of-plan"
-    if board_term is None or board_term == plan_term:
-        return plan_term, "matched"
-    return plan_term, "misplaced"
-
-
-def _placement_plan_term(
-    course_key: str,
-    board_term: int | None,
-    plan_map: dict[str, int],
-    elective_terms: dict[str, set[int]],
-) -> tuple[int | None, str]:
-    """The plan-term sheet a placement belongs on, and its plan-vs-board status.
-
-    A mapped elective is in place on any of its slots' terms (see
-    :func:`get_plan_elective_terms`); every other course goes by
-    :func:`_classify_placement_term`. One decision for the classification
-    pre-pass and the placement loop, so the two cannot diverge.
-    """
-    slot_terms = elective_terms.get(course_key)
-    if slot_terms and board_term in slot_terms:
-        return board_term, "matched"
-    if slot_terms:
-        return min(slot_terms), "misplaced"
-    return _classify_placement_term(course_key, board_term, plan_map)
 
 
 def export_scenario_per_plan(
@@ -673,20 +413,11 @@ def export_scenario_per_plan(
         f"__filtered_{_slugify(export_filter.original)}" if export_filter.original else ""
     )
 
-    from core.models import TermSection
-
-    scenario_course_keys = {
-        _budget_course_key(b) for b in ScenarioSectionBudget.objects.filter(scenario=scenario)
-    } | {_term_section_course_key(ts) for ts in TermSection.objects.filter(scenario=scenario)}
-    scenario_course_keys.discard("")
+    course_keys = scenario_course_keys(scenario)
 
     workbook_paths: list[tuple[str, Path]] = []  # (filename, on-disk path)
     for prog in selected_programs:
-        plan_map = get_plan_term_map(prog)
-        elective_terms, elective_fills = get_plan_elective_terms(
-            prog, scenario, scenario_course_keys, plan_map
-        )
-        plan_map = {**{key: min(terms) for key, terms in elective_terms.items()}, **plan_map}
+        plan_map, elective_terms, elective_fills = programme_context(prog, scenario, course_keys)
         wb_path = _build_program_workbook(
             scenario,
             prog,
@@ -867,24 +598,18 @@ def _build_program_workbook(
     # course's sections on each plan-term sheet are classified once, from the
     # lens's seating, before any placement is kept. Per sheet, so an elective
     # on two slot terms is judged on each. SHARED narrows the candidates
-    # first; the text search filters what classification shows (below).
-    sheet_sections: dict[tuple[int, str], dict[int, str]] = defaultdict(dict)
-    for p in placements:
-        key = _term_section_course_key(p.term_section)
-        plan_term, _status = _placement_plan_term(
-            key, board_term_by_id.get(p.board_id), plan_map, elective_terms
-        )
-        if plan_term is None:
-            continue
-        if not _section_passes_search(p.term_section_id, plan_lens, export_filter):
-            continue
-        sheet_sections[(plan_term, key)][p.term_section_id] = p.term_section.section or "?"
-    section_seats: dict[int, dict[int, SectionSeat]] = defaultdict(dict)
-    for (plan_term, _key), labels in sheet_sections.items():
-        grid_order = [
-            ts_id for ts_id, _label in sorted(labels.items(), key=lambda kv: (kv[1], kv[0]))
-        ]
-        section_seats[plan_term].update(classify_course_sections(program, grid_order, plan_lens))
+    # first; the text search filters what classification shows (below). The
+    # one rule the workspace's programme lens reads too.
+    programme_roles = programme_placement_roles(
+        program,
+        placements,
+        plan_map=plan_map,
+        elective_terms=elective_terms,
+        board_terms=board_term_by_id,
+        plan_lens=plan_lens,
+        shared_only=export_filter.shared_only,
+    )
+    section_seats = programme_roles.seats
 
     # Keep the placements of the sections this program's file shows: an
     # in-plan section by who sits in it, an out-of-plan one by the lens's
@@ -911,23 +636,22 @@ def _build_program_workbook(
             _placement_search_text(p, key, course_names),
         )
         plan_term, status = _placement_plan_term(key, board_term, plan_map, elective_terms)
+        role = programme_roles.roles.get(p.id)
         if plan_term is None:
-            if not _section_matches_plan_filter(
-                p.term_section_id, program, plan_lens, export_filter
-            ):
+            if role != ROLE_OUTSIDE:
                 continue
             if not export_filter.text_tokens or placement_matches_text:
                 out_of_plan_codes.add(key)
                 course_board_terms[key].add(board_term or 0)
             continue
-        if p.term_section_id not in section_seats.get(plan_term, {}):
+        if role is None:
             continue
         if export_filter.text_tokens and not (placement_matches_text or key in text_matched_keys):
             continue
         text_matched_keys.add(key)
         in_plan_placements.append(p)
         placement_terms[p.id] = plan_term
-        is_other = section_seats[plan_term][p.term_section_id].role == ROLE_OTHER
+        is_other = role == ROLE_OTHER
         statuses = other_status if is_other else course_status
         (other_board_terms if is_other else course_board_terms)[key].add(board_term or 0)
         prev = statuses.get(key)

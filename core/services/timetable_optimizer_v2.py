@@ -59,7 +59,7 @@ from core.services.timetable_course_tier import (
     classify_course_tier,
     program_count_by_code,
 )
-from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
 from core.services.timetable_flags import (
     is_gap_regular_students_only_enabled,
     is_online_gap_exclusion_enabled,
@@ -100,6 +100,8 @@ _DAY_IDX: dict[str, int] = {d: i for i, d in enumerate(WEEKDAYS)}
 
 def build_student_profiles_for_scenario(
     scenario_id: int,
+    *,
+    demand_rows: list[StudentCourseDemand] | None = None,
 ) -> dict[str, StudentProfile]:
     """Read canonical scenario demand + student metadata → StudentProfile dict.
 
@@ -110,8 +112,13 @@ def build_student_profiles_for_scenario(
 
     intra_tier_score: lower GPA → higher priority within the tier
                       (students struggling most get first pick).
+
+    ``demand_rows``: this scenario's ``load_scenario_course_demands(scenario_id)``
+    when the caller has read it already (the quality read hands the same rows
+    on to the plan lens); read here otherwise.
     """
-    demand_rows = load_scenario_course_demands(scenario_id)
+    if demand_rows is None:
+        demand_rows = load_scenario_course_demands(scenario_id)
     if not demand_rows:
         return {}
 
