@@ -2455,16 +2455,11 @@ function renderGridWithSlots(slots, labSlots) {
   // only. A board with a single group has no heading, so its cards keep it.
   TW.cardsShowSection = numGroups <= 1;
 
-  // Helper: classify a placement as lab (100-min) based on duration
-  function isLabPlacement(p) {
-    if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return false;
-    const toMin = t => { const [h,m] = t.split(':').map(Number); return h*60+m; };
-    return (toMin(p.end_time) - toMin(p.start_time)) > 80;
-  }
-
   // Only the board's first table points at the keys line.
   TW.gridKeysDescribed = false;
   TW.gridTables = 0;
+  // Meetings parked under their tables (6e): the legend explains the strip.
+  TW.gridParked = 0;
   // If no placements, show empty grid
   if (numGroups === 0) {
     _renderSingleGrid(gridEl, slots, [], 'tw-grid-table', null, 'lecture');
@@ -2482,9 +2477,10 @@ function renderGridWithSlots(slots, labSlots) {
     const tsIds = new Set(groupPlacements.map(p => p.term_section_id));
     const allForGroup = placements.filter(p => tsIds.has(p.term_section_id));
 
-    // Separate lecture and lab placements
-    const lecturePlacements = allForGroup.filter(p => !isLabPlacement(p));
-    const labPlacements = allForGroup.filter(p => isLabPlacement(p));
+    // Separate lecture and lab placements (the grid's lab rule; an English
+    // bundle is a lecture here, and goes to its own table below).
+    const lecturePlacements = allForGroup.filter(p => !isLabMeeting(p));
+    const labPlacements = allForGroup.filter(p => isLabMeeting(p));
 
     // Group header: the section label it really is, and what it holds (the
     // filter's matches are added in place, by applyGridView).
@@ -2511,12 +2507,15 @@ function renderGridWithSlots(slots, labSlots) {
       const heading = document.createElement('div'); heading.className = 'tw-english-heading';
       heading.textContent = IS_AR ? 'الإنجليزية · لقاءات متصلة لمدة ثلاث ساعات' : 'English · continuous three-hour meetings';
       gridInner.appendChild(heading);
-      _renderSingleGrid(gridInner, TimetableMeetingPolicy.gridSlots(englishPlacements), englishPlacements, 'tw-grid-table tw-english-grid', secKey, 'english');
+      // Its columns come from its meetings on the grid (a teaching day); one
+      // on any other day is off it (the day is checked first) and parked.
+      const columns = TimetableMeetingPolicy.gridSlots(englishPlacements.filter(isPlacementOnGrid));
+      _renderSingleGrid(gridInner, columns, englishPlacements, 'tw-grid-table tw-english-grid', secKey, 'english');
     }
     gridEl.appendChild(gridInner);
 
-    // Lab grid (if any lab slots exist)
-    if (labSlots.length) {
+    // Lab grid: when there are lab columns, or a lab to park under it.
+    if (labSlots.length || labPlacements.length) {
       gridEl.appendChild(gridSubheading(IS_AR ? 'المعامل' : 'Labs', 'lab'));
       const labInner = document.createElement('div');
       labInner.className = 'tw-grid-inner';
@@ -2524,7 +2523,7 @@ function renderGridWithSlots(slots, labSlots) {
       gridEl.appendChild(labInner);
     }
   });
-  if (TW.placements.length) gridEl.insertAdjacentHTML('beforeend', boardLegendHtml());
+  if (TW.placements.length) gridEl.insertAdjacentHTML('beforeend', boardLegendHtml({ parked: TW.gridParked > 0 }));
   // New cards take their tones, the filter's view and the selection at once,
   // not at the next redraw.
   markSelection();
@@ -2541,6 +2540,79 @@ function gridLabel(secKey, kind) {
 const DAY_NAMES_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
 const minutesOf = time => { const [h, m] = String(time || '0:0').split(':').map(Number); return h * 60 + m; };
 
+/* ── Where a meeting is drawn (design record §7.2 item 6, 6e; E14) ──
+   One cell key for the renderer and the grid's rule, read as the server reads
+   a stored time (timetable_slot_config._TIME, _minutes and _hhmm): H:MM or
+   HH:MM, seconds allowed, hours 0–23 — "9:00" and "09:00:00" are 09:00 —
+   and anything else is no time; the day upper-cased to three letters ("sun"
+   is SUN). A meeting with no cell is parked under its table, never lost. */
+const SERVER_TIME = /^\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*$/;
+function timeMinutes(value) {
+  const match = SERVER_TIME.exec(value == null ? '' : String(value));
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+function hhmm(value) {
+  const minutes = timeMinutes(value);
+  return minutes == null ? null : `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+const dayKey = day => String(day || '').toUpperCase().slice(0, 3);
+/* `DAY|HH:MM`, or null for a start that is no time (it matches no column). */
+function cellKey(day, start) {
+  const time = hhmm(start);
+  return time ? `${dayKey(day)}|${time}` : null;
+}
+/* The grid's lab rule (timetable_slot_config.is_lab_meeting): more than 80
+   minutes. An English bundle is never a lab: it has its own table. */
+function isLabMeeting(p) {
+  if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return false;
+  const start = timeMinutes(p.start_time);
+  const end = timeMinutes(p.end_time);
+  return start != null && end != null && end - start > 80;
+}
+
+/* A day in words: the grid's five, then Friday and Saturday, where a meeting
+   off the grid can fall (6e). `long` gives English its full names (Arabic has
+   one form). Any other value is no day the page knows: '' (the caller shows
+   the value itself, isolated). */
+const WEEK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+const WEEK_SHORT = [...DAY_LABELS, ...(IS_AR ? ['الجمعة', 'السبت'] : ['Fri', 'Sat'])];
+const WEEK_LONG = IS_AR ? WEEK_SHORT : [...DAY_NAMES_EN, 'Friday', 'Saturday'];
+function dayWord(day, { long = false } = {}) {
+  const index = WEEK.indexOf(dayKey(day));
+  return index < 0 ? '' : (long ? WEEK_LONG : WEEK_SHORT)[index];
+}
+/* The same as plain text: an unknown value isolated, none a dash. */
+const dayText = (day, options) => dayWord(day, options) || (String(day || '').trim() ? isolatedText(String(day).trim()) : '—');
+/* As HTML: an unknown value escaped in its own <bdi>. */
+const dayHtml = (day, options) => {
+  const word = dayWord(day, options);
+  if (word) return esc(word);
+  return String(day || '').trim() ? `<bdi>${esc(String(day).trim())}</bdi>` : '—';
+};
+
+/* The words of the parking strip (6e): a table's meetings whose day or start
+   no column of their kind has. */
+const PARK_WORDS = IS_AR ? {
+  head: 'خارج الشبكة', headMore: ' — خارج أعمدة الجدول', underTable: 'أسفل جدوله',
+  legend: 'أسفل الجدول: لقاءاته خارج الأعمدة (المفتاح M ينقل أحدها إلى الجدول)',
+} : {
+  head: 'Off grid', headMore: ' — outside the grid’s columns', underTable: 'under its table',
+  legend: 'Under a table: its meetings outside the columns (M moves one onto the grid)',
+};
+/* The strip's order: by day (SUN…SAT, then any other value by its text),
+   then start (a start that is no time last), then course, then id (a strip
+   is one section group's, so its cards share their section label). */
+const PARK_NO_TIME = 24 * 60;
+function parkOrder(a, b) {
+  const day = p => { const i = WEEK.indexOf(dayKey(p.day)); return i < 0 ? WEEK.length : i; };
+  const start = p => timeMinutes(p.start_time) ?? PARK_NO_TIME;
+  return day(a) - day(b)
+    || (day(a) === WEEK.length ? String(a.day || '').localeCompare(String(b.day || '')) : 0)
+    || start(a) - start(b)
+    || String(a.course_code || '').localeCompare(String(b.course_code || ''), undefined, { numeric: true })
+    || Number(a.id) - Number(b.id);
+}
+
 function gridSubheading(text, kind) {
   const heading = document.createElement('div');
   heading.className = `tw-subhead tw-subhead-${kind}`;
@@ -2552,15 +2624,18 @@ function gridSubheading(text, kind) {
    are `.ux-grid-row` (display: contents) on the CSS grid. The keyboard moves
    over its cards, and over the empty cells, with UXControls.roving.
    Its first row is its fold (§7.2 item 6, 6c; contract D), hidden until the
-   filter's text matches nothing in the table; the header, day rows follow in
-   a `display: contents` rowgroup the fold hides. */
+   filter's text matches nothing in the table; the header, the day rows and,
+   when any of its meetings has no cell, the parking strip (6e) follow in a
+   `display: contents` rowgroup the fold hides. Every meeting is drawn once:
+   in its cell, or in the strip. */
 function _renderSingleGrid(container, slots, placements, className, secKey, kind = 'lecture') {
   // Transposed: columns = time slots, rows = days. The column count is the one
-  // layout fact the stylesheet cannot know; everything else is in its classes.
+  // layout fact the stylesheet cannot know; everything else is in its classes
+  // (a table with no column, drawn only for its strip, still lays out one).
   const numSlots = slots.length;
   const table = document.createElement('div');
   table.className = className;
-  table.style.setProperty('--tw-slots', String(numSlots));
+  table.style.setProperty('--tw-slots', String(Math.max(numSlots, 1)));
   table.setAttribute('role', 'grid');
   table.setAttribute('aria-label', gridLabel(secKey, kind));
   if (!TW.gridKeysDescribed) {
@@ -2628,6 +2703,24 @@ function _renderSingleGrid(container, slots, placements, className, secKey, kind
     head.appendChild(hdr);
   });
 
+  // Where each meeting goes (E14): the first column whose cell key is its
+  // own (two columns with one start draw it once); a meeting with no such
+  // cell — its day is no teaching day, or no column of this table starts at
+  // its time — is parked in the strip under the table (6e).
+  const firstColumn = new Map();
+  DAYS.forEach(day => slots.forEach((slot, index) => {
+    const key = cellKey(day, slot.start);
+    if (key && !firstColumn.has(key)) firstColumn.set(key, index);
+  }));
+  const inCell = new Map();
+  const parked = [];
+  placements.forEach(p => {
+    const key = cellKey(p.day, p.start_time);
+    if (!firstColumn.has(key)) { parked.push(p); return; }
+    if (!inCell.has(key)) inCell.set(key, []);
+    inCell.get(key).push(p);
+  });
+
   // Day rows
   DAYS.forEach((day, di) => {
     const line = row();
@@ -2640,7 +2733,7 @@ function _renderSingleGrid(container, slots, placements, className, secKey, kind
     line.appendChild(lbl);
 
     // Slot cells
-    slots.forEach(slot => {
+    slots.forEach((slot, index) => {
       const cell = document.createElement('div');
       cell.className = 'tw-cell';
       cell.setAttribute('role', 'gridcell');
@@ -2654,10 +2747,9 @@ function _renderSingleGrid(container, slots, placements, className, secKey, kind
       cell.addEventListener('dragleave', onDragLeave);
       cell.addEventListener('drop', onDrop);
 
-      // Find placements in this cell
-      const cellPlacements = placements.filter(
-        p => p.day === day && p.start_time === slot.start
-      );
+      // The meetings this cell holds.
+      const key = cellKey(day, slot.start);
+      const cellPlacements = key && firstColumn.get(key) === index ? (inCell.get(key) || []) : [];
 
       if (cellPlacements.length === 1) {
         const p = cellPlacements[0];
@@ -2680,6 +2772,35 @@ function _renderSingleGrid(container, slots, placements, className, secKey, kind
     });
   });
 
+  // The parking strip (6e, E13): the table's last row, only when it holds a
+  // meeting; one gridcell per meeting (ordered by day, then start), each a
+  // `tw-cell` container for the card's anatomy and placed in time
+  // (`data-ux-col`), so ↓ from the last day lands on the nearest and ←/→ walk
+  // the strip. It is no drop target: a card leaves it by a drop on a cell or
+  // by M (Move).
+  if (parked.length) {
+    const strip = row();
+    strip.classList.add('tw-park-row');
+    const stripHead = document.createElement('div');
+    stripHead.className = 'tw-grid-slot-label tw-park-head';
+    stripHead.setAttribute('role', 'rowheader');
+    stripHead.innerHTML = `${esc(PARK_WORDS.head)}<span class="visually-hidden">${esc(PARK_WORDS.headMore)}</span>`;
+    strip.appendChild(stripHead);
+    const park = document.createElement('div');
+    park.className = 'tw-park';
+    parked.sort(parkOrder).forEach(p => {
+      const cell = document.createElement('div');
+      cell.className = 'tw-park-cell';
+      cell.setAttribute('role', 'gridcell');
+      cell.dataset.uxCol = String(timeMinutes(p.start_time) ?? PARK_NO_TIME);
+      cell.dataset.focusKey = `park:${secKey || '-'}:${kind}|${p.id}`;
+      cell.appendChild(createPlacementCard(p, { parked: true }));
+      park.appendChild(cell);
+    });
+    strip.appendChild(park);
+    TW.gridParked = (TW.gridParked || 0) + parked.length;
+  }
+
   // What the fold says it holds: the meetings drawn in this table.
   toggle.querySelector('.ux-disclosure-label').textContent = foldLabel(kind, body.querySelectorAll('.tw-card').length);
   container.appendChild(table);
@@ -2700,7 +2821,10 @@ function meetingRoomText(room, p = null) {
   return String(room || '').trim() || '—';
 }
 
-function createPlacementCard(p) {
+/* A card. A parked one (6e) shows its day and time, since no row or column
+   says them: `{parked: true}` puts them on a line of their own, which the
+   card's words for assistive technology then need not repeat. */
+function createPlacementCard(p, { parked = false } = {}) {
   const card = document.createElement('div');
   card.className = 'tw-card';
   card.setAttribute('role', 'button');
@@ -2740,14 +2864,17 @@ function createPlacementCard(p) {
     + (p.is_locked ? `<span class="ux-icon" data-icon="lock" role="img" aria-label="${lockWords}" title="${lockWords}"></span>` : '')
     + (p.shared_with_other_scenario ? `<span class="ux-icon" data-icon="shared" role="img" aria-label="${sharedWords}" title="${sharedWords}"></span>` : '');
   const roomState = p.room_state === 'unassigned' && p.needs_room !== false ? 'unassigned' : '';
-  const dayIndex = DAYS.indexOf(p.day);
-  const when = `${IS_AR ? (DAY_LABELS[dayIndex] || p.day) : (DAY_NAMES_EN[dayIndex] || p.day)} \u2066${p.start_time}–${p.end_time}\u2069`;
+  const when = `${dayText(p.day, { long: true })} \u2066${p.start_time}–${p.end_time}\u2069`;
+  // Parked: the day in the line's own direction and the time left to right,
+  // as Selection, Issues and Move write a meeting's time.
+  const whenLine = parked
+    ? `<div class="tw-card-when">${dayHtml(p.day)} <bdi dir="ltr">${esc(p.start_time)}–${esc(p.end_time)}</bdi></div>` : '';
   card.innerHTML = `
     <div class="cc"><span class="tw-card-code">${esc(p.course_code)}</span>${TW.cardsShowSection === false ? '' : `<bdi class="tw-card-section">${esc(p.section)}</bdi>`}</div>
-    ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))}</div>` : ''}
+    ${whenLine}${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))}</div>` : ''}
     ${showCourseName ? `<div class="tw-card-name" dir="auto">${esc(courseName)}</div>` : ''}
     <div class="ci">${room ? `<bdi class="tw-card-room"${roomState ? ` data-room-state="${roomState}"` : ''}>${esc(room)}</bdi>` : ''}${teacher ? `<bdi class="tw-card-teacher">${esc(teacher)}</bdi>` : ''}<span class="tw-card-marks">${marks}</span></div>
-    <span class="visually-hidden">${esc(when)}</span>
+    ${parked ? '' : `<span class="visually-hidden">${esc(when)}</span>`}
   `;
 
   card.addEventListener('dragstart', (e) => {
@@ -2783,8 +2910,9 @@ function markSelection() {
   });
 }
 
-/* What the marks on the board mean: one line after the last table. */
-function boardLegendHtml() {
+/* What the marks on the board mean: one line after the last table; the
+   parking strip's item only while a table has one (6e). */
+function boardLegendHtml({ parked = false } = {}) {
   const item = (swatch, words) => `<span class="ux-legend-item">${swatch}<span>${words}</span></span>`;
   const swatch = name => `<span class="ux-legend-swatch" data-swatch="${name}" aria-hidden="true"></span>`;
   const icon = (attr, value) => `<span class="${attr === 'tone' ? 'ux-tone-icon' : 'ux-icon'}" data-${attr}="${value}" aria-hidden="true"></span>`;
@@ -2796,6 +2924,7 @@ function boardLegendHtml() {
     + item(icon('icon', 'shared'), IS_AR ? 'يملكها سيناريو آخر' : 'Another scenario owns it')
     + item(swatch('selected'), IS_AR ? 'الشعبة المحددة' : 'The selected section')
     + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه الأخرى' : 'The same course’s other meetings')
+    + (parked ? `<span class="ux-legend-item" id="twLegendPark">${swatch('park')}<span>${esc(PARK_WORDS.legend)}</span></span>` : '')
     // Shown by applyGridView while the filter dims a card.
     + `<span class="ux-legend-item" id="twLegendDim" hidden>${swatch('dim')}<span>${IS_AR ? 'باهتة: خارج التصفية' : 'Dimmed: outside the filter'}</span></span>`
     + `<span class="ux-legend-item">${IS_AR ? 'اللون يساعد على إيجاد المقرر' : 'Colour helps find a course'}</span>`
@@ -4031,7 +4160,8 @@ function moveRefusal(p) {
   const refusal = p ? cardActionRefusal('move', p) : '';
   return refusal && ['external', 'locked'].includes(refusal.code) ? refusal : null;
 }
-const moveDayWord = day => (IS_AR ? DAY_LABELS : DAY_NAMES_EN)[DAYS.indexOf(String(day || '').toUpperCase())] || day || '';
+// Full names in English; Friday and Saturday too (a parked meeting, 6e).
+const moveDayWord = day => dayText(day, { long: true });
 const moveKey = candidate => `${candidate.day}|${candidate.start}`;
 const moveChoosable = candidate => !candidate.verdict?.own_section_meeting;
 /* The candidates in the verdict's order (verdict_rank), not the legacy one. */
@@ -5165,7 +5295,8 @@ $('twRightBody').addEventListener('click', async event => {
     const card = highlightWorkspacePlacements(ids);
     const p = card && TW.placements.find(row => String(row.id) === card.dataset.placementId);
     if (p) {
-      const day = DAY_LABELS[DAYS.indexOf(p.day)] || p.day;
+      // A parked meeting can fall on Friday or Saturday (6e): named too.
+      const day = dayText(p.day);
       const where = `${day} \u2066${p.start_time}–${p.end_time}\u2069`;
       const what = `\u2066${p.course_code} ${p.section}\u2069`;
       announceBoard(IS_AR
@@ -5230,7 +5361,7 @@ function renderRightPanel(tab) {
         const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
           + `<span class="tw-issue-subject"><bdi>${isolateTimes(row.subject)}</bdi></span>`
           + (row.detail ? `<span class="tw-issue-detail"><bdi>${isolateTimes(row.detail)}</bdi></span>` : '');
-        html += row.ids.length && row.locate !== false
+        html += row.ids.length
           ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-focus-key="${esc(`${row.kind}:${row.ids.join(',')}`)}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
           : `<div class="tw-issue-row tw-issue-static" data-tone="${tone}">${inner}</div>`;
       });
@@ -5245,7 +5376,6 @@ function renderRightPanel(tab) {
     const p = TW.placements.find(x => x.id === TW.selectedPlacementId);
     if (!p) { draw(''); return; }
     const english = globalThis.TimetableMeetingPolicy?.isEnglish(p);
-    const dayLabel = code => DAY_LABELS[DAYS.indexOf(code)] || code || '—';
     const field = (label, value) => `<div class="tw-sel-field"><dt>${label}</dt><dd>${value}</dd></div>`;
     // A count of 0 is a count; only a missing one is unknown.
     const count = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)))
@@ -5266,7 +5396,7 @@ function renderRightPanel(tab) {
         `<li data-tone="${row.tone}"><span class="ux-tone-icon" data-tone="${row.tone}" role="img" aria-label="${esc(TONE_LEAD[row.tone])}"></span>`
         + `<span><span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${esc(issuePendingWord())}` : ''}</span> <bdi class="tw-sel-issue-subject">${isolateTimes(row.subject)}</bdi>${row.detail ? `<span class="tw-sel-hint"><bdi>${isolateTimes(row.detail)}</bdi></span>` : ''}</span></li>`).join('')}</ul>`
       : '';
-    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${esc(dayLabel(m.day))}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
+    const meetings = (p.meetings || []).map(m => `<li class="ux-meta"><span>${dayHtml(m.day)}</span><bdi dir="ltr">${esc(m.start_time)}–${esc(m.end_time)}</bdi><bdi>${esc(english ? TimetableMeetingPolicy.roomLabel(p, IS_AR) : meetingRoomText(m.room, p))}</bdi></li>`).join('');
     const editable = workspaceCanEdit();
     // Change room (5c) and Move… (5e); why each is held is written into
     // #twSelActionNote by syncSelectionActions, right after this draw.
@@ -5281,7 +5411,7 @@ function renderRightPanel(tab) {
       ${ownIssues}
       ${english ? `<div class="tw-pattern-label">${esc(TimetableMeetingPolicy.label(p, IS_AR))} · SUN / MON / WED / THU</div><button type="button" class="tw-pattern-action" data-focus-key="pattern" data-tw-mutation ${editable ? '' : 'disabled'} onclick="chooseEnglishWorkspacePattern({type:'move',placement_id:${p.id}})">${IS_AR ? 'تغيير نمط الشعبة' : 'Change section pattern'}</button>` : ''}
       <dl class="tw-sel-fields">
-        ${field(IS_AR ? 'اليوم' : 'Day', esc(dayLabel(p.day)))}
+        ${field(IS_AR ? 'اليوم' : 'Day', dayHtml(p.day))}
         ${field(IS_AR ? 'الوقت' : 'Time', `<bdi>${esc(p.start_time)}–${esc(p.end_time)}</bdi>`)}
         ${field(IS_AR ? 'القاعة' : 'Room', `<bdi>${esc(placementRoomText(p) || (IS_AR ? 'لم تُحدَّد' : 'Not set'))}</bdi>${roomAction}`)}
         ${field(IS_AR ? 'المدرس' : 'Teacher', teacherHtml)}
@@ -5853,7 +5983,7 @@ const TONE_LEAD = {
   info: IS_AR ? 'للاطلاع' : 'For context',
 };
 const issueKindLabel = kind => (IS_AR ? ISSUE_KINDS[kind].ar : ISSUE_KINDS[kind].en);
-const dayName = code => DAY_LABELS[DAYS.indexOf(String(code || '').toUpperCase().slice(0, 3))] || code || '—';
+const dayName = code => dayText(code);
 const studentsNeedBoth = n => (IS_AR
   ? pluralAr(n, { zero: 'لا طلاب يحتاجون كليهما', one: 'طالب واحد يحتاج كليهما', two: 'طالبان يحتاجان كليهما', few: '{n} طلاب يحتاجون كليهما', many: '{n} طالباً يحتاجون كليهما', other: '{n} طالب يحتاجون كليهما' })
   : `${n} ${n === 1 ? 'student needs' : 'students need'} both`);
@@ -5865,15 +5995,15 @@ const seatsNeeded = n => (IS_AR
 const isolateTimes = text => esc(text).replace(/(\d{1,2}:\d{2})–(\d{1,2}:\d{2})/g, '<bdi dir="ltr">$1–$2</bdi>');
 
 /* The grid's rule (timetable_slot_config.is_on_grid): a teaching day and a
-   column start of the meeting's kind — a lab runs more than 80 minutes.
-   English meetings have their own table. */
+   column start of the meeting's kind — a lab runs more than 80 minutes —
+   compared by the one cell key the renderer draws by (E14). English
+   meetings have their own table, built from their own times. */
 function isPlacementOnGrid(p) {
-  if (!DAYS.includes(String(p.day || '').toUpperCase().slice(0, 3))) return false;
+  if (!DAYS.includes(dayKey(p.day))) return false;
   if (globalThis.TimetableMeetingPolicy?.isEnglish(p)) return true;
-  const minutes = t => { const [h, m] = String(t || '').split(':').map(Number); return h * 60 + m; };
-  const columns = minutes(p.end_time) - minutes(p.start_time) > 80 ? scenarioLabSlots() : scenarioLectureSlots();
-  const start = String(p.start_time || '').slice(0, 5);
-  return columns.some(slot => String(slot.start || '').slice(0, 5) === start);
+  const key = cellKey(p.day, p.start_time);
+  const columns = isLabMeeting(p) ? scenarioLabSlots() : scenarioLectureSlots();
+  return key != null && columns.some(slot => cellKey(p.day, slot?.start) === key);
 }
 
 function computeBoardIssues() {
@@ -5931,8 +6061,8 @@ function computeBoardIssues() {
     if (p.needs_room && p.room_state === 'unassigned') add('noRoom', [p.id], name(p), when(p));
     else if (p.needs_room && p.room_state === 'unset') add('roomUnset', [p.id], name(p), when(p));
     if (blocked.has(`${p.day}|${p.start_time}`)) add('blocked', [p.id], name(p), when(p));
-    // Not drawn until the grid gets its parking strip: the row cannot point at it.
-    if (!isPlacementOnGrid(p)) add('offGrid', [p.id], name(p), when(p), { locate: false });
+    // Drawn in the strip under its table (6e): the row points at it there.
+    if (!isPlacementOnGrid(p)) add('offGrid', [p.id], name(p), `${when(p)} · ${PARK_WORDS.underTable}`);
   });
 
   // The quality check: room suitability. "missing" is read from the board above.
@@ -6114,7 +6244,8 @@ async function openSlotEditor(typed = null) {
     confirm: async details => {
       const ok = await dlg.confirm({
         title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
-        body: SC.confirmationHtml(details),
+        // The meetings it leaves are parked under their tables (6e).
+        body: SC.confirmationHtml(details, { parked: true }),
         kind: 'danger',
         confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
       });

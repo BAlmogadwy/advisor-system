@@ -1,5 +1,5 @@
 {
-  "about": "The grid's rule, stated once for both implementations: core/services/timetable_slot_config.is_on_grid (Python) and isPlacementOnGrid (static/js/page-timetable-workspace.js). A meeting is drawn when its day is a teaching day and its start is a column start of its kind (a lab runs more than 80 minutes); an English bundle has its own table.",
+  "about": "The grid's rule, stated once for both implementations: core/services/timetable_slot_config.is_on_grid (Python) and isPlacementOnGrid (static/js/page-timetable-workspace.js), whose renderer draws by the same cell key (cellKey). A meeting is drawn in a cell when its day is a teaching day and its start is a column start of its kind (a lab runs more than 80 minutes); an English bundle has its own table. Times read as the server reads them: H:MM or HH:MM, seconds allowed; the day upper-cased. Any other meeting is parked under its table.",
   "lecture_slots": [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:50-12:05", "start": "10:50", "end": "12:05"}
@@ -18,6 +18,11 @@
     {"name": "81 minutes is a lab", "course": "CS101", "day": "TUE", "start": "10:50", "end": "12:11", "on_grid": false},
     {"name": "an online meeting in its window", "course": "GS101", "day": "WED", "start": "15:50", "end": "17:30", "on_grid": true},
     {"name": "not a teaching day", "course": "CS101", "day": "SAT", "start": "09:00", "end": "10:15", "on_grid": false},
-    {"name": "an English bundle is drawn in its own table", "course": "ENG101", "day": "SUN", "start": "13:00", "end": "16:00", "on_grid": true}
+    {"name": "an English bundle is drawn in its own table", "course": "ENG101", "day": "SUN", "start": "13:00", "end": "16:00", "on_grid": true},
+    {"name": "an English meeting on a non-teaching day", "course": "ENG101", "day": "SAT", "start": "09:00", "end": "12:00", "on_grid": false},
+    {"name": "a start without its leading zero", "course": "CS101", "day": "SUN", "start": "9:00", "end": "10:15", "on_grid": true},
+    {"name": "a start with seconds", "course": "CS101", "day": "MON", "start": "09:00:00", "end": "10:15:00", "on_grid": true},
+    {"name": "a day in lower case", "course": "CS101", "day": "sun", "start": "10:50", "end": "12:05", "on_grid": true},
+    {"name": "a start that is no time", "course": "CS101", "day": "TUE", "start": "9am", "end": "10:15", "on_grid": false}
   ]
 }

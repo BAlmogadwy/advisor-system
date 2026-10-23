@@ -751,6 +751,8 @@ test('a slot save that would hide meetings names them, and repeats only with tha
   assert.equal(h.posts[0].confirm, undefined);
   assert.deepEqual(h.posts[0].lab_slot_config.map(row => row.start), ['09:00', '15:50']);
   assert.match(shown[1].body, /leaves 1 meeting outside the grid/);
+  // The workspace parks such a meeting under its table, and says so (6e, PK6).
+  assert.match(shown[1].body, /still published; each is shown under its table until a column has its time again:/);
   assert.match(shown[1].body, /Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Sun <bdi dir="ltr">09:00–10:15<\/bdi> · time locked/);
   assert.equal(h.posts[1].confirm, 'abc123');
   assert.ok(h.notices.some(n => n.type === 'success'));
@@ -989,7 +991,7 @@ test('the open board’s flag keeps the list’s clash count while its own clash
   assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '4');
 });
 
-test('an issue row takes the user to its sections, on another board too; an unplaceable one is read only', async t => {
+test('an issue row takes the user to its sections, on another board too; a meeting off the grid is found in its strip', async t => {
   const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
   const pair = { board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: 25, board_a_label: 'Term 7', board_b_label: 'Term 8' };
   const h = await harness(t, url => {
@@ -1005,7 +1007,11 @@ test('an issue row takes the user to its sections, on another board too; an unpl
   h.w.renderRightPanel('issues');
   const rows = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')];
   const row = kind => rows.find(r => r.querySelector('.tw-issue-kind').textContent.startsWith(kind));
-  assert.equal(row('Outside the grid’s columns').tagName, 'DIV', 'not drawn yet: nothing to point at');
+  // Drawn in the strip under its table (6e), so its row points at it too (PK1).
+  assert.equal(row('Outside the grid’s columns').tagName, 'BUTTON');
+  row('Outside the grid’s columns').click();
+  await settle();
+  assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId), ['12']);
   row('Room double-booked').click();
   await settle();
   assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId).sort(), ['10', '11']);
@@ -1682,6 +1688,292 @@ test('FL10 a programme token (the interim lens) dims, by the union of the progra
       ? 'المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1؛ تصفية البرامج: \u2066AI2\u2069.'
       : '1 of 4 meetings match; tables folded for no match: 1; programme filter: \u2066AI2\u2069.');
   }
+});
+
+/* ── The parking strip (design record §7.2 item 6, 6e) ──
+   A meeting no column of its kind has (its day is no teaching day, or no
+   column starts at its time) is drawn in a strip, the last row of its own
+   table, with its day and time; it is toned a warning, its Issues row points
+   at it, and the keyboard reaches it in time order. */
+const offGrid = (id, extra = {}) => at(id, { day: 'MON', start_time: '18:30', end_time: '19:45', ...extra });
+const stripOf = (h, group, kind) => h.d.querySelector(`#twGrid [role="grid"][data-group="${group}"][data-kind="${kind}"] .tw-park-row`);
+const stripIds = (h, group, kind) => [...(stripOf(h, group, kind)?.querySelectorAll('.tw-card') || [])].map(c => Number(c.dataset.placementId));
+
+test('PK1 a meeting outside the columns is parked under its table with its day and time; its Issues row finds it', async t => {
+  const h = await viewHarness(t, { placements: [at(10), offGrid(11)] });
+  await h.select();
+  h.w.Element.prototype.scrollIntoView = () => {};  // jsdom has none
+  const parked = card(h, 11);
+  assert.equal(parked.closest('.tw-cell'), null, 'in no cell');
+  const parkRow = stripOf(h, 'S1', 'lecture');
+  assert.ok(parkRow && parkRow.contains(parked), 'in its own table’s strip');
+  assert.deepEqual([parkRow.getAttribute('role'), parkRow.classList.contains('ux-grid-row')], ['row', true]);
+  assert.equal(foldOf(h, 'S1', 'lecture').body.lastElementChild, parkRow, 'the table’s last row, inside the rows the fold hides');
+  const head = parkRow.querySelector(':scope > [role="rowheader"]');
+  assert.equal(head.textContent, 'Off grid — outside the grid’s columns');
+  assert.equal(head.querySelector('.visually-hidden').textContent, ' — outside the grid’s columns', 'only "Off grid" is shown');
+  assert.ok(head.classList.contains('tw-park-head') && head.classList.contains('tw-grid-slot-label'));
+  const cell = parked.parentElement;
+  assert.ok(cell.matches('.tw-park > .tw-park-cell[role="gridcell"]'));
+  assert.deepEqual([cell.dataset.uxCol, cell.dataset.focusKey], ['1110', 'park:S1:lecture|11']);
+  assert.equal(parked.querySelector('.tw-card-when').innerHTML, 'Mon <bdi dir="ltr">18:30–19:45</bdi>');
+  assert.equal(parked.querySelectorAll('.visually-hidden').length, 0, 'its day and time are said once, by the line');
+  assert.ok(card(h, 10).querySelector('.visually-hidden'), 'a card in a cell keeps its words for assistive technology');
+  assert.equal(card(h, 10).querySelector('.tw-card-when'), null);
+  // A warning: ringed, and the strip explained by the legend.
+  assert.equal(tone(h, 11), 'warning');
+  assert.match(parked.title, /^Lowers quality: Outside the grid’s columns/);
+  assert.equal(h.d.getElementById('twLegendPark').textContent, 'Under a table: its meetings outside the columns (M moves one onto the grid)');
+  assert.equal(h.d.querySelector('#twLegendPark .ux-legend-swatch').dataset.swatch, 'park');
+  assert.equal(parked.draggable, true, 'it drags onto a cell');
+  // Its Issues row is a button that finds it: a pulse and the board's tab stop.
+  h.w.renderRightPanel('issues');
+  const row = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')].find(r => r.querySelector('.tw-issue-kind').textContent === 'Outside the grid’s columns');
+  assert.equal(row.tagName, 'BUTTON');
+  assert.equal(row.dataset.ids, '["11"]');
+  assert.equal(strip(row.querySelector('.tw-issue-detail').textContent), 'Mon 18:30–19:45 · under its table');
+  row.focus();
+  row.click();
+  await settle();
+  assert.ok(parked.classList.contains('highlight'));
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')], [parked], 'the board’s one stop');
+  assert.equal(h.d.activeElement, row, 'the keyboard stays where it was');
+  assert.match(strip(h.d.getElementById('twBoardStatus').textContent), /^Located: Mon 18:30–19:45, AI11 S1\./);
+  // The filter: it counts and folds with the rest of its table, and a fold
+  // the text shuts is opened by a locate.
+  await findText(h, '19:45');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'its time matches: its table stays open');
+  assert.deepEqual(dimsOf(h, [10, 11]), ['filter', '']);
+  await findText(h, 'zzz');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, FOLDED);
+  assert.equal(foldOf(h, 'S1', 'lecture').label, 'Lectures · no match · 2 meetings', 'the parked meeting is one of the table’s');
+  assert.deepEqual([...foldOf(h, 'S1', 'lecture').fold.querySelectorAll('.tw-fold-tone:not([hidden]) .tw-fold-n')].map(n => n.textContent), ['1'], 'and its warning is counted');
+  h.w.renderRightPanel('issues');
+  [...h.d.querySelectorAll('#twRightBody .tw-issue-row')].find(r => r.querySelector('.tw-issue-kind').textContent === 'Outside the grid’s columns').click();
+  await settle();
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, OPENED, 'found inside a fold: the fold opens');
+  assert.deepEqual(h.errors, []);
+});
+
+test('PK2 each meeting is parked under its own table: a lab under its group’s labs, English on a weekend under English; nowhere else', async t => {
+  const english = (id, extra) => at(id, { course_code: 'ENG101', course_key: 'ENG101', start_time: '09:00', end_time: '12:00', ...extra });
+  const h = await viewHarness(t, { placements: [
+    at(10),
+    at(12, { course_code: 'PHYS1', section: 'S2', term_section_id: 212 }),
+    at(13, { course_code: 'CS102', section: 'S2', term_section_id: 213, start_time: '16:00', end_time: '17:40' }),  // a lab at no lab column
+    english(14, { day: 'SUN' }),
+    english(15, { day: 'SAT', start_time: '14:00', end_time: '17:00' }),  // a weekend English meeting
+  ] });
+  await h.select();
+  assert.deepEqual(stripIds(h, 'S2', 'lab'), [13], 'S2’s labs');
+  assert.deepEqual(stripIds(h, 'S1', 'english'), [15], 'English, on a day the grid has no row for');
+  assert.equal(h.d.querySelectorAll('#twGrid .tw-park-row').length, 2, 'no strip elsewhere');
+  assert.equal(card(h, 14).closest('.tw-cell').dataset.focusKey, 'cell:S1:english|SUN|09:00', 'the weekday one in its cell');
+  // English columns come from its meetings on the grid: the weekend one adds none.
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [data-kind="english"] .tw-slot-time')].map(e => e.textContent), ['09:00–12:00', '13:00–16:00']);
+  assert.equal(card(h, 15).querySelector('.tw-card-when').innerHTML, 'Sat <bdi dir="ltr">14:00–17:00</bdi>');
+  assert.match(issuesText(h), /Outside the grid’s columnsENG101 S1Sat 14:00–17:00 · under its table/);
+  // A board with no lab column: its labs are still drawn, under a lab table of their own.
+  const bare = await viewHarness(t, { labs: [], placements: [at(10), at(13, { start_time: '16:00', end_time: '17:40' })] });
+  await bare.select();
+  assert.deepEqual(stripIds(bare, 'S1', 'lab'), [13]);
+  const table = bare.d.querySelector('#twGrid [role="grid"][data-kind="lab"]');
+  assert.equal(table.style.getPropertyValue('--tw-slots'), '1', 'one column to lay the strip out in');
+  assert.equal(table.querySelectorAll('.tw-cell').length, 0);
+});
+
+test('PK3 a board with nothing off the grid has no strip and no strip in its legend; one moved back loses it', async t => {
+  const h = await viewHarness(t, { placements: [at(10), offGrid(11)] });
+  await h.select();
+  assert.equal(h.d.querySelectorAll('#twGrid .tw-park-row').length, 1);
+  h.w.TW.placements = [at(10), at(11, { day: 'MON' })];
+  h.w.renderGrid();
+  assert.equal(h.d.querySelectorAll('#twGrid .tw-park-row, #twGrid .tw-park, #twGrid .tw-park-cell').length, 0);
+  assert.equal(h.d.getElementById('twLegendPark'), null);
+  assert.ok(card(h, 11).closest('.tw-cell'));
+  const none = await viewHarness(t, { placements: [] });
+  await none.select();
+  assert.equal(none.d.querySelectorAll('#twGrid .tw-park-row').length, 0);
+});
+
+test('PK4 the keyboard: ↓ from the last day lands on the parked card nearest in time; ←/→ walk the strip; it is no drop target', async t => {
+  const h = await viewHarness(t, { placements: [
+    at(10),
+    offGrid(11),                                                   // MON 18:30
+    offGrid(12, { day: 'SAT', start_time: '09:00', end_time: '10:15' }),  // SAT 09:00
+    offGrid(14, { day: 'SUN', start_time: '08:00', end_time: '09:15' }),  // SUN 08:00
+  ] });
+  await h.select();
+  assert.deepEqual(stripIds(h, 'S1', 'lecture'), [14, 11, 12], 'by day, then start');
+  assert.deepEqual([...stripOf(h, 'S1', 'lecture').querySelectorAll('.tw-park-cell')].map(c => c.dataset.uxCol), ['480', '1110', '540']);
+  const nav = boardNavOf(h);
+  nav.active('cell:S1:lecture|THU|09:00', { focus: true });
+  keyOn(h, 'ArrowDown');
+  assert.equal(h.d.activeElement, card(h, 12), 'THU 09:00 → the parked meeting at 09:00 (SAT), not the strip’s first');
+  keyOn(h, 'ArrowLeft');
+  assert.equal(h.d.activeElement, card(h, 11));
+  keyOn(h, 'ArrowLeft');
+  assert.equal(h.d.activeElement, card(h, 14));
+  keyOn(h, 'ArrowLeft');
+  assert.equal(h.d.activeElement, card(h, 14), 'the strip’s start');
+  keyOn(h, 'ArrowRight');
+  assert.equal(h.d.activeElement, card(h, 11));
+  keyOn(h, 'ArrowUp');
+  assert.equal(h.d.activeElement.dataset.focusKey, 'cell:S1:lecture|THU|09:00', '↑: back to the last day, nearest in time');
+  keyOn(h, 'ArrowDown');
+  keyOn(h, 'PageDown');
+  assert.equal(h.d.activeElement.closest('[role="grid"]').dataset.kind, 'lab', 'PageDown: the next table');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid [tabindex="0"]')].length, 1, 'still one stop');
+  // M and R act on a parked card as on any other.
+  const acted = [];
+  h.w.TW.keyActions.move = p => acted.push(['move', p.id]);
+  h.w.TW.keyActions.room = p => acted.push(['room', p.id]);
+  nav.active('placement:12', { focus: true });
+  keyOn(h, 'm');
+  keyOn(h, 'r');
+  assert.deepEqual(acted, [['move', 12], ['room', 12]]);
+  // No drop target: a drag over the strip is the browser's (no drop), over a cell the page's.
+  const over = target => { const event = new h.w.Event('dragover', { bubbles: true, cancelable: true }); target.dispatchEvent(event); return event.defaultPrevented; };
+  const parkRow = stripOf(h, 'S1', 'lecture');
+  assert.deepEqual([over(parkRow.querySelector('.tw-park-cell')), over(parkRow.querySelector('.tw-park')), over(parkRow.querySelector('.tw-park-head'))], [false, false, false]);
+  assert.equal(over(h.d.querySelector('#twGrid .tw-cell')), true, 'a cell takes the drop');
+});
+
+test('PK5 the grid rule and the renderer agree with the shared cases: a meeting is in a cell exactly when it is on the grid, else in a strip', async t => {
+  const table = JSON.parse(fs.readFileSync(path.join(root, 'tests/fixtures/grid_rule_cases.json'), 'utf8'));
+  const rows = table.cases.map((c, i) => at(100 + i, { course_code: c.course, course_key: c.course, term_section_id: 300 + i, day: c.day, start_time: c.start, end_time: c.end }));
+  const h = await harness(t, url => (url === '/ops/tw/boards/2/' ? { placements: rows }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms
+    : url.includes('/readiness/') ? { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } } : undefined),
+  { effective_slot_config: table.lecture_slots, effective_lab_slot_config: table.lab_slots });
+  await h.select();
+  const offGridRows = issuesText(h).split('Outside the grid’s columns').length - 1;
+  table.cases.forEach((c, i) => {
+    const drawn = card(h, 100 + i);
+    const cell = drawn.closest('.tw-cell');
+    assert.equal(h.w.isPlacementOnGrid(rows[i]), c.on_grid, `rule: ${c.name}`);
+    assert.equal(Boolean(cell), c.on_grid, `in a cell: ${c.name}`);
+    if (cell) assert.equal(h.w.cellKey(cell.dataset.day, cell.dataset.start), h.w.cellKey(c.day, c.start), `the right cell: ${c.name}`);
+    else assert.ok(drawn.closest('.tw-park-cell'), `parked: ${c.name}`);
+  });
+  assert.equal(h.d.querySelectorAll('#twGrid .tw-card').length, rows.length, 'each drawn once');
+  assert.equal(offGridRows, table.cases.filter(c => !c.on_grid).length, 'an Issues row for each parked one');
+  // The key itself, as the server reads a time.
+  assert.deepEqual(['9:00', '09:00:00', ' 9:05 ', '24:00', '9am', '', null].map(v => h.w.cellKey('sun', v)),
+    ['SUN|09:00', 'SUN|09:00', 'SUN|09:05', null, null, null, null]);
+});
+
+test('PK7 the strip in Arabic: the time left to right, Friday and Saturday named, any other day isolated; the words', async t => {
+  for (const arabic of [false, true]) {
+    const h = await viewHarness(t, { arabic, placements: [
+      at(10),
+      offGrid(11),
+      offGrid(12, { day: 'SAT', start_time: '09:00', end_time: '10:15' }),
+      offGrid(13, { day: 'FRI', start_time: '09:00', end_time: '10:15' }),
+      offGrid(14, { day: 'X<y', start_time: '09:00', end_time: '10:15' }),
+    ] });
+    await h.select();
+    h.w.Element.prototype.scrollIntoView = () => {};
+    const when = id => card(h, id).querySelector('.tw-card-when').innerHTML;
+    assert.equal(when(11), arabic ? 'الاثنين <bdi dir="ltr">18:30–19:45</bdi>' : 'Mon <bdi dir="ltr">18:30–19:45</bdi>');
+    assert.equal(when(12), arabic ? 'السبت <bdi dir="ltr">09:00–10:15</bdi>' : 'Sat <bdi dir="ltr">09:00–10:15</bdi>');
+    assert.equal(when(13), arabic ? 'الجمعة <bdi dir="ltr">09:00–10:15</bdi>' : 'Fri <bdi dir="ltr">09:00–10:15</bdi>');
+    assert.equal(when(14), '<bdi>X&lt;y</bdi> <bdi dir="ltr">09:00–10:15</bdi>', 'an unknown day: escaped and isolated');
+    assert.deepEqual(stripIds(h, 'S1', 'lecture'), [11, 13, 12, 14], 'MON, FRI, SAT, then any other day');
+    assert.equal(stripOf(h, 'S1', 'lecture').querySelector('.tw-park-head').textContent,
+      arabic ? 'خارج الشبكة — خارج أعمدة الجدول' : 'Off grid — outside the grid’s columns');
+    assert.equal(h.d.getElementById('twLegendPark').textContent, arabic
+      ? 'أسفل الجدول: لقاءاته خارج الأعمدة (المفتاح M ينقل أحدها إلى الجدول)'
+      : 'Under a table: its meetings outside the columns (M moves one onto the grid)');
+    h.w.renderRightPanel('issues');
+    const details = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')]
+      .filter(r => r.querySelector('.tw-issue-kind').textContent === (arabic ? 'خارج أعمدة الجدول' : 'Outside the grid’s columns'))
+      .map(r => r.querySelector('.tw-issue-detail').innerHTML);
+    assert.deepEqual(details, arabic ? [
+      '<bdi>الاثنين <bdi dir="ltr">18:30–19:45</bdi> · أسفل جدوله</bdi>',
+      '<bdi>السبت <bdi dir="ltr">09:00–10:15</bdi> · أسفل جدوله</bdi>',
+      '<bdi>الجمعة <bdi dir="ltr">09:00–10:15</bdi> · أسفل جدوله</bdi>',
+      '<bdi>\u2066X&lt;y\u2069 <bdi dir="ltr">09:00–10:15</bdi> · أسفل جدوله</bdi>',
+    ] : [
+      '<bdi>Mon <bdi dir="ltr">18:30–19:45</bdi> · under its table</bdi>',
+      '<bdi>Sat <bdi dir="ltr">09:00–10:15</bdi> · under its table</bdi>',
+      '<bdi>Fri <bdi dir="ltr">09:00–10:15</bdi> · under its table</bdi>',
+      '<bdi>\u2066X&lt;y\u2069 <bdi dir="ltr">09:00–10:15</bdi> · under its table</bdi>',
+    ]);
+    // Where else the page names the day: Selection, the locate, Move.
+    card(h, 12).click();
+    const day = h.d.querySelector('#twRightBody .tw-sel-fields dd').innerHTML;
+    assert.equal(day, arabic ? 'السبت' : 'Sat');
+    const p = h.w.TW.placements.find(row => row.id === 12);
+    assert.ok(h.w.moveSubHtml(p).startsWith(arabic ? 'السبت <bdi dir="ltr">09:00–10:15</bdi>. ' : 'Saturday <bdi dir="ltr">09:00–10:15</bdi>. '), 'Move names the day in full');
+    assert.equal(h.w.moveSubHtml(h.w.TW.placements.find(row => row.id === 14)).startsWith('\u2066X&lt;y\u2069 '), true, 'Move isolates an unknown day');
+    card(h, 14).click();
+    assert.equal(h.d.querySelector('#twRightBody .tw-sel-fields dd').innerHTML, '<bdi>X&lt;y</bdi>');
+    h.w.renderRightPanel('issues');
+    [...h.d.querySelectorAll('#twRightBody .tw-issue-row')].find(r => r.dataset.ids === '["12"]').click();
+    await settle();
+    assert.match(h.d.getElementById('twBoardStatus').textContent, arabic
+      ? /^عُثر عليها: السبت \u206609:00–10:15\u2069، /
+      : /^Located: Sat \u206609:00–10:15\u2069, /);
+  }
+});
+
+test('PK4b the strip’s order: by day, then start (a start that is no time after every time), then course; any other day last', async t => {
+  const h = await viewHarness(t, { placements: [
+    at(10),
+    offGrid(17, { day: 'ZZZ' }),
+    offGrid(12, { day: 'SAT', start_time: '09:00', end_time: '10:15' }),
+    offGrid(15, { start_time: '7pm' }),
+    offGrid(18, { day: 'ABC' }),
+    offGrid(21, { day: 'SAT', start_time: '09:00', end_time: '10:15', course_code: 'AA9' }),  // the same course and time: by id
+    offGrid(16, { day: 'SAT', start_time: '09:00', end_time: '10:15', course_code: 'AA9' }),
+    offGrid(11),
+  ] });
+  await h.select();
+  assert.deepEqual(stripIds(h, 'S1', 'lecture'), [11, 15, 16, 21, 12, 18, 17]);
+  assert.deepEqual([...stripOf(h, 'S1', 'lecture').querySelectorAll('.tw-park-cell')].map(c => c.dataset.uxCol),
+    ['1110', '1440', '540', '540', '540', '1110', '1110'], 'in minutes; no time sits after every time');
+  assert.equal(card(h, 15).querySelector('.tw-card-when').innerHTML, 'Mon <bdi dir="ltr">7pm–19:45</bdi>', 'the stored time as it is');
+});
+
+test('PK5b two columns with one start (their ends differ, the server keeps both): a meeting there is drawn once, in the first', async t => {
+  const h = await harness(t, url => (url === '/ops/tw/boards/2/' ? { placements: [at(10)] }
+    : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms
+    : url.includes('/readiness/') ? { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } } : undefined),
+  { effective_slot_config: [{ label: 'A', start: '09:00', end: '10:15' }, { label: 'B', start: '09:00', end: '10:40' }], effective_lab_slot_config: [] });
+  await h.select();
+  assert.equal(h.d.querySelectorAll('#twGrid .tw-card').length, 1, 'once (it used to be drawn in both)');
+  assert.equal(card(h, 10).closest('.tw-cell').dataset.end, '10:15');
+  assert.equal(h.d.querySelectorAll('#twGrid .tw-park-row').length, 0);
+});
+
+test('PK4c a parked card drags onto a cell as any card does: the drop moves it to that cell’s time, and the strip goes', async t => {
+  const rows = [at(10), offGrid(11)];
+  const posts = [];
+  const h = await harness(t, (url, opts) => {
+    if (url === '/ops/tw/placements/11/move/' && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      rows[1] = { ...rows[1], ...posts.at(-1) };
+      return { ok: true, placement: rows[1] };
+    }
+    if (url === '/ops/tw/boards/2/') return { placements: rows.map(row => ({ ...row })) };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/quality/')) return noRooms;
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    return undefined;
+  });
+  await h.select();
+  const data = {};
+  const dragstart = new h.w.Event('dragstart', { bubbles: true, cancelable: true });
+  dragstart.dataTransfer = { setData: (type, value) => { data[type] = value; }, effectAllowed: '' };
+  card(h, 11).dispatchEvent(dragstart);
+  assert.equal(dragstart.defaultPrevented, false, 'a parked card drags');
+  assert.deepEqual(JSON.parse(data['text/plain']), { type: 'move', placement_id: 11 });
+  await h.w.onDrop({ preventDefault() {}, currentTarget: h.d.querySelector('#twGrid .tw-cell[data-day="MON"][data-start="09:00"]'),
+    dataTransfer: { getData: () => data['text/plain'] } });
+  assert.deepEqual(posts, [{ day: 'MON', start_time: '09:00', end_time: '10:15' }], 'the cell’s time, by its time alone');
+  assert.deepEqual([card(h, 11).closest('.tw-cell')?.dataset.focusKey, h.d.querySelectorAll('#twGrid .tw-park-row').length],
+    ['cell:S1:lecture|MON|09:00', 0]);
 });
 
 /* ── Programme mark in Selection (PR 4b) ── */
