@@ -308,6 +308,9 @@ Stage 3 (to evaluate): a time-proportional week grid.
   `data-dim`, `aria-describedby`, titles, a fold row's and rowgroup's
   `hidden` — and never the board's nodes, so a drag, a focused card and the
   keyboard's stop survive typing. Every meeting is drawn.
+- Every meeting is drawn exactly once (§7.2 item 6, 6e): in the cell its key
+  names — `cellKey`, one key for the renderer and the grid's rule, reading a
+  time as the server does — or in the parking strip under its own table.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
 
@@ -325,7 +328,10 @@ Stage 3 (to evaluate): a time-proportional week grid.
 
 Pinned by `tests/test_timetable_workspace_grid_view_browser.py` (the
 filter's dims and folds: contrast, the ring, the echo told apart, the
-keyboard into a fold), `tests/test_timetable_workspace_frame_browser.py`
+keyboard into a fold), `tests/test_timetable_workspace_parking_browser.py`
+(the parking strip: under its table and across its columns, its header in
+whole words at 12px, contrast, the teacher in a wide enough cell, M moving a
+parked meeting onto the grid), `tests/test_timetable_workspace_frame_browser.py`
 (frame, slot width, chrome height, type floor, contrast, blocked Publish
 never posts),
 `tests/test_design_system_tokens.py` (token contrast in both themes),
@@ -1152,6 +1158,99 @@ findings changed the plan:
    10.0 ms (max 16.7). Drawing the whole board again — what an edit does,
    and what the old filter did on every keystroke over the cards it kept —
    takes 16.2 ms, and 95 ms throttled.
+   **As built, 6e (the parking strip):** a meeting no column of its kind has
+   is drawn, under its own table, and was drawn nowhere before. One cell key
+   for the renderer and the grid's rule (E14): `cellKey(day, start)` is the
+   day upper-cased to three letters and the start read as the server reads a
+   stored time (`_TIME`, `_hhmm`: H:MM or HH:MM, seconds allowed, hours
+   0–23), null for anything else, so "9:00", "09:00:00" and "sun" are drawn
+   where the server says they are (the renderer compared raw strings, the
+   rule `slice(0, 5)`). The lab rule is one function for both too
+   (`isLabMeeting`, as `is_lab_meeting`: over 80 minutes, never English; it
+   was a copy inside the renderer). A table draws each meeting in the first
+   column whose key is its own, and every other one of its meetings — no
+   teaching day, or no column of its kind at its start — in its strip, so
+   every meeting is drawn exactly once: two lecture columns with one start
+   (the server keeps both when their ends differ) used to draw a meeting
+   there twice, with one focus key (PK5b). A lab table is drawn when there
+   are lab columns or a lab to park, laying out at least one column. The
+   English table's columns come from its meetings on the grid, so a weekend
+   English meeting adds none and is parked under English.
+   The markup is the spec's: the strip is the table's last row inside the
+   rowgroup its fold hides (a fold counts its parked meetings, and a locate
+   opens it); "Off grid" in the day column with the rest of its name
+   visually hidden; one gridcell per meeting, a `tw-cell` container,
+   `data-ux-col` its start in minutes and `data-focus-key`
+   `park:{group}:{kind}|{id}`. The order is day (SUN…SAT, then any other
+   value by its text), start (a start that is no time last, its column
+   1440), course, then id (one course twice at one time). The keyboard needs nothing new from roving:
+   ↓ from the last day lands on the parked card nearest in time, ←/→ walk the
+   strip, ↑ goes back to the nearest column, PageDown to the next table
+   (PK4). No drag listener is on the strip; a parked card drags onto a cell
+   as any card does (PK4c), and M opens Move with the manual offer (Chrome).
+   Three departures from the spec's text, each for a rule of the design
+   record: the when-line is `{day} <bdi dir="ltr">{t}</bdi>`, the day in the
+   line's own direction and only the time left to right, as Selection,
+   Issues and Move write a meeting's time (the spec's `<bdi dir="ltr">{day}
+   {t}</bdi>` paints an Arabic day to the left of its time, the one place
+   on the page that would); it is `--text-xs`, the design system's floor for
+   data (global.css), not `--text-2xs`; and the strip's header has a 4px
+   inline inset, not the day labels' 8px, because "الشبكة" in the wide font
+   was cut in two inside the 56px column (Chrome found it; its test now
+   fails a word broken across lines). A parked card does not repeat its day
+   and time in the card's visually hidden words (its line says them).
+   Days: SUN–THU as the grid's words, Friday and Saturday named (Fri/Sat,
+   الجمعة/السبت, Friday/Saturday where English uses full names), any other
+   value escaped and isolated — one helper (`dayWord`, `dayText`, `dayHtml`)
+   wherever a parked meeting's day is shown: its card, Issues, the locate's
+   words, Selection's Day and meetings, and Move's lines. For SUN–THU every
+   output is unchanged: an oracle of the grid, Issues and Selection (en and
+   ar, a board with stacked, locked, lab, online and English meetings) and
+   of the slot module, recorded before the edits, is byte-identical after.
+   Issues: `offGrid` locates (its `locate: false` and the renderer's check
+   for it are gone) and its detail ends "· under its table" / "· أسفل
+   جدوله"; the card keeps its warning. The legend has one line
+   (`#twLegendPark`, a swatch of the strip's tint) while any strip is drawn.
+   `timetable-slot-config.js`: `confirmationHtml(details, {parked})`, the
+   workspace passing true; without it the output is the one recorded before
+   6e, to the byte (PK6), and split view's confirmation keeps its words.
+   Versions: PAGE ?v=58, TWCSS ?v=18, the slot module ?v=4 in its three
+   templates; `global.css` unchanged.
+   Tests: the issue-row test now locates the parked meeting (a spec change);
+   PK1–PK5 and PK7, with PK4b (order), PK4c (a drop) and PK5b (one start, two
+   columns), in `timetable-workspace.test.cjs`; PK6 in
+   `timetable-slot-config.test.cjs`, with the workspace's and split view's
+   confirmations pinned; `grid_rule_cases.json` gains "9:00", "09:00:00",
+   "sun", a weekend English meeting and "9am" (the server's rule passes them
+   as it is); PK8 and the Chrome checks in
+   `tests/test_timetable_workspace_parking_browser.py` (`ParkingTests`, an
+   ORM meeting at Monday 18:30: 1366×650 and 1440×790, light and dark, en and
+   ar — the strip under its table and across its columns, the header at
+   12px in whole words and unclipped, contrast of the header, the card's
+   code, room and day and time and the legend line, nothing faded, the
+   frame's acceptance, the teacher shown in a cell at least 130px wide; and
+   M → Monday 09:00 moves the card into its cell and the strip and its
+   legend line go). Mutation-checked: 64 jsdom mutants and 12 Chrome
+   mutants all go red. Three first survived and were strengthened: a parked
+   card made undraggable is made draggable again by the page's own control
+   sync (a mutant the sync cannot undo goes red); a faded header passed the
+   contrast helper, which reads colours, not opacity; and a strip no longer
+   spanning its columns still gave each card 140px. The Chrome check now
+   measures the strip's span and every opacity. Not pinned, as decoration: the strip's tint and the legend
+   swatch (no text sits on the tint), and `overflow-wrap: anywhere` on the
+   header (both words now fit whole; it only keeps a longer word from
+   clipping).
+   Measured on a copy of the QA database: 788 placements in 5 scenarios,
+   none parked by the server's rule, and the page's old rule and old
+   renderer agreed with the new on every one (every stored time is HH:MM, on
+   SUN–THU); no scenario has two columns with one start. Nothing on the QA
+   data changes: the strip shows for what the old editors could save (Risk
+   1: fixtures and an ORM meeting only).
+   Follow-up: `TimetableMeetingPolicy.gridSlots` (shared with split view)
+   tells columns apart by their raw start and end, so an English meeting
+   stored at "9:00" is drawn once, in the 09:00–12:00 column, beside an
+   empty "9:00–12:00" one; it should key columns by `_hhmm` too. F11 (the
+   page's `isEnglish` against the server's policy) stands.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
