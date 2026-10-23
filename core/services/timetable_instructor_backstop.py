@@ -133,7 +133,21 @@ def scenario_instructor_clash_report(scenario_id: int) -> dict[str, Any]:
             if one_teacher or not _is_sibling_pair(sections_by_id, row)
         ]
         return {"count": len(clashes), "clashes": clashes, "checked": True}
-    except Exception:  # pragma: no cover - defensive; see docstring
+    except Exception as exc:  # defensive; see docstring
+        from core.services.timetable_optimizer_v2 import IncompletePolicyPattern
+
+        if isinstance(exc, IncompletePolicyPattern):
+            # Not a failure: an English section has no one complete weekly
+            # pattern, so its meetings (and who clashes with them) are not
+            # known. Said as such, without a traceback on every manual edit.
+            logger.warning(
+                "Instructor clash backstop not run for scenario %s: %s %s has no one "
+                "complete English weekly pattern",
+                scenario_id,
+                exc.course_code,
+                exc.section,
+            )
+            return _unchecked("incomplete_english_pattern")
         logger.exception("Instructor clash backstop failed for scenario %s", scenario_id)
         return _unchecked("backstop_error")
 

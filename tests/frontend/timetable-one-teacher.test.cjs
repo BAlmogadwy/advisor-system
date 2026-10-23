@@ -89,7 +89,32 @@ for (const arabic of [false, true]) {
     const h = await drawer(t, { id: null, name: null, status: 'no_links', source: null, reason: null }, { arabic });
     assert.equal(h.chips.textContent.trim(), arabic ? 'لا يوجد' : 'None');
   });
+  // B2 (stage 3): an English section with no one complete weekly pattern.
+  test(`the drawer shows an unknown teacher as a dash and why, never the meeting's name (${arabic ? 'ar' : 'en'})`, async t => {
+    const h = await drawer(t, { id: null, name: null, status: 'unknown', source: null, reason: 'incomplete_english_pattern' }, { arabic, meetingName: 'Registrar Name' });
+    assert.equal(h.chips.querySelector('.tws-instr-none').textContent, '—');
+    assert.equal(h.chips.querySelector('.tws-instr-hint').textContent, arabic
+      ? 'لم يُعرض المدرّس: ليس لهذه الشعبة الإنجليزية نمط أسبوعي كامل واحد على كل اللوحات. احذفها وضعها من جديد.'
+      : 'Teacher not shown: this English section does not have one complete weekly pattern on every board. Remove it and place it again.');
+    assert.doesNotMatch(h.chips.textContent, /Registrar Name/);
+    assert.equal(h.d.querySelector('.tws-drawer-instr-edit'), null);
+  });
 }
+
+test('the shared rule reads an unknown teacher as its own state, in the page’s language', () => {
+  for (const [lang, hint] of [['en', /^Teacher not shown: this English section/], ['ar', /^لم يُعرض المدرّس:/]]) {
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only' });
+    dom.window.LANGUAGE_CODE = lang;
+    dom.window.eval(read('static/js/timetable-section-teacher.js'));
+    const rule = dom.window.TimetableSectionTeacher;
+    const seen = rule.teacherOf({ teacher: { status: 'unknown', reason: 'incomplete_english_pattern', name: 'Stale' }, meetings: [{ instructor: 'Registrar Name' }] });
+    assert.equal(seen.state, 'unknown');
+    assert.equal(seen.name, '');
+    assert.match(seen.hint, hint);
+    assert.equal(rule.words.unknown, '—');
+    dom.window.close();
+  }
+});
 
 test('a section the map leaves out keeps its meeting name', async t => {
   for (const teacher of [null, { id: null, name: null, status: 'no_links', source: null, reason: null }]) {

@@ -8419,6 +8419,11 @@ function sectionTeacherHtml(p) {
     return `<span class="tws-instr-tbd">${esc(window.TimetableSectionTeacher.words.tbd)}</span>`
       + (teacher.hint ? `<span class="tws-instr-hint">${esc(teacher.hint)}</span>` : '');
   }
+  if (teacher.state === 'unknown') {
+    // Not shown, and why (an English section with no one complete pattern).
+    return `<span class="tws-instr-none">${esc(window.TimetableSectionTeacher.words.unknown)}</span>`
+      + (teacher.hint ? `<span class="tws-instr-hint">${esc(teacher.hint)}</span>` : '');
+  }
   if (teacher.state === 'named') return `<span class="tws-instr-chip primary">${esc(teacher.name)}</span>`;
   return `<span class="tws-instr-none">${esc(window.TimetableSectionTeacher.words.none)}</span>`;
 }
@@ -9252,7 +9257,8 @@ function doExport() {
   const query = parts.join(' ').trim();
   if (query) params.set('search', query);
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  window.open(`/ops/tw/scenarios/${S.scenarioId}/export-per-plan${suffix}`, '_blank');
+  // Downloaded on the page (safe-fetch.js), as the classic page does.
+  return safeDownload(`/ops/tw/scenarios/${S.scenarioId}/export-per-plan${suffix}`, { busyEl: $('twsExport'), kind: 'export' });
 }
 
 const DISMISSIBLE_DETAILS = ['twsViewMenu', 'twsMoreMenu'];

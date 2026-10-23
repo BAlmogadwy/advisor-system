@@ -284,7 +284,7 @@ def _course_instructor_links(
     return resolve, names
 
 
-def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
+def build_section_instructor_ids(scenario, *, incomplete: str = "raise") -> dict[str, set[int]]:
     """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
     scenario-independent ``CourseInstructor`` assignments.
 
@@ -299,13 +299,16 @@ def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     charges nobody and suppresses the free-text fallback; a section with no
     links, or a frozen section with no known teacher, stays absent. The map
     also covers the teacher-frozen sections placed on the scenario's boards.
+    ``incomplete`` is ``load_assignment``'s: an engine raises on an English
+    section without one complete weekly pattern; the board's checks
+    (``"collect"``) leave it absent, so its meeting name decides.
     """
     from core.services.timetable_flags import is_one_teacher_active
 
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        return load_assignment(scenario.id).pr4_map()
+        return load_assignment(scenario.id, incomplete=incomplete).pr4_map()
 
     return linked_section_instructor_ids(scenario).ids
 

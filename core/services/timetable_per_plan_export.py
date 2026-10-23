@@ -405,9 +405,12 @@ def export_scenario_per_plan(
         raise RuntimeError("The export filter did not match any scenario program")
 
     plan_lens = build_scenario_plan_lens(scenario_id)
-    from core.services.timetable_export import section_teacher_texts
+    from core.services.timetable_export import export_section_teachers
 
-    teachers = section_teacher_texts(scenario_id)  # one read for every program
+    # One read for every program; the sections it could not name go on each
+    # workbook's first sheet (their teachers are missing from its Instructors
+    # sheet, which covers the whole scenario).
+    teachers, unknown_teachers = export_section_teachers(scenario_id)
     safe_name = _slugify(scenario.name)
     filter_suffix = (
         f"__filtered_{_slugify(export_filter.original)}" if export_filter.original else ""
@@ -427,6 +430,7 @@ def export_scenario_per_plan(
             elective_fills=elective_fills,
             elective_terms=elective_terms,
             teachers=teachers,
+            unknown_teachers=unknown_teachers,
         )
         filename = f"{_slugify(prog)}.xlsx"
         workbook_paths.append((filename, wb_path))
@@ -467,6 +471,7 @@ def _build_program_workbook(
     elective_fills: dict[str, list[str]] | None = None,
     elective_terms: dict[str, set[int]] | None = None,
     teachers: dict[int, str] | None = None,
+    unknown_teachers: list[dict] | None = None,
 ) -> Path:
     """Produce one XLSX file for a single program's plan view.
 
@@ -476,7 +481,8 @@ def _build_program_workbook(
     its own term; a course is in place on any of its slots' terms.
     ``teachers`` (``timetable_export.section_teacher_texts``, one teacher per
     section only) names each section's teacher in the grid and the Instructors
-    sheet.
+    sheet; ``unknown_teachers`` (``export_section_teachers``) are the sections
+    it prints a dash for, named on a notice sheet put first.
     """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -780,9 +786,10 @@ def _build_program_workbook(
 
     # Instructor timetables (each assigned instructor's full weekly grid),
     # mirroring the Rooms sheet. Reuses the single-workbook renderer.
-    from core.services.timetable_export import _render_instructors_sheet
+    from core.services.timetable_export import _render_instructors_sheet, write_teacher_notice
 
     _render_instructors_sheet(wb, scenario, _course_fill, teachers=teachers)
+    write_teacher_notice(wb, unknown_teachers or [])
 
     # Save
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)

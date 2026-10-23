@@ -47,6 +47,8 @@ async function harness(t, intercept = () => undefined, { arabic = false } = {}) 
       else if (url.endsWith('/plan-lens/')) body = { plan_lens: { plans: [], courses: {}, sections: {} } };
       else body = { ok: true, candidates: [], instructors: [], summary: {} };
     }
+    // A real Response (a file, or a body that is not JSON) goes through as it is.
+    if (body instanceof Response) return body;
     return { ok: !body.httpError, status: body.httpError || 200, json: async () => body };
   };
   w.eval(read('static/js/timetable-meeting-policy.js'));
@@ -281,4 +283,41 @@ for (const arabic of [false, true]) test(`Issues lists a critical overlap under 
   assert.deepEqual(section(heads.critical), { tone: 'section-head danger', count: '1', title: 'AI10-S1 / AI11-S1', dot: 'dot critical' });
   assert.deepEqual(section(heads.warning), { tone: 'section-head warn', count: '1', title: 'AI10-S1 / AI12-S1', dot: 'dot warn' });
   assert.equal(h.d.getElementById('twsRpCountIssues').textContent, '2');
+});
+
+/* B2 (stage 3): split's Export downloads on the page too, through the global
+   safeDownload: a file is saved, a signed-out answer says so, window.open is
+   never used, and the button says it is busy (its accessible name too). */
+for (const arabic of [false, true]) test(`split Export downloads on the page and never opens a tab (${arabic ? 'ar' : 'en'})`, async t => {
+  let answer = 'file';
+  const h = await harness(t, url => {
+    if (!url.includes('/export-per-plan')) return undefined;
+    if (answer === 'file') return new Response('PK', { status: 200, headers: { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="split__per_plan.zip"' } });
+    return new Response('<!doctype html><title>Login</title>', { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }, { arabic });
+  h.d.documentElement.lang = arabic ? 'ar' : 'en';
+  h.w.eval(read('static/js/safe-fetch.js'));
+  const opened = [], saved = [], errors = [];
+  h.w.open = (...args) => { opened.push(args); return null; };
+  h.w.URL.createObjectURL = () => 'blob:split';
+  h.w.URL.revokeObjectURL = () => {};
+  h.w.HTMLAnchorElement.prototype.click = function () { saved.push(this.download); };
+  h.w.notify.error = (title, sub) => errors.push([title, sub]);
+  const button = h.d.getElementById('twsExport');
+  const name = button.getAttribute('aria-label');
+
+  const first = h.w.doExport();
+  assert.equal(button.getAttribute('aria-label'), arabic ? 'جارٍ التصدير…' : 'Exporting…');
+  // The page's realm: compared as JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(await first)), { ok: true, filename: 'split__per_plan.zip' });
+  assert.deepEqual(saved, ['split__per_plan.zip']);
+  assert.equal(button.getAttribute('aria-label'), name);
+
+  answer = 'login';
+  assert.equal((await h.w.doExport()).reason, 'signed_out');
+  assert.deepEqual(errors, [arabic
+    ? ['تعذّر التصدير', 'انتهت جلستك. سجّل الدخول ثم صدّر من جديد.']
+    : ['Export failed', 'You are signed out. Sign in again, then export.']]);
+  assert.deepEqual(opened, []);
+  assert.equal(h.requests.filter(r => r.url.includes('/export-per-plan')).length, 2);
 });

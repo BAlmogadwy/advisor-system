@@ -1895,7 +1895,9 @@ function exportScenario(mode) {
   const url = mode === 'per-plan'
     ? `/ops/tw/scenarios/${TW.scenarioId}/export-per-plan${suffix}`
     : `/ops/tw/scenarios/${TW.scenarioId}/export.xlsx`;
-  window.open(url, '_blank');
+  // Downloaded on the page (safe-fetch.js): an error is a toast in words,
+  // never a raw server page in a new tab; the Export button says it is busy.
+  return safeDownload(url, { busyEl: $('twExport'), kind: 'export' });
 }
 
 /* ── Rendering ── */
@@ -5622,9 +5624,12 @@ function renderRightPanel(tab) {
     // The section's teacher by the one-teacher rule (a meeting row can carry a
     // stale name, so the meetings list below names no one).
     const teacher = window.TimetableSectionTeacher.teacherOf(p);
-    const teacherHtml = teacher.state === 'tbd'
-      ? `${esc(window.TimetableSectionTeacher.words.tbd)}${teacher.hint ? `<span class="tw-sel-hint">${esc(teacher.hint)}</span>` : ''}`
-      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : esc(window.TimetableSectionTeacher.words.none);
+    const teacherWords = window.TimetableSectionTeacher.words;
+    const teacherHint = teacher.hint ? `<span class="tw-sel-hint">${esc(teacher.hint)}</span>` : '';
+    const teacherHtml = teacher.state === 'tbd' ? `${esc(teacherWords.tbd)}${teacherHint}`
+      // Not shown, and why (an English section with no one complete pattern).
+      : teacher.state === 'unknown' ? `${esc(teacherWords.unknown)}${teacherHint}`
+      : teacher.state === 'named' ? `<bdi>${esc(teacher.name)}</bdi>` : esc(teacherWords.none);
     // What is wrong with this section, from the board's one issue model: what
     // blocks publishing or lowers quality (context stays in the Issues tab),
     // each naming what it is about — a pair shows both sections. An item from

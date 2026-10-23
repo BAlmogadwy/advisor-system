@@ -120,6 +120,7 @@ from core.services.timetable_mutation_guard import (
     scenario_busy_response,
 )
 from core.services.timetable_online import OnlineCourseLookup
+from core.services.timetable_optimizer_v2 import IncompletePolicyPattern
 from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
 from core.services.timetable_plan_lens import build_scenario_plan_lens
 from core.services.timetable_repair import (
@@ -1445,6 +1446,20 @@ def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResp
     return _ok({"scenario": _scenario_to_dict(scenario)})
 
 
+#: The words of an export that failed for a reason the user cannot act on.
+EXPORT_FAILED_MESSAGE = (
+    "The export could not be built. Try again; if it fails again, tell the timetable administrator."
+)
+
+
+def _export_failed(scenario_id: int, kind: str) -> JsonResponse:
+    """An export that raised: logged with its traceback, answered in words
+    (JSON ``EXPORT_FAILED``), never a raw server page. The page downloads
+    exports itself (``safeDownload``), so it shows these words."""
+    logger.exception("Timetable export failed (scenario %s, %s)", scenario_id, kind)
+    return _err(EXPORT_FAILED_MESSAGE, code="EXPORT_FAILED", status=500)
+
+
 @login_required(login_url="login")
 @require_GET
 @_one_teacher_request
@@ -1460,7 +1475,10 @@ def tw_scenario_export_view(request: HttpRequest, scenario_id: int) -> HttpRespo
 
     from core.services.timetable_export import export_scenario_xlsx
 
-    path = export_scenario_xlsx(scenario_id)
+    try:
+        path = export_scenario_xlsx(scenario_id)
+    except Exception:
+        return _export_failed(scenario_id, "combined")
     filename = f"timetable_{scenario.name.replace(' ', '_')}_{scenario.academic_year}_T{scenario.term}.xlsx"
     response = FileResponse(
         open(path, "rb"),
@@ -1501,7 +1519,11 @@ def tw_scenario_export_per_plan_view(request: HttpRequest, scenario_id: int) -> 
     try:
         path, filename, is_zip = export_scenario_per_plan(scenario_id, search=search)
     except RuntimeError as exc:
+        # The export's own refusals (no programme, a filter matching none):
+        # their words are the user's.
         return _err(str(exc), code="EXPORT_FAILED", status=500)
+    except Exception:
+        return _export_failed(scenario_id, "per_plan")
 
     content_type = (
         "application/zip"
@@ -1522,7 +1544,24 @@ def tw_scenario_student_blockers_view(request: HttpRequest, scenario_id: int) ->
         return deny
     if not TimetableScenario.objects.filter(id=scenario_id).exists():
         return _err("Scenario not found", code="NOT_FOUND", status=404)
-    return _ok(build_scenario_student_blockers(scenario_id))
+    try:
+        return _ok(build_scenario_student_blockers(scenario_id))
+    except IncompletePolicyPattern as exc:
+        # Seating needs every section's meetings; one English section has no
+        # one complete pattern, so the blockers cannot be counted honestly.
+        return _err(
+            f"Student blockers need every English section on one complete weekly "
+            f"pattern; {exc.course_code} {exc.section} is not. Remove it and place "
+            f"it again.",
+            code="INCOMPLETE_ENGLISH_PATTERN",
+            status=409,
+            details={
+                "term_section_id": exc.term_section_id,
+                "course_code": exc.course_code,
+                "section": exc.section,
+                "board_ids": list(exc.board_ids),
+            },
+        )
 
 
 # ── Board Endpoints ──────────────────────────────────────────────
