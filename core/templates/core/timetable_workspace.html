@@ -12,7 +12,7 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
-  <link href="{% static 'css/timetable-workspace.css' %}?v=18" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=20" rel="stylesheet">
   <link href="{% static 'css/timetable-meeting-policy.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
@@ -413,6 +413,55 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
   </form>
 </dialog>
 
+{# ── Edit time slots: the grid's columns, for every board of the scenario, as rows (§7.2 item 6, 6f); the page draws each list's table from the slot module's rows and words ── #}
+<dialog id="twSlotDialog" class="ux-dialog ux-dialog-scroll ux-dialog-wide" aria-labelledby="twSlotTitle" aria-describedby="twSlotSub">
+  <form method="dialog" id="twSlotForm" novalidate>
+    <div class="ux-dialog-head">
+      <div>
+        <h2 class="ux-dialog-title" id="twSlotTitle">{% if LANGUAGE_CODE == 'ar' %}تعديل الفترات الزمنية{% else %}Edit time slots{% endif %}</h2>
+        <p class="ux-dialog-sub" id="twSlotSub">{% if LANGUAGE_CODE == 'ar' %}أعمدة الجدول لكل لوحات هذا السيناريو{% else %}The grid's columns, for every board of this scenario{% endif %} · <bdi id="twSlotScenario"></bdi></p>
+      </div>
+      <button type="button" class="btn btn-sm btn-neutral btn-icon" data-dialog-close aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    {# The save in progress: in view above the scrolling body, and said (always in the page, empty and no height when there is nothing to say). #}
+    <p id="twSlotStatus" class="ux-choice-status tw-dialog-status" role="status" aria-live="polite"></p>
+    <div class="ux-dialog-body" id="twSlotBody" tabindex="-1">
+      {# The rows, inert while a save is out; hidden while the server's list is reviewed. #}
+      <div class="tw-slot-step" id="twSlotEditor">
+        {# A draft kept from an earlier open; it says when the saved columns are no longer the ones it started from. #}
+        <p class="ux-field-hint" id="twSlotDraft" hidden>{% if LANGUAGE_CODE == 'ar' %}عادت أعمدتك غير المحفوظة.{% else %}Your unsaved columns are back.{% endif %} <span class="tw-slot-draft-changed" id="twSlotDraftChanged" hidden>{% if LANGUAGE_CODE == 'ar' %}تغيّرت الأعمدة المحفوظة منذ هذه المسودة.{% else %}The saved columns changed since this draft.{% endif %}</span> <button type="button" class="btn btn-sm btn-neutral" id="twSlotFromSaved">{% if LANGUAGE_CODE == 'ar' %}البدء من الأعمدة المحفوظة{% else %}Start from the saved columns{% endif %}</button></p>
+        <fieldset class="ux-field">
+          <legend class="ux-field-label" id="twSlotLecturesLegend">{% if LANGUAGE_CODE == 'ar' %}المحاضرات (75 دقيقة){% else %}Lectures (75 min){% endif %}</legend>
+          <table class="ux-rows" id="twSlotLectures" aria-labelledby="twSlotLecturesLegend"></table>
+          <div><button type="button" class="btn btn-sm btn-neutral" data-slot-add="slot_config" data-focus-key="slot-add:slot_config">{% if LANGUAGE_CODE == 'ar' %}إضافة عمود محاضرات{% else %}Add a lecture column{% endif %}</button></div>
+        </fieldset>
+        <fieldset class="ux-field">
+          <legend class="ux-field-label" id="twSlotLabsLegend">{% if LANGUAGE_CODE == 'ar' %}المعامل (100 دقيقة){% else %}Labs (100 min){% endif %}</legend>
+          <table class="ux-rows" id="twSlotLabs" aria-labelledby="twSlotLabsLegend"></table>
+          <div><button type="button" class="btn btn-sm btn-neutral" data-slot-add="lab_slot_config" data-focus-key="slot-add:lab_slot_config">{% if LANGUAGE_CODE == 'ar' %}إضافة عمود معامل{% else %}Add a lab column{% endif %}</button></div>
+        </fieldset>
+        {# Why Remove is off on a list's only row (its aria-describedby). #}
+        <p class="ux-field-hint" id="twSlotOneRow" hidden>{% if LANGUAGE_CODE == 'ar' %}تبقى في القائمة فترة واحدة على الأقل: القائمة الفارغة تعني الأعمدة الافتراضية.{% else %}A list keeps at least one column: an empty list would mean the default columns.{% endif %}</p>
+        <p class="ux-field-hint" id="twSlotFlags" hidden></p>
+      </div>
+      <section class="tw-slot-step" id="twSlotReview" aria-labelledby="twSlotReviewTitle" hidden>
+        <h3 class="tw-slot-review-title" id="twSlotReviewTitle" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}راجِع قبل الحفظ{% else %}Check before saving{% endif %}</h3>
+        <div id="twSlotReviewBody"></div>
+      </section>
+    </div>
+    {# Why nothing was saved, said inside the dialog (a toast behind a modal is never seen). #}
+    <p class="tw-dialog-alert" id="twSlotAlert" role="alert" hidden></p>
+    <div class="ux-dialog-foot">
+      <p class="ux-dialog-foot-note" id="twSlotNote"></p>
+      <button type="button" class="btn btn-sm btn-neutral" data-dialog-close>{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+      <button type="button" class="btn btn-sm btn-neutral" id="twSlotBack" hidden>{% if LANGUAGE_CODE == 'ar' %}العودة إلى التعديل{% else %}Back to editing{% endif %}</button>
+      <button type="submit" class="btn btn-sm btn-primary" id="twSlotSave" data-tw-mutation aria-describedby="twSlotNote" data-review-label="{% if LANGUAGE_CODE == 'ar' %}حفظ على أي حال{% else %}Save anyway{% endif %}">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</button>
+    </div>
+  </form>
+</dialog>
+
 {% include "core/partials/pr8_async_job_card.html" %}
 
 {% endblock %}
@@ -425,11 +474,11 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
   const defaultTerm = "{{ default_term|default:''|escapejs }}";
 </script>
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=4"></script>
-<script src="{% static 'js/timetable-slot-config.js' %}?v=4"></script>
+<script src="{% static 'js/timetable-slot-config.js' %}?v=5"></script>
 <script src="{% static 'js/timetable-section-teacher.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-room-choice.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=58"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=60"></script>
 <script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}

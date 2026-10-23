@@ -178,6 +178,23 @@ padding-aware for `p-0`.
   `.ux-choice-static` is a row that cannot be chosen, its reason written in it
   (no disabled radios); `.ux-choice-title` is a flex line (icon, code, words);
   `.ux-choice-status` is a row's small status line.
+- `.ux-rows` — a list edited as rows (the slot dialog, §7.2 item 6, 6f): a
+  table, one row per item, a row header (its number), text fields, then the
+  row's own icon buttons (`.ux-rows-actions`, each named by its row; one that
+  cannot act now is `aria-disabled`, so the keyboard stays on it, and drawn
+  faded). `.ux-rows-time` is a 24-hour time typed as text (76px, left to right
+  in either language), `.ux-rows-length` a computed value, `.ux-rows-flags`
+  the row's pills; `.ux-rows-grow` (the label's cell) takes the room the
+  others leave, each of them at least a fixed width, so two tables of one
+  dialog line up. Below 560px each row is two lines (its number and label,
+  then the rest), the header row out of sight only.
+- `.ux-field-error` — a field's error under it, named by the field's
+  `aria-describedby`; in a dialog a field the server refused
+  (`aria-invalid="true"`) takes a critical edge, inside and out (3:1).
+  Instructor management's `.im-form-error`, the exam timetable's period
+  repeater and
+  the older `.field-error` are to move onto it and `.ux-rows` (F12).
+- `.ux-dialog-wide` — an 800px dialog, for one that edits rows.
 - `.ux-job` — the shared planner job card, floating at the window's end edge.
 - `.pill-n` — neutral status pill.
 
@@ -302,7 +319,16 @@ Stage 3 (to evaluate): a time-proportional week grid.
   `data-tw-about`), the words lead with what they are about (course and
   section, isolated), so they never read as that dialog's own.
   Its commit checks the page's edit hold itself before it writes
-  (`dialogWrite`), since the page's busy guard answers with a toast.
+  (`dialogWrite`, which answers a failure as `{code, status, error}`, the
+  last the server's own error), since the page's busy guard answers with a
+  toast.
+- The grid's columns are edited on PR 1's contract (§7.2 item 6, 6f): the
+  page sends each list's rows as typed (label, start, end; never a flag, never
+  an empty list, which the server would save as its defaults) and checks no
+  time; the server's `VALIDATION_SLOTS` is marked on the row sent at its
+  index, and its `SLOT_EDIT_NEEDS_CONFIRMATION` list is confirmed only by
+  its fingerprint, after the user has read it. Unsaved edits are kept as the
+  scenario's draft until a save lands.
 - The filter and the programme lens are a view over the board
   (`applyGridView`, §7.2 item 6, 6c): they change attributes and text only —
   `data-dim`, `aria-describedby`, titles, a fold row's and rowgroup's
@@ -334,6 +360,16 @@ Stage 3 (to evaluate): a time-proportional week grid.
   roles follow the allocation and the marks. A view that cannot be built is
   `null` (logged), never at the cost of the lens or the quality keys.
   `/plan-lens/` does not carry it.
+- The workspace (not split view) reads the plan lens only with the quality
+  (`quality/?lens=1`, 6d), while it is wanted: the first quality read of an
+  opened or reset scenario, while the filter holds a programme or SHARED, on
+  Selection's Refresh and after a saved mark; every other read is plain. One
+  quality read is in flight; a request joins it when it is about the same
+  scenario and data and has the lens or needs none. The lens is never part of
+  `TW.quality`. A programme in the filter dims by `programme_view`'s roles
+  (any role, over the union; `shared_roles` with SHARED); the page holds no
+  copy of the per-plan rule, and a meeting the roles never saw is unknown,
+  never dimmed.
 
 ## 6. Acceptance
 
@@ -1593,6 +1629,369 @@ findings changed the plan:
    the fold's cell spans `numSlots + 1` columns: a screen reader may give
    their column positions loosely (the keyboard, by `data-ux-col`, is right
    and tested).
+   **As built, 6d (the lens from the quality read):** the page reads the plan
+   lens only through `quality/?lens=1` and never reads `/plan-lens/` (split
+   view still does, E22). `loadPlanLens`, its read record and its revision
+   are gone; `resetPlanLens` stays and now also forgets the quality read in
+   flight, which carries the lens (a reload after a planner job keeps the
+   data version, not the timetable). One read is in flight at a time
+   (`qualityRead = {scenarioId, version, lens, promise}`, contract C): a
+   request joins it when the scenario and data match and it has the lens or
+   none is needed; any other starts a new read and only the newest lands. A
+   read overtaken by a newer one resolves with the newer one, so a board's
+   load (`boardLoading`) holds until the quality it will show (LN9); a
+   caller of the older read used to resume while the newer read was still
+   out. `refreshWorkspaceQuality(force, {lens = lensWanted()})`: the
+   board's read passes `lensWanted()` explicitly, as the spec says, and every
+   other caller gets it by default, so the Generate path asks for it too.
+   `lensWanted()` is true while no lens answer (or failure) has come since the
+   scenario opened or the lens was reset, or while the filter holds a
+   programme or SHARED; Refresh and a saved mark pass `{lens: true}`. A
+   non-forced read reuses the held quality only when the lens is not wanted
+   or is current (`lensCurrent`). The answer is split
+   (`const {plan_lens, ...quality} = data`): the lens never sits in
+   `TW.quality`. Every path that opens another scenario resets the lens
+   (`onScenarioChange`, `resetWorkspace`, and now Generate's in-place
+   switch to the scenario it made, which kept the previous scenario's lens
+   until a reload: LN1b), so the lens is always this scenario's.
+   A lens read that fails, or answers `plan_lens: null`, keeps what the lens
+   had and marks it `failed`, with `failedVersion` the data it was about;
+   `programme_view: null` is a lens without a view. Neither is asked again
+   by typing or by a board switch for the same data (the spec's "stale"
+   would re-read on every keystroke and every switch while the lens cannot
+   be built); the next edit asks again, and so does Selection's Refresh.
+   **Dims by the server's roles.** `lensRoles(p, query, view)` reads
+   `programme_view`: for each programme of the filter (SHARED alone: every
+   programme of the view), the role its per-plan file gives the meeting
+   (`shared_roles` under SHARED), or null when the meeting is unknown (no
+   programme or SHARED, no roles, an id not in `placement_ids`). `inLens` is
+   "any role" over the union; the interim allocation rule of 6c
+   (`itemMatchesPlanToken`'s section branch) is gone, and what is left of it,
+   the course branch, is the left list's own question ("does P need this
+   course", E12) as `courseMatchesPlanToken`. The programme tokens are the
+   view's `programmes`; before a view is held, the boards' programmes
+   (upper-cased, board order; those the lens knows when a lens without a view
+   is held), as E5b says. The states (`lensView`): `fresh`; `updating`, the
+   data moved on since the board was dimmed for these same programmes, so
+   the old roles stay (a new meeting is unknown, so not dimmed) until the
+   new ones land; `checking`, no roles to show for these programmes yet (a
+   programme typed while its roles are read, or after an edit made without
+   it: nothing is dimmed for the lens, as the spec's table says); `failed`,
+   the last read gave no view: nothing is dimmed. "The same programmes" is
+   `TW.lensKeyShown`, written by `applyGridView` (the programmes and SHARED
+   the cards were last dimmed for from roles that were current, or kept), so
+   switching programmes while roles are read shows "checking", not roles the
+   user never saw. A card's title adds its role words for each programme
+   ("AI2: its own section", "… mixed section (5 of 12)", "… seats 2 of 30;
+   mainly another programme's", "… outside its plan; its file lists the
+   course as placed"; c and t from its section's lens row, the numbers the
+   server classified it by), "(checking)" when unknown, and nothing while
+   the view could not be read. The count's sentence is unchanged and the lens
+   follows it as its own sentence(s): "{P}: {n} of {total} meetings in its
+   timetable" per programme (n counted over the board, by the roles),
+   "{P}: checking…", "{P}: updating…", or "The programme view could not be
+   read; nothing is dimmed for {P}." With the seating unassessed the
+   allocation sentence follows. Roles arriving change attributes and text
+   only: the same cards, the focus kept, no node added or removed (LN4).
+   **Deviations from the spec's words**, each to keep a sentence true: the
+   shared note names its programmes ("Not a shared section in AI2's
+   timetable", "… in these timetables: AI, AI2") and SHARED alone says "Not a
+   shared section in any programme's timetable" (the spec's "these
+   timetables" had nothing to point at); the count's lens part is a sentence
+   after the count's, not the 6c clause "programme filter: {P}"; under
+   SHARED it reads "{P} (shared sections only): …", and SHARED alone
+   "Shared sections: {n} of {total} meetings in the programmes' timetables";
+   the Arabic count after من keeps 6c's genitive plural (لقاء واحد، لقاءين، 3
+   لقاءات، 11 لقاءً) where the spec wrote "{total} لقاء"; the Arabic failure
+   for several programmes or SHARED is "لم يُبهَت شيء لتصفية البرامج: …" (the
+   spec's "للبرنامج {P}" names one); the seating words come in three forms
+   (one programme, several, none: Selection's, which is about a section, not
+   a programme). The legend has two dim lines: 6c's "Dimmed: outside the
+   filter" for a text dim, and `#twLegendDimLens` for a lens dim, "Dimmed: "
+   and the lens's note ("Dimmed: not in AI2's timetable"), its words
+   rewritten in place (a text node, so typing a programme adds no node to the
+   board). The export scope names the programmes ("Programme AI2 only",
+   "Programmes AI2, DS only"), "Shared sections only" and the text, joined
+   by " · ", each programme isolated.
+   **Selection (E20):** the 4b words; "—" plus "The seating could not be
+   evaluated: sections follow the plan's allocation, as the per-plan files
+   do." when the seating is unassessed (never "No student of this scenario
+   sits here"); a read again that failed keeps the mix it had and says "The
+   programme mix could not be read again.", then "From before your last
+   change." when it is older than the data, with Refresh. A saved mark makes
+   one quality read with the lens and then the publish check (LN7: one
+   quality read in all, none of `/plan-lens/`, no Refresh after).
+   **Names (E19):** `duplicatedCodes()` is computed once per lens (it was a
+   scan of every course key per card); the board records the set it was
+   drawn with (`TW.drawnDupKey`) and a lens answer draws it again only when
+   the set changed (LN8: on open, drawn without names, then once with them;
+   the same set again, no redraw).
+   Versions: PAGE ?v=59 (`timetable-workspace.css`, `global.css` and
+   `ux-controls.js` unchanged).
+   **Tests:** LN1–LN11 with LN1b, LN5b–LN5d (`timetable-workspace.test.cjs`);
+   FL10 now dims by the roles (a spec change); the 4b and lens-mechanics
+   tests (older answer, joins, reset, older read finishing, Refresh, the
+   programme filter read anew) are re-pinned on the quality read, and
+   "older read finishing" now also pins that its caller waits for the newer
+   read (a behaviour change); the board harness answers no `/plan-lens/`, so
+   any read of it fails a test; `timetable-outcomes` gives the sliced
+   Generate a `resetPlanLens`; the copy and integration harnesses serve the
+   lens with the quality. Chrome: `LensTests`
+   (`tests/test_timetable_workspace_lens_browser.py`; the browser support
+   records every URL a page asks for). FL2 (6c) watched the board with a
+   MutationObserver whose callback was handed, and so emptied, the queue
+   before `takeRecords()` read it, after an await: it could see nothing.
+   FL2 and LN4 now keep every record they are handed.
+   Mutation-checked: 78 jsdom mutants of the page (the reading rule, the
+   joins and the newest-wins rule, failures, the roles and SHARED, the
+   states, every new string's form, the legend, the export scope,
+   Selection, the mark save, names) and 6 Chrome mutants (the roles by the
+   allocation, "other" dimmed, a `/plan-lens/` read kept, the legend line
+   for the wrong dim or faded, the scope as text). 73 jsdom mutants went
+   red at once. Of the 5 that survived, 3 now go red on a stronger test: a
+   reset that kept the read in flight (the reset test now lets the
+   forgotten read land before any other starts), the lens folding a table
+   whose text matches only a meeting the lens dims (LN3, "ds cs1"), and the
+   legend's words rebuilt as a node (LN4, once its observer kept its
+   records). 2 were equivalent by construction, and their code is gone: a
+   scenario tag on the lens (every path that opens another scenario resets
+   it) and a `failedVersion` for a lens with no view (its own version
+   already says it is current). Re-running the changed lines found a third
+   equivalent, a loading flag the failure wrote after the read had cleared
+   it, also gone (its mutant, the read's own clear, goes red). The 76 that
+   remain, and the 6 Chrome mutants, all go red.
+   Follow-up (recorded, not done): a lens whose programme view alone could
+   not be built (`programme_view: null`, the lens itself current) offers no
+   Refresh in Selection, whose mix is current; the dims say so in the
+   count's description and are read again by the next edit.
+   **Real data** (a copy of the QA database, production flags, the page on
+   a dev server, Chrome): on scenarios 663, 665 and 666, every board and
+   every board programme, with and without SHARED (120 cases), the count
+   "{n} of {total}" equals the meetings of that board the programme's file
+   holds by `programme_view`; each scenario made one `quality/?lens=1` read
+   and no other quality or `/plan-lens/` read across its five boards and
+   forty filters.
+   **After review (6d):** a Refresh (or a saved mark) overtaken by a plain
+   read, an edit made while it read with no programme in the filter,
+   brought no lens and still said "Programme mix updated.": the lens held
+   was loaded and not failed, though from before the edit (the old
+   `/plan-lens/` code said the same). `refreshPlanLens` now says it only
+   for a lens of the data now. A lens held that is older than the data,
+   with no read failed for the data now, is "The programme mix is from
+   before your last change." ("توزيع البرامج من قبل آخر تعديل."), as
+   Selection says with its Refresh; a read failed for the data now, or no
+   lens held (a reset), is "The programme mix is not available." as before.
+   LN12 pins the three, in English and Arabic: overtaken by a plain read,
+   by a read with the lens (a programme typed meanwhile: updated), and by a
+   reset. Mutation-checked: 9 mutants of the announcement (each term of
+   both conditions, the words in both languages) all go red, in LN12 or
+   LN5c.
+   Recorded, not changed: after a re-read of the same data that fails,
+   Selection keeps the mix it had ("could not be read again") while the
+   board drops every lens dim, as `lensView` says `failed` though the held
+   roles still describe the data. That is the spec's state table ("Read
+   failed → none for the lens", pinned by LN5c); a follow-up may align the
+   two. The reviewer's surviving mutant, `resetPlanLens` no longer clearing
+   `TW.lensKeyShown`, is equivalent: after a reset the lens is unloaded, so
+   `lensView` holds no view and says `checking`, and the first lens answer
+   runs `applyGridView`, which writes `lensKeyShown` before anything reads
+   the old key. The line stays as a guard.
+   **As built, 6f (the slot dialog):** ⋯ › Edit time slots… opens
+   `#twSlotDialog`, a template dialog through `UXControls.dialog`, where the
+   textarea editor was (a `dlg.confirm`, with the confirmation stacked on it;
+   `openSlotEditor` is gone). It shows the scenario's effective columns as
+   rows, lectures then labs, from `editorRows`: a label (`dir=auto`), a
+   start and an end typed as text (`.ux-rows-time`: `inputmode=numeric`,
+   `dir=ltr`, no autocomplete or spellcheck), the length (`lengthText`,
+   display only), the column's rule as a pill (Online only, Policy column:
+   read only, owner Q4, with the old editor's line that an online window
+   keeps its rule while it keeps its times), and Up, Down and Remove, icon
+   buttons named by the row (its label, else "Lecture column 3"; the name
+   isolated) and `aria-disabled` where they cannot act, so the keyboard stays
+   on them. Each field is named by its row header and its column header. A
+   list always keeps one row (owner Q5): Remove is off on a list's only row,
+   described by `#twSlotOneRow`, which shows; and Save sends nothing while a
+   list is empty (the server's columns never are; an empty list would be
+   saved as its defaults). Add appends a row and focuses its label; Remove
+   focuses the next row's label, or Add; Up and Down keep the keyboard on
+   the same button. Typing updates the row's length and its buttons' names
+   in place: the rows are drawn again only when they change shape.
+   **Save** (E15, contract C): the rows in their order through
+   `rowsToPayload` (trimmed, an empty value sent as empty, never a flag; no
+   time checked), each list's row keys kept as `sent`. `SC.save` with
+   `send` (`dialogWrite`, which now also returns the server's `error`,
+   E18), `invalid` (each refused field `aria-invalid` on the row sent at its
+   index, the row's error line under it — "End: must be after the start",
+   `fieldErrorText`, the field named as its column header — and the first
+   marked field takes the keyboard; a list's own error, index −1, is the
+   alert's alone), `confirm` (the review, below) and `report` (the alert).
+   While the save is out the rows are `inert`, the status line says "Saving
+   the columns…", the keyboard waits on the body (Save turns off under it,
+   as a choice list holds it in Move), and a second submit sends nothing.
+   A failure is said in the alert: the gate's words for published, a
+   planner job or busy (the hold's words go when it does), else "The
+   columns were not saved."; the keyboard goes back to Save unless the user
+   moved to a way out. **The review** is a step of the dialog, never a
+   dialog over it: the rows hide, `confirmationHtml(details, {parked:
+   true})` shows under "Check before saving", which takes the keyboard,
+   Back shows, Save reads "Save anyway" (the template's
+   `data-review-label`). Save anyway repeats the same body with the
+   server's fingerprint; the review stays in view while it is out, Back
+   hidden. Back, or the dialog closing, answers the module false (the
+   promise always settles); Back puts the keyboard on Save. **Saved:** the
+   draft goes, the dialog closes (the keyboard back on ⋯), `TW.scenario`
+   takes the answer, the board is read again (`selectBoard`, so quality
+   too, E17), and the saved columns are said — "Columns saved: 7 lecture, 8
+   lab." or, when `hidden_count` > 0, a warning that adds "now under their
+   tables, outside the columns: 2 meetings" (`meetingsCount`) — through
+   `dialogSay`, so a dialog open by then says it. **Holds:** Save is
+   `data-tw-mutation`; its note gives the first hold. The ⋯ item stays off
+   while the page is busy, as before, so the dialog meets a hold that starts
+   while it is open. **Drafts (E15d):** page memory per scenario, written on
+   every change, dropped when the rows would send what is saved, by "Start
+   from the saved columns" (`#twSlotDraft`, shown on an open that has a
+   draft) and by a save that lands; Cancel, Escape and a failure keep it.
+   A draft keeps `base`, the saved columns it started from (every lecture
+   and lab column's label, start, end and rule, as one string): an open
+   whose saved columns are no longer those (saved elsewhere, e.g. split
+   view, and read again with the board) still offers the draft, and its
+   notice adds "The saved columns changed since this draft."
+   (`#twSlotDraftChanged`, the warning ink, both arms), with "Start from the
+   saved columns" as before; the draft is never offered as current. A draft edited further
+   keeps its `base`; one started again from the saved columns takes theirs.
+   A draft that would send what is saved now is no draft at the open.
+   **Escape while the save is out** (D17a) closes the dialog; the save
+   ends and says how where the user is (the slot dialog open again, another
+   helper dialog, or a toast). A confirmation it then needs is not given:
+   nothing more is sent and it says "The columns were not saved."; when the
+   edits are kept and no slot dialog shows them, the words add "Your edits
+   come back when you open “Edit time slots” again." (a sentence beyond the
+   spec's strings). A refusal is never marked on the rows of a dialog opened
+   again meanwhile.
+   **The slot module** (`?v=5`, three templates) gains `editorRows`,
+   `rowsToPayload`, `lengthText` (`pluralAr`), `rowWords` (headers, a row's
+   list word, flags, Up/Down/Remove), `fieldErrorText`, `save({invalid})`
+   (without `invalid` the answer is as before: SC1 and split view's test;
+   a fourth answer that the list changed again is never shown, since no
+   send would follow a yes to it: three reviews, then "The timetable kept
+   changing…", for split view and MRI too), the reading of a typed time
+   (`typedTime`: an Arabic-Indic (U+0660–0669) or Eastern Arabic-Indic
+   (U+06F0–06F9) digit, as an Arabic keyboard types it, is its 0–9; used by
+   `lengthText` and by `rowsToPayload` for start and end, never for a label)
+   and `minutes`, the server's reading of a stored time (`_TIME`): the
+   grid's `timeMinutes` (6e) now calls it, so the grid and the dialog share
+   one client copy (PK5 still pins it against Python). The integration
+   harness loads the module before the page, as the template does, and the
+   workspace harness sets `<html lang>` as `base.html` does (the module
+   reads it). **Global** (`global.css ?v=87`): `.ux-rows` with its cells,
+   `.ux-field-error`, the refused field's critical edge in a dialog, and
+   `.ux-dialog-wide` (§3.3); page CSS (`?v=20`): the two steps' rhythm and
+   the review's heading. PAGE `?v=60`.
+   **Deviations from the spec:** (1) the rows' section is `#twSlotEditor`:
+   `#twSlotEdit` is the ⋯ item's id. (2) Only that section goes inert, not
+   the whole body: the body (`tabindex=-1`) holds the keyboard while Save is
+   off. (3) The tables' headers and a row's words are drawn from the slot
+   module (one copy, which the field error reuses), not written in the
+   template; the legends, Add, the hints, the review's heading and the
+   buttons are template arms. (4) The field error names the field by its
+   header ("End: …"), not by `FIELD` ("end"). (5) The open's refusals use
+   the gate's words as warnings ("Select a scenario first";
+   `REFUSAL.published`), not the old error toasts. (6) The dialog is 800px
+   (`.ux-dialog-wide`); at 600px the label had 30px. (7) Cells are
+   middle-aligned (the spec's CSS said top), and the length, rule and
+   actions cells have minimum widths with the label taking the rest, so the
+   two tables line up. (8) `{meetings}` in the toast is the page's
+   `meetingsCount`. (9) A field's name is its row header, then its column
+   header ("Lecture column 1 Start"), the spec's two parts in the order a
+   row is read.
+   **Tests:** SC1–SC6 (`timetable-slot-config.test.cjs`); SD1–SD12
+   (`timetable-workspace.test.cjs`) replace the textarea editor's four tests
+   (a spec change): SD1 rows, pills, names, focus, a second open refused;
+   SD2 the body; SD3 marks on the rows sent after a reorder, the alert, no
+   toast; SD4 the review (Back, Save anyway by fingerprint and its step,
+   Escape settling, the next open on the rows); SD4b a list that changed
+   while it was reviewed (the new list reviewed and confirmed by its own
+   fingerprint; after four answers, three of them reviewed, the module's
+   words and the rows back);
+   SD5 saved; SD6 Add, Remove,
+   Up, Down and the one-row rule, an empty list never sent; SD7 drafts; SD8
+   holds, inert, one save at a time, the open's refusals; SD9 Arabic (times
+   left to right, `pluralAr` lengths, isolated names and review times, the
+   template's arms); SD10 a save the user left; SD11 a draft older than
+   the saved columns, SD11b one whose column's label, start or end alone
+   changed (the confirm's ask; each field's mutant goes red); SD12 a time typed in Arabic digits. Chrome
+   (`tests/test_timetable_workspace_slot_dialog_browser.py`,
+   `SlotDialogTests`): SDB1 at 1366×650 and 1440×790, light and dark, en
+   and ar, wide font (the head and Save in view while the rows scroll, no
+   sideways scroll, the tables lined up with the label taking the spare
+   room, "08:00" whole in its 76px field and left to right, each field's
+   edge and the refused one's critical edge at 3:1, the words at 4.5:1,
+   nothing under 11px, a button that cannot act faded, Escape back to ⋯);
+   SDB2 the keyboard alone (⋯, the item, an end before its start, Enter:
+   marked and focused; fixed — in Arabic typed in Arabic-Indic digits, its
+   length shown — Enter: saved to the database as 0–9, the online-only
+   windows keeping their rule, the keyboard on ⋯); SDB3 removing the 16:00
+   column that holds an ORM meeting (reviewed, Save anyway, the meeting
+   under its table); SDB4 below 560px each row two lines, nothing sideways;
+   SDB5 en and ar, light and dark: a draft is current after the board is
+   read again from the real server, and says the saved columns changed once
+   they are saved elsewhere (its words at 4.5:1), "Start from the saved
+   columns" giving the new ones.
+   The neutral-button inventory gains the dialog's buttons.
+   Mutation-checked: 100 jsdom mutants and 15 Chrome mutants all go red but
+   two, argued equivalent: the draft's defensive copy (every change to the
+   rows writes the draft again, so an alias holds the same rows), and the
+   session check before a left save resets `pending` and the step (a dialog
+   opened again cannot be saving or reviewing while an older save is out:
+   every write waits for the one out). Survivors first found and
+   strengthened: the step not reset at open (SD4 now reopens while Save
+   anyway is out), the click's `aria-disabled` check (removed: the row's
+   own rules already refuse, and the last-row rule now goes red), a second
+   submit while out (its alert and status are pinned), a second open (no
+   row is drawn again), a refusal marked on a reopened dialog's rows, the
+   scenario not taking the answer (skipping it; a replace for the merge
+   survives, equivalent: the server answers the full scenario), and the
+   label's cell not taking the spare room (each time cell is pinned at its
+   field's width).
+   **Review fixes (6f review, all non-blocking):** (1) M18 survived: SD7
+   read the alert's text only, so a reopen that left `#twSlotAlert` shown
+   and empty (a bare warning strip) passed; SD7 now pins `hidden`. (2) A
+   draft had no record of the saved columns it started from, so after a
+   save elsewhere the older draft came back as if current (saving it would
+   replace the newer columns unless meetings or rules made the server ask):
+   `base` and `#twSlotDraftChanged`, above (SD11, SDB5). (3) `save()` asked
+   a fourth time on the fourth 409 and then sent nothing: the last answer is
+   no longer shown (the module's test counts sends and reviews, en and ar;
+   SD4b). (4) A time typed in Arabic digits had no length and the server
+   refused it: `typedTime` (SC6 en and ar, SD12, SDB2 in Arabic). Mutants:
+   18 jsdom (28 runs) and 5 Chrome, all red. M1 (marking by the live order
+   instead of `sent`) stays, argued equivalent: the rows are inert while a
+   save is out and a dialog opened again gets no marks, so the live order
+   at the answer is the order sent; SD3 pins the marks against the order at
+   open (its reorder is before Save), not `sent` against a later order. M34
+   (a removed row's mark kept) is equivalent too: row keys are never reused.
+   **Real data** (a copy of the QA database, read only): all five
+   scenarios (662–666) are on the server's defaults (7 lecture and 8 lab
+   columns, 3 online-only); each one's rows, sent back unchanged as the
+   dialog sends them, clean to exactly the columns it has (flags carried),
+   with nothing to confirm; no label is over 40 characters; and the
+   module's time rule reads all 788 stored starts and ends as the server
+   does.
+   Follow-ups (recorded, not done): split view's editor on this dialog
+   (F13); `.im-form-error` and the exam repeater on `.ux-rows` and
+   `.ux-field-error` (F12). A row's rule pill is drawn once, from the saved
+   flags: it stays after the row's times are edited, and a plain row given
+   a flagged column's start and end shows none, though the server carries
+   the rule by start and end; display only — the review names a rule lost
+   before anything is saved (E15b). The ⋯ item stays off while the page is
+   busy or a planner job runs, so a draft cannot be looked at then (the
+   spec's "opens, Save held" is reached only by a hold that starts while
+   the dialog is open). Labels past 40
+   characters are cut by the server silently; the next open shows the saved
+   label. Below 560px the rows are flex lines: table semantics there are
+   not checked with a screen reader (the workspace's acceptance starts at
+   1366px). The grid's column cells still read their start with the older
+   `minutesOf` for `data-ux-col` (the same minutes for every stored column).
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any

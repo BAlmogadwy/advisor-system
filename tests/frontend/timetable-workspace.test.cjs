@@ -25,6 +25,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
   // base.html loads shared-utils (esc, pluralAr) on every page.
   w.eval(fs.readFileSync(path.join(root, 'static/js/shared-utils.js'), 'utf8'));
   w.LANGUAGE_CODE = arabic ? 'ar' : 'en';
+  // base.html's <html lang>, which the slot module reads.
+  d.documentElement.lang = arabic ? 'ar' : 'en';
   w._injectCsrf = x => x;
   w.esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   w.debounce = fn => fn;
@@ -36,8 +38,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
     if (answer === undefined) {
       if (url.startsWith('/ops/tw/scenarios/?')) answer = { scenarios: [scenario] };
       else if (url === '/ops/tw/scenarios/1/') answer = { scenario: { ...scenario, ...extra }, active_job: extra.active_job || null };
+      // The classic page reads the lens with the quality (6d), never /plan-lens/.
       else if (url.includes('/quality/')) answer = quality;
-      else if (url.includes('/plan-lens/')) answer = { plans: [], courses: {}, sections: {} };
       else if (url.startsWith('/ops/tw/boards/?')) answer = { boards: [board] };
       else if (/\/boards\/\d+\/$/.test(url)) answer = { placements: [placement], slot_config: scenario.slot_config };
       else if (url.includes('/conflicts/')) answer = { summary: { critical: 0 }, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, section_a: 'CS323', section_b: 'FE2', overlap_count: 14 }] };
@@ -712,92 +714,6 @@ test('a board answer without columns keeps the scenario’s effective columns', 
   assert.equal(h.d.querySelectorAll('.tw-lab-grid .tw-slot-time').length, 2);
 });
 
-function slotHarness(t, answer) {
-  const posts = [];
-  return harness(t, (url, opts) => {
-    if (url === '/ops/tw/boards/2/') return { placements: [placement], ...columns };
-    if (!url.endsWith('/slots/update/')) return undefined;
-    const body = JSON.parse(opts.body);
-    posts.push(body);
-    return answer(body);
-  }, columns).then(h => Object.assign(h, { posts }));
-}
-const dialogs = (h, ...answers) => {
-  const shown = [];
-  h.w.dlg = { confirm: async ({ title, body }) => {
-    shown.push({ title, body });
-    // The real dialog puts its body in the page (one at a time): the editor
-    // reads its textareas. An answer may first type into it.
-    h.d.querySelectorAll('.stub-dialog').forEach(node => node.remove());
-    h.d.body.insertAdjacentHTML('beforeend', `<div class="stub-dialog">${body}</div>`);
-    const answer = answers.shift();
-    return typeof answer === 'function' ? answer(h.d) : answer;
-  } };
-  return shown;
-};
-const HIDDEN = { hidden: [{ placement_id: 10, board_id: 2, board_label: 'Term 7', course_code: 'CS323', section: 'S1', day: 'SUN', start_time: '09:00', end_time: '10:15', is_locked: true }], hidden_count: 1, fingerprint: 'abc123' };
-
-test('a slot save that would hide meetings names them, and repeats only with that confirmation', async t => {
-  const h = await slotHarness(t, body => body.confirm === 'abc123'
-    ? { ok: true, scenario: { ...scenario, ...columns, slot_config: body.slot_config }, hidden_count: 1 }
-    : { httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: HIDDEN } });
-  await h.select();
-  const shown = dialogs(h, true, true);
-  await h.w.openSlotEditor();
-  // The editor lists the effective columns, the online window included, and says it stays online-only.
-  assert.match(shown[0].body, /Online 1\t15:50\t17:30/);
-  assert.match(shown[0].body, /The online-only columns \(15:50\) stay online-only/);
-  assert.equal(h.posts.length, 2);
-  assert.equal(h.posts[0].confirm, undefined);
-  assert.deepEqual(h.posts[0].lab_slot_config.map(row => row.start), ['09:00', '15:50']);
-  assert.match(shown[1].body, /leaves 1 meeting outside the grid/);
-  // The workspace parks such a meeting under its table, and says so (6e, PK6).
-  assert.match(shown[1].body, /still published; each is shown under its table until a column has its time again:/);
-  assert.match(shown[1].body, /Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Sun <bdi dir="ltr">09:00–10:15<\/bdi> · time locked/);
-  assert.equal(h.posts[1].confirm, 'abc123');
-  assert.ok(h.notices.some(n => n.type === 'success'));
-  assert.deepEqual(h.errors, []);
-});
-
-test('a declined confirmation reopens the editor with the typed text, and sends nothing more', async t => {
-  const h = await slotHarness(t, () => ({ httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: HIDDEN } }));
-  await h.select();
-  const edited = '09:00-10:15\t09:00\t10:15\nLate\t16:00\t17:15';
-  const shown = dialogs(h, d => { d.getElementById('twSlotInput').value = edited; return true; }, false, false);
-  await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 1, 'declined: no second request');
-  assert.equal(shown.length, 3, 'editor, confirmation, editor again');
-  assert.match(shown[2].body, /Late\t16:00\t17:15/, 'the user’s edit is still there');
-  assert.ok(!h.notices.some(n => n.type === 'success'));
-});
-
-test('a save the server cannot take now (busy) gives the typed text back', async t => {
-  const h = await slotHarness(t, () => ({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }));
-  await h.select();
-  const shown = dialogs(h, d => { d.getElementById('twSlotInput').value = 'Kept	09:00	10:15'; return true; }, false);
-  await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 1);
-  assert.equal(shown.length, 2, 'the editor came back');
-  assert.match(shown[1].body, /Kept	09:00	10:15/);
-});
-
-test('a line the editor cannot read saves nothing and is named; a refused column is named', async t => {
-  let invalid = false;
-  const h = await slotHarness(t, () => invalid
-    ? { httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'x', details: { errors: [{ list: 'slot_config', index: 0, field: 'end', message: 'must be after the start' }] } } }
-    : { ok: true });
-  await h.select();
-  const shown = dialogs(h, d => { d.getElementById('twLabSlotInput').value = 'Lab 1\t09:00\t10:40\nevening labs'; return true; }, false);
-  await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 0, 'nothing is sent while a line is unread');
-  assert.ok(h.notices.some(n => n.type === 'error' && /Labs: line 2/.test(n.text)), JSON.stringify(h.notices));
-  assert.match(shown[1].body, /evening labs/, 'the editor reopens with the text');
-  invalid = true;
-  dialogs(h, true, false);
-  await h.w.openSlotEditor();
-  assert.ok(h.notices.some(n => n.type === 'error' && n.text === 'The columns were not saved: Lectures, line 1: end must be after the start'), JSON.stringify(h.notices));
-});
-
 /* ── One issue model: cards, Issues, counts and board buttons agree with the server ── */
 const at = (id, extra = {}) => ({ ...placement, id, term_section_id: id + 100, course_code: `AI${id}`, room: 'R1',
   needs_room: true, room_state: 'assigned', is_online: false, shared_with_other_scenario: false, ...extra });
@@ -1141,19 +1057,36 @@ test('the legend says what the marks mean, in both languages, under a board that
   }
 });
 
-test('two courses sharing a code are told apart on the board: colour by key, name read in its own direction', async t => {
+test('LN8 two courses sharing a code are told apart: colour by key, and named once the lens says so (one redraw; none for the same codes again)', async t => {
   const placements = [
     at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' }),
     at(11, { day: 'MON', course_code: 'CS112', course_key: 'CS112::PROGRAMMING_II', course_name: 'Programming II', term_section_id: 120 }),
   ];
-  // The plan lens is where the page learns that two courses share a code.
+  // The lens is where the page learns that two courses share a code: it comes
+  // with the quality read, after the board is first drawn.
+  let courses = { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} };
   const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements, slot_config: scenario.slot_config }
-    : url.includes('/plan-lens/') ? { plan_lens: { plans: [], sections: {}, courses: { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} } } }
+    : url.includes('/quality/') && url.endsWith('?lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses } }
     : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
+  const draws = [];
+  const draw = h.w.renderGridWithSlots;
+  h.w.renderGridWithSlots = (...args) => {
+    draw(...args);
+    draws.push([...h.d.querySelectorAll('#twGrid .tw-card-name')].map(name => name.textContent));
+  };
   await h.select();
+  assert.deepEqual(draws, [[], ['Programming I', 'Programming II']], 'drawn without names, then once more with them');
   const hue = id => card(h, id).style.getPropertyValue('--tw-card-hue');
   assert.notEqual(hue(10), hue(11), 'the card colours by course key, not by code');
   assert.equal(card(h, 10).querySelector('.tw-card-name').getAttribute('dir'), 'auto');
+  // The same codes again: the board is not drawn again.
+  await h.w.refreshWorkspaceQuality(true, { lens: true });
+  assert.equal(draws.length, 2, 'the same codes: no redraw');
+  // The codes no longer shared: drawn once more, without the names.
+  courses = { 'CS112::PROGRAMMING_I': {} };
+  await h.w.refreshWorkspaceQuality(true, { lens: true });
+  assert.deepEqual(draws.slice(2), [[]]);
+  assert.deepEqual(h.errors, []);
 });
 
 test('the tone mark is announced, with the reason', async t => {
@@ -1306,7 +1239,7 @@ test('search finds a section by the teacher its card names, never by a stale mee
    Every meeting stays drawn. A table the text matches nothing in folds to one
    row (its toggle, the table's one keyboard stop); the other cards the text
    misses are dimmed, by attributes only, so typing never draws the board
-   again. Programme tokens (the interim lens) dim and never fold. */
+   again. Programme tokens (the lens, 6d) dim and never fold. */
 const VIEW_LABS = [{ label: 'L1', start: '10:30', end: '12:10' }];
 function viewHarness(t, { placements, labs = VIEW_LABS, lens = null, q = noRooms, arabic = false, other = null } = {}) {
   return harness(t, url => {
@@ -1314,12 +1247,14 @@ function viewHarness(t, { placements, labs = VIEW_LABS, lens = null, q = noRooms
     if (other && url.startsWith('/ops/tw/boards/?')) return { boards: [board, { ...board, id: 3, label: 'Term 8', nominal_term: 8 }] };
     if (other && url === '/ops/tw/boards/3/') return { placements: other, slot_config: scenario.slot_config, lab_slot_config: labs };
     if (url.includes('/conflicts/')) return quiet;
-    if (url.includes('/quality/')) return q;
-    if (url.includes('/plan-lens/') && lens) return { plan_lens: lens };
+    // The lens comes with the quality read that asks for it (6d).
+    if (url.includes('/quality/')) return lens && url.endsWith('?lens=1') ? { ...q, plan_lens: lens } : q;
     if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     return undefined;
   }, {}, arabic);
 }
+// A programme or code as plain text isolates it (U+2066 … U+2069).
+const iso = text => `${String.fromCharCode(0x2066)}${text}${String.fromCharCode(0x2069)}`;
 // S1: two lectures; S2: a lecture and a lab. With labs on, each group has a lab table.
 const viewRows = () => [
   at(10, { course_code: 'CS101' }),
@@ -1408,14 +1343,17 @@ test('FL2 typing keeps the same card nodes and the keyboard on a focused card; t
   await h.select();
   const nodes = [...h.d.querySelectorAll('#twGrid .tw-card')];
   card(h, 11).focus();
-  const observer = new h.w.MutationObserver(() => {});
+  // Records are handed to the callback after each turn: keep them all.
+  const records = [];
+  const observer = new h.w.MutationObserver(list => records.push(...list));
   observer.observe(h.d.getElementById('twGrid'), { childList: true, subtree: true });
   for (const text of ['c', 'cs', 'cs1', 'math', 'zzz', '']) {
     await findText(h, text);
     assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')], nodes, `"${text}": the same cards`);
     assert.equal(h.d.activeElement, card(h, 11), `"${text}": the keyboard stays`);
   }
-  assert.deepEqual(observer.takeRecords(), [], 'no node of the board added or removed');
+  records.push(...observer.takeRecords());
+  assert.deepEqual(records, [], 'no node of the board added or removed');
 });
 
 test('FL3 a fold counts its toned meetings with the icon and the words; a later warning updates the count in place', async t => {
@@ -1659,61 +1597,78 @@ test('FL9 the count, its title and the folds count meetings by the language’s 
   }
 });
 
-test('FL10 a programme token (the interim lens) dims, by the union of the programmes, and never folds; SHARED narrows', async t => {
-  const lens = { plans: ['AI', 'AI2'], courses: {}, sections: {
-    110: { filter_plans: ['AI'] },
-    111: { filter_plans: ['AI2'], shared: true },
-    112: { filter_plans: ['AI2'] },
+test('FL10 a programme token dims what its per-plan file leaves out, by the union of the programmes, and never folds; SHARED reads the shared roles', async t => {
+  // The roles are the server's (programme_view, 6d): the page holds no copy of the rule.
+  const lens = { plans: ['AI', 'AI2'], courses: {}, sections: {}, seating: { assessed: true, students: 9 }, programme_view: {
+    programmes: ['AI', 'AI2'],
+    roles: { AI: { main: [10] }, AI2: { main: [11, 12] } },
+    shared_roles: { AI: {}, AI2: { main: [11] } },
+    placement_ids: [10, 11, 12, 20],
+    seating_assessed: true,
   } };
   for (const arabic of [false, true]) {
     const h = await viewHarness(t, { lens, labs: [], arabic, placements: [
       at(10, { course_code: 'CS101', term_section_id: 110 }),
       at(11, { course_code: 'MATH1', term_section_id: 111, day: 'MON' }),
       at(12, { course_code: 'PHYS1', term_section_id: 112, day: 'TUE' }),
-      at(20, { course_code: 'BIO1', section: 'S2', term_section_id: 220 }),  // in no programme: its table is all dimmed
+      at(20, { course_code: 'BIO1', section: 'S2', term_section_id: 220 }),  // in no programme's file: its table is all dimmed
     ] });
     await h.select();
     await findText(h, 'ai2');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', '', 'lens']);
     assert.deepEqual([foldOf(h, 'S1', 'lecture').state, foldOf(h, 'S2', 'lecture').state], [NO_FOLD, NO_FOLD], 'the lens never folds');
     assert.equal(card(h, 10).getAttribute('aria-describedby'), 'twDimNoteLens');
-    const note = arabic ? 'خارج تصفية البرامج: \u2066AI2\u2069' : 'Outside the programme filter: \u2066AI2\u2069';
+    const note = arabic ? `ليست في جدول ${iso('AI2')}` : `Not in ${iso('AI2')}’s timetable`;
     assert.equal(h.d.getElementById('twDimNoteLens').textContent, note);
     assert.equal(card(h, 10).title, note);
+    assert.equal(card(h, 11).title, arabic ? `${iso('AI2')}: شعبة خاصة به` : `${iso('AI2')}: its own section`, 'a card in the file says its role');
     assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? '2 من 4' : '2 of 4');
     assert.equal(h.d.getElementById('twSearch').title, arabic
-      ? 'المطابق للتصفية: 2 من 4 لقاءات؛ تصفية البرامج: \u2066AI2\u2069.' : '2 of 4 meetings match; programme filter: \u2066AI2\u2069.',
-      'the count’s words say the programme filter');
-    // A lens dim is a dim: a heading does not count it a match, and the legend says what it is.
+      ? `المطابق للتصفية: 2 من 4 لقاءات. ${iso('AI2')}: 2 من 4 لقاءات في جدوله.`
+      : `2 of 4 meetings match. ${iso('AI2')}: 2 of 4 meetings in its timetable.`,
+    'the count’s words say what the programme’s timetable holds');
+    // A lens dim is a dim: a heading does not count it a match, and the
+    // legend's programme line says what it is (the text's line stays hidden).
     assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-group-meta')].map(m => m.textContent), arabic
       ? ['3 مقررات · مطابقتان', 'مقرر واحد · لا شيء مطابق'] : ['3 courses · 2 matches', '1 course · 0 matches']);
-    assert.equal(h.d.getElementById('twLegendDim').hidden, false, 'the legend’s dim line, for a lens dim alone');
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [true, false]);
+    assert.equal(h.d.getElementById('twLegendDimLens').textContent, arabic ? `باهتة: ${note}` : `Dimmed: not in ${iso('AI2')}’s timetable`);
     await findText(h, 'ai ai2');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['', '', '', 'lens'], 'several programmes: a union');
-    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
-      ? 'خارج تصفية البرامج: \u2066AI\u2069، \u2066AI2\u2069' : 'Outside the programme filter: \u2066AI\u2069, \u2066AI2\u2069');
+    const several = arabic ? `ليست في أيٍّ من جداول: ${iso('AI')}، ${iso('AI2')}` : `In none of these timetables: ${iso('AI')}, ${iso('AI2')}`;
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, several);
+    assert.equal(h.d.getElementById('twLegendDimLens').textContent, arabic ? `باهتة: ${several}` : `Dimmed: in none of these timetables: ${iso('AI')}, ${iso('AI2')}`,
+      'the legend’s words follow the filter');
     await findText(h, 'shared ai2');
-    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED: the shared sections of the programmes');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED: the programme’s shared roles');
     assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
-      ? 'خارج تصفية البرامج: \u2066AI2\u2069، الشعب المشتركة' : 'Outside the programme filter: \u2066AI2\u2069, shared sections');
+      ? `ليست شعبة مشتركة في جدول ${iso('AI2')}` : `Not a shared section in ${iso('AI2')}’s timetable`);
     await findText(h, 'shared');
-    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED alone: every shared section');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED alone: every programme’s shared roles');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
+      ? 'ليست شعبة مشتركة في جدول أي برنامج' : 'Not a shared section in any programme’s timetable');
+    await findText(h, 'shared ai ai2');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
+      ? `ليست شعبة مشتركة في هذه الجداول: ${iso('AI')}، ${iso('AI2')}` : `Not a shared section in these timetables: ${iso('AI')}, ${iso('AI2')}`);
     // A programme and text: the text folds, the programme only dims.
     await findText(h, 'ai2 math');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['filter lens', '', 'filter', 'filter lens']);
     assert.equal(card(h, 10).getAttribute('aria-describedby'), 'twDimNoteFilter twDimNoteLens');
     assert.deepEqual([foldOf(h, 'S1', 'lecture').state, foldOf(h, 'S2', 'lecture').state], [NO_FOLD, FOLDED]);
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [false, false], 'both lines');
     assert.equal(h.d.getElementById('twSearch').title, arabic
-      ? 'المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1؛ تصفية البرامج: \u2066AI2\u2069.'
-      : '1 of 4 meetings match; tables folded for no match: 1; programme filter: \u2066AI2\u2069.');
+      ? `المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1. ${iso('AI2')}: 2 من 4 لقاءات في جدوله.`
+      : `1 of 4 meetings match; tables folded for no match: 1. ${iso('AI2')}: 2 of 4 meetings in its timetable.`);
     // An opened fold is kept for the board and its TEXT: a programme token
     // removed or added, the text the same, keeps it open.
     foldOf(h, 'S2', 'lecture').toggle.click();
     assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED);
     await findText(h, 'math');
     assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED, 'a programme removed: still open');
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [false, true], 'the text’s line alone');
     await findText(h, 'math ai');
     assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED, 'a programme added: still open');
+    assert.deepEqual(h.errors, []);
   }
 });
 
@@ -2026,8 +1981,8 @@ test('PK4c a parked card drags onto a cell as any card does: the drop moves it t
 });
 
 /* ── Programme mark in Selection (PR 4b) ── */
-const LENS = sections => ({ plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } },
-  sections, programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } } });
+const LENS = (sections, programme_view = null) => ({ plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } },
+  sections, programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 }, seating: { assessed: true, students: 44 }, programme_view } });
 const markRows = () => [
   at(10, { course_key: 'CS112', preferred_programme: '', preferred_programme_editable: true }),
   at(13, { day: 'WED', course_key: 'CS112', term_section_id: 110, preferred_programme: '', preferred_programme_editable: true }),  // its other meeting
@@ -2036,13 +1991,16 @@ const markRows = () => [
 ];
 async function markHarness(t, { sections = () => ({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }), lens = null,
   answer = null, hold = {}, extra = {}, arabic = false, rows = markRows() } = {}) {
+  // `lens` counts the quality reads that ask for the lens; `quality` every one.
   const seen = { posts: [], lens: 0, quality: 0, readiness: 0 };
   const h = await harness(t, async (url, opts) => {
     if (url === '/ops/tw/boards/2/') return { placements: rows, slot_config: scenario.slot_config };
-    if (url.includes('/plan-lens/')) {
+    if (url.includes('/quality/') && url.endsWith('?lens=1')) {
+      seen.quality++;
       const n = ++seen.lens;
       if (hold.lens) await hold.lens(n);
-      return lens ? lens(n) : LENS(sections());
+      const body = lens ? lens(n) : LENS(sections());
+      return body.httpError ? body : { ...noRooms, ...body };
     }
     if (url.endsWith('/programme-preference/') && opts.method === 'POST') {
       const body = JSON.parse(opts.body);
@@ -2136,7 +2094,7 @@ test('after an edit the mix and its trade-off say how old they are; Refresh read
   assert.match(h.body().textContent, /Loading programme mix/);
   const busy = h.body().querySelector('[data-tw-lens-refresh]');
   assert.equal(busy.disabled, true, 'Refresh waits while it reads');
-  busy.disabled = false; busy.click(); h.w.loadPlanLens();  // a second ask joins the read in flight
+  busy.disabled = false; busy.click(); h.w.refreshWorkspaceQuality(true, { lens: true });  // a second ask joins the read in flight
   await settle();
   assert.equal(h.seen.lens, before + 1, 'one read');
   held.resolve();
@@ -2146,13 +2104,75 @@ test('after an edit the mix and its trade-off say how old they are; Refresh read
   assert.ok(h.body().contains(h.d.activeElement), 'the keyboard stays in the panel');
 });
 
+test('LN12 a Refresh overtaken by a plain read (an edit made meanwhile) never says the mix was updated, but how old it is; by a read with the lens, it was; by a reset, none is held', async t => {
+  for (const arabic of [false, true]) {
+    const holds = {};
+    // A programme view, so that AI2 typed is a programme.
+    const view = { programmes: ['AI', 'AI2'], roles: { AI2: { main: [10, 13] } }, shared_roles: {}, placement_ids: [10, 11, 12, 13], seating_assessed: true };
+    const h = await markHarness(t, { arabic, lens: () => LENS({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }, view),
+      hold: { lens: n => holds[n]?.promise } });
+    const status = h.d.getElementById('twInspectorStatus');
+    card(h, 10).click();
+    h.w.TW.dataVersion++;  // an edit
+    h.w.renderRightPanel('selection');
+    const [lens0, quality0] = [h.seen.lens, h.seen.quality];
+    holds[lens0 + 1] = deferred();
+    status.textContent = '';
+    h.body().querySelector('[data-tw-lens-refresh]').click();
+    await settle();
+    assert.equal(h.seen.lens, lens0 + 1, 'the Refresh reads the lens');
+    // Another edit while it reads, with no programme in the filter: the
+    // board's read is plain and overtakes it.
+    h.w.TW.dataVersion++;
+    assert.equal(h.w.lensWanted(), false);
+    await h.w.refreshWorkspaceQuality(false, { lens: h.w.lensWanted() });
+    assert.deepEqual([h.seen.lens, h.seen.quality], [lens0 + 1, quality0 + 2], 'a plain read');
+    holds[lens0 + 1].resolve();
+    await wait(() => status.textContent !== '');
+    assert.equal(status.textContent, arabic ? 'توزيع البرامج من قبل آخر تعديل.' : 'The programme mix is from before your last change.');
+    assert.notEqual(h.w.TW.planLens.version, h.w.TW.dataVersion, 'the mix held is from before the edit');
+    assert.match(h.body().textContent, arabic ? /من قبل آخر تعديل/ : /From before your last change/, 'as Selection says');
+    assert.equal(h.body().querySelector('[data-tw-lens-refresh]')?.disabled, false, 'with its Refresh');
+    // Overtaken by a read with the lens (a programme typed meanwhile), the
+    // mix is of the data now: updated.
+    holds[lens0 + 2] = deferred();
+    status.textContent = '';
+    h.body().querySelector('[data-tw-lens-refresh]').click();
+    await settle();
+    h.w.TW.dataVersion++;
+    await findText(h, 'AI2');
+    await wait(() => h.seen.lens === lens0 + 3 && h.w.TW.planLens.version === h.w.TW.dataVersion);
+    assert.equal(status.textContent, '', 'nothing said before the Refresh ends');
+    holds[lens0 + 2].resolve();
+    await wait(() => status.textContent !== '');
+    assert.equal(status.textContent, arabic ? 'حُدِّث توزيع البرامج.' : 'Programme mix updated.');
+    // Overtaken by a reset (a reload after a planner job forgets the lens and
+    // the read in flight): no mix is held, as Selection says.
+    h.w.TW.dataVersion++;
+    h.w.renderRightPanel('selection');
+    holds[lens0 + 4] = deferred();
+    status.textContent = '';
+    h.body().querySelector('[data-tw-lens-refresh]').click();
+    await settle();
+    assert.equal(h.seen.lens, lens0 + 4);
+    h.w.resetPlanLens();
+    holds[lens0 + 4].resolve();
+    await wait(() => status.textContent !== '');
+    const none = arabic ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.';
+    assert.equal(status.textContent, none);
+    h.w.renderRightPanel('selection');
+    assert.ok(h.body().textContent.includes(none), h.body().textContent);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
 test('an older lens answer never replaces a newer one', async t => {
   const first = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI2: n } } }),
     hold: { lens: n => (n === 2 ? first.promise : null) } });
-  const older = h.w.loadPlanLens();  // the second read, held
+  const older = h.w.refreshWorkspaceQuality(true, { lens: true });  // the second read, held
   h.w.TW.dataVersion++;
-  await h.w.loadPlanLens();  // the third, about newer data, answers first
+  await h.w.refreshWorkspaceQuality(true, { lens: true });  // the third, about newer data, answers first
   first.resolve();
   await older;
   assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
@@ -2160,7 +2180,7 @@ test('an older lens answer never replaces a newer one', async t => {
   assert.equal(h.w.TW.planLens.loading, false);
 });
 
-test('saving posts once, keeps the keyboard, reads the lens, the quality and the publish check once each', async t => {
+test('LN7 saving posts once, keeps the keyboard, reads the quality once, with the lens, and the publish check', async t => {
   const post = deferred(), lensHeld = deferred();
   let gateLens = false;
   const h = await markHarness(t, { sections: () => ({ 110: { actual_total: 10, actual_plans: { AI2: 10 } } }),
@@ -2188,6 +2208,10 @@ test('saving posts once, keeps the keyboard, reads the lens, the quality and the
   assert.deepEqual(h.w.TW.placements.filter(p => p.term_section_id === 110).map(p => p.preferred_programme), ['AI2', 'AI2'], 'every meeting of the section');
   assert.ok(h.notices.some(n => n.type === 'success'));
   assert.equal(h.seen.lens, lens0 + 1, 'the lens once');
+  for (let i = 0; i < 10; i++) await settle();
+  assert.equal(h.seen.quality, quality0 + 1, 'one quality read: the one with the lens (LN7)');
+  assert.equal(h.requests.filter(r => r.url.includes('/plan-lens/')).length, 0, 'never /plan-lens/');
+  assert.equal(h.body().querySelector('[data-tw-lens-refresh]'), null, 'fresh: no Refresh');
   assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
   assert.equal(h.w.TW.readinessLoading, true, 'the publish check is scheduled');
   assert.equal(h.d.activeElement, h.select());
@@ -2263,20 +2287,21 @@ test('a keyboard choice saves once the arrow keys rest, or at once on Enter or o
   await wait(() => h.seen.quality === quality0 + 3 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
 });
 
-test('a programme search filters anew when the lens is read again', async t => {
-  let plans = ['AI'];
-  const h = await markHarness(t, { lens: () => ({ plan_lens: { plans: ['AI', 'AI2'], courses: {}, sections: { 110: { actual_total: 1, actual_plans: { AI: 1 }, filter_plans: plans } } } }) });
-  const search = h.d.getElementById('twSearch');
-  search.value = 'AI2';
-  search.dispatchEvent(new h.w.Event('input'));
-  await settle();
+test('a programme in the filter dims anew, in place, when the lens is read again', async t => {
+  let ai2 = [];
+  const view = () => ({ programmes: ['AI', 'AI2'], roles: { AI: { main: [10] }, AI2: { main: ai2 } }, shared_roles: {},
+    placement_ids: [10, 11, 12, 13], seating_assessed: true });
+  const h = await markHarness(t, { lens: () => LENS({ 110: { actual_total: 1, actual_plans: { AI: 1 } } }, view()) });
+  const lens0 = h.seen.lens;
+  await findText(h, 'AI2');
   const node = card(h, 10);
-  assert.equal(node.dataset.dim, 'lens', 'not an AI2 section yet: dimmed by the lens (6c), still on the board');
-  plans = ['AI', 'AI2'];
+  assert.equal(node.dataset.dim, 'lens', 'in no AI2 file yet: dimmed by the lens, still on the board');
+  ai2 = [10];
   h.w.TW.dataVersion++;
   await h.w.refreshPlanLens();
+  assert.equal(h.seen.lens, lens0 + 1);
   assert.equal(card(h, 10), node, 'a new lens dims anew in place: the same card');
-  assert.equal(node.dataset.dim, undefined, 'the new lens puts it in AI2');
+  assert.equal(node.dataset.dim, undefined, 'the new roles put it in AI2');
 });
 
 test('a lens that cannot be read offers Refresh and is not left loading', async t => {
@@ -2379,42 +2404,58 @@ test('each arrow key restarts the wait; a pointer choice saves at once', async t
 test('a lens read joins only a read about the same scenario and data', async t => {
   const held = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? held.promise : null) } });
-  const first = h.w.loadPlanLens();  // read 2, held
+  const first = h.w.refreshWorkspaceQuality(true, { lens: true });  // read 2, held
   assert.equal(h.w.TW.planLens.loading, true);
-  const joined = h.w.loadPlanLens();
+  const joined = h.w.refreshWorkspaceQuality(true, { lens: true });
+  const plain = h.w.refreshWorkspaceQuality(true, { lens: false });  // a read with no lens needed joins one with it
   assert.equal(h.seen.lens, 2, 'the same data: one read');
+  assert.equal(h.seen.quality, 2, 'and no plain read beside it');
   h.w.TW.scenarioId = 2;  // another scenario, the same data version
-  await h.w.loadPlanLens();
+  await h.w.refreshWorkspaceQuality(true, { lens: true });
   assert.equal(h.seen.lens, 3, 'a read for another scenario is its own');
   held.resolve();
-  await Promise.all([first, joined]);
+  await Promise.all([first, joined, plain]);
 });
 
 test('a reset (the scenario reloaded after a planner job) forgets the read in flight', async t => {
   const held = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? held.promise : null) } });
-  const old = h.w.loadPlanLens();  // read 2, held; the data version does not move on a reload
+  const old = h.w.refreshWorkspaceQuality(true, { lens: true });  // read 2, held; the data version does not move on a reload
   h.w.resetPlanLens();
-  const fresh = h.w.loadPlanLens();
+  const fresh = h.w.refreshWorkspaceQuality(true, { lens: true });
   assert.equal(h.seen.lens, 3, 'a new read, never the old one');
   await fresh;
   held.resolve();
   await old;
   assert.equal(h.w.TW.planLens.sections['110'].actual_total, 3, 'the forgotten read does not land');
+  // A read forgotten before any other starts lands nowhere either: no lens,
+  // no quality (the reload reads both again).
+  const late = deferred();
+  const r = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? late.promise : null) } });
+  r.w.TW.quality = null;
+  const forgotten = r.w.refreshWorkspaceQuality(true, { lens: true });
+  r.w.resetPlanLens();
+  late.resolve();
+  await forgotten;
+  assert.deepEqual([r.w.TW.planLens.loaded, r.w.TW.planLens.failed, r.w.TW.quality, r.w.TW.qualityLoading], [false, undefined, null, false]);
 });
 
-test('an older read finishing never clears the newer read’s loading', async t => {
+test('an older read finishing never clears the newer read’s loading, and its caller waits for the newer one', async t => {
   const older = deferred(), newer = deferred();
   const h = await markHarness(t, { hold: { lens: n => (n === 2 ? older.promise : n === 3 ? newer.promise : null) } });
-  const a = h.w.loadPlanLens();
+  let done = false;
+  const a = h.w.refreshWorkspaceQuality(true, { lens: true }).then(() => { done = true; });
   h.w.TW.dataVersion++;
-  const b = h.w.loadPlanLens();
+  const b = h.w.refreshWorkspaceQuality(true, { lens: true });
   older.resolve();
-  await a;
+  for (let i = 0; i < 10; i++) await settle();
   assert.equal(h.w.TW.planLens.loading, true, 'the newer read is still loading');
+  assert.equal(h.w.TW.qualityLoading, true);
+  assert.equal(done, false, 'the older read’s caller waits for the read that overtook it');
   newer.resolve();
-  await b;
-  assert.equal(h.w.TW.planLens.loading, false);
+  await Promise.all([a, b]);
+  assert.equal(done, true);
+  assert.deepEqual([h.w.TW.planLens.loading, h.w.TW.qualityLoading], [false, false]);
 });
 
 test('a select drawn again while the keys move carries on the same wait: one save, the last choice', async t => {
@@ -2471,6 +2512,482 @@ test('a settled choice is saved once: leaving after it, or a pointer choice over
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2', ''], 'the waiting key never lands');
   await waitTimed(() => h.seen.quality === quality0 + 2 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+});
+
+/* ── The lens from the quality read (design record §7.2 item 6, 6d) ──
+   The plan lens comes with the quality read (`quality/?lens=1`) while it is
+   wanted, never from /plan-lens/; a programme in the filter dims what its
+   per-plan file leaves out, by the server's roles (`programme_view`), and the
+   page holds no copy of that rule. */
+const lensRows = () => [
+  at(10, { course_code: 'CS101', preferred_programme: '', preferred_programme_editable: true }),
+  at(11, { course_code: 'MATH1', day: 'MON' }),
+  at(12, { course_code: 'PHYS1', day: 'TUE' }),
+  at(13, { course_code: 'BIO1', day: 'WED' }),
+  at(14, { course_code: 'ENG1', day: 'THU' }),
+];
+// AI2's file: CS101 its own, MATH1 another programme's section it seats two
+// in, BIO1 mixed, ENG1 outside its plan; PHYS1 is in DS's file alone.
+const LENS_VIEW = () => ({
+  programmes: ['AI2', 'DS'],
+  roles: { AI2: { main: [10], mixed: [13], other: [11], outside: [14] }, DS: { main: [11, 12] } },
+  shared_roles: { AI2: { main: [11] }, DS: { main: [11] } },
+  placement_ids: [10, 11, 12, 13, 14],
+  seating_assessed: true,
+});
+// PHYS1 is allocated to AI2 yet in no AI2 file; BIO1 is a shared section that
+// the SHARED classification gives AI2 no role in: the roles decide, never the
+// allocation or the shared flag.
+const LENS_SECTIONS = () => ({
+  110: { actual_plans: { AI2: 20, DS: 0 }, actual_total: 20, filter_plans: ['AI2'] },
+  111: { actual_plans: { AI2: 2, DS: 28 }, actual_total: 30, filter_plans: ['DS'], shared: true },
+  112: { actual_plans: { AI2: 0, DS: 25 }, actual_total: 25, filter_plans: ['AI2'] },
+  113: { actual_plans: { AI2: 5, DS: 7 }, actual_total: 12, filter_plans: ['AI2'], shared: true },
+  114: { actual_plans: { AI2: 0, DS: 0 }, actual_total: 0, filter_plans: ['AI2'] },
+});
+const lensAnswer = ({ view = LENS_VIEW(), sections = LENS_SECTIONS(), courses = {}, plans = ['AI2', 'DS'], assessed = true } = {}) => ({
+  plans, courses, sections,
+  seating: assessed ? { assessed: true, students: 57 } : { assessed: false, students: 0, reason: 'assessment_failed' },
+  programme_view: view && { ...view, seating_assessed: assessed },
+});
+const ALL = [10, 11, 12, 13, 14];
+/* `reads` names each quality read: 'lens' (with `?lens=1`) or 'plain'.
+   `hold(n, lens)` may hold the n-th; `answer(n)` is the n-th lens (null:
+   `plan_lens: null`; an httpError: the read fails). */
+async function lensHarness(t, { rows = lensRows(), answer = () => lensAnswer(), hold = null, arabic = false, boards = [board], budget = [], select = true } = {}) {
+  const reads = [];
+  const h = await harness(t, async url => {
+    if (url === '/ops/tw/boards/2/') return { placements: rows.map(row => ({ ...row })), slot_config: scenario.slot_config };
+    if (url.startsWith('/ops/tw/boards/?')) return { boards };
+    if (url.includes('/budget/')) return { budget };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    if (!url.includes('/quality/')) return undefined;
+    const lens = url.endsWith('/quality/?lens=1');
+    reads.push(lens ? 'lens' : 'plain');
+    const n = reads.length;
+    if (hold) await hold(n, lens);
+    if (!lens) return noRooms;
+    const body = answer(n);
+    return body?.httpError ? body : { ...noRooms, plan_lens: body };
+  }, {}, arabic);
+  if (select) await h.select();
+  return Object.assign(h, { reads, rows });
+}
+// An edit's end: the data moved on and the board is read again.
+const edit = async h => { h.w.TW.dataVersion++; await h.w.selectBoard(2); };
+const planLensReads = h => h.requests.filter(r => r.url.includes('/plan-lens/')).length;
+
+test('LN1 the lens comes with the quality read: on open, while the filter names a programme, never on a read of its own', async t => {
+  const h = await lensHarness(t);
+  assert.deepEqual(h.requests.filter(r => r.url.includes('/quality/')).map(r => r.url), ['/ops/tw/scenarios/1/quality/?lens=1'],
+    'open: the first quality read brings the lens');
+  await edit(h);
+  assert.deepEqual(h.reads, ['lens', 'plain'], 'an edit with no programme in the filter: a plain read');
+  await findText(h, 'cs1');
+  await settle();
+  assert.equal(h.reads.length, 2, 'text alone reads nothing');
+  await findText(h, 'ai2');
+  await wait(() => h.reads.length === 3 && !h.w.TW.planLens.loading);
+  assert.equal(h.reads[2], 'lens', 'a programme typed while the lens is from before an edit: one read, with the lens');
+  await findText(h, 'ds');
+  await findText(h, 'ai2 ds shared');
+  await settle();
+  assert.equal(h.reads.length, 3, 'another programme, the roles fresh: nothing read');
+  await edit(h);
+  await edit(h);
+  assert.deepEqual(h.reads.slice(3), ['lens', 'lens'], 'with a programme in the filter, every quality read has the lens');
+  // A board switch reuses the quality and the lens.
+  await h.w.selectBoard(2);
+  assert.equal(h.reads.length, 5);
+  await findText(h, 'math');
+  await edit(h);
+  assert.deepEqual(h.reads.slice(5), ['plain'], 'the programme gone: plain again');
+  // The quality is fresh but the lens is not: asking for the lens reads it; asked again, nothing.
+  await h.w.refreshWorkspaceQuality(false, { lens: true });
+  await h.w.refreshWorkspaceQuality(false, { lens: true });
+  assert.deepEqual(h.reads.slice(6), ['lens']);
+  assert.equal('plan_lens' in h.w.TW.quality, false, 'the lens is never part of the quality');
+  assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
+  assert.equal(planLensReads(h), 0, 'never /plan-lens/');
+  assert.deepEqual(h.notices.filter(n => n.type === 'error'), []);
+  assert.deepEqual(h.errors, []);
+});
+
+test('LN1b a scenario generated in place never shows the one before it: its board is drawn with no lens, and its first quality read brings its own', async t => {
+  const generated = { ...scenario, id: 7, name: 'Generated' };
+  const courses = { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} };
+  const reads = [];
+  const h = await harness(t, url => {
+    if (url === '/ops/tw/generate-workspace/') return { scenario: generated, boards: [board], build_summary: {}, seed: 1 };
+    if (url === '/ops/tw/boards/2/') return { placements: [at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' })], slot_config: scenario.slot_config };
+    if (url.includes('/quality/')) {
+      reads.push(url);
+      return url.endsWith('?lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses: url.includes('/scenarios/1/') ? courses : {} } } : noRooms;
+    }
+    if (url.includes('/conflicts/')) return quiet;
+    return undefined;
+  });
+  await h.select();
+  assert.equal(card(h, 10).querySelector('.tw-card-name')?.textContent, 'Programming I', 'scenario 1’s lens names it');
+  const names = [];
+  const draw = h.w.renderGridWithSlots;
+  h.w.renderGridWithSlots = (...args) => { draw(...args); names.push(card(h, 10)?.querySelector('.tw-card-name')?.textContent || ''); };
+  await h.w.runGenerate('classic', GENERATE);
+  assert.deepEqual(names, [''], 'the new board is drawn without the old scenario’s lens');
+  assert.ok(reads.includes('/ops/tw/scenarios/7/quality/?lens=1'), JSON.stringify(reads));
+  assert.deepEqual([h.w.TW.planLens.loaded, Object.keys(h.w.TW.planLens.courses)], [true, []], 'its own lens');
+});
+
+test('LN2 a programme dims what its per-plan file leaves out, by the server’s roles, never by the allocation; each card’s title says its role', async t => {
+  for (const arabic of [false, true]) {
+    const h = await lensHarness(t, { arabic });
+    await findText(h, 'ai2');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', 'lens', '', ''],
+      'PHYS1 (allocated to AI2, in no AI2 file) is dimmed; MATH1 (two AI2 seated, mainly DS’s: "other") is not');
+    const P = iso('AI2');
+    const titles = arabic ? [
+      `${P}: شعبة خاصة به`,
+      `${P}: فيها 2 من 30؛ ومعظمها لبرنامج آخر`,
+      `ليست في جدول ${P}`,
+      `${P}: شعبة مختلطة (5 من 12)`,
+      `${P}: خارج خطته؛ يذكر ملفه المقرر بين المقررات المطروحة`,
+    ] : [
+      `${P}: its own section`,
+      `${P}: seats 2 of 30; mainly another programme’s`,
+      `Not in ${P}’s timetable`,
+      `${P}: mixed section (5 of 12)`,
+      `${P}: outside its plan; its file lists the course as placed`,
+    ];
+    assert.deepEqual(ALL.map(id => card(h, id).title), titles);
+    assert.equal(card(h, 12).getAttribute('aria-describedby'), 'twDimNoteLens');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, titles[2]);
+    assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? '4 من 5' : '4 of 5');
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? `المطابق للتصفية: 4 من 5 لقاءات. ${P}: 4 من 5 لقاءات في جدوله.`
+      : `4 of 5 meetings match. ${P}: 4 of 5 meetings in its timetable.`);
+    assert.equal(h.d.getElementById('twSearchNote').textContent, h.d.getElementById('twSearch').title);
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [true, false]);
+    assert.equal(h.d.getElementById('twLegendDimLens').textContent, arabic ? `باهتة: ليست في جدول ${P}` : `Dimmed: not in ${P}’s timetable`);
+    assert.equal(h.d.getElementById('twExportScope').textContent, arabic ? `برنامج ${P} فقط` : `Programme ${P} only`);
+    await findText(h, 'ds');
+    assert.deepEqual(dimsOf(h, ALL), ['lens', '', '', 'lens', 'lens']);
+    assert.equal(card(h, 11).title, arabic ? `${iso('DS')}: شعبة خاصة به` : `${iso('DS')}: its own section`);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
+test('LN3 several programmes are a union; SHARED reads the shared roles, never the shared flag; text folds, programmes only dim; switching programmes reads nothing', async t => {
+  const h = await lensHarness(t);
+  const reads = h.reads.length;
+  await findText(h, 'ai2 ds');
+  assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', '']);
+  assert.equal(card(h, 11).title, `${iso('AI2')}: seats 2 of 30; mainly another programme’s | ${iso('DS')}: its own section`, 'each programme’s role');
+  assert.equal(h.d.getElementById('twSearch').title,
+    `5 of 5 meetings match. ${iso('AI2')}: 4 of 5 meetings in its timetable; ${iso('DS')}: 2 of 5 meetings in its timetable.`);
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programmes ${iso('AI2')}, ${iso('DS')} only`);
+  await findText(h, 'shared ai2');
+  assert.deepEqual(dimsOf(h, ALL), ['lens', '', 'lens', 'lens', 'lens'],
+    'BIO1, a shared section with an AI2 role but no AI2 shared role, is dimmed');
+  assert.equal(card(h, 11).title, `${iso('AI2')}: its own section`, 'its role under SHARED');
+  assert.equal(h.d.getElementById('twSearch').title,
+    `1 of 5 meetings match. ${iso('AI2')} (shared sections only): 1 of 5 meetings in its timetable.`);
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programme ${iso('AI2')} only · Shared sections only`);
+  await findText(h, 'shared');
+  assert.deepEqual(dimsOf(h, ALL), ['lens', '', 'lens', 'lens', 'lens'], 'SHARED alone: every programme');
+  assert.equal(h.d.getElementById('twSearch').title, '1 of 5 meetings match. Shared sections: 1 of 5 meetings in the programmes’ timetables.');
+  assert.equal(h.d.getElementById('twExportScope').textContent, 'Shared sections only');
+  await findText(h, 'ds');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'three dimmed by the lens: nothing folds');
+  await findText(h, 'ds cs1');
+  assert.deepEqual(dimsOf(h, ALL), ['lens', 'filter', 'filter', 'filter lens', 'filter lens']);
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'the text matches CS101, which the lens dims: a match all the same');
+  await findText(h, 'ai2 zzz');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, FOLDED, 'the text folds');
+  await findText(h, 'ai2 cs1');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD);
+  assert.deepEqual(dimsOf(h, ALL), ['', 'filter', 'filter lens', 'filter', 'filter']);
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programme ${iso('AI2')} only · Only what matches "CS1"`);
+  assert.equal(h.reads.length, reads, 'switching programmes with fresh roles reads nothing');
+});
+
+test('LN4 roles arriving keep the board: the same cards and nodes, the keyboard on its card; before them, nothing is dimmed for the programme', async t => {
+  const held = deferred();
+  const h = await lensHarness(t, { hold: n => (n === 3 ? held.promise : null) });
+  await edit(h);  // read 2, plain: the lens is now from before the change
+  const nodes = [...h.d.querySelectorAll('#twGrid .tw-card')];
+  card(h, 12).focus();
+  // Records are handed to the callback after each turn: keep them all.
+  const records = [];
+  const observer = new h.w.MutationObserver(list => records.push(...list));
+  observer.observe(h.d.getElementById('twGrid'), { childList: true, subtree: true });
+  await findText(h, 'ai2');  // read 3, held
+  assert.deepEqual(h.reads, ['lens', 'plain', 'lens']);
+  assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', ''], 'a programme typed while its roles are read: no lens dims');
+  assert.equal(h.d.getElementById('twSearch').title, `5 of 5 meetings match. ${iso('AI2')}: checking…`);
+  assert.deepEqual(ALL.map(id => card(h, id).title), Array(5).fill('(checking)'));
+  assert.equal(h.d.getElementById('twLegendDimLens').hidden, true);
+  held.resolve();
+  await wait(() => card(h, 12).dataset.dim === 'lens');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')], nodes, 'the same cards');
+  assert.equal(h.d.activeElement, card(h, 12), 'the keyboard stays');
+  assert.equal(h.d.getElementById('twLegendDimLens').hidden, false);
+  assert.match(h.d.getElementById('twLegendDimLens').textContent, /^Dimmed: not in /);
+  records.push(...observer.takeRecords());
+  assert.deepEqual(records, [], 'no node of the board added or removed');
+});
+
+test('LN5 a lens that cannot be read: nothing is dimmed for the programme and the count says why; typing does not ask again, Selection’s Refresh does', async t => {
+  for (const failure of ['http', 'null', 'view']) {
+    let fail = true;
+    // With no programme view, the boards say which tokens are programmes.
+    const h = await lensHarness(t, { boards: [{ ...board, program: 'AI2,DS' }], answer: () => (!fail ? lensAnswer()
+      : failure === 'http' ? { httpError: 500, error: { message: 'down' } }
+        : failure === 'null' ? null : lensAnswer({ view: null })) });
+    assert.equal(h.w.TW.planLens.loading, false, failure);
+    await findText(h, 'ai2');
+    await settle();
+    assert.equal(h.reads.length, 1, `${failure}: not asked again by typing`);
+    assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', ''], failure);
+    assert.equal(h.d.getElementById('twSearch').title,
+      `5 of 5 meetings match. The programme view could not be read; nothing is dimmed for ${iso('AI2')}.`, failure);
+    assert.equal(card(h, 12).title, '', `${failure}: no "(checking)" for a lens that could not be read`);
+    await findText(h, 'ai2 shared');
+    assert.equal(h.d.getElementById('twSearch').title,
+      `5 of 5 meetings match. The programme view could not be read; nothing is dimmed for ${iso('AI2')}, shared sections.`, failure);
+    if (failure !== 'http') assert.equal(h.d.getElementById('twQualityRooms').textContent, '0', `${failure}: the quality is shown`);
+    card(h, 10).click();
+    const body = h.d.getElementById('twRightBody');
+    if (failure === 'view') {
+      // The seating read: Selection's mix is current; the dims wait for the next read.
+      assert.match(body.textContent, /20: AI2 20/);
+      assert.equal(body.querySelector('[data-tw-lens-refresh]'), null);
+      fail = false;
+      await edit(h);
+    } else {
+      assert.match(body.textContent, /The programme mix is not available/, failure);
+      fail = false;
+      body.querySelector('[data-tw-lens-refresh]').click();
+      await wait(() => !h.w.TW.planLens.loading && /20: AI2 20/.test(body.textContent));
+      assert.equal(h.d.getElementById('twInspectorStatus').textContent, 'Programme mix updated.');
+    }
+    await wait(() => card(h, 12).dataset.dim === 'lens');
+    assert.deepEqual(h.reads, ['lens', 'lens'], failure);
+    assert.equal(planLensReads(h), 0);
+  }
+});
+
+test('LN5b a seating that could not be evaluated: dims by the roles and the count says why; Selection reads "—" and the reason, never "nobody"', async t => {
+  // Unassessed, the files follow the allocation and the marks: main and outside only.
+  const view = { ...LENS_VIEW(), roles: { AI2: { main: [10, 11, 13], outside: [14] }, DS: { main: [11, 12] } } };
+  const sections = { 110: { actual_plans: { AI2: 0, DS: 0 }, actual_total: 0, filter_plans: ['AI2'] } };
+  for (const arabic of [false, true]) {
+    const h = await lensHarness(t, { arabic, answer: () => lensAnswer({ view, sections, assessed: false }) });
+    const [AI2, DS] = [iso('AI2'), iso('DS')];
+    await findText(h, 'ai2');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', 'lens', '', '']);
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? `المطابق للتصفية: 4 من 5 لقاءات. ${AI2}: 4 من 5 لقاءات في جدوله. تعذّر تقييم توزيع الطلاب على الشعب: تتبع شعب ${AI2} توزيع الخطة، كما في ملفه لكل برنامج.`
+      : `4 of 5 meetings match. ${AI2}: 4 of 5 meetings in its timetable. The seating could not be evaluated: ${AI2}’s sections follow the plan’s allocation, as its per-plan file does.`);
+    await findText(h, 'ai2 ds');
+    assert.match(h.d.getElementById('twSearch').title, arabic
+      ? new RegExp(`تعذّر تقييم توزيع الطلاب على الشعب: تتبع شعب ${AI2}، ${DS} توزيع خططها، كما في ملفاتها لكل برنامج\\.$`)
+      : new RegExp(`The seating could not be evaluated: the sections of ${AI2}, ${DS} follow their plans’ allocation, as their per-plan files do\\.$`));
+    await findText(h, 'shared');
+    const none = arabic
+      ? 'تعذّر تقييم توزيع الطلاب على الشعب: تتبع الشعب توزيع الخطة، كما في الملفات لكل برنامج.'
+      : 'The seating could not be evaluated: sections follow the plan’s allocation, as the per-plan files do.';
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(` ${none}`), h.d.getElementById('twSearch').title);
+    card(h, 10).click();
+    const seated = [...h.d.querySelectorAll('#twRightBody .tw-sel-field')].find(f => f.querySelector('dt').textContent === (arabic ? 'المقاعد' : 'Seated')).querySelector('dd');
+    assert.match(seated.textContent, /^—/);
+    assert.ok(seated.textContent.includes(none), seated.textContent);
+    assert.doesNotMatch(seated.textContent, /No student|لا يُقعَد/);
+  }
+});
+
+test('LN5c a lens read again that fails keeps the one before it and says so in Selection, how old it is too; while it reads, the count says checking', async t => {
+  for (const arabic of [false, true]) {
+    let fail = false;
+    const held = deferred();
+    const h = await lensHarness(t, { arabic, answer: () => (fail ? { httpError: 500, error: { message: 'down' } } : lensAnswer()),
+      hold: n => (n === 2 ? held.promise : null) });
+    await findText(h, 'ai2');
+    card(h, 10).click();
+    const body = h.d.getElementById('twRightBody');
+    fail = true;
+    const again = h.w.refreshPlanLens();  // read again, for the same data
+    await wait(() => h.reads.length === 2);
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(arabic ? `${iso('AI2')}: 4 من 5 لقاءات في جدوله.` : `${iso('AI2')}: 4 of 5 meetings in its timetable.`),
+      'the roles are still those of this data');
+    held.resolve();
+    await again;
+    assert.match(body.textContent, /20: AI2 20/, 'the mix it had');
+    assert.ok(body.textContent.includes(arabic ? 'تعذّرت قراءة توزيع البرامج مجدداً.' : 'The programme mix could not be read again.'), body.textContent);
+    assert.ok(!body.textContent.includes(arabic ? 'من قبل آخر تعديل.' : 'From before your last change.'), 'of this data still');
+    assert.ok(body.querySelector('[data-tw-lens-refresh]'), 'Refresh again');
+    assert.equal(h.d.getElementById('twInspectorStatus').textContent, arabic ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', ''], 'nothing dimmed by a lens that could not be read again');
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? `المطابق للتصفية: 5 من 5 لقاءات. تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج ${iso('AI2')}.`
+      : `5 of 5 meetings match. The programme view could not be read; nothing is dimmed for ${iso('AI2')}.`);
+    await findText(h, 'ai2 ds');
+    await settle();
+    assert.equal(h.reads.length, 2, 'not asked again by typing');
+    // After an edit (its read fails too), the mix says how old it is.
+    await edit(h);
+    assert.deepEqual(h.reads, ['lens', 'lens', 'lens']);
+    assert.ok(body.textContent.includes(arabic ? 'تعذّرت قراءة توزيع البرامج مجدداً. من قبل آخر تعديل.' : 'The programme mix could not be read again. From before your last change.'), body.textContent);
+    // Refresh: the count says the programmes are being checked while it reads.
+    const next = deferred();
+    fail = false;
+    const refresh = body.querySelector('[data-tw-lens-refresh]');
+    h.w.fetch = (old => async (url, opts) => { if (url.includes('/quality/')) await next.promise; return old(url, opts); })(h.w.fetch);
+    refresh.click();
+    await settle();
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(arabic ? `${iso('AI2')}، ${iso('DS')}: جارٍ التحقق…` : `${iso('AI2')}, ${iso('DS')}: checking…`),
+      h.d.getElementById('twSearch').title);
+    next.resolve();
+    await wait(() => !h.w.TW.planLens.loading && card(h, 10).title !== '(checking)');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', '']);
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(arabic ? 'في جدوله.' : 'in its timetable.'));
+  }
+});
+
+test('LN5d a lens that could not be read is not asked for by every read after it', async t => {
+  const h = await lensHarness(t, { answer: () => null });
+  await edit(h);
+  assert.deepEqual(h.reads, ['lens', 'plain']);
+});
+
+test('LN6 a meeting the roles never saw is not dimmed and says "(checking)"; an edit keeps the old roles, "updating…", until the new ones arrive', async t => {
+  // The roles of the first read never saw ENG1.
+  const first = { ...LENS_VIEW(), roles: { AI2: { main: [10], mixed: [13], other: [11] }, DS: { main: [11, 12] } }, placement_ids: [10, 11, 12, 13] };
+  const held = deferred();
+  const h = await lensHarness(t, { hold: n => (n === 2 ? held.promise : null),
+    answer: n => lensAnswer({ view: n === 1 ? first : { ...LENS_VIEW(), placement_ids: [...ALL, 15] } }) });
+  await findText(h, 'ai2');
+  assert.deepEqual(dimsOf(h, ALL), ['', '', 'lens', '', ''], 'ENG1 unknown: not dimmed');
+  assert.equal(card(h, 14).title, '(checking)');
+  // An edit: a new meeting, the board read again, its quality read held.
+  h.rows.push(at(15, { course_code: 'CHEM1', day: 'THU' }));
+  h.w.TW.dataVersion++;
+  const loading = h.w.selectBoard(2);
+  await wait(() => h.reads.length === 2);
+  assert.equal(h.reads[1], 'lens');
+  assert.deepEqual(dimsOf(h, [...ALL, 15]), ['', '', 'lens', '', '', ''], 'the old roles stay; the new meeting is unknown');
+  assert.equal(card(h, 15).title, '(checking)');
+  assert.equal(h.d.getElementById('twSearch').title, `5 of 6 meetings match. ${iso('AI2')}: updating…`);
+  // Another programme while the roles are read: none were shown for it.
+  await findText(h, 'ds');
+  assert.equal(h.reads.length, 2, 'joined');
+  assert.deepEqual(dimsOf(h, [...ALL, 15]), ['', '', '', '', '', '']);
+  assert.equal(h.d.getElementById('twSearch').title, `6 of 6 meetings match. ${iso('DS')}: checking…`);
+  await findText(h, 'ai2');
+  held.resolve();
+  await loading;
+  assert.deepEqual(dimsOf(h, [...ALL, 15]), ['', '', 'lens', '', '', 'lens'], 'the new roles: CHEM1 is in no AI2 file');
+  assert.equal(card(h, 14).title, `${iso('AI2')}: outside its plan; its file lists the course as placed`);
+  assert.equal(h.d.getElementById('twSearch').title, `4 of 6 meetings match. ${iso('AI2')}: 4 of 6 meetings in its timetable.`);
+});
+
+test('LN9 a read without the lens out when a programme is typed: a second read, with it, starts; one with the lens out is joined; the board’s load holds until it lands', async t => {
+  const plain = deferred(), withLens = deferred();
+  const h = await lensHarness(t, { hold: n => (n === 2 ? plain.promise : n === 3 ? withLens.promise : null) });
+  h.w.TW.dataVersion++;
+  const loading = h.w.selectBoard(2);
+  await wait(() => h.reads.length === 2);
+  assert.equal(h.reads[1], 'plain');
+  await findText(h, 'ai2');
+  await wait(() => h.reads.length === 3);
+  assert.equal(h.reads[2], 'lens', 'the read out has no lens: a new one, with it');
+  await findText(h, 'ai2 ds');
+  h.w.refreshWorkspaceQuality(false, { lens: true });
+  h.w.refreshWorkspaceQuality(true, { lens: false });
+  await settle();
+  assert.equal(h.reads.length, 3, 'a read with the lens out is joined, with or without the lens');
+  plain.resolve();
+  await settle(); await settle();
+  assert.equal(h.w.workspaceBusy(), true, 'the board’s load waits for the read that overtook its own');
+  withLens.resolve();
+  await loading;
+  assert.equal(h.w.workspaceBusy(), false);
+  await findText(h, 'ai2');
+  assert.equal(card(h, 12).dataset.dim, 'lens');
+  assert.equal(h.w.TW.qualityVersion, h.w.TW.dataVersion);
+});
+
+test('LN10 Arabic: the programmes isolated, the counts by the plural, the scope line, the checking and failure words', async t => {
+  const rowsOf = n => Array.from({ length: n }, (_, i) => at(10 + i, { course_code: `CS10${i}`, day: DAYS5[i % 5] }));
+  const viewOf = n => ({ programmes: ['AI2', 'DS'], roles: { AI2: { main: rowsOf(n).map(p => p.id) }, DS: {} }, shared_roles: {},
+    placement_ids: rowsOf(n).map(p => p.id), seating_assessed: true });
+  const counts = { 1: 'لقاء واحد', 2: 'لقاءين', 3: '3 لقاءات', 11: '11 لقاءً' };
+  for (const [n, of] of Object.entries(counts)) {
+    const h = await lensHarness(t, { arabic: true, rows: rowsOf(Number(n)), answer: () => lensAnswer({ view: viewOf(Number(n)) }) });
+    await findText(h, 'ai2');
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(` ${iso('AI2')}: ${n} من ${of} في جدوله.`), h.d.getElementById('twSearch').title);
+  }
+  const h = await lensHarness(t, { arabic: true });
+  await findText(h, 'ai2 ds');
+  assert.equal(h.d.getElementById('twExportScope').textContent, `البرامج ${iso('AI2')}، ${iso('DS')} فقط`);
+  assert.equal(h.d.getElementById('twSearch').title,
+    `المطابق للتصفية: 5 من 5 لقاءات. ${iso('AI2')}: 4 من 5 لقاءات في جدوله؛ ${iso('DS')}: 2 من 5 لقاءات في جدوله.`);
+  await findText(h, 'shared ai2 cs1');
+  assert.equal(h.d.getElementById('twExportScope').textContent, `برنامج ${iso('AI2')} فقط · الشعب المشتركة فقط · ما يطابق «CS1» فقط`);
+  assert.ok(h.d.getElementById('twSearch').title.endsWith(` ${iso('AI2')} (الشعب المشتركة فقط): 1 من 5 لقاءات في جدوله.`), h.d.getElementById('twSearch').title);
+  await findText(h, 'shared');
+  assert.ok(h.d.getElementById('twSearch').title.endsWith(' الشعب المشتركة: 1 من 5 لقاءات في جداول البرامج.'), h.d.getElementById('twSearch').title);
+  // Checking, updating, and a lens that could not be read, in Arabic.
+  const held = deferred();
+  let fail = false;
+  const a = await lensHarness(t, { arabic: true, answer: () => (fail ? null : lensAnswer()), hold: n => (n === 2 ? held.promise : null) });
+  await findText(a, 'ai2');
+  a.w.TW.dataVersion++;
+  const loading = a.w.selectBoard(2);
+  await wait(() => a.reads.length === 2);
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` ${iso('AI2')}: جارٍ التحديث…`), a.d.getElementById('twSearch').title);
+  await findText(a, 'ds');
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` ${iso('DS')}: جارٍ التحقق…`), a.d.getElementById('twSearch').title);
+  assert.equal(card(a, 10).title, '(جارٍ التحقق)');
+  fail = true;
+  held.resolve();
+  await loading;
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج ${iso('DS')}.`), a.d.getElementById('twSearch').title);
+  await findText(a, 'ds ai2');
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء لتصفية البرامج: ${iso('DS')}، ${iso('AI2')}.`), a.d.getElementById('twSearch').title);
+  await findText(a, 'shared');
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(' تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء لتصفية البرامج: الشعب المشتركة.'), a.d.getElementById('twSearch').title);
+  assert.equal(a.d.getElementById('twExportScope').textContent, 'الشعب المشتركة فقط');
+});
+
+test('LN11 a programme is known by the boards before the view is read; the left list asks whether it needs the course, anew when the lens arrives', async t => {
+  const held = deferred();
+  const budget = [
+    { course_code: 'CS101', course_key: 'CS101', programme_term: 7, remaining_sections: 1, used_sections: 0, planned_sections: 1, total_demand: 20 },
+    { course_code: 'PHYS1', course_key: 'PHYS1', programme_term: 7, remaining_sections: 1, used_sections: 0, planned_sections: 1, total_demand: 25 },
+  ];
+  const courses = { CS101: { plans: { AI2: 20 } }, PHYS1: { plans: { DS: 25 } } };
+  const h = await lensHarness(t, { select: false, budget, boards: [{ ...board, program: 'ai2, DS' }],
+    answer: n => lensAnswer({ courses, view: n === 1 ? LENS_VIEW() : null, plans: ['AI2'] }), hold: n => (n === 1 ? held.promise : null) });
+  const opening = h.select();
+  await wait(() => h.reads.length === 1);
+  const rows = () => [...h.d.querySelectorAll('#twSectionList [data-focus-key^="place:"]')].map(row => row.dataset.focusKey.split(':')[1].split('|')[0]);
+  assert.deepEqual(rows(), ['CS101', 'PHYS1']);
+  await findText(h, 'ai2');
+  assert.equal(h.reads.length, 1, 'the open read, with the lens, is joined');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'a board programme: a programme, never text, before the view');
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programme ${iso('AI2')} only`);
+  assert.deepEqual(rows(), [], 'no course known to need it yet');
+  held.resolve();
+  await opening;
+  assert.deepEqual(rows(), ['CS101'], 'the lens arrives: the list asks again');
+  // A lens with no view: the board programmes it knows (DS has no demand here).
+  await edit(h);
+  await findText(h, 'ds');
+  await wait(() => !h.w.TW.planLens.loading);
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, FOLDED, 'DS is text now: it matches nothing');
+  await findText(h, 'ai2');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD);
 });
 
 /* ── Keyboard: grid and list semantics, roving focus (design record §7.3, 5a) ── */
@@ -6594,4 +7111,764 @@ test('PL17 the dialog’s other words in Arabic: ranking, failures, the fallback
   moved.d.getElementById('twPlaceForm').requestSubmit();
   await settle();
   assert.equal(placeAlert(moved), 'تغيّرت اللوحة؛ لم يُوضع شيء.');
+});
+
+/* ── Edit time slots (design record §7.2 item 6, 6f) ──
+   The slot dialog: the scenario's effective columns as rows; a save on PR 1's
+   contract (a refused field marked on the row sent at its index, the server's
+   list reviewed inside the dialog and confirmed by its fingerprint, flags
+   never sent); edits never lost. These replace the textarea editor's tests
+   (a spec change). */
+const SLOT_LRI = String.fromCharCode(0x2066);
+const SLOT_PDI = String.fromCharCode(0x2069);
+const slotIso = text => `${SLOT_LRI}${text}${SLOT_PDI}`;
+const SLOT_COLUMNS = { slot_config: [], lab_slot_config: [],
+  effective_slot_config: [{ label: '09:00-10:15', start: '09:00', end: '10:15' }, { label: 'Late', start: '16:00', end: '17:15' }],
+  effective_lab_slot_config: [{ label: 'Lab 1', start: '09:00', end: '10:40' }, { label: 'Bundle', start: '13:00', end: '16:00', policy_only: true },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }] };
+const SLOT_HIDDEN = { hidden: [{ placement_id: 10, board_id: 2, board_label: 'Term 7', course_code: 'CS323', section: 'S1', day: 'MON',
+  start_time: '16:00', end_time: '17:15', is_locked: true }], hidden_count: 1, dropped_flags: [], fingerprint: 'abc123' };
+const slotNeedsConfirm = (details = SLOT_HIDDEN) => ({ httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details } });
+const slotInvalid = errors => ({ httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'x', details: { errors } } });
+const slotSaved = (body, extra = {}) => ({ ok: true, hidden_count: 0, ...extra, scenario: { ...scenario, ...SLOT_COLUMNS, updated_at: 'saved now',
+  slot_config: body.slot_config, lab_slot_config: body.lab_slot_config, effective_slot_config: body.slot_config, effective_lab_slot_config: body.lab_slot_config } });
+// The board answers with the scenario's columns as the server has them (a save changes them).
+function slotHarness(t, { answer = body => slotSaved(body), arabic = false, more = () => undefined } = {}) {
+  const posts = [];
+  const stored = { ...SLOT_COLUMNS };
+  return harness(t, async (url, opts) => {
+    const own = await more(url, opts);
+    if (own !== undefined) return own;
+    if (url === '/ops/tw/boards/2/') return { placements: [placement], ...stored };
+    if (url !== '/ops/tw/scenarios/1/slots/update/') return undefined;
+    const body = JSON.parse(opts.body);
+    posts.push({ method: opts.method, body });
+    const reply = await answer(body, posts.length);
+    if (reply?.ok) ['slot_config', 'lab_slot_config', 'effective_slot_config', 'effective_lab_slot_config'].forEach(key => { stored[key] = reply.scenario[key]; });
+    return reply;
+  }, SLOT_COLUMNS, arabic).then(h => Object.assign(h, { posts }));
+}
+const SLOT_TABLE = { slot_config: 'twSlotLectures', lab_slot_config: 'twSlotLabs' };
+const slotDialogEl = h => h.d.getElementById('twSlotDialog');
+const slotRowsOf = (h, list = 'slot_config') => [...h.d.querySelectorAll(`#${SLOT_TABLE[list]} tbody tr[data-row-key]`)];
+const slotInput = (h, list, index, field) => slotRowsOf(h, list)[index].querySelector(`input[data-field="${field}"]`);
+const slotButton = (h, list, index, kind) => slotRowsOf(h, list)[index].querySelector(`[data-row-action="${kind}"]`);
+const slotValues = (h, list) => slotRowsOf(h, list).map(tr => ['label', 'start', 'end'].map(field => tr.querySelector(`input[data-field="${field}"]`).value));
+const slotLengths = (h, list) => slotRowsOf(h, list).map(tr => tr.querySelector('.ux-rows-length').textContent);
+const slotAlert = h => (h.d.getElementById('twSlotAlert').hidden ? '' : h.d.getElementById('twSlotAlert').textContent);
+const slotSaveButton = h => h.d.getElementById('twSlotSave');
+const slotShown = (h, id) => !h.d.getElementById(id).hidden;
+const slotType = (h, input, value) => {
+  input.focus();
+  input.value = value;
+  input.dispatchEvent(new h.w.Event('input', { bubbles: true }));
+};
+// Opened as the user does: the ⋯ menu's item, once the page is at rest.
+const slotOpen = async h => {
+  await wait(() => atRest(h) && !h.d.getElementById('twSlotEdit').disabled);
+  h.d.getElementById('twSlotEdit').click();
+  assert.equal(slotDialogEl(h).hasAttribute('open'), true, 'the dialog opens');
+};
+const slotSubmit = h => h.d.getElementById('twSlotForm').requestSubmit();
+const slotOut = h => h.d.getElementById('twSlotEditor').hasAttribute('inert');
+
+test('SD1 one row per effective column, its flags as pills, the keyboard on the first label; a second open is refused', async t => {
+  const h = await slotHarness(t);
+  await h.select();
+  await slotOpen(h);
+  assert.deepEqual(slotValues(h, 'slot_config'), [['09:00-10:15', '09:00', '10:15'], ['Late', '16:00', '17:15']]);
+  assert.deepEqual(slotValues(h, 'lab_slot_config'), [['Lab 1', '09:00', '10:40'], ['Bundle', '13:00', '16:00'], ['Online 1', '15:50', '17:30']]);
+  const pills = list => slotRowsOf(h, list).map(tr => [...tr.querySelectorAll('.pill-status')].map(pill => pill.textContent));
+  assert.deepEqual([pills('slot_config'), pills('lab_slot_config')], [[[], []], [[], ['Policy column'], ['Online only']]]);
+  assert.deepEqual([slotLengths(h, 'slot_config'), slotLengths(h, 'lab_slot_config')], [['75 min', '75 min'], ['100 min', '180 min', '100 min']]);
+  assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 0, 'label'));
+  // Each field is named by its row header and its column header.
+  const nameOf = element => element.getAttribute('aria-labelledby').split(' ').map(id => h.d.getElementById(id).textContent).join(' ');
+  assert.deepEqual(['label', 'start', 'end'].map(field => nameOf(slotInput(h, 'lab_slot_config', 1, field))),
+    ['Lab column 2 Label', 'Lab column 2 Start', 'Lab column 2 End']);
+  assert.equal(nameOf(slotInput(h, 'slot_config', 1, 'end')), 'Lecture column 2 End');
+  assert.deepEqual(slotRowsOf(h).map(tr => tr.querySelector('th[scope="row"]').textContent), ['Lecture column 1', 'Lecture column 2']);
+  const start = slotInput(h, 'slot_config', 0, 'start');
+  assert.deepEqual(['type', 'inputmode', 'dir', 'autocomplete', 'spellcheck', 'class'].map(name => start.getAttribute(name)),
+    ['text', 'numeric', 'ltr', 'off', 'false', 'ux-rows-time']);
+  assert.deepEqual(['type', 'dir'].map(name => slotInput(h, 'slot_config', 0, 'label').getAttribute(name)), ['text', 'auto']);
+  assert.deepEqual([...h.d.querySelectorAll('#twSlotLabs thead th')].map(th => th.textContent), ['Label', 'Start', 'End', 'Length', 'Rule']);
+  assert.equal(h.d.getElementById('twSlotScenario').textContent, 'Real scenario copy');
+  assert.equal(h.d.getElementById('twSlotFlags').textContent, 'The online-only columns (15:50) stay online-only while they keep the same start and end.');
+  assert.deepEqual(['twSlotDraft', 'twSlotOneRow', 'twSlotReview', 'twSlotBack', 'twSlotAlert'].map(id => slotShown(h, id)), [false, false, false, false, false]);
+  assert.equal(slotSaveButton(h).textContent, slotSaveButton(h).dataset.saveLabel);
+  assert.equal(slotDialogEl(h).dataset.twAbout, 'slots:1');
+  // A second open while it is open: refused, the rows as the user left them.
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  const field = slotInput(h, 'slot_config', 1, 'label');
+  assert.equal(h.w.openSlotDialog(), false);
+  assert.equal(slotInput(h, 'slot_config', 1, 'label'), field, 'nothing drawn again');
+  assert.equal(field.value, 'Evening');
+  assert.deepEqual([h.posts, h.errors], [[], []]);
+});
+
+test('SD2 a save sends the rows in their order, trimmed, an empty value as empty, never a flag; no time is checked here', async t => {
+  const h = await slotHarness(t, { answer: () => slotInvalid([]) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), '');
+  slotType(h, slotInput(h, 'slot_config', 1, 'start'), ' 4pm ');
+  slotType(h, slotInput(h, 'lab_slot_config', 2, 'label'), ' Online one ');
+  slotType(h, slotInput(h, 'lab_slot_config', 2, 'end'), '');
+  slotSubmit(h);
+  await wait(() => h.posts.length === 1 && slotAlert(h) && atRest(h));
+  assert.deepEqual(h.posts, [{ method: 'POST', body: {
+    slot_config: [{ label: '09:00-10:15', start: '09:00', end: '10:15' }, { label: '', start: '4pm', end: '17:15' }],
+    lab_slot_config: [{ label: 'Lab 1', start: '09:00', end: '10:40' }, { label: 'Bundle', start: '13:00', end: '16:00' }, { label: 'Online one', start: '15:50', end: '' }],
+  } }]);
+  // The rows keep what was typed.
+  assert.deepEqual(slotValues(h, 'slot_config')[1], ['', ' 4pm ', '17:15']);
+});
+
+test('SD3 a refused field is marked on the row sent at its index, though the rows moved before Save; the keyboard on it; the alert says it all; no toast', async t => {
+  const errors = [
+    { list: 'lab_slot_config', index: 1, field: 'end', message: 'must be after the start' },
+    { list: 'lab_slot_config', index: 1, field: 'start', message: 'must be a time as HH:MM' },
+    { list: 'slot_config', index: -1, field: 'list', message: 'has more than 40 columns' },
+  ];
+  const later = deferred();
+  const h = await slotHarness(t, { answer: (body, n) => (n === 1 ? slotInvalid(errors) : later.promise) });
+  await h.select();
+  await slotOpen(h);
+  // Lab 1 goes down: it is sent second, where Bundle was when the dialog opened.
+  slotButton(h, 'lab_slot_config', 0, 'down').click();
+  assert.deepEqual(slotValues(h, 'lab_slot_config').map(row => row[0]), ['Bundle', 'Lab 1', 'Online 1']);
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  const marked = () => [...h.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]')];
+  assert.deepEqual(marked(), [slotInput(h, 'lab_slot_config', 1, 'start'), slotInput(h, 'lab_slot_config', 1, 'end')]);
+  assert.equal(h.d.activeElement, slotInput(h, 'lab_slot_config', 1, 'start'), 'the first marked field has the keyboard');
+  const said = h.d.getElementById(slotInput(h, 'lab_slot_config', 1, 'end').getAttribute('aria-describedby'));
+  assert.equal(h.d.getElementById(slotInput(h, 'lab_slot_config', 1, 'label').getAttribute('aria-describedby')), said, 'every field of the row is described by its error');
+  assert.deepEqual([said.textContent, said.closest('tr').hidden, said.closest('tr').dataset.errorFor], ['End: must be after the start; Start: must be a time as HH:MM', false, slotRowsOf(h, 'lab_slot_config')[1].dataset.rowKey]);
+  const others = [...h.d.querySelectorAll('#twSlotDialog tr[data-error-for]')].filter(row => row !== said.closest('tr'));
+  assert.ok(others.length === 4 && others.every(row => row.hidden && row.textContent === ''), 'no other row says anything');
+  assert.equal(slotAlert(h), 'The columns were not saved: Labs, line 2: end must be after the start; Labs, line 2: start must be a time as HH:MM; Lectures: has more than 40 columns');
+  assert.equal(h.d.getElementById('twSlotAlert').dataset.tone, 'warning');
+  assert.deepEqual(h.notices.slice(toasts), [], 'nothing toasted behind the dialog');
+  assert.equal(slotDialogEl(h).hasAttribute('open'), true);
+  // A marked row keeps its mark when it moves.
+  slotButton(h, 'lab_slot_config', 1, 'up').click();
+  assert.deepEqual(marked(), [slotInput(h, 'lab_slot_config', 0, 'start'), slotInput(h, 'lab_slot_config', 0, 'end')]);
+  assert.equal(slotRowsOf(h, 'lab_slot_config')[0].nextElementSibling.hidden, false);
+  // The next save clears every mark, and the alert, as it starts.
+  slotSubmit(h);
+  await settle();
+  const errorRows = [...h.d.querySelectorAll('#twSlotDialog tr[data-error-for]')];
+  assert.deepEqual([marked(), slotAlert(h), errorRows.length, errorRows.every(row => row.hidden && row.textContent === '')], [[], '', 5, true]);
+  assert.equal(h.d.getElementById(slotInput(h, 'lab_slot_config', 0, 'end').getAttribute('aria-describedby')).textContent, '');
+  later.resolve(slotSaved(h.posts[1].body));
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+});
+
+test('SD4 the server’s list is reviewed inside the dialog: Back sends nothing and keeps the edits; Save anyway confirms by the fingerprint; Escape settles the save', async t => {
+  const confirmed = deferred();
+  const h = await slotHarness(t, { answer: body => (body.confirm === 'abc123' ? confirmed.promise : slotNeedsConfirm()) });
+  await h.select();
+  let stacked = 0;
+  h.w.dlg = { confirm: async () => { stacked++; return true; } };
+  await slotOpen(h);
+  // The 16:00 column goes.
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  const save = slotSaveButton(h);
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  assert.deepEqual([slotShown(h, 'twSlotEditor'), slotShown(h, 'twSlotBack'), save.textContent, save.disabled, slotOut(h)],
+    [false, true, save.getAttribute('data-review-label'), false, false]);
+  assert.equal(h.d.activeElement, h.d.getElementById('twSlotReviewTitle'), 'the keyboard on the review’s heading');
+  const review = h.d.getElementById('twSlotReviewBody').innerHTML;
+  assert.match(review, /^<p class="tw-readiness-lead">This change leaves 1 meeting outside the grid's columns\. They stay in the timetable and are still published; each is shown under its table/);
+  assert.match(review, /<bdi>Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Mon <bdi dir="ltr">16:00–17:15<\/bdi> · time locked/);
+  assert.deepEqual([stacked, h.posts.map(post => post.body.confirm)], [0, [undefined]], 'no dialog over the dialog');
+  // Back: nothing sent, the rows as they were (the removal kept), Save under the keyboard.
+  h.d.getElementById('twSlotBack').click();
+  await wait(() => slotShown(h, 'twSlotEditor'));
+  await settle();
+  assert.deepEqual([h.posts.length, slotShown(h, 'twSlotReview'), slotShown(h, 'twSlotBack'), save.textContent, slotAlert(h)],
+    [1, false, false, save.dataset.saveLabel, '']);
+  assert.deepEqual(slotValues(h, 'slot_config'), [['09:00-10:15', '09:00', '10:15']]);
+  assert.equal(h.d.activeElement, save);
+  // Save, then Save anyway: the same body again, with the fingerprint; the
+  // review stays in view while it is out, with no way back.
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  slotSubmit(h);
+  await settle();
+  assert.deepEqual([slotShown(h, 'twSlotReview'), slotShown(h, 'twSlotEditor'), slotShown(h, 'twSlotBack'), save.textContent, save.disabled,
+    h.d.getElementById('twSlotStatus').textContent, h.d.activeElement.id], [true, false, false, save.getAttribute('data-review-label'), true, 'Saving the columns…', 'twSlotBody']);
+  slotSubmit(h);
+  await settle();
+  assert.equal(h.posts.length, 3, 'one Save anyway');
+  confirmed.resolve(slotSaved(h.posts[2].body, { hidden_count: 1 }));
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  assert.deepEqual(h.posts.map(post => post.body.confirm), [undefined, undefined, 'abc123']);
+  assert.deepEqual(h.posts[2].body.slot_config, h.posts[1].body.slot_config);
+  assert.equal(stacked, 0);
+  // Escape while Save anyway is out: the next open (before it ends) is the
+  // rows, never the review.
+  const late = deferred();
+  const g = await slotHarness(t, { answer: body => (body.confirm ? late.promise : slotNeedsConfirm()) });
+  await g.select();
+  await slotOpen(g);
+  slotSubmit(g);
+  await wait(() => slotShown(g, 'twSlotReview') && atRest(g));
+  slotSubmit(g);
+  await settle();
+  keyOn(g, 'Escape');
+  assert.equal(slotDialogEl(g).hasAttribute('open'), false);
+  g.w.openSlotDialog();
+  assert.deepEqual([slotShown(g, 'twSlotEditor'), slotShown(g, 'twSlotReview'), slotSaveButton(g).textContent], [true, false, slotSaveButton(g).dataset.saveLabel]);
+  late.resolve(slotSaved(g.posts[1].body));
+  await wait(() => atRest(g) && slotAlert(g));
+  assert.equal(slotAlert(g), 'Columns saved: 2 lecture, 3 lab.');
+  // Escape during the review: the save settles, nothing more is sent, and a
+  // review the user closed is not reported.
+  const e = await slotHarness(t, { answer: () => slotNeedsConfirm() });
+  await e.select();
+  await slotOpen(e);
+  const toasts = e.notices.length;
+  const saving = e.w.saveSlotDialog();
+  await wait(() => slotShown(e, 'twSlotReview'));
+  keyOn(e, 'Escape');
+  const settled = await Promise.race([saving.then(() => 'settled'), new Promise(resolve => setTimeout(() => resolve('hanging'), 1000))]);
+  assert.equal(settled, 'settled');
+  await settle();
+  assert.deepEqual([slotDialogEl(e).hasAttribute('open'), e.posts.length, e.notices.slice(toasts)], [false, 1, []]);
+  // Opened again: the rows, never the review.
+  await slotOpen(e);
+  assert.deepEqual([slotShown(e, 'twSlotEditor'), slotShown(e, 'twSlotReview'), slotShown(e, 'twSlotBack'), slotSaveButton(e).textContent],
+    [true, false, false, slotSaveButton(e).dataset.saveLabel]);
+  assert.equal(e.d.activeElement, slotInput(e, 'slot_config', 0, 'label'));
+});
+
+test('SD4b the list changed while it was reviewed: the new list is reviewed, confirmed by its own fingerprint; one that keeps changing is said after four answers, the last never reviewed', async t => {
+  const other = { ...SLOT_HIDDEN, hidden: [{ ...SLOT_HIDDEN.hidden[0], placement_id: 11, course_code: 'AI777' }], fingerprint: 'def456' };
+  const h = await slotHarness(t, { answer: body => (body.confirm === 'def456' ? slotSaved(body) : body.confirm === 'abc123' ? slotNeedsConfirm(other) : slotNeedsConfirm()) });
+  await h.select();
+  await slotOpen(h);
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  assert.match(h.d.getElementById('twSlotReviewBody').innerHTML, /CS323 S1/);
+  slotSubmit(h);
+  // The second answer is another list: it is the one reviewed now.
+  await wait(() => /AI777 S1/.test(h.d.getElementById('twSlotReviewBody').innerHTML) && atRest(h));
+  assert.doesNotMatch(h.d.getElementById('twSlotReviewBody').innerHTML, /CS323/);
+  assert.deepEqual([slotShown(h, 'twSlotBack'), slotSaveButton(h).disabled, h.d.activeElement.id, slotOut(h)], [true, false, 'twSlotReviewTitle', false]);
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  assert.deepEqual(h.posts.map(post => post.body.confirm), [undefined, 'abc123', 'def456']);
+  // A list that changes at every answer: three reviews; the fourth answer is
+  // never shown (nothing would be sent after a Save anyway on it): the
+  // module's words, the rows back.
+  let n = 0;
+  const k = await slotHarness(t, { answer: () => slotNeedsConfirm({ ...SLOT_HIDDEN, fingerprint: `fp${++n}` }) });
+  await k.select();
+  await slotOpen(k);
+  slotSubmit(k);
+  for (let i = 0; i < 3; i++) {
+    await wait(() => slotShown(k, 'twSlotReview') && atRest(k) && k.posts.length === i + 1);
+    slotSubmit(k);
+  }
+  await wait(() => slotAlert(k) && atRest(k) && k.posts.length === 4);
+  assert.deepEqual([k.posts.map(post => post.body.confirm), slotAlert(k), slotShown(k, 'twSlotEditor'), slotShown(k, 'twSlotReview'), k.d.activeElement],
+    [[undefined, 'fp1', 'fp2', 'fp3'], 'The timetable kept changing while you reviewed it; nothing was saved. Try again.', true, false, slotSaveButton(k)]);
+});
+
+test('SD5 saved: the dialog closes, the keyboard goes back to the ⋯ menu, the board and the quality are read again, the draft goes, and how many meetings now sit under their tables is a warning', async t => {
+  const h = await slotHarness(t, { answer: body => slotSaved(body, { hidden_count: 2 }) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  const before = h.requests.length;
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h) && h.notices.length > toasts);
+  const urls = h.requests.slice(before).map(request => request.url);
+  const saved = urls.indexOf('/ops/tw/scenarios/1/slots/update/');
+  assert.ok(saved >= 0 && urls.indexOf('/ops/tw/boards/2/', saved) > saved, 'the board, read after the save');
+  assert.ok(urls.some((url, i) => i > saved && url.includes('/quality/')), 'the quality, read again');
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning', text: 'Columns saved: 2 lecture, 3 lab; now under their tables, outside the columns: 2 meetings.' }]);
+  assert.equal(h.d.activeElement, h.d.getElementById('twMoreMenu'));
+  assert.equal(h.w.TW.scenario.effective_slot_config[1].label, 'Evening');
+  assert.equal(h.w.TW.scenario.updated_at, 'saved now', 'the scenario as the save answered it');
+  // The draft went with the save.
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotInput(h, 'slot_config', 1, 'label').value], [false, 'Evening']);
+  // Nothing outside the columns: a success; one meeting: its count.
+  for (const [count, tone, text] of [[0, 'success', 'Columns saved: 2 lecture, 3 lab.'],
+    [1, 'warning', 'Columns saved: 2 lecture, 3 lab; now under their tables, outside the columns: 1 meeting.']]) {
+    const s = await slotHarness(t, { answer: body => slotSaved(body, { hidden_count: count }) });
+    await s.select();
+    await slotOpen(s);
+    const shown = s.notices.length;
+    slotSubmit(s);
+    await wait(() => !slotDialogEl(s).hasAttribute('open') && atRest(s) && s.notices.length > shown);
+    assert.deepEqual(s.notices.slice(shown), [{ type: tone, text }]);
+  }
+});
+
+test('SD6 Add, Remove, Up and Down keep the keyboard where the rule says; a list’s only row cannot be removed, and says why', async t => {
+  const h = await slotHarness(t);
+  await h.select();
+  await slotOpen(h);
+  const keys = list => slotRowsOf(h, list).map(tr => tr.dataset.rowKey);
+  const names = (list, i) => ['up', 'down', 'remove'].map(kind => [slotButton(h, list, i, kind).getAttribute('aria-label'), slotButton(h, list, i, kind).title]);
+  const late = slotIso('Late');
+  assert.deepEqual(names('slot_config', 1), [[`Move ${late} up`, `Move ${late} up`], [`Move ${late} down`, `Move ${late} down`], [`Remove ${late}`, `Remove ${late}`]]);
+  // Up on the first row and Down on the last are off (focusable, aria-disabled).
+  const off = (list, i) => ['up', 'down', 'remove'].map(kind => slotButton(h, list, i, kind).getAttribute('aria-disabled'));
+  assert.deepEqual([off('slot_config', 0), off('slot_config', 1), off('lab_slot_config', 1)], [['true', null, null], [null, 'true', null], [null, null, null]]);
+  assert.ok([...h.d.querySelectorAll('#twSlotDialog [data-row-action]')].every(button => !button.disabled && button.type === 'button'));
+  // Add: a row at the end, the keyboard on its label, named by its list and number.
+  h.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.deepEqual([slotRowsOf(h).length, slotValues(h, 'slot_config')[2], slotLengths(h, 'slot_config')[2]], [3, ['', '', ''], '—']);
+  assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 2, 'label'));
+  assert.equal(slotButton(h, 'slot_config', 2, 'remove').getAttribute('aria-label'), `Remove ${slotIso('Lecture column 3')}`);
+  assert.deepEqual([off('slot_config', 1), off('slot_config', 2)], [[null, null, null], [null, 'true', null]], 'the old last row moves down again');
+  // Typing names the row's buttons and gives its length.
+  slotType(h, slotInput(h, 'slot_config', 2, 'label'), 'Night');
+  slotType(h, slotInput(h, 'slot_config', 2, 'start'), '18:00');
+  assert.equal(slotLengths(h, 'slot_config')[2], '—');
+  slotType(h, slotInput(h, 'slot_config', 2, 'end'), '19:15');
+  assert.deepEqual([names('slot_config', 2)[0], slotLengths(h, 'slot_config')[2]], [[`Move ${slotIso('Night')} up`, `Move ${slotIso('Night')} up`], '75 min']);
+  // Up: the rows swap, the keyboard stays on the same button; at the top it is off and moves nothing.
+  const night = keys('slot_config')[2];
+  slotButton(h, 'slot_config', 2, 'up').click();
+  assert.deepEqual([keys('slot_config')[1], h.d.activeElement], [night, slotButton(h, 'slot_config', 1, 'up')]);
+  slotButton(h, 'slot_config', 1, 'up').click();
+  assert.deepEqual([keys('slot_config')[0], h.d.activeElement, h.d.activeElement.getAttribute('aria-disabled')], [night, slotButton(h, 'slot_config', 0, 'up'), 'true']);
+  h.d.activeElement.click();
+  assert.deepEqual([keys('slot_config')[0], h.d.activeElement], [night, slotButton(h, 'slot_config', 0, 'up')]);
+  // Down: the same, the other way; at the bottom it is off.
+  slotButton(h, 'slot_config', 0, 'down').click();
+  assert.deepEqual([keys('slot_config')[1], h.d.activeElement], [night, slotButton(h, 'slot_config', 1, 'down')]);
+  slotButton(h, 'slot_config', 1, 'down').click();
+  assert.deepEqual([keys('slot_config')[2], h.d.activeElement.getAttribute('aria-disabled')], [night, 'true']);
+  h.d.activeElement.click();
+  assert.equal(keys('slot_config')[2], night);
+  // Remove: the keyboard on the next row's label, or on Add after the last row.
+  const [first, second] = keys('slot_config');
+  slotButton(h, 'slot_config', 0, 'remove').click();
+  assert.deepEqual([keys('slot_config'), h.d.activeElement], [[second, night], slotInput(h, 'slot_config', 0, 'label')]);
+  assert.ok(!keys('slot_config').includes(first));
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  assert.equal(h.d.activeElement, h.d.querySelector('[data-slot-add="slot_config"]'));
+  // One row left: Remove is off with its reason, which shows, and removes nothing.
+  const only = slotButton(h, 'slot_config', 0, 'remove');
+  assert.deepEqual([only.getAttribute('aria-disabled'), only.getAttribute('aria-describedby'), slotShown(h, 'twSlotOneRow')], ['true', 'twSlotOneRow', true]);
+  assert.match(h.d.getElementById('twSlotOneRow').textContent, /A list keeps at least one column: an empty list would mean the default columns\./);
+  only.click();
+  assert.equal(slotRowsOf(h).length, 1, 'never an empty list');
+  // A second row: the reason hides; back to one, it shows.
+  h.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.deepEqual([slotShown(h, 'twSlotOneRow'), slotButton(h, 'slot_config', 0, 'remove').getAttribute('aria-disabled')], [false, null]);
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  assert.equal(slotShown(h, 'twSlotOneRow'), true);
+  assert.ok(slotRowsOf(h, 'lab_slot_config').every((tr, i) => slotButton(h, 'lab_slot_config', i, 'remove').getAttribute('aria-disabled') === null),
+    'the labs keep their own');
+  slotSubmit(h);
+  await wait(() => h.posts.length === 1);
+  assert.deepEqual(h.posts[0].body.slot_config, [{ label: 'Late', start: '16:00', end: '17:15' }]);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  assert.deepEqual(h.errors, []);
+  // A list that arrives with no row (the server's never do) is never sent:
+  // an empty list would be saved as the defaults.
+  const none = await slotHarness(t);
+  await none.select();
+  none.w.TW.scenario.effective_slot_config = [];
+  await slotOpen(none);
+  assert.deepEqual([slotRowsOf(none).length, slotShown(none, 'twSlotOneRow')], [0, true]);
+  slotSubmit(none);
+  await settle();
+  assert.deepEqual([none.posts.length, slotAlert(none).includes('A list keeps at least one column: an empty list would mean the default columns.')], [0, true]);
+  none.d.querySelector('[data-slot-add="slot_config"]').click();
+  slotType(none, slotInput(none, 'slot_config', 0, 'start'), '09:00');
+  slotType(none, slotInput(none, 'slot_config', 0, 'end'), '10:15');
+  slotSubmit(none);
+  await wait(() => none.posts.length === 1 && !slotDialogEl(none).hasAttribute('open') && atRest(none));
+  assert.deepEqual(none.posts[0].body.slot_config, [{ label: '', start: '09:00', end: '10:15' }]);
+});
+
+test('SD7 edits are never lost: Cancel, Escape and a failure keep the scenario’s draft, the next open offers it, and “Start from the saved columns” sets it aside', async t => {
+  const h = await slotHarness(t, { answer: () => ({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  slotButton(h, 'lab_slot_config', 0, 'down').click();
+  // Cancel: the next open has the edits, and says so.
+  h.d.querySelector('#twSlotDialog .ux-dialog-foot [data-dialog-close]').click();
+  assert.equal(slotDialogEl(h).hasAttribute('open'), false);
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), true);
+  assert.match(h.d.getElementById('twSlotDraft').textContent, /Your unsaved columns are back\..*Start from the saved columns/);
+  assert.equal(slotShown(h, 'twSlotDraftChanged'), false, 'the saved columns are the ones it started from');
+  assert.deepEqual([slotInput(h, 'slot_config', 1, 'label').value, slotValues(h, 'lab_slot_config').map(row => row[0])], ['Evening', ['Bundle', 'Lab 1', 'Online 1']]);
+  assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 0, 'label'));
+  // Escape: the same.
+  slotType(h, slotInput(h, 'slot_config', 0, 'label'), 'Morning');
+  keyOn(h, 'Escape');
+  assert.equal(slotDialogEl(h).hasAttribute('open'), false);
+  await slotOpen(h);
+  assert.deepEqual(slotValues(h, 'slot_config').map(row => row[0]), ['Morning', 'Evening']);
+  // A failure: said in the dialog; the edits stay, Save under the keyboard again; the draft kept.
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  assert.deepEqual([slotAlert(h), h.d.activeElement, slotValues(h, 'slot_config').map(row => row[0]), h.notices.slice(toasts)],
+    ['The columns were not saved.', slotSaveButton(h), ['Morning', 'Evening'], []]);
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotAlert(h)], [true, ''], 'offered again, the old alert gone');
+  assert.equal(h.d.getElementById('twSlotAlert').hidden, true, 'no empty warning strip');
+  // "Start from the saved columns": the saved rows, the hint gone, the keyboard on the first label, the draft gone.
+  slotSubmit(h);
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  h.d.getElementById('twSlotFromSaved').click();
+  assert.deepEqual([slotValues(h, 'slot_config').map(row => row[0]), slotValues(h, 'lab_slot_config').map(row => row[0])],
+    [['09:00-10:15', 'Late'], ['Lab 1', 'Bundle', 'Online 1']]);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), h.d.activeElement, slotAlert(h)], [false, slotInput(h, 'slot_config', 0, 'label'), '']);
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), false);
+  // Edits taken back to what is saved leave no draft.
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'X');
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Late');
+  slotButton(h, 'slot_config', 0, 'down').click();
+  slotButton(h, 'slot_config', 1, 'up').click();
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), false);
+  // A draft is its scenario's: another scenario opens on its own columns.
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Mine');
+  keyOn(h, 'Escape');
+  Object.assign(h.w.TW, { scenarioId: 2, scenario: { ...h.w.TW.scenario, id: 2, name: 'Another' } });
+  assert.equal(h.w.openSlotDialog(), true);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotInput(h, 'slot_config', 1, 'label').value, slotDialogEl(h).dataset.twAbout], [false, 'Late', 'slots:2']);
+});
+
+test('SD8 Save waits for the page: published, a planner job or a write in flight hold it with the first hold’s words; while its save is out the rows are inert', async t => {
+  const answer = deferred();
+  const lock = deferred();
+  let n = 0;
+  const h = await slotHarness(t, {
+    answer: body => (++n === 1 ? answer.promise : slotSaved(body)),
+    more: url => (url.endsWith('/lock/') ? lock.promise : undefined),
+  });
+  await h.select();
+  // At the open: no scenario, or a published one, is a toast; no dialog.
+  h.w.TW.scenario.status = 'published';
+  let toasts = h.notices.length;
+  assert.equal(h.w.openSlotDialog(), false);
+  assert.deepEqual([h.notices.slice(toasts), slotDialogEl(h).hasAttribute('open')], [[{ type: 'warning', text: 'This scenario is published and read-only.' }], false]);
+  h.w.TW.scenario.status = 'draft';
+  const id = h.w.TW.scenarioId;
+  h.w.TW.scenarioId = null;
+  toasts = h.notices.length;
+  assert.equal(h.w.openSlotDialog(), false);
+  assert.deepEqual([h.notices.slice(toasts), slotDialogEl(h).hasAttribute('open')], [[{ type: 'warning', text: 'Select a scenario first' }], false]);
+  h.w.TW.scenarioId = id;
+  await slotOpen(h);
+  const save = slotSaveButton(h);
+  const note = () => [save.disabled, h.d.getElementById('twSlotNote').textContent];
+  assert.deepEqual(note(), [false, '']);
+  h.w.TW.plannerJob = { job_id: 'j', status: 'running' };
+  h.w.syncWorkspaceControls();
+  assert.deepEqual(note(), [true, 'A planner job is running; edits wait until it ends.']);
+  h.w.TW.scenario.status = 'published';
+  h.w.syncWorkspaceControls();
+  assert.deepEqual(note(), [true, 'This scenario is published and read-only.'], 'the first hold');
+  // Submitted anyway: the hold is said in the alert, nothing is sent, and its words go with it.
+  slotSubmit(h);
+  await wait(() => slotAlert(h));
+  assert.deepEqual([slotAlert(h), h.posts.length, slotOut(h)], ['This scenario is published and read-only.', 0, false]);
+  h.w.TW.scenario.status = 'draft';
+  h.w.syncWorkspaceControls();
+  assert.deepEqual([slotAlert(h), note()], ['', [true, 'A planner job is running; edits wait until it ends.']]);
+  h.w.TW.plannerJob = null;
+  h.w.syncWorkspaceControls();
+  assert.deepEqual(note(), [false, '']);
+  // Another write out: busy.
+  const locking = h.w.toggleLock(10);
+  await settle();
+  assert.deepEqual(note(), [true, 'Wait for the current operation to finish.']);
+  lock.resolve({ placement_id: 10, is_locked: true });
+  await locking;
+  await wait(() => atRest(h) && !save.disabled);
+  assert.equal(h.d.getElementById('twSlotNote').textContent, '');
+  // The save out: the rows inert, the status says so, the keyboard waits on the body, Save off and its note quiet.
+  slotType(h, slotInput(h, 'slot_config', 0, 'label'), 'Early');
+  save.focus();
+  slotSubmit(h);
+  await settle();
+  assert.deepEqual([slotOut(h), h.d.getElementById('twSlotStatus').textContent, save.disabled, save.hasAttribute('data-tw-hold'), h.d.getElementById('twSlotNote').textContent, h.d.activeElement.id],
+    [true, 'Saving the columns…', true, true, '', 'twSlotBody']);
+  slotSubmit(h);
+  await settle();
+  assert.deepEqual([h.posts.length, slotAlert(h), h.d.getElementById('twSlotStatus').textContent, slotOut(h)], [1, '', 'Saving the columns…', true],
+    'one save at a time; the one out is left alone');
+  answer.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  assert.deepEqual([h.d.getElementById('twSlotStatus').textContent, save.disabled, save.hasAttribute('data-tw-hold'), h.d.activeElement],
+    ['', false, false, save]);
+  // A refusal the server gives: the gate's words.
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  const refused = await slotHarness(t, { answer: () => ({ httpError: 400, error: { code: 'SCENARIO_PUBLISHED', message: 'Published' } }) });
+  await refused.select();
+  await slotOpen(refused);
+  slotSubmit(refused);
+  await wait(() => slotAlert(refused) && atRest(refused));
+  assert.equal(slotAlert(refused), 'This scenario is published and read-only.');
+});
+
+test('SD9 in Arabic: the times left to right, the label in its own direction, the words and lengths in Arabic, the review’s times isolated, the toast in Arabic', async t => {
+  const h = await slotHarness(t, { arabic: true, answer: body => (body.confirm === 'abc123' ? slotSaved(body, { hidden_count: 2 }) : slotNeedsConfirm()) });
+  await h.select();
+  await slotOpen(h);
+  assert.deepEqual(['start', 'end', 'label'].map(field => slotInput(h, 'slot_config', 0, field).getAttribute('dir')), ['ltr', 'ltr', 'auto']);
+  assert.deepEqual([slotLengths(h, 'slot_config'), slotLengths(h, 'lab_slot_config')], [['75 دقيقةً', '75 دقيقةً'], ['100 دقيقة', '180 دقيقةً', '100 دقيقة']]);
+  assert.deepEqual([...h.d.querySelectorAll('#twSlotLectures thead th')].map(th => th.textContent), ['الاسم', 'البداية', 'النهاية', 'المدة', 'القيد']);
+  assert.deepEqual(slotRowsOf(h, 'lab_slot_config').map(tr => tr.querySelector('th[scope="row"]').textContent), ['عمود معامل 1', 'عمود معامل 2', 'عمود معامل 3']);
+  assert.deepEqual(slotRowsOf(h, 'lab_slot_config').map(tr => [...tr.querySelectorAll('.pill-status')].map(pill => pill.textContent)), [[], ['عمود سياسة'], ['عن بُعد فقط']]);
+  const late = slotIso('Late');
+  assert.deepEqual(['up', 'down', 'remove'].map(kind => slotButton(h, 'slot_config', 1, kind).getAttribute('aria-label')),
+    [`نقل ${late} إلى الأعلى`, `نقل ${late} إلى الأسفل`, `حذف ${late}`]);
+  h.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.equal(slotButton(h, 'slot_config', 2, 'remove').getAttribute('aria-label'), `حذف ${slotIso('عمود محاضرات 3')}`);
+  slotButton(h, 'slot_config', 2, 'remove').click();
+  assert.equal(h.d.getElementById('twSlotFlags').textContent, 'أعمدة «عن بُعد فقط» (15:50) تبقى كذلك ما دامت بالبداية والنهاية نفسيهما.');
+  // The review: Arabic, its time isolated left to right; Save anyway; the toast.
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  const review = h.d.getElementById('twSlotReviewBody').innerHTML;
+  assert.match(review, /هذا التغيير يترك لقاءً واحداً خارج أعمدة الجدول\. تبقى في الجدول وتُنشر، ويظهر كلٌّ منها أسفل جدوله/);
+  assert.match(review, /الاثنين <bdi dir="ltr">16:00–17:15<\/bdi> · الوقت مقفل/);
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h) && h.notices.length > toasts);
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning', text: 'حُفظت الأعمدة: المحاضرات 1، المعامل 3؛ أسفل جداولها الآن خارج الأعمدة: لقاءان.' }]);
+  // Saving, a refused field and a failure, in Arabic.
+  const out = deferred();
+  const errors = [{ list: 'slot_config', index: 0, field: 'end', message: 'must be after the start' }];
+  let n = 0;
+  const w = await slotHarness(t, { arabic: true, answer: () => (++n === 1 ? out.promise : slotInvalid(errors)) });
+  await w.select();
+  await slotOpen(w);
+  slotSubmit(w);
+  await settle();
+  assert.equal(w.d.getElementById('twSlotStatus').textContent, 'جارٍ حفظ الأعمدة…');
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => slotAlert(w) && atRest(w) && !slotOut(w));
+  assert.equal(slotAlert(w), 'لم تُحفظ الأعمدة.');
+  slotSubmit(w);
+  await wait(() => /المحاضرات، السطر 1/.test(slotAlert(w)) && atRest(w) && !slotOut(w));
+  assert.equal(slotAlert(w), 'لم تُحفظ الأعمدة: المحاضرات، السطر 1: النهاية يجب أن تكون بعد البداية');
+  assert.equal(w.d.getElementById(slotInput(w, 'slot_config', 0, 'end').getAttribute('aria-describedby')).textContent, 'النهاية: يجب أن تكون بعد البداية');
+  // The template's words, in both arms.
+  const arms = (english, arabic) => assert.ok(template.includes(`{% if LANGUAGE_CODE == 'ar' %}${arabic}{% else %}${english}{% endif %}`), english);
+  arms('Edit time slots', 'تعديل الفترات الزمنية');
+  arms('The grid\'s columns, for every board of this scenario', 'أعمدة الجدول لكل لوحات هذا السيناريو');
+  arms('Lectures (75 min)', 'المحاضرات (75 دقيقة)');
+  arms('Labs (100 min)', 'المعامل (100 دقيقة)');
+  arms('Add a lecture column', 'إضافة عمود محاضرات');
+  arms('Add a lab column', 'إضافة عمود معامل');
+  arms('A list keeps at least one column: an empty list would mean the default columns.', 'تبقى في القائمة فترة واحدة على الأقل: القائمة الفارغة تعني الأعمدة الافتراضية.');
+  arms('Your unsaved columns are back.', 'عادت أعمدتك غير المحفوظة.');
+  arms('Start from the saved columns', 'البدء من الأعمدة المحفوظة');
+  arms('Check before saving', 'راجِع قبل الحفظ');
+  arms('Back to editing', 'العودة إلى التعديل');
+  arms('Save anyway', 'حفظ على أي حال');
+  arms('Save', 'حفظ');
+  arms('Cancel', 'إلغاء');
+  assert.match(template, /data-review-label="{% if LANGUAGE_CODE == 'ar' %}حفظ على أي حال{% else %}Save anyway{% endif %}">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}<\/button>/);
+});
+
+test('SD10 a save the user left (Escape while it was out) ends where the user is; a confirmation it then needs is not given; where the edits are is said when no slot dialog shows them', async t => {
+  const leave = async (h, reply) => {
+    await h.select();
+    await slotOpen(h);
+    slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+    slotSubmit(h);
+    await settle();
+    keyOn(h, 'Escape');
+    assert.equal(slotDialogEl(h).hasAttribute('open'), false, 'Escape is never blocked by a save');
+    assert.equal(h.d.activeElement, h.d.getElementById('twMoreMenu'));
+    const toasts = h.notices.length;
+    reply();
+    return toasts;
+  };
+  const kept = 'Your edits come back when you open “Edit time slots” again.';
+  // Saved: a toast; the draft gone.
+  let out = deferred();
+  const s = await slotHarness(t, { answer: () => out.promise });
+  let toasts = await leave(s, () => out.resolve(slotSaved({ slot_config: [...SLOT_COLUMNS.effective_slot_config], lab_slot_config: [...SLOT_COLUMNS.effective_lab_slot_config] })));
+  await wait(() => s.notices.length > toasts && atRest(s));
+  assert.deepEqual(s.notices.slice(toasts), [{ type: 'success', text: 'Columns saved: 2 lecture, 3 lab.' }]);
+  await slotOpen(s);
+  assert.equal(slotShown(s, 'twSlotDraft'), false);
+  // A failure: a toast that says where the edits are.
+  out = deferred();
+  const f = await slotHarness(t, { answer: () => out.promise });
+  toasts = await leave(f, () => out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }));
+  await wait(() => f.notices.length > toasts && atRest(f));
+  assert.deepEqual(f.notices.slice(toasts), [{ type: 'warning', text: `The columns were not saved. ${kept}` }]);
+  // A confirmation needed: not given, nothing more sent; said the same way.
+  out = deferred();
+  const c = await slotHarness(t, { answer: (body, n) => (n === 1 ? out.promise : slotSaved(body)) });
+  toasts = await leave(c, () => out.resolve(slotNeedsConfirm()));
+  await wait(() => c.notices.length > toasts && atRest(c));
+  await settle();
+  assert.deepEqual([c.notices.slice(toasts), c.posts.length, slotShown(c, 'twSlotReview')], [[{ type: 'warning', text: `The columns were not saved. ${kept}` }], 1, false]);
+  await slotOpen(c);
+  assert.deepEqual([slotShown(c, 'twSlotDraft'), slotInput(c, 'slot_config', 1, 'label').value], [true, 'Evening'], 'the edits came back');
+  // A refused field: the server's sentence, nothing marked.
+  out = deferred();
+  const v = await slotHarness(t, { answer: () => out.promise });
+  toasts = await leave(v, () => out.resolve(slotInvalid([{ list: 'slot_config', index: 1, field: 'end', message: 'must be after the start' }])));
+  await wait(() => v.notices.length > toasts && atRest(v));
+  assert.deepEqual(v.notices.slice(toasts), [{ type: 'warning', text: `The columns were not saved: Lectures, line 2: end must be after the start. ${kept}` }]);
+  await slotOpen(v);
+  assert.equal(v.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]').length, 0);
+  // Nothing changed and nothing kept: no word about edits.
+  out = deferred();
+  const u = await slotHarness(t, { answer: () => out.promise });
+  await u.select();
+  await slotOpen(u);
+  slotSubmit(u);
+  await settle();
+  keyOn(u, 'Escape');
+  toasts = u.notices.length;
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => u.notices.length > toasts && atRest(u));
+  assert.deepEqual(u.notices.slice(toasts), [{ type: 'warning', text: 'The columns were not saved.' }]);
+  // Move's dialog open by then: its alert line, no toast.
+  out = deferred();
+  const m = await slotHarness(t, { answer: () => out.promise, more: url => (url.includes('/slot-candidates/') ? movesAnswer() : undefined) });
+  await leave(m, () => {});
+  moveByKey(m, 10);
+  await movesSettled(m);
+  toasts = m.notices.length;
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => moveAlert(m) && atRest(m));
+  assert.deepEqual([moveAlert(m), m.d.getElementById('twMoveAlert').dataset.tone, m.notices.slice(toasts)], [`The columns were not saved. ${kept}`, 'warning', []]);
+  // The slot dialog open again by then: its own alert, the edits in front of the user.
+  out = deferred();
+  const r = await slotHarness(t, { answer: (body, n) => (n === 1 ? out.promise : slotSaved(body)) });
+  await leave(r, () => {});
+  r.w.openSlotDialog();
+  assert.equal(slotDialogEl(r).hasAttribute('open'), true);
+  assert.deepEqual([slotShown(r, 'twSlotDraft'), slotSaveButton(r).disabled, r.d.getElementById('twSlotNote').textContent], [true, true, 'Wait for the current operation to finish.']);
+  toasts = r.notices.length;
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => slotAlert(r) && atRest(r));
+  assert.deepEqual([slotAlert(r), r.notices.slice(toasts), slotOut(r), slotSaveButton(r).disabled], ['The columns were not saved.', [], false, false]);
+  // Reopened, then refused: the sentence in its alert, and no mark on the
+  // rows it shows (they are not the rows that were sent, even when drawn again).
+  out = deferred();
+  const x = await slotHarness(t, { answer: (body, n) => (n === 1 ? out.promise : slotSaved(body)) });
+  await leave(x, () => {});
+  x.w.openSlotDialog();
+  out.resolve(slotInvalid([{ list: 'slot_config', index: 1, field: 'end', message: 'must be after the start' }]));
+  await wait(() => slotAlert(x) && atRest(x));
+  x.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.deepEqual([slotAlert(x), x.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]').length,
+    [...x.d.querySelectorAll('#twSlotDialog tr[data-error-for]')].every(row => row.hidden)],
+  ['The columns were not saved: Lectures, line 2: end must be after the start', 0, true]);
+});
+
+test('SD11b a saved column whose label, start or end alone changed elsewhere makes a draft older too', async t => {
+  for (const [field, value] of [['label', 'Morning'], ['start', '09:05'], ['end', '10:20']]) {
+    let stored = { ...SLOT_COLUMNS };
+    const h = await slotHarness(t, { more: url => (url === '/ops/tw/scenarios/1/' ? { scenario: { ...scenario, ...stored }, active_job: null }
+      : url === '/ops/tw/boards/2/' ? { placements: [placement], ...stored } : undefined) });
+    await h.select();
+    await slotOpen(h);
+    slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+    keyOn(h, 'Escape');
+    // Saved elsewhere: only this field of the first column.
+    stored = { ...SLOT_COLUMNS, effective_slot_config: SLOT_COLUMNS.effective_slot_config.map((slot, i) => (i ? slot : { ...slot, [field]: value })) };
+    await h.w.selectBoard(2);
+    await slotOpen(h);
+    assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged')], [true, true], field);
+    keyOn(h, 'Escape');
+  }
+});
+
+test('SD11 a draft older than the saved columns (saved elsewhere, e.g. split view) says so and keeps “Start from the saved columns”; one that now equals them is none', async t => {
+  // The scenario's columns as the server has them now: the scenario and the board answer with them.
+  let stored = { ...SLOT_COLUMNS };
+  const h = await slotHarness(t, { more: url => (url === '/ops/tw/scenarios/1/' ? { scenario: { ...scenario, ...stored }, active_job: null }
+    : url === '/ops/tw/boards/2/' ? { placements: [placement], ...stored } : undefined) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  keyOn(h, 'Escape');
+  // Read again with nothing changed: the draft, offered as current.
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged'), slotInput(h, 'slot_config', 1, 'label').value], [true, false, 'Evening']);
+  keyOn(h, 'Escape');
+  // Saved elsewhere: a lecture column more.
+  const night = { label: 'Night', start: '18:00', end: '19:15' };
+  stored = { ...SLOT_COLUMNS, effective_slot_config: [...SLOT_COLUMNS.effective_slot_config, night] };
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged'), slotValues(h, 'slot_config').map(row => row[0])],
+    [true, true, ['09:00-10:15', 'Evening']], 'the draft, said to be older than the saved columns');
+  assert.match(h.d.getElementById('twSlotDraft').textContent, /Your unsaved columns are back\..*The saved columns changed since this draft\..*Start from the saved columns/);
+  // Edited further, it is still that draft: said again on the next open.
+  slotType(h, slotInput(h, 'slot_config', 0, 'label'), 'Morning');
+  h.d.querySelector('#twSlotDialog .ux-dialog-foot [data-dialog-close]').click();
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraftChanged'), slotValues(h, 'slot_config').map(row => row[0])], [true, ['Morning', 'Evening']]);
+  // Start from the saved columns: the new ones; a draft from them is current.
+  h.d.getElementById('twSlotFromSaved').click();
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotValues(h, 'slot_config').map(row => row[0])], [false, ['09:00-10:15', 'Late', 'Night']]);
+  slotType(h, slotInput(h, 'slot_config', 2, 'end'), '19:30');
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged'), slotInput(h, 'slot_config', 2, 'end').value], [true, false, '19:30']);
+  keyOn(h, 'Escape');
+  // A rule the saved columns lost is a change too.
+  stored = { ...stored, effective_lab_slot_config: SLOT_COLUMNS.effective_lab_slot_config.map(slot => ({ ...slot, online_only: false })) };
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged')], [true, true]);
+  keyOn(h, 'Escape');
+  // Saved elsewhere as exactly the draft: nothing to offer, and the draft is gone.
+  stored = { ...stored, effective_slot_config: [...SLOT_COLUMNS.effective_slot_config, { ...night, end: '19:30' }] };
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotInput(h, 'slot_config', 2, 'end').value], [false, '19:30']);
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), false);
+  assert.deepEqual([h.posts, h.errors], [[], []]);
+  // Its words, in both arms of the template.
+  assert.ok(template.includes(`<span class="tw-slot-draft-changed" id="twSlotDraftChanged" hidden>{% if LANGUAGE_CODE == 'ar' %}تغيّرت الأعمدة المحفوظة منذ هذه المسودة.{% else %}The saved columns changed since this draft.{% endif %}</span>`));
+});
+
+test('SD12 a time typed in Arabic digits shows its length and is saved as 0–9, in English and in Arabic', async t => {
+  // Built from their code points: Arabic-Indic U+0660–0669, Eastern Arabic-Indic U+06F0–06F9.
+  const arabic = text => text.replace(/[0-9]/g, d => String.fromCharCode(0x0660 + Number(d)));
+  const eastern = text => text.replace(/[0-9]/g, d => String.fromCharCode(0x06F0 + Number(d)));
+  for (const [lang, start, end, length] of [['en', eastern, eastern, '80 min'], ['ar', arabic, eastern, '80 دقيقةً']]) {
+    const h = await slotHarness(t, { arabic: lang === 'ar' });
+    await h.select();
+    await slotOpen(h);
+    slotType(h, slotInput(h, 'slot_config', 0, 'start'), start('09:00'));
+    slotType(h, slotInput(h, 'slot_config', 0, 'end'), end('10:20'));
+    assert.equal(slotLengths(h, 'slot_config')[0], length, lang);
+    assert.deepEqual(slotValues(h, 'slot_config')[0], ['09:00-10:15', start('09:00'), end('10:20')], `${lang}: the field keeps what was typed`);
+    slotSubmit(h);
+    await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+    assert.deepEqual(h.posts.map(post => post.body.slot_config[0]), [{ label: '09:00-10:15', start: '09:00', end: '10:20' }], lang);
+  }
 });

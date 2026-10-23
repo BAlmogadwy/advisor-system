@@ -54,12 +54,16 @@ const TW = {
   generatedPlan: null,       // section plan from generate
   sectionBudget: null,       // budget per course
   studentSummary: null,      // student classification summary
+  // The plan lens, from the quality read (6d): see resetPlanLens and takeLens.
   planLens: {
     plans: [],
     courses: {},
     sections: {},
     loaded: false,
   },
+  // The programmes (and SHARED) the board's cards were last dimmed by from
+  // roles that described the data (lensView's 'updating').
+  lensKeyShown: '',
   // The tables the user opened while the filter folds them ({group}|{kind}):
   // page memory for one board and one text, never stored (design record
   // §7.2 item 6, 6c). `foldScope` is the board and text it holds for.
@@ -240,9 +244,10 @@ function writeHold() {
   return workspaceCanEdit() ? '' : 'busy';
 }
 
-/* A dialog's commit (contract C): {data}, or {code, status} for every
-   failure (status 0: no answer was read), with nothing toasted (a toast
-   behind a modal is never seen). The keyboard goes
+/* A dialog's commit (contract C): {data}, or {code, status, error} for
+   every failure (status 0: no answer was read; `error` the server's own
+   {code, message, details}, or null), with nothing toasted (a toast behind
+   a modal is never seen). The keyboard goes
    to the chosen row first, since the commit button turns off as the write
    starts. twFetch's own busy guard would toast, so the hold is checked here
    and answered as a code like any refusal. */
@@ -250,16 +255,19 @@ async function dialogWrite(dialog, url, body) {
   const hold = writeHold();
   if (hold) return { code: hold };
   (dialog.querySelector('input[type="radio"]:checked') || dialog.querySelector('.ux-choice-list'))?.focus({ preventScroll: true });
-  let code = '', failed = 0;
+  let code = '', failed = 0, error = null;
   const data = await twFetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _quiet: true,
     _onError: (answer, status) => {
       code = answer?.error?.code || (answer ? String(status) : 'NETWORK');
       failed = Number(status) || 0;
+      // The slot dialog marks the fields a VALIDATION_SLOTS answer names
+      // and reviews a confirmation's list: both are in the server's error.
+      error = answer?.error && typeof answer.error === 'object' ? answer.error : null;
       return true;
     },
   });
-  return data ? { data } : { code: code || 'NETWORK', status: failed };
+  return data ? { data } : { code: code || 'NETWORK', status: failed, error };
 }
 
 /* What a dialog's work came to: in its alert line while it is open. Once the
@@ -370,6 +378,7 @@ function syncWorkspaceControls() {
   syncMoveDialog();
   syncRoomDialog();
   syncPlaceDialog();
+  syncSlotDialog();
 }
 
 /* The other views of this timetable are real links, so they open in a new tab
@@ -442,10 +451,10 @@ async function twFetch(url, opts = {}) {
   // no answer could be read — the request failed, or a success came back
   // that is not JSON (an expired session's login page).
   // It does not hear the local busy guard below, which toasts and returns
-  // null before any request is made. Today's callers (publish, drop, the slot
-  // editor) use no dialog or the page's `dlg` ones, which sit under the
-  // toasts and leave them announced, so that toast is seen even when the
-  // slot editor reopens on it. A template <dialog> opened modal
+  // null before any request is made. Today's callers without a template
+  // dialog (publish, a drop) use no dialog or the page's `dlg` ones, which
+  // sit under the toasts and leave them announced, so that toast is seen.
+  // A template <dialog> opened modal
   // (UXControls.dialog) is in the top layer, over every toast: it keeps its
   // commit off while the workspace is busy (data-tw-mutation, which
   // syncWorkspaceControls turns off) and checks workspaceCanEdit() before it
@@ -775,7 +784,7 @@ async function showSchedulerOutcome(jobId) {
 
   // ⋯ scenario actions
   $('twCopyScenario')?.addEventListener('click', copyScenarioPrompt);
-  $('twSlotEdit').addEventListener('click', openSlotEditor);
+  $('twSlotEdit').addEventListener('click', () => openSlotDialog());
 
   // Scenario picker and its scope
   $('twScenario').addEventListener('change', onScenarioChange);
@@ -807,10 +816,12 @@ async function showSchedulerOutcome(jobId) {
   }
   // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
   // place (applyGridView, which also writes the count), never redraws it, so
-  // a drag or a focused card survives typing.
+  // a drag or a focused card survives typing. A programme or SHARED typed
+  // while the lens is from before the last change reads it once (6d).
   $('twSearch')?.addEventListener('input', debounce(() => {
     applyGridView();
     renderBudgetSidebar();
+    readLensForFilter();
   }, 120));
   // A fold the user opens or shuts stays so for this board and text, and the
   // count's words say how many tables are still folded.
@@ -1004,6 +1015,8 @@ async function runGenerate(engine = 'classic', request = {}) {
     TW.selectedPlacementId = null;
     TW.undoStack = []; TW.redoStack = [];
     TW.quality = null; TW.qualityVersion = -1;
+    // Nor its lens: the board's first quality read brings the new one's.
+    resetPlanLens();
     // The new scenario's readiness is unknown: never show the previous one's.
     TW.readiness = null; TW.readinessVersion = -1;
     TW.plannerJob = null;
@@ -1205,8 +1218,8 @@ async function onScenarioChange() {
     $('twExportMenu').disabled = false;
     syncWorkspaceControls();
 
-    await loadPlanLens();
-    if (revision !== scenarioLoadRevision) return;
+    // The lens comes with the board's first quality read (lensWanted: none
+    // is held since the reset above).
     const boardsLoaded = await loadBoards(preferredBoard);
     if (revision === scenarioLoadRevision) persistWorkspaceScenario(TW.scenarioId, TW.loadedBoardId);
     syncWorkspaceControls();
@@ -1377,7 +1390,7 @@ async function selectBoard(boardId) {
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
     await loadBudget();
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
-    await refreshWorkspaceQuality();
+    await refreshWorkspaceQuality(false, { lens: lensWanted() });
     renderWorkspaceQuality();
     syncWorkspaceControls();
   } finally {
@@ -2037,73 +2050,168 @@ function courseKeyOf(item) {
   return String(item?.course_key || item?.course_code || '').trim();
 }
 
-// The lens read in flight (shared by every ask for the same data) and the
-// count that lets only the newest read land.
-let planLensRead = null;
-let planLensRevision = 0;
+/* ── The plan lens (design record §7.2 item 6, 6d) ──
+   Who sits where, by programme, and what each programme's per-plan file
+   shows (`programme_view`, contract B). It comes with the quality read —
+   `quality/?lens=1`, one seating on the server — and only while it is
+   wanted (lensWanted): the first quality read of an opened or reset
+   scenario, while the filter holds a programme or SHARED, on Selection's
+   Refresh and after a programme mark is saved. Every other quality read is
+   plain. `version` says which data it describes; every path that opens
+   another scenario resets it (onScenarioChange, resetWorkspace and
+   Generate's switch to the scenario it made). A read that brings no lens (it
+   failed, or `plan_lens: null`) keeps what the lens had and marks it
+   `failed`; `failedVersion` is the data that read was about, which is not
+   asked again unless the user asks (Refresh) or the data moves on. The page
+   holds no copy of the per-plan rule: the dims and the role words read the
+   server's roles. */
+
+// The quality read in flight ({scenarioId, version, lens, promise}) and the
+// count that lets only the newest read land (contract C).
+let qualityRead = null;
+let qualityLoadRevision = 0;
+function setQualityRead(read) {
+  qualityRead = read;
+  TW.qualityLoading = Boolean(read);
+  TW.planLens.loading = Boolean(read?.lens);
+}
+
 function resetPlanLens() {
   // Whatever read is in flight answers for data that is gone (a reload after
-  // a planner job keeps the data version but not the timetable).
-  planLensRevision++;
-  planLensRead = null;
+  // a planner job keeps the data version but not the timetable): the quality
+  // read in flight, which carries the lens, is forgotten with it.
+  qualityLoadRevision++;
   TW.planLens = { plans: [], courses: {}, sections: {}, loaded: false };
+  setQualityRead(null);
+  TW.lensKeyShown = '';
 }
 
-/* The plan lens: who sits where, by programme — a full seating evaluation
-   on the server. It is read when a scenario opens and then only on request
-   (Selection's Refresh, or after a programme mark is saved), never after
-   every edit; `version` says which data it describes. A second request for
-   the same data joins the read in flight; a newer read wins over an older. */
-function loadPlanLens() {
-  const scenarioId = TW.scenarioId;
-  if (!scenarioId) {
-    resetPlanLens();
-    return Promise.resolve();
+/* The lens answers for the data now, or could not, and is not asked again
+   for it unless the user asks. */
+function lensCurrent() {
+  const lens = TW.planLens;
+  return lens.failedVersion === TW.dataVersion || Boolean(lens.loaded && !lens.failed && lens.version === TW.dataVersion);
+}
+
+const hasLensTokens = query => Boolean(query.programmes.length || query.shared);
+
+/* Contract C: wanted while no lens has been read for this scenario since it
+   opened or was reset, or while the filter holds a programme or SHARED. A
+   Refresh and a mark save ask for it themselves. */
+function lensWanted() {
+  if (!TW.scenarioId) return false;
+  if (!TW.planLens.loaded && !TW.planLens.failed) return true;
+  return hasLensTokens(filterQuery());
+}
+
+/* A quality read's lens: its answer, or a failure (null), which keeps what
+   the lens had. */
+function takeLens(planLens, version) {
+  if (planLens) {
+    TW.planLens = { plans: [], courses: {}, sections: {}, ...planLens, loaded: true, failed: false, loading: false, version };
+    return;
   }
-  const version = TW.dataVersion;
-  if (planLensRead && planLensRead.scenarioId === scenarioId && planLensRead.version === version) return planLensRead.promise;
-  const revision = ++planLensRevision;
-  TW.planLens.loading = true;
-  const promise = (async () => {
-    try {
-      const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/plan-lens/`);
-      if (revision !== planLensRevision || TW.scenarioId !== scenarioId) return;
-      if (!data || !data.plan_lens) {
-        TW.planLens.loaded = false;
-        return;
-      }
-      TW.planLens = Object.assign({ plans: [], courses: {}, sections: {}, loaded: true }, data.plan_lens, { version });
-    } finally {
-      if (revision === planLensRevision) {
-        TW.planLens.loading = false;
-        planLensRead = null;
-      }
-    }
-  })();
-  planLensRead = { scenarioId, version, promise };
-  return promise;
+  Object.assign(TW.planLens, { failed: true, failedVersion: version });
 }
 
-/* A search by programme ("AI2") reads the lens: a new lens dims anew, in
-   place (the board is not drawn again). */
-function reapplyPlanSearch() {
-  const tokens = [...workspaceSearchTokens(), ...sectionBudgetSearch().split(/\s+/)];
-  if (!tokens.some(token => planTokenFromSearch(token))) return;
-  applyGridView();
-  renderBudgetSidebar();
+/* What the lens dims by now (contract D; the states of §7.4, 6d):
+   'fresh'    the roles describe the data now;
+   'updating' the data changed since and the board was dimmed for these same
+              programmes: the old roles stay until the new ones arrive (a
+              meeting they never saw is unknown, so not dimmed);
+   'checking' no roles to show for these programmes yet (a read is out, or
+              will be);
+   'failed'   the last read brought no programme view: nothing is dimmed. */
+function lensView(query = filterQuery()) {
+  const lens = TW.planLens;
+  const view = lens.loaded ? lens.programme_view || null : null;
+  if (view && !lens.failed && lens.version === TW.dataVersion) return { state: 'fresh', view };
+  const kept = view && !lens.failed && lensKey(query) && lensKey(query) === TW.lensKeyShown ? view : null;
+  const failed = lens.failed || (lens.loaded && !lens.programme_view);
+  if (!lens.loading && failed) return { state: 'failed', view: null };
+  return kept ? { state: 'updating', view: kept } : { state: 'checking', view: null };
+}
+const lensKey = query => (hasLensTokens(query) ? `${[...query.programmes].sort().join(' ')}${query.shared ? ' SHARED' : ''}` : '');
+
+/* The roles of a programme view, indexed once per view. */
+const VIEW_INDEX = new WeakMap();
+function viewIndex(view) {
+  let index = VIEW_INDEX.get(view);
+  if (!index) {
+    const byProgramme = roles => Object.fromEntries(Object.entries(roles || {}).map(([plan, lists]) => [plan,
+      new Map(Object.entries(lists || {}).flatMap(([role, ids]) => (ids || []).map(id => [String(id), role])))]));
+    index = { ids: new Set((view.placement_ids || []).map(String)), roles: byProgramme(view.roles), shared: byProgramme(view.shared_roles) };
+    VIEW_INDEX.set(view, index);
+  }
+  return index;
 }
 
-/* The lens on request: Selection says it is loading, then shows the answer,
-   a programme search filters anew, and a screen reader hears it arrive. */
+/* Each programme of the filter with the role its per-plan file gives the
+   meeting ([[P, role]], none when no file shows it), or null when it is
+   unknown: no programme or SHARED in the filter, no roles, or a meeting the
+   roles never saw. SHARED reads the export's SHARED classification
+   (`shared_roles`); alone, it means every programme. */
+function lensRoles(p, query, view) {
+  if (!hasLensTokens(query) || !view) return null;
+  const index = viewIndex(view);
+  const id = String(p.id);
+  if (!index.ids.has(id)) return null;
+  const roles = query.shared ? index.shared : index.roles;
+  const programmes = query.programmes.length ? query.programmes : view.programmes || [];
+  return programmes.map(plan => [plan, roles[plan]?.get(id)]).filter(([, role]) => role);
+}
+
+/* The role words of a card's title: c and t are the seats the section's
+   lens row counts (the same numbers the server classified it by). */
+const ROLE_WORDS = {
+  main: plan => (IS_AR ? `${plan}: شعبة خاصة به` : `${plan}: its own section`),
+  mixed: (plan, c, t) => (IS_AR ? `${plan}: شعبة مختلطة (${c} من ${t})` : `${plan}: mixed section (${c} of ${t})`),
+  other: (plan, c, t) => (IS_AR ? `${plan}: فيها ${c} من ${t}؛ ومعظمها لبرنامج آخر` : `${plan}: seats ${c} of ${t}; mainly another programme’s`),
+  outside: plan => (IS_AR ? `${plan}: خارج خطته؛ يذكر ملفه المقرر بين المقررات المطروحة` : `${plan}: outside its plan; its file lists the course as placed`),
+};
+function roleWords(p, roles) {
+  const row = sectionLensForPlacement(p);
+  return roles.map(([plan, role]) => ROLE_WORDS[role]?.(isolatedText(plan),
+    Number(row?.actual_plans?.[plan] || 0), Number(row?.actual_total || 0))).filter(Boolean);
+}
+const LENS_UNKNOWN = IS_AR ? '(جارٍ التحقق)' : '(checking)';
+
+/* The lens on request (Selection's Refresh, a saved mark): one quality read
+   with the lens. Selection says it is loading, then shows the answer (the
+   read draws the open tab again), and a screen reader hears what landed:
+   "updated" only for a lens of the data now. A read overtaken by a plain
+   one (an edit made meanwhile, with no programme in the filter) brings no
+   lens, so the mix held is from before that edit, as Selection says. */
 async function refreshPlanLens() {
-  const read = loadPlanLens();
+  const read = refreshWorkspaceQuality(true, { lens: true });
   redrawSelection();
   await read;
-  redrawSelection();
-  reapplyPlanSearch();
-  announceInspector(TW.planLens.loaded
+  const lens = TW.planLens;
+  // Not of the data now: older than it, unless a read failed for it (or
+  // none is held), as Selection says.
+  announceInspector(lens.loaded && !lens.failed && lens.version === TW.dataVersion
     ? (IS_AR ? 'حُدِّث توزيع البرامج.' : 'Programme mix updated.')
-    : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
+    : lens.loaded && lens.failedVersion !== TW.dataVersion
+      ? (IS_AR ? 'توزيع البرامج من قبل آخر تعديل.' : 'The programme mix is from before your last change.')
+      : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
+}
+
+/* After a quality read that asked for the lens: the left list filters anew
+   when a programme is in its search, and the board is drawn again only when
+   the codes two courses share changed (a card names its course then, E19). */
+function afterLensAnswer() {
+  if (TW.loadedBoardId != null && duplicatedCodesKey() !== TW.drawnDupKey) renderGrid();
+  const tokens = [...workspaceSearchTokens(), ...sectionBudgetSearch().split(/\s+/)];
+  if (tokens.some(token => planTokenFromSearch(token))) renderBudgetSidebar();
+}
+
+/* A programme or SHARED typed while the lens is from before the last change
+   (or none is held): one read with the lens, joined when one is out
+   (contract C). A lens that could not be read for this data is asked again
+   only by the user (Selection's Refresh). */
+function readLensForFilter() {
+  if (!TW.scenarioId || !hasLensTokens(filterQuery()) || lensCurrent()) return;
+  refreshWorkspaceQuality(true, { lens: true });
 }
 
 /* The inspector's own status line (outside the panel it redraws). */
@@ -2123,21 +2231,33 @@ function courseLensForItem(item) {
   return TW.planLens.courses[courseKeyOf(item)] || null;
 }
 
+/* The programmes a filter token can name (E5b): the per-plan export's — the
+   board programmes, upper-cased, in board order — as the programme view
+   lists them; before a view is read, the board programmes this page holds
+   (those the lens knows, when a lens without a view is held). */
+function programmeTokens() {
+  const lens = TW.planLens;
+  if (Array.isArray(lens.programme_view?.programmes)) return lens.programme_view.programmes;
+  const codes = [];
+  (TW.boards || []).forEach(board => String(board.program || '').split(',').forEach(token => {
+    const code = token.trim().toUpperCase();
+    if (code && !codes.includes(code)) codes.push(code);
+  }));
+  return lens.loaded ? codes.filter(code => (lens.plans || []).includes(code)) : codes;
+}
+
 function planTokenFromSearch(search) {
   const q = String(search || '').trim().toUpperCase();
   if (!q) return '';
   if (q === 'SHARED') return 'SHARED';
-  return (TW.planLens.plans || []).includes(q) ? q : '';
+  return programmeTokens().includes(q) ? q : '';
 }
 
-function itemMatchesPlanToken(item, token) {
-  if (!token) return false;
-  const sectionLens = sectionLensForPlacement(item);
-  if (sectionLens) {
-    if (token === 'SHARED') return !!sectionLens.shared || sectionLens.role === 'shared';
-    return (sectionLens.filter_plans || []).includes(token);
-  }
-  const courseLens = courseLensForItem(item);
+/* The left list's programme token: does the programme need this course (its
+   demand, or the lens's allocation; SHARED, a course shared beyond its
+   sections) — a question of its own, not the board's lens (E12). */
+function courseMatchesPlanToken(item, token) {
+  const courseLens = token ? courseLensForItem(item) : null;
   if (!courseLens) return false;
   if (token === 'SHARED') return !!courseLens.shared_overflow;
   const plans = courseLens.plans || {};
@@ -2145,14 +2265,27 @@ function itemMatchesPlanToken(item, token) {
   return Number(plans[token] || 0) > 0 || Number(allocation[token] || 0) > 0;
 }
 
+/* The codes two courses share, from the lens's course keys, once per lens. */
+const DUPLICATED_CODES = new WeakMap();
+function duplicatedCodes() {
+  const courses = TW.planLens.courses || {};
+  let codes = DUPLICATED_CODES.get(courses);
+  if (!codes) {
+    const keysByCode = new Map();
+    Object.keys(courses).forEach(key => {
+      const code = courseColorKey(String(key).split('::')[0]);
+      if (!keysByCode.has(code)) keysByCode.set(code, new Set());
+      keysByCode.get(code).add(key);
+    });
+    codes = new Set([...keysByCode].filter(([code, keys]) => code !== '__UNKNOWN__' && keys.size > 1).map(([code]) => code));
+    DUPLICATED_CODES.set(courses, codes);
+  }
+  return codes;
+}
+const duplicatedCodesKey = () => [...duplicatedCodes()].sort().join(' ');
 function hasDuplicateCourseCode(code) {
   const target = courseColorKey(code);
-  if (!target || target === '__UNKNOWN__') return false;
-  const keys = Object.keys(TW.planLens.courses || {}).filter(key => {
-    const prefix = String(key).split('::')[0];
-    return courseColorKey(prefix) === target;
-  });
-  return new Set(keys).size > 1;
+  return target !== '__UNKNOWN__' && duplicatedCodes().has(target);
 }
 
 function compactCourseName(name) {
@@ -2197,8 +2330,8 @@ function placementText(p) {
 }
 
 /* The filter's tokens (contract D): `programmes` and `shared` are the lens's
-   (a programme the lens knows, and SHARED), the rest is `text`. Until 6d the
-   programmes are the plans of the lens this page holds. */
+   (a programme of the per-plan export's set, programmeTokens, and SHARED),
+   the rest is `text`. */
 function filterQuery() {
   const query = { programmes: [], shared: false, text: [] };
   workspaceSearchTokens().forEach(token => {
@@ -2218,23 +2351,21 @@ function textMatch(p, query = filterQuery()) {
   return query.text.every(token => text.includes(token));
 }
 
-/* The lens: null with no programme or SHARED token; otherwise whether the
-   meeting is in the union of the programmes (SHARED narrowing it to shared
-   sections; SHARED alone, every shared section). The lens only dims, never
-   folds (§7.1 #5). Interim (6c): the allocation rule of today's token,
-   itemMatchesPlanToken; 6d dims by the per-plan export's roles instead. */
-function inLens(p, query = filterQuery()) {
-  if (!query.programmes.length && !query.shared) return null;
-  if (query.shared && !itemMatchesPlanToken(p, 'SHARED')) return false;
-  return !query.programmes.length || query.programmes.some(plan => itemMatchesPlanToken(p, plan));
+/* The lens (contract D): null when it cannot say (no programme or SHARED in
+   the filter, no roles, a meeting the roles never saw); otherwise whether a
+   per-plan file of the filter's programmes shows the meeting — any role,
+   their union. The lens only dims, never folds (§7.1 #5). */
+function inLens(p, query = filterQuery(), view = lensView(query).view) {
+  const roles = lensRoles(p, query, view);
+  return roles === null ? null : roles.length > 0;
 }
 
 /* Why a meeting is dimmed: 'filter' (the text), 'lens' (the programmes), both
    or neither. A dimmed card is an ordinary card (it drags, Enter, M, R). */
-function placementDims(p, query = filterQuery()) {
+function placementDims(p, query = filterQuery(), view = lensView(query).view) {
   const dims = [];
   if (!textMatch(p, query)) dims.push('filter');
-  if (inLens(p, query) === false) dims.push('lens');
+  if (inLens(p, query, view) === false) dims.push('lens');
   return dims;
 }
 
@@ -2257,26 +2388,98 @@ function budgetMatchesSearch(c, search) {
   ].filter(v => v != null).join(' ').toUpperCase();
   return search.split(/\s+/).filter(Boolean).every(token => {
     const planToken = planTokenFromSearch(token);
-    return planToken ? itemMatchesPlanToken(c, planToken) : text.includes(token);
+    return planToken ? courseMatchesPlanToken(c, planToken) : text.includes(token);
   });
 }
 
+/* "{n} meetings" after "of": Arabic in the genitive (لقاء واحد، لقاءين، 3 لقاءات). */
+const ofMeetings = n => (IS_AR
+  ? pluralAr(n, { zero: '0 لقاء', one: 'لقاء واحد', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })
+  : `${n} ${n === 1 ? 'meeting' : 'meetings'}`);
+
 /* Words beside the filter (E21): the count is the meetings not dimmed of
    all the board's meetings; its title and the field's description add the
-   tables folded for no match and the programme filter. */
-function searchCountWords(shown, total, folded, programmes = []) {
+   tables folded for no match, then the lens's own words (lensCountWords). */
+function searchCountWords(shown, total, folded) {
+  if (IS_AR) return `المطابق للتصفية: ${shown} من ${ofMeetings(total)}${folded ? `؛ الجداول المطويّة لعدم وجود مطابق: ${folded}` : ''}.`;
+  return `${shown} of ${total} ${total === 1 ? 'meeting matches' : 'meetings match'}${folded ? `; tables folded for no match: ${folded}` : ''}.`;
+}
+const upperFirst = text => text.charAt(0).toUpperCase() + text.slice(1);
+const lowerFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
+const LENS_STATE_WORDS = {
+  checking: IS_AR ? 'جارٍ التحقق…' : 'checking…',
+  updating: IS_AR ? 'جارٍ التحديث…' : 'updating…',
+};
+/* Why the seating cannot say who sits where: the roles follow the plans'
+   allocation and the marks, as the per-plan files do then. */
+function seatingUnknownWords(programmes = []) {
+  const names = programmes.map(isolatedText);
   if (IS_AR) {
-    const of = pluralAr(total, { zero: '0 لقاء', one: 'لقاء واحد', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' });
-    return `المطابق للتصفية: ${shown} من ${of}${folded ? `؛ الجداول المطويّة لعدم وجود مطابق: ${folded}` : ''}`
-      + `${programmes.length ? `؛ تصفية البرامج: ${programmes.join('، ')}` : ''}.`;
+    const lead = 'تعذّر تقييم توزيع الطلاب على الشعب: ';
+    if (!names.length) return `${lead}تتبع الشعب توزيع الخطة، كما في الملفات لكل برنامج.`;
+    if (names.length === 1) return `${lead}تتبع شعب ${names[0]} توزيع الخطة، كما في ملفه لكل برنامج.`;
+    return `${lead}تتبع شعب ${names.join('، ')} توزيع خططها، كما في ملفاتها لكل برنامج.`;
   }
-  return `${shown} of ${total} ${total === 1 ? 'meeting matches' : 'meetings match'}${folded ? `; tables folded for no match: ${folded}` : ''}`
-    + `${programmes.length ? `; programme filter: ${programmes.join(', ')}` : ''}.`;
+  const lead = 'The seating could not be evaluated: ';
+  if (!names.length) return `${lead}sections follow the plan’s allocation, as the per-plan files do.`;
+  if (names.length === 1) return `${lead}${names[0]}’s sections follow the plan’s allocation, as its per-plan file does.`;
+  return `${lead}the sections of ${names.join(', ')} follow their plans’ allocation, as their per-plan files do.`;
+}
+/* The lens in the count's title and description (the states of §7.4, 6d):
+   each programme's meetings in its timetable, or that its roles are being
+   checked or updated, or could not be read; with the seating unknown, why. */
+function lensCountWords(query, lv) {
+  if (!hasLensTokens(query)) return '';
+  const subject = upperFirst(lensParts(query).join(IS_AR ? '، ' : ', '));
+  if (lv.state === 'checking' || lv.state === 'updating') return `${subject}: ${LENS_STATE_WORDS[lv.state]}`;
+  if (lv.state === 'failed') {
+    if (!IS_AR) return `The programme view could not be read; nothing is dimmed for ${lowerFirst(subject)}.`;
+    return query.programmes.length === 1 && !query.shared
+      ? `تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج ${subject}.`
+      : `تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء لتصفية البرامج: ${subject}.`;
+  }
+  const total = TW.placements.length;
+  const counted = programmes => TW.placements
+    .filter(p => lensRoles(p, { programmes, shared: query.shared, text: [] }, lv.view)?.length).length;
+  const onlyShared = IS_AR ? ' (الشعب المشتركة فقط)' : ' (shared sections only)';
+  const clauses = query.programmes.length
+    ? query.programmes.map(plan => `${isolatedText(plan)}${query.shared ? onlyShared : ''}: ${counted([plan])} ${IS_AR ? 'من' : 'of'} ${ofMeetings(total)} ${IS_AR ? 'في جدوله' : 'in its timetable'}`)
+    : [`${subject}: ${counted([])} ${IS_AR ? 'من' : 'of'} ${ofMeetings(total)} ${IS_AR ? 'في جداول البرامج' : 'in the programmes’ timetables'}`];
+  const words = `${clauses.join(IS_AR ? '؛ ' : '; ')}.`;
+  return lv.view.seating_assessed === false ? `${words} ${seatingUnknownWords(query.programmes)}` : words;
+}
+/* What the per-plan export will hold (E23): the programmes, shared
+   sections, the text; or every programme's file. */
+function exportScopeWords(query, raw) {
+  if (!raw) return IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term';
+  const names = query.programmes.map(isolatedText);
+  const parts = [];
+  if (names.length) {
+    parts.push(IS_AR ? `${names.length === 1 ? 'برنامج' : 'البرامج'} ${names.join('، ')} فقط`
+      : `${names.length === 1 ? 'Programme' : 'Programmes'} ${names.join(', ')} only`);
+  }
+  if (query.shared) parts.push(IS_AR ? 'الشعب المشتركة فقط' : 'Shared sections only');
+  if (query.text.length) {
+    const text = query.text.join(' ');
+    parts.push(IS_AR ? `ما يطابق «${text}» فقط` : `Only what matches "${text}"`);
+  }
+  return parts.join(' · ');
 }
 /* Text and attributes written only when they change: a live region is not
    read again, and the board's roving never hears a change it need not. */
 function setText(element, text) {
   if (element && element.textContent !== text) element.textContent = text;
+}
+/* The same, rewriting the element's own text node: no node of the board is
+   added or removed (only an empty element gains one). */
+function setTextInPlace(element, text) {
+  if (!element) return;
+  const node = element.firstChild;
+  if (node && node.nodeType === Node.TEXT_NODE && !node.nextSibling) {
+    if (node.nodeValue !== text) node.nodeValue = text;
+  } else {
+    setText(element, text);
+  }
 }
 function setAttr(element, name, value) {
   if (value == null || value === '') {
@@ -2286,28 +2489,24 @@ function setAttr(element, name, value) {
   }
 }
 
-function updateSearchStatus() {
+function updateSearchStatus(lv = null) {
   const input = $('twSearch');
   if (!input) return;
   const q = activeWorkspaceSearch();
-  const plan = planTokenFromSearch(q);
-  setText($('twExportScope'), !q
-    ? (IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term')
-    : plan
-      ? (IS_AR ? `برنامج ${plan} فقط` : `Programme ${plan} only`)
-      : (IS_AR ? `ما يطابق «${q}» فقط` : `Only what matches "${q}"`));
+  const query = filterQuery();
+  setText($('twExportScope'), exportScopeWords(query, q));
   if (!q) {
     setAttr(input, 'title', '');
     setText($('twSearchCount'), '');
     setText($('twSearchNote'), '');
     return;
   }
-  const query = filterQuery();
+  const lens = lv || lensView(query);
   const total = TW.placements.length;
-  const shown = TW.placements.filter(p => !placementDims(p, query).length).length;
+  const shown = TW.placements.filter(p => !placementDims(p, query, lens.view).length).length;
   // Folded now: a table with no match the user has not opened.
   const folded = document.querySelectorAll('#twGrid .tw-fold-row:not([hidden]) .tw-fold-toggle[aria-expanded="false"]').length;
-  const sentence = searchCountWords(shown, total, folded, lensParts(query));
+  const sentence = [searchCountWords(shown, total, folded), lensCountWords(query, lens)].filter(Boolean).join(' ');
   setAttr(input, 'title', sentence);
   setText($('twSearchNote'), sentence);
   setText($('twSearchCount'), IS_AR ? `${shown} من ${total}` : `${shown} of ${total}`);
@@ -2333,25 +2532,36 @@ const foldLabel = (kind, n) => `${TABLE_WORDS[kind] || ''} · ${IS_AR ? 'لا ش
 const DIM_NOTE_IDS = { filter: 'twDimNoteFilter', lens: 'twDimNoteLens' };
 /* The lens's tokens in words: each programme isolated, then shared sections. */
 const lensParts = query => [...query.programmes.map(isolatedText), ...(query.shared ? [IS_AR ? 'الشعب المشتركة' : 'shared sections'] : [])];
-function dimNotes(query) {
-  const parts = lensParts(query);
-  return {
-    filter: IS_AR ? 'خارج التصفية' : 'Outside the filter',
-    lens: !parts.length ? ''
-      : IS_AR ? `خارج تصفية البرامج: ${parts.join('، ')}` : `Outside the programme filter: ${parts.join(', ')}`,
-  };
+/* Why the lens dims a card: no per-plan file of the filter's programmes
+   shows it (with SHARED, none shows it as a shared section). */
+function lensNote(query) {
+  if (!hasLensTokens(query)) return '';
+  const names = query.programmes.map(isolatedText);
+  if (query.shared) {
+    if (!names.length) return IS_AR ? 'ليست شعبة مشتركة في جدول أي برنامج' : 'Not a shared section in any programme’s timetable';
+    if (names.length === 1) return IS_AR ? `ليست شعبة مشتركة في جدول ${names[0]}` : `Not a shared section in ${names[0]}’s timetable`;
+    return IS_AR ? `ليست شعبة مشتركة في هذه الجداول: ${names.join('، ')}` : `Not a shared section in these timetables: ${names.join(', ')}`;
+  }
+  if (names.length === 1) return IS_AR ? `ليست في جدول ${names[0]}` : `Not in ${names[0]}’s timetable`;
+  return IS_AR ? `ليست في أيٍّ من جداول: ${names.join('، ')}` : `In none of these timetables: ${names.join(', ')}`;
 }
+function dimNotes(query) {
+  return { filter: IS_AR ? 'خارج التصفية' : 'Outside the filter', lens: lensNote(query) };
+}
+/* The legend's line for a lens dim: "Dimmed: " and the note. */
+const lensLegendWords = note => `${IS_AR ? 'باهتة: ' : 'Dimmed: '}${IS_AR ? note : lowerFirst(note)}`;
 
 /* The filter and the lens over the drawn board, in place (contract D). It
    runs after a draw, a filter change, a tone change and a lens change, and
    writes attributes and text only — never the board's nodes — so a drag, a
    focused card and the keyboard's stop survive it:
    - each card's dim (`data-dim` filter and/or lens, its notes in
-     `aria-describedby`, their words in its title);
+     `aria-describedby`, their words in its title, then the lens's role words,
+     or "(checking)" for a meeting the roles never saw);
    - each table the text matches nothing in folds: its fold row shows (the
      table's one stop) and its rows hide, unless the user opened it for this
      board and text (TW.foldOpen); the fold's tone counts;
-   - each group heading's matches, the legend's dim line and the count.
+   - each group heading's matches, the legend's dim lines and the count.
    Roving reads its stops again only when a table folded or opened. A caller
    that has the issue model's `byPlacement` passes it (applyCardTones), so a
    tone update builds the model once. */
@@ -2359,6 +2569,11 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
   const grid = $('twGrid');
   const query = filterQuery();
   const active = filterActive(query);
+  const lens = lensView(query);
+  const lensOn = hasLensTokens(query);
+  // The programmes the board is dimmed for now, from roles it may keep while
+  // newer ones are read ('updating').
+  TW.lensKeyShown = lens.view ? lensKey(query) : '';
   const scope = `${TW.loadedBoardId ?? ''}|${query.text.join(' ')}`;
   if (scope !== TW.foldScope) {
     TW.foldScope = scope;
@@ -2370,7 +2585,7 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
   setText($('twDimNoteLens'), notes.lens);
   const shownInGroup = new Map();
   let moved = false;
-  let dimmed = false;
+  const dimmed = { filter: false, lens: false };
   grid.querySelectorAll('[role="grid"]').forEach(table => {
     const group = table.dataset.group || '-';
     const tones = { critical: 0, warning: 0 };
@@ -2378,13 +2593,17 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
     table.querySelectorAll('.tw-card[data-placement-id]').forEach(card => {
       const id = card.dataset.placementId;
       const p = byId.get(id);
-      const dims = p && active ? placementDims(p, query) : [];
+      const roles = p && lensOn ? lensRoles(p, query, lens.view) : null;
+      const dims = p && active ? [...(textMatch(p, query) ? [] : ['filter']), ...(roles && !roles.length ? ['lens'] : [])] : [];
       if (!dims.includes('filter')) matched++;
       if (!dims.length) shownInGroup.set(group, (shownInGroup.get(group) || 0) + 1);
-      if (dims.length) dimmed = true;
+      dims.forEach(dim => { dimmed[dim] = true; });
       setAttr(card, 'data-dim', dims.join(' '));
       setAttr(card, 'aria-describedby', dims.map(dim => DIM_NOTE_IDS[dim]).join(' '));
-      const title = [card._twToneReason || '', card.dataset.identity || '', ...dims.map(dim => notes[dim])].filter(Boolean).join(' | ');
+      // What the programmes' files make of it: its roles; unknown while the
+      // roles are read (or never saw it); nothing when they could not be read.
+      const lensWords = !p || !lensOn ? [] : roles ? roleWords(p, roles) : lens.state === 'failed' ? [] : [LENS_UNKNOWN];
+      const title = [card._twToneReason || '', card.dataset.identity || '', ...dims.map(dim => notes[dim]), ...lensWords].filter(Boolean).join(' | ');
       if (card.title !== title) card.title = title;
       const tone = byPlacement.get(id)?.tone;
       if (tone in tones) tones[tone]++;
@@ -2410,10 +2629,16 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
     const text = `${head.dataset.what || ''}${active ? ` · ${matchesCount(shownInGroup.get(head.dataset.group) || 0)}` : ''}`;
     if (meta && meta.nodeValue !== text) meta.nodeValue = text;
   });
+  // The legend says what each kind of dim means, while a card has it.
   const legend = $('twLegendDim');
-  if (legend && legend.hidden !== !dimmed) legend.hidden = !dimmed;
+  if (legend && legend.hidden !== !dimmed.filter) legend.hidden = !dimmed.filter;
+  const legendLens = $('twLegendDimLens');
+  if (legendLens) {
+    if (legendLens.hidden !== !dimmed.lens) legendLens.hidden = !dimmed.lens;
+    if (dimmed.lens) setTextInPlace(legendLens.querySelector('.tw-legend-words'), lensLegendWords(notes.lens));
+  }
   if (moved) boardNav?.refresh();
-  updateSearchStatus();
+  updateSearchStatus(lens);
 }
 
 /* A located card inside a folded table: the fold opens first (as a click on
@@ -2441,6 +2666,9 @@ function renderGridWithSlots(slots, labSlots) {
   // Every meeting is drawn: the filter folds and dims in place
   // (applyGridView), so typing never draws the board again.
   const placements = TW.placements;
+  // The codes two courses share, as these cards name them (a lens answer
+  // that changes them draws the board again, afterLensAnswer).
+  TW.drawnDupKey = duplicatedCodesKey();
 
   // ── Split placements into student groups by section label ──
   const bySec = {};
@@ -2546,11 +2774,11 @@ const minutesOf = time => { const [h, m] = String(time || '0:0').split(':').map(
    a stored time (timetable_slot_config._TIME, _minutes and _hhmm): H:MM or
    HH:MM, seconds allowed, hours 0–23 — "9:00" and "09:00:00" are 09:00 —
    and anything else is no time; the day upper-cased to three letters ("sun"
-   is SUN). A meeting with no cell is parked under its table, never lost. */
-const SERVER_TIME = /^\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*$/;
+   is SUN). A meeting with no cell is parked under its table, never lost.
+   The time rule is the slot module's `minutes` (loaded before this script),
+   which the slot dialog's lengths read too (6f): one client copy. */
 function timeMinutes(value) {
-  const match = SERVER_TIME.exec(value == null ? '' : String(value));
-  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+  return window.TimetableSlotConfig.minutes(value);
 }
 function hhmm(value) {
   const minutes = timeMinutes(value);
@@ -2926,8 +3154,10 @@ function boardLegendHtml({ parked = false } = {}) {
     + item(swatch('selected'), IS_AR ? 'الشعبة المحددة' : 'The selected section')
     + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه الأخرى' : 'The same course’s other meetings')
     + (parked ? `<span class="ux-legend-item" id="twLegendPark">${swatch('park')}<span>${esc(PARK_WORDS.legend)}</span></span>` : '')
-    // Shown by applyGridView while the filter dims a card.
+    // Shown by applyGridView while the text, or the programmes, dim a card
+    // (the programmes' words written in place as the filter changes).
     + `<span class="ux-legend-item" id="twLegendDim" hidden>${swatch('dim')}<span>${IS_AR ? 'باهتة: خارج التصفية' : 'Dimmed: outside the filter'}</span></span>`
+    + `<span class="ux-legend-item" id="twLegendDimLens" hidden>${swatch('dim')}<span class="tw-legend-words">${esc(lensLegendWords(lensNote(filterQuery())))}</span></span>`
     + `<span class="ux-legend-item">${IS_AR ? 'اللون يساعد على إيجاد المقرر' : 'Colour helps find a course'}</span>`
     + `</div>`;
 }
@@ -5182,15 +5412,18 @@ async function placeRefused(result, { dialog, here, session, about, request, lab
    parts are the shared module's). The seated mix and the grouping trade-off
    are the plan lens this page already holds: after an edit they say they are
    from before it and offer a Refresh — the lens is a full seating evaluation,
-   never re-read per edit. A saved mark reads it once more, and the quality
-   and the publish check with it (both are about the seating). The panel's
-   redraw keeps the keyboard on the select through a save. */
+   never re-read per edit. A saved mark reads it once more, with the quality
+   (one read, `quality/?lens=1`), and then the publish check (both are about
+   the seating). A seating that could not be evaluated is unknown, never
+   "nobody sits here". The panel's redraw keeps the keyboard on the select
+   through a save. */
 // Section → the mark being saved (the select shows it while it saves).
 const PROGRAMME_MARK_PENDING = new Map();
 function programmeMarkHtml(p) {
   const PM = window.TimetableProgrammeMark;
   if (!PM || !PM.hasMark(p)) return '';
-  const lens = TW.planLens || {};
+  // `loading`: a quality read with the lens is out.
+  const lens = TW.planLens;
   const key = String(p.term_section_id);
   const pending = PROGRAMME_MARK_PENDING.has(key);
   const shown = pending ? { ...p, preferred_programme: PROGRAMME_MARK_PENDING.get(key) } : p;
@@ -5198,16 +5431,21 @@ function programmeMarkHtml(p) {
   const hold = p.preferred_programme_editable === false || pending;
   const disabled = hold || !workspaceCanEdit();
   const nobody = lens.loaded ? PM.nobodyHtml(p, courseLensForItem(p)) : '';
-  const fresh = lens.loaded && !lens.loading && lens.version === TW.dataVersion;
+  const fresh = lens.loaded && !lens.loading && !lens.failed && lens.version === TW.dataVersion;
   // A section the lens does not hold (another scenario's, or new) is unknown,
-  // not empty.
+  // not empty; so is every section when the seating could not be evaluated.
+  const unassessed = lens.loaded && lens.seating?.assessed === false;
   const sectionLens = lens.loaded ? sectionLensForPlacement(p) : null;
-  const mix = !sectionLens ? '—'
+  const mix = !sectionLens || unassessed ? '—'
     : (PM.mixHtml(sectionLens) || esc(IS_AR ? 'لا يُقعَد فيها طلاب هذا السيناريو' : 'No student of this scenario sits here'));
+  const unknown = unassessed ? `<span class="tw-sel-hint">${esc(seatingUnknownWords())}</span>` : '';
   const trade = lens.loaded ? PM.tradeHtml(lens.programme_grouping) : '';
+  // A read again that failed keeps the mix it had: said, and how old it is.
+  const stale = lens.version === TW.dataVersion ? '' : (IS_AR ? 'من قبل آخر تعديل.' : 'From before your last change.');
   const state = lens.loading ? PM.words.loading
     : !lens.loaded ? (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.')
-      : fresh ? '' : (IS_AR ? 'من قبل آخر تعديل.' : 'From before your last change.');
+      : lens.failed ? [IS_AR ? 'تعذّرت قراءة توزيع البرامج مجدداً.' : 'The programme mix could not be read again.', stale].filter(Boolean).join(' ')
+        : fresh ? '' : stale;
   const refresh = fresh ? ''
     : `<button type="button" class="btn btn-sm btn-neutral" data-tw-lens-refresh data-focus-key="lens-refresh"${lens.loading ? ' disabled aria-busy="true"' : ''}>${IS_AR ? 'تحديث' : 'Refresh'}</button>`;
   return `<h3 class="tw-sel-subhead">${IS_AR ? 'البرنامج' : 'Programme'}</h3>
@@ -5215,7 +5453,7 @@ function programmeMarkHtml(p) {
       <div class="tw-sel-field tw-sel-field-stack"><dt><label for="twSelProgramme">${esc(PM.words.label)}</label></dt>
         <dd><select id="twSelProgramme" class="form-select form-select-sm tw-programme-select" data-placement-id="${p.id}" data-tw-mutation${hold ? ' data-tw-hold' : ''}${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}${nobody ? ' aria-describedby="twSelProgrammeNote"' : ''}>${PM.optionsHtml(shown, lens.plans)}</select>
           ${nobody ? `<span class="tw-sel-note" id="twSelProgrammeNote" data-tone="warning">${nobody}</span>` : ''}</dd></div>
-      <div class="tw-sel-field tw-sel-field-stack"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${trade ? `<span class="tw-sel-hint">${trade}</span>` : ''}${state ? `<span class="tw-sel-hint">${esc(state)} ${refresh}</span>` : ''}</dd></div>
+      <div class="tw-sel-field tw-sel-field-stack"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${unknown}${trade ? `<span class="tw-sel-hint">${trade}</span>` : ''}${state ? `<span class="tw-sel-hint">${esc(state)} ${refresh}</span>` : ''}</dd></div>
     </dl>`;
 }
 
@@ -5269,10 +5507,10 @@ async function saveWorkspaceProgrammeMark(placementId, value) {
     redrawSelection();
   }
   if (!changed) return;
-  // The seating changed: the seated mix is read again, once, and then the
-  // quality and the publish check (seats and student clashes are seating).
+  // The seating changed: the seated mix and the quality are read again, in
+  // one read with the lens, and then the publish check (seats and student
+  // clashes are seating).
   await refreshPlanLens();
-  await refreshWorkspaceQuality();
 }
 
 /* ── Right Panel ── */
@@ -5769,37 +6007,60 @@ function updateQuickStats() {
   renderBoardTabs();
 }
 
-let qualityLoadRevision = 0;
 /* The scenario's quality is a full seating evaluation — the heaviest read this
    page makes. It is scenario-wide, so a board switch reuses it; only a write
-   (TW.dataVersion) or a reload makes it stale. */
-async function refreshWorkspaceQuality(force = false) {
+   (TW.dataVersion) or a reload makes it stale. With `lens` it also brings the
+   plan lens from the same seating (`quality/?lens=1`, contract C): asked
+   while lensWanted() — the board's read passes it — and by a Refresh or a
+   saved mark. One read is in flight at a time: a request joins it when it is
+   about the same scenario and data and has the lens or needs none; any other
+   starts a new read, and only the newest lands. A read overtaken by a newer
+   one ends with it, so a board's load holds until the quality it shows. */
+async function refreshWorkspaceQuality(force = false, { lens = lensWanted() } = {}) {
   const scenarioId = TW.scenarioId;
-  const revision = ++qualityLoadRevision;
   if (!scenarioId) { TW.quality = null; renderWorkspaceQuality(); return; }
-  if (!force && TW.quality && TW.qualityVersion === TW.dataVersion) {
+  const version = TW.dataVersion;
+  if (!force && TW.quality && TW.qualityVersion === version && (!lens || lensCurrent())) {
     renderWorkspaceQuality();
     if (!TW.readiness || TW.readinessVersion !== TW.dataVersion) scheduleReadinessRefresh();
     return;
   }
-  const version = TW.dataVersion;
-  if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
-  TW.qualityLoading = true;
-  let data;
-  try {
-    data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
-  } finally {
-    if (revision === qualityLoadRevision) TW.qualityLoading = false;
+  if (qualityRead && qualityRead.scenarioId === scenarioId && qualityRead.version === version && (qualityRead.lens || !lens)) {
+    return qualityRead.promise;
   }
-  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) { renderWorkspaceQuality(); return; }
-  TW.quality = data?.ok ? data : null;
-  TW.qualityVersion = version;
-  // Schedule the publish check first: the panel then says "checking", not
-  // "not checked again", for the debounce before it runs.
-  scheduleReadinessRefresh();
-  renderWorkspaceQuality();
-  const active = document.querySelector('.tw-right .tw-panel-tab.active');
-  if (active) renderRightPanel(active.dataset.tab);
+  const revision = ++qualityLoadRevision;
+  if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
+  const read = { scenarioId, version, lens, promise: null };
+  read.promise = (async () => {
+    let data;
+    try {
+      data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/${lens ? '?lens=1' : ''}`);
+    } finally {
+      if (revision === qualityLoadRevision) setQualityRead(null);
+    }
+    if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) {
+      renderWorkspaceQuality();
+      return qualityRead?.scenarioId === scenarioId ? qualityRead.promise : undefined;
+    }
+    // The lens is its own part of the answer, never part of the quality.
+    const { plan_lens: planLens, ...quality } = data || {};
+    TW.quality = data?.ok ? quality : null;
+    TW.qualityVersion = version;
+    if (lens) takeLens(data?.ok && planLens ? planLens : null, version);
+    // Schedule the publish check first: the panel then says "checking", not
+    // "not checked again", for the debounce before it runs.
+    scheduleReadinessRefresh();
+    // The tones, and with them the filter's view (applyGridView), the new lens.
+    renderWorkspaceQuality();
+    if (lens) afterLensAnswer();
+    const active = document.querySelector('.tw-right .tw-panel-tab.active');
+    if (active) renderRightPanel(active.dataset.tab);
+  })();
+  setQualityRead(read);
+  // The count's words say the programmes are being checked (no longer that
+  // they could not be read).
+  if (lens && hasLensTokens(filterQuery())) applyGridView();
+  return read.promise;
 }
 /* The stat strip. Two scopes (whole scenario / instructors), each number with
    its meaning in its label and its direction in its tone:
@@ -6186,83 +6447,475 @@ function setIssuesCount(total, critical) {
   if ($('twRightRailCount')) $('twRightRailCount').textContent = text;
 }
 
-/* ── Slot Edit Modal ── */
-/* The editor opens on the effective columns, or on the text the user had
-   typed when a save stopped (a decline, a line it could not read, a column
-   the server refused): their edits are never lost. */
-async function openSlotEditor(typed = null) {
-  if (!TW.scenarioId || !TW.scenario) { notify.error(IS_AR ? 'اختر سيناريو أولا' : 'Select a scenario first'); return; }
-  if (TW.scenario.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Cannot edit published scenario'); return; }
+/* ── Edit time slots (design record §7.2 item 6, 6f) ──
+   The grid's columns for every board of the scenario, in #twSlotDialog: one
+   row per column (the slot module's rows and words), lectures then labs.
+   Nothing about a time is checked here: a column the server refuses
+   (VALIDATION_SLOTS) is marked on the row that was sent at its index, since
+   rows move while the dialog is open. A change that leaves meetings outside
+   the columns, or takes a column's online-only rule away, is a review step
+   of the dialog — the server's list, confirmed by its fingerprint (PR 1) —
+   before Save anyway. A list always keeps one row: an empty list is the
+   server's defaults, never "no columns". A column's flags are shown and never
+   edited (owner, Q4). Edits are never lost: every change is the scenario's
+   draft (page memory) until a save lands, and the next open offers it —
+   saying so when the saved columns changed since the draft began. */
+const SLOT_WORDS = IS_AR ? {
+  noScenario: 'اختر سيناريو أولا',
+  progress: 'جارٍ حفظ الأعمدة…',
+  notSaved: 'لم تُحفظ الأعمدة.',
+  kept: 'تعود تعديلاتك عند فتح «تعديل الفترات الزمنية» مرة أخرى.',
+  saved: (lectures, labs) => `حُفظت الأعمدة: المحاضرات ${lectures}، المعامل ${labs}.`,
+  parked: (lectures, labs, n) => `حُفظت الأعمدة: المحاضرات ${lectures}، المعامل ${labs}؛ أسفل جداولها الآن خارج الأعمدة: ${meetingsCount(n)}.`,
+} : {
+  noScenario: 'Select a scenario first',
+  progress: 'Saving the columns…',
+  notSaved: 'The columns were not saved.',
+  kept: 'Your edits come back when you open “Edit time slots” again.',
+  saved: (lectures, labs) => `Columns saved: ${lectures} lecture, ${labs} lab.`,
+  parked: (lectures, labs, n) => `Columns saved: ${lectures} lecture, ${labs} lab; now under their tables, outside the columns: ${meetingsCount(n)}.`,
+};
+// The refusals a save can meet that have the gate's words; any other is notSaved.
+const SLOT_REFUSALS = {
+  SCENARIO_PUBLISHED: REFUSAL.published, SCENARIO_BUSY: REFUSAL.busy,
+  published: REFUSAL.published, job: REFUSAL.job, busy: REFUSAL.busy,
+};
+const SLOT_LISTS = ['slot_config', 'lab_slot_config'];
+const SLOT_TABLES = { slot_config: 'twSlotLectures', lab_slot_config: 'twSlotLabs' };
+const SLOT_FIELDS = ['label', 'start', 'end'];
+const SLOT_ICONS = {
+  up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+  remove: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+};
+/* Scenario id → its draft: the unsaved rows ({slot_config, lab_slot_config})
+   and `base`, the saved columns they started from (slotSignature), so a
+   draft older than the saved columns is never offered as if it were current. */
+const SLOT_DRAFTS = new Map();
+/* The dialog's session: the scenario it edits, its rows and the saved
+   columns they started from, the server's marks (row key → {fields, texts}),
+   its write out, the step shown ('rows' or 'review'), the review waiting for
+   an answer ({resolve}), and the page's hold its alert is about. */
+const SLOT = {
+  token: 0, scenarioId: null, rows: { slot_config: [], lab_slot_config: [] }, base: '', marks: new Map(),
+  pending: false, step: 'rows', review: null, held: '',
+};
+function slotDialogOpen() {
+  return Boolean(window.UXControls?.dialog?.isOpen($('twSlotDialog')));
+}
+const copySlotRows = rows => Object.fromEntries(SLOT_LISTS.map(list => [list, (rows[list] || []).map(row => ({ ...row, flags: [...row.flags] }))]));
+/* The saved columns as rows: the scenario's effective ones (its own, or the
+   server's defaults), never the page's. */
+function savedSlotRows() {
   const SC = window.TimetableSlotConfig;
-  const lectureSlots = scenarioLectureSlots();
-  const labSlots = scenarioLabSlots();
-  const flagged = SC.flaggedColumnsText(labSlots) || SC.flaggedColumnsText(lectureSlots);
-  const lectureText = typed ? typed.lecture : SC.rowsToText(lectureSlots);
-  const labText = typed ? typed.lab : SC.rowsToText(labSlots);
-
-  const result = await dlg.confirm({
-    title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
-    body: `<div class="fs-md text-t3 fw-semibold" style="margin-bottom:6px">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
-      <div class="fs-sm text-t4" style="margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(lectureText)}</textarea>
-      <div class="fs-md text-teal fw-semibold" style="margin:10px 0 6px">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>
-      ${flagged ? `<p class="fs-sm text-t3" style="margin:8px 0 0">${esc(flagged)}</p>` : ''}`,
-    confirmText: IS_AR ? 'حفظ' : 'Save Slots',
-    kind: 'info',
-  });
-  if (!result) return;
-
-  const text = {
-    lecture: document.getElementById('twSlotInput')?.value ?? lectureText,
-    lab: document.getElementById('twLabSlotInput')?.value ?? labText,
-  };
-  const lectures = SC.parseLines(text.lecture);
-  const labs = SC.parseLines(text.lab);
-  if (lectures.rejected.length || labs.rejected.length) {
-    notify.error(SC.rejectedText(lectures.rejected, labs.rejected));
-    return openSlotEditor(text);
+  return { slot_config: SC.editorRows(scenarioLectureSlots()), lab_slot_config: SC.editorRows(scenarioLabSlots()) };
+}
+/* The saved columns as one string (every column's label, start, end and
+   flags, lectures then labs): what a draft started from. */
+function slotSignature() {
+  const saved = savedSlotRows();
+  return JSON.stringify(SLOT_LISTS.map(list => saved[list].map(row => [row.label, row.start, row.end, row.flags])));
+}
+/* Rows that would send what is saved: nothing to keep. */
+function slotRowsSendSaved(rows) {
+  const SC = window.TimetableSlotConfig;
+  const saved = savedSlotRows();
+  return SLOT_LISTS.every(list => JSON.stringify(SC.rowsToPayload(rows[list])) === JSON.stringify(SC.rowsToPayload(saved[list])));
+}
+/* After every change: the rows are the scenario's draft, with the saved
+   columns they started from, unless they would send what is saved. */
+function rememberSlotDraft() {
+  if (TW.scenarioId === SLOT.scenarioId && slotRowsSendSaved(SLOT.rows)) {
+    SLOT_DRAFTS.delete(SLOT.scenarioId);
+    return;
   }
-  if (lectures.rows.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return openSlotEditor(text); }
-  const scenarioId = TW.scenarioId;
+  SLOT_DRAFTS.set(SLOT.scenarioId, { rows: copySlotRows(SLOT.rows), base: SLOT.base });
+}
+function findSlotRow(key) {
+  for (const list of SLOT_LISTS) {
+    const index = SLOT.rows[list].findIndex(row => row.key === key);
+    if (index >= 0) return { list, index, row: SLOT.rows[list][index] };
+  }
+  return null;
+}
+/* A row's name for its buttons: its label, or its list's word and number. */
+function slotRowName(list, row, index) {
+  return row.label.trim() || `${window.TimetableSlotConfig.rowWords.column[list]} ${index + 1}`;
+}
+const slotMarkText = mark => mark.texts.join(IS_AR ? '؛ ' : '; ');
 
+/* One column as a row, and under it the row its error is said in (its
+   fields' aria-describedby; empty and hidden while there is none). Up on the
+   first row, Down on the last and Remove on a list's only row are
+   aria-disabled, so the keyboard stays on them; Remove says why. */
+function slotRowHtml(list, row, index, count) {
+  const SC = window.TimetableSlotConfig;
+  const W = SC.rowWords;
+  const key = esc(row.key);
+  const head = `twSlotRow-${key}`;
+  const error = `twSlotErr-${key}`;
+  const mark = SLOT.marks.get(row.key);
+  const field = (name, attributes) => `<td${name === 'label' ? ' class="ux-rows-grow"' : ''}><input type="text" value="${esc(row[name])}" data-field="${name}" data-focus-key="slot:${key}:${name}"`
+    + ` aria-labelledby="${head} ${SLOT_TABLES[list]}-${name}" aria-describedby="${error}"${mark?.fields.has(name) ? ' aria-invalid="true"' : ''} ${attributes}></td>`;
+  const time = 'class="ux-rows-time" inputmode="numeric" dir="ltr" autocomplete="off" spellcheck="false"';
+  const name = slotRowName(list, row, index);
+  const button = (kind, off, extra = '') => {
+    const words = esc(W[kind](name));
+    return `<button type="button" class="btn btn-sm btn-neutral btn-icon" data-row-action="${kind}" data-focus-key="slot:${key}:${kind}"`
+      + ` aria-label="${words}" title="${words}"${off ? ` aria-disabled="true"${extra}` : ''}>${SLOT_ICONS[kind]}</button>`;
+  };
+  return `<tr data-row-key="${key}"><th scope="row" id="${head}"><span class="visually-hidden">${esc(W.column[list])} </span>${index + 1}</th>`
+    + field('label', 'dir="auto" autocomplete="off"') + field('start', time) + field('end', time)
+    + `<td class="ux-rows-length" data-length>${esc(SC.lengthText(row.start, row.end))}</td>`
+    + `<td class="ux-rows-flags">${row.flags.map(flag => `<span class="pill-status pill-n">${esc(W.flag[flag] || flag)}</span>`).join(' ')}</td>`
+    + `<td class="ux-rows-actions">${button('up', index === 0)}${button('down', index === count - 1)}`
+    + `${button('remove', count === 1, ' aria-describedby="twSlotOneRow"')}</td></tr>`
+    + `<tr data-error-for="${key}"${mark ? '' : ' hidden'}><td colspan="7"><p class="ux-field-error" id="${error}">${mark ? esc(slotMarkText(mark)) : ''}</p></td></tr>`;
+}
+/* A list's table: its headers (each field's name, with its row header) and
+   its rows. */
+function drawSlotTable(list) {
+  const table = $(SLOT_TABLES[list]);
+  if (!table) return;
+  const W = window.TimetableSlotConfig.rowWords;
+  const rows = SLOT.rows[list];
+  const heads = ['label', 'start', 'end', 'length', 'rule']
+    .map(name => `<th scope="col" id="${SLOT_TABLES[list]}-${name}">${esc(W.headers[name])}</th>`).join('');
+  table.innerHTML = `<thead><tr><td></td>${heads}<td></td></tr></thead>`
+    + `<tbody>${rows.map((row, index) => slotRowHtml(list, row, index, rows.length)).join('')}</tbody>`;
+}
+function drawSlotDialog() {
+  SLOT_LISTS.forEach(drawSlotTable);
+  $('twSlotOneRow').hidden = !SLOT_LISTS.some(list => SLOT.rows[list].length <= 1);
+}
+/* The server's marks on the rows drawn now, in place. */
+function applySlotMarks() {
+  $('twSlotDialog').querySelectorAll('tr[data-row-key]').forEach(tr => {
+    const mark = SLOT.marks.get(tr.dataset.rowKey);
+    tr.querySelectorAll('input[data-field]').forEach(input => setAttr(input, 'aria-invalid', mark?.fields.has(input.dataset.field) ? 'true' : ''));
+    const line = tr.nextElementSibling;
+    if (!line?.matches('[data-error-for]')) return;
+    setText(line.querySelector('.ux-field-error'), mark ? slotMarkText(mark) : '');
+    line.hidden = !mark;
+  });
+}
+/* A VALIDATION_SLOTS answer's columns, on the rows sent at those indexes
+   (`sent`: each list's row keys in the order sent). A column of the list as a
+   whole (index -1) is the alert's alone. */
+function markSlotErrors(errors, sent) {
+  const SC = window.TimetableSlotConfig;
+  SLOT.marks = new Map();
+  (errors || []).forEach(error => {
+    const key = SLOT_LISTS.includes(error?.list) && Number(error.index) >= 0 ? sent[error.list][error.index] : undefined;
+    if (!key) return;
+    const mark = SLOT.marks.get(key) || { fields: new Set(), texts: [] };
+    if (SLOT_FIELDS.includes(error.field)) mark.fields.add(error.field);
+    mark.texts.push(SC.fieldErrorText(error));
+    SLOT.marks.set(key, mark);
+  });
+}
+
+/* The step shown, in place: the rows (inert while the save is out, the
+   status line saying so), or the review, with Back while it waits, and Save
+   reading "Save anyway" (the review stays in view while that save is out). */
+function showSlotStep() {
+  const review = SLOT.step === 'review';
+  const save = $('twSlotSave');
+  setText(save, review ? save.dataset.reviewLabel : save.dataset.saveLabel);
+  const editor = $('twSlotEditor');
+  if (editor.hasAttribute('inert') !== SLOT.pending) editor.toggleAttribute('inert', SLOT.pending);
+  editor.hidden = review;
+  $('twSlotReview').hidden = !review;
+  $('twSlotBack').hidden = !review || SLOT.pending;
+  setText($('twSlotStatus'), SLOT.pending ? SLOT_WORDS.progress : '');
+}
+/* Save and its note, in place (it runs with every control sync). Save is off
+   while the page cannot write — the note gives the first hold, in the order
+   of the page's holds — and while the dialog's own save is out. A hold's
+   words in the alert go when the hold does. */
+function syncSlotDialog() {
+  if (!slotDialogOpen()) return;
+  if (SLOT.held && writeHold() !== SLOT.held) {
+    SLOT.held = '';
+    dialogSay($('twSlotDialog'), '');
+  }
+  const save = $('twSlotSave');
+  save.toggleAttribute('data-tw-hold', SLOT.pending);
+  save.disabled = SLOT.pending || !workspaceCanEdit();
+  const hold = writeHold();
+  setText($('twSlotNote'), SLOT.pending ? '' : hold ? REFUSAL[hold] : '');
+  showSlotStep();
+}
+
+/* From the ⋯ menu. Any open dialog first; no scenario, or a published one,
+   is a toast (no dialog is open to say it in). The rows are the scenario's
+   draft when it has one (said, with a way back to the saved columns, and
+   that the saved columns changed when they are no longer the ones it started
+   from — saved elsewhere, e.g. in split view), else its saved columns. A
+   draft that would send what is saved now is none. The keyboard starts on
+   the first label and goes back to the menu's button. */
+function openSlotDialog() {
+  if (anyDialogOpen()) return false;
+  if (!TW.scenarioId || !TW.scenario) {
+    notify.warning(SLOT_WORDS.noScenario);
+    return false;
+  }
+  if (TW.scenario.status === 'published') {
+    notify.warning(REFUSAL.published);
+    return false;
+  }
+  const dialog = $('twSlotDialog');
+  const SC = window.TimetableSlotConfig;
+  if (!dialog || !window.UXControls?.dialog || !SC) return false;
+  let draft = SLOT_DRAFTS.get(TW.scenarioId);
+  if (draft && slotRowsSendSaved(draft.rows)) {
+    SLOT_DRAFTS.delete(TW.scenarioId);
+    draft = undefined;
+  }
+  const base = slotSignature();
+  Object.assign(SLOT, {
+    token: SLOT.token + 1, scenarioId: TW.scenarioId, rows: draft ? copySlotRows(draft.rows) : savedSlotRows(),
+    base: draft ? draft.base : base, marks: new Map(), pending: false, step: 'rows', review: null, held: '',
+  });
+  // What it is about, for the words another dialog's write says in it.
+  dialog.dataset.twAbout = `slots:${TW.scenarioId}`;
+  const alert = $('twSlotAlert');
+  alert.textContent = '';
+  alert.hidden = true;
+  $('twSlotScenario').textContent = TW.scenario.name || '';
+  $('twSlotDraft').hidden = !draft;
+  $('twSlotDraftChanged').hidden = !draft || draft.base === base;
+  const flags = [SC.flaggedColumnsText(scenarioLectureSlots()), SC.flaggedColumnsText(scenarioLabSlots())].filter(Boolean).join(' ');
+  $('twSlotFlags').textContent = flags;
+  $('twSlotFlags').hidden = !flags;
+  $('twSlotReviewBody').innerHTML = '';
+  drawSlotDialog();
+  showSlotStep();
+  const first = () => dialog.querySelector('#twSlotEditor input[data-field="label"]');
+  if (!window.UXControls.dialog.open(dialog, { initialFocus: first, returnFocus: () => $('twMoreMenu') })) return false;
+  syncSlotDialog();
+  return true;
+}
+
+function focusSlotControl(key) {
+  [...$('twSlotDialog').querySelectorAll('[data-focus-key]')].find(element => element.dataset.focusKey === key)?.focus();
+}
+/* Typing: the row's value, its length, its buttons' names (by its label)
+   and the draft, in place; the rows are never drawn again under the caret. */
+function editSlotField(input) {
+  const tr = input.closest('tr[data-row-key]');
+  const found = tr ? findSlotRow(tr.dataset.rowKey) : null;
+  if (!found || !SLOT_FIELDS.includes(input.dataset.field)) return;
+  found.row[input.dataset.field] = input.value;
+  const SC = window.TimetableSlotConfig;
+  setText(tr.querySelector('[data-length]'), SC.lengthText(found.row.start, found.row.end));
+  if (input.dataset.field === 'label') {
+    const name = slotRowName(found.list, found.row, found.index);
+    tr.querySelectorAll('[data-row-action]').forEach(button => {
+      const words = SC.rowWords[button.dataset.rowAction](name);
+      setAttr(button, 'aria-label', words);
+      setAttr(button, 'title', words);
+    });
+  }
+  rememberSlotDraft();
+}
+/* Add: a row at the list's end, the keyboard on its label. */
+function addSlotRow(list) {
+  if (SLOT.pending || SLOT.step !== 'rows' || !SLOT.rows[list]) return;
+  const [row] = window.TimetableSlotConfig.editorRows([{}]);
+  SLOT.rows[list].push(row);
+  drawSlotDialog();
+  focusSlotControl(`slot:${row.key}:label`);
+  rememberSlotDraft();
+}
+/* Up and Down swap the row with its neighbour, the keyboard staying on the
+   same button; Remove takes the row away (never a list's only one), the
+   keyboard on the next row's label, or on Add when it was the last. */
+function slotRowAction(kind, key) {
+  const found = findSlotRow(key);
+  if (!found || SLOT.pending || SLOT.step !== 'rows') return;
+  const { list, index } = found;
+  const rows = SLOT.rows[list];
+  if (kind === 'remove') {
+    if (rows.length < 2) return;
+    rows.splice(index, 1);
+    SLOT.marks.delete(key);
+    drawSlotDialog();
+    const next = rows[index];
+    focusSlotControl(next ? `slot:${next.key}:label` : `slot-add:${list}`);
+  } else {
+    const to = index + (kind === 'up' ? -1 : 1);
+    if (to < 0 || to >= rows.length) return;
+    [rows[index], rows[to]] = [rows[to], rows[index]];
+    drawSlotDialog();
+    focusSlotControl(`slot:${key}:${kind}`);
+  }
+  rememberSlotDraft();
+}
+/* The draft set aside: the saved columns, the keyboard on the first label. */
+function startFromSavedSlots() {
+  if (SLOT.pending || SLOT.step !== 'rows' || TW.scenarioId !== SLOT.scenarioId) return;
+  SLOT_DRAFTS.delete(SLOT.scenarioId);
+  Object.assign(SLOT, { rows: savedSlotRows(), base: slotSignature(), marks: new Map() });
+  $('twSlotDraft').hidden = true;
+  dialogSay($('twSlotDialog'), '');
+  drawSlotDialog();
+  $('twSlotDialog').querySelector('#twSlotEditor input[data-field="label"]')?.focus();
+}
+
+/* The server's list of what the change leaves outside the columns, and the
+   rules it takes away, as a step of this dialog (never a dialog over it).
+   Resolves true on Save anyway; false on Back, or when the dialog closes. */
+function reviewSlotChange(details) {
+  return new Promise(resolve => {
+    Object.assign(SLOT, { review: { resolve }, step: 'review', pending: false });
+    $('twSlotReviewBody').innerHTML = window.TimetableSlotConfig.confirmationHtml(details, { parked: true });
+    syncSlotDialog();
+    $('twSlotReviewTitle').focus();
+  });
+}
+function answerSlotReview(go) {
+  const review = SLOT.review;
+  if (!review) return;
+  SLOT.review = null;
+  review.resolve(go);
+}
+/* A save goes out: the keyboard waits on the body (the rows go inert and
+   Save turns off under it). */
+function beginSlotWrite() {
+  SLOT.pending = true;
+  $('twSlotBody').focus({ preventScroll: true });
+  syncSlotDialog();
+}
+
+/* Save (and Save anyway). What is sent is the rows in their order now, each
+   list's row keys kept so a refused column is marked on the row sent at its
+   index. A refusal is said in the dialog: the fields the server names are
+   marked and the first takes the keyboard; a page hold's words go when it
+   does; any other failure is "The columns were not saved." with Save back
+   under the keyboard. The rows stay as they are, and so does the draft. On
+   success the draft goes, the dialog closes (the keyboard back on the ⋯
+   menu), the board is read again (E17) and what was saved is said. Escape
+   while the save is out closes the dialog: the save still ends, and says how
+   where the user is (D17a); a confirmation it then needs is not given. */
+async function saveSlotDialog() {
+  const dialog = $('twSlotDialog');
+  if (!slotDialogOpen() || SLOT.pending) return;
+  if (SLOT.review) {
+    beginSlotWrite();
+    answerSlotReview(true);
+    return;
+  }
+  // A list with no row would be saved as the server's defaults: nothing is
+  // sent (the server's columns always have rows, so only an empty list from
+  // elsewhere could get here).
+  if (SLOT_LISTS.some(list => !SLOT.rows[list].length)) {
+    dialogSay(dialog, $('twSlotOneRow').textContent.trim(), 'warning');
+    return;
+  }
+  const SC = window.TimetableSlotConfig;
+  const session = SLOT.token;
+  const scenarioId = SLOT.scenarioId;
+  const sent = Object.fromEntries(SLOT_LISTS.map(list => [list, SLOT.rows[list].map(row => row.key)]));
+  const body = Object.fromEntries(SLOT_LISTS.map(list => [list, SC.rowsToPayload(SLOT.rows[list])]));
+  SLOT.marks = new Map();
+  applySlotMarks();
+  SLOT.held = '';
+  dialogSay(dialog, '');
+  beginSlotWrite();
+  const left = () => session !== SLOT.token || !slotDialogOpen();
+  let failure = null;
+  let reported = '';
+  let escaped = false;
   const data = await SC.save({
     send: async extra => {
-      let error = null;
-      const answer = await twFetch(`/ops/tw/scenarios/${scenarioId}/slots/update/`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ slot_config: lectures.rows, lab_slot_config: labs.rows, ...extra }),
-        _onError: body => {
-          const code = body?.error?.code;
-          if (code !== 'SLOT_EDIT_NEEDS_CONFIRMATION' && code !== 'VALIDATION_SLOTS') return false;
-          error = body.error;
-          return true;
-        },
-      });
-      return { data: answer, error };
+      const result = await dialogWrite(dialog, `/ops/tw/scenarios/${scenarioId}/slots/update/`, { ...body, ...extra });
+      if (result.data) return { data: result.data, error: null };
+      if (result.code === 'VALIDATION_SLOTS' || result.code === 'SLOT_EDIT_NEEDS_CONFIRMATION') {
+        return { data: null, error: result.error || { code: result.code } };
+      }
+      failure = result;
+      return { data: null, error: null };
     },
-    confirm: async details => {
-      const ok = await dlg.confirm({
-        title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
-        // The meetings it leaves are parked under their tables (6e).
-        body: SC.confirmationHtml(details, { parked: true }),
-        kind: 'danger',
-        confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
-      });
-      return ok;
+    invalid: errors => { if (!left()) markSlotErrors(errors, sent); },
+    confirm: details => {
+      if (!left()) return reviewSlotChange(details);
+      escaped = true;
+      return false;
     },
-    report: message => notify.error(message),
+    report: text => { reported = text; },
   });
-  if (TW.scenarioId !== scenarioId) return;
-  // Nothing saved — declined, refused, busy or offline: the typed text comes
-  // back, so it can be adjusted or tried again.
-  if (!data) return openSlotEditor(text);
-
-  TW.scenario = data.scenario;
-  notify.success(IS_AR ? 'تم تحديث الفترات' : `${lectures.rows.length} lecture + ${labs.rows.length} lab slots saved`);
-  renderGrid();
+  if (session === SLOT.token) Object.assign(SLOT, { pending: false, step: 'rows' });
+  if (data) {
+    await slotsSaved(data, { dialog, session, scenarioId });
+    return;
+  }
+  const words = failure ? SLOT_REFUSALS[failure.code] || SLOT_WORDS.notSaved : reported || (escaped ? SLOT_WORDS.notSaved : '');
+  if (left()) {
+    // Left while out: said where the user is — this dialog open again,
+    // another one, or a toast, adding where the edits are when they are
+    // kept and no slot dialog shows them.
+    const kept = !slotDialogOpen() && SLOT_DRAFTS.has(scenarioId);
+    if (words) dialogSay(dialog, kept ? `${/[.!?]$/.test(words) ? words : `${words}.`} ${SLOT_WORDS.kept}` : words, 'warning');
+    return;
+  }
+  if (failure && ['published', 'job', 'busy'].includes(failure.code)) SLOT.held = failure.code;
+  syncSlotDialog();
+  applySlotMarks();
+  if (words) dialogSay(dialog, words, 'warning');
+  // The keyboard: on the first field the server refused, else back on Save
+  // (it waited on the body, or on Back, gone now), unless the user moved to
+  // a way out meanwhile.
+  const marked = dialog.querySelector('#twSlotEditor [aria-invalid="true"]');
+  const save = $('twSlotSave');
+  if (marked) marked.focus();
+  else if (!save.disabled && !document.activeElement?.matches?.('#twSlotDialog [data-dialog-close]')) save.focus();
 }
+/* Saved: the draft goes, the dialog closes, the board is read again with the
+   scenario's new columns, and what was saved is said where the user is —
+   with how many meetings now sit under their tables, outside the columns. */
+async function slotsSaved(data, { dialog, session, scenarioId }) {
+  SLOT_DRAFTS.delete(scenarioId);
+  if (session === SLOT.token && slotDialogOpen()) window.UXControls.dialog.close(dialog, 'close');
+  if (TW.scenarioId === scenarioId) {
+    TW.scenario = { ...TW.scenario, ...(data.scenario || {}) };
+    if (TW.boardId) await selectBoard(TW.boardId);
+    else renderGrid();
+  }
+  const saved = data.scenario || {};
+  const lectures = (saved.effective_slot_config || saved.slot_config || []).length;
+  const labs = (saved.effective_lab_slot_config || saved.lab_slot_config || []).length;
+  const parked = Number(data.hidden_count) || 0;
+  dialogSay(dialog, parked > 0 ? SLOT_WORDS.parked(lectures, labs, parked) : SLOT_WORDS.saved(lectures, labs), parked > 0 ? 'warning' : 'success');
+}
+
+(function wireSlotDialog() {
+  const dialog = $('twSlotDialog');
+  if (!dialog) return;
+  const save = $('twSlotSave');
+  save.dataset.saveLabel = save.textContent.trim();
+  // A <form method="dialog"> closes itself on submit: the page saves, and
+  // closes it once the columns are saved.
+  $('twSlotForm').addEventListener('submit', event => {
+    event.preventDefault();
+    saveSlotDialog();
+  });
+  dialog.addEventListener('input', event => {
+    if (event.target.matches?.('input[data-field]')) editSlotField(event.target);
+  });
+  dialog.addEventListener('click', event => {
+    const button = event.target.closest?.('button');
+    if (!button) return;
+    // An aria-disabled button stays a button: slotRowAction itself never
+    // moves a row past its list's ends nor removes a list's only row.
+    if (button.matches('[data-row-action]')) slotRowAction(button.dataset.rowAction, button.closest('tr[data-row-key]')?.dataset.rowKey);
+    else if (button.matches('[data-slot-add]')) addSlotRow(button.dataset.slotAdd);
+    else if (button.id === 'twSlotFromSaved') startFromSavedSlots();
+    else if (button.id === 'twSlotBack') answerSlotReview(false);
+  });
+  // Closed while the review waits (Cancel, Escape): nothing is saved.
+  dialog.addEventListener('ux-dialog-close', () => answerSlotReview(false));
+})();
 
 /* ── Elective Mapping Dialog ── */
 $('twMapElectives').addEventListener('click', async () => {

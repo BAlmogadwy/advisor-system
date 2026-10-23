@@ -40,7 +40,8 @@ async function harness(t, split, intercept = () => undefined, arabic = false) {
       else if (/\/scenarios\/[12]\/$/.test(url)) body = { scenario: url.includes('/2/') ? copy : source };
       else if (url.startsWith('/ops/tw/boards/?')) body = { boards: url.includes('scenario_id=1') ? [{ id: 10, label: 'Original board', nominal_term: 1 }] : copyBoards };
       else if (/\/boards\/(10|20)\/$/.test(url)) body = { placements: [{ id: url.includes('/10/') ? 100 : 200, term_section_id: 300, course_code: 'CS101', section: 'S1', day: 'SUN', start_time: '09:00', end_time: '10:15', room: 'R1', is_locked: true }], slot_config: source.slot_config };
-      else if (url.endsWith('/quality/')) body = {};
+      // The classic page asks for the lens with the quality (6d); split view reads /plan-lens/.
+      else if (url.endsWith('/quality/') || url.endsWith('/quality/?lens=1')) body = {};
       else if (url.endsWith('/plan-lens/')) body = { plans: [], courses: {}, sections: {} };
       else if ((options.method || 'GET') !== 'GET') assert.fail(`Unexpected mutation ${url}`);
       else body = { ok: true, courses: [], totals: {}, candidates: [], instructors: [], summary: {}, budget: [], unplaced: [] };

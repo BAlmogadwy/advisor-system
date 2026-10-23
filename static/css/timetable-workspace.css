@@ -638,6 +638,13 @@ html[data-theme="dark"] .tw-legend .ux-legend-swatch[data-swatch="dim"] { backgr
 }
 .tw-place-note .ux-tone-icon { flex: none; }
 .tw-place-action { margin: 0; }
+/* ── Edit time slots (design record §7.2 item 6, 6f) ── its two steps (the
+   rows; the server's list to review) keep the body's rhythm; the review's
+   heading reads as a sub-title. */
+.tw-slot-step { display: grid; gap: 16px; min-width: 0; }
+.tw-slot-review-title { margin: 0; color: var(--t0); font-size: var(--text-sm); font-weight: 700; }
+/* A draft older than the saved columns says so, in the warning ink. */
+.tw-slot-draft-changed { color: var(--sev-warning); font-weight: 600; }
 /* Selection's Change… beside the room it changes; the row's label stays
    level with them. */
 .tw-sel-inline { margin-inline-start: 6px; }
