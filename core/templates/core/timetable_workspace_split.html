@@ -382,8 +382,8 @@
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
-  const INITIAL_SCENARIO = "{{ initial_scenario }}";
-  const INITIAL_BOARD = "{{ initial_board }}";
+  const INITIAL_SCENARIO = "{{ initial_scenario|escapejs }}";
+  const INITIAL_BOARD = "{{ initial_board|escapejs }}";
   const DEFAULT_YEAR = "{{ default_year|default:''|escapejs }}";
   const DEFAULT_TERM = "{{ default_term|default:''|escapejs }}";
 </script>

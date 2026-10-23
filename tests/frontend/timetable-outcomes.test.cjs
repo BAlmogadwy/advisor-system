@@ -3,10 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
 const vm = require('node:vm');
+const { loadSharedUtils } = require('./shared-utils-harness.cjs');
 
 const sources = Object.fromEntries(['page-timetable-workspace.js', 'page-timetable-workspace-split.js']
   .map(name => [name, fs.readFileSync(path.join(__dirname, '../../static/js', name), 'utf8')]));
 const slice = (source, begin, end) => source.slice(source.indexOf(begin), source.indexOf(end, source.indexOf(begin)));
+// base.html loads shared-utils.js on every page: the real safeHtml, not a stub.
+const { safeHtml } = loadSharedUtils();
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function harness(name, arabic = false) {
@@ -18,7 +21,7 @@ function harness(name, arabic = false) {
   };
   const dialogs = [], notices = { error: [], success: [], warning: [] };
   const context = vm.createContext({
-    IS_AR: arabic, $, esc: escapeHtml, Number, console,
+    IS_AR: arabic, $, esc: escapeHtml, safeHtml, Number, console,
     document: { getElementById: $, createElement: () => ({}) },
     window: { dispatchEvent: () => {} }, CustomEvent: class {},
     notify: Object.fromEntries(Object.keys(notices).map(kind => [kind, message => notices[kind].push(message)])),
@@ -155,6 +158,27 @@ for (const name of Object.keys(sources)) {
     assert.deepEqual(h.notices.error, []);
     assert.match(h.dialogs[0].body, /Result not applied/);
     assert.doesNotMatch(h.dialogs[0].body, /Board [Ii]mproved/);
+  });
+}
+
+for (const arabic of [false, true]) {
+  test(`page-timetable-workspace.js ${arabic ? 'ar' : 'en'} reserve pressure chips escape section labels and keep their markup`, async () => {
+    const h = harness('page-timetable-workspace.js', arabic);
+    const label = arabic ? 'ضغط احتياطي' : 'Reserve Pressure';
+    // Today's markup for a plain label, byte for byte (as master builds it).
+    const chip = text => '<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">' + text + '</span>';
+    const plain = '<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">' + label + '</span>'
+      + '<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">' + chip('Z_S1 90%') + chip('&lt;b&gt;Z_S2&lt;/b&gt; 67%') + '</div></div>';
+    const outcome = { ...result(), reserve_heavy_sections: [{ section: 'Z_S1', ratio: 0.9 }, { section: '<b>Z_S2</b>', ratio: 0.666 }] };
+    h.context.runOptimiseRequest = async () => ({ ok: true, optimisation: outcome });
+    await h.context.runOptimiseV2('current');
+    const body = h.dialogs[0].body;
+    assert.ok(body.includes(plain), body);
+    assert.ok(!body.includes('<b>Z_S2</b>'));
+    assert.equal(String(h.context.reservePressureHtml({ reserve_heavy_sections: [] })), '');
+    assert.equal(String(h.context.reservePressureHtml({})), '');
+    const nine = Array.from({ length: 9 }, (_, k) => ({ section: `S${k}`, ratio: 0.5 }));
+    assert.equal(String(h.context.reservePressureHtml({ reserve_heavy_sections: nine })).split('50%').length - 1, 8);
   });
 }
 

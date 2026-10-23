@@ -4120,7 +4120,7 @@ Chrome (`SlotDialogTests`):
 - **F11.** One meeting-policy rule for the page and the server in the grid rule.
 - **F12.** Move `.im-form-error`, the exam repeater and `.field-error` onto `.ux-field-error` and `.ux-rows`.
 - **F13.** Split view's slot editor on the 6f dialog.
-- **F14.** A 503 retry in MRI's `api`; then decide whether quality takes the lane.
+- ~~**F14.** A 503 retry in MRI's `api`; then decide whether quality takes the lane.~~ Dropped (owner, 2026-10-23: no work on the MRI page).
 - **F15.** Compress JSON answers.
 - **F16.** Measure `lens=1` on the 0.5 vCPU host and on a scenario larger than 665, before any default change to E2a.
 - **F17.** (Found in 6b.) With one teacher per section on, the per-plan export raises on a scenario whose sections cannot be built (QA 662 and 664: "English board copies must each use the same complete weekly pattern", from `section_teacher_texts`), so the download fails where the quality read says "unassessed". Decide the export's answer (a refusal naming the boards, or files without teachers).
@@ -4133,3 +4133,977 @@ Chrome (`SlotDialogTests`):
 - **Q5.** Should the dialog offer "Use the default columns" explicitly? **Decided by the owner:** no. A list always keeps one row, and there is no "Use the default columns" button (E15c), because an empty list silently means the defaults.
 
 **Provenance.** The measurement and roles probe is `scratchpad/pr6/critic_roles.py` (the session's scratch directory), run on the QA copy `scratchpad/pr6/critic.sqlite3`. The cost figures in F come from re-running `scratchpad/pr6/combined2.py` on that copy.
+
+## 8. Stage 3 — plan (2026-10-23, after four audits and two adversarial critiques)
+
+Four read-only audits (triage, live UX, split view and MRI, a global sweep), a
+draft, and a design and an engineering critique produced this plan; every
+must-change was re-checked in code before it was accepted. Line numbers are as
+of `4f33b23` and drift: each PR re-verifies the ones it relies on.
+
+> **Owner decision (2026-10-23): no work on the MRI page, ever.** The MRI page
+> (`timetable_workspace_mri.html`, `page-timetable-mri.js`) and the classic
+> inspector's MRI tab stay exactly as they are. M1, D-8 and D-11 are withdrawn
+> (M1 was built and reviewed but is not merged); MRI-01, MRI-03 and F14 are
+> dropped; Q7 is answered. No stage 3 PR edits the MRI page's own files or the
+> classic MRI tab, and no PR is made for MRI. Global files it loads
+> (`base.html`, `global.css`, `shared-utils.js`) change for every page; C1
+> leaves MRI's own two `color: var(--teal)` declarations alone. The entries
+> below are kept for the record, marked withdrawn.
+
+### Summary
+
+1. Stage 3 makes the classic Timetable Workspace safe, truthful and accessible in English and Arabic. Any fix that the rest of the design system also needs is built once, globally.
+2. Two P0 defects are confirmed again. Both elective dialogs run script from catalogue data (classic `executed=1`, split `executed=2`). Under the production flags, a scenario whose English copies differ cannot even open its board (raw 500).
+3. Security comes first. A1 adds a global `safeHtml` tag and a fingerprinted ratchet, and closes the workspace sinks. A2 and A3 close the other four confirmed sinks.
+4. The server becomes the source of truth:
+   - B1 refuses a section label that is already placed (with a row lock), and refuses removal of externally owned sections.
+   - B2 turns F17 into "—" with a reason and downloads exports on the page.
+   - ~~M1 makes the MRI page read-only now.~~ Withdrawn: the owner keeps the MRI page as it is.
+5. The plan is 24 unconditional PRs (25 listed; M1 withdrawn by the owner), down from 31, plus 3 PRs gated on owner question Q6. The longest serial chain is 8 PRs, and CI costs about 12–18 CI-hours before re-runs (unverified per-run time).
+6. Classic critical path: A1 → C3 → D2 → D3a → D3b → D4 → D5 → E2. The global PRs C1, C2, C4 and C5 run beside it.
+7. The online-only windows get their own "Online only" table, like the English table; they hold 0 meetings on 662–666 today. A room-needing class placed there gets a server-side readiness warning and is never refused.
+8. The owner is asked now:
+   - Q6: the future of split view (this gates E0, E4 and E5).
+   - ~~Q7: the MRI page.~~ Answered: no work on the MRI page.
+   - Q2: online severity, presented neutrally.
+   - Q3: one room for all of a section's meetings.
+9. Every acceptance line is tagged [CI] or [probe]. Every PR is checked against the §6 viewport matrix, non-text contrast of at least 3:1 and forced colours. The dialog, toast, state, online-table and Issues PRs also need an NVDA smoke pass.
+10. The first PR is A1. Its build spec is in `docs/stage3/A1.md`: files, the exact `safeHtml` behaviour, tests by name, mutants, `?v` bumps and acceptance.
+
+---
+
+Date: 2026-10-23. Base: master + 6d + 6f (`4f33b23`), the end of stage 2.
+
+**Sources.** Four audits (triage, live, split, sweep), the stage-3 draft, and two critiques (design and engineering). Finding ids are kept: F*, (a)–(k), N*, L*, SPL-*, MRI-*, X-*, SW-*. I re-checked every must-change in code before accepting it.
+
+**Abbreviations.**
+- **PAGE**: `static/js/page-timetable-workspace.js` (7,359 lines)
+- **SPLIT**: `static/js/page-timetable-workspace-split.js` (9,509 lines)
+- **MRI**: `static/js/page-timetable-mri.js`
+- **UXC**: `static/js/ux-controls.js`
+- **GCSS**: `static/css/global.css`
+- **TWCSS**: `static/css/timetable-workspace.css`
+- **TPL**: `core/templates/core/timetable_workspace*.html`
+- **VIEWS**: `core/timetable_workspace_views.py`
+- **SVC**: `core/services/timetable_workspace.py`
+
+**Where this plan goes.**
+- It landed with A1 as this §8, with no separate docs-only PR, so one CI run is saved.
+- Each PR writes its As-built note to its own file, `docs/stage3/<ID>.md`. §8.9 links them, so parallel PRs never conflict on this 4,135-line record.
+
+**Acceptance tags.**
+- **[CI]**: enforced by the test suite on fixtures.
+- **[probe]**: measured on the QA copy. Its script path and result go into the As-built note.
+- Every [probe] has a [CI] twin built on a small fixture of the same shape.
+
+### New evidence (checked in code or on the QA copy; 0 QA writes)
+
+| # | Finding | Evidence |
+|---|---|---|
+| N-1 | **Classic electives dialog: stored XSS.** The catalogue `course_name`, `prerequisites_csv`, `course_code`, the placeholder code and `info.type` go raw into `dlg.confirm`'s HTML `body` ("callers must pre-escape", dialog.js:118). | PAGE:7000-7007; body passed at :7014. Re-run `scratchpad/stage3/editor/xss_classic_rerun.py`: **executed=1**, 1 `<img>` in `.dlg-body`, 0 POSTs. |
+| N-2 | **Split electives list: `ph.type`, `ph.programme_term` and `ph.credit_hours` are raw. Confirmed executing.** Classic reserve chips print `s.section` raw. | SPLIT:7993; PAGE:7302. `stage3/editor/xss_split_electives.py`: **executed=2** (auto-load plus Load), 1 `<img>`, 0 POSTs. Reserve chips are not probed (that needs a real optimise run); [CI] in A1. |
+| N-3 | **Exports open in a new tab, so a server error shows as a raw page.** | PAGE:1898 and SPLIT:9255 `window.open`. VIEWS:1458-1463 has no try; VIEWS:1501-1504 catches only `RuntimeError`. |
+| N-4 | `flex:1` is set on `.ux-dialog-title`, but the flex item is its wrapper. | GCSS:2380-2381; timetable_workspace.html:419-421. |
+| N-5 | Demand's Total "Sections" cell prints the course count. | PAGE:6204 `t.course_count`. |
+| N-6 (corrected) | **Classic Remove asks "Remove placement?" with no body.** It removes one meeting for an ordinary section, but **the whole weekly bundle across the scenario for an English (policy) section**. Locks are refused unless `override` is sent; **external ownership is not checked**. | PAGE:5969-5990 (`removed_placements.length > 1` → snapshot); VIEWS:3156-3170 (`remove_policy_section_bundle`); `timetable_section_policy.py:397-415`. |
+| N-7 | `create_planned_section_placements` has one server caller. Its `get_or_create` runs with no row lock. | VIEWS:1916; SVC:2983-2996 (no `select_for_update` in :2933-3040). |
+| N-8 | The online windows are labelled in the data, but the page never reads the flag. | `timetable_autoplace.py:283-285`; 0 `online_only` in PAGE; TWCSS:249. |
+| N-9 | **F17 is not export-only.** With one-teacher-per-section on, **the board read itself raises** for 662 and 664, and the create-planned response raises *after* its write commits. | engcritic `probe_f17.out`: traceback through VIEWS:1648 → `_section_teachers` (VIEWS:311-319) → `section_teacher_display`. Unguarded callers: VIEWS:1648, 1972, 2083, 2158, 2941, 3120. |
+| N-10 | **Split undo and redo remove through locks.** `doRemoveApi` always sends `{override:true}`. | SPLIT:8796-8799; callers :8806, :8841, :8878. |
+| N-11 | **In split, Ctrl+Z inside a text field undoes a timetable edit on the server, and Escape asks to leave the page.** | SPLIT:9433-9458: the `if (typing) return;` guard comes after the Escape and undo branches. |
+| N-12 | **A split `?board=` containing `\` or a newline kills the whole page.** | `stage3/editor/probe_split_board.py`: "Invalid or unexpected token" and then "LANGUAGE_CODE is not defined". Template lines 385-386 lack `escapejs`; MRI's template has it (:217-218). |
+| N-13 | **The global tag cannot be named `html`.** 30 functions in `static/js` declare a local `html` that would shadow it. | `grep -cE "\b(let\|const\|var) html\b" static/js/*.js` totals 30, e.g. PAGE:3975, 4065, 4519. |
+| N-14 | **Production serves content-hashed static files.** Manual `?v=` affects only DEBUG and QA browsers. | `config/settings.py:551-557` (`CompressedManifestStaticFilesStorage` when not DEBUG). |
+| N-15 | **The online windows hold 0 meetings on every real scenario (662–666).** Yet they take 288 px of every Labs table. | design critique `online2.py`; TWCSS:240-249. |
+| N-16 | **Split-only repair tools were last used on 2026-05-28/29** on the QA copy. Production use is unverified. | design critique `usage2.py`: audit-log counts 12/6/3. |
+| N-17 | **Count of `color: var(--teal)` used as text** (excluding `background-color` and `border-color`): global 86, split 27, sections-import 10, graph 8, group-availability 4, MRI 2, meeting-policy 1. | `grep -cE "(^\|[;{[:space:]])color:[[:space:]]*var\(--teal\)"` on `static/css`. |
+
+Re-verified from the draft: L01's four sites (PAGE:4063, 4554, 5057, 5646); SPL-05 (SPLIT:1635); SPL-13 (SPLIT:3092); F10; and notify.js:10-28.
+
+---
+
+### 8.1 Goals
+
+1. **G1 No script runs from data.**
+   - The 6 executing sinks give `executed=0`: N-1, N-2 (split) and SW-01 in db-admin, planner, portfolio and dashboard, plus SW-02.
+   - The SW-05 / N-12 page error is gone.
+   - A repository ratchet fails on any **new** raw HTML interpolation, by name.
+2. **G2 No silent corruption, no raw 500, no lock override the user did not ask for.**
+   - The server refuses a section label already placed in the scenario, race-safe.
+   - The server refuses removal of an externally owned placement.
+   - With the production flags, the board read, create-planned and both exports answer 200 or a worded refusal on every scenario.
+   - No page sends `override` on Remove, undo or redo.
+   - ~~The MRI page writes nothing.~~ Withdrawn with M1.
+3. **G3 One truth on every page, conditional on Q6.**
+   - If split keeps its grid (E0, E4, E5), split shows classic's meetings, severity and verdict: 76 of 76 S1 meetings, critical 2/11/2/4, CS112 S1 MON 09:00 at 21 critical / 13 warning.
+   - If Q6 retires split's grid, the goal is met by retirement.
+   - Either way, E1–E3 remove split's unsafe writes and wrong room rules in stage 3.
+4. **G4 One dialog engine and one feedback policy, everywhere.**
+   - `dlg` is rebuilt on `<dialog class="ux-dialog">`, which covers the 40 call sites.
+   - 0 native `confirm`/`alert`/`prompt` remain in `static/js` (4 today: planner:890, SPLIT:8676, 8912, 9235).
+   - Error toasts persist, never cover chrome on any page, and carry no actions.
+   - Loading, empty and error states use one global `.ux-state`.
+5. **G5 The classic page meets §6 in Arabic too**, including the Optimise result:
+   - 0 reversed code/section pairs (4 sites today);
+   - every table fits its pane at the default slot configuration across the full §6 matrix;
+   - chrome at most 170 px (172 today);
+   - nothing under 11 px, text at least 4.5:1 and control edges at least 3:1 (Optimise result: 13 failures today, fixed in D6, P1).
+6. **G6 Every number says scope, meaning and direction.**
+   - An unknown value shows a visible reason, in place, adding no height (D2, P1).
+   - One inspector tab per question: Capacity is merged into Demand (D4); the MRI tab stays (owner decision).
+   - One count unit, meetings, on every board button, heading and readiness line (D4).
+   - Keyboard-reachable stat meanings are P2 (D7).
+7. **G7 The owner's online rule is visible.**
+   - The online windows are an "Online only" table, shown when used or relevant.
+   - A room-needing class placed in a window is a server readiness **warning**. It is shown everywhere and never refused; whether it should also block publishing is Q2.
+
+**After P1, G1, G2, G4, G5 and G7 are met, and G6 is met except keyboard-reachable stat meanings.** G3 depends on Q6.
+
+**Keep (already good; the tests that pin these stay green):**
+- No page scroll.
+- Lecture slots 98 / 105 px.
+- 0 reversed time ranges.
+- The roving grid with RTL arrows.
+- Move, Room, Place and Slots dialogs.
+- Publish with blockers never POSTs.
+- Instant board switch.
+- The dimming filter.
+- Lens words.
+- The parking strip.
+- Same-course echo.
+- Scoped stat groups.
+- The slot dialog row table.
+- Generate's Year/Sem.
+- The shared modules `TimetableRoomChoice`, `TimetableSlotConfig`, `TimetableSectionTeacher` and `TimetableHotspots`.
+- Clean escaping on user-management, instructor-management, virtual-advisor, the student pages and the advisor inbox.
+
+---
+
+### 8.2 Decisions (delegated; each can be revisited)
+
+| # | Decision | Rationale |
+|---|---|---|
+| D-1 | **Security first across all staff pages.** Track A starts now. | There is no CSP and the CSRF cookie is readable by JS (settings.py:573). One payload in a scraped course name means SUPER_ADMIN takeover (SW-01, N-1, N-2). |
+| D-2 | **One global tagged template, `safeHtml`, in `shared-utils.js`.**<br>• It escapes every `${}` and passes nested `safeHtml` results through.<br>• `safeHtml.raw()` is the only opt-out.<br>• The ratchet keys an allowlist by **fingerprint** (file + normalised expression) with counts that may only fall.<br>• `esc()` inside `safeHtml` is an error (double escape); so is an interpolation inside `on*=`.<br>• New template HTML in every later PR uses `safeHtml`. | Global-first. Per-page escapers drift (SW-03). A per-file count cannot stop a swap of one sink for another (engineering critique). The name `html` would be shadowed 30 times (N-13). |
+| D-3 | **Section labels are unique per scenario, enforced on the server.**<br>• "In use" means the label is placed on any board of the scenario, scenario-owned or global, checked by label.<br>• The check repeats under `select_for_update` on the TermSection.<br>• 409 `SECTION_LABEL_IN_USE {label, next_free}`.<br>• `next_free` is a server function pinned against the client's `freeSectionLabels` by one shared case table. | Only the client stops it today, and split does not. There is a check-then-act race (N-7). |
+| D-4 | **F17 degrades at the source.**<br>• For display, `build_section_states_for_scenario` collects incomplete English bundles instead of raising.<br>• Those sections show "—" with a reason; every other section keeps its teacher.<br>• Exports print "—" plus a bilingual note naming each section and board.<br>• The engine path still raises. | N-9: the board read 500s, not only the export. Principle 3: unknown is "—" with a reason, never `TBD`. |
+| D-5 | **F10: export search uses the grid's words**, in the page's language. One case table with a language column pins parity. | The menu promises "Only what matches"; today ONLINE gives 0. |
+| D-6 | **One dialog engine.**<br>• `dlg.confirm`/`prompt` render `<dialog class="ux-dialog">` with their own stack, so a confirm can open over an open `ux-dialog`.<br>• `waitForClose` defaults to true; the default flip is audited per caller.<br>• The `.btn-confirm`, `.btn-cancel` and `.dlg-input` hooks are kept.<br>• "Is a dialog open?" becomes `UXControls.dialog.isOpen()`.<br>• `.dlg-*` CSS is kept while the dashboard's `_modals.html` uses it. | One engine for 40 call sites (SW-06, L13). The coupling is measured in PAGE:202, 1836-1837, panes:84 and exam:1626. |
+| D-7 | **The online-only windows are their own "Online only" table**, like the English table.<br>• It is shown when a meeting sits in a window or the board has an online course.<br>• It uses normal 96 px columns; Labs go back to 5 columns.<br>• A meeting of a non-online course in a window gets a **server readiness warning** (`ONLINE_WINDOW_ROOM_CLASS`).<br>• Sideways scroll with a sticky day column stays the fallback for wide custom slot lists. | 0 meetings in windows today (N-15). One rule, read by the classic page, split, Publish and MRI. A compact 72 px card would need a second card design for an empty feature. |
+| D-8 | **Withdrawn (owner, 2026-10-23).** ~~Remove the classic inspector's MRI tab.~~ The MRI tab and "Full MRI" in Open ▾ both stay. | MRI-01, L05; principle 6. |
+| D-9 | Merge Capacity into Demand, with a labelled demand/seats bar and a Total that sums its column. | L08, N-5. |
+| D-10 | **No page sends `override` on Remove, undo or redo.** A locked meeting reads "Its time is locked. Unlock its time first." and has no destructive button. | A lock freezes time; removal changes it. SPL-10, N-10. |
+| D-11 | **Withdrawn (owner, 2026-10-23).** ~~The MRI page becomes read-only now. Its "Move" links to classic.~~ | MRI-02 (a non-atomic bundle writer). |
+| D-12 | **Split view: safety and shared rules first, reskin later.**<br>• E1–E3 ship in stage 3.<br>• E0, E4 and E5 (shared models, grid, verdict) wait for Q6.<br>• If they go ahead, split gets classic's **renderer**, not just its model. | The split-only tools have seen no use since 2026-05-29 on the QA copy (N-16). A third renderer would be rewritten again (design critique). |
+| D-13 | Selecting a card in split never starts a repair run. "Find repairs" is a button, and a click paints no slot assist. | SPL-13 (an audited CP-SAT run on click). |
+| D-14 | **Compress JSON only**: a subclass of Django's `GZipMiddleware` filtered to `/ops/tw/`, `application/json`, at least 1 KB, never file responses. | Measured 349,243 → 8,268 B in 1.4 ms. Django's middleware already carries the BREACH mitigation. |
+| D-15 | **Toasts stay top-end.** Tool pages push them below their chrome with `--toast-inset-block-start`.<br>• Errors persist; others pause on hover or focus.<br>• Toasts never carry actions; Retry lives in the pane's error state. | Bottom-end collides with `#backToTop` (GCSS:5101-5105), `.bulk-bar` (GCSS:11813) and `.ux-job`. A toast is unreachable by keyboard. |
+| D-16 | **Q2 is asked neutrally** (§8.6). D-7 ships in any case. | Owner rule (autoplace:276-277); real data. |
+| D-17 | **New: removal of an externally owned placement is refused on the server** (409 `PLACEMENT_EXTERNALLY_OWNED`), override or not. | Owner rule: external sections are fully frozen. Move, pattern switch and programme preference already refuse it (VIEWS:2987, 3053, 3254); Remove does not (N-6). |
+| D-18 | **New: one count unit, meetings.** Grouped rows state both figures: "No room · 8 sections, 11 meetings". | Today the open board counts rows and other boards count readiness meetings (PAGE:1948-1961). |
+| D-19 | **New: global state and popover primitives**: `.ux-state` (loading/empty/error, `aria-busy`, optional action) and `UXControls.popover`. | UXC exports no popover (UXC:953-956). There are about 48 empty-state variants (SW-25). |
+| D-20 | **New: the `?v=` bumps are a dev/QA cache matter, not a merge-order rule.** PRs touching disjoint regions of one file run in parallel. After any merge, every asset both sides changed is re-bumped. | N-14. Identical bumps merge silently (memory rule). |
+
+---
+
+### 8.3 PRs in order
+
+Tiers:
+- **P0**: security or data safety.
+- **P1**: truth and the §6 acceptance.
+- **P2**: polish, first to cut.
+- **P1\***: P1, but gated on Q6.
+
+| # | id | title | tier | size | risk | track | depends_on | why |
+|---|---|---|---|---|---|---|---|---|
+| 1 | A1 | `safeHtml` tag, fingerprinted ratchet, workspace sinks, stage-3 record | P0 | M | low | Security | — | N-1, N-2, N-12, SW-05 |
+| 2 | B1 | Server write guards: label in use; no removal of externally owned placements | P0 | M | med | Server | — | (e), SPL-05, N-6, N-7 |
+| 3 | B2 | F17 degrades at the source; exports download on the page | P0 | M | med | Server + global | — | F17, N-3, N-9 |
+| 4 | ~~M1~~ | **Withdrawn (owner, 2026-10-23).** ~~MRI read-only; Move links to classic~~ | P0 | S | low | MRI | — | MRI-02 |
+| 5 | A2 | DB-admin and dashboard sinks | P0 | M | low | Security | A1 | SW-01 |
+| 6 | A3 | Planner and portfolio sinks, delegated handlers | P0 | M | low | Security | A1 | SW-01, SW-02 |
+| 7 | E1 | Split safety: no override anywhere, typing guard, no repair on click | P0 | M | low | Split | B1 | SPL-10, SPL-13, N-10, N-11 |
+| 8 | B4 | Online-window server truth; `_TIME` digits | P1 | S | low | Server | — | N1, N-8, (c), (f) |
+| 9 | B5 | Compress JSON (`GZipMiddleware` subclass) | P1 | S | low | Server | — | F15 |
+| 10 | C1 | Contrast and type-floor tokens | P1 | M | med | Global | — | SW-10, SW-11, L23, L24, X-02, SW-29 |
+| 11 | C2 | Layout primitives and overflow | P1 | M | med | Global | — | L14, L29–L31, L33, L07, L16, SW-27 |
+| 12 | C3 | One dialog engine | P1 | L | med-high | Global | A1 | SW-06, SW-08, L13, SPL-11 |
+| 13 | C4 | Feedback surfaces: toasts, `.ux-state`, `UXControls.popover` | P1 | M | med | Global | C2 | L09, SW-19, SW-25 |
+| 14 | C5 | English chooser on the engine | P1 | M | med | Shared | C3 | F1, L13, L18 |
+| 15 | D1 | Classic words, bidi, Arabic counts | P1 | M | low | Classic | A1, B1 | L01, L02, L17–L19 |
+| 16 | B3 | Export search follows the grid's words | P1 | M | low | Server | B2 | F10 |
+| 17 | D6 | Optimise result truth (contrast, type, Arabic, one figure) | P1 | M | med | Classic | A1, C1 | L06, L24 |
+| 18 | D2 | Loading, error and unknown states; deep link; Generate focus | P1 | M | med | Classic | C3, C4, D1, B2 | L04, L09, L10 (reasons), L32, F2 |
+| 19 | E3 | Split rooms on `TimetableRoomChoice` | P1 | M | med | Split | E1 | F3, F6, SPL-06, Q1 |
+| 20 | D3a | Online-only table, grid fit, column names | P1 | M | med | Classic | D2, B4 | L03, N1, N-15 |
+| 21 | D3b | Cards, legend popover, no-match, programme control | P1 | M | med | Classic | D3a, C4 | L11, L12, L15, L26, L34 |
+| 22 | D4 | Inspector: Capacity merged into Demand, Issues list, one count unit (the MRI tab stays) | P1 | M | med | Classic | D3b, C2 | L05, L07, L08, L20–L22, N-5 |
+| 23 | D5 | Shared Remove and Publish flows, Delete key, Electives dialog | P1 | L | med | Classic → shared | D4, C3, B1 | L02, L13, F7, D-10, D-17, N-6 |
+| 24 | E2 | Split on shared labels, flows and dialogs | P1 | M | low | Split | D5, E3, D6 | SPL-05, SPL-12, SW-07 |
+| 25 | D7 | P2 polish: hotspots, engine details, stat meanings, small truths | P2 | M | low | Classic + global | D4, D6, C4, C5 | (g), (i), (j), L10 (meanings), L28, L35 |
+| 26 | E0 | Shared grid, issue and lens models (refactor) | P1\* | M | med | Shared | D5, Q6 | X-01 |
+| 27 | E4 | Split grid and Issues on the shared renderer; one quality read | P1\* | L | high | Split | E0, E2 | SPL-01, SPL-02, SPL-07, SPL-09, SPL-14–16, F8 |
+| 28 | E5 | Split assists from the server verdict, per board | P1\* | M | med | Split | E4, B5 | SPL-03, SPL-04 |
+
+**24 unconditional PRs (25 listed; M1 withdrawn by the owner) plus 3 gated on Q6.** Changes from the draft:
+- E0a and E0b merge into E0; E6 merges into E4.
+- D6 is split by tier; D7 and D8 merge into D7.
+- A4 moves to stage 4, since the ratchet already blocks new sinks.
+- The docs-only PR folds into A1.
+
+#### Per-PR detail
+
+##### A1: `safeHtml` tag, fingerprinted ratchet, workspace sinks, stage-3 record
+The full build spec is in **`docs/stage3/A1.md`**. In short:
+- `safeHtml` and `safeHtml.raw` go in `shared-utils.js`.
+- The classic electives body and reserve chips, and the split electives list, move to `safeHtml`.
+- The split template gets `|escapejs`.
+- `tests/frontend/template-scan.cjs` and `html-sinks.test.cjs` are added, with a fingerprint allowlist.
+- A meta-test checks that every jsdom suite is wired to pytest.
+- §8 of the record and `docs/stage3/A1.md` are added.
+
+The weak escapers move out of A1. `page-planner.js:47` goes to A3. `shared-timetable.js:410` goes to the stage-4 dedup: all of its uses are text-context (shared-timetable.js:434-446), so it is not a sink.
+
+##### A2: DB-admin and dashboard sinks
+**Scope**
+- `page-db-admin.js:1473, 1476, 1496, 1501`
+- `page-dashboard.js:700, 1987, 2657`
+- `partials/dashboard/_js_i18n.html:455-470`
+- `<option>` lists built with `createElement` / `textContent`. All new markup uses `safeHtml`.
+
+**Acceptance**
+- [CI] New `tests/test_xss_regression_browser.py` (API answers routed in the browser): one case per sink, `window.__xss === 0`.
+- [CI] The allowlist entries for the fixed lines are removed.
+- [CI] `db-admin-capacities.test.cjs` stays green.
+- [probe] The sweep's `xss_probe.py` "db" and "dash" cases give executed=0.
+
+**Mutants.** Revert each fix, and its case goes red.
+
+**Risk.** Low.
+
+##### A3: Planner and portfolio sinks, delegated handlers
+**Scope**
+- `page-planner.js:423, 1207-1213, 1274-1281`; its `escapeHtml` (:47) also escapes `'`.
+- `page-advisor-portfolio.js:279-280, 582-590, 646-647, 754-755`.
+- `advisor_portfolio.html:104-135`: 12 inline handlers become listeners delegated on `data-sid`.
+- Pager buttons named, with `aria-current`.
+
+**Acceptance**
+- [CI] Browser cases planner, portfolio and sid (`1');window.__xss=1;//`) give 0.
+- [CI] 0 `onclick=` in both files.
+- [CI] `tests/test_portfolio_browser.py` stays green.
+
+**Mutant.** Restore one inline handler, and the sid case goes red.
+
+**Risk.** Low.
+
+##### B1: Server write guards
+**Scope**
+- SVC `create_planned_section_placements`:
+  - after `get_or_create` (:2984), take `select_for_update()` on that TermSection;
+  - raise `SectionLabelInUse(ValueError)` when any `SectionPlacement` on a board of the scenario has the same `course_key` and the same label (case-folded), whether its TermSection is scenario-owned or global.
+- New `first_free_section_labels(used, count)` in SVC, in the same rule as PAGE:1578-1587.
+- VIEWS create view (:1916-1945): 409 `SECTION_LABEL_IN_USE` with `{label, next_free}`.
+- VIEWS `tw_placement_remove_view` (:3156): 409 `PLACEMENT_EXTERNALLY_OWNED` when `term_section_id in external_shared_section_ids(scenario_id)`, override or not. This runs before the lock check.
+- New `tests/fixtures/section_label_cases.json`, read by pytest now and by jsdom (`freeSectionLabels`).
+- The race test is added to the `planner (PostgreSQL 16)` job's list in `.github/workflows/ci.yml`.
+
+**Acceptance**
+- [CI] S1 placed on another board gives 409, with TermSection, SectionPlacement and TermSectionMeeting counts unchanged.
+- [CI] Same board, other day: 409.
+- [CI] All S1 placements removed, then create S1: 201 (the redo path, PAGE:3561-3565).
+- [CI] A placed global section with the same label: 409.
+- [CI] PostgreSQL, two connections creating S1 on two boards: exactly one 201 and one 409.
+- [CI] Removing an external placement: 409, 0 rows deleted, with and without `override`.
+- [CI] `section_label_cases.json` passes on the server and in jsdom.
+- [probe] On QA 663, 665 and 666, placed labels per course are unique (0 duplicates).
+
+**Mutants**
+- No check: red.
+- Check the same board only: red.
+- Check that the TermSection exists rather than that it has placements: redo case red.
+- Drop `select_for_update`: PostgreSQL race red.
+- Check only the scenario-owned row: global case red.
+- Drop the external check: red.
+
+**Risk.** Medium (a legitimate re-create could be refused). One server caller; the redo case is pinned.
+
+##### B2: F17 degrades at the source; exports download on the page
+**Scope**
+- `timetable_optimizer_v2.py:239, 242` raise `IncompletePolicyPattern(ValueError)` carrying term-section ids and boards.
+- `build_section_states_for_scenario(..., incomplete='raise'|'collect')`. Display paths use `'collect'`: `load_assignment`, `section_teacher_display` and `_section_teachers` (VIEWS:311-319). Engine paths keep `'raise'`.
+- Collected sections get `teacher_status: 'unknown'`, `reason: 'incomplete_english_pattern'`. The classic and split pages render "—" plus the reason through `TimetableSectionTeacher`.
+- Exports (`timetable_export.py:126-152`, :186; per-plan :410): teacher cells "—", and a note on the first sheet in both languages.
+- VIEWS:1458-1463 and 1501-1504: any other exception gives `{code:'EXPORT_FAILED', message}`, logged.
+- Global `safeDownload(url, {busyEl})` in `static/js/safe-fetch.js`:
+  - fetch, then switch on `Content-Type`;
+  - JSON → the server's words;
+  - `text/html` (login page) → "signed out";
+  - a file → blob plus `a[download]`, with the name from `Content-Disposition`;
+  - `aria-disabled` and "Exporting…" on the trigger.
+- Used by PAGE `exportScenario` (:1889-1899) and SPLIT:9255.
+
+**Words**
+
+| Where | en | ar |
+|---|---|---|
+| Teacher | Teacher not shown: this English section's weekly pattern differs between boards. | لم يُعرض المدرّس: يختلف النمط الأسبوعي لهذه الشعبة الإنجليزية بين اللوحات. |
+| Export note | Teachers not shown for: ENG102 S1 (Term 4, Term 5). The English boards do not share one complete weekly pattern. Fix the pattern, then export again. | لم يُعرض المدرّسون لـ: ENG102 S1 (المستوى 4، المستوى 5). لا تشترك لوحات الإنجليزية في نمط أسبوعي كامل واحد. أصلح النمط ثم صدّر من جديد. |
+| Signed out | You are signed out. Sign in again, then export. | انتهت جلستك. سجّل الدخول ثم صدّر من جديد. |
+| Busy | Exporting… | جارٍ التصدير… |
+
+**Acceptance**
+- [CI] Production flags on, with a fixture whose English copies differ:
+  - `GET /boards/<id>/` gives 200, and the other sections keep their teachers;
+  - create-planned gives 201;
+  - both exports give 200, with "—" and the note.
+- [CI] A consistent fixture gives the same digests as `per_plan_export_digests.json`.
+- [CI] jsdom: a JSON error, an HTML login answer and a blob each take the right branch; `window.open` is used 0 times by the export paths.
+- [probe] 662 and 664 locally with the flag on: board, create and exports give 200.
+
+**Mutants**
+- Restore `raise` for display: board red.
+- Degrade all sections instead of one: other-teacher case red.
+- Drop the note: red.
+- Catch every `ValueError`: a different ValueError still surfaces, red.
+- `window.open` back: red.
+
+**Risk.** Medium. The board payload is additive; the engine still raises.
+
+##### M1: MRI read-only (withdrawn by the owner, 2026-10-23; kept for the record)
+
+**Withdrawn — do not build.** The owner keeps the MRI page exactly as it is, writes included.
+**Scope**
+- MRI: delete `applySelectedMove`, `undoLastMove` and the move panel's apply (:2619-2770; the writes are at :2683 and :2743). The template drops the writer controls.
+- "Move" becomes a link to `/timetable-workspace/?scenario=&board=&placement=&action=move`. Classic honours `scenario` and `board` today (PAGE:952-959), and `placement` and `action` from D2, so MRI needs no second edit.
+
+**Acceptance**
+- [CI] Chrome: 0 POSTs over scan, board change and every button.
+- [CI] The link carries the four parameters.
+
+**Mutant.** Restore apply, and the POST counter goes red.
+
+**Risk.** Low. Bundle moves become one Move each, with undo.
+
+##### E1: Split safety
+**Scope** (SPLIT)
+- `doRemove` (:8690-8691), the Delete/Backspace path (:9461-9465) and **`doRemoveApi` (:8796-8799)** never send `override`.
+- `removePlacementList`, undo-of-create and redo-of-remove:
+  - on `PLACEMENT_LOCKED` or `PLACEMENT_EXTERNALLY_OWNED`, the action goes back on its stack and the words below are shown;
+  - nothing is retried with override.
+- The `typing` guard moves above undo, redo and Escape-leave; only modal, drawer and menu Escape stay before it (:9433-9458).
+- A card click (:3092) does not call `/repair/analyse/`. Selection shows a "Find repairs" button. A click paints no slot assist; drag keeps the student-outcome assist.
+- 409 `SECTION_LABEL_IN_USE`: words, plus a budget re-read.
+
+**Words**
+
+| Where | en | ar |
+|---|---|---|
+| Locked | Its time is locked. Unlock its time first. | وقتها مقفل. افتح قفل الوقت أولاً. |
+| External | Another scenario owns this section's time and room. Change it there. | سيناريو آخر يملك وقت هذه الشعبة وقاعتها. عدّلها هناك. |
+| Label | S1 is already placed in this scenario. Use S4. | الشعبة S1 موضوعة في هذا السيناريو. استخدم S4. |
+| Button | Find repairs | ابحث عن إصلاحات |
+
+**Acceptance** (all [CI], jsdom with request counting)
+- Removing a locked card: 0 POSTs.
+- Undo of a create whose placement is now locked: 0 POSTs with `override`, and the action is restored.
+- `grep "override: true"` in SPLIT finds 0 (2 today).
+- Ctrl+Z in the search input: 0 undo requests.
+- Escape in an input: no leave confirm.
+- A card click: 0 `/repair/analyse/` requests.
+- The 409 shows the label and `next_free`.
+- `timetable-split-lock.test.cjs` and `timetable-split-locked-room.test.cjs` stay green.
+
+**Mutants.** Restore each override (red); restore the repair call on click (red); move the guard back (red).
+
+**Risk.** Low.
+
+##### B4: Online-window server truth
+**Scope**
+- The board read adds `online_course_codes` (`OnlineCourseLookup.codes_for_board`, `timetable_online.py:24-49`).
+- `check_publish_readiness` adds a warning `ONLINE_WINDOW_ROOM_CLASS {course_code, section, day, slot_label, start, end}` for a meeting of a course not in that set, in an `online_only` column. It never blocks and never refuses.
+- `timetable_slot_config.py:46` `_TIME` uses `[0-9]` explicitly. `re.ASCII` would also narrow `\s`.
+
+**Words** (readiness item)
+
+| en | ar |
+|---|---|
+| CS114 S1 meets in Online 2 (Sun 17:40–19:20), a window kept for online courses. | تجتمع CS114 S1 في «عن بُعد 2» (الأحد 17:40–19:20)، وهي فترة مخصصة للمقررات عن بُعد. |
+
+**Acceptance**
+- [CI] Fixture: a lab in an online window gives one warning and `publishable` stays true.
+- [CI] `"١٠:٠٠"` is off-grid.
+- [CI] A time with a non-breaking space parses as before.
+- [probe] The 665 payload lists GS103, GS104, GS112, GS152, GSE2 and IS482 on their boards; 0 warnings on 662–666.
+
+**Mutants.** Drop the field (red); make the warning block publishing (red); drop the digit class (red).
+
+**Risk.** Low.
+
+##### B5: Compress JSON
+**Scope.** `config/middleware.py: TwJsonGZipMiddleware(GZipMiddleware)`, filtered to `/ops/tw/`, `application/json`, at least 1 KB, not streaming and not a `FileResponse`. It is added to `MIDDLEWARE` (settings.py:70-84).
+
+**Acceptance**
+- [CI] `/boards/<id>/` with `Accept-Encoding: gzip` is compressed and carries `Vary: Accept-Encoding`.
+- [CI] HTML and XLSX are never compressed.
+- [probe] 63,258 → about 2.6 KB; p50 over 20 reads of 665 rises by at most 10 ms.
+- Host CPU is a gate recorded in the As-built note (unverified until someone may read the host).
+
+**Mutants.** Drop the path check (HTML red); drop the type check (XLSX red).
+
+**Risk.** Low. Revert = one line.
+
+##### C1: Contrast and type-floor tokens
+**Scope**
+- Text `color: var(--teal)` becomes `--text-brand`: global 86, sections-import 10, graph 8, group-availability 4, meeting-policy 1 (N-17).
+- **Split's 27 and MRI's 2 are excluded**, because split forces a dark card (`timetable-workspace-split.css:32-39`) and `--text-brand` light (#067858) would fall to 3.23:1 there. Alternatively, split's private token block gets a dark `--text-brand` in this PR.
+- Teal fill with `#fff` becomes `--btn-primary-bg` / `--btn-primary-ink`, including `.skip-link`.
+- Sidebar micro-labels go to `--text-2xs`, and the breakpoint shrinks are deleted (GCSS:1235, 2570, 3813).
+- `.pill-status` uses `--sev-*` inks; flat inside `.ux-toolbar`.
+- `.fb-search::placeholder` uses `--t4`.
+- `html[data-theme=light]{color-scheme:light}`.
+
+**Acceptance**
+- [CI] Token-pair contrast test in both themes.
+- [CI] Lint: no text `color: var(--teal|--amber)` outside the excluded files.
+- [CI] Rendered audit over 7 pages (workspace, **split**, dashboard, planner, user-management, profile, db-admin):
+  - skip-link at least 4.5:1 (today 4.11 / 3.04);
+  - sidebar labels at least 11 px at 1440, 1100 and 400 (today 8.9 / 7.4 / 6.5);
+  - Draft pill at least 4.5:1 (today 4.17);
+  - placeholder at least 4.5:1 (today 2.02);
+  - `.tw-english-heading` at least 4.5:1 (today 3.63);
+  - split's teal text not lower than today (4.29:1).
+- [CI] Forced colours: the skip-link and pills stay visible.
+
+**Mutants.** Revert the skip-link (red); restore the 1200 px shrink (red); remap split (split audit red).
+
+**Risk.** Medium (every page). Screenshots in both themes go in the PR.
+
+##### C2: Layout primitives and overflow
+**Scope** (GCSS and UXC)
+- `.ux-dialog-head > :first-child{flex:1 1 auto;min-width:0}` (N-4).
+- The `.ux-meta` separator never starts a line.
+- Inset ring on `.ux-dialog-body:focus-visible`, with the status line outside the scroller.
+- `.fb-w-3ch` at least 28 px.
+- **An explicit `line-height` on toolbar controls (`.btn-sm`, inputs, labels).** `.ux-toolbar` keeps `flex-wrap` and gets at most `min-block-size`: never a fixed `block-size` and never clipping.
+- Valid RTL keyframes.
+- UXC: overflow for `.ux-tabs` and `.ux-seg`: edge cue, scroll buttons, and the active item revealed.
+
+**Acceptance**
+- [CI] Every template `.ux-dialog` close button sits within 24 px of the end edge, en and ar (slot dialog today: 236 px).
+- [CI] 0 wrapped `.ux-meta` lines start with "·".
+- [CI] Chrome at most 170 px at 1440×790 in en and ar (172 today).
+- [CI] With the WCAG 1.4.12 text-spacing overrides, nothing in the chrome is clipped or overlapped; the bands may grow (header 32 → 70 px measured).
+- [CI] `#twTerm` at least 24 px in ar.
+- [CI] At 1366×650, the board strip and the inspector tabs show the overflow control, and the active item is fully visible.
+- [CI] The overflow buttons have edges of at least 3:1 and are visible in forced colours.
+
+**Mutants.** Drop the head rule (red); set a fixed `block-size` (text-spacing red); drop reveal-active (red).
+
+**Risk.** Medium.
+
+##### C3: One dialog engine
+**Scope**
+- `dialog.js`:
+  - `dlg.confirm`/`prompt` render `<dialog class="ux-dialog">` via `UXControls.dialog`, resolved lazily at call time;
+  - **`base.html` loads `dialog.js` after `ux-controls.js`** (today :77 before :79);
+  - unique ids per instance; native modal;
+  - default labels and the typed-confirm sentence from `<html lang>`;
+  - `initialFocus` = cancel for `danger`; flat neutral buttons;
+  - `body` accepts a string or `SafeHtml`;
+  - `.btn-confirm`, `.btn-cancel` and `.dlg-input` kept on the new elements;
+  - **its own stack**: a confirm opened over an open `ux-dialog` sits on the top layer, and focus returns to the outer dialog;
+  - **`waitForClose` defaults to true**.
+- UXC: `UXControls.dialog.confirm(opts)` and `UXControls.dialog.isOpen()`.
+- `isOpen()` replaces the `.dlg-backdrop` queries at PAGE:202, PAGE:1836-1837 (`wireReadinessLinks`), `timetable-workspace-panes.js:84` and `page-exam-timetable.js:1626`.
+- `.dlg-*` CSS is kept while `_modals.html` / `page-dashboard.js:335-358` use it.
+- `page-planner.js:890` native confirm moves onto the engine, with an escaped list.
+- Test markup updates, about 69 assertions:
+
+| Test file | Assertions |
+|---|---|
+| exam-timetable | 40 |
+| section-planning | 6 |
+| timetable-copy | 6 |
+| db-admin-capacities | 5 |
+| pr8-planner-card | 3 |
+| `test_scrape_dashboard_browser.py` | 6 |
+| `test_timetable_workspace_frame_browser.py` | 2 |
+
+  Plus 3 harnesses that eval `dialog.js` alone.
+- The As-built note carries a per-caller audit table for the 40 call sites: does the caller run code after the await?
+
+**Acceptance**
+- [CI] The chain prompt → confirm leaves exactly one title id, and the second dialog's accessible name is its own.
+- [CI] A confirm opened over an open `ux-dialog` resolves on the user's answer, not as a cancel (today `openDialog` returns false, UXC:776).
+- [CI] ar defaults إلغاء / تأكيد, and the typed sentence is Arabic.
+- [CI] Tab never reaches the sidebar; focus returns to the opener.
+- [CI] The jsdom suites of all caller files are green; native `confirm` count in `static/js` goes 4 → 3.
+- [CI] The Publish dialog's "Open board" links still work.
+- NVDA smoke: the name and description are read once.
+
+**Mutants.** Resolve before close (chain red); English default (red); `show()` instead of `showModal()` (inert red); single-slot stack (nested red).
+
+**Risk.** Medium-high. Stronger reviewer.
+
+##### C4: Feedback surfaces: toasts, `.ux-state`, popover
+**Scope**
+- `notify.js` and GCSS:
+  - the region stays top-end at `--toast-inset-block-start` (the workspace sets it below its header);
+  - an identical message within 5 s collapses to "×N";
+  - errors persist; others last 4–6 s and pause on hover or focus;
+  - one polite region and a separate alert region;
+  - close label localised; logical exit transform; an optional detail line; **no actions**.
+- Global `.ux-state`: loading (`aria-busy`, skeleton), empty and error, with one optional action button.
+- `UXControls.popover`: non-modal; Escape and an outside click close it; focus returns to the trigger; RTL anchoring; no new Tab stop for its content.
+
+**Acceptance**
+- [CI] At 1366×650 and 1440×790, en and ar, the toast does not intersect `#twPublish`, `#twExport`, `#twOpenMenu`, `#twToggleRight`, `#backToTop` (on a scrolled page), `.bulk-bar` (user-management with selection) or `.ux-job`.
+- [CI] The same error twice gives "×2"; an error is still present at 20 s; ar close label "إغلاق".
+- [CI] Popover: Escape returns focus to the trigger.
+- [CI] Forced colours: toast border, state and popover visible; non-text 3:1.
+- NVDA smoke: a toast is announced once.
+
+**Mutants.** Auto-dismiss errors (red); bottom-end position (back-to-top red); an action button in a toast (red).
+
+**Risk.** Medium.
+
+##### C5: English chooser on the engine
+As drafted:
+- `timetable-meeting-policy.js` `choose()` moves to `UXControls.dialog`, with a head, `.ux-choice-list` and Commit.
+- Counts go through `pluralAr` and English singular/plural forms.
+- Verdict words appear when a candidate carries `verdict`.
+- The CSS dialog rules are deleted.
+- The `choose()` contract is unchanged.
+
+**Acceptance**
+- [probe] ENG102 S1 on 665: rows read "8 clashes" / "8 تعارضات".
+- [CI] Fixture twin of that case.
+- [CI] 0 POSTs before Commit.
+- [CI] Escape returns focus to the card.
+- [CI] `timetable-english-patterns.test.cjs` stays green.
+
+**Mutants.** Commit on click (red); `${n} تعارض` (red).
+
+##### D1: Classic words, bidi, Arabic counts
+**Scope**
+- `shared-utils.js` gains `sectionNameHtml(code, section)`, one isolate around the pair. `isolateTimes` moves there from PAGE:6257.
+- PAGE:4063, 4554, 5057 and 5646 use it.
+- Blocker lines: board name isolated, counts through `pluralAr`.
+- Every `(s)` becomes singular/plural forms; Arabic lists are joined with `، `.
+- `course_key` is dropped from card titles.
+- A board named `Term N` renders from `nominal_term` in the page language.
+- Wording:
+  - "clash" everywhere;
+  - the Move/Place foot names the chosen time;
+  - "use Move…";
+  - title pattern "Move · CS114 S1".
+- Words for `SECTION_LABEL_IN_USE` and `PLACEMENT_EXTERNALLY_OWNED`.
+- Every `${n} <Arabic noun>` site goes through `pluralAr`, at least: PAGE:1658, 1661, 1664, 1665, 1675, 1677, 1795, 1984-1993, 3340, 5694, and board-button labels joined with `، `.
+- New `tests/frontend/arabic-counts.test.cjs`: a scanner rule over `IS_AR` branches flags a `${…}` followed by an Arabic letter unless it goes through `pluralAr`. It uses the same fingerprint allowlist mechanism, with exemptions for "X من Y" and names.
+
+**Acceptance**
+- [probe] `bidi.js` on 665 (ar): `pairReversed=0` in `#twMoveTitle`, `#twRoomTitle`, `#twPlaceTitle` and `.tw-sel-title` (1 each today).
+- [CI] A fixture twin in Chrome.
+- [CI] 0 `(s)` in PAGE; 0 card titles containing `::`.
+- [CI] Arabic strings from `pluralAr`'s own forms: "لقاءان", "11 لقاءً", "31 تحذيراً".
+- [CI] The Arabic-count ratchet passes.
+
+**Mutants.** Restore two isolates (red); bypass `pluralAr` (red); add `${n} لقاء` (ratchet red).
+
+**Risk.** Low.
+
+##### B3: Export search follows the grid's words
+**Scope**
+- `timetable_per_plan_export.py:335-349` adds department, the teacher text (the teachers map, with the meeting-name fallback as in `TimetableSectionTeacher.teacherOf`) and room words.
+- The page sends `lang` with `search`.
+- `tests/fixtures/search_text_cases.json` gains a `lang` column, read by pytest and by jsdom (`placementText`, PAGE:2311-2330).
+
+**Acceptance**
+- [CI] Every case gives the same match set, per language.
+- [probe] On 665, the grid count equals the export's section count for ONLINE, NO ROOM, one teacher, one department and GS104 (ONLINE gives 0 today).
+
+**Mutants.** Drop teacher on the server (red); change `placementText` without updating the table (red); ignore `lang` (ar case red).
+
+##### D6: Optimise result truth (P1)
+**Scope**
+- PAGE:7166-7318 move to a template `.ux-dialog` and a new `static/js/timetable-run-result.js`. It holds the 13 run-outcome functions; split's byte-identical copies (SPLIT:347-490) are deleted in E2.
+- The dialog opens with one outcome sentence at scenario scope.
+- Before → after on `.ux-stat`, with one "unresolved" definition.
+- Reserve pressure on `--sev-*`.
+- Bilingual; one Close; no inline styles; `safeHtml` throughout.
+
+**Acceptance** (canned optimise-v2 answer)
+- [CI] 0 contrast failures (13 today); 0 text under 11 px.
+- [CI] 0 English strings in ar apart from codes and numbers (9 today).
+- [CI] One unresolved figure (today 51→46 and 48→46).
+- [CI] 0 `style=` (52 today).
+- [CI] `timetable-outcomes.test.cjs` stays green.
+
+**Mutant.** Restore the inline amber text (contrast red).
+
+Hotspot click-through and "Engine details" are in D7.
+
+##### D2: Loading, error and unknown states; deep link; Generate focus
+**Scope** (PAGE, TPL, TWCSS)
+- `.ux-state` loading "Opening <scenario>…" / «جارٍ فتح <scenario>…», with `aria-busy` on the grid and panes.
+- Header actions use `aria-disabled` with a click guard (focus never drops to body).
+- The empty state appears only when no scenario is requested.
+- The error state carries Retry for the scenario list and board reads; Retry lives here, not in a toast.
+- Failure toasts name the operation: "Couldn't load board Term 4 (server error)." / «تعذّر تحميل لوحة المستوى 4 (خطأ في الخادم).»
+- **Unknown with a reason:** a stat group whose data is unknown replaces its value/bar line in place with its reason, e.g. "Quality not assessed: the check failed." / «لم تُقيَّم الجودة: فشل الفحص.» It adds no height.
+- Deep link `?scenario=&board=&placement=&action=move` opens Move, then clears `placement` and `action` with `history.replaceState`.
+- Generate opens through `UXControls.dialog.open` with `initialFocus` = `#twGenYear`.
+
+**Acceptance** ([CI], Chrome with routed delays and failures)
+- With a 4 s delay:
+  - no "No scenario open";
+  - `#twGrid[aria-busy=true]`;
+  - Export and Publish are `aria-disabled` and focus stays on them.
+- An aborted list shows Retry, and Retry sends a second request.
+- A board 500 gives a toast naming the board, not "500".
+- Quality failed: every group shows a visible reason, and chrome stays at most 170 px at 1366×650 and 1440×790 in en and ar.
+- Deep link: focus inside `#twMoveDialog`, and a reload does not reopen it.
+- Generate's first focus is Year.
+- NVDA smoke: "Opening…" is announced and the busy state clears.
+
+**Mutants.** The empty state while loading (red); the reason only visually hidden (red); no `replaceState` (reload red).
+
+**Risk.** Medium.
+
+##### E3: Split rooms on `TimetableRoomChoice`
+As drafted:
+- TPL split loads `timetable-room-choice.js`.
+- Reads use `?audit=1`.
+- `roomIsAssignable`, `roomFitsSection` and `roomCandidateStatusText` (SPLIT:4247-4269, 7024-7052) become `RC.verdict`, `refusals`, `misfitReasons`, `factsHtml` and `auditNotes`.
+- Every room is listed, in groups, with bilingual words.
+- `roomIsScheduleClean` is renamed.
+
+**Acceptance**
+- [probe] CS112 S1 MON 09:00 on 665: 32 rooms; 172FA011 and 172FB011 can be chosen as "Room too small · needs 19 seats".
+- [CI] `room_choice_cases.json` passes through split's adapter.
+- [CI] A locked card can still change room (lock = time only).
+- [CI] `timetable-split-locked-room.test.cjs` and `timetable-split-lock.test.cjs` stay green.
+
+**Mutant.** Refuse when `fits_capacity` is false (red).
+
+##### D3a: Online-only table, grid fit, column names
+**Scope**
+- The grid model groups columns by `online_only`.
+- Online windows render as a separate "Online only" / «عن بُعد فقط» table after Labs (precedent: PAGE:2733-2743). It is shown when a meeting is in a window or `online_course_codes` is non-empty.
+- 96 px columns; Labs back to 5 columns (56 + 480 = 536 px).
+- Wide custom lists keep the sticky-day sideways scroll (TWCSS:240-249, :272), with an edge cue.
+- Column headers: the accessible name includes the slot label and, for the online table, "Online only" (today PAGE:2930 omits the label).
+- Default labels are localised: Lab N → «معمل N», Online N → «عن بُعد N». Custom labels are isolated.
+- `placeOnline()` reads `online_course_codes` (PAGE:4880-4886).
+- The `ONLINE_WINDOW_ROOM_CLASS` warning arrives through readiness (B4) and classic's existing merge into Issues (PAGE:6282, 6346).
+
+**Acceptance**
+- [CI] Default config, full §6 matrix (1366×650, 1440×790, 1536×730, 1920×1080), en and ar, with Verdana: every table's `scrollWidth ≤ clientWidth` (today 840 > 773 / 823).
+- [CI] A 12-column lab config: the day column stays visible and the focused cell scrolls into view, with nothing clipped.
+- [CI] A lab mocked at 19:30 gets a warning ring and an Issues row, with 0 refusals.
+- [CI] The table header has edges of at least 3:1 and is visible in forced colours.
+- NVDA: column headers are read with "Online only".
+
+**Mutants.** Online columns back in Labs (fit red); drop the slot label from the header name (red).
+
+**Risk.** Medium (column layout changes for users).
+
+##### D3b: Cards, legend popover, no-match, programme control
+**Scope**
+- The card name line shows the part that tells the names apart (L12).
+- `.tw-pattern-label` at 12 px.
+- No-match on `.ux-state`: "No meeting matches …" with "Clear filter", which returns focus to the field.
+- A visible programme control beside the filter writes the programme into it and shows the lens words.
+- The filter field grows on focus.
+- Placeholder "Course, room, teacher, programme" / «مقرر، قاعة، مدرّس، برنامج», fully visible at 1366 and 1440.
+- Legend as a `UXControls.popover` in the board bar.
+
+**Acceptance** ([CI])
+- The CS112 PROGRAMMING I and II cards show different text.
+- "ZZZ999" shows the no-match state.
+- The programme control dims exactly as typing does.
+- The placeholder is not truncated in en and ar.
+- The legend opens without scrolling the grid.
+- Controls have edges of at least 3:1.
+
+**Mutants.** Programme control writes a different string (lens parity red); legend becomes modal (red).
+
+##### D4: Inspector: Capacity merged into Demand, Issues list, one count unit (the MRI tab stays)
+**Scope**
+- ~~Delete the MRI tab and its model (:5703-5890).~~ Withdrawn: the MRI tab stays (owner decision).
+- Merge Capacity into Demand: a labelled demand/seats bar, Short in its severity colour, Total Sections = the column's sum, and a separate "N courses" line.
+- The Issues list on `UXControls.roving`: one stop, arrows, Enter locates, Home/End.
+- One row per section and kind, worded as "No room · 8 sections, 11 meetings". **Every count (board buttons, Publish, headings, readiness) is in meetings.**
+- Locate:
+  - scrolls with `block:'center'`;
+  - starts its pulse on `scrollend`, with a timeout fallback;
+  - uses the focus ink, not `--teal`;
+  - is static under reduced motion.
+
+**Acceptance**
+- [CI] The tablist fits at 1366 and 1440, en and ar.
+- [CI] Term 4 Demand total = 18 (8 today).
+- [CI] Each board's critical count is the same whether the board is open or not, and equals readiness.
+- [CI] One Tab leaves Issues (39 today).
+- [CI] After the scroll ends, the located card's centre is within the pane's middle third and the outline shows for at least 1 s.
+- NVDA: rows are read with their position.
+
+**Mutants.** Sum by course count (red); count rows instead of meetings (open/closed parity red); drop roving (red).
+
+##### D5: Shared Remove and Publish flows, Delete key, Electives dialog
+**Scope**
+- New `static/js/timetable-remove-flow.js`:
+  - scope from `TimetableMeetingPolicy` and the section policy;
+  - an ordinary section names its one meeting;
+  - an English section names all N meetings and the boards;
+  - locked → D-10 words, no destructive button;
+  - external → D-17 words, no button;
+  - the undo record covers N meetings.
+- New `static/js/timetable-publish-flow.js`: readiness read, blocker list with "Open board", one Close.
+- The classic page uses both.
+- **Delete** on a focused card opens Remove; the keys line lists Delete (F7).
+- The Electives dialog moves to a template `.ux-dialog`, with words localised. Today "Term", "cr" and "no prereq" show in English in ar (PAGE:7000, 7007).
+
+**Words**
+
+| Case | en | ar |
+|---|---|---|
+| Ordinary section | Remove CS114 S1 · Sun 09:00–10:15? Only this meeting is removed. | إزالة CS114 S1 · الأحد 09:00–10:15؟ يُزال هذا اللقاء فقط. |
+| English section | Remove ENG102 S1? All 4 meetings are removed (Sun, Mon, Wed, Thu 09:00–12:00) on 2 boards. | إزالة ENG102 S1؟ تُزال لقاءاتها الأربعة (الأحد، الاثنين، الأربعاء، الخميس 09:00–12:00) من لوحتين. |
+
+**Acceptance**
+- [CI] Publish opens `.ux-dialog` with one button, 0 POSTs and 0 reversed Arabic lines.
+- [CI] Delete on CS114 S1: the dialog names the meeting; confirm removes 1; undo restores 1.
+- [CI] **ENG102 S1: the dialog lists 4 meetings; confirm removes 4; undo restores 4** (`remapHistory` intact).
+- [CI] A locked card and an external card: no Remove button, 0 POSTs.
+
+**Mutants.** Unbind Delete (red); "this meeting only" on a bundle (red); show Remove when locked (red).
+
+**Risk.** Medium. Stronger reviewer.
+
+##### E2: Split on shared labels, flows and dialogs
+**Scope**
+- Extract `static/js/timetable-section-labels.js` (`usedSectionLabels` and `freeSectionLabels` from PAGE:1570-1588). Classic and split call it, and `section_label_cases.json` runs against it.
+- `createPayloadFromBudgetRow` and the drag payload (SPLIT:1627-1646, 7404-7411) use it.
+- Native confirms (SPLIT:8676, 8912, 9235) move to the engine.
+- Remove and Publish go through D5's flows.
+- Split's run-outcome copies are deleted in favour of `timetable-run-result.js`.
+- Repository test: 0 `confirm(`, `alert(` and `prompt(` natives in `static/js`.
+
+**Acceptance** ([CI])
+- The label proposed for CS112 with S2 removed is S2 (S5 today).
+- Publish with blockers: 0 POSTs and a list.
+- 0 native dialogs.
+
+**Mutant.** Restore `S${used+1}` (red).
+
+##### D7: P2 polish (first to cut)
+- `TimetableHotspots` rows become buttons: set the filter and open the board holding most of the sections.
+- An "Engine details" disclosure in the result dialog.
+- **Stat meanings:** the stat strip becomes one roving group (one Tab stop, arrows between stats). Each meaning goes in `aria-describedby`, with the same text in a popover on focus or hover.
+- Slot pills recomputed on input via `UXControls.redraw`.
+- The engine-teacher note: "Its teacher is chosen by the engine and may change after saving." / «يختار المحرّك مدرّسها وقد يتغيّر بعد الحفظ.»
+- A visible "Place…" on list rows.
+- Choice rows do not repeat their group's verdict.
+- The English chooser fetches add `verdict=1` (PAGE:3268-3270).
+
+**Acceptance** ([CI])
+- The Tab count through the chrome rises by at most 1.
+- Every `.ux-stat` has a keyboard-reachable description.
+- The pill appears and disappears on input.
+- 0 of 24 repeated head texts.
+
+##### E0 (gated on Q6): Shared grid, issue and lens models
+**Scope**
+- One PR: `timetable-grid-model.js`, `timetable-issue-model.js` and `timetable-lens-model.js`, from PAGE after D5.
+- `computeIssues` takes its freshness inputs as parameters: `qualityVersion`, `readinessVersion`, `dataVersion`. Today they are read from `TW` in about ten places (PAGE:6271-6347).
+- Window aliases are kept for names the tests use (`ISSUE_KINDS` 7, `TONE_LEAD` 6, `seatsNeeded` 4, `cellKey` 3, `isPlacementOnGrid` 3).
+- The edits to the 7 harnesses are named in the PR.
+
+**Acceptance**
+- [CI] Classic suites green with the named harness edits.
+- [CI] Parity between classic before and the modules on 3 fixtures.
+- [probe] 665 critical counts unchanged.
+
+##### E4 (gated): Split grid and Issues on the shared renderer
+**Scope**
+- Extract classic's table renderer, with a density option, as `timetable-grid-render.js`: header, day rows, stacked cells shown as in classic ("i of n at this time"), parking strip, tones and `UXControls.roving`. Split's panes become classic tables.
+- One `/quality/?lens=1` read per data version. `loadPlanLens` is deleted from `refreshBoardsSummary` (SPLIT:3703-3716); this absorbs the old E6.
+- Readiness is debounced as in classic.
+- The English table becomes its own block.
+- The dead sync toggles are deleted.
+- Split-only tools keep a named legacy adapter.
+
+**Acceptance**
+- [CI] A fixture twin draws every meeting.
+- [CI] Per edit: at most 1 quality read, 0 plan-lens reads, at most 1 debounced readiness read.
+- [CI] ar: 0 reversed time ranges and 0 start-cut codes.
+- [CI] One Tab stop per pane, with cards reachable.
+- [CI] The issue count equals classic's on fixtures.
+- [probe] 665: 76 of 76 meetings; 208642 ringed critical "No room"; DS2 keeps 95.
+
+**Risk.** High. Stronger reviewer.
+
+##### E5 (gated): Split assists from the server verdict, per board
+**Scope**
+- Delete `classifySplitTargets`, `splitSlotScore` and their badges.
+- Read `/slot-candidates/?verdict=1&offer=manual` and `/planned-slot-candidates/?verdict=1&limit=1000` once per board, not per pane.
+- At most 2 requests at a time on the preview lane (`request_lanes.py:33`).
+
+**Acceptance**
+- [CI] One sidebar click with 4 panes: at most 2 concurrent candidate requests and 0 503s.
+- [probe] CS112 S1 MON 09:00: 21 critical / 13 warning.
+- [probe] S6 sees 190 patterns.
+
+---
+
+### 8.4 Parallel tracks and stacking
+
+**Logical dependencies, not files, set the order (D-20).** PRs that edit disjoint regions of PAGE, SPLIT or GCSS run in parallel and rebase only on a real textual conflict. After any merge, every asset that both sides changed is re-bumped. `?v` matters only in DEBUG and QA (N-14).
+
+| Chain | PRs |
+|---|---|
+| Classic critical path | A1 → C3 → D2 → D3a → D3b → D4 → D5 → E2 (8 serial PRs); D7 after D4, D6, C4 and C5 |
+| Feeders | D1 (A1, B1) → D2; C2 → C4 → D2; B2 → D2; B4 → D3a; C1 → D6 |
+| Split | E1 → E3 → E2; gated: E0 → E4 → E5 |
+| Shared modules (new files) | `timetable-run-result.js` (D6 → E2); `timetable-section-labels.js` (E2); `timetable-remove-flow.js` / `timetable-publish-flow.js` (D5 → E2); `timetable-grid-model.js`, `timetable-issue-model.js`, `timetable-lens-model.js`, `timetable-grid-render.js` (E0 → E4). Whichever of a classic or split PR lands second updates the other page's adapter, and a classic/split parity test pins it. |
+| Server | B2 → B3; B1, B4 and B5 are independent |
+
+**Waves.**
+1. **Now:** A1, B1, B2, B4, B5, C1, C2. **Q2, Q3 and Q6 go to the owner now** (Q7 answered: no MRI work).
+2. **Next:**
+   - A2, A3 and C3 (after A1);
+   - E1 and D1 (after A1 and B1);
+   - B3 (after B2);
+   - C4 (after C2);
+   - D6 (after A1 and C1).
+3. **Then:** C5 (after C3); D2 (after C3, C4, D1 and B2); E3 (after E1).
+4. **Tail:**
+   - D3a → D3b → D4 → D5 → E2;
+   - D7;
+   - E0 → E4 → E5 once Q6 says to keep split's grid.
+
+**Cross-cutting rules for every PR:**
+- **§6 full matrix:** 1366×650, 1440×790, 1536×730 and 1920×1080; light and dark; en and ar; also with Verdana, because CI's Linux fonts are wider.
+- **Non-text contrast:** every new or changed control has edges of at least 3:1 against its surface, in both themes.
+- **Forced colours:** a Playwright `forced_colors='active'` pass for each new control (overflow cue, online header, popovers, toasts, states).
+- **NVDA smoke checklist** for C3, C4, D2, D3a and D4, plus one stage-exit pass that also does (d) `aria-colindex`. NVDA availability on this machine is unverified; install it if absent. Results go in each As-built note.
+- **Acceptance lines tagged** [CI] or [probe]; every [probe] has a [CI] twin.
+- **Every new `.test.cjs` is wired to pytest.** A1's meta-test enforces this.
+- **New template HTML uses `safeHtml`**, and the ratchet allowlist may only shrink.
+- **Server and teacher tests run under the three production flags.** openpyxl runs with lxml blocked.
+- **Every listed mutant must go red.**
+- **One reviewer per PR**, never Fable 5. Sonnet by default; a stronger model for A1, B1, B2, C3, D5 and E4.
+- **As-built notes** go in `docs/stage3/<ID>.md`.
+
+**Cost.** 24 PRs (M1 withdrawn) × about 30–45 min of CI comes to about 12–18 CI-hours before re-runs (the per-run time is unverified; master CI was about 28 min). The critical path is 8 PRs.
+
+---
+
+### 8.5 Not in stage 3
+
+| Item | Disposition | Reason |
+|---|---|---|
+| SW-04 CSP; SW-24 language select | Own security stage, right after A | Needs 46 inline handlers and 29 inline scripts moved first. Escaping is the primary fix. |
+| A4 one escaper (14 private copies, including `shared-timetable.js:410`) | Stage-4 sweep | The ratchet already blocks new sinks; those copies are used in text context. |
+| Retiring manual `?v` (content hash in DEBUG) | Later global PR | It touches every template that loads a static asset. Stage 3 drops `?v` as a sequencing reason instead. |
+| SW-09, 15–18, 20–23, 25 (migrations onto `.ux-state`), 26, 28, 30 | Stage 4 | Not this screen. Each is a family migration done on the stage-3 globals. |
+| SW-17 RTL arrow bug (`page-student-graduation.js:240`, `page-advisor-student-graduation.js:147`); SW-22 section-planning pager; SW-12 prerequisite graph in dark mode | Separate small PRs now | Real bugs elsewhere, mostly student-facing. |
+| SW-11 beyond the chrome (115 declarations) | Stage 4 | C1 fixes the chrome. |
+| SPL-08 / SW-13 split theme; SPL-14 split language; SPL-11 split modal (16 sites), split Generate; SPL-12 / F13 split slot editor | Stage 4, after Q6 | E4 brings keyboard and bidi only if Q6 keeps the grid. |
+| MRI-01, MRI-03 / SW-14, F14 | Dropped (owner) | The owner keeps the MRI page and the classic MRI tab as they are (2026-10-23). |
+| F4, F5, F7's Shift+F10 menu, F9, F11, F19 | Later | As in the draft. B2 pins F17 under the production flags. |
+| F16, F15 edge | Gates in As-built notes | Production is off limits. |
+| F18; (a), (b) | Dropped | No user impact; 0 cases. |
+| (h), (k) | Later | 0 cases, or rare. |
+| (d) `aria-colindex` | Stage-exit NVDA pass | Scheduled (§8.4). |
+| L25 `.form-select`; L28 day filter | Stage 4 | Every form; new UI. |
+| Server publish-check sentences as codes (L19) | Later (server) | D1 fixes the words the page builds. |
+| Engines placing GS/GSE in the online windows | Engine PR, through Q2 | Outside this screen. |
+
+---
+
+### 8.6 Owner questions (asked now; defaults apply if unanswered by wave 3)
+
+1. **Q2: online courses and the evening windows.**
+   - The rule says GS/GSE run "in these three windows and nowhere else" (autoplace:276-277).
+   - On 665, all 8 GS/GSE meetings sit in daytime lab columns. The other scenarios are unverified; B4 measures 663 and 666.
+   - Options for an online course in a daytime column:
+
+     | Option | Shows on 665 |
+     |---|---|
+     | (a) not marked | 0 |
+     | (b) info | 8 |
+     | (c) warning | 8 |
+     | (d) blocks publishing | 8 |
+
+   - Options for a room-needing class in a window: warning (shipping in B4) or blocks publishing.
+   - Separately: should Place and Move list the online windows first for an online course? If the engines cause the noise, an engine PR fixes them; that is not a reason to lower a severity.
+   - **Default: (a), plus a warning for room-needing classes.**
+2. **Q3: Change room for all N meetings when they share the room** (12 of 69 multi-meeting sections on 665).
+   - Recommended: an explicit "Apply to all 3 meetings", offered only when the room is free at every meeting. Stage 4.
+   - **Default: not built.**
+3. **Q6: does split view stay a page, and with its grid?**
+   - Stage 3 makes split safe (E1) and fixes its rooms (E3) and labels (E2).
+   - Its unique value is side-by-side boards plus the repair console, fix queue and resolvers, about 2,850 lines. On the QA copy those tools were last used on 2026-05-28/29 (N-16; production unverified).
+   - **Recommended:** keep the repair console and fix queue on the shared models; retire block mode, bulk "clean rooms" and safe-time moves unless used; decide whether a "compare boards" layout inside classic replaces split's grid.
+   - **Default: E0, E4 and E5 are not started.**
+   - Please name the split-only tools the department uses.
+4. **Q7: the MRI page.** **Answered by the owner (2026-10-23): never do anything for the MRI page; keep it as it is.**
+   - ~~**Recommended:** keep the Board Map / graph only if it is used; otherwise retire the page into classic's Issues, hotspots and Demand.~~
+   - ~~**Default: read-only, unchanged.**~~
+   - **Answer:** the page stays exactly as it is (still writable): no retirement, no read-only change.
+
+---
+
+### 8.7 Risks
+
+| # | Risk | Likelihood / impact | Mitigation |
+|---|---|---|---|
+| R1 | C3 regressions: 40 call sites, a default flip to resolve-after-close, about 69 test assertions, and markup coupling in 4 files | Med / high | Compatibility hooks; `isOpen()`; the per-caller audit table; nested and chain tests; stronger reviewer; it lands before D2. |
+| R2 | C1 changes colours on every page, and split could get worse | Med / med | Split and MRI excluded; a 7-page rendered audit that includes split; screenshots. |
+| R3 | The classic critical path is 8 serial PRs | Med / med | Disjoint-region parallelism (D-20); D6 and D7 sit off the path; tiers let D7 drop. |
+| R4 | E4 is large on a 9.5k-line file | Med / high | Gated on Q6; a shared renderer, not a third one; a named legacy adapter; a request budget; stronger reviewer. |
+| R5 | B1 refuses a legitimate flow, or the race leaks | Low / med | One caller; redo pinned; a PostgreSQL two-connection test; a [probe] on 663/665/666. |
+| R6 | B2's "—" workbook is taken for final | Low / med | A bilingual note on the first sheet names each section and board; publish still blocks. |
+| R7 | B5 CPU on the 0.5 vCPU host | Low / low | Measured 0.3–1.4 ms; filtered; one-line revert; a host gate in the As-built note. |
+| R8 | ~~Users lose the MRI tab or MRI's bundle moves~~ | — | Withdrawn with D-8 and M1. |
+| R9 | The online table changes the Labs layout | Med / low | Labs return to their 5 lab columns; the table appears only when relevant; the legend cites the rule. |
+| R10 | Ratchet false positives (about 1,430 raw interpolations in 1,088 fingerprints, prototype) | Med / low | Fingerprints, not lines; literal ternaries and nested-template map-joins classed safe; the scanner pinned by unit cases; `--lower` only lowers. |
+| R11 | `?v` drift in dev/QA after parallel merges | Med / low | The re-bump rule; production is hashed (N-14). |
+| R12 | Production flags differ from QA | Med / med | B2, B3 and D7 test under all three flags; [probe]s run locally with the flags on. |
+| R13 | Unverified inputs: production usage of split and MRI, per-run CI time, Render edge compression, NVDA availability, (i) mismatch rates | — | Each PR re-measures, or writes "unverified" in its As-built note. |
+| R14 | Q6 unanswered | Med / low | Defaults (§8.6) keep stage 3 complete without E0, E4 and E5. |
+| R15 | The `safeHtml` object is not a string; `typeof body === 'string'` checks drop it (e.g. split `openModal`) | Med / low | The contract says "coerce at sinks that check `typeof`"; A1 never passes `SafeHtml` to such a sink; C3 makes `dlg` accept it. |
+
+**Scratch evidence from this pass** (0 QA writes, 0 POSTs), in the session's scratch directory under `scratchpad/stage3/editor/`:
+- `xss_classic_rerun.py` (executed=1);
+- `xss_split_electives.py` + `.png` (executed=2);
+- `probe_split_board.py` (2 page errors for `%5C` and `%0A`; 0 for `2420`);
+- `scan_proto.cjs` and `list_ranges.cjs` (the ratchet prototype and A1's deltas).
+
+---
+
+### 8.8 Rejected critique points
+
+1. **"C1 count is 115, not 86" (engineering).** Partly rejected. The 115 grep also matches `background-color:` and `border-color:`. Text-only `color: var(--teal)` in `global.css` is 86 (N-17). Accepted: the split/MRI exclusion and the other files' counts.
+2. **"C4 rides with C2" (engineering consolidation).** Rejected. C4 now also carries `.ux-state` and `UXControls.popover` (design critique). One L PR across GCSS, UXC and notify.js would put three surfaces under one reviewer. The PR count still falls from 31 to 25.
+3. **"B4's `re.ASCII` rides in B2" (engineering).** Rejected. B4 still exists for the online-window truth, so moving one line saves no PR. Accepted: `[0-9]` instead of `re.ASCII`, as the same critique advises.
+4. **"Retire manual `?v` in stage 3" (engineering, preferred fix).** Deferred, not refuted. It touches every template that loads static assets. Stage 3 adopts the critique's fallback instead: `?v` no longer serialises PRs.
+5. **"Add a real JS parser as a devDependency" (engineering, one of two options).** Took the other option, a pinned tokenizer with unit cases. A1 is a security PR and should not add a new npm supply-chain dependency (`package.json` has 3 devDependencies today).
+
+Every must-change in both critiques was checked in code and accepted:
+- design: tiers, the English-section Remove scope, no fixed toolbar height;
+- engineering: B2's scope, `doRemoveApi`, C3's coupling and size, B1's race and parity.
+
+### 8.9 As-built notes
+
+Each PR's As-built note (what was built, deviations with evidence, probes,
+mutants) is its own file, so parallel PRs never edit this record at once. A PR
+adds its row here when it lands.
+
+| PR | As-built note |
+|---|---|
+| A1 | [`docs/stage3/A1.md`](stage3/A1.md): the build spec and the As-built note |
