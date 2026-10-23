@@ -21,7 +21,10 @@ a column start of its kind: a lab when it runs more than 80 minutes, otherwise
 a lecture (``isLabPlacement`` in the workspace's script and ``_is_lab_p`` in the
 exports use the same rule). A meeting under a course meeting policy (the
 three-hour English bundles) is drawn in its own table built from the meetings
-themselves, so no column change ever hides it.
+themselves, so no column change ever hides it. A meeting drawn in an
+online-only window (:func:`online_window`) whose course is not online for its
+board is a publish-readiness warning, never a refusal
+(``check_publish_readiness``, ``online_window_room_class``).
 
 A change of columns must be confirmed, by name, when it would leave drawn
 meetings off the grid, or when a flagged column (an online-only window)
@@ -42,8 +45,14 @@ LAB_MINUTES_ABOVE = 80
 SLOT_FLAGS = ("online_only", "policy_only")
 MAX_SLOTS_PER_LIST = 40
 MAX_LABEL_LENGTH = 40
-# HH:MM, optionally with seconds (stored times can read "09:00:00").
-_TIME = re.compile(r"^\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*$")
+# HH:MM, optionally with seconds (stored times can read "09:00:00"). The
+# digits are ASCII, as in the pages' copy of this rule (``SERVER_TIME`` in
+# static/js/timetable-slot-config.js, where ``\d`` is ASCII). ``\d`` here
+# would also read any Unicode digit: an Arabic-Indic nine then ":30" was 09:30
+# on the grid for the server and parked by the page. ``\s`` stays Unicode, as
+# the pages' ``\s`` is, so a time with a no-break space around it reads as
+# before (``re.ASCII`` would narrow ``\s`` too).
+_TIME = re.compile(r"^\s*([01]?[0-9]|2[0-3]):([0-5][0-9])(?::[0-5][0-9])?\s*$")
 
 
 def effective_lecture_slots(scenario: Any) -> list[dict]:
@@ -210,11 +219,67 @@ def is_on_grid(
         return False
     if policy_meeting:
         return True
+    return drawn_column(day, start_time, end_time, lecture_slots, lab_slots) is not None
+
+
+def drawn_column(
+    day: Any,
+    start_time: Any,
+    end_time: Any,
+    lecture_slots: list[dict],
+    lab_slots: list[dict],
+) -> dict | None:
+    """The column the grid draws a meeting in, or None when it is parked.
+
+    A teaching day, and the first column of the meeting's kind (a lab runs
+    more than 80 minutes) whose start is the meeting's start: the renderer
+    draws a meeting once, in the first such column (``firstColumn`` in the
+    workspace's ``_renderSingleGrid``). A meeting under a course meeting policy
+    is not asked here: it has its own table (``is_on_grid``).
+    """
+    if str(day or "").upper()[:3] not in GRID_DAYS:
+        return None
     start = _hhmm(start_time)
+    if start is None:
+        return None
     columns = lab_slots if is_lab_meeting(start_time, end_time) else lecture_slots
-    return start is not None and any(
-        _hhmm(slot.get("start")) == start for slot in columns if isinstance(slot, dict)
+    return next(
+        (slot for slot in columns if isinstance(slot, dict) and _hhmm(slot.get("start")) == start),
+        None,
     )
+
+
+def online_window(
+    day: Any,
+    start_time: Any,
+    end_time: Any,
+    lecture_slots: list[dict],
+    lab_slots: list[dict],
+) -> dict[str, str] | None:
+    """The online-only window the grid draws a meeting in, or None.
+
+    The owner's rule (2026-07-28, ``DEFAULT_LAB_SLOTS``): only online courses
+    meet in the online-only windows; nothing in the estate is open in the
+    evening. Which column a meeting is in is the grid's rule
+    (:func:`drawn_column`), so a lab in Lab 5 (16:30-18:10) is not "in" Online 1
+    or Online 2 although their times overlap, and a meeting off the grid is in
+    none (the page lists it under its table).
+
+    Returns the window's ``label`` (its ``start-end`` when it has none) and the
+    meeting's ``day``, ``start`` and ``end`` as the grid reads them
+    (``SUN``, ``HH:MM``).
+    """
+    column = drawn_column(day, start_time, end_time, lecture_slots, lab_slots)
+    if column is None or not column.get("online_only"):
+        return None
+    start, end = _hhmm(start_time) or "", _hhmm(end_time) or str(end_time or "")
+    label = str(column.get("label") or "").strip()
+    return {
+        "label": label or f"{_hhmm(column.get('start'))}-{_hhmm(column.get('end'))}",
+        "day": str(day).upper()[:3],
+        "start": start,
+        "end": end,
+    }
 
 
 def hidden_by_slot_change(

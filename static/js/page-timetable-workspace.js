@@ -1710,7 +1710,26 @@ const READINESS_ITEM_TEXT = {
   cross_board_conflicts: p => IS_AR
     ? `${p.count} تداخلات بين اللوحات يشترك فيها ${p.threshold} طالباً أو أكثر.`
     : `${plural(p.count, 'cross-board overlap', 'cross-board overlaps')} shared by ${p.threshold} or more students.`,
+  // A class that needs a room, in a window kept for online courses (stage 3,
+  // B4): a warning, never a blocker. The pair, the window and the times are
+  // each isolated, so Arabic never reverses them.
+  online_window_room_class: p => {
+    const name = isolatedText([p.course_code, p.section].filter(Boolean).join(' '));
+    const when = `${dayText(p.day)} ${isolatedText(`${p.start}–${p.end}`)}`;
+    return IS_AR
+      ? `تجتمع ${name} في «${onlineWindowName(p.slot_label)}» (${when})، وهي فترة مخصصة للمقررات عن بُعد.`
+      : `${name} meets in ${onlineWindowName(p.slot_label)} (${when}), a window kept for online courses.`;
+  },
 };
+/* An online window's label as the page says it: a default window
+   (timetable_autoplace.DEFAULT_LAB_SLOTS, "Online N") in the page's language,
+   any other label as it was typed, isolated. */
+function onlineWindowName(label) {
+  const text = String(label ?? '').trim();
+  const number = /^Online (\d+)$/.exec(text)?.[1];
+  if (number) return IS_AR ? `عن بُعد ${number}` : `Online ${number}`;
+  return text ? isolatedText(text) : '—';
+}
 function readinessItemText(item) {
   if (!item) return '';
   const params = { ...(item.params || {}), board_label: item.board_label || '', count: item.count };
