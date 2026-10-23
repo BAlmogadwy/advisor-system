@@ -330,8 +330,9 @@ Pinned by `tests/test_timetable_workspace_grid_view_browser.py` (the
 filter's dims and folds: contrast, the ring, the echo told apart, the
 keyboard into a fold), `tests/test_timetable_workspace_parking_browser.py`
 (the parking strip: under its table and across its columns, its header in
-whole words at 12px, contrast, the teacher in a wide enough cell, M moving a
-parked meeting onto the grid), `tests/test_timetable_workspace_frame_browser.py`
+whole words at 12px, contrast, the teacher in a wide enough cell, every
+table's days one to a row in the day column even with no slot column, M
+moving a parked meeting onto the grid), `tests/test_timetable_workspace_frame_browser.py`
 (frame, slot width, chrome height, type floor, contrast, blocked Publish
 never posts),
 `tests/test_design_system_tokens.py` (token contrast in both themes),
@@ -1274,6 +1275,45 @@ findings changed the plan:
    stored at "9:00" is drawn once, in the 09:00–12:00 column, beside an
    empty "9:00–12:00" one; it should key columns by `_hhmm` too. F11 (the
    page's `isEnglish` against the server's policy) stands.
+   **After review (6e):** a table with no slot column, drawn only for its
+   strip, flowed its day labels two to a row (Chrome: Sun beside the
+   corner, then Mon and Tue, Wed and Thu, then "Off grid"), since its one
+   laid-out column took every other label. A row's label
+   (`.tw-grid-slot-label`, the days and the strip's header) is now pinned
+   to the day column (`grid-column: 1`); the server
+   always sends lab columns, so only the page could draw such a table. The
+   Chrome test `test_a_table_with_no_columns_keeps_each_day_on_its_own_row`
+   draws the lab table with none and checks every table's labels (each in
+   the day column, under the row before) and its strip (beside its header,
+   clear of the day column); it fails without the pin, and the first Chrome
+   test runs the same check on every table at every size. Three surviving
+   reviewer mutants now fail: PK4b has a later course that starts earlier
+   on the same day (the strip's start order), and PK7b asserts Selection's
+   meetings list (each day as the grid names it: `dayHtml`, not the raw
+   value) and the dash for an empty day on the card, in Issues, Selection
+   and Move (`dayHtml` and `dayText`). The fold's label counts the strip's
+   cards: PK1's "2 meetings" fails if it counts only cells' cards or is
+   written before the strip is drawn. 6c's R-fold-label-all-cards (the
+   table's meetings, not its drawn cards) is equivalent now, as every
+   meeting is drawn exactly once (§5). Nothing is left of the `locate`
+   option: `add()` spreads its `extra` (a board target, `pending`, a
+   readiness item and its weight) and nothing reads `locate`, so re-adding
+   it to `offGrid` is an equivalent mutant.
+   Follow-ups (recorded, not done): the `blocked` issue still keys on the
+   raw `${day}|${start}`, so a meeting stored as "9:00" or "sun" is drawn in
+   its cell but a blocked time there misses it; it should use `cellKey`
+   (older than 6e). An English meeting on a teaching day with a start that
+   is no time ("9am") is parked, but `isPlacementOnGrid` (and the server's
+   `policy_meeting`) calls every such English meeting on the grid, so it has
+   no Issues row; garbage data only, with the `gridSlots` `_hhmm` follow-up
+   above. Python's `\d` in `_TIME` matches any Unicode digit ("٠٩:٠٠")
+   where the page's `SERVER_TIME` reads ASCII only: in theory the server
+   calls such a meeting on the grid while the page parks it (every stored
+   time is HH:MM; E14's "one cell key" holds for them). The strip's
+   gridcells sit in a plain `.tw-park` box with no `aria-colindex`, while
+   the fold's cell spans `numSlots + 1` columns: a screen reader may give
+   their column positions loosely (the keyboard, by `data-ux-col`, is right
+   and tested).
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any

@@ -264,7 +264,11 @@ html[data-theme="dark"] .tw-grid { --tw-warning-ink: var(--sev-warning); }
 .tw-grid-corner { inset-inline-start: 0; z-index: 3; }
 .tw-slot-no { color: var(--t3); font-size: var(--text-2xs); font-weight: 700; }
 .tw-slot-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A row's label (a day, or the strip's "Off grid") is always in the day
+   column: a table with no slot column, drawn only for its strip (6e), would
+   otherwise flow its days two to a row. */
 .tw-grid-slot-label {
+  grid-column: 1;
   position: sticky; inset-inline-start: 0; z-index: 1;
   display: flex; align-items: center;
   padding: 6px 8px;

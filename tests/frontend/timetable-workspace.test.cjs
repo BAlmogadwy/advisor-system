@@ -1945,6 +1945,27 @@ test('PK7 the strip in Arabic: the time left to right, Friday and Saturday named
   }
 });
 
+test('PK7b Selection’s meetings list names each day as the grid does; an empty day is a dash on the card, in Issues, Selection and Move', async t => {
+  for (const arabic of [false, true]) {
+    const meetings = ['SUN', 'SAT', 'X<y', ''].map(day => ({ day, start_time: '09:00', end_time: '10:15', room: 'R1' }));
+    const h = await viewHarness(t, { arabic, placements: [at(10, { meetings }), offGrid(11, { day: '' })] });
+    await h.select();
+    card(h, 10).click();
+    assert.deepEqual([...h.d.querySelectorAll('#twRightBody .tw-sel-meetings li > span:first-child')].map(s => s.innerHTML),
+      [arabic ? 'الأحد' : 'Sun', arabic ? 'السبت' : 'Sat', '<bdi>X&lt;y</bdi>', '—']);
+    // A meeting with no day is parked, and its day reads as a dash wherever it is said.
+    assert.deepEqual(stripIds(h, 'S1', 'lecture'), [11]);
+    assert.equal(card(h, 11).querySelector('.tw-card-when').innerHTML, '— <bdi dir="ltr">18:30–19:45</bdi>');
+    card(h, 11).click();
+    assert.equal(h.d.querySelector('#twRightBody .tw-sel-fields dd').innerHTML, '—');
+    assert.ok(h.w.moveSubHtml(h.w.TW.placements.find(row => row.id === 11)).startsWith('— <bdi dir="ltr">18:30–19:45</bdi>.'), 'Move');
+    h.w.renderRightPanel('issues');
+    assert.equal([...h.d.querySelectorAll('#twRightBody .tw-issue-row')].find(r => r.dataset.ids === '["11"]').querySelector('.tw-issue-detail').innerHTML,
+      `<bdi>— <bdi dir="ltr">18:30–19:45</bdi> · ${arabic ? 'أسفل جدوله' : 'under its table'}</bdi>`);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
 test('PK4b the strip’s order: by day, then start (a start that is no time after every time), then course; any other day last', async t => {
   const h = await viewHarness(t, { placements: [
     at(10),
@@ -1955,11 +1976,12 @@ test('PK4b the strip’s order: by day, then start (a start that is no time afte
     offGrid(21, { day: 'SAT', start_time: '09:00', end_time: '10:15', course_code: 'AA9' }),  // the same course and time: by id
     offGrid(16, { day: 'SAT', start_time: '09:00', end_time: '10:15', course_code: 'AA9' }),
     offGrid(11),
+    offGrid(19, { course_code: 'ZZ1', start_time: '07:30', end_time: '08:45' }),  // a later course, earlier on the day: by start
   ] });
   await h.select();
-  assert.deepEqual(stripIds(h, 'S1', 'lecture'), [11, 15, 16, 21, 12, 18, 17]);
+  assert.deepEqual(stripIds(h, 'S1', 'lecture'), [19, 11, 15, 16, 21, 12, 18, 17]);
   assert.deepEqual([...stripOf(h, 'S1', 'lecture').querySelectorAll('.tw-park-cell')].map(c => c.dataset.uxCol),
-    ['1110', '1440', '540', '540', '540', '1110', '1110'], 'in minutes; no time sits after every time');
+    ['450', '1110', '1440', '540', '540', '540', '1110', '1110'], 'in minutes; no time sits after every time');
   assert.equal(card(h, 15).querySelector('.tw-card-when').innerHTML, 'Mon <bdi dir="ltr">7pm–19:45</bdi>', 'the stored time as it is');
 });
 

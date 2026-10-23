@@ -13,6 +13,10 @@ acceptance (no sideways scroll, nothing under 11px); and the parked card's
 cell is wide enough that the card names its teacher (PK8: its cell is the
 card's container, as a slot is).
 
+Every table's rows (ROWS): each day, and the strip's header, in the day
+column under the row before, and the strip's cells beside its header. A table
+with no slot column, drawn only for its strip, keeps each day on its own row.
+
 From the keyboard, M on the parked card opens Move, a time at 09:00 moves it
 into its cell, and the strip goes (with its legend line).
 """
@@ -79,6 +83,34 @@ STRIP = r"""() => {
   return bad;
 }"""
 
+# Every table's rows, as short findings: each row's label (a day, or the
+# strip's header) in the day column under the row before, and a strip's cells
+# beside its header, under its last day.
+ROWS = r"""() => {
+  const bad = [];
+  const box = el => el.getBoundingClientRect();
+  for (const table of document.querySelectorAll('#twGrid [role="grid"]')) {
+    const name = `${table.dataset.group}:${table.dataset.kind}`;
+    const corner = box(table.querySelector('.tw-grid-corner'));
+    let above = corner;
+    for (const label of table.querySelectorAll('.tw-grid-slot-label')) {
+      const b = box(label);
+      const words = label.textContent.trim();
+      if (Math.abs(b.left - corner.left) > 0.5 || Math.abs(b.width - corner.width) > 0.5) bad.push(`${name}: "${words}" not in the day column`);
+      if (b.top < above.bottom - 0.5) bad.push(`${name}: "${words}" not under the row before`);
+      above = b;
+    }
+    const park = table.querySelector('.tw-park');
+    if (park) {
+      const b = box(park);
+      const rtl = getComputedStyle(table).direction === 'rtl';
+      if (rtl ? b.right > corner.left + 0.5 : b.left < corner.right - 0.5) bad.push(`${name}: the strip over the day column`);
+      if (Math.abs(b.top - above.top) > 0.5) bad.push(`${name}: the strip not beside its header`);
+    }
+  }
+  return bad;
+}"""
+
 
 class ParkingTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
     maxDiff = None
@@ -105,6 +137,7 @@ class ParkingTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                 for width, height in ((1366, 650), (1440, 790)):
                     page, sent, errors = self._load(language, theme, width, height, cards=5)
                     found = page.evaluate(STRIP)
+                    found += page.evaluate(ROWS)
                     found += page.evaluate(
                         CONTRAST,
                         [
@@ -122,6 +155,33 @@ class ParkingTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                         problems[f"{language} {theme} {width}x{height}"] = found
                     page.context.close()
         self.assertEqual(problems, {})
+
+    def test_a_table_with_no_columns_keeps_each_day_on_its_own_row(self) -> None:
+        # A lab (100 minutes) drawn with no lab column: its table is drawn
+        # for its strip alone (one column to lay it out in). The server
+        # always has lab columns, so the page is drawn here without them.
+        key = fx.requirement("AI", "AI444", "Lab work")
+        fx.budget(self.scenario, key, 1)
+        fx.place(
+            self.scenario.boards.get(),
+            fx.section(self.scenario, key, "S1"),
+            (("SUN", "08:00", "09:40"),),
+            room="R101",
+        )
+        lab = SectionPlacement.objects.get(term_section__course_code="AI444")
+        for language in ("en", "ar"):
+            page, sent, errors = self._load(language, "light", 1366, 650, cards=6)
+            drawn = page.evaluate(
+                """() => { renderGridWithSlots(scenarioLectureSlots(), []);
+                  const table = document.querySelector('#twGrid [role="grid"][data-kind="lab"]');
+                  return { cells: table.querySelectorAll('.tw-cell').length,
+                           parked: [...table.querySelectorAll('.tw-park .tw-card')].map(c => Number(c.dataset.placementId)),
+                           days: table.querySelectorAll('.tw-grid-slot-label:not(.tw-park-head)').length }; }"""
+            )
+            self.assertEqual(drawn, {"cells": 0, "parked": [lab.id], "days": 5}, language)
+            self.assertEqual(page.evaluate(ROWS), [], language)
+            self.assertEqual([*sent, *errors], [], language)
+            page.context.close()
 
     def test_m_moves_a_parked_meeting_onto_the_grid_and_the_strip_goes(self) -> None:
         for language in ("en", "ar"):
