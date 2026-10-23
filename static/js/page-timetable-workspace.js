@@ -240,9 +240,10 @@ function writeHold() {
   return workspaceCanEdit() ? '' : 'busy';
 }
 
-/* A dialog's commit (contract C): {data}, or {code, status} for every
-   failure (status 0: no answer was read), with nothing toasted (a toast
-   behind a modal is never seen). The keyboard goes
+/* A dialog's commit (contract C): {data}, or {code, status, error} for
+   every failure (status 0: no answer was read; `error` the server's own
+   {code, message, details}, or null), with nothing toasted (a toast behind
+   a modal is never seen). The keyboard goes
    to the chosen row first, since the commit button turns off as the write
    starts. twFetch's own busy guard would toast, so the hold is checked here
    and answered as a code like any refusal. */
@@ -250,16 +251,19 @@ async function dialogWrite(dialog, url, body) {
   const hold = writeHold();
   if (hold) return { code: hold };
   (dialog.querySelector('input[type="radio"]:checked') || dialog.querySelector('.ux-choice-list'))?.focus({ preventScroll: true });
-  let code = '', failed = 0;
+  let code = '', failed = 0, error = null;
   const data = await twFetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), _quiet: true,
     _onError: (answer, status) => {
       code = answer?.error?.code || (answer ? String(status) : 'NETWORK');
       failed = Number(status) || 0;
+      // The slot dialog marks the fields a VALIDATION_SLOTS answer names
+      // and reviews a confirmation's list: both are in the server's error.
+      error = answer?.error && typeof answer.error === 'object' ? answer.error : null;
       return true;
     },
   });
-  return data ? { data } : { code: code || 'NETWORK', status: failed };
+  return data ? { data } : { code: code || 'NETWORK', status: failed, error };
 }
 
 /* What a dialog's work came to: in its alert line while it is open. Once the
@@ -370,6 +374,7 @@ function syncWorkspaceControls() {
   syncMoveDialog();
   syncRoomDialog();
   syncPlaceDialog();
+  syncSlotDialog();
 }
 
 /* The other views of this timetable are real links, so they open in a new tab
@@ -442,10 +447,10 @@ async function twFetch(url, opts = {}) {
   // no answer could be read — the request failed, or a success came back
   // that is not JSON (an expired session's login page).
   // It does not hear the local busy guard below, which toasts and returns
-  // null before any request is made. Today's callers (publish, drop, the slot
-  // editor) use no dialog or the page's `dlg` ones, which sit under the
-  // toasts and leave them announced, so that toast is seen even when the
-  // slot editor reopens on it. A template <dialog> opened modal
+  // null before any request is made. Today's callers without a template
+  // dialog (publish, a drop) use no dialog or the page's `dlg` ones, which
+  // sit under the toasts and leave them announced, so that toast is seen.
+  // A template <dialog> opened modal
   // (UXControls.dialog) is in the top layer, over every toast: it keeps its
   // commit off while the workspace is busy (data-tw-mutation, which
   // syncWorkspaceControls turns off) and checks workspaceCanEdit() before it
@@ -775,7 +780,7 @@ async function showSchedulerOutcome(jobId) {
 
   // ⋯ scenario actions
   $('twCopyScenario')?.addEventListener('click', copyScenarioPrompt);
-  $('twSlotEdit').addEventListener('click', openSlotEditor);
+  $('twSlotEdit').addEventListener('click', () => openSlotDialog());
 
   // Scenario picker and its scope
   $('twScenario').addEventListener('change', onScenarioChange);
@@ -6186,83 +6191,457 @@ function setIssuesCount(total, critical) {
   if ($('twRightRailCount')) $('twRightRailCount').textContent = text;
 }
 
-/* ── Slot Edit Modal ── */
-/* The editor opens on the effective columns, or on the text the user had
-   typed when a save stopped (a decline, a line it could not read, a column
-   the server refused): their edits are never lost. */
-async function openSlotEditor(typed = null) {
-  if (!TW.scenarioId || !TW.scenario) { notify.error(IS_AR ? 'اختر سيناريو أولا' : 'Select a scenario first'); return; }
-  if (TW.scenario.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Cannot edit published scenario'); return; }
+/* ── Edit time slots (design record §7.2 item 6, 6f) ──
+   The grid's columns for every board of the scenario, in #twSlotDialog: one
+   row per column (the slot module's rows and words), lectures then labs.
+   Nothing about a time is checked here: a column the server refuses
+   (VALIDATION_SLOTS) is marked on the row that was sent at its index, since
+   rows move while the dialog is open. A change that leaves meetings outside
+   the columns, or takes a column's online-only rule away, is a review step
+   of the dialog — the server's list, confirmed by its fingerprint (PR 1) —
+   before Save anyway. A list always keeps one row: an empty list is the
+   server's defaults, never "no columns". A column's flags are shown and never
+   edited (owner, Q4). Edits are never lost: every change is the scenario's
+   draft (page memory) until a save lands, and the next open offers it. */
+const SLOT_WORDS = IS_AR ? {
+  noScenario: 'اختر سيناريو أولا',
+  progress: 'جارٍ حفظ الأعمدة…',
+  notSaved: 'لم تُحفظ الأعمدة.',
+  kept: 'تعود تعديلاتك عند فتح «تعديل الفترات الزمنية» مرة أخرى.',
+  saved: (lectures, labs) => `حُفظت الأعمدة: المحاضرات ${lectures}، المعامل ${labs}.`,
+  parked: (lectures, labs, n) => `حُفظت الأعمدة: المحاضرات ${lectures}، المعامل ${labs}؛ أسفل جداولها الآن خارج الأعمدة: ${meetingsCount(n)}.`,
+} : {
+  noScenario: 'Select a scenario first',
+  progress: 'Saving the columns…',
+  notSaved: 'The columns were not saved.',
+  kept: 'Your edits come back when you open “Edit time slots” again.',
+  saved: (lectures, labs) => `Columns saved: ${lectures} lecture, ${labs} lab.`,
+  parked: (lectures, labs, n) => `Columns saved: ${lectures} lecture, ${labs} lab; now under their tables, outside the columns: ${meetingsCount(n)}.`,
+};
+// The refusals a save can meet that have the gate's words; any other is notSaved.
+const SLOT_REFUSALS = {
+  SCENARIO_PUBLISHED: REFUSAL.published, SCENARIO_BUSY: REFUSAL.busy,
+  published: REFUSAL.published, job: REFUSAL.job, busy: REFUSAL.busy,
+};
+const SLOT_LISTS = ['slot_config', 'lab_slot_config'];
+const SLOT_TABLES = { slot_config: 'twSlotLectures', lab_slot_config: 'twSlotLabs' };
+const SLOT_FIELDS = ['label', 'start', 'end'];
+const SLOT_ICONS = {
+  up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+  remove: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+};
+// Scenario id → its unsaved rows ({slot_config, lab_slot_config}).
+const SLOT_DRAFTS = new Map();
+/* The dialog's session: the scenario it edits, its rows, the server's marks
+   (row key → {fields, texts}), its write out, the step shown ('rows' or
+   'review'), the review waiting for an answer ({resolve}), and the page's
+   hold its alert is about. */
+const SLOT = {
+  token: 0, scenarioId: null, rows: { slot_config: [], lab_slot_config: [] }, marks: new Map(),
+  pending: false, step: 'rows', review: null, held: '',
+};
+function slotDialogOpen() {
+  return Boolean(window.UXControls?.dialog?.isOpen($('twSlotDialog')));
+}
+const copySlotRows = rows => Object.fromEntries(SLOT_LISTS.map(list => [list, (rows[list] || []).map(row => ({ ...row, flags: [...row.flags] }))]));
+/* The saved columns as rows: the scenario's effective ones (its own, or the
+   server's defaults), never the page's. */
+function savedSlotRows() {
   const SC = window.TimetableSlotConfig;
-  const lectureSlots = scenarioLectureSlots();
-  const labSlots = scenarioLabSlots();
-  const flagged = SC.flaggedColumnsText(labSlots) || SC.flaggedColumnsText(lectureSlots);
-  const lectureText = typed ? typed.lecture : SC.rowsToText(lectureSlots);
-  const labText = typed ? typed.lab : SC.rowsToText(labSlots);
-
-  const result = await dlg.confirm({
-    title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
-    body: `<div class="fs-md text-t3 fw-semibold" style="margin-bottom:6px">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
-      <div class="fs-sm text-t4" style="margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(lectureText)}</textarea>
-      <div class="fs-md text-teal fw-semibold" style="margin:10px 0 6px">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
-      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" dir="ltr" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>
-      ${flagged ? `<p class="fs-sm text-t3" style="margin:8px 0 0">${esc(flagged)}</p>` : ''}`,
-    confirmText: IS_AR ? 'حفظ' : 'Save Slots',
-    kind: 'info',
-  });
-  if (!result) return;
-
-  const text = {
-    lecture: document.getElementById('twSlotInput')?.value ?? lectureText,
-    lab: document.getElementById('twLabSlotInput')?.value ?? labText,
-  };
-  const lectures = SC.parseLines(text.lecture);
-  const labs = SC.parseLines(text.lab);
-  if (lectures.rejected.length || labs.rejected.length) {
-    notify.error(SC.rejectedText(lectures.rejected, labs.rejected));
-    return openSlotEditor(text);
+  return { slot_config: SC.editorRows(scenarioLectureSlots()), lab_slot_config: SC.editorRows(scenarioLabSlots()) };
+}
+/* After every change: the rows are the scenario's draft, unless they would
+   send what is saved (then there is nothing to keep). */
+function rememberSlotDraft() {
+  const SC = window.TimetableSlotConfig;
+  if (TW.scenarioId === SLOT.scenarioId) {
+    const saved = savedSlotRows();
+    const sends = list => JSON.stringify(SC.rowsToPayload(SLOT.rows[list]));
+    if (SLOT_LISTS.every(list => sends(list) === JSON.stringify(SC.rowsToPayload(saved[list])))) {
+      SLOT_DRAFTS.delete(SLOT.scenarioId);
+      return;
+    }
   }
-  if (lectures.rows.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return openSlotEditor(text); }
-  const scenarioId = TW.scenarioId;
+  SLOT_DRAFTS.set(SLOT.scenarioId, copySlotRows(SLOT.rows));
+}
+function findSlotRow(key) {
+  for (const list of SLOT_LISTS) {
+    const index = SLOT.rows[list].findIndex(row => row.key === key);
+    if (index >= 0) return { list, index, row: SLOT.rows[list][index] };
+  }
+  return null;
+}
+/* A row's name for its buttons: its label, or its list's word and number. */
+function slotRowName(list, row, index) {
+  return row.label.trim() || `${window.TimetableSlotConfig.rowWords.column[list]} ${index + 1}`;
+}
+const slotMarkText = mark => mark.texts.join(IS_AR ? '؛ ' : '; ');
 
+/* One column as a row, and under it the row its error is said in (its
+   fields' aria-describedby; empty and hidden while there is none). Up on the
+   first row, Down on the last and Remove on a list's only row are
+   aria-disabled, so the keyboard stays on them; Remove says why. */
+function slotRowHtml(list, row, index, count) {
+  const SC = window.TimetableSlotConfig;
+  const W = SC.rowWords;
+  const key = esc(row.key);
+  const head = `twSlotRow-${key}`;
+  const error = `twSlotErr-${key}`;
+  const mark = SLOT.marks.get(row.key);
+  const field = (name, attributes) => `<td${name === 'label' ? ' class="ux-rows-grow"' : ''}><input type="text" value="${esc(row[name])}" data-field="${name}" data-focus-key="slot:${key}:${name}"`
+    + ` aria-labelledby="${head} ${SLOT_TABLES[list]}-${name}" aria-describedby="${error}"${mark?.fields.has(name) ? ' aria-invalid="true"' : ''} ${attributes}></td>`;
+  const time = 'class="ux-rows-time" inputmode="numeric" dir="ltr" autocomplete="off" spellcheck="false"';
+  const name = slotRowName(list, row, index);
+  const button = (kind, off, extra = '') => {
+    const words = esc(W[kind](name));
+    return `<button type="button" class="btn btn-sm btn-neutral btn-icon" data-row-action="${kind}" data-focus-key="slot:${key}:${kind}"`
+      + ` aria-label="${words}" title="${words}"${off ? ` aria-disabled="true"${extra}` : ''}>${SLOT_ICONS[kind]}</button>`;
+  };
+  return `<tr data-row-key="${key}"><th scope="row" id="${head}"><span class="visually-hidden">${esc(W.column[list])} </span>${index + 1}</th>`
+    + field('label', 'dir="auto" autocomplete="off"') + field('start', time) + field('end', time)
+    + `<td class="ux-rows-length" data-length>${esc(SC.lengthText(row.start, row.end))}</td>`
+    + `<td class="ux-rows-flags">${row.flags.map(flag => `<span class="pill-status pill-n">${esc(W.flag[flag] || flag)}</span>`).join(' ')}</td>`
+    + `<td class="ux-rows-actions">${button('up', index === 0)}${button('down', index === count - 1)}`
+    + `${button('remove', count === 1, ' aria-describedby="twSlotOneRow"')}</td></tr>`
+    + `<tr data-error-for="${key}"${mark ? '' : ' hidden'}><td colspan="7"><p class="ux-field-error" id="${error}">${mark ? esc(slotMarkText(mark)) : ''}</p></td></tr>`;
+}
+/* A list's table: its headers (each field's name, with its row header) and
+   its rows. */
+function drawSlotTable(list) {
+  const table = $(SLOT_TABLES[list]);
+  if (!table) return;
+  const W = window.TimetableSlotConfig.rowWords;
+  const rows = SLOT.rows[list];
+  const heads = ['label', 'start', 'end', 'length', 'rule']
+    .map(name => `<th scope="col" id="${SLOT_TABLES[list]}-${name}">${esc(W.headers[name])}</th>`).join('');
+  table.innerHTML = `<thead><tr><td></td>${heads}<td></td></tr></thead>`
+    + `<tbody>${rows.map((row, index) => slotRowHtml(list, row, index, rows.length)).join('')}</tbody>`;
+}
+function drawSlotDialog() {
+  SLOT_LISTS.forEach(drawSlotTable);
+  $('twSlotOneRow').hidden = !SLOT_LISTS.some(list => SLOT.rows[list].length <= 1);
+}
+/* The server's marks on the rows drawn now, in place. */
+function applySlotMarks() {
+  $('twSlotDialog').querySelectorAll('tr[data-row-key]').forEach(tr => {
+    const mark = SLOT.marks.get(tr.dataset.rowKey);
+    tr.querySelectorAll('input[data-field]').forEach(input => setAttr(input, 'aria-invalid', mark?.fields.has(input.dataset.field) ? 'true' : ''));
+    const line = tr.nextElementSibling;
+    if (!line?.matches('[data-error-for]')) return;
+    setText(line.querySelector('.ux-field-error'), mark ? slotMarkText(mark) : '');
+    line.hidden = !mark;
+  });
+}
+/* A VALIDATION_SLOTS answer's columns, on the rows sent at those indexes
+   (`sent`: each list's row keys in the order sent). A column of the list as a
+   whole (index -1) is the alert's alone. */
+function markSlotErrors(errors, sent) {
+  const SC = window.TimetableSlotConfig;
+  SLOT.marks = new Map();
+  (errors || []).forEach(error => {
+    const key = SLOT_LISTS.includes(error?.list) && Number(error.index) >= 0 ? sent[error.list][error.index] : undefined;
+    if (!key) return;
+    const mark = SLOT.marks.get(key) || { fields: new Set(), texts: [] };
+    if (SLOT_FIELDS.includes(error.field)) mark.fields.add(error.field);
+    mark.texts.push(SC.fieldErrorText(error));
+    SLOT.marks.set(key, mark);
+  });
+}
+
+/* The step shown, in place: the rows (inert while the save is out, the
+   status line saying so), or the review, with Back while it waits, and Save
+   reading "Save anyway" (the review stays in view while that save is out). */
+function showSlotStep() {
+  const review = SLOT.step === 'review';
+  const save = $('twSlotSave');
+  setText(save, review ? save.dataset.reviewLabel : save.dataset.saveLabel);
+  const editor = $('twSlotEditor');
+  if (editor.hasAttribute('inert') !== SLOT.pending) editor.toggleAttribute('inert', SLOT.pending);
+  editor.hidden = review;
+  $('twSlotReview').hidden = !review;
+  $('twSlotBack').hidden = !review || SLOT.pending;
+  setText($('twSlotStatus'), SLOT.pending ? SLOT_WORDS.progress : '');
+}
+/* Save and its note, in place (it runs with every control sync). Save is off
+   while the page cannot write — the note gives the first hold, in the order
+   of the page's holds — and while the dialog's own save is out. A hold's
+   words in the alert go when the hold does. */
+function syncSlotDialog() {
+  if (!slotDialogOpen()) return;
+  if (SLOT.held && writeHold() !== SLOT.held) {
+    SLOT.held = '';
+    dialogSay($('twSlotDialog'), '');
+  }
+  const save = $('twSlotSave');
+  save.toggleAttribute('data-tw-hold', SLOT.pending);
+  save.disabled = SLOT.pending || !workspaceCanEdit();
+  const hold = writeHold();
+  setText($('twSlotNote'), SLOT.pending ? '' : hold ? REFUSAL[hold] : '');
+  showSlotStep();
+}
+
+/* From the ⋯ menu. Any open dialog first; no scenario, or a published one,
+   is a toast (no dialog is open to say it in). The rows are the scenario's
+   draft when it has one (said, with a way back to the saved columns), else
+   its saved columns. The keyboard starts on the first label and goes back
+   to the menu's button. */
+function openSlotDialog() {
+  if (anyDialogOpen()) return false;
+  if (!TW.scenarioId || !TW.scenario) {
+    notify.warning(SLOT_WORDS.noScenario);
+    return false;
+  }
+  if (TW.scenario.status === 'published') {
+    notify.warning(REFUSAL.published);
+    return false;
+  }
+  const dialog = $('twSlotDialog');
+  const SC = window.TimetableSlotConfig;
+  if (!dialog || !window.UXControls?.dialog || !SC) return false;
+  const draft = SLOT_DRAFTS.get(TW.scenarioId);
+  Object.assign(SLOT, {
+    token: SLOT.token + 1, scenarioId: TW.scenarioId, rows: draft ? copySlotRows(draft) : savedSlotRows(), marks: new Map(),
+    pending: false, step: 'rows', review: null, held: '',
+  });
+  // What it is about, for the words another dialog's write says in it.
+  dialog.dataset.twAbout = `slots:${TW.scenarioId}`;
+  const alert = $('twSlotAlert');
+  alert.textContent = '';
+  alert.hidden = true;
+  $('twSlotScenario').textContent = TW.scenario.name || '';
+  $('twSlotDraft').hidden = !draft;
+  const flags = [SC.flaggedColumnsText(scenarioLectureSlots()), SC.flaggedColumnsText(scenarioLabSlots())].filter(Boolean).join(' ');
+  $('twSlotFlags').textContent = flags;
+  $('twSlotFlags').hidden = !flags;
+  $('twSlotReviewBody').innerHTML = '';
+  drawSlotDialog();
+  showSlotStep();
+  const first = () => dialog.querySelector('#twSlotEditor input[data-field="label"]');
+  if (!window.UXControls.dialog.open(dialog, { initialFocus: first, returnFocus: () => $('twMoreMenu') })) return false;
+  syncSlotDialog();
+  return true;
+}
+
+function focusSlotControl(key) {
+  [...$('twSlotDialog').querySelectorAll('[data-focus-key]')].find(element => element.dataset.focusKey === key)?.focus();
+}
+/* Typing: the row's value, its length, its buttons' names (by its label)
+   and the draft, in place; the rows are never drawn again under the caret. */
+function editSlotField(input) {
+  const tr = input.closest('tr[data-row-key]');
+  const found = tr ? findSlotRow(tr.dataset.rowKey) : null;
+  if (!found || !SLOT_FIELDS.includes(input.dataset.field)) return;
+  found.row[input.dataset.field] = input.value;
+  const SC = window.TimetableSlotConfig;
+  setText(tr.querySelector('[data-length]'), SC.lengthText(found.row.start, found.row.end));
+  if (input.dataset.field === 'label') {
+    const name = slotRowName(found.list, found.row, found.index);
+    tr.querySelectorAll('[data-row-action]').forEach(button => {
+      const words = SC.rowWords[button.dataset.rowAction](name);
+      setAttr(button, 'aria-label', words);
+      setAttr(button, 'title', words);
+    });
+  }
+  rememberSlotDraft();
+}
+/* Add: a row at the list's end, the keyboard on its label. */
+function addSlotRow(list) {
+  if (SLOT.pending || SLOT.step !== 'rows' || !SLOT.rows[list]) return;
+  const [row] = window.TimetableSlotConfig.editorRows([{}]);
+  SLOT.rows[list].push(row);
+  drawSlotDialog();
+  focusSlotControl(`slot:${row.key}:label`);
+  rememberSlotDraft();
+}
+/* Up and Down swap the row with its neighbour, the keyboard staying on the
+   same button; Remove takes the row away (never a list's only one), the
+   keyboard on the next row's label, or on Add when it was the last. */
+function slotRowAction(kind, key) {
+  const found = findSlotRow(key);
+  if (!found || SLOT.pending || SLOT.step !== 'rows') return;
+  const { list, index } = found;
+  const rows = SLOT.rows[list];
+  if (kind === 'remove') {
+    if (rows.length < 2) return;
+    rows.splice(index, 1);
+    SLOT.marks.delete(key);
+    drawSlotDialog();
+    const next = rows[index];
+    focusSlotControl(next ? `slot:${next.key}:label` : `slot-add:${list}`);
+  } else {
+    const to = index + (kind === 'up' ? -1 : 1);
+    if (to < 0 || to >= rows.length) return;
+    [rows[index], rows[to]] = [rows[to], rows[index]];
+    drawSlotDialog();
+    focusSlotControl(`slot:${key}:${kind}`);
+  }
+  rememberSlotDraft();
+}
+/* The draft set aside: the saved columns, the keyboard on the first label. */
+function startFromSavedSlots() {
+  if (SLOT.pending || SLOT.step !== 'rows' || TW.scenarioId !== SLOT.scenarioId) return;
+  SLOT_DRAFTS.delete(SLOT.scenarioId);
+  Object.assign(SLOT, { rows: savedSlotRows(), marks: new Map() });
+  $('twSlotDraft').hidden = true;
+  dialogSay($('twSlotDialog'), '');
+  drawSlotDialog();
+  $('twSlotDialog').querySelector('#twSlotEditor input[data-field="label"]')?.focus();
+}
+
+/* The server's list of what the change leaves outside the columns, and the
+   rules it takes away, as a step of this dialog (never a dialog over it).
+   Resolves true on Save anyway; false on Back, or when the dialog closes. */
+function reviewSlotChange(details) {
+  return new Promise(resolve => {
+    Object.assign(SLOT, { review: { resolve }, step: 'review', pending: false });
+    $('twSlotReviewBody').innerHTML = window.TimetableSlotConfig.confirmationHtml(details, { parked: true });
+    syncSlotDialog();
+    $('twSlotReviewTitle').focus();
+  });
+}
+function answerSlotReview(go) {
+  const review = SLOT.review;
+  if (!review) return;
+  SLOT.review = null;
+  review.resolve(go);
+}
+/* A save goes out: the keyboard waits on the body (the rows go inert and
+   Save turns off under it). */
+function beginSlotWrite() {
+  SLOT.pending = true;
+  $('twSlotBody').focus({ preventScroll: true });
+  syncSlotDialog();
+}
+
+/* Save (and Save anyway). What is sent is the rows in their order now, each
+   list's row keys kept so a refused column is marked on the row sent at its
+   index. A refusal is said in the dialog: the fields the server names are
+   marked and the first takes the keyboard; a page hold's words go when it
+   does; any other failure is "The columns were not saved." with Save back
+   under the keyboard. The rows stay as they are, and so does the draft. On
+   success the draft goes, the dialog closes (the keyboard back on the ⋯
+   menu), the board is read again (E17) and what was saved is said. Escape
+   while the save is out closes the dialog: the save still ends, and says how
+   where the user is (D17a); a confirmation it then needs is not given. */
+async function saveSlotDialog() {
+  const dialog = $('twSlotDialog');
+  if (!slotDialogOpen() || SLOT.pending) return;
+  if (SLOT.review) {
+    beginSlotWrite();
+    answerSlotReview(true);
+    return;
+  }
+  // A list with no row would be saved as the server's defaults: nothing is
+  // sent (the server's columns always have rows, so only an empty list from
+  // elsewhere could get here).
+  if (SLOT_LISTS.some(list => !SLOT.rows[list].length)) {
+    dialogSay(dialog, $('twSlotOneRow').textContent.trim(), 'warning');
+    return;
+  }
+  const SC = window.TimetableSlotConfig;
+  const session = SLOT.token;
+  const scenarioId = SLOT.scenarioId;
+  const sent = Object.fromEntries(SLOT_LISTS.map(list => [list, SLOT.rows[list].map(row => row.key)]));
+  const body = Object.fromEntries(SLOT_LISTS.map(list => [list, SC.rowsToPayload(SLOT.rows[list])]));
+  SLOT.marks = new Map();
+  applySlotMarks();
+  SLOT.held = '';
+  dialogSay(dialog, '');
+  beginSlotWrite();
+  const left = () => session !== SLOT.token || !slotDialogOpen();
+  let failure = null;
+  let reported = '';
+  let escaped = false;
   const data = await SC.save({
     send: async extra => {
-      let error = null;
-      const answer = await twFetch(`/ops/tw/scenarios/${scenarioId}/slots/update/`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ slot_config: lectures.rows, lab_slot_config: labs.rows, ...extra }),
-        _onError: body => {
-          const code = body?.error?.code;
-          if (code !== 'SLOT_EDIT_NEEDS_CONFIRMATION' && code !== 'VALIDATION_SLOTS') return false;
-          error = body.error;
-          return true;
-        },
-      });
-      return { data: answer, error };
+      const result = await dialogWrite(dialog, `/ops/tw/scenarios/${scenarioId}/slots/update/`, { ...body, ...extra });
+      if (result.data) return { data: result.data, error: null };
+      if (result.code === 'VALIDATION_SLOTS' || result.code === 'SLOT_EDIT_NEEDS_CONFIRMATION') {
+        return { data: null, error: result.error || { code: result.code } };
+      }
+      failure = result;
+      return { data: null, error: null };
     },
-    confirm: async details => {
-      const ok = await dlg.confirm({
-        title: IS_AR ? 'تأكيد تغيير الأعمدة' : 'Confirm the column change',
-        // The meetings it leaves are parked under their tables (6e).
-        body: SC.confirmationHtml(details, { parked: true }),
-        kind: 'danger',
-        confirmText: IS_AR ? 'حفظ على أي حال' : 'Save anyway',
-      });
-      return ok;
+    invalid: errors => { if (!left()) markSlotErrors(errors, sent); },
+    confirm: details => {
+      if (!left()) return reviewSlotChange(details);
+      escaped = true;
+      return false;
     },
-    report: message => notify.error(message),
+    report: text => { reported = text; },
   });
-  if (TW.scenarioId !== scenarioId) return;
-  // Nothing saved — declined, refused, busy or offline: the typed text comes
-  // back, so it can be adjusted or tried again.
-  if (!data) return openSlotEditor(text);
-
-  TW.scenario = data.scenario;
-  notify.success(IS_AR ? 'تم تحديث الفترات' : `${lectures.rows.length} lecture + ${labs.rows.length} lab slots saved`);
-  renderGrid();
+  if (session === SLOT.token) Object.assign(SLOT, { pending: false, step: 'rows' });
+  if (data) {
+    await slotsSaved(data, { dialog, session, scenarioId });
+    return;
+  }
+  const words = failure ? SLOT_REFUSALS[failure.code] || SLOT_WORDS.notSaved : reported || (escaped ? SLOT_WORDS.notSaved : '');
+  if (left()) {
+    // Left while out: said where the user is — this dialog open again,
+    // another one, or a toast, adding where the edits are when they are
+    // kept and no slot dialog shows them.
+    const kept = !slotDialogOpen() && SLOT_DRAFTS.has(scenarioId);
+    if (words) dialogSay(dialog, kept ? `${/[.!?]$/.test(words) ? words : `${words}.`} ${SLOT_WORDS.kept}` : words, 'warning');
+    return;
+  }
+  if (failure && ['published', 'job', 'busy'].includes(failure.code)) SLOT.held = failure.code;
+  syncSlotDialog();
+  applySlotMarks();
+  if (words) dialogSay(dialog, words, 'warning');
+  // The keyboard: on the first field the server refused, else back on Save
+  // (it waited on the body, or on Back, gone now), unless the user moved to
+  // a way out meanwhile.
+  const marked = dialog.querySelector('#twSlotEditor [aria-invalid="true"]');
+  const save = $('twSlotSave');
+  if (marked) marked.focus();
+  else if (!save.disabled && !document.activeElement?.matches?.('#twSlotDialog [data-dialog-close]')) save.focus();
 }
+/* Saved: the draft goes, the dialog closes, the board is read again with the
+   scenario's new columns, and what was saved is said where the user is —
+   with how many meetings now sit under their tables, outside the columns. */
+async function slotsSaved(data, { dialog, session, scenarioId }) {
+  SLOT_DRAFTS.delete(scenarioId);
+  if (session === SLOT.token && slotDialogOpen()) window.UXControls.dialog.close(dialog, 'close');
+  if (TW.scenarioId === scenarioId) {
+    TW.scenario = { ...TW.scenario, ...(data.scenario || {}) };
+    if (TW.boardId) await selectBoard(TW.boardId);
+    else renderGrid();
+  }
+  const saved = data.scenario || {};
+  const lectures = (saved.effective_slot_config || saved.slot_config || []).length;
+  const labs = (saved.effective_lab_slot_config || saved.lab_slot_config || []).length;
+  const parked = Number(data.hidden_count) || 0;
+  dialogSay(dialog, parked > 0 ? SLOT_WORDS.parked(lectures, labs, parked) : SLOT_WORDS.saved(lectures, labs), parked > 0 ? 'warning' : 'success');
+}
+
+(function wireSlotDialog() {
+  const dialog = $('twSlotDialog');
+  if (!dialog) return;
+  const save = $('twSlotSave');
+  save.dataset.saveLabel = save.textContent.trim();
+  // A <form method="dialog"> closes itself on submit: the page saves, and
+  // closes it once the columns are saved.
+  $('twSlotForm').addEventListener('submit', event => {
+    event.preventDefault();
+    saveSlotDialog();
+  });
+  dialog.addEventListener('input', event => {
+    if (event.target.matches?.('input[data-field]')) editSlotField(event.target);
+  });
+  dialog.addEventListener('click', event => {
+    const button = event.target.closest?.('button');
+    if (!button) return;
+    // An aria-disabled button stays a button: slotRowAction itself never
+    // moves a row past its list's ends nor removes a list's only row.
+    if (button.matches('[data-row-action]')) slotRowAction(button.dataset.rowAction, button.closest('tr[data-row-key]')?.dataset.rowKey);
+    else if (button.matches('[data-slot-add]')) addSlotRow(button.dataset.slotAdd);
+    else if (button.id === 'twSlotFromSaved') startFromSavedSlots();
+    else if (button.id === 'twSlotBack') answerSlotReview(false);
+  });
+  // Closed while the review waits (Cancel, Escape): nothing is saved.
+  dialog.addEventListener('ux-dialog-close', () => answerSlotReview(false));
+})();
 
 /* ── Elective Mapping Dialog ── */
 $('twMapElectives').addEventListener('click', async () => {

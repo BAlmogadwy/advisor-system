@@ -125,6 +125,14 @@ NEUTRAL_TEMPLATE_SITES = {
     # template's data-dialog-close).
     ("static/js/page-timetable-workspace.js", "place-recheck"),
     ("static/js/page-timetable-workspace.js", "place-retry"),
+    # Edit time slots (§7.2 item 6, 6f): each list's Add, the draft's "Start
+    # from the saved columns", the review's Back (its × and Cancel are the
+    # template's data-dialog-close), and each row's Up, Down and Remove.
+    ("core/templates/core/timetable_workspace.html", "slot-add:slot_config"),
+    ("core/templates/core/timetable_workspace.html", "slot-add:lab_slot_config"),
+    ("core/templates/core/timetable_workspace.html", "twSlotFromSaved"),
+    ("core/templates/core/timetable_workspace.html", "twSlotBack"),
+    ("static/js/page-timetable-workspace.js", "slot:${key}:${kind}"),
     # Instructor management: the roster's Refresh, the dialog's ×, and each
     # row's Edit and Deactivate/Activate (built by the page script).
     ("core/templates/core/instructor_management.html", "imRefresh"),

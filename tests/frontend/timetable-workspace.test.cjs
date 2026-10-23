@@ -25,6 +25,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
   // base.html loads shared-utils (esc, pluralAr) on every page.
   w.eval(fs.readFileSync(path.join(root, 'static/js/shared-utils.js'), 'utf8'));
   w.LANGUAGE_CODE = arabic ? 'ar' : 'en';
+  // base.html's <html lang>, which the slot module reads.
+  d.documentElement.lang = arabic ? 'ar' : 'en';
   w._injectCsrf = x => x;
   w.esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   w.debounce = fn => fn;
@@ -710,92 +712,6 @@ test('a board answer without columns keeps the scenario’s effective columns', 
   await h.select();
   assert.deepEqual(h.w.TW.scenario.effective_lab_slot_config.map(slot => slot.start), ['09:00', '15:50']);
   assert.equal(h.d.querySelectorAll('.tw-lab-grid .tw-slot-time').length, 2);
-});
-
-function slotHarness(t, answer) {
-  const posts = [];
-  return harness(t, (url, opts) => {
-    if (url === '/ops/tw/boards/2/') return { placements: [placement], ...columns };
-    if (!url.endsWith('/slots/update/')) return undefined;
-    const body = JSON.parse(opts.body);
-    posts.push(body);
-    return answer(body);
-  }, columns).then(h => Object.assign(h, { posts }));
-}
-const dialogs = (h, ...answers) => {
-  const shown = [];
-  h.w.dlg = { confirm: async ({ title, body }) => {
-    shown.push({ title, body });
-    // The real dialog puts its body in the page (one at a time): the editor
-    // reads its textareas. An answer may first type into it.
-    h.d.querySelectorAll('.stub-dialog').forEach(node => node.remove());
-    h.d.body.insertAdjacentHTML('beforeend', `<div class="stub-dialog">${body}</div>`);
-    const answer = answers.shift();
-    return typeof answer === 'function' ? answer(h.d) : answer;
-  } };
-  return shown;
-};
-const HIDDEN = { hidden: [{ placement_id: 10, board_id: 2, board_label: 'Term 7', course_code: 'CS323', section: 'S1', day: 'SUN', start_time: '09:00', end_time: '10:15', is_locked: true }], hidden_count: 1, fingerprint: 'abc123' };
-
-test('a slot save that would hide meetings names them, and repeats only with that confirmation', async t => {
-  const h = await slotHarness(t, body => body.confirm === 'abc123'
-    ? { ok: true, scenario: { ...scenario, ...columns, slot_config: body.slot_config }, hidden_count: 1 }
-    : { httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: HIDDEN } });
-  await h.select();
-  const shown = dialogs(h, true, true);
-  await h.w.openSlotEditor();
-  // The editor lists the effective columns, the online window included, and says it stays online-only.
-  assert.match(shown[0].body, /Online 1\t15:50\t17:30/);
-  assert.match(shown[0].body, /The online-only columns \(15:50\) stay online-only/);
-  assert.equal(h.posts.length, 2);
-  assert.equal(h.posts[0].confirm, undefined);
-  assert.deepEqual(h.posts[0].lab_slot_config.map(row => row.start), ['09:00', '15:50']);
-  assert.match(shown[1].body, /leaves 1 meeting outside the grid/);
-  // The workspace parks such a meeting under its table, and says so (6e, PK6).
-  assert.match(shown[1].body, /still published; each is shown under its table until a column has its time again:/);
-  assert.match(shown[1].body, /Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Sun <bdi dir="ltr">09:00–10:15<\/bdi> · time locked/);
-  assert.equal(h.posts[1].confirm, 'abc123');
-  assert.ok(h.notices.some(n => n.type === 'success'));
-  assert.deepEqual(h.errors, []);
-});
-
-test('a declined confirmation reopens the editor with the typed text, and sends nothing more', async t => {
-  const h = await slotHarness(t, () => ({ httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details: HIDDEN } }));
-  await h.select();
-  const edited = '09:00-10:15\t09:00\t10:15\nLate\t16:00\t17:15';
-  const shown = dialogs(h, d => { d.getElementById('twSlotInput').value = edited; return true; }, false, false);
-  await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 1, 'declined: no second request');
-  assert.equal(shown.length, 3, 'editor, confirmation, editor again');
-  assert.match(shown[2].body, /Late\t16:00\t17:15/, 'the user’s edit is still there');
-  assert.ok(!h.notices.some(n => n.type === 'success'));
-});
-
-test('a save the server cannot take now (busy) gives the typed text back', async t => {
-  const h = await slotHarness(t, () => ({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }));
-  await h.select();
-  const shown = dialogs(h, d => { d.getElementById('twSlotInput').value = 'Kept	09:00	10:15'; return true; }, false);
-  await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 1);
-  assert.equal(shown.length, 2, 'the editor came back');
-  assert.match(shown[1].body, /Kept	09:00	10:15/);
-});
-
-test('a line the editor cannot read saves nothing and is named; a refused column is named', async t => {
-  let invalid = false;
-  const h = await slotHarness(t, () => invalid
-    ? { httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'x', details: { errors: [{ list: 'slot_config', index: 0, field: 'end', message: 'must be after the start' }] } } }
-    : { ok: true });
-  await h.select();
-  const shown = dialogs(h, d => { d.getElementById('twLabSlotInput').value = 'Lab 1\t09:00\t10:40\nevening labs'; return true; }, false);
-  await h.w.openSlotEditor();
-  assert.equal(h.posts.length, 0, 'nothing is sent while a line is unread');
-  assert.ok(h.notices.some(n => n.type === 'error' && /Labs: line 2/.test(n.text)), JSON.stringify(h.notices));
-  assert.match(shown[1].body, /evening labs/, 'the editor reopens with the text');
-  invalid = true;
-  dialogs(h, true, false);
-  await h.w.openSlotEditor();
-  assert.ok(h.notices.some(n => n.type === 'error' && n.text === 'The columns were not saved: Lectures, line 1: end must be after the start'), JSON.stringify(h.notices));
 });
 
 /* ── One issue model: cards, Issues, counts and board buttons agree with the server ── */
@@ -6594,4 +6510,639 @@ test('PL17 the dialog’s other words in Arabic: ranking, failures, the fallback
   moved.d.getElementById('twPlaceForm').requestSubmit();
   await settle();
   assert.equal(placeAlert(moved), 'تغيّرت اللوحة؛ لم يُوضع شيء.');
+});
+
+/* ── Edit time slots (design record §7.2 item 6, 6f) ──
+   The slot dialog: the scenario's effective columns as rows; a save on PR 1's
+   contract (a refused field marked on the row sent at its index, the server's
+   list reviewed inside the dialog and confirmed by its fingerprint, flags
+   never sent); edits never lost. These replace the textarea editor's tests
+   (a spec change). */
+const SLOT_LRI = String.fromCharCode(0x2066);
+const SLOT_PDI = String.fromCharCode(0x2069);
+const slotIso = text => `${SLOT_LRI}${text}${SLOT_PDI}`;
+const SLOT_COLUMNS = { slot_config: [], lab_slot_config: [],
+  effective_slot_config: [{ label: '09:00-10:15', start: '09:00', end: '10:15' }, { label: 'Late', start: '16:00', end: '17:15' }],
+  effective_lab_slot_config: [{ label: 'Lab 1', start: '09:00', end: '10:40' }, { label: 'Bundle', start: '13:00', end: '16:00', policy_only: true },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }] };
+const SLOT_HIDDEN = { hidden: [{ placement_id: 10, board_id: 2, board_label: 'Term 7', course_code: 'CS323', section: 'S1', day: 'MON',
+  start_time: '16:00', end_time: '17:15', is_locked: true }], hidden_count: 1, dropped_flags: [], fingerprint: 'abc123' };
+const slotNeedsConfirm = (details = SLOT_HIDDEN) => ({ httpError: 409, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', message: 'x', details } });
+const slotInvalid = errors => ({ httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'x', details: { errors } } });
+const slotSaved = (body, extra = {}) => ({ ok: true, hidden_count: 0, ...extra, scenario: { ...scenario, ...SLOT_COLUMNS, updated_at: 'saved now',
+  slot_config: body.slot_config, lab_slot_config: body.lab_slot_config, effective_slot_config: body.slot_config, effective_lab_slot_config: body.lab_slot_config } });
+// The board answers with the scenario's columns as the server has them (a save changes them).
+function slotHarness(t, { answer = body => slotSaved(body), arabic = false, more = () => undefined } = {}) {
+  const posts = [];
+  const stored = { ...SLOT_COLUMNS };
+  return harness(t, async (url, opts) => {
+    const own = await more(url, opts);
+    if (own !== undefined) return own;
+    if (url === '/ops/tw/boards/2/') return { placements: [placement], ...stored };
+    if (url !== '/ops/tw/scenarios/1/slots/update/') return undefined;
+    const body = JSON.parse(opts.body);
+    posts.push({ method: opts.method, body });
+    const reply = await answer(body, posts.length);
+    if (reply?.ok) ['slot_config', 'lab_slot_config', 'effective_slot_config', 'effective_lab_slot_config'].forEach(key => { stored[key] = reply.scenario[key]; });
+    return reply;
+  }, SLOT_COLUMNS, arabic).then(h => Object.assign(h, { posts }));
+}
+const SLOT_TABLE = { slot_config: 'twSlotLectures', lab_slot_config: 'twSlotLabs' };
+const slotDialogEl = h => h.d.getElementById('twSlotDialog');
+const slotRowsOf = (h, list = 'slot_config') => [...h.d.querySelectorAll(`#${SLOT_TABLE[list]} tbody tr[data-row-key]`)];
+const slotInput = (h, list, index, field) => slotRowsOf(h, list)[index].querySelector(`input[data-field="${field}"]`);
+const slotButton = (h, list, index, kind) => slotRowsOf(h, list)[index].querySelector(`[data-row-action="${kind}"]`);
+const slotValues = (h, list) => slotRowsOf(h, list).map(tr => ['label', 'start', 'end'].map(field => tr.querySelector(`input[data-field="${field}"]`).value));
+const slotLengths = (h, list) => slotRowsOf(h, list).map(tr => tr.querySelector('.ux-rows-length').textContent);
+const slotAlert = h => (h.d.getElementById('twSlotAlert').hidden ? '' : h.d.getElementById('twSlotAlert').textContent);
+const slotSaveButton = h => h.d.getElementById('twSlotSave');
+const slotShown = (h, id) => !h.d.getElementById(id).hidden;
+const slotType = (h, input, value) => {
+  input.focus();
+  input.value = value;
+  input.dispatchEvent(new h.w.Event('input', { bubbles: true }));
+};
+// Opened as the user does: the ⋯ menu's item, once the page is at rest.
+const slotOpen = async h => {
+  await wait(() => atRest(h) && !h.d.getElementById('twSlotEdit').disabled);
+  h.d.getElementById('twSlotEdit').click();
+  assert.equal(slotDialogEl(h).hasAttribute('open'), true, 'the dialog opens');
+};
+const slotSubmit = h => h.d.getElementById('twSlotForm').requestSubmit();
+const slotOut = h => h.d.getElementById('twSlotEditor').hasAttribute('inert');
+
+test('SD1 one row per effective column, its flags as pills, the keyboard on the first label; a second open is refused', async t => {
+  const h = await slotHarness(t);
+  await h.select();
+  await slotOpen(h);
+  assert.deepEqual(slotValues(h, 'slot_config'), [['09:00-10:15', '09:00', '10:15'], ['Late', '16:00', '17:15']]);
+  assert.deepEqual(slotValues(h, 'lab_slot_config'), [['Lab 1', '09:00', '10:40'], ['Bundle', '13:00', '16:00'], ['Online 1', '15:50', '17:30']]);
+  const pills = list => slotRowsOf(h, list).map(tr => [...tr.querySelectorAll('.pill-status')].map(pill => pill.textContent));
+  assert.deepEqual([pills('slot_config'), pills('lab_slot_config')], [[[], []], [[], ['Policy column'], ['Online only']]]);
+  assert.deepEqual([slotLengths(h, 'slot_config'), slotLengths(h, 'lab_slot_config')], [['75 min', '75 min'], ['100 min', '180 min', '100 min']]);
+  assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 0, 'label'));
+  // Each field is named by its row header and its column header.
+  const nameOf = element => element.getAttribute('aria-labelledby').split(' ').map(id => h.d.getElementById(id).textContent).join(' ');
+  assert.deepEqual(['label', 'start', 'end'].map(field => nameOf(slotInput(h, 'lab_slot_config', 1, field))),
+    ['Lab column 2 Label', 'Lab column 2 Start', 'Lab column 2 End']);
+  assert.equal(nameOf(slotInput(h, 'slot_config', 1, 'end')), 'Lecture column 2 End');
+  assert.deepEqual(slotRowsOf(h).map(tr => tr.querySelector('th[scope="row"]').textContent), ['Lecture column 1', 'Lecture column 2']);
+  const start = slotInput(h, 'slot_config', 0, 'start');
+  assert.deepEqual(['type', 'inputmode', 'dir', 'autocomplete', 'spellcheck', 'class'].map(name => start.getAttribute(name)),
+    ['text', 'numeric', 'ltr', 'off', 'false', 'ux-rows-time']);
+  assert.deepEqual(['type', 'dir'].map(name => slotInput(h, 'slot_config', 0, 'label').getAttribute(name)), ['text', 'auto']);
+  assert.deepEqual([...h.d.querySelectorAll('#twSlotLabs thead th')].map(th => th.textContent), ['Label', 'Start', 'End', 'Length', 'Rule']);
+  assert.equal(h.d.getElementById('twSlotScenario').textContent, 'Real scenario copy');
+  assert.equal(h.d.getElementById('twSlotFlags').textContent, 'The online-only columns (15:50) stay online-only while they keep the same start and end.');
+  assert.deepEqual(['twSlotDraft', 'twSlotOneRow', 'twSlotReview', 'twSlotBack', 'twSlotAlert'].map(id => slotShown(h, id)), [false, false, false, false, false]);
+  assert.equal(slotSaveButton(h).textContent, slotSaveButton(h).dataset.saveLabel);
+  assert.equal(slotDialogEl(h).dataset.twAbout, 'slots:1');
+  // A second open while it is open: refused, the rows as the user left them.
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  const field = slotInput(h, 'slot_config', 1, 'label');
+  assert.equal(h.w.openSlotDialog(), false);
+  assert.equal(slotInput(h, 'slot_config', 1, 'label'), field, 'nothing drawn again');
+  assert.equal(field.value, 'Evening');
+  assert.deepEqual([h.posts, h.errors], [[], []]);
+});
+
+test('SD2 a save sends the rows in their order, trimmed, an empty value as empty, never a flag; no time is checked here', async t => {
+  const h = await slotHarness(t, { answer: () => slotInvalid([]) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), '');
+  slotType(h, slotInput(h, 'slot_config', 1, 'start'), ' 4pm ');
+  slotType(h, slotInput(h, 'lab_slot_config', 2, 'label'), ' Online one ');
+  slotType(h, slotInput(h, 'lab_slot_config', 2, 'end'), '');
+  slotSubmit(h);
+  await wait(() => h.posts.length === 1 && slotAlert(h) && atRest(h));
+  assert.deepEqual(h.posts, [{ method: 'POST', body: {
+    slot_config: [{ label: '09:00-10:15', start: '09:00', end: '10:15' }, { label: '', start: '4pm', end: '17:15' }],
+    lab_slot_config: [{ label: 'Lab 1', start: '09:00', end: '10:40' }, { label: 'Bundle', start: '13:00', end: '16:00' }, { label: 'Online one', start: '15:50', end: '' }],
+  } }]);
+  // The rows keep what was typed.
+  assert.deepEqual(slotValues(h, 'slot_config')[1], ['', ' 4pm ', '17:15']);
+});
+
+test('SD3 a refused field is marked on the row sent at its index, though the rows moved before Save; the keyboard on it; the alert says it all; no toast', async t => {
+  const errors = [
+    { list: 'lab_slot_config', index: 1, field: 'end', message: 'must be after the start' },
+    { list: 'lab_slot_config', index: 1, field: 'start', message: 'must be a time as HH:MM' },
+    { list: 'slot_config', index: -1, field: 'list', message: 'has more than 40 columns' },
+  ];
+  const later = deferred();
+  const h = await slotHarness(t, { answer: (body, n) => (n === 1 ? slotInvalid(errors) : later.promise) });
+  await h.select();
+  await slotOpen(h);
+  // Lab 1 goes down: it is sent second, where Bundle was when the dialog opened.
+  slotButton(h, 'lab_slot_config', 0, 'down').click();
+  assert.deepEqual(slotValues(h, 'lab_slot_config').map(row => row[0]), ['Bundle', 'Lab 1', 'Online 1']);
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  const marked = () => [...h.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]')];
+  assert.deepEqual(marked(), [slotInput(h, 'lab_slot_config', 1, 'start'), slotInput(h, 'lab_slot_config', 1, 'end')]);
+  assert.equal(h.d.activeElement, slotInput(h, 'lab_slot_config', 1, 'start'), 'the first marked field has the keyboard');
+  const said = h.d.getElementById(slotInput(h, 'lab_slot_config', 1, 'end').getAttribute('aria-describedby'));
+  assert.equal(h.d.getElementById(slotInput(h, 'lab_slot_config', 1, 'label').getAttribute('aria-describedby')), said, 'every field of the row is described by its error');
+  assert.deepEqual([said.textContent, said.closest('tr').hidden, said.closest('tr').dataset.errorFor], ['End: must be after the start; Start: must be a time as HH:MM', false, slotRowsOf(h, 'lab_slot_config')[1].dataset.rowKey]);
+  const others = [...h.d.querySelectorAll('#twSlotDialog tr[data-error-for]')].filter(row => row !== said.closest('tr'));
+  assert.ok(others.length === 4 && others.every(row => row.hidden && row.textContent === ''), 'no other row says anything');
+  assert.equal(slotAlert(h), 'The columns were not saved: Labs, line 2: end must be after the start; Labs, line 2: start must be a time as HH:MM; Lectures: has more than 40 columns');
+  assert.equal(h.d.getElementById('twSlotAlert').dataset.tone, 'warning');
+  assert.deepEqual(h.notices.slice(toasts), [], 'nothing toasted behind the dialog');
+  assert.equal(slotDialogEl(h).hasAttribute('open'), true);
+  // A marked row keeps its mark when it moves.
+  slotButton(h, 'lab_slot_config', 1, 'up').click();
+  assert.deepEqual(marked(), [slotInput(h, 'lab_slot_config', 0, 'start'), slotInput(h, 'lab_slot_config', 0, 'end')]);
+  assert.equal(slotRowsOf(h, 'lab_slot_config')[0].nextElementSibling.hidden, false);
+  // The next save clears every mark, and the alert, as it starts.
+  slotSubmit(h);
+  await settle();
+  const errorRows = [...h.d.querySelectorAll('#twSlotDialog tr[data-error-for]')];
+  assert.deepEqual([marked(), slotAlert(h), errorRows.length, errorRows.every(row => row.hidden && row.textContent === '')], [[], '', 5, true]);
+  assert.equal(h.d.getElementById(slotInput(h, 'lab_slot_config', 0, 'end').getAttribute('aria-describedby')).textContent, '');
+  later.resolve(slotSaved(h.posts[1].body));
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+});
+
+test('SD4 the server’s list is reviewed inside the dialog: Back sends nothing and keeps the edits; Save anyway confirms by the fingerprint; Escape settles the save', async t => {
+  const confirmed = deferred();
+  const h = await slotHarness(t, { answer: body => (body.confirm === 'abc123' ? confirmed.promise : slotNeedsConfirm()) });
+  await h.select();
+  let stacked = 0;
+  h.w.dlg = { confirm: async () => { stacked++; return true; } };
+  await slotOpen(h);
+  // The 16:00 column goes.
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  const save = slotSaveButton(h);
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  assert.deepEqual([slotShown(h, 'twSlotEditor'), slotShown(h, 'twSlotBack'), save.textContent, save.disabled, slotOut(h)],
+    [false, true, save.getAttribute('data-review-label'), false, false]);
+  assert.equal(h.d.activeElement, h.d.getElementById('twSlotReviewTitle'), 'the keyboard on the review’s heading');
+  const review = h.d.getElementById('twSlotReviewBody').innerHTML;
+  assert.match(review, /^<p class="tw-readiness-lead">This change leaves 1 meeting outside the grid's columns\. They stay in the timetable and are still published; each is shown under its table/);
+  assert.match(review, /<bdi>Term 7<\/bdi> · <bdi>CS323 S1<\/bdi> · Mon <bdi dir="ltr">16:00–17:15<\/bdi> · time locked/);
+  assert.deepEqual([stacked, h.posts.map(post => post.body.confirm)], [0, [undefined]], 'no dialog over the dialog');
+  // Back: nothing sent, the rows as they were (the removal kept), Save under the keyboard.
+  h.d.getElementById('twSlotBack').click();
+  await wait(() => slotShown(h, 'twSlotEditor'));
+  await settle();
+  assert.deepEqual([h.posts.length, slotShown(h, 'twSlotReview'), slotShown(h, 'twSlotBack'), save.textContent, slotAlert(h)],
+    [1, false, false, save.dataset.saveLabel, '']);
+  assert.deepEqual(slotValues(h, 'slot_config'), [['09:00-10:15', '09:00', '10:15']]);
+  assert.equal(h.d.activeElement, save);
+  // Save, then Save anyway: the same body again, with the fingerprint; the
+  // review stays in view while it is out, with no way back.
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  slotSubmit(h);
+  await settle();
+  assert.deepEqual([slotShown(h, 'twSlotReview'), slotShown(h, 'twSlotEditor'), slotShown(h, 'twSlotBack'), save.textContent, save.disabled,
+    h.d.getElementById('twSlotStatus').textContent, h.d.activeElement.id], [true, false, false, save.getAttribute('data-review-label'), true, 'Saving the columns…', 'twSlotBody']);
+  slotSubmit(h);
+  await settle();
+  assert.equal(h.posts.length, 3, 'one Save anyway');
+  confirmed.resolve(slotSaved(h.posts[2].body, { hidden_count: 1 }));
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  assert.deepEqual(h.posts.map(post => post.body.confirm), [undefined, undefined, 'abc123']);
+  assert.deepEqual(h.posts[2].body.slot_config, h.posts[1].body.slot_config);
+  assert.equal(stacked, 0);
+  // Escape while Save anyway is out: the next open (before it ends) is the
+  // rows, never the review.
+  const late = deferred();
+  const g = await slotHarness(t, { answer: body => (body.confirm ? late.promise : slotNeedsConfirm()) });
+  await g.select();
+  await slotOpen(g);
+  slotSubmit(g);
+  await wait(() => slotShown(g, 'twSlotReview') && atRest(g));
+  slotSubmit(g);
+  await settle();
+  keyOn(g, 'Escape');
+  assert.equal(slotDialogEl(g).hasAttribute('open'), false);
+  g.w.openSlotDialog();
+  assert.deepEqual([slotShown(g, 'twSlotEditor'), slotShown(g, 'twSlotReview'), slotSaveButton(g).textContent], [true, false, slotSaveButton(g).dataset.saveLabel]);
+  late.resolve(slotSaved(g.posts[1].body));
+  await wait(() => atRest(g) && slotAlert(g));
+  assert.equal(slotAlert(g), 'Columns saved: 2 lecture, 3 lab.');
+  // Escape during the review: the save settles, nothing more is sent, and a
+  // review the user closed is not reported.
+  const e = await slotHarness(t, { answer: () => slotNeedsConfirm() });
+  await e.select();
+  await slotOpen(e);
+  const toasts = e.notices.length;
+  const saving = e.w.saveSlotDialog();
+  await wait(() => slotShown(e, 'twSlotReview'));
+  keyOn(e, 'Escape');
+  const settled = await Promise.race([saving.then(() => 'settled'), new Promise(resolve => setTimeout(() => resolve('hanging'), 1000))]);
+  assert.equal(settled, 'settled');
+  await settle();
+  assert.deepEqual([slotDialogEl(e).hasAttribute('open'), e.posts.length, e.notices.slice(toasts)], [false, 1, []]);
+  // Opened again: the rows, never the review.
+  await slotOpen(e);
+  assert.deepEqual([slotShown(e, 'twSlotEditor'), slotShown(e, 'twSlotReview'), slotShown(e, 'twSlotBack'), slotSaveButton(e).textContent],
+    [true, false, false, slotSaveButton(e).dataset.saveLabel]);
+  assert.equal(e.d.activeElement, slotInput(e, 'slot_config', 0, 'label'));
+});
+
+test('SD5 saved: the dialog closes, the keyboard goes back to the ⋯ menu, the board and the quality are read again, the draft goes, and how many meetings now sit under their tables is a warning', async t => {
+  const h = await slotHarness(t, { answer: body => slotSaved(body, { hidden_count: 2 }) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  const before = h.requests.length;
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h) && h.notices.length > toasts);
+  const urls = h.requests.slice(before).map(request => request.url);
+  const saved = urls.indexOf('/ops/tw/scenarios/1/slots/update/');
+  assert.ok(saved >= 0 && urls.indexOf('/ops/tw/boards/2/', saved) > saved, 'the board, read after the save');
+  assert.ok(urls.some((url, i) => i > saved && url.includes('/quality/')), 'the quality, read again');
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning', text: 'Columns saved: 2 lecture, 3 lab; now under their tables, outside the columns: 2 meetings.' }]);
+  assert.equal(h.d.activeElement, h.d.getElementById('twMoreMenu'));
+  assert.equal(h.w.TW.scenario.effective_slot_config[1].label, 'Evening');
+  assert.equal(h.w.TW.scenario.updated_at, 'saved now', 'the scenario as the save answered it');
+  // The draft went with the save.
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotInput(h, 'slot_config', 1, 'label').value], [false, 'Evening']);
+  // Nothing outside the columns: a success; one meeting: its count.
+  for (const [count, tone, text] of [[0, 'success', 'Columns saved: 2 lecture, 3 lab.'],
+    [1, 'warning', 'Columns saved: 2 lecture, 3 lab; now under their tables, outside the columns: 1 meeting.']]) {
+    const s = await slotHarness(t, { answer: body => slotSaved(body, { hidden_count: count }) });
+    await s.select();
+    await slotOpen(s);
+    const shown = s.notices.length;
+    slotSubmit(s);
+    await wait(() => !slotDialogEl(s).hasAttribute('open') && atRest(s) && s.notices.length > shown);
+    assert.deepEqual(s.notices.slice(shown), [{ type: tone, text }]);
+  }
+});
+
+test('SD6 Add, Remove, Up and Down keep the keyboard where the rule says; a list’s only row cannot be removed, and says why', async t => {
+  const h = await slotHarness(t);
+  await h.select();
+  await slotOpen(h);
+  const keys = list => slotRowsOf(h, list).map(tr => tr.dataset.rowKey);
+  const names = (list, i) => ['up', 'down', 'remove'].map(kind => [slotButton(h, list, i, kind).getAttribute('aria-label'), slotButton(h, list, i, kind).title]);
+  const late = slotIso('Late');
+  assert.deepEqual(names('slot_config', 1), [[`Move ${late} up`, `Move ${late} up`], [`Move ${late} down`, `Move ${late} down`], [`Remove ${late}`, `Remove ${late}`]]);
+  // Up on the first row and Down on the last are off (focusable, aria-disabled).
+  const off = (list, i) => ['up', 'down', 'remove'].map(kind => slotButton(h, list, i, kind).getAttribute('aria-disabled'));
+  assert.deepEqual([off('slot_config', 0), off('slot_config', 1), off('lab_slot_config', 1)], [['true', null, null], [null, 'true', null], [null, null, null]]);
+  assert.ok([...h.d.querySelectorAll('#twSlotDialog [data-row-action]')].every(button => !button.disabled && button.type === 'button'));
+  // Add: a row at the end, the keyboard on its label, named by its list and number.
+  h.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.deepEqual([slotRowsOf(h).length, slotValues(h, 'slot_config')[2], slotLengths(h, 'slot_config')[2]], [3, ['', '', ''], '—']);
+  assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 2, 'label'));
+  assert.equal(slotButton(h, 'slot_config', 2, 'remove').getAttribute('aria-label'), `Remove ${slotIso('Lecture column 3')}`);
+  assert.deepEqual([off('slot_config', 1), off('slot_config', 2)], [[null, null, null], [null, 'true', null]], 'the old last row moves down again');
+  // Typing names the row's buttons and gives its length.
+  slotType(h, slotInput(h, 'slot_config', 2, 'label'), 'Night');
+  slotType(h, slotInput(h, 'slot_config', 2, 'start'), '18:00');
+  assert.equal(slotLengths(h, 'slot_config')[2], '—');
+  slotType(h, slotInput(h, 'slot_config', 2, 'end'), '19:15');
+  assert.deepEqual([names('slot_config', 2)[0], slotLengths(h, 'slot_config')[2]], [[`Move ${slotIso('Night')} up`, `Move ${slotIso('Night')} up`], '75 min']);
+  // Up: the rows swap, the keyboard stays on the same button; at the top it is off and moves nothing.
+  const night = keys('slot_config')[2];
+  slotButton(h, 'slot_config', 2, 'up').click();
+  assert.deepEqual([keys('slot_config')[1], h.d.activeElement], [night, slotButton(h, 'slot_config', 1, 'up')]);
+  slotButton(h, 'slot_config', 1, 'up').click();
+  assert.deepEqual([keys('slot_config')[0], h.d.activeElement, h.d.activeElement.getAttribute('aria-disabled')], [night, slotButton(h, 'slot_config', 0, 'up'), 'true']);
+  h.d.activeElement.click();
+  assert.deepEqual([keys('slot_config')[0], h.d.activeElement], [night, slotButton(h, 'slot_config', 0, 'up')]);
+  // Down: the same, the other way; at the bottom it is off.
+  slotButton(h, 'slot_config', 0, 'down').click();
+  assert.deepEqual([keys('slot_config')[1], h.d.activeElement], [night, slotButton(h, 'slot_config', 1, 'down')]);
+  slotButton(h, 'slot_config', 1, 'down').click();
+  assert.deepEqual([keys('slot_config')[2], h.d.activeElement.getAttribute('aria-disabled')], [night, 'true']);
+  h.d.activeElement.click();
+  assert.equal(keys('slot_config')[2], night);
+  // Remove: the keyboard on the next row's label, or on Add after the last row.
+  const [first, second] = keys('slot_config');
+  slotButton(h, 'slot_config', 0, 'remove').click();
+  assert.deepEqual([keys('slot_config'), h.d.activeElement], [[second, night], slotInput(h, 'slot_config', 0, 'label')]);
+  assert.ok(!keys('slot_config').includes(first));
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  assert.equal(h.d.activeElement, h.d.querySelector('[data-slot-add="slot_config"]'));
+  // One row left: Remove is off with its reason, which shows, and removes nothing.
+  const only = slotButton(h, 'slot_config', 0, 'remove');
+  assert.deepEqual([only.getAttribute('aria-disabled'), only.getAttribute('aria-describedby'), slotShown(h, 'twSlotOneRow')], ['true', 'twSlotOneRow', true]);
+  assert.match(h.d.getElementById('twSlotOneRow').textContent, /A list keeps at least one column: an empty list would mean the default columns\./);
+  only.click();
+  assert.equal(slotRowsOf(h).length, 1, 'never an empty list');
+  // A second row: the reason hides; back to one, it shows.
+  h.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.deepEqual([slotShown(h, 'twSlotOneRow'), slotButton(h, 'slot_config', 0, 'remove').getAttribute('aria-disabled')], [false, null]);
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  assert.equal(slotShown(h, 'twSlotOneRow'), true);
+  assert.ok(slotRowsOf(h, 'lab_slot_config').every((tr, i) => slotButton(h, 'lab_slot_config', i, 'remove').getAttribute('aria-disabled') === null),
+    'the labs keep their own');
+  slotSubmit(h);
+  await wait(() => h.posts.length === 1);
+  assert.deepEqual(h.posts[0].body.slot_config, [{ label: 'Late', start: '16:00', end: '17:15' }]);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  assert.deepEqual(h.errors, []);
+  // A list that arrives with no row (the server's never do) is never sent:
+  // an empty list would be saved as the defaults.
+  const none = await slotHarness(t);
+  await none.select();
+  none.w.TW.scenario.effective_slot_config = [];
+  await slotOpen(none);
+  assert.deepEqual([slotRowsOf(none).length, slotShown(none, 'twSlotOneRow')], [0, true]);
+  slotSubmit(none);
+  await settle();
+  assert.deepEqual([none.posts.length, slotAlert(none).includes('A list keeps at least one column: an empty list would mean the default columns.')], [0, true]);
+  none.d.querySelector('[data-slot-add="slot_config"]').click();
+  slotType(none, slotInput(none, 'slot_config', 0, 'start'), '09:00');
+  slotType(none, slotInput(none, 'slot_config', 0, 'end'), '10:15');
+  slotSubmit(none);
+  await wait(() => none.posts.length === 1 && !slotDialogEl(none).hasAttribute('open') && atRest(none));
+  assert.deepEqual(none.posts[0].body.slot_config, [{ label: '', start: '09:00', end: '10:15' }]);
+});
+
+test('SD7 edits are never lost: Cancel, Escape and a failure keep the scenario’s draft, the next open offers it, and “Start from the saved columns” sets it aside', async t => {
+  const h = await slotHarness(t, { answer: () => ({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  slotButton(h, 'lab_slot_config', 0, 'down').click();
+  // Cancel: the next open has the edits, and says so.
+  h.d.querySelector('#twSlotDialog .ux-dialog-foot [data-dialog-close]').click();
+  assert.equal(slotDialogEl(h).hasAttribute('open'), false);
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), true);
+  assert.match(h.d.getElementById('twSlotDraft').textContent, /Your unsaved columns are back\..*Start from the saved columns/);
+  assert.deepEqual([slotInput(h, 'slot_config', 1, 'label').value, slotValues(h, 'lab_slot_config').map(row => row[0])], ['Evening', ['Bundle', 'Lab 1', 'Online 1']]);
+  assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 0, 'label'));
+  // Escape: the same.
+  slotType(h, slotInput(h, 'slot_config', 0, 'label'), 'Morning');
+  keyOn(h, 'Escape');
+  assert.equal(slotDialogEl(h).hasAttribute('open'), false);
+  await slotOpen(h);
+  assert.deepEqual(slotValues(h, 'slot_config').map(row => row[0]), ['Morning', 'Evening']);
+  // A failure: said in the dialog; the edits stay, Save under the keyboard again; the draft kept.
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  assert.deepEqual([slotAlert(h), h.d.activeElement, slotValues(h, 'slot_config').map(row => row[0]), h.notices.slice(toasts)],
+    ['The columns were not saved.', slotSaveButton(h), ['Morning', 'Evening'], []]);
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotAlert(h)], [true, ''], 'offered again, the old alert gone');
+  // "Start from the saved columns": the saved rows, the hint gone, the keyboard on the first label, the draft gone.
+  slotSubmit(h);
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  h.d.getElementById('twSlotFromSaved').click();
+  assert.deepEqual([slotValues(h, 'slot_config').map(row => row[0]), slotValues(h, 'lab_slot_config').map(row => row[0])],
+    [['09:00-10:15', 'Late'], ['Lab 1', 'Bundle', 'Online 1']]);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), h.d.activeElement, slotAlert(h)], [false, slotInput(h, 'slot_config', 0, 'label'), '']);
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), false);
+  // Edits taken back to what is saved leave no draft.
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'X');
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Late');
+  slotButton(h, 'slot_config', 0, 'down').click();
+  slotButton(h, 'slot_config', 1, 'up').click();
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), false);
+  // A draft is its scenario's: another scenario opens on its own columns.
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Mine');
+  keyOn(h, 'Escape');
+  Object.assign(h.w.TW, { scenarioId: 2, scenario: { ...h.w.TW.scenario, id: 2, name: 'Another' } });
+  assert.equal(h.w.openSlotDialog(), true);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotInput(h, 'slot_config', 1, 'label').value, slotDialogEl(h).dataset.twAbout], [false, 'Late', 'slots:2']);
+});
+
+test('SD8 Save waits for the page: published, a planner job or a write in flight hold it with the first hold’s words; while its save is out the rows are inert', async t => {
+  const answer = deferred();
+  const lock = deferred();
+  let n = 0;
+  const h = await slotHarness(t, {
+    answer: body => (++n === 1 ? answer.promise : slotSaved(body)),
+    more: url => (url.endsWith('/lock/') ? lock.promise : undefined),
+  });
+  await h.select();
+  // At the open: no scenario, or a published one, is a toast; no dialog.
+  h.w.TW.scenario.status = 'published';
+  let toasts = h.notices.length;
+  assert.equal(h.w.openSlotDialog(), false);
+  assert.deepEqual([h.notices.slice(toasts), slotDialogEl(h).hasAttribute('open')], [[{ type: 'warning', text: 'This scenario is published and read-only.' }], false]);
+  h.w.TW.scenario.status = 'draft';
+  const id = h.w.TW.scenarioId;
+  h.w.TW.scenarioId = null;
+  toasts = h.notices.length;
+  assert.equal(h.w.openSlotDialog(), false);
+  assert.deepEqual([h.notices.slice(toasts), slotDialogEl(h).hasAttribute('open')], [[{ type: 'warning', text: 'Select a scenario first' }], false]);
+  h.w.TW.scenarioId = id;
+  await slotOpen(h);
+  const save = slotSaveButton(h);
+  const note = () => [save.disabled, h.d.getElementById('twSlotNote').textContent];
+  assert.deepEqual(note(), [false, '']);
+  h.w.TW.plannerJob = { job_id: 'j', status: 'running' };
+  h.w.syncWorkspaceControls();
+  assert.deepEqual(note(), [true, 'A planner job is running; edits wait until it ends.']);
+  h.w.TW.scenario.status = 'published';
+  h.w.syncWorkspaceControls();
+  assert.deepEqual(note(), [true, 'This scenario is published and read-only.'], 'the first hold');
+  // Submitted anyway: the hold is said in the alert, nothing is sent, and its words go with it.
+  slotSubmit(h);
+  await wait(() => slotAlert(h));
+  assert.deepEqual([slotAlert(h), h.posts.length, slotOut(h)], ['This scenario is published and read-only.', 0, false]);
+  h.w.TW.scenario.status = 'draft';
+  h.w.syncWorkspaceControls();
+  assert.deepEqual([slotAlert(h), note()], ['', [true, 'A planner job is running; edits wait until it ends.']]);
+  h.w.TW.plannerJob = null;
+  h.w.syncWorkspaceControls();
+  assert.deepEqual(note(), [false, '']);
+  // Another write out: busy.
+  const locking = h.w.toggleLock(10);
+  await settle();
+  assert.deepEqual(note(), [true, 'Wait for the current operation to finish.']);
+  lock.resolve({ placement_id: 10, is_locked: true });
+  await locking;
+  await wait(() => atRest(h) && !save.disabled);
+  assert.equal(h.d.getElementById('twSlotNote').textContent, '');
+  // The save out: the rows inert, the status says so, the keyboard waits on the body, Save off and its note quiet.
+  slotType(h, slotInput(h, 'slot_config', 0, 'label'), 'Early');
+  save.focus();
+  slotSubmit(h);
+  await settle();
+  assert.deepEqual([slotOut(h), h.d.getElementById('twSlotStatus').textContent, save.disabled, save.hasAttribute('data-tw-hold'), h.d.getElementById('twSlotNote').textContent, h.d.activeElement.id],
+    [true, 'Saving the columns…', true, true, '', 'twSlotBody']);
+  slotSubmit(h);
+  await settle();
+  assert.deepEqual([h.posts.length, slotAlert(h), h.d.getElementById('twSlotStatus').textContent, slotOut(h)], [1, '', 'Saving the columns…', true],
+    'one save at a time; the one out is left alone');
+  answer.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
+  assert.deepEqual([h.d.getElementById('twSlotStatus').textContent, save.disabled, save.hasAttribute('data-tw-hold'), h.d.activeElement],
+    ['', false, false, save]);
+  // A refusal the server gives: the gate's words.
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  const refused = await slotHarness(t, { answer: () => ({ httpError: 400, error: { code: 'SCENARIO_PUBLISHED', message: 'Published' } }) });
+  await refused.select();
+  await slotOpen(refused);
+  slotSubmit(refused);
+  await wait(() => slotAlert(refused) && atRest(refused));
+  assert.equal(slotAlert(refused), 'This scenario is published and read-only.');
+});
+
+test('SD9 in Arabic: the times left to right, the label in its own direction, the words and lengths in Arabic, the review’s times isolated, the toast in Arabic', async t => {
+  const h = await slotHarness(t, { arabic: true, answer: body => (body.confirm === 'abc123' ? slotSaved(body, { hidden_count: 2 }) : slotNeedsConfirm()) });
+  await h.select();
+  await slotOpen(h);
+  assert.deepEqual(['start', 'end', 'label'].map(field => slotInput(h, 'slot_config', 0, field).getAttribute('dir')), ['ltr', 'ltr', 'auto']);
+  assert.deepEqual([slotLengths(h, 'slot_config'), slotLengths(h, 'lab_slot_config')], [['75 دقيقةً', '75 دقيقةً'], ['100 دقيقة', '180 دقيقةً', '100 دقيقة']]);
+  assert.deepEqual([...h.d.querySelectorAll('#twSlotLectures thead th')].map(th => th.textContent), ['الاسم', 'البداية', 'النهاية', 'المدة', 'القيد']);
+  assert.deepEqual(slotRowsOf(h, 'lab_slot_config').map(tr => tr.querySelector('th[scope="row"]').textContent), ['عمود معامل 1', 'عمود معامل 2', 'عمود معامل 3']);
+  assert.deepEqual(slotRowsOf(h, 'lab_slot_config').map(tr => [...tr.querySelectorAll('.pill-status')].map(pill => pill.textContent)), [[], ['عمود سياسة'], ['عن بُعد فقط']]);
+  const late = slotIso('Late');
+  assert.deepEqual(['up', 'down', 'remove'].map(kind => slotButton(h, 'slot_config', 1, kind).getAttribute('aria-label')),
+    [`نقل ${late} إلى الأعلى`, `نقل ${late} إلى الأسفل`, `حذف ${late}`]);
+  h.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.equal(slotButton(h, 'slot_config', 2, 'remove').getAttribute('aria-label'), `حذف ${slotIso('عمود محاضرات 3')}`);
+  slotButton(h, 'slot_config', 2, 'remove').click();
+  assert.equal(h.d.getElementById('twSlotFlags').textContent, 'أعمدة «عن بُعد فقط» (15:50) تبقى كذلك ما دامت بالبداية والنهاية نفسيهما.');
+  // The review: Arabic, its time isolated left to right; Save anyway; the toast.
+  slotButton(h, 'slot_config', 1, 'remove').click();
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  const review = h.d.getElementById('twSlotReviewBody').innerHTML;
+  assert.match(review, /هذا التغيير يترك لقاءً واحداً خارج أعمدة الجدول\. تبقى في الجدول وتُنشر، ويظهر كلٌّ منها أسفل جدوله/);
+  assert.match(review, /الاثنين <bdi dir="ltr">16:00–17:15<\/bdi> · الوقت مقفل/);
+  const toasts = h.notices.length;
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h) && h.notices.length > toasts);
+  assert.deepEqual(h.notices.slice(toasts), [{ type: 'warning', text: 'حُفظت الأعمدة: المحاضرات 1، المعامل 3؛ أسفل جداولها الآن خارج الأعمدة: لقاءان.' }]);
+  // Saving, a refused field and a failure, in Arabic.
+  const out = deferred();
+  const errors = [{ list: 'slot_config', index: 0, field: 'end', message: 'must be after the start' }];
+  let n = 0;
+  const w = await slotHarness(t, { arabic: true, answer: () => (++n === 1 ? out.promise : slotInvalid(errors)) });
+  await w.select();
+  await slotOpen(w);
+  slotSubmit(w);
+  await settle();
+  assert.equal(w.d.getElementById('twSlotStatus').textContent, 'جارٍ حفظ الأعمدة…');
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => slotAlert(w) && atRest(w) && !slotOut(w));
+  assert.equal(slotAlert(w), 'لم تُحفظ الأعمدة.');
+  slotSubmit(w);
+  await wait(() => /المحاضرات، السطر 1/.test(slotAlert(w)) && atRest(w) && !slotOut(w));
+  assert.equal(slotAlert(w), 'لم تُحفظ الأعمدة: المحاضرات، السطر 1: النهاية يجب أن تكون بعد البداية');
+  assert.equal(w.d.getElementById(slotInput(w, 'slot_config', 0, 'end').getAttribute('aria-describedby')).textContent, 'النهاية: يجب أن تكون بعد البداية');
+  // The template's words, in both arms.
+  const arms = (english, arabic) => assert.ok(template.includes(`{% if LANGUAGE_CODE == 'ar' %}${arabic}{% else %}${english}{% endif %}`), english);
+  arms('Edit time slots', 'تعديل الفترات الزمنية');
+  arms('The grid\'s columns, for every board of this scenario', 'أعمدة الجدول لكل لوحات هذا السيناريو');
+  arms('Lectures (75 min)', 'المحاضرات (75 دقيقة)');
+  arms('Labs (100 min)', 'المعامل (100 دقيقة)');
+  arms('Add a lecture column', 'إضافة عمود محاضرات');
+  arms('Add a lab column', 'إضافة عمود معامل');
+  arms('A list keeps at least one column: an empty list would mean the default columns.', 'تبقى في القائمة فترة واحدة على الأقل: القائمة الفارغة تعني الأعمدة الافتراضية.');
+  arms('Your unsaved columns are back.', 'عادت أعمدتك غير المحفوظة.');
+  arms('Start from the saved columns', 'البدء من الأعمدة المحفوظة');
+  arms('Check before saving', 'راجِع قبل الحفظ');
+  arms('Back to editing', 'العودة إلى التعديل');
+  arms('Save anyway', 'حفظ على أي حال');
+  arms('Save', 'حفظ');
+  arms('Cancel', 'إلغاء');
+  assert.match(template, /data-review-label="{% if LANGUAGE_CODE == 'ar' %}حفظ على أي حال{% else %}Save anyway{% endif %}">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}<\/button>/);
+});
+
+test('SD10 a save the user left (Escape while it was out) ends where the user is; a confirmation it then needs is not given; where the edits are is said when no slot dialog shows them', async t => {
+  const leave = async (h, reply) => {
+    await h.select();
+    await slotOpen(h);
+    slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+    slotSubmit(h);
+    await settle();
+    keyOn(h, 'Escape');
+    assert.equal(slotDialogEl(h).hasAttribute('open'), false, 'Escape is never blocked by a save');
+    assert.equal(h.d.activeElement, h.d.getElementById('twMoreMenu'));
+    const toasts = h.notices.length;
+    reply();
+    return toasts;
+  };
+  const kept = 'Your edits come back when you open “Edit time slots” again.';
+  // Saved: a toast; the draft gone.
+  let out = deferred();
+  const s = await slotHarness(t, { answer: () => out.promise });
+  let toasts = await leave(s, () => out.resolve(slotSaved({ slot_config: [...SLOT_COLUMNS.effective_slot_config], lab_slot_config: [...SLOT_COLUMNS.effective_lab_slot_config] })));
+  await wait(() => s.notices.length > toasts && atRest(s));
+  assert.deepEqual(s.notices.slice(toasts), [{ type: 'success', text: 'Columns saved: 2 lecture, 3 lab.' }]);
+  await slotOpen(s);
+  assert.equal(slotShown(s, 'twSlotDraft'), false);
+  // A failure: a toast that says where the edits are.
+  out = deferred();
+  const f = await slotHarness(t, { answer: () => out.promise });
+  toasts = await leave(f, () => out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } }));
+  await wait(() => f.notices.length > toasts && atRest(f));
+  assert.deepEqual(f.notices.slice(toasts), [{ type: 'warning', text: `The columns were not saved. ${kept}` }]);
+  // A confirmation needed: not given, nothing more sent; said the same way.
+  out = deferred();
+  const c = await slotHarness(t, { answer: (body, n) => (n === 1 ? out.promise : slotSaved(body)) });
+  toasts = await leave(c, () => out.resolve(slotNeedsConfirm()));
+  await wait(() => c.notices.length > toasts && atRest(c));
+  await settle();
+  assert.deepEqual([c.notices.slice(toasts), c.posts.length, slotShown(c, 'twSlotReview')], [[{ type: 'warning', text: `The columns were not saved. ${kept}` }], 1, false]);
+  await slotOpen(c);
+  assert.deepEqual([slotShown(c, 'twSlotDraft'), slotInput(c, 'slot_config', 1, 'label').value], [true, 'Evening'], 'the edits came back');
+  // A refused field: the server's sentence, nothing marked.
+  out = deferred();
+  const v = await slotHarness(t, { answer: () => out.promise });
+  toasts = await leave(v, () => out.resolve(slotInvalid([{ list: 'slot_config', index: 1, field: 'end', message: 'must be after the start' }])));
+  await wait(() => v.notices.length > toasts && atRest(v));
+  assert.deepEqual(v.notices.slice(toasts), [{ type: 'warning', text: `The columns were not saved: Lectures, line 2: end must be after the start. ${kept}` }]);
+  await slotOpen(v);
+  assert.equal(v.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]').length, 0);
+  // Nothing changed and nothing kept: no word about edits.
+  out = deferred();
+  const u = await slotHarness(t, { answer: () => out.promise });
+  await u.select();
+  await slotOpen(u);
+  slotSubmit(u);
+  await settle();
+  keyOn(u, 'Escape');
+  toasts = u.notices.length;
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => u.notices.length > toasts && atRest(u));
+  assert.deepEqual(u.notices.slice(toasts), [{ type: 'warning', text: 'The columns were not saved.' }]);
+  // Move's dialog open by then: its alert line, no toast.
+  out = deferred();
+  const m = await slotHarness(t, { answer: () => out.promise, more: url => (url.includes('/slot-candidates/') ? movesAnswer() : undefined) });
+  await leave(m, () => {});
+  moveByKey(m, 10);
+  await movesSettled(m);
+  toasts = m.notices.length;
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => moveAlert(m) && atRest(m));
+  assert.deepEqual([moveAlert(m), m.d.getElementById('twMoveAlert').dataset.tone, m.notices.slice(toasts)], [`The columns were not saved. ${kept}`, 'warning', []]);
+  // The slot dialog open again by then: its own alert, the edits in front of the user.
+  out = deferred();
+  const r = await slotHarness(t, { answer: (body, n) => (n === 1 ? out.promise : slotSaved(body)) });
+  await leave(r, () => {});
+  r.w.openSlotDialog();
+  assert.equal(slotDialogEl(r).hasAttribute('open'), true);
+  assert.deepEqual([slotShown(r, 'twSlotDraft'), slotSaveButton(r).disabled, r.d.getElementById('twSlotNote').textContent], [true, true, 'Wait for the current operation to finish.']);
+  toasts = r.notices.length;
+  out.resolve({ httpError: 503, error: { code: 'SERVER_BUSY', message: 'Busy' } });
+  await wait(() => slotAlert(r) && atRest(r));
+  assert.deepEqual([slotAlert(r), r.notices.slice(toasts), slotOut(r), slotSaveButton(r).disabled], ['The columns were not saved.', [], false, false]);
+  // Reopened, then refused: the sentence in its alert, and no mark on the
+  // rows it shows (they are not the rows that were sent, even when drawn again).
+  out = deferred();
+  const x = await slotHarness(t, { answer: (body, n) => (n === 1 ? out.promise : slotSaved(body)) });
+  await leave(x, () => {});
+  x.w.openSlotDialog();
+  out.resolve(slotInvalid([{ list: 'slot_config', index: 1, field: 'end', message: 'must be after the start' }]));
+  await wait(() => slotAlert(x) && atRest(x));
+  x.d.querySelector('[data-slot-add="slot_config"]').click();
+  assert.deepEqual([slotAlert(x), x.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]').length,
+    [...x.d.querySelectorAll('#twSlotDialog tr[data-error-for]')].every(row => row.hidden)],
+  ['The columns were not saved: Lectures, line 2: end must be after the start', 0, true]);
 });
