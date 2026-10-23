@@ -72,10 +72,12 @@ for (const lang of ['en', 'ar']) {
     assert.equal(p.plain.getAttribute('aria-disabled'), 'true');
     assert.equal(p.plain.textContent.trim(), lang === 'ar' ? 'جارٍ التصدير…' : 'Exporting…');
     assert.ok(p.plain.querySelector('svg'), 'the icon stays');
-    const second = json(await p.w.safeDownload('/export.xlsx', { busyEl: p.plain, kind: 'export' }));
-    assert.deepEqual(second, { ok: false, reason: 'busy' });
+    // Not awaited before the release: a second request would wait on the gate too.
+    const second = p.w.safeDownload('/export.xlsx', { busyEl: p.plain, kind: 'export' });
+    assert.equal(p.calls.length, 1, 'one request');
     release();
     assert.equal((await first).ok, true);
+    assert.deepEqual(json(await second), { ok: false, reason: 'busy' });
     assert.equal(p.calls.length, 1, 'one request');
     assert.equal(p.plain.textContent, label);
     assert.equal(p.plain.getAttribute('aria-busy'), null);

@@ -2505,14 +2505,10 @@ def section_teacher_view(scenario_id: int) -> tuple[dict[int, dict[str, Any]], t
             "name": name,
             "status": status,
             "source": source,
-            "reason": (
-                REASON_INCOMPLETE_PATTERN
-                if status == STATUS_UNKNOWN
-                else assignment.tbd_reason.get(slot.key)
-            ),
+            "reason": assignment.tbd_reason.get(slot.key),
         }
-    # A section with no slot of its own (a foreign one sharing a local label)
-    # is still unknown, never shown under the other section's teacher.
+    # Every unknown section, slot or not (a foreign one sharing a local label
+    # has none), reads unknown with its reason, never another's teacher.
     for exc in assignment.incomplete:
         if exc.term_section_id is not None:
             out[exc.term_section_id] = {

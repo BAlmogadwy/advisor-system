@@ -46,6 +46,15 @@ REASON = {
 TERM2_CARDS = 13
 
 
+def _holder(held: list):
+    """A route handler that keeps each request unanswered in ``held``."""
+
+    def hold(route) -> None:
+        held.append(route)
+
+    return hold
+
+
 @override_settings(**PRODUCTION)
 class IncompleteEnglishBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
     def setUp(self) -> None:  # the mixin's scenario is not this one
@@ -123,3 +132,51 @@ class IncompleteEnglishBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
         self.assertEqual(notices, [], "an error saves nothing")
         self.assertEqual(len(context.pages), 1, "no tab ever opens")
         self.assertEqual(errors, [])
+
+    def test_the_busy_export_button_moves_nothing_in_any_window(self) -> None:
+        """While an export is built the button reads "Exporting…" (longer than
+        "Export", in both languages); the toolbar wraps, so a longer label could
+        push the chrome down. At every window of the record's matrix, in the
+        wide font, the busy label changes no height and scrolls nothing."""
+        measure = """() => {
+          const main = document.getElementById('main-content');
+          const button = document.getElementById('twExport');
+          return {
+            panes: Math.round(document.querySelector('.tw-workspace').getBoundingClientRect().top),
+            button: Math.round(button.getBoundingClientRect().height),
+            sideways: document.documentElement.scrollWidth > innerWidth + 0.5
+              || main.scrollWidth > main.clientWidth + 0.5,
+            busy: button.getAttribute('aria-busy'),
+            label: button.textContent.trim(),
+          };
+        }"""
+        problems = {}
+        for language in ("en", "ar"):
+            for width, height in ((1366, 650), (1440, 790), (1536, 730), (1920, 1080)):
+                page, _sent, errors = self._load(language, "light", width, height, TERM2_CARDS)
+                held: list = []  # the export request, held until measured
+                page.route("**/export-per-plan*", _holder(held))
+                before = page.evaluate(measure)
+                page.click("#twExport")
+                page.wait_for_function(
+                    "document.getElementById('twExport').getAttribute('aria-busy') === 'true'"
+                )
+                during = page.evaluate(measure)
+                self.assertEqual(
+                    during["label"], "جارٍ التصدير…" if language == "ar" else "Exporting…"
+                )
+                for route in held:
+                    route.abort()
+                page.wait_for_function(
+                    "!document.getElementById('twExport').hasAttribute('aria-busy')"
+                )
+                key = f"{language} {width}x{height}"
+                changed = {
+                    k: (before[k], during[k])
+                    for k in ("panes", "button", "sideways")
+                    if before[k] != during[k]
+                }
+                if changed or during["sideways"] or errors:
+                    problems[key] = {**changed, "errors": errors}
+                page.context.close()
+        self.assertEqual(problems, {})
