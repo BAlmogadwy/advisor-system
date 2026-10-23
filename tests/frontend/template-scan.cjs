@@ -53,14 +53,20 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const JS_DIR = path.join(ROOT, 'static', 'js');
 const ALLOWLIST_PATH = path.join(ROOT, 'tests', 'fixtures', 'html_sink_allowlist.json');
 
-/* Known HTML escapers (each escapes & < > " and, but for page-planner's and
-   shared-timetable's, '). URL and CSS encoders are not HTML escapers. */
-const ESCAPERS = ['esc', 'escape', 'escapeHtml', 'escHtml', 'escapeAttr', 'pgEsc', 'escAttr', 'htmlEscape', '_escapeText'];
+/* The HTML escapers static/js defines. Each name is trusted by name, so the
+   list holds only names defined there: every definition escapes & < > " and
+   ', except the two in WEAK_ESCAPERS, which leave ' alone; a file calls one
+   only when it defines it, or it is shared-utils.js's global. html-sinks
+   pins all of this ("every trusted escaper ..."). URL and CSS encoders are
+   not HTML escapers. */
+const ESCAPERS = ['esc', 'escape', 'escapeHtml', 'escHtml', 'escapeAttr', 'pgEsc', '_escapeText'];
 const WEAK_ESCAPERS = { 'page-planner.js': ['escapeHtml'], 'shared-timetable.js': ['_escapeText'] };
 const ESCAPER_CALL = re('^(?:' + ESCAPERS.join('|') + ')~s*~(');
 const ESCAPER_REF = re('(?:^|[^.~w$])(?:' + ESCAPERS.join('|') + ')(?![~w$])');
 const NUMERIC_CALL = re('^(?:Number|Math~.[A-Za-z]+|parseInt|parseFloat)~s*~(');
-const I18N = re('^(?:T|t|TXT|L|I18N|i18n|tr|MSG|STR|WORDS|[A-Z_]+_WORDS)~.[A-Za-z_$][~w$]*$');
+/* i18n constants: T.x and *_WORDS.x only (A1.5). t, tr and L name data rows
+   and arrays in static/js, so they are never trusted. */
+const I18N = re('^(?:T|[A-Z_]+_WORDS)~.[A-Za-z_$][~w$]*$');
 const NUMBER = re('^[0-9]+(?:~.[0-9]+)?$');
 const LENGTH = re('~.length$');
 const TO_FIXED = re('~.toFixed~([^()]*~)$');
@@ -605,7 +611,7 @@ function compareToAllowlist(actual, allowed) {
 const describe = entry => `${entry.file}: ${entry.expr} (now ${entry.actual}, allowed ${entry.allowed})`;
 
 module.exports = {
-  ALLOWLIST_PATH, JS_DIR, PLACEHOLDER, ESCAPERS,
+  ALLOWLIST_PATH, JS_DIR, PLACEHOLDER, ESCAPERS, WEAK_ESCAPERS,
   scan, classify, parseTernary, htmlContexts, auditSource, audit,
   toAllowlist, fromAllowlist, readAllowlist, allowlistText, compareToAllowlist, describe,
 };

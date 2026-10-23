@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 const { JSDOM } = require('jsdom');
@@ -15,6 +16,7 @@ const { loadSharedUtils, SHARED_UTILS } = require('./shared-utils-harness.cjs');
 
 const BS = String.fromCharCode(92);
 const NL = String.fromCharCode(10);
+const rx = (source, flags) => new RegExp(source.split('~').join(BS), flags);
 const PH = scanner.PLACEHOLDER;
 const PAYLOAD = '<img src=x onerror="window.__xss=1">';
 const { safeHtml } = loadSharedUtils();
@@ -158,6 +160,10 @@ test('classifier: literal ternaries and nested-template map-joins are safe; data
     'c.course_name', "c.prerequisites_csv || 'no prereq'", "info.type || 'Elective'", 'ph', "a ? name : ''",
     'esc(x) + y', 'name + list.length', "a?.b ?? 'c'", 'items.filter(f).map(i => `…`).join(\'\')', 'safeHtml.raw(x)',
     'String(x)', 'x.toLocaleString()',
+    // Only T.x and *_WORDS.x are i18n constants: t, tr and L name data rows.
+    't.course_name', 'tr.id', 'L.x', 'WORDS.x', 'TXT.x', 'MSG.x', 'STR.x', 'I18N.x', 'i18n.x', 'T_x.y',
+    // Escapers are trusted by name only where static/js defines one.
+    'escAttr(x)', 'htmlEscape(x)',
   ]) assert.equal(safe(expr), false, expr);
   assert.deepEqual(scanner.classify(`a ? ${PH} : b ? esc(x) : ${PH}`).flows, [0, 1]);
   assert.deepEqual(scanner.classify(`items.map(i => ${PH}).join('')`).flows, [0]);
@@ -337,4 +343,68 @@ test('repository: the N-1 and N-2 sinks are not allowlisted', () => {
     assert.equal(allowlist[key], undefined, `allowlisted: ${key}`);
     assert.equal(repository.fingerprints[key], undefined, `raw in static/js: ${key}`);
   }
+});
+
+/* The classifier trusts an escaper by its name, so each trusted name must be a
+   real escaper wherever a file calls it. Each definition in static/js is read
+   alone (the shortest slice from its start, ending at a } or ;, that compiles)
+   and run on & < > " '. */
+const DANGEROUS = '&<>"' + "'";
+const ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#34;': '"', '&#39;': "'", '&#x27;': "'", '&apos;': "'" };
+const ENTITY = new RegExp(Object.keys(ENTITIES).join('|'), 'g');
+
+function escaperDefinitions(file, src, name) {
+  const found = [];
+  const start = rx('(?:^|[^.~w$])((?:function~s+' + name + '~s*~(|(?:const|let|var)~s+' + name + '~s*=))', 'g');
+  for (let m; (m = start.exec(src));) {
+    const at = m.index + m[0].length - m[1].length;
+    let fn = null;
+    for (let k = at; k < Math.min(src.length, at + 4000) && !fn; k++) {
+      if (src[k] !== '}' && src[k] !== ';') continue;
+      const code = src.slice(at, k + 1);
+      try { new vm.Script(code); } catch { continue; }
+      fn = vm.runInNewContext(code + NL + ';' + name, {});
+    }
+    found.push({ file, name, line: src.slice(0, at).split(NL).length, fn });
+  }
+  return found;
+}
+
+test('repository: every trusted escaper is defined in static/js and escapes & < > and both quotes', () => {
+  const sources = Object.fromEntries(repository.files.map(f => [f, fs.readFileSync(path.join(scanner.JS_DIR, f), 'utf8')]));
+  const definitions = [];
+  for (const [file, src] of Object.entries(sources)) {
+    for (const name of scanner.ESCAPERS) definitions.push(...escaperDefinitions(file, src, name));
+  }
+  // No name is trusted that static/js does not define.
+  for (const name of scanner.ESCAPERS) {
+    assert.ok(definitions.some(d => d.name === name), `${name} is trusted but defined nowhere in static/js: drop it from ESCAPERS`);
+  }
+  // Every definition escapes all five, but for the WEAK_ESCAPERS, which leave ' alone (and are listed exactly).
+  for (const d of definitions) {
+    const where = `${d.file}:${d.line} ${d.name}`;
+    assert.equal(typeof d.fn, 'function', `${where}: the definition could not be read alone`);
+    const out = String(d.fn(DANGEROUS));
+    assert.equal(out.replace(ENTITY, e => ENTITIES[e]), DANGEROUS, `${where} changes text: ${out}`);
+    const leftRaw = [...DANGEROUS].filter(c => out.replace(ENTITY, '').includes(c));
+    const weak = (scanner.WEAK_ESCAPERS[d.file] || []).includes(d.name);
+    const message = weak && !leftRaw.length
+      ? `${where} escapes ' as well: drop it from WEAK_ESCAPERS`
+      : `${where} leaves ${leftRaw.join(' ')} raw: ${out}`;
+    assert.deepEqual(leftRaw, weak ? ["'"] : [], message);
+  }
+  for (const [file, names] of Object.entries(scanner.WEAK_ESCAPERS)) {
+    for (const name of names) assert.ok(definitions.some(d => d.file === file && d.name === name), `WEAK_ESCAPERS lists ${file} ${name}, which is not defined there`);
+  }
+  // A file calls an escaper it defines, or a top-level one of shared-utils.js (a global on every page).
+  const globals = scanner.ESCAPERS.filter(name => rx('^function~s+' + name + '~s*~(', 'm').test(sources['shared-utils.js']));
+  assert.deepEqual(globals, ['esc']);
+  for (const [file, src] of Object.entries(sources)) {
+    for (const name of scanner.ESCAPERS) {
+      if (!rx('(?:^|[^.~w$])' + name + '~s*~(').test(src)) continue;
+      const local = definitions.some(d => d.file === file && d.name === name);
+      assert.ok(local || globals.includes(name), `${file} calls ${name}( but neither it nor shared-utils.js defines ${name}`);
+    }
+  }
+  assert.ok(definitions.length >= scanner.ESCAPERS.length);
 });
