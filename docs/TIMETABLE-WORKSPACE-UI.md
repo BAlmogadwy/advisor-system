@@ -4141,6 +4141,14 @@ draft, and a design and an engineering critique produced this plan; every
 must-change was re-checked in code before it was accepted. Line numbers are as
 of `4f33b23` and drift: each PR re-verifies the ones it relies on.
 
+> **Owner decision (2026-10-23): no work on the MRI page, ever.** The MRI page
+> (`timetable_workspace_mri.html`, `page-timetable-mri.js`) and the classic
+> inspector's MRI tab stay exactly as they are. M1, D-8 and D-11 are withdrawn
+> (M1 was built and reviewed but is not merged); MRI-01, MRI-03 and F14 are
+> dropped; Q7 is answered. Stage 3 PRs change nothing on the MRI page, and
+> global changes (C1's colour tokens) keep it excluded. The entries below are
+> kept for the record, marked withdrawn.
+
 ### Summary
 
 1. Stage 3 makes the classic Timetable Workspace safe, truthful and accessible in English and Arabic. Any fix that the rest of the design system also needs is built once, globally.
@@ -4149,13 +4157,13 @@ of `4f33b23` and drift: each PR re-verifies the ones it relies on.
 4. The server becomes the source of truth:
    - B1 refuses a section label that is already placed (with a row lock), and refuses removal of externally owned sections.
    - B2 turns F17 into "—" with a reason and downloads exports on the page.
-   - M1 makes the MRI page read-only now.
+   - ~~M1 makes the MRI page read-only now.~~ Withdrawn: the owner keeps the MRI page as it is.
 5. The plan is 25 unconditional PRs, down from 31, plus 3 PRs gated on owner question Q6. The longest serial chain is 8 PRs, and CI costs about 13–19 CI-hours before re-runs (unverified per-run time).
 6. Classic critical path: A1 → C3 → D2 → D3a → D3b → D4 → D5 → E2. The global PRs C1, C2, C4 and C5 run beside it.
 7. The online-only windows get their own "Online only" table, like the English table; they hold 0 meetings on 662–666 today. A room-needing class placed there gets a server-side readiness warning and is never refused.
 8. The owner is asked now:
    - Q6: the future of split view (this gates E0, E4 and E5).
-   - Q7: the MRI page.
+   - ~~Q7: the MRI page.~~ Answered: no work on the MRI page.
    - Q2: online severity, presented neutrally.
    - Q3: one room for all of a section's meetings.
 9. Every acceptance line is tagged [CI] or [probe]. Every PR is checked against the §6 viewport matrix, non-text contrast of at least 3:1 and forced colours. The dialog, toast, state, online-table and Issues PRs also need an NVDA smoke pass.
@@ -4224,7 +4232,7 @@ Re-verified from the draft: L01's four sites (PAGE:4063, 4554, 5057, 5646); SPL-
    - The server refuses removal of an externally owned placement.
    - With the production flags, the board read, create-planned and both exports answer 200 or a worded refusal on every scenario.
    - No page sends `override` on Remove, undo or redo.
-   - The MRI page writes nothing.
+   - ~~The MRI page writes nothing.~~ Withdrawn with M1.
 3. **G3 One truth on every page, conditional on Q6.**
    - If split keeps its grid (E0, E4, E5), split shows classic's meetings, severity and verdict: 76 of 76 S1 meetings, critical 2/11/2/4, CS112 S1 MON 09:00 at 21 critical / 13 warning.
    - If Q6 retires split's grid, the goal is met by retirement.
@@ -4241,7 +4249,7 @@ Re-verified from the draft: L01's four sites (PAGE:4063, 4554, 5057, 5646); SPL-
    - nothing under 11 px, text at least 4.5:1 and control edges at least 3:1 (Optimise result: 13 failures today, fixed in D6, P1).
 6. **G6 Every number says scope, meaning and direction.**
    - An unknown value shows a visible reason, in place, adding no height (D2, P1).
-   - One inspector tab per question: the MRI tab is gone and Capacity is merged into Demand (D4).
+   - One inspector tab per question: Capacity is merged into Demand (D4); the MRI tab stays (owner decision).
    - One count unit, meetings, on every board button, heading and readiness line (D4).
    - Keyboard-reachable stat meanings are P2 (D7).
 7. **G7 The owner's online rule is visible.**
@@ -4281,10 +4289,10 @@ Re-verified from the draft: L01's four sites (PAGE:4063, 4554, 5057, 5646); SPL-
 | D-5 | **F10: export search uses the grid's words**, in the page's language. One case table with a language column pins parity. | The menu promises "Only what matches"; today ONLINE gives 0. |
 | D-6 | **One dialog engine.**<br>• `dlg.confirm`/`prompt` render `<dialog class="ux-dialog">` with their own stack, so a confirm can open over an open `ux-dialog`.<br>• `waitForClose` defaults to true; the default flip is audited per caller.<br>• The `.btn-confirm`, `.btn-cancel` and `.dlg-input` hooks are kept.<br>• "Is a dialog open?" becomes `UXControls.dialog.isOpen()`.<br>• `.dlg-*` CSS is kept while the dashboard's `_modals.html` uses it. | One engine for 40 call sites (SW-06, L13). The coupling is measured in PAGE:202, 1836-1837, panes:84 and exam:1626. |
 | D-7 | **The online-only windows are their own "Online only" table**, like the English table.<br>• It is shown when a meeting sits in a window or the board has an online course.<br>• It uses normal 96 px columns; Labs go back to 5 columns.<br>• A meeting of a non-online course in a window gets a **server readiness warning** (`ONLINE_WINDOW_ROOM_CLASS`).<br>• Sideways scroll with a sticky day column stays the fallback for wide custom slot lists. | 0 meetings in windows today (N-15). One rule, read by the classic page, split, Publish and MRI. A compact 72 px card would need a second card design for an empty feature. |
-| D-8 | Remove the classic inspector's MRI tab. "Full MRI" stays in Open ▾. | MRI-01, L05; principle 6. |
+| D-8 | **Withdrawn (owner, 2026-10-23).** ~~Remove the classic inspector's MRI tab.~~ "Full MRI" stays in Open ▾. | MRI-01, L05; principle 6. |
 | D-9 | Merge Capacity into Demand, with a labelled demand/seats bar and a Total that sums its column. | L08, N-5. |
 | D-10 | **No page sends `override` on Remove, undo or redo.** A locked meeting reads "Its time is locked. Unlock its time first." and has no destructive button. | A lock freezes time; removal changes it. SPL-10, N-10. |
-| D-11 | **The MRI page becomes read-only now.** Its "Move" links to classic. | MRI-02 (a non-atomic bundle writer). |
+| D-11 | **Withdrawn (owner, 2026-10-23).** ~~The MRI page becomes read-only now.~~ Its "Move" links to classic. | MRI-02 (a non-atomic bundle writer). |
 | D-12 | **Split view: safety and shared rules first, reskin later.**<br>• E1–E3 ship in stage 3.<br>• E0, E4 and E5 (shared models, grid, verdict) wait for Q6.<br>• If they go ahead, split gets classic's **renderer**, not just its model. | The split-only tools have seen no use since 2026-05-29 on the QA copy (N-16). A third renderer would be rewritten again (design critique). |
 | D-13 | Selecting a card in split never starts a repair run. "Find repairs" is a button, and a click paints no slot assist. | SPL-13 (an audited CP-SAT run on click). |
 | D-14 | **Compress JSON only**: a subclass of Django's `GZipMiddleware` filtered to `/ops/tw/`, `application/json`, at least 1 KB, never file responses. | Measured 349,243 → 8,268 B in 1.4 ms. Django's middleware already carries the BREACH mitigation. |
@@ -4310,7 +4318,7 @@ Tiers:
 | 1 | A1 | `safeHtml` tag, fingerprinted ratchet, workspace sinks, stage-3 record | P0 | M | low | Security | — | N-1, N-2, N-12, SW-05 |
 | 2 | B1 | Server write guards: label in use; no removal of externally owned placements | P0 | M | med | Server | — | (e), SPL-05, N-6, N-7 |
 | 3 | B2 | F17 degrades at the source; exports download on the page | P0 | M | med | Server + global | — | F17, N-3, N-9 |
-| 4 | M1 | MRI read-only; Move links to classic | P0 | S | low | MRI | — | MRI-02 |
+| 4 | ~~M1~~ | **Withdrawn (owner, 2026-10-23).** MRI read-only; Move links to classic | P0 | S | low | MRI | — | MRI-02 |
 | 5 | A2 | DB-admin and dashboard sinks | P0 | M | low | Security | A1 | SW-01 |
 | 6 | A3 | Planner and portfolio sinks, delegated handlers | P0 | M | low | Security | A1 | SW-01, SW-02 |
 | 7 | E1 | Split safety: no override anywhere, typing guard, no repair on click | P0 | M | low | Split | B1 | SPL-10, SPL-13, N-10, N-11 |
@@ -4461,7 +4469,7 @@ The weak escapers move out of A1. `page-planner.js:47` goes to A3. `shared-timet
 
 **Risk.** Medium. The board payload is additive; the engine still raises.
 
-##### M1: MRI read-only
+##### M1: MRI read-only (withdrawn by the owner, 2026-10-23; kept for the record)
 **Scope**
 - MRI: delete `applySelectedMove`, `undoLastMove` and the move panel's apply (:2619-2770; the writes are at :2683 and :2743). The template drops the writer controls.
 - "Move" becomes a link to `/timetable-workspace/?scenario=&board=&placement=&action=move`. Classic honours `scenario` and `board` today (PAGE:952-959), and `placement` and `action` from D2, so MRI needs no second edit.
@@ -4820,7 +4828,7 @@ As drafted:
 
 ##### D4: Inspector: three tabs, Demand, Issues list, one count unit
 **Scope**
-- Delete the MRI tab and its model (:5703-5890).
+- ~~Delete the MRI tab and its model (:5703-5890).~~ Withdrawn: the MRI tab stays (owner decision).
 - Merge Capacity into Demand: a labelled demand/seats bar, Short in its severity colour, Total Sections = the column's sum, and a separate "N courses" line.
 - The Issues list on `UXControls.roving`: one stop, arrows, Enter locates, Home/End.
 - One row per section and kind, worded as "No room · 8 sections, 11 meetings". **Every count (board buttons, Publish, headings, readiness) is in meetings.**
@@ -4960,7 +4968,7 @@ As drafted:
 | Server | B2 → B3; B1, B4 and B5 are independent |
 
 **Waves.**
-1. **Now:** A1, B1, B2, M1, B4, B5, C1, C2. **Q2, Q3, Q6 and Q7 go to the owner now.**
+1. **Now:** A1, B1, B2, B4, B5, C1, C2. **Q2, Q3 and Q6 go to the owner now** (Q7 answered: no MRI work).
 2. **Next:**
    - A2, A3 and C3 (after A1);
    - E1 and D1 (after A1 and B1);
@@ -5001,7 +5009,7 @@ As drafted:
 | SW-17 RTL arrow bug (`page-student-graduation.js:240`, `page-advisor-student-graduation.js:147`); SW-22 section-planning pager; SW-12 prerequisite graph in dark mode | Separate small PRs now | Real bugs elsewhere, mostly student-facing. |
 | SW-11 beyond the chrome (115 declarations) | Stage 4 | C1 fixes the chrome. |
 | SPL-08 / SW-13 split theme; SPL-14 split language; SPL-11 split modal (16 sites), split Generate; SPL-12 / F13 split slot editor | Stage 4, after Q6 | E4 brings keyboard and bidi only if Q6 keeps the grid. |
-| MRI-01, MRI-03 / SW-14, F14 | Stage 4, after Q7 | M1 removes the data risk now. |
+| MRI-01, MRI-03 / SW-14, F14 | Dropped (owner) | The owner keeps the MRI page and the classic MRI tab as they are (2026-10-23). |
 | F4, F5, F7's Shift+F10 menu, F9, F11, F19 | Later | As in the draft. B2 pins F17 under the production flags. |
 | F16, F15 edge | Gates in As-built notes | Production is off limits. |
 | F18; (a), (b) | Dropped | No user impact; 0 cases. |
@@ -5039,7 +5047,7 @@ As drafted:
    - **Recommended:** keep the repair console and fix queue on the shared models; retire block mode, bulk "clean rooms" and safe-time moves unless used; decide whether a "compare boards" layout inside classic replaces split's grid.
    - **Default: E0, E4 and E5 are not started.**
    - Please name the split-only tools the department uses.
-4. **Q7: the MRI page after M1.**
+4. **Q7: the MRI page.** **Answered by the owner (2026-10-23): never do anything for the MRI page; keep it as it is.**
    - **Recommended:** keep the Board Map / graph only if it is used; otherwise retire the page into classic's Issues, hotspots and Demand.
    - **Default: read-only, unchanged.**
 
@@ -5056,13 +5064,13 @@ As drafted:
 | R5 | B1 refuses a legitimate flow, or the race leaks | Low / med | One caller; redo pinned; a PostgreSQL two-connection test; a [probe] on 663/665/666. |
 | R6 | B2's "—" workbook is taken for final | Low / med | A bilingual note on the first sheet names each section and board; publish still blocks. |
 | R7 | B5 CPU on the 0.5 vCPU host | Low / low | Measured 0.3–1.4 ms; filtered; one-line revert; a host gate in the As-built note. |
-| R8 | Users lose the MRI tab or MRI's bundle moves | Med / low | Full MRI stays in Open ▾; the deep link opens Move; Q7. |
+| R8 | ~~Users lose the MRI tab or MRI's bundle moves~~ | — | Withdrawn with D-8 and M1. |
 | R9 | The online table changes the Labs layout | Med / low | Labs return to their 5 lab columns; the table appears only when relevant; the legend cites the rule. |
 | R10 | Ratchet false positives (about 1,430 raw interpolations in 1,088 fingerprints, prototype) | Med / low | Fingerprints, not lines; literal ternaries and nested-template map-joins classed safe; the scanner pinned by unit cases; `--lower` only lowers. |
 | R11 | `?v` drift in dev/QA after parallel merges | Med / low | The re-bump rule; production is hashed (N-14). |
 | R12 | Production flags differ from QA | Med / med | B2, B3 and D7 test under all three flags; [probe]s run locally with the flags on. |
 | R13 | Unverified inputs: production usage of split and MRI, per-run CI time, Render edge compression, NVDA availability, (i) mismatch rates | — | Each PR re-measures, or writes "unverified" in its As-built note. |
-| R14 | Q6/Q7 unanswered | Med / low | Defaults (§8.6) keep stage 3 complete without E0, E4 and E5. |
+| R14 | Q6 unanswered | Med / low | Defaults (§8.6) keep stage 3 complete without E0, E4 and E5. |
 | R15 | The `safeHtml` object is not a string; `typeof body === 'string'` checks drop it (e.g. split `openModal`) | Med / low | The contract says "coerce at sinks that check `typeof`"; A1 never passes `SafeHtml` to such a sink; C3 makes `dlg` accept it. |
 
 **Scratch evidence from this pass** (0 QA writes, 0 POSTs), in the session's scratch directory under `scratchpad/stage3/editor/`:
