@@ -7182,6 +7182,24 @@ test('SD10 a save the user left (Escape while it was out) ends where the user is
   ['The columns were not saved: Lectures, line 2: end must be after the start', 0, true]);
 });
 
+test('SD11b a saved column whose label, start or end alone changed elsewhere makes a draft older too', async t => {
+  for (const [field, value] of [['label', 'Morning'], ['start', '09:05'], ['end', '10:20']]) {
+    let stored = { ...SLOT_COLUMNS };
+    const h = await slotHarness(t, { more: url => (url === '/ops/tw/scenarios/1/' ? { scenario: { ...scenario, ...stored }, active_job: null }
+      : url === '/ops/tw/boards/2/' ? { placements: [placement], ...stored } : undefined) });
+    await h.select();
+    await slotOpen(h);
+    slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+    keyOn(h, 'Escape');
+    // Saved elsewhere: only this field of the first column.
+    stored = { ...SLOT_COLUMNS, effective_slot_config: SLOT_COLUMNS.effective_slot_config.map((slot, i) => (i ? slot : { ...slot, [field]: value })) };
+    await h.w.selectBoard(2);
+    await slotOpen(h);
+    assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged')], [true, true], field);
+    keyOn(h, 'Escape');
+  }
+});
+
 test('SD11 a draft older than the saved columns (saved elsewhere, e.g. split view) says so and keeps “Start from the saved columns”; one that now equals them is none', async t => {
   // The scenario's columns as the server has them now: the scenario and the board answer with them.
   let stored = { ...SLOT_COLUMNS };
