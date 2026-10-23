@@ -41,14 +41,16 @@
   background: var(--card);
   border-bottom: 1px solid var(--line);
 }
+/* The board strip is the global `.ux-overflow` around the `.ux-seg` of
+   boards: the wrapper is what the bar lays out, so it is what is sized here. */
 .tw-boards { max-width: min(760px, 52vw); }
 /* From 1201px (where the sidebar is at its full width) the bar is one row:
-   the board strip gives way — it scrolls sideways and keeps the chosen board
-   in view — and the controls keep their size. With real boards (flags, "N
-   left") the bar used to wrap at 1366 and 1440, pushing the panes 35px down.
-   Below 1201px the row cannot always hold every control (the filter, Arabic,
-   wider fonts), so the bar wraps there rather than clip a control. The
-   strip's minimum renders 126px (the segmented control adds 6px). */
+   the board strip gives way — it scrolls sideways, with its scroll buttons
+   and edge cue, and keeps the chosen board in view — and the controls keep
+   their size. With real boards (flags, "N left") the bar used to wrap at
+   1366 and 1440, pushing the panes 35px down. Below 1201px the row cannot
+   always hold every control (the filter, Arabic, wider fonts), so the bar
+   wraps there rather than clip a control. */
 @media (min-width: 1201px) {
   .tw-cmd-bar { flex-wrap: nowrap; }
   .tw-cmd-bar > :not(.tw-boards, .ux-spacer) { flex-shrink: 0; }
@@ -456,7 +458,10 @@ html[data-theme="dark"] .tw-legend .ux-legend-swatch[data-swatch="dim"] { backgr
   padding-inline: 4px 6px;
   border-bottom: 1px solid var(--line-strong);
 }
-.tw-inspector-head .ux-tabs { flex: 1 1 auto; min-width: 0; border-bottom: 0; }
+/* The tablist sits in the global `.ux-overflow` (scroll buttons and an edge
+   cue when the tabs do not fit the pane, the chosen tab kept in view). */
+.tw-inspector-head > .ux-overflow { flex: 1 1 auto; min-width: 0; }
+.tw-inspector-head .ux-tabs { border-bottom: 0; }
 .tw-right .ux-tab { flex: 0 1 auto; padding-inline: 8px; }
 .tw-panel-body { padding: 8px 10px 18px; overflow-wrap: anywhere; }
 .tw-pane-empty, .tw-pane-note { margin: 12px 4px; color: var(--t3); font-size: var(--text-sm); }

@@ -27,7 +27,9 @@ from core.services.timetable_slot_config import (
     carry_slot_flags,
     clean_slot_rows,
     confirmation_fingerprint,
+    drawn_column,
     is_on_grid,
+    online_window,
 )
 
 LECTURES = [
@@ -154,6 +156,89 @@ def test_only_a_real_boolean_sets_a_flag() -> None:
 def test_a_policy_meeting_is_drawn_whatever_the_columns() -> None:
     assert is_on_grid("SUN", "09:00", "12:00", LECTURES, [], policy_meeting=True)
     assert not is_on_grid("SUN", "09:00", "12:00", LECTURES, []), "as a 180-minute lab it would be"
+
+
+# ── times read in ASCII digits (stage 3, B4) ────────────────────────────────
+
+
+def _native(text: str, zero: int = 0x0660) -> str:
+    """``text`` with each digit in another script (Arabic-Indic by default)."""
+    return "".join(chr(zero + int(c)) if c.isdigit() else c for c in text)
+
+
+NBSP = chr(0xA0)
+# A time with one digit from another script where ``\d`` stands: the server
+# read each of these as 10:50, the page (whose ``\d`` is ASCII) as no time.
+MIXED_DIGIT_TIMES = [
+    "1" + _native("0") + ":50",
+    "10:5" + _native("0"),
+    _native("9") + ":30",
+    _native("9", 0x06F0) + ":30",  # Eastern Arabic-Indic
+    _native("9", 0xFF10) + ":30",  # full width
+]
+
+
+@pytest.mark.parametrize("value", MIXED_DIGIT_TIMES, ids=ascii)
+def test_a_time_with_a_digit_from_another_script_is_no_time(value) -> None:
+    columns = [{"start": "09:30", "end": "10:45"}, {"start": "10:50", "end": "12:05"}]
+    assert not is_on_grid("SUN", value, "12:05", columns, [])
+    rows, errors = clean_slot_rows([{"start": value, "end": "12:05"}], "slot_config")
+    assert rows == []
+    assert [e.as_dict() for e in errors] == [
+        {"list": "slot_config", "index": 0, "field": "start", "message": "must be a time as HH:MM"}
+    ]
+
+
+def test_a_time_in_arabic_indic_digits_is_off_the_grid() -> None:
+    assert not is_on_grid("SUN", _native("10:00"), _native("11:15"), LECTURES, LABS)
+    assert not is_on_grid("SUN", _native("10:50"), "12:05", LECTURES, LABS)
+
+
+def test_a_time_with_a_no_break_space_around_it_reads_as_before() -> None:
+    assert is_on_grid("SUN", f"{NBSP}10:50{NBSP}", "12:05", LECTURES, LABS)
+    rows, errors = clean_slot_rows(
+        [{"start": f"{NBSP}9:00", "end": f"10:15{NBSP}", "label": "x"}], "slot_config"
+    )
+    assert errors == []
+    assert rows == [{"label": "x", "start": "09:00", "end": "10:15"}]
+
+
+# ── the online-only windows (stage 3, B4) ───────────────────────────────────
+
+
+def test_an_online_window_is_the_column_the_grid_draws_the_meeting_in() -> None:
+    assert online_window("wed", "15:50", "17:30", LECTURES, LABS) == {
+        "label": "Online 1",
+        "day": "WED",
+        "start": "15:50",
+        "end": "17:30",
+    }
+    # Lab 5 overlaps the window's times; it is drawn in Lab 5.
+    assert online_window("WED", "16:30", "18:10", LECTURES, LABS) is None
+    # A lecture at 15:50 is no lab: it is not drawn in a lab column at all.
+    assert online_window("WED", "15:50", "17:05", LECTURES, LABS) is None
+    assert online_window("SAT", "15:50", "17:30", LECTURES, LABS) is None
+    assert online_window("WED", "15:50:00", "17:20:00", LECTURES, LABS) == {
+        "label": "Online 1",
+        "day": "WED",
+        "start": "15:50",
+        "end": "17:20",
+    }
+
+
+def test_the_first_column_with_the_meetings_start_draws_it() -> None:
+    plain = {"label": "Evening lab", "start": "17:40", "end": "19:00"}
+    window = {"start": "17:40", "end": "19:20", "online_only": True}
+    assert drawn_column("SUN", "17:40", "19:20", [], [plain, window]) is plain
+    assert online_window("SUN", "17:40", "19:20", [], [plain, window]) is None
+    assert drawn_column("SUN", "17:40", "19:20", [], [window, plain]) is window
+    # A window with no label is named by its times.
+    assert online_window("SUN", "17:40", "19:20", [], [window, plain]) == {
+        "label": "17:40-19:20",
+        "day": "SUN",
+        "start": "17:40",
+        "end": "19:20",
+    }
 
 
 # ── the endpoint ────────────────────────────────────────────────────────────

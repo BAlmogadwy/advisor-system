@@ -1726,7 +1726,14 @@ def tw_board_create_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
-    """Return a board's metadata, slot config, all placements, and student counts."""
+    """Return a board's metadata, slot config, all placements, and student counts.
+
+    ``online_course_codes`` lists the courses that are online for the board
+    (its programmes' online requirements, ``OnlineCourseLookup``: the rule
+    every placement's ``is_online`` and the publish check use), sorted, even
+    those not placed on it yet, so a page can tell an online course before its
+    first section is placed.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1755,6 +1762,7 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
             "effective_slot_config": effective_lecture_slots(board.scenario),
             "effective_lab_slot_config": effective_lab_slots(board.scenario),
             "placements": [_placement_to_dict(p, teachers, marks, ctx) for p in placements],
+            "online_course_codes": sorted(ctx.online.codes_for_board(board)),
             "primary_student_count": primary_count,
             "visitor_student_count": visitor_count,
         }

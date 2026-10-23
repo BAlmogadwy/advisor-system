@@ -1,5 +1,5 @@
 {
-  "about": "The grid's rule, stated once for both implementations: core/services/timetable_slot_config.is_on_grid (Python) and isPlacementOnGrid (static/js/page-timetable-workspace.js), whose renderer draws by the same cell key (cellKey). A meeting is drawn in a cell when its day is a teaching day and its start is a column start of its kind (a lab runs more than 80 minutes); an English bundle has its own table. Times read as the server reads them: H:MM or HH:MM, seconds allowed; the day upper-cased. Any other meeting is parked under its table.",
+  "about": "The grid's rule, stated once for both implementations: core/services/timetable_slot_config.is_on_grid (Python) and isPlacementOnGrid (static/js/page-timetable-workspace.js), whose renderer draws by the same cell key (cellKey). A meeting is drawn in a cell when its day is a teaching day and its start is a column start of its kind (a lab runs more than 80 minutes); an English bundle has its own table. Times read as the server reads them: H:MM or HH:MM in ASCII digits, seconds allowed, spaces (a no-break space too) around them ignored; the day upper-cased. Any other meeting is parked under its table.",
   "lecture_slots": [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:50-12:05", "start": "10:50", "end": "12:05"}
@@ -23,6 +23,9 @@
     {"name": "a start without its leading zero", "course": "CS101", "day": "SUN", "start": "9:00", "end": "10:15", "on_grid": true},
     {"name": "a start with seconds", "course": "CS101", "day": "MON", "start": "09:00:00", "end": "10:15:00", "on_grid": true},
     {"name": "a day in lower case", "course": "CS101", "day": "sun", "start": "10:50", "end": "12:05", "on_grid": true},
-    {"name": "a start that is no time", "course": "CS101", "day": "TUE", "start": "9am", "end": "10:15", "on_grid": false}
+    {"name": "a start that is no time", "course": "CS101", "day": "TUE", "start": "9am", "end": "10:15", "on_grid": false},
+    {"name": "a start with an Arabic-Indic digit (the digits are ASCII on both sides)", "course": "CS101", "day": "SUN", "start": "1\u0660:50", "end": "12:05", "on_grid": false},
+    {"name": "a start in Arabic-Indic digits", "course": "CS101", "day": "SUN", "start": "\u0661\u0660:\u0665\u0660", "end": "12:05", "on_grid": false},
+    {"name": "a start with a no-break space around it", "course": "CS101", "day": "SUN", "start": "\u00a010:50\u00a0", "end": "12:05", "on_grid": true}
   ]
 }

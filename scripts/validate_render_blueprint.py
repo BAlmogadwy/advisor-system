@@ -119,6 +119,9 @@ WEB_FIXED_ENV_VALUES = {
     "TIMETABLE_CPSAT_WORKERS": "1",
     # Timetable CP-SAT models stop growing here; 800 MB models OOM-killed it.
     "TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS": "40000",
+    # Render's load balancers already compress responses; app gzip stays off on
+    # the 0.5-CPU host until the host gate in docs/stage3/B5.md says otherwise.
+    "TIMETABLE_WORKSPACE_JSON_GZIP": "false",
     "TELEGRAM_ADVISOR_ENABLED": "true",
     "TELEGRAM_PUBLIC_BASE_URL": EXPECTED_PUBLIC_ORIGIN,
     "TELEGRAM_LINK_TOKEN_TTL_SECONDS": "900",

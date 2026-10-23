@@ -5353,6 +5353,10 @@ def check_publish_readiness(scenario_id: int) -> dict:
           affected student can route round through sibling sections.
         - Cross-board overlaps that share at least ``HARD_OVERLAP_THRESHOLD``
           students.
+        - A meeting of a course that is not online for its board sits in an
+          online-only window (the owner's rule: only online courses meet
+          there; nothing in the estate is open in the evening). Never a
+          blocker, and no write is refused for it.
 
     Parameters:
         scenario_id: PK of the ``Scenario``.
@@ -5407,6 +5411,16 @@ def check_publish_readiness(scenario_id: int) -> dict:
         ``cross_board_conflicts``
             no board / cross-board pairs at or over the threshold /
             ``threshold``: ``HARD_OVERLAP_THRESHOLD`` (shared students).
+        ``online_window_room_class``
+            board of the meeting / none / ``placement_id``, ``course_code``,
+            ``section``, ``day`` (``SUN``...``THU``), ``slot_label`` (the
+            window's label) and the meeting's ``start`` and ``end``
+            (``HH:MM``). One item per meeting the grid draws in an online-only
+            window (``timetable_slot_config.online_window``) whose course is
+            not online for its board (``OnlineCourseLookup``, as the room
+            checks above decide it). English bundles have their own table and
+            are never in one. After the stages above, in board order, then
+            day, start, course and section.
     """
     from django.db.models import Q
 
@@ -5628,5 +5642,57 @@ def check_publish_readiness(scenario_id: int) -> dict:
                     detail=str(exc),
                 ),
             )
+
+    # The online-only windows (D-7): a meeting of a course that is not online
+    # for its board, drawn in one, is a warning. It never blocks publishing and
+    # no write refuses it: a manual placement is the user's decision. An online
+    # course outside the windows is not marked (owner question Q2, default).
+    from core.services.timetable_slot_config import (
+        GRID_DAYS,
+        effective_lab_slots,
+        effective_lecture_slots,
+        online_window,
+    )
+
+    lecture_slots = effective_lecture_slots(_scenario) if _scenario else []
+    lab_slots = effective_lab_slots(_scenario) if _scenario else []
+    board_rank = {board.id: (board.display_order, board.id) for board in board_list}
+    in_windows: list[tuple[tuple, DeliveryBoard, TermSection, int, dict[str, str]]] = []
+    for placement in scenario_placements:
+        window = online_window(
+            placement.day, placement.start_time, placement.end_time, lecture_slots, lab_slots
+        )
+        ts = placement.term_section
+        if window is None or section_policy(ts):
+            continue
+        board = board_by_id[placement.board_id]
+        if online_lookup.is_online_course_for_board(board, ts.course_code):
+            continue
+        order = (
+            board_rank[board.id],
+            GRID_DAYS.index(window["day"]),
+            window["start"],
+            ts.course_code or "",
+            ts.section or "",
+            placement.id,
+        )
+        in_windows.append((order, board, ts, placement.id, window))
+    for _order, board, ts, placement_id, window in sorted(in_windows, key=lambda row: row[0]):
+        warn(
+            f"Board '{board.label}': {ts.course_code} {ts.section} meets in "
+            f"{window['label']} ({window['day']} {window['start']}-{window['end']}), "
+            "a window kept for online courses",
+            _readiness_item(
+                "online_window_room_class",
+                board,
+                placement_id=placement_id,
+                course_code=ts.course_code,
+                section=ts.section,
+                day=window["day"],
+                slot_label=window["label"],
+                start=window["start"],
+                end=window["end"],
+            ),
+        )
 
     return outcome()

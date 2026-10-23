@@ -69,7 +69,10 @@ padding-aware for `p-0`.
 
 ### 3.2 Tokens
 - `--t4`: light `#66667f` (5.57 card / 4.92 bg), dark `#8c92aa` (5.72 / 6.19).
-- `--text-brand`: light `#067858`, dark `#2ec9a0`.
+- `--text-brand`: light `#05664b` (6.98:1 on card, and ≥ 4.9:1 on a teal
+  wash of up to 16% over any surface; `#067858` until stage 3 C1, 4.31:1 on
+  `--teal-dim` over `--surface-2`), dark `#2ec9a0`. `--brand-dark` is the same
+  value, for text only.
 - Primary: `--btn-primary-bg/-ink/-hover`: light `#067858` / white (5.48:1),
   hover `#05664b`; dark `#2ec9a0` / `#04201a` (8.13:1), hover `#4dd9b4`.
   `.btn-primary` and `.btn-success` use them; `.btn-outline-primary` text uses
@@ -4290,7 +4293,7 @@ Re-verified from the draft: L01's four sites (PAGE:4063, 4554, 5057, 5646); SPL-
 | D-4 | **F17 degrades at the source.**<br>• For display, `build_section_states_for_scenario` collects incomplete English bundles instead of raising.<br>• Those sections show "—" with a reason; every other section keeps its teacher.<br>• Exports print "—" plus a bilingual note naming each section and board.<br>• The engine path still raises. | N-9: the board read 500s, not only the export. Principle 3: unknown is "—" with a reason, never `TBD`. |
 | D-5 | **F10: export search uses the grid's words**, in the page's language. One case table with a language column pins parity. | The menu promises "Only what matches"; today ONLINE gives 0. |
 | D-6 | **One dialog engine.**<br>• `dlg.confirm`/`prompt` render `<dialog class="ux-dialog">` with their own stack, so a confirm can open over an open `ux-dialog`.<br>• `waitForClose` defaults to true; the default flip is audited per caller.<br>• The `.btn-confirm`, `.btn-cancel` and `.dlg-input` hooks are kept.<br>• "Is a dialog open?" becomes `UXControls.dialog.isOpen()`.<br>• `.dlg-*` CSS is kept while the dashboard's `_modals.html` uses it. | One engine for 40 call sites (SW-06, L13). The coupling is measured in PAGE:202, 1836-1837, panes:84 and exam:1626. |
-| D-7 | **The online-only windows are their own "Online only" table**, like the English table.<br>• It is shown when a meeting sits in a window or the board has an online course.<br>• It uses normal 96 px columns; Labs go back to 5 columns.<br>• A meeting of a non-online course in a window gets a **server readiness warning** (`ONLINE_WINDOW_ROOM_CLASS`).<br>• Sideways scroll with a sticky day column stays the fallback for wide custom slot lists. | 0 meetings in windows today (N-15). One rule, read by the classic page, split, Publish and MRI. A compact 72 px card would need a second card design for an empty feature. |
+| D-7 | **The online-only windows are their own "Online only" table**, like the English table.<br>• It is shown when a meeting sits in a window or the board has an online course.<br>• It uses normal 96 px columns; Labs go back to 5 columns.<br>• A meeting of a non-online course in a window gets a **server readiness warning** (`online_window_room_class`, lower case like every readiness code; as built in B4).<br>• Sideways scroll with a sticky day column stays the fallback for wide custom slot lists. | 0 meetings in windows today (N-15). One rule, read by the classic page, split, Publish and MRI. A compact 72 px card would need a second card design for an empty feature. |
 | D-8 | **Withdrawn (owner, 2026-10-23).** ~~Remove the classic inspector's MRI tab.~~ The MRI tab and "Full MRI" in Open ▾ both stay. | MRI-01, L05; principle 6. |
 | D-9 | Merge Capacity into Demand, with a labelled demand/seats bar and a Total that sums its column. | L08, N-5. |
 | D-10 | **No page sends `override` on Remove, undo or redo.** A locked meeting reads "Its time is locked. Unlock its time first." and has no destructive button. | A lock freezes time; removal changes it. SPL-10, N-10. |
@@ -4522,7 +4525,7 @@ The weak escapers move out of A1. `page-planner.js:47` goes to A3. `shared-timet
 ##### B4: Online-window server truth
 **Scope**
 - The board read adds `online_course_codes` (`OnlineCourseLookup.codes_for_board`, `timetable_online.py:24-49`).
-- `check_publish_readiness` adds a warning `ONLINE_WINDOW_ROOM_CLASS {course_code, section, day, slot_label, start, end}` for a meeting of a course not in that set, in an `online_only` column. It never blocks and never refuses.
+- `check_publish_readiness` adds a warning `online_window_room_class {placement_id, course_code, section, day, slot_label, start, end}` for a meeting of a course not in that set, in an `online_only` column. It never blocks and never refuses. (As built: the plan wrote the code in upper case and without `placement_id`; see [`docs/stage3/B4.md`](stage3/B4.md), deviations 1 and 2.)
 - `timetable_slot_config.py:46` `_TIME` uses `[0-9]` explicitly. `re.ASCII` would also narrow `\s`.
 
 **Words** (readiness item)
@@ -4702,6 +4705,9 @@ As drafted:
 - Words for `SECTION_LABEL_IN_USE` and `PLACEMENT_EXTERNALLY_OWNED`.
 - Every `${n} <Arabic noun>` site goes through `pluralAr`, at least: PAGE:1658, 1661, 1664, 1665, 1675, 1677, 1795, 1984-1993, 3340, 5694, and board-button labels joined with `، `.
 - New `tests/frontend/arabic-counts.test.cjs`: a scanner rule over `IS_AR` branches flags a `${…}` followed by an Arabic letter unless it goes through `pluralAr`. It uses the same fingerprint allowlist mechanism, with exemptions for "X من Y" and names.
+- **A time range never breaks across lines** (added by B4's review). Today a line may break after the en dash (UAX #14 allows a break after U+2013), so "19:30–21:10" can end one line with "19:30–" and start the next with "21:10". B4 measured it on its own line: the online-window warning in the Arabic Publish dialog at 1440×790 (`docs/stage3/B4.md`, deviation 7). The same note measures the joiner below: in Chromium the plain range splits at 77 widths from 120 to 600 px, and the joined range at none ("After review").
+  - `shared-utils.js` gains `timeRangeText(start, end)`: one isolate around `start–end`, with U+2060 WORD JOINER after the dash. It must be a character, not CSS, because many ranges are plain text where no style reaches: `<option>` labels, `aria-label`s, live-region announcements and the readiness list. `timeRangeHtml(start, end)` is the same text in the `<bdi dir="ltr">` the page uses for markup, and `isolateTimes` inserts the joiner too.
+  - Every range on the page uses one of them. At B4's tree these are the `isolatedText` ranges (PAGE:1718, B4's `online_window_room_class` line; 3439; 5021; 5088), the hand-written `\u2066…\u2069` ranges (2985, 3151, 5629), the Issues rows' bare range that `isolateTimes` wraps later (6377), and the `<bdi dir="ltr">` ranges (2986, 3155, 4027, 4033, 4516, 4550, 4606, 4612, 5070, 5731, 5747).
 
 **Acceptance**
 - [probe] `bidi.js` on 665 (ar): `pairReversed=0` in `#twMoveTitle`, `#twRoomTitle`, `#twPlaceTitle` and `.tw-sel-title` (1 each today).
@@ -4709,8 +4715,10 @@ As drafted:
 - [CI] 0 `(s)` in PAGE; 0 card titles containing `::`.
 - [CI] Arabic strings from `pluralAr`'s own forms: "لقاءان", "11 لقاءً", "31 تحذيراً".
 - [CI] The Arabic-count ratchet passes.
+- [CI] A range scanner over PAGE: every `start–end` goes through `timeRangeText`, `timeRangeHtml` or `isolateTimes` (0 hand-built ranges).
+- [CI] Chrome, ar, 1440×790, with Verdana: B4's online-window line in the Publish dialog keeps "19:30–21:10" on one line (today it breaks after the dash).
 
-**Mutants.** Restore two isolates (red); bypass `pluralAr` (red); add `${n} لقاء` (ratchet red).
+**Mutants.** Restore two isolates (red); bypass `pluralAr` (red); add `${n} لقاء` (ratchet red); drop the word joiner (the Chrome range case red); build one range by hand (the range scanner red).
 
 **Risk.** Low.
 
@@ -4797,7 +4805,7 @@ As drafted:
 - Column headers: the accessible name includes the slot label and, for the online table, "Online only" (today PAGE:2930 omits the label).
 - Default labels are localised: Lab N → «معمل N», Online N → «عن بُعد N». Custom labels are isolated.
 - `placeOnline()` reads `online_course_codes` (PAGE:4880-4886).
-- The `ONLINE_WINDOW_ROOM_CLASS` warning arrives through readiness (B4) and classic's existing merge into Issues (PAGE:6282, 6346).
+- The `online_window_room_class` warning (lower case, as B4 built it) arrives through readiness (B4) and classic's existing merge into Issues (PAGE:6282, 6346). Its `params.placement_id` names the card to ring and the Issues row's meeting, so the page reads the server's verdict and never recomputes the window rule.
 
 **Acceptance**
 - [CI] Default config, full §6 matrix (1366×650, 1440×790, 1536×730, 1920×1080), en and ar, with Verdana: every table's `scrollWidth ≤ clientWidth` (today 840 > 773 / 823).
@@ -5107,3 +5115,4 @@ adds its row here when it lands.
 | PR | As-built note |
 |---|---|
 | A1 | [`docs/stage3/A1.md`](stage3/A1.md): the build spec and the As-built note |
+| B4 | [`docs/stage3/B4.md`](stage3/B4.md): the As-built note. The readiness code is `online_window_room_class` (lower case, like every readiness code) and carries `placement_id` |

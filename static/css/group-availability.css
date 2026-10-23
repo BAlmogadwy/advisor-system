@@ -98,7 +98,7 @@
 }
 
 .ga-stat-num { font-size: 1.3rem; font-weight: 800; color: var(--t1); line-height: 1.1; }
-.ga-stat-num.is-good { color: var(--teal); }
+.ga-stat-num.is-good { color: var(--text-brand); }
 .ga-stat-lbl {
   color: var(--t4);
   font-size: 0.7rem;
@@ -151,7 +151,7 @@
 
 .ga-source.is-registrar,
 .ga-occ-source.is-registrar {
-  color: var(--teal);
+  color: var(--text-brand);
   background: color-mix(in srgb, var(--teal) 10%, transparent);
   border-color: color-mix(in srgb, var(--teal) 35%, var(--line));
 }
@@ -195,7 +195,7 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.ga-tab.is-active { background: var(--brand); color: #fff; }
+.ga-tab.is-active { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }
 .ga-tab:focus-visible {
   position: relative;
   z-index: 1;
@@ -338,8 +338,8 @@
   text-transform: uppercase;
   letter-spacing: 0.025em;
 }
-.ga-cell.is-free .ga-cell-check { color: var(--teal); font-size: 1.1rem; font-weight: 800; }
-.ga-cell.is-free .ga-cell-sub { color: var(--teal); text-transform: none; }
+.ga-cell.is-free .ga-cell-check { color: var(--text-brand); font-size: 1.1rem; font-weight: 800; }
+.ga-cell.is-free .ga-cell-sub { color: var(--text-brand); text-transform: none; }
 .ga-cell-unknown { color: var(--t4); font-size: 1.05rem; font-weight: 800; }
 
 .ga-grid.is-timeline .ga-grid-slotlabel,

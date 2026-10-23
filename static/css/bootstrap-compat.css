@@ -119,7 +119,7 @@
 /* ── TYPOGRAPHY ──────────────────────────────────────────── */
 .text-center          { text-align: center !important; }
 .text-secondary       { color: var(--muted, #64748b) !important; }
-.text-success         { color: var(--success, #12a259) !important; }
+.text-success         { color: var(--sev-ok, #067858) !important; }
 .text-danger          { color: var(--danger, #e03434) !important; }
 .text-decoration-none { text-decoration: none !important; }
 .fw-semibold          { font-weight: 600 !important; }
@@ -148,9 +148,9 @@
   vertical-align: baseline;
   border-radius: var(--radius-sm, 7px);
 }
-.text-bg-primary   { background-color: var(--brand, #0A8E6E) !important; color: #fff !important; }
+.text-bg-primary   { background-color: var(--btn-primary-bg, #067858) !important; color: var(--btn-primary-ink, #fff) !important; }
 .text-bg-secondary { background-color: var(--muted, #6c757d) !important; color: #fff !important; }
-.text-bg-success   { background-color: var(--success, #12a259) !important; color: #fff !important; }
+.text-bg-success   { background-color: var(--btn-primary-bg, #067858) !important; color: var(--btn-primary-ink, #fff) !important; }
 .text-bg-danger    { background-color: var(--danger, #e03434) !important; color: #fff !important; }
 .text-bg-light     { background-color: var(--glass-bg, #f8f9fa) !important; color: var(--ink, #212529) !important; }
 
@@ -248,7 +248,7 @@ html[dir="rtl"] .form-select {
 /* Base btn is defined in global.css — these are supplementary */
 .btn-link {
   font-weight: 400;
-  color: var(--brand, #0A8E6E);
+  color: var(--text-brand, #067858);
   text-decoration: underline;
   background: none;
   border: none;
@@ -342,10 +342,10 @@ h6,
   flex-direction: column;
   justify-content: center;
   overflow: hidden;
-  color: #fff;
+  color: var(--btn-primary-ink, #fff);
   text-align: center;
   white-space: nowrap;
-  background-color: var(--brand, #0A8E6E);
+  background-color: var(--btn-primary-bg, #067858);
   transition: width 0.6s ease;
 }
 
@@ -466,7 +466,7 @@ html[data-theme="dark"] .form-control:focus {
   border-color: var(--brand, #0A8E6E);
 }
 html[data-theme="dark"] .form-control::placeholder {
-  color: #505468;
+  color: var(--t4);
 }
 
 html[data-theme="dark"] .form-select {
