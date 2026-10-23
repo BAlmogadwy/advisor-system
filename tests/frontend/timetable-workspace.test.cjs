@@ -6746,6 +6746,37 @@ test('SD4 the server’s list is reviewed inside the dialog: Back sends nothing 
   assert.equal(e.d.activeElement, slotInput(e, 'slot_config', 0, 'label'));
 });
 
+test('SD4b the list changed while it was reviewed: the new list is reviewed, confirmed by its own fingerprint; one that keeps changing is said after four answers', async t => {
+  const other = { ...SLOT_HIDDEN, hidden: [{ ...SLOT_HIDDEN.hidden[0], placement_id: 11, course_code: 'AI777' }], fingerprint: 'def456' };
+  const h = await slotHarness(t, { answer: body => (body.confirm === 'def456' ? slotSaved(body) : body.confirm === 'abc123' ? slotNeedsConfirm(other) : slotNeedsConfirm()) });
+  await h.select();
+  await slotOpen(h);
+  slotSubmit(h);
+  await wait(() => slotShown(h, 'twSlotReview') && atRest(h));
+  assert.match(h.d.getElementById('twSlotReviewBody').innerHTML, /CS323 S1/);
+  slotSubmit(h);
+  // The second answer is another list: it is the one reviewed now.
+  await wait(() => /AI777 S1/.test(h.d.getElementById('twSlotReviewBody').innerHTML) && atRest(h));
+  assert.doesNotMatch(h.d.getElementById('twSlotReviewBody').innerHTML, /CS323/);
+  assert.deepEqual([slotShown(h, 'twSlotBack'), slotSaveButton(h).disabled, h.d.activeElement.id, slotOut(h)], [true, false, 'twSlotReviewTitle', false]);
+  slotSubmit(h);
+  await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+  assert.deepEqual(h.posts.map(post => post.body.confirm), [undefined, 'abc123', 'def456']);
+  // A list that changes at every answer: after four, the module's words, the rows back.
+  let n = 0;
+  const k = await slotHarness(t, { answer: () => slotNeedsConfirm({ ...SLOT_HIDDEN, fingerprint: `fp${++n}` }) });
+  await k.select();
+  await slotOpen(k);
+  slotSubmit(k);
+  for (let i = 0; i < 4; i++) {
+    await wait(() => slotShown(k, 'twSlotReview') && atRest(k) && k.posts.length === i + 1);
+    slotSubmit(k);
+  }
+  await wait(() => slotAlert(k) && atRest(k));
+  assert.deepEqual([k.posts.map(post => post.body.confirm), slotAlert(k), slotShown(k, 'twSlotEditor'), slotShown(k, 'twSlotReview'), k.d.activeElement],
+    [[undefined, 'fp1', 'fp2', 'fp3'], 'The timetable kept changing while you reviewed it; nothing was saved. Try again.', true, false, slotSaveButton(k)]);
+});
+
 test('SD5 saved: the dialog closes, the keyboard goes back to the ⋯ menu, the board and the quality are read again, the draft goes, and how many meetings now sit under their tables is a warning', async t => {
   const h = await slotHarness(t, { answer: body => slotSaved(body, { hidden_count: 2 }) });
   await h.select();
