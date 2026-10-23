@@ -30,7 +30,7 @@ function harness(name, arabic = false) {
     refreshScenarioOptions: async () => {},
     DEFAULT_YEAR: '1448', DEFAULT_TERM: '1', loadScenarios: async () => {},
     workspaceCanEdit: () => true, beginWorkspaceOperation: () => ({ scenarioId: 1 }),
-    syncWorkspaceControls: () => {}, announcePlannerJob: () => {}, refreshWorkspaceQuality: async () => {},
+    syncWorkspaceControls: () => {}, announcePlannerJob: () => {}, refreshWorkspaceQuality: async () => {}, resetPlanLens: () => {},
     finishWorkspaceOperation: () => { $('twGenerate').disabled = false; $('twOptimise').disabled = false; $('twOptimiseMenu').disabled = false; },
     ACTIVE_PLANNER_STATUSES: new Set(['queued', 'running', 'unknown']),
   });

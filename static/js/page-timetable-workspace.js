@@ -54,12 +54,16 @@ const TW = {
   generatedPlan: null,       // section plan from generate
   sectionBudget: null,       // budget per course
   studentSummary: null,      // student classification summary
+  // The plan lens, from the quality read (6d): see resetPlanLens and takeLens.
   planLens: {
     plans: [],
     courses: {},
     sections: {},
     loaded: false,
   },
+  // The programmes (and SHARED) the board's cards were last dimmed by from
+  // roles that described the data (lensView's 'updating').
+  lensKeyShown: '',
   // The tables the user opened while the filter folds them ({group}|{kind}):
   // page memory for one board and one text, never stored (design record
   // §7.2 item 6, 6c). `foldScope` is the board and text it holds for.
@@ -812,10 +816,12 @@ async function showSchedulerOutcome(jobId) {
   }
   // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
   // place (applyGridView, which also writes the count), never redraws it, so
-  // a drag or a focused card survives typing.
+  // a drag or a focused card survives typing. A programme or SHARED typed
+  // while the lens is from before the last change reads it once (6d).
   $('twSearch')?.addEventListener('input', debounce(() => {
     applyGridView();
     renderBudgetSidebar();
+    readLensForFilter();
   }, 120));
   // A fold the user opens or shuts stays so for this board and text, and the
   // count's words say how many tables are still folded.
@@ -1009,6 +1015,8 @@ async function runGenerate(engine = 'classic', request = {}) {
     TW.selectedPlacementId = null;
     TW.undoStack = []; TW.redoStack = [];
     TW.quality = null; TW.qualityVersion = -1;
+    // Nor its lens: the board's first quality read brings the new one's.
+    resetPlanLens();
     // The new scenario's readiness is unknown: never show the previous one's.
     TW.readiness = null; TW.readinessVersion = -1;
     TW.plannerJob = null;
@@ -1210,8 +1218,8 @@ async function onScenarioChange() {
     $('twExportMenu').disabled = false;
     syncWorkspaceControls();
 
-    await loadPlanLens();
-    if (revision !== scenarioLoadRevision) return;
+    // The lens comes with the board's first quality read (lensWanted: none
+    // is held since the reset above).
     const boardsLoaded = await loadBoards(preferredBoard);
     if (revision === scenarioLoadRevision) persistWorkspaceScenario(TW.scenarioId, TW.loadedBoardId);
     syncWorkspaceControls();
@@ -1382,7 +1390,7 @@ async function selectBoard(boardId) {
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
     await loadBudget();
     if (revision !== boardLoadRevision || TW.scenarioId !== scenarioId) return;
-    await refreshWorkspaceQuality();
+    await refreshWorkspaceQuality(false, { lens: lensWanted() });
     renderWorkspaceQuality();
     syncWorkspaceControls();
   } finally {
@@ -2042,73 +2050,168 @@ function courseKeyOf(item) {
   return String(item?.course_key || item?.course_code || '').trim();
 }
 
-// The lens read in flight (shared by every ask for the same data) and the
-// count that lets only the newest read land.
-let planLensRead = null;
-let planLensRevision = 0;
+/* ── The plan lens (design record §7.2 item 6, 6d) ──
+   Who sits where, by programme, and what each programme's per-plan file
+   shows (`programme_view`, contract B). It comes with the quality read —
+   `quality/?lens=1`, one seating on the server — and only while it is
+   wanted (lensWanted): the first quality read of an opened or reset
+   scenario, while the filter holds a programme or SHARED, on Selection's
+   Refresh and after a programme mark is saved. Every other quality read is
+   plain. `version` says which data it describes; every path that opens
+   another scenario resets it (onScenarioChange, resetWorkspace and
+   Generate's switch to the scenario it made). A read that brings no lens (it
+   failed, or `plan_lens: null`) keeps what the lens had and marks it
+   `failed`; `failedVersion` is the data that read was about, which is not
+   asked again unless the user asks (Refresh) or the data moves on. The page
+   holds no copy of the per-plan rule: the dims and the role words read the
+   server's roles. */
+
+// The quality read in flight ({scenarioId, version, lens, promise}) and the
+// count that lets only the newest read land (contract C).
+let qualityRead = null;
+let qualityLoadRevision = 0;
+function setQualityRead(read) {
+  qualityRead = read;
+  TW.qualityLoading = Boolean(read);
+  TW.planLens.loading = Boolean(read?.lens);
+}
+
 function resetPlanLens() {
   // Whatever read is in flight answers for data that is gone (a reload after
-  // a planner job keeps the data version but not the timetable).
-  planLensRevision++;
-  planLensRead = null;
+  // a planner job keeps the data version but not the timetable): the quality
+  // read in flight, which carries the lens, is forgotten with it.
+  qualityLoadRevision++;
   TW.planLens = { plans: [], courses: {}, sections: {}, loaded: false };
+  setQualityRead(null);
+  TW.lensKeyShown = '';
 }
 
-/* The plan lens: who sits where, by programme — a full seating evaluation
-   on the server. It is read when a scenario opens and then only on request
-   (Selection's Refresh, or after a programme mark is saved), never after
-   every edit; `version` says which data it describes. A second request for
-   the same data joins the read in flight; a newer read wins over an older. */
-function loadPlanLens() {
-  const scenarioId = TW.scenarioId;
-  if (!scenarioId) {
-    resetPlanLens();
-    return Promise.resolve();
+/* The lens answers for the data now, or could not, and is not asked again
+   for it unless the user asks. */
+function lensCurrent() {
+  const lens = TW.planLens;
+  return lens.failedVersion === TW.dataVersion || Boolean(lens.loaded && !lens.failed && lens.version === TW.dataVersion);
+}
+
+const hasLensTokens = query => Boolean(query.programmes.length || query.shared);
+
+/* Contract C: wanted while no lens has been read for this scenario since it
+   opened or was reset, or while the filter holds a programme or SHARED. A
+   Refresh and a mark save ask for it themselves. */
+function lensWanted() {
+  if (!TW.scenarioId) return false;
+  if (!TW.planLens.loaded && !TW.planLens.failed) return true;
+  return hasLensTokens(filterQuery());
+}
+
+/* A quality read's lens: its answer, or a failure (null), which keeps what
+   the lens had. */
+function takeLens(planLens, version) {
+  if (planLens) {
+    TW.planLens = { plans: [], courses: {}, sections: {}, ...planLens, loaded: true, failed: false, loading: false, version };
+    return;
   }
-  const version = TW.dataVersion;
-  if (planLensRead && planLensRead.scenarioId === scenarioId && planLensRead.version === version) return planLensRead.promise;
-  const revision = ++planLensRevision;
-  TW.planLens.loading = true;
-  const promise = (async () => {
-    try {
-      const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/plan-lens/`);
-      if (revision !== planLensRevision || TW.scenarioId !== scenarioId) return;
-      if (!data || !data.plan_lens) {
-        TW.planLens.loaded = false;
-        return;
-      }
-      TW.planLens = Object.assign({ plans: [], courses: {}, sections: {}, loaded: true }, data.plan_lens, { version });
-    } finally {
-      if (revision === planLensRevision) {
-        TW.planLens.loading = false;
-        planLensRead = null;
-      }
-    }
-  })();
-  planLensRead = { scenarioId, version, promise };
-  return promise;
+  Object.assign(TW.planLens, { failed: true, failedVersion: version });
 }
 
-/* A search by programme ("AI2") reads the lens: a new lens dims anew, in
-   place (the board is not drawn again). */
-function reapplyPlanSearch() {
-  const tokens = [...workspaceSearchTokens(), ...sectionBudgetSearch().split(/\s+/)];
-  if (!tokens.some(token => planTokenFromSearch(token))) return;
-  applyGridView();
-  renderBudgetSidebar();
+/* What the lens dims by now (contract D; the states of §7.4, 6d):
+   'fresh'    the roles describe the data now;
+   'updating' the data changed since and the board was dimmed for these same
+              programmes: the old roles stay until the new ones arrive (a
+              meeting they never saw is unknown, so not dimmed);
+   'checking' no roles to show for these programmes yet (a read is out, or
+              will be);
+   'failed'   the last read brought no programme view: nothing is dimmed. */
+function lensView(query = filterQuery()) {
+  const lens = TW.planLens;
+  const view = lens.loaded ? lens.programme_view || null : null;
+  if (view && !lens.failed && lens.version === TW.dataVersion) return { state: 'fresh', view };
+  const kept = view && !lens.failed && lensKey(query) && lensKey(query) === TW.lensKeyShown ? view : null;
+  const failed = lens.failed || (lens.loaded && !lens.programme_view);
+  if (!lens.loading && failed) return { state: 'failed', view: null };
+  return kept ? { state: 'updating', view: kept } : { state: 'checking', view: null };
+}
+const lensKey = query => (hasLensTokens(query) ? `${[...query.programmes].sort().join(' ')}${query.shared ? ' SHARED' : ''}` : '');
+
+/* The roles of a programme view, indexed once per view. */
+const VIEW_INDEX = new WeakMap();
+function viewIndex(view) {
+  let index = VIEW_INDEX.get(view);
+  if (!index) {
+    const byProgramme = roles => Object.fromEntries(Object.entries(roles || {}).map(([plan, lists]) => [plan,
+      new Map(Object.entries(lists || {}).flatMap(([role, ids]) => (ids || []).map(id => [String(id), role])))]));
+    index = { ids: new Set((view.placement_ids || []).map(String)), roles: byProgramme(view.roles), shared: byProgramme(view.shared_roles) };
+    VIEW_INDEX.set(view, index);
+  }
+  return index;
 }
 
-/* The lens on request: Selection says it is loading, then shows the answer,
-   a programme search filters anew, and a screen reader hears it arrive. */
+/* Each programme of the filter with the role its per-plan file gives the
+   meeting ([[P, role]], none when no file shows it), or null when it is
+   unknown: no programme or SHARED in the filter, no roles, or a meeting the
+   roles never saw. SHARED reads the export's SHARED classification
+   (`shared_roles`); alone, it means every programme. */
+function lensRoles(p, query, view) {
+  if (!hasLensTokens(query) || !view) return null;
+  const index = viewIndex(view);
+  const id = String(p.id);
+  if (!index.ids.has(id)) return null;
+  const roles = query.shared ? index.shared : index.roles;
+  const programmes = query.programmes.length ? query.programmes : view.programmes || [];
+  return programmes.map(plan => [plan, roles[plan]?.get(id)]).filter(([, role]) => role);
+}
+
+/* The role words of a card's title: c and t are the seats the section's
+   lens row counts (the same numbers the server classified it by). */
+const ROLE_WORDS = {
+  main: plan => (IS_AR ? `${plan}: شعبة خاصة به` : `${plan}: its own section`),
+  mixed: (plan, c, t) => (IS_AR ? `${plan}: شعبة مختلطة (${c} من ${t})` : `${plan}: mixed section (${c} of ${t})`),
+  other: (plan, c, t) => (IS_AR ? `${plan}: فيها ${c} من ${t}؛ ومعظمها لبرنامج آخر` : `${plan}: seats ${c} of ${t}; mainly another programme’s`),
+  outside: plan => (IS_AR ? `${plan}: خارج خطته؛ يذكر ملفه المقرر بين المقررات المطروحة` : `${plan}: outside its plan; its file lists the course as placed`),
+};
+function roleWords(p, roles) {
+  const row = sectionLensForPlacement(p);
+  return roles.map(([plan, role]) => ROLE_WORDS[role]?.(isolatedText(plan),
+    Number(row?.actual_plans?.[plan] || 0), Number(row?.actual_total || 0))).filter(Boolean);
+}
+const LENS_UNKNOWN = IS_AR ? '(جارٍ التحقق)' : '(checking)';
+
+/* The lens on request (Selection's Refresh, a saved mark): one quality read
+   with the lens. Selection says it is loading, then shows the answer (the
+   read draws the open tab again), and a screen reader hears what landed:
+   "updated" only for a lens of the data now. A read overtaken by a plain
+   one (an edit made meanwhile, with no programme in the filter) brings no
+   lens, so the mix held is from before that edit, as Selection says. */
 async function refreshPlanLens() {
-  const read = loadPlanLens();
+  const read = refreshWorkspaceQuality(true, { lens: true });
   redrawSelection();
   await read;
-  redrawSelection();
-  reapplyPlanSearch();
-  announceInspector(TW.planLens.loaded
+  const lens = TW.planLens;
+  // Not of the data now: older than it, unless a read failed for it (or
+  // none is held), as Selection says.
+  announceInspector(lens.loaded && !lens.failed && lens.version === TW.dataVersion
     ? (IS_AR ? 'حُدِّث توزيع البرامج.' : 'Programme mix updated.')
-    : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
+    : lens.loaded && lens.failedVersion !== TW.dataVersion
+      ? (IS_AR ? 'توزيع البرامج من قبل آخر تعديل.' : 'The programme mix is from before your last change.')
+      : (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.'));
+}
+
+/* After a quality read that asked for the lens: the left list filters anew
+   when a programme is in its search, and the board is drawn again only when
+   the codes two courses share changed (a card names its course then, E19). */
+function afterLensAnswer() {
+  if (TW.loadedBoardId != null && duplicatedCodesKey() !== TW.drawnDupKey) renderGrid();
+  const tokens = [...workspaceSearchTokens(), ...sectionBudgetSearch().split(/\s+/)];
+  if (tokens.some(token => planTokenFromSearch(token))) renderBudgetSidebar();
+}
+
+/* A programme or SHARED typed while the lens is from before the last change
+   (or none is held): one read with the lens, joined when one is out
+   (contract C). A lens that could not be read for this data is asked again
+   only by the user (Selection's Refresh). */
+function readLensForFilter() {
+  if (!TW.scenarioId || !hasLensTokens(filterQuery()) || lensCurrent()) return;
+  refreshWorkspaceQuality(true, { lens: true });
 }
 
 /* The inspector's own status line (outside the panel it redraws). */
@@ -2128,21 +2231,33 @@ function courseLensForItem(item) {
   return TW.planLens.courses[courseKeyOf(item)] || null;
 }
 
+/* The programmes a filter token can name (E5b): the per-plan export's — the
+   board programmes, upper-cased, in board order — as the programme view
+   lists them; before a view is read, the board programmes this page holds
+   (those the lens knows, when a lens without a view is held). */
+function programmeTokens() {
+  const lens = TW.planLens;
+  if (Array.isArray(lens.programme_view?.programmes)) return lens.programme_view.programmes;
+  const codes = [];
+  (TW.boards || []).forEach(board => String(board.program || '').split(',').forEach(token => {
+    const code = token.trim().toUpperCase();
+    if (code && !codes.includes(code)) codes.push(code);
+  }));
+  return lens.loaded ? codes.filter(code => (lens.plans || []).includes(code)) : codes;
+}
+
 function planTokenFromSearch(search) {
   const q = String(search || '').trim().toUpperCase();
   if (!q) return '';
   if (q === 'SHARED') return 'SHARED';
-  return (TW.planLens.plans || []).includes(q) ? q : '';
+  return programmeTokens().includes(q) ? q : '';
 }
 
-function itemMatchesPlanToken(item, token) {
-  if (!token) return false;
-  const sectionLens = sectionLensForPlacement(item);
-  if (sectionLens) {
-    if (token === 'SHARED') return !!sectionLens.shared || sectionLens.role === 'shared';
-    return (sectionLens.filter_plans || []).includes(token);
-  }
-  const courseLens = courseLensForItem(item);
+/* The left list's programme token: does the programme need this course (its
+   demand, or the lens's allocation; SHARED, a course shared beyond its
+   sections) — a question of its own, not the board's lens (E12). */
+function courseMatchesPlanToken(item, token) {
+  const courseLens = token ? courseLensForItem(item) : null;
   if (!courseLens) return false;
   if (token === 'SHARED') return !!courseLens.shared_overflow;
   const plans = courseLens.plans || {};
@@ -2150,14 +2265,27 @@ function itemMatchesPlanToken(item, token) {
   return Number(plans[token] || 0) > 0 || Number(allocation[token] || 0) > 0;
 }
 
+/* The codes two courses share, from the lens's course keys, once per lens. */
+const DUPLICATED_CODES = new WeakMap();
+function duplicatedCodes() {
+  const courses = TW.planLens.courses || {};
+  let codes = DUPLICATED_CODES.get(courses);
+  if (!codes) {
+    const keysByCode = new Map();
+    Object.keys(courses).forEach(key => {
+      const code = courseColorKey(String(key).split('::')[0]);
+      if (!keysByCode.has(code)) keysByCode.set(code, new Set());
+      keysByCode.get(code).add(key);
+    });
+    codes = new Set([...keysByCode].filter(([code, keys]) => code !== '__UNKNOWN__' && keys.size > 1).map(([code]) => code));
+    DUPLICATED_CODES.set(courses, codes);
+  }
+  return codes;
+}
+const duplicatedCodesKey = () => [...duplicatedCodes()].sort().join(' ');
 function hasDuplicateCourseCode(code) {
   const target = courseColorKey(code);
-  if (!target || target === '__UNKNOWN__') return false;
-  const keys = Object.keys(TW.planLens.courses || {}).filter(key => {
-    const prefix = String(key).split('::')[0];
-    return courseColorKey(prefix) === target;
-  });
-  return new Set(keys).size > 1;
+  return target !== '__UNKNOWN__' && duplicatedCodes().has(target);
 }
 
 function compactCourseName(name) {
@@ -2202,8 +2330,8 @@ function placementText(p) {
 }
 
 /* The filter's tokens (contract D): `programmes` and `shared` are the lens's
-   (a programme the lens knows, and SHARED), the rest is `text`. Until 6d the
-   programmes are the plans of the lens this page holds. */
+   (a programme of the per-plan export's set, programmeTokens, and SHARED),
+   the rest is `text`. */
 function filterQuery() {
   const query = { programmes: [], shared: false, text: [] };
   workspaceSearchTokens().forEach(token => {
@@ -2223,23 +2351,21 @@ function textMatch(p, query = filterQuery()) {
   return query.text.every(token => text.includes(token));
 }
 
-/* The lens: null with no programme or SHARED token; otherwise whether the
-   meeting is in the union of the programmes (SHARED narrowing it to shared
-   sections; SHARED alone, every shared section). The lens only dims, never
-   folds (§7.1 #5). Interim (6c): the allocation rule of today's token,
-   itemMatchesPlanToken; 6d dims by the per-plan export's roles instead. */
-function inLens(p, query = filterQuery()) {
-  if (!query.programmes.length && !query.shared) return null;
-  if (query.shared && !itemMatchesPlanToken(p, 'SHARED')) return false;
-  return !query.programmes.length || query.programmes.some(plan => itemMatchesPlanToken(p, plan));
+/* The lens (contract D): null when it cannot say (no programme or SHARED in
+   the filter, no roles, a meeting the roles never saw); otherwise whether a
+   per-plan file of the filter's programmes shows the meeting — any role,
+   their union. The lens only dims, never folds (§7.1 #5). */
+function inLens(p, query = filterQuery(), view = lensView(query).view) {
+  const roles = lensRoles(p, query, view);
+  return roles === null ? null : roles.length > 0;
 }
 
 /* Why a meeting is dimmed: 'filter' (the text), 'lens' (the programmes), both
    or neither. A dimmed card is an ordinary card (it drags, Enter, M, R). */
-function placementDims(p, query = filterQuery()) {
+function placementDims(p, query = filterQuery(), view = lensView(query).view) {
   const dims = [];
   if (!textMatch(p, query)) dims.push('filter');
-  if (inLens(p, query) === false) dims.push('lens');
+  if (inLens(p, query, view) === false) dims.push('lens');
   return dims;
 }
 
@@ -2262,26 +2388,98 @@ function budgetMatchesSearch(c, search) {
   ].filter(v => v != null).join(' ').toUpperCase();
   return search.split(/\s+/).filter(Boolean).every(token => {
     const planToken = planTokenFromSearch(token);
-    return planToken ? itemMatchesPlanToken(c, planToken) : text.includes(token);
+    return planToken ? courseMatchesPlanToken(c, planToken) : text.includes(token);
   });
 }
 
+/* "{n} meetings" after "of": Arabic in the genitive (لقاء واحد، لقاءين، 3 لقاءات). */
+const ofMeetings = n => (IS_AR
+  ? pluralAr(n, { zero: '0 لقاء', one: 'لقاء واحد', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })
+  : `${n} ${n === 1 ? 'meeting' : 'meetings'}`);
+
 /* Words beside the filter (E21): the count is the meetings not dimmed of
    all the board's meetings; its title and the field's description add the
-   tables folded for no match and the programme filter. */
-function searchCountWords(shown, total, folded, programmes = []) {
+   tables folded for no match, then the lens's own words (lensCountWords). */
+function searchCountWords(shown, total, folded) {
+  if (IS_AR) return `المطابق للتصفية: ${shown} من ${ofMeetings(total)}${folded ? `؛ الجداول المطويّة لعدم وجود مطابق: ${folded}` : ''}.`;
+  return `${shown} of ${total} ${total === 1 ? 'meeting matches' : 'meetings match'}${folded ? `; tables folded for no match: ${folded}` : ''}.`;
+}
+const upperFirst = text => text.charAt(0).toUpperCase() + text.slice(1);
+const lowerFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
+const LENS_STATE_WORDS = {
+  checking: IS_AR ? 'جارٍ التحقق…' : 'checking…',
+  updating: IS_AR ? 'جارٍ التحديث…' : 'updating…',
+};
+/* Why the seating cannot say who sits where: the roles follow the plans'
+   allocation and the marks, as the per-plan files do then. */
+function seatingUnknownWords(programmes = []) {
+  const names = programmes.map(isolatedText);
   if (IS_AR) {
-    const of = pluralAr(total, { zero: '0 لقاء', one: 'لقاء واحد', two: 'لقاءين', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' });
-    return `المطابق للتصفية: ${shown} من ${of}${folded ? `؛ الجداول المطويّة لعدم وجود مطابق: ${folded}` : ''}`
-      + `${programmes.length ? `؛ تصفية البرامج: ${programmes.join('، ')}` : ''}.`;
+    const lead = 'تعذّر تقييم توزيع الطلاب على الشعب: ';
+    if (!names.length) return `${lead}تتبع الشعب توزيع الخطة، كما في الملفات لكل برنامج.`;
+    if (names.length === 1) return `${lead}تتبع شعب ${names[0]} توزيع الخطة، كما في ملفه لكل برنامج.`;
+    return `${lead}تتبع شعب ${names.join('، ')} توزيع خططها، كما في ملفاتها لكل برنامج.`;
   }
-  return `${shown} of ${total} ${total === 1 ? 'meeting matches' : 'meetings match'}${folded ? `; tables folded for no match: ${folded}` : ''}`
-    + `${programmes.length ? `; programme filter: ${programmes.join(', ')}` : ''}.`;
+  const lead = 'The seating could not be evaluated: ';
+  if (!names.length) return `${lead}sections follow the plan’s allocation, as the per-plan files do.`;
+  if (names.length === 1) return `${lead}${names[0]}’s sections follow the plan’s allocation, as its per-plan file does.`;
+  return `${lead}the sections of ${names.join(', ')} follow their plans’ allocation, as their per-plan files do.`;
+}
+/* The lens in the count's title and description (the states of §7.4, 6d):
+   each programme's meetings in its timetable, or that its roles are being
+   checked or updated, or could not be read; with the seating unknown, why. */
+function lensCountWords(query, lv) {
+  if (!hasLensTokens(query)) return '';
+  const subject = upperFirst(lensParts(query).join(IS_AR ? '، ' : ', '));
+  if (lv.state === 'checking' || lv.state === 'updating') return `${subject}: ${LENS_STATE_WORDS[lv.state]}`;
+  if (lv.state === 'failed') {
+    if (!IS_AR) return `The programme view could not be read; nothing is dimmed for ${lowerFirst(subject)}.`;
+    return query.programmes.length === 1 && !query.shared
+      ? `تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج ${subject}.`
+      : `تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء لتصفية البرامج: ${subject}.`;
+  }
+  const total = TW.placements.length;
+  const counted = programmes => TW.placements
+    .filter(p => lensRoles(p, { programmes, shared: query.shared, text: [] }, lv.view)?.length).length;
+  const onlyShared = IS_AR ? ' (الشعب المشتركة فقط)' : ' (shared sections only)';
+  const clauses = query.programmes.length
+    ? query.programmes.map(plan => `${isolatedText(plan)}${query.shared ? onlyShared : ''}: ${counted([plan])} ${IS_AR ? 'من' : 'of'} ${ofMeetings(total)} ${IS_AR ? 'في جدوله' : 'in its timetable'}`)
+    : [`${subject}: ${counted([])} ${IS_AR ? 'من' : 'of'} ${ofMeetings(total)} ${IS_AR ? 'في جداول البرامج' : 'in the programmes’ timetables'}`];
+  const words = `${clauses.join(IS_AR ? '؛ ' : '; ')}.`;
+  return lv.view.seating_assessed === false ? `${words} ${seatingUnknownWords(query.programmes)}` : words;
+}
+/* What the per-plan export will hold (E23): the programmes, shared
+   sections, the text; or every programme's file. */
+function exportScopeWords(query, raw) {
+  if (!raw) return IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term';
+  const names = query.programmes.map(isolatedText);
+  const parts = [];
+  if (names.length) {
+    parts.push(IS_AR ? `${names.length === 1 ? 'برنامج' : 'البرامج'} ${names.join('، ')} فقط`
+      : `${names.length === 1 ? 'Programme' : 'Programmes'} ${names.join(', ')} only`);
+  }
+  if (query.shared) parts.push(IS_AR ? 'الشعب المشتركة فقط' : 'Shared sections only');
+  if (query.text.length) {
+    const text = query.text.join(' ');
+    parts.push(IS_AR ? `ما يطابق «${text}» فقط` : `Only what matches "${text}"`);
+  }
+  return parts.join(' · ');
 }
 /* Text and attributes written only when they change: a live region is not
    read again, and the board's roving never hears a change it need not. */
 function setText(element, text) {
   if (element && element.textContent !== text) element.textContent = text;
+}
+/* The same, rewriting the element's own text node: no node of the board is
+   added or removed (only an empty element gains one). */
+function setTextInPlace(element, text) {
+  if (!element) return;
+  const node = element.firstChild;
+  if (node && node.nodeType === Node.TEXT_NODE && !node.nextSibling) {
+    if (node.nodeValue !== text) node.nodeValue = text;
+  } else {
+    setText(element, text);
+  }
 }
 function setAttr(element, name, value) {
   if (value == null || value === '') {
@@ -2291,28 +2489,24 @@ function setAttr(element, name, value) {
   }
 }
 
-function updateSearchStatus() {
+function updateSearchStatus(lv = null) {
   const input = $('twSearch');
   if (!input) return;
   const q = activeWorkspaceSearch();
-  const plan = planTokenFromSearch(q);
-  setText($('twExportScope'), !q
-    ? (IS_AR ? 'ملف XLSX لكل برنامج بأوراق حسب فصل الخطة' : 'One XLSX per programme, sheets by plan term')
-    : plan
-      ? (IS_AR ? `برنامج ${plan} فقط` : `Programme ${plan} only`)
-      : (IS_AR ? `ما يطابق «${q}» فقط` : `Only what matches "${q}"`));
+  const query = filterQuery();
+  setText($('twExportScope'), exportScopeWords(query, q));
   if (!q) {
     setAttr(input, 'title', '');
     setText($('twSearchCount'), '');
     setText($('twSearchNote'), '');
     return;
   }
-  const query = filterQuery();
+  const lens = lv || lensView(query);
   const total = TW.placements.length;
-  const shown = TW.placements.filter(p => !placementDims(p, query).length).length;
+  const shown = TW.placements.filter(p => !placementDims(p, query, lens.view).length).length;
   // Folded now: a table with no match the user has not opened.
   const folded = document.querySelectorAll('#twGrid .tw-fold-row:not([hidden]) .tw-fold-toggle[aria-expanded="false"]').length;
-  const sentence = searchCountWords(shown, total, folded, lensParts(query));
+  const sentence = [searchCountWords(shown, total, folded), lensCountWords(query, lens)].filter(Boolean).join(' ');
   setAttr(input, 'title', sentence);
   setText($('twSearchNote'), sentence);
   setText($('twSearchCount'), IS_AR ? `${shown} من ${total}` : `${shown} of ${total}`);
@@ -2338,25 +2532,36 @@ const foldLabel = (kind, n) => `${TABLE_WORDS[kind] || ''} · ${IS_AR ? 'لا ش
 const DIM_NOTE_IDS = { filter: 'twDimNoteFilter', lens: 'twDimNoteLens' };
 /* The lens's tokens in words: each programme isolated, then shared sections. */
 const lensParts = query => [...query.programmes.map(isolatedText), ...(query.shared ? [IS_AR ? 'الشعب المشتركة' : 'shared sections'] : [])];
-function dimNotes(query) {
-  const parts = lensParts(query);
-  return {
-    filter: IS_AR ? 'خارج التصفية' : 'Outside the filter',
-    lens: !parts.length ? ''
-      : IS_AR ? `خارج تصفية البرامج: ${parts.join('، ')}` : `Outside the programme filter: ${parts.join(', ')}`,
-  };
+/* Why the lens dims a card: no per-plan file of the filter's programmes
+   shows it (with SHARED, none shows it as a shared section). */
+function lensNote(query) {
+  if (!hasLensTokens(query)) return '';
+  const names = query.programmes.map(isolatedText);
+  if (query.shared) {
+    if (!names.length) return IS_AR ? 'ليست شعبة مشتركة في جدول أي برنامج' : 'Not a shared section in any programme’s timetable';
+    if (names.length === 1) return IS_AR ? `ليست شعبة مشتركة في جدول ${names[0]}` : `Not a shared section in ${names[0]}’s timetable`;
+    return IS_AR ? `ليست شعبة مشتركة في هذه الجداول: ${names.join('، ')}` : `Not a shared section in these timetables: ${names.join(', ')}`;
+  }
+  if (names.length === 1) return IS_AR ? `ليست في جدول ${names[0]}` : `Not in ${names[0]}’s timetable`;
+  return IS_AR ? `ليست في أيٍّ من جداول: ${names.join('، ')}` : `In none of these timetables: ${names.join(', ')}`;
 }
+function dimNotes(query) {
+  return { filter: IS_AR ? 'خارج التصفية' : 'Outside the filter', lens: lensNote(query) };
+}
+/* The legend's line for a lens dim: "Dimmed: " and the note. */
+const lensLegendWords = note => `${IS_AR ? 'باهتة: ' : 'Dimmed: '}${IS_AR ? note : lowerFirst(note)}`;
 
 /* The filter and the lens over the drawn board, in place (contract D). It
    runs after a draw, a filter change, a tone change and a lens change, and
    writes attributes and text only — never the board's nodes — so a drag, a
    focused card and the keyboard's stop survive it:
    - each card's dim (`data-dim` filter and/or lens, its notes in
-     `aria-describedby`, their words in its title);
+     `aria-describedby`, their words in its title, then the lens's role words,
+     or "(checking)" for a meeting the roles never saw);
    - each table the text matches nothing in folds: its fold row shows (the
      table's one stop) and its rows hide, unless the user opened it for this
      board and text (TW.foldOpen); the fold's tone counts;
-   - each group heading's matches, the legend's dim line and the count.
+   - each group heading's matches, the legend's dim lines and the count.
    Roving reads its stops again only when a table folded or opened. A caller
    that has the issue model's `byPlacement` passes it (applyCardTones), so a
    tone update builds the model once. */
@@ -2364,6 +2569,11 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
   const grid = $('twGrid');
   const query = filterQuery();
   const active = filterActive(query);
+  const lens = lensView(query);
+  const lensOn = hasLensTokens(query);
+  // The programmes the board is dimmed for now, from roles it may keep while
+  // newer ones are read ('updating').
+  TW.lensKeyShown = lens.view ? lensKey(query) : '';
   const scope = `${TW.loadedBoardId ?? ''}|${query.text.join(' ')}`;
   if (scope !== TW.foldScope) {
     TW.foldScope = scope;
@@ -2375,7 +2585,7 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
   setText($('twDimNoteLens'), notes.lens);
   const shownInGroup = new Map();
   let moved = false;
-  let dimmed = false;
+  const dimmed = { filter: false, lens: false };
   grid.querySelectorAll('[role="grid"]').forEach(table => {
     const group = table.dataset.group || '-';
     const tones = { critical: 0, warning: 0 };
@@ -2383,13 +2593,17 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
     table.querySelectorAll('.tw-card[data-placement-id]').forEach(card => {
       const id = card.dataset.placementId;
       const p = byId.get(id);
-      const dims = p && active ? placementDims(p, query) : [];
+      const roles = p && lensOn ? lensRoles(p, query, lens.view) : null;
+      const dims = p && active ? [...(textMatch(p, query) ? [] : ['filter']), ...(roles && !roles.length ? ['lens'] : [])] : [];
       if (!dims.includes('filter')) matched++;
       if (!dims.length) shownInGroup.set(group, (shownInGroup.get(group) || 0) + 1);
-      if (dims.length) dimmed = true;
+      dims.forEach(dim => { dimmed[dim] = true; });
       setAttr(card, 'data-dim', dims.join(' '));
       setAttr(card, 'aria-describedby', dims.map(dim => DIM_NOTE_IDS[dim]).join(' '));
-      const title = [card._twToneReason || '', card.dataset.identity || '', ...dims.map(dim => notes[dim])].filter(Boolean).join(' | ');
+      // What the programmes' files make of it: its roles; unknown while the
+      // roles are read (or never saw it); nothing when they could not be read.
+      const lensWords = !p || !lensOn ? [] : roles ? roleWords(p, roles) : lens.state === 'failed' ? [] : [LENS_UNKNOWN];
+      const title = [card._twToneReason || '', card.dataset.identity || '', ...dims.map(dim => notes[dim]), ...lensWords].filter(Boolean).join(' | ');
       if (card.title !== title) card.title = title;
       const tone = byPlacement.get(id)?.tone;
       if (tone in tones) tones[tone]++;
@@ -2415,10 +2629,16 @@ function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
     const text = `${head.dataset.what || ''}${active ? ` · ${matchesCount(shownInGroup.get(head.dataset.group) || 0)}` : ''}`;
     if (meta && meta.nodeValue !== text) meta.nodeValue = text;
   });
+  // The legend says what each kind of dim means, while a card has it.
   const legend = $('twLegendDim');
-  if (legend && legend.hidden !== !dimmed) legend.hidden = !dimmed;
+  if (legend && legend.hidden !== !dimmed.filter) legend.hidden = !dimmed.filter;
+  const legendLens = $('twLegendDimLens');
+  if (legendLens) {
+    if (legendLens.hidden !== !dimmed.lens) legendLens.hidden = !dimmed.lens;
+    if (dimmed.lens) setTextInPlace(legendLens.querySelector('.tw-legend-words'), lensLegendWords(notes.lens));
+  }
   if (moved) boardNav?.refresh();
-  updateSearchStatus();
+  updateSearchStatus(lens);
 }
 
 /* A located card inside a folded table: the fold opens first (as a click on
@@ -2446,6 +2666,9 @@ function renderGridWithSlots(slots, labSlots) {
   // Every meeting is drawn: the filter folds and dims in place
   // (applyGridView), so typing never draws the board again.
   const placements = TW.placements;
+  // The codes two courses share, as these cards name them (a lens answer
+  // that changes them draws the board again, afterLensAnswer).
+  TW.drawnDupKey = duplicatedCodesKey();
 
   // ── Split placements into student groups by section label ──
   const bySec = {};
@@ -2931,8 +3154,10 @@ function boardLegendHtml({ parked = false } = {}) {
     + item(swatch('selected'), IS_AR ? 'الشعبة المحددة' : 'The selected section')
     + item(swatch('same'), IS_AR ? 'لقاءات المقرر نفسه الأخرى' : 'The same course’s other meetings')
     + (parked ? `<span class="ux-legend-item" id="twLegendPark">${swatch('park')}<span>${esc(PARK_WORDS.legend)}</span></span>` : '')
-    // Shown by applyGridView while the filter dims a card.
+    // Shown by applyGridView while the text, or the programmes, dim a card
+    // (the programmes' words written in place as the filter changes).
     + `<span class="ux-legend-item" id="twLegendDim" hidden>${swatch('dim')}<span>${IS_AR ? 'باهتة: خارج التصفية' : 'Dimmed: outside the filter'}</span></span>`
+    + `<span class="ux-legend-item" id="twLegendDimLens" hidden>${swatch('dim')}<span class="tw-legend-words">${esc(lensLegendWords(lensNote(filterQuery())))}</span></span>`
     + `<span class="ux-legend-item">${IS_AR ? 'اللون يساعد على إيجاد المقرر' : 'Colour helps find a course'}</span>`
     + `</div>`;
 }
@@ -5187,15 +5412,18 @@ async function placeRefused(result, { dialog, here, session, about, request, lab
    parts are the shared module's). The seated mix and the grouping trade-off
    are the plan lens this page already holds: after an edit they say they are
    from before it and offer a Refresh — the lens is a full seating evaluation,
-   never re-read per edit. A saved mark reads it once more, and the quality
-   and the publish check with it (both are about the seating). The panel's
-   redraw keeps the keyboard on the select through a save. */
+   never re-read per edit. A saved mark reads it once more, with the quality
+   (one read, `quality/?lens=1`), and then the publish check (both are about
+   the seating). A seating that could not be evaluated is unknown, never
+   "nobody sits here". The panel's redraw keeps the keyboard on the select
+   through a save. */
 // Section → the mark being saved (the select shows it while it saves).
 const PROGRAMME_MARK_PENDING = new Map();
 function programmeMarkHtml(p) {
   const PM = window.TimetableProgrammeMark;
   if (!PM || !PM.hasMark(p)) return '';
-  const lens = TW.planLens || {};
+  // `loading`: a quality read with the lens is out.
+  const lens = TW.planLens;
   const key = String(p.term_section_id);
   const pending = PROGRAMME_MARK_PENDING.has(key);
   const shown = pending ? { ...p, preferred_programme: PROGRAMME_MARK_PENDING.get(key) } : p;
@@ -5203,16 +5431,21 @@ function programmeMarkHtml(p) {
   const hold = p.preferred_programme_editable === false || pending;
   const disabled = hold || !workspaceCanEdit();
   const nobody = lens.loaded ? PM.nobodyHtml(p, courseLensForItem(p)) : '';
-  const fresh = lens.loaded && !lens.loading && lens.version === TW.dataVersion;
+  const fresh = lens.loaded && !lens.loading && !lens.failed && lens.version === TW.dataVersion;
   // A section the lens does not hold (another scenario's, or new) is unknown,
-  // not empty.
+  // not empty; so is every section when the seating could not be evaluated.
+  const unassessed = lens.loaded && lens.seating?.assessed === false;
   const sectionLens = lens.loaded ? sectionLensForPlacement(p) : null;
-  const mix = !sectionLens ? '—'
+  const mix = !sectionLens || unassessed ? '—'
     : (PM.mixHtml(sectionLens) || esc(IS_AR ? 'لا يُقعَد فيها طلاب هذا السيناريو' : 'No student of this scenario sits here'));
+  const unknown = unassessed ? `<span class="tw-sel-hint">${esc(seatingUnknownWords())}</span>` : '';
   const trade = lens.loaded ? PM.tradeHtml(lens.programme_grouping) : '';
+  // A read again that failed keeps the mix it had: said, and how old it is.
+  const stale = lens.version === TW.dataVersion ? '' : (IS_AR ? 'من قبل آخر تعديل.' : 'From before your last change.');
   const state = lens.loading ? PM.words.loading
     : !lens.loaded ? (IS_AR ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.')
-      : fresh ? '' : (IS_AR ? 'من قبل آخر تعديل.' : 'From before your last change.');
+      : lens.failed ? [IS_AR ? 'تعذّرت قراءة توزيع البرامج مجدداً.' : 'The programme mix could not be read again.', stale].filter(Boolean).join(' ')
+        : fresh ? '' : stale;
   const refresh = fresh ? ''
     : `<button type="button" class="btn btn-sm btn-neutral" data-tw-lens-refresh data-focus-key="lens-refresh"${lens.loading ? ' disabled aria-busy="true"' : ''}>${IS_AR ? 'تحديث' : 'Refresh'}</button>`;
   return `<h3 class="tw-sel-subhead">${IS_AR ? 'البرنامج' : 'Programme'}</h3>
@@ -5220,7 +5453,7 @@ function programmeMarkHtml(p) {
       <div class="tw-sel-field tw-sel-field-stack"><dt><label for="twSelProgramme">${esc(PM.words.label)}</label></dt>
         <dd><select id="twSelProgramme" class="form-select form-select-sm tw-programme-select" data-placement-id="${p.id}" data-tw-mutation${hold ? ' data-tw-hold' : ''}${disabled ? ' disabled' : ''}${pending ? ' aria-busy="true"' : ''}${nobody ? ' aria-describedby="twSelProgrammeNote"' : ''}>${PM.optionsHtml(shown, lens.plans)}</select>
           ${nobody ? `<span class="tw-sel-note" id="twSelProgrammeNote" data-tone="warning">${nobody}</span>` : ''}</dd></div>
-      <div class="tw-sel-field tw-sel-field-stack"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${trade ? `<span class="tw-sel-hint">${trade}</span>` : ''}${state ? `<span class="tw-sel-hint">${esc(state)} ${refresh}</span>` : ''}</dd></div>
+      <div class="tw-sel-field tw-sel-field-stack"><dt>${esc(PM.words.seated)}</dt><dd>${mix}${unknown}${trade ? `<span class="tw-sel-hint">${trade}</span>` : ''}${state ? `<span class="tw-sel-hint">${esc(state)} ${refresh}</span>` : ''}</dd></div>
     </dl>`;
 }
 
@@ -5274,10 +5507,10 @@ async function saveWorkspaceProgrammeMark(placementId, value) {
     redrawSelection();
   }
   if (!changed) return;
-  // The seating changed: the seated mix is read again, once, and then the
-  // quality and the publish check (seats and student clashes are seating).
+  // The seating changed: the seated mix and the quality are read again, in
+  // one read with the lens, and then the publish check (seats and student
+  // clashes are seating).
   await refreshPlanLens();
-  await refreshWorkspaceQuality();
 }
 
 /* ── Right Panel ── */
@@ -5774,37 +6007,60 @@ function updateQuickStats() {
   renderBoardTabs();
 }
 
-let qualityLoadRevision = 0;
 /* The scenario's quality is a full seating evaluation — the heaviest read this
    page makes. It is scenario-wide, so a board switch reuses it; only a write
-   (TW.dataVersion) or a reload makes it stale. */
-async function refreshWorkspaceQuality(force = false) {
+   (TW.dataVersion) or a reload makes it stale. With `lens` it also brings the
+   plan lens from the same seating (`quality/?lens=1`, contract C): asked
+   while lensWanted() — the board's read passes it — and by a Refresh or a
+   saved mark. One read is in flight at a time: a request joins it when it is
+   about the same scenario and data and has the lens or needs none; any other
+   starts a new read, and only the newest lands. A read overtaken by a newer
+   one ends with it, so a board's load holds until the quality it shows. */
+async function refreshWorkspaceQuality(force = false, { lens = lensWanted() } = {}) {
   const scenarioId = TW.scenarioId;
-  const revision = ++qualityLoadRevision;
   if (!scenarioId) { TW.quality = null; renderWorkspaceQuality(); return; }
-  if (!force && TW.quality && TW.qualityVersion === TW.dataVersion) {
+  const version = TW.dataVersion;
+  if (!force && TW.quality && TW.qualityVersion === version && (!lens || lensCurrent())) {
     renderWorkspaceQuality();
     if (!TW.readiness || TW.readinessVersion !== TW.dataVersion) scheduleReadinessRefresh();
     return;
   }
-  const version = TW.dataVersion;
-  if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
-  TW.qualityLoading = true;
-  let data;
-  try {
-    data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/`);
-  } finally {
-    if (revision === qualityLoadRevision) TW.qualityLoading = false;
+  if (qualityRead && qualityRead.scenarioId === scenarioId && qualityRead.version === version && (qualityRead.lens || !lens)) {
+    return qualityRead.promise;
   }
-  if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) { renderWorkspaceQuality(); return; }
-  TW.quality = data?.ok ? data : null;
-  TW.qualityVersion = version;
-  // Schedule the publish check first: the panel then says "checking", not
-  // "not checked again", for the debounce before it runs.
-  scheduleReadinessRefresh();
-  renderWorkspaceQuality();
-  const active = document.querySelector('.tw-right .tw-panel-tab.active');
-  if (active) renderRightPanel(active.dataset.tab);
+  const revision = ++qualityLoadRevision;
+  if ($('twQualityStatus')) $('twQualityStatus').textContent = IS_AR ? 'جاري تقييم جودة السيناريو…' : 'Evaluating scenario quality…';
+  const read = { scenarioId, version, lens, promise: null };
+  read.promise = (async () => {
+    let data;
+    try {
+      data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/${lens ? '?lens=1' : ''}`);
+    } finally {
+      if (revision === qualityLoadRevision) setQualityRead(null);
+    }
+    if (revision !== qualityLoadRevision || TW.scenarioId !== scenarioId) {
+      renderWorkspaceQuality();
+      return qualityRead?.scenarioId === scenarioId ? qualityRead.promise : undefined;
+    }
+    // The lens is its own part of the answer, never part of the quality.
+    const { plan_lens: planLens, ...quality } = data || {};
+    TW.quality = data?.ok ? quality : null;
+    TW.qualityVersion = version;
+    if (lens) takeLens(data?.ok && planLens ? planLens : null, version);
+    // Schedule the publish check first: the panel then says "checking", not
+    // "not checked again", for the debounce before it runs.
+    scheduleReadinessRefresh();
+    // The tones, and with them the filter's view (applyGridView), the new lens.
+    renderWorkspaceQuality();
+    if (lens) afterLensAnswer();
+    const active = document.querySelector('.tw-right .tw-panel-tab.active');
+    if (active) renderRightPanel(active.dataset.tab);
+  })();
+  setQualityRead(read);
+  // The count's words say the programmes are being checked (no longer that
+  // they could not be read).
+  if (lens && hasLensTokens(filterQuery())) applyGridView();
+  return read.promise;
 }
 /* The stat strip. Two scopes (whole scenario / instructors), each number with
    its meaning in its label and its direction in its tone:
