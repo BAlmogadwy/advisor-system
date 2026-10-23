@@ -183,10 +183,13 @@ def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
     The lens equals ``/plan-lens/``, plus ``programme_view`` (what each board
     programme's per-plan file shows; ``None`` when it cannot be built): it
     reads the evaluation's states when the seating ran; nobody to seat without
-    demand; otherwise it seats on its own (cheap when the sections cannot even
-    be built), so a quality failure that is not the seating's never reads as a
-    failed seating. Any failure here is logged and the lens is ``None``; the
-    quality keys are never touched.
+    demand; otherwise it seats on its own, so a quality failure that is not the
+    seating's never reads as a failed seating. That own seating costs what
+    ``/plan-lens/`` costs, even when the sections cannot be built: it reads the
+    demand and builds every student's profile before the sections fail, and the
+    lens reads the demand again (on the QA copy, about 2.5x plain quality, the
+    same as the two reads apart). Any failure here is logged and the lens is
+    ``None``; the quality keys are never touched.
     """
     result, seated = _build_scenario_quality(scenario_id, keep_demands=with_lens)
     if not with_lens:

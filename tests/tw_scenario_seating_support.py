@@ -8,7 +8,8 @@ acts on) and the plan lens a grouped seating to show. ``record_legacy_reads``
 reads ``/quality/`` and ``/plan-lens/`` through their views, ids replaced by
 names, so the recorded oracle (``tests/fixtures/tw_quality_legacy.json``,
 written by ``tests/record_tw_quality_legacy.py`` from the code before 6a) and
-a later run compare as JSON text, key order included.
+a later run compare as JSON text, key order included. The oracle holds the
+three ``FLAG_MODES`` and, under ``NO_DEMAND``, the fixture without demand.
 """
 
 from __future__ import annotations
@@ -48,11 +49,19 @@ FLAG_MODES = {
     "production": PRODUCTION,
     "production_legacy_seats": {**PRODUCTION, "TIMETABLE_TIERED_OBJECTIVE_ENABLED": False},
 }
+#: The oracle's fourth entry: production flags, the fixture's demand removed
+#: (``remove_demand``), so nobody is seated.
+NO_DEMAND = "production_no_demand"
 
 
 def apply_flags(settings, mode: str) -> None:
     for name, value in FLAG_MODES[mode].items():
         setattr(settings, name, value)
+
+
+def remove_demand(fx: Seating) -> None:
+    """Delete every course request of the fixture: nobody to seat."""
+    ScenarioStudentCourseRequest.objects.filter(scenario=fx.scenario).delete()
 
 
 @dataclass

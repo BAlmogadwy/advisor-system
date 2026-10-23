@@ -2,8 +2,10 @@
 
 Recorded at ``b376afa``, before sub-PR 6a let one seating serve quality and the
 lens: the oracle must describe the code before the change, or "the read without
-``lens`` is unchanged" proves nothing. Never re-record it on a branch that
-changes either read::
+``lens`` is unchanged" proves nothing. The ``NO_DEMAND`` entry was added after
+6a's review, recorded the same way from ``b376afa``'s code (a worktree at the
+oracle's own commit, ``f518662``, which adds tests only). Never re-record it on
+a branch that changes either read::
 
     TW_QUALITY_LEGACY_RECORD=<file> python -m pytest -p no:cacheprovider \\
         tests/record_tw_quality_legacy.py
@@ -24,9 +26,11 @@ from django.test import Client
 from core.services.rbac import ROLE_SUPER_ADMIN
 from tests.tw_scenario_seating_support import (
     FLAG_MODES,
+    NO_DEMAND,
     apply_flags,
     build_seating_fixture,
     record_legacy_reads,
+    remove_demand,
 )
 
 
@@ -44,4 +48,7 @@ def test_record_quality_oracle(settings) -> None:
     for mode in FLAG_MODES:
         apply_flags(settings, mode)
         produced[mode] = record_legacy_reads(client, fx)
+    apply_flags(settings, "production")
+    remove_demand(fx)
+    produced[NO_DEMAND] = record_legacy_reads(client, fx)
     Path(target).write_text(json.dumps(produced, ensure_ascii=False) + "\n", encoding="utf-8")
