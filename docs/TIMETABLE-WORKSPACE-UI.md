@@ -1207,8 +1207,12 @@ findings changed the plan:
    each plan-term sheet's sections, each course is classified per sheet, and
    an out-of-plan placement is `outside` when it passes SHARED and the
    allocation) and `programme_view(scenario, plan_lens)` (contract B). The
-   module imports the models and two small helpers: never OR-Tools, the
-   export or the lens (a subprocess test). The export re-imports every moved
+   module imports the models and two small helpers; at call time
+   `get_plan_elective_terms` imports the elective resolver (deferred, as it
+   was in the export), which loads eight more modules (reporting, eligibility
+   and the timetable snapshots among them). Neither loads OR-Tools, the export
+   or the lens (a subprocess test checks the module's import; the deferred
+   one was checked by hand). The export re-imports every moved
    name (explicit re-export aliases for the ones it no longer calls), draws
    each file from `programme_placement_roles(...,
    shared_only=export_filter.shared_only)` (`is_other` is role `other`; the
@@ -1243,8 +1247,10 @@ findings changed the plan:
    (median of 31 calls alone), mostly ORM rows (each programme's plan rows,
    the placements) and the 8 role passes. Queries: 61 = quality's 44 + the
    lens's 4 + the view's 5 + 2 × 4 programmes. JSON: `programme_view` is
-   5,670 B as `JsonResponse` writes it (4,975 B compact; budget 6 KB); the
-   lens with it 58.8 KB. Python peak: `lens=1` 3.62-3.66 MiB against quality's
+   5,670 B as `JsonResponse` writes it (4,975 B compact; 666: 5,612 B), about
+   6 % under the 6 KB budget. It grows with placements × programmes × 2 (each
+   programme's roles and shared roles), so a scenario larger than 665 can pass
+   6 KB (F16 measures one); the lens with it 58.8 KB. Python peak: `lens=1` 3.62-3.66 MiB against quality's
    3.35-3.36 MiB, as at 6a.
    **Deviations from the spec:** (1) `programme_placement_roles` returns
    `ProgrammeRoles(roles, seats)`, not only the roles: the export draws its
@@ -1252,8 +1258,13 @@ findings changed the plan:
    would make it classify every sheet twice. (2) PV7's count is 5 + 2 per
    programme, not 4 + 2: the fifth read is the scenario row, whose year and
    term the elective mappings need (the quality view only checks that the
-   scenario exists). A programme whose term has mapped electives reads its
-   plan rows once more (the export's own `get_plan_elective_terms`). (3) The
+   scenario exists, and the lens is handed its id), read by primary key in
+   `timetable_plan_lens._programme_view`. It costs one indexed query; reading
+   the row where the quality view checks that it exists, and handing its year
+   and term down, would bring the count back to the spec's (F18). A
+   programme whose term has mapped
+   electives reads its plan rows once more (the export's own
+   `get_plan_elective_terms`). (3) The
    export keeps no `_section_passes_search` adapter: after the move nothing in
    it passes its filter object, and its planned-section count calls the moved
    function with `export_filter.shared_only`. (4) Moved beyond the spec's
@@ -1303,6 +1314,26 @@ findings changed the plan:
    before and after 6b: the download fails on a scenario whose English
    copies disagree. The quality read reports that scenario as unassessed and
    the lens as unassessed seating; the export has no such guard.
+   **After review (approved; its non-blocking items fixed):** 6a's review
+   fixes merged first (`1691bfb`); its new SQ2b and SQ4b now split
+   `?lens=1`'s lens from its view, and their 6a mutants still go red.
+   (1) Nothing checked that the view reads only its own scenario's
+   placements: every view test's database held one scenario, so
+   `SectionPlacement.objects.all()` passed. PV4's shape test now adds a
+   second scenario with a placement (a course in no plan and with no lens
+   row, so any programme that read it would list it outside); it is in
+   neither `placement_ids` nor any role list, with or without SHARED.
+   (2) R2's last tie-break, grid order (label, then id), came across
+   verbatim and no test reached it. A PV2 case pins it: two CS112 sections
+   seat 4 of 10 AI2 each, and S1, the larger id and placed second, is mixed;
+   two ENGL214 sections with no label (both "?") fall to the smaller id,
+   also placed second. (3) The note above now names the deferred elective
+   resolver import, the JSON budget's headroom (about 6 % on 665) and what
+   the fifth view read is for and costs. **Tests:** 56 cases. Eleven mutants,
+   all red on the intended test: the view's placements, its ids alone or its
+   roles alone read from every scenario; the grid order by id alone, by
+   label alone, as placed or reversed, and the later section winning R2's
+   tie; and 6a's three on SQ2b and SQ4b. **Follow-ups:** F18 and F19.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
@@ -3435,6 +3466,8 @@ Chrome (`SlotDialogTests`):
 - **F15.** Compress JSON answers.
 - **F16.** Measure `lens=1` on the 0.5 vCPU host and on a scenario larger than 665, before any default change to E2a.
 - **F17.** (Found in 6b.) With one teacher per section on, the per-plan export raises on a scenario whose sections cannot be built (QA 662 and 664: "English board copies must each use the same complete weekly pattern", from `section_teacher_texts`), so the download fails where the quality read says "unassessed". Decide the export's answer (a refusal naming the boards, or files without teachers).
+- **F18.** (6b review.) The programme view reads the scenario row by primary key for the elective mappings' year and term, so PV7 is 5 + 2 per programme, not the spec's 4 + 2. Read the row where the quality view now only checks that it exists, and hand its year and term down through the lens to `programme_view`; PV7 and SQ3 then pin 4 + 2.
+- **F19.** (6b review.) PV1's workbook oracle is recorded with one teacher per section and the day-off policy off; the mark flag is on only in the two `grouping/marked_flag_on` scenarios. Add a scenario recorded under all three production flags with a mark that decides a role, so the oracle covers the production path. Today that path rests on the grouping tests and the real-data runs (663, 665 and 666 under production flags: the view's roles equal the export's drawn roles).
 
 #### Owner questions (decided by the owner)
 

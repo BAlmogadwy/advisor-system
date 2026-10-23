@@ -238,6 +238,39 @@ def test_pv2_a_course_nobody_of_the_programme_sits_in_keeps_its_allocated_sectio
     assert out.roles == {1: "main"}
 
 
+def test_pv2_equal_count_and_share_fall_to_grid_order_label_then_id() -> None:
+    """R2's last tie-break: no section is main, and two seat as many AI2
+    students at the same share, so the first in grid order (label, then id)
+    is mixed. CS112: S1 is, though its id is the larger and it was placed
+    second. ENGL214's two sections have no label (both "?"): the smaller id
+    is, though it was placed second."""
+    placements = [
+        _placement(1, 301, "CS112", "S2"),
+        _placement(2, 302, "CS112", "S1"),
+        _placement(3, 304, "ENGL214", ""),
+        _placement(4, 303, "ENGL214", ""),
+    ]
+    four_of_ten = _row(AI2=4, DS2=6)
+    lens = _lens({301: four_of_ten, 302: four_of_ten, 303: four_of_ten, 304: four_of_ten})
+
+    out = pview.programme_placement_roles(
+        "AI2",
+        placements,
+        plan_map={"CS112": 2, "ENGL214": 2},
+        elective_terms={},
+        board_terms={10: 2},
+        plan_lens=lens,
+    )
+
+    assert out.roles == {1: "other", 2: "mixed", 3: "other", 4: "mixed"}
+    assert out.seats[2] == {
+        301: pview.SectionSeat("other", 4, 10),
+        302: pview.SectionSeat("mixed", 4, 10),
+        303: pview.SectionSeat("mixed", 4, 10),
+        304: pview.SectionSeat("other", 4, 10),
+    }
+
+
 def test_pv2_role_lists_are_in_the_contracts_order_ascending_and_never_empty() -> None:
     lists = pview._role_lists({5: "other", 9: "main", 2: "main", 1: "outside", 3: "main"})
 
@@ -331,7 +364,8 @@ def test_pv4_shared_roles_are_classified_after_shared_narrows_the_sections() -> 
 def test_pv4_the_view_has_contract_bs_shape() -> None:
     """Keys in contract B's order, roles in main, mixed, other, outside order,
     ids ascending, empty lists left out; a section the lens gives nobody is
-    outside the plan of a board programme that does not hold its course."""
+    outside the plan of a board programme that does not hold its course; only
+    this scenario's placements are read."""
     scenario, lens, ids = _shared_fixture()
     math = TermSection.objects.create(
         scenario=scenario,
@@ -348,9 +382,33 @@ def test_pv4_the_view_has_contract_bs_shape() -> None:
     )
     lens["sections"][str(math.id)] = _row(plans=("AI2",), AI2=1)
     DeliveryBoard.objects.create(scenario=scenario, label="Spare", program="IS", display_order=9)
+    # Another scenario's placement, of a course in no plan and with no lens
+    # row, so any programme that read it would list it outside: never here.
+    elsewhere = TimetableScenario.objects.create(academic_year="1448", term="2", name="Elsewhere")
+    stray = SectionPlacement.objects.create(
+        board=DeliveryBoard.objects.create(
+            scenario=elsewhere, label="Term 2", nominal_term=2, program="AI2,DS2,IS"
+        ),
+        term_section=TermSection.objects.create(
+            scenario=elsewhere,
+            course_code="PHYS101",
+            course_number="PHYS101",
+            course_key="PHYS101",
+            course_name="PHYS101",
+            section="P1",
+            source_tag="tw_auto",
+        ),
+        day="WED",
+        start_time="13:00",
+        end_time="14:15",
+    )
 
     view = pview.programme_view(scenario, lens)
 
+    assert stray.id not in view["placement_ids"]
+    for by_programme in (view["roles"], view["shared_roles"]):
+        for programme, by_role in by_programme.items():
+            assert stray.id not in _flat(by_role), programme
     assert list(view) == VIEW_KEYS
     assert list(view["roles"]["AI2"]) == ["main", "mixed", "other", "outside"]
     assert view["roles"]["AI2"]["outside"] == [outside.id]
