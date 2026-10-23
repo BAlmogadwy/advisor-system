@@ -58,12 +58,25 @@ class WorkspaceBrowserMixin:
         self.scenario = sc
         self.path = f"/timetable-workspace/?scenario={sc.id}"
 
-    def _load(self, language: str, theme: str, width: int, height: int, cards: int = 4):
+    def _load(
+        self,
+        language: str,
+        theme: str,
+        width: int,
+        height: int,
+        cards: int = 4,
+        *,
+        font: str = WIDE_FONT,
+        forced_colors: str = "none",
+    ):
+        """`font`: the init script that sets the page's font (CI's wide font
+        by default); `forced_colors`: "active" for Windows High Contrast."""
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},
             viewport={"width": width, "height": height},
             color_scheme=theme,
+            forced_colors=forced_colors,
         )
         self.addCleanup(context.close)
         context.add_cookies(
@@ -83,7 +96,7 @@ class WorkspaceBrowserMixin:
         context.add_init_script(
             f"try {{ localStorage.setItem('theme', '{theme}'); }} catch (e) {{}}"
         )
-        context.add_init_script(WIDE_FONT)
+        context.add_init_script(font)
         page = context.new_page()
         sent: list[str] = []
         errors: list[str] = []

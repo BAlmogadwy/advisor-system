@@ -837,17 +837,9 @@ async function showSchedulerOutcome(jobId) {
   });
   $('twPublish').addEventListener('click', publishScenario);
 
-  // Board bar
+  // Board bar. The strip is the global `.ux-overflow` (ux-controls.js): it
+  // keeps the chosen board in view through every render and resize.
   $('twNewBoard').addEventListener('click', createBoardPrompt);
-  // The strip changes width without a render (a window resize, a longer
-  // filter count beside it): keep the chosen board in view.
-  if (window.ResizeObserver) {
-    const strip = $('twBoardTabs');
-    new ResizeObserver(() => {
-      const current = strip.querySelector('[aria-current="true"]');
-      if (current) revealInStrip(strip, current);
-    }).observe(strip);
-  }
   // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
   // place (applyGridView, which also writes the count), never redraws it, so
   // a drag or a focused card survives typing. A programme or SHARED typed
@@ -1961,24 +1953,6 @@ function boardSectionsLeft(board) {
     .reduce((sum, row) => sum + Math.max(0, Number(row.remaining_sections) || 0), 0);
 }
 
-/* Scroll a horizontal strip just enough to show one of its items. scrollLeft
-   moves the view right as it grows in either direction (in a right-to-left
-   strip it runs from a negative minimum up to 0), so the visual overflow is the
-   amount to move. */
-function revealInStrip(strip, item) {
-  const view = strip.getBoundingClientRect();
-  const box = item.getBoundingClientRect();
-  // Wider than the strip: always show its start (alternating ends on every
-  // reveal — each resize step fires several — would make it flicker).
-  if (box.width > view.width - 8) {
-    if (getComputedStyle(strip).direction === 'rtl') strip.scrollLeft += box.right - view.right + 4;
-    else strip.scrollLeft -= view.left - box.left + 4;
-    return;
-  }
-  if (box.left < view.left) strip.scrollLeft -= view.left - box.left + 4;
-  else if (box.right > view.right) strip.scrollLeft += box.right - view.right + 4;
-}
-
 /* The open board: what the model knows, and while its clashes are unknown
    the board list's own count for them (rather than none). */
 function activeBoardCritical(board) {
@@ -2030,15 +2004,10 @@ function renderBoardTabs() {
     btn.addEventListener('click', () => selectBoard(b.id));
     wrap.appendChild(btn);
   });
+  // The chosen board is kept in view by the strip's `.ux-overflow` (it scrolls
+  // the STRIP only, after this and every later render; scrollIntoView also
+  // scrolled the page, on every keystroke).
   if (focusedBoard) wrap.querySelector(`[data-board-id="${focusedBoard}"]`)?.focus({ preventScroll: true });
-  // Keep the chosen board in view by scrolling the STRIP only (scrollIntoView
-  // also scrolled the page, on every keystroke). It runs after every render,
-  // because later renders widen the buttons before it ("N left", flags), and it
-  // re-reads the current button: this one may be gone by the next frame.
-  (window.requestAnimationFrame || setTimeout)(() => {
-    const current = wrap.querySelector('[aria-current="true"]');
-    if (current) revealInStrip(wrap, current);
-  });
 }
 
 /* The columns the scenario really uses: the server's effective config (its

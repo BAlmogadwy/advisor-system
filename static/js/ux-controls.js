@@ -17,6 +17,9 @@
    TABS   `[role=tablist].ux-tabs` of `[role=tab]` buttons whose `.active` class
           marks the selected one: roving tabindex, ← → Home End (mirrored in
           Arabic), `aria-selected`, and the owned panel's `aria-labelledby`.
+   OVERFLOW  `.ux-overflow` around one `.ux-seg` or `.ux-tabs` whose items may
+          not fit: scroll buttons and an edge cue at the ends with more to
+          see, and the active item kept in view (see "Overflow" below).
    DISCLOSURE  `<button class="ux-disclosure-toggle" aria-expanded aria-controls="ID"
           data-ux-disclosure="KEY">` opening and closing the region `#ID`
           (its `hidden`). One delegated listener, so it survives a page that
@@ -249,6 +252,156 @@
       all[next].click();
       syncTabs();
     });
+  }
+
+  // ── Overflow: a strip whose items may not fit ─────────────────
+  /* `.ux-overflow` wraps one scroller (a `.ux-seg` or `.ux-tabs`: its first
+     element child). Wiring adds a scroll button at each inline end of it
+     (`.ux-overflow-btn`, `data-ux-overflow-dir` start/end) and then keeps:
+     - `data-overflow-start` / `data-overflow-end` on the wrapper while there
+       is more to see that way (global.css shows that end's button and fades
+       the items into it);
+     - the active item (aria-current, aria-selected or aria-checked true,
+       `.active`, or holding a checked input) wholly in view and clear of the
+       cue, whenever it changes, the items change, a font arrives or the
+       strip changes size - by moving the strip only, never the page (a
+       page that scrolls below 1025px must not jump while the user types).
+       An item too wide for the room between the cues is centred; one wider
+       than the strip shows its start.
+     A button pages the strip by its width less the two cues, smoothly unless
+     the user asks for reduced motion. It is for a pointer: every item is
+     reached by the keyboard, and focus scrolls it into view clear of the cue
+     (the scroller's scroll-padding), so the buttons take no Tab stop, are
+     hidden from assistive technology, and a press never moves focus. Their
+     tooltip follows `<html lang>`. */
+  const OVERFLOW_WORDS = {
+    en: { start: 'Show previous', end: 'Show next' },
+    ar: { start: 'عرض السابق', end: 'عرض التالي' },
+  };
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const overflows = new WeakMap();
+  const scrollerOf = wrapper => [...wrapper.children].find(child => !child.classList.contains('ux-overflow-btn')) || null;
+  const isActiveItem = item => {
+    const current = item.getAttribute('aria-current');
+    return (current !== null && current !== 'false')
+      || item.getAttribute('aria-selected') === 'true' || item.getAttribute('aria-checked') === 'true'
+      || item.classList.contains('active') || Boolean(item.querySelector('input:checked'));
+  };
+  const cueOf = wrapper => parseFloat(getComputedStyle(wrapper).getPropertyValue('--ux-overflow-cue')) || 52;
+  const rtlOf = element => getComputedStyle(element).direction === 'rtl';
+  const setFlag = (element, name, on) => {
+    if (on) element.setAttribute(name, '');
+    else element.removeAttribute(name);
+  };
+
+  // How far the strip can move, and how far along it is (0 at its start in
+  // either direction: a right-to-left strip runs from a negative scrollLeft).
+  function overflowUpdate(wrapper) {
+    const scroller = scrollerOf(wrapper);
+    if (!scroller) return;
+    const range = scroller.scrollWidth - scroller.clientWidth;
+    const along = Math.abs(scroller.scrollLeft);
+    setFlag(wrapper, 'data-overflow-start', range > 1 && along > 1);
+    setFlag(wrapper, 'data-overflow-end', range > 1 && along < range - 1);
+  }
+
+  function overflowReveal(wrapper, item) {
+    const scroller = scrollerOf(wrapper);
+    if (!scroller) return;
+    const target = item || [...scroller.children].find(isActiveItem);
+    if (!target || !target.getClientRects().length) return;
+    if (scroller.scrollWidth - scroller.clientWidth <= 1) return;
+    const view = scroller.getBoundingClientRect();
+    const box = target.getBoundingClientRect();
+    const cue = cueOf(wrapper);
+    const room = view.width - box.width;
+    let delta = 0;
+    if (room < 0) {
+      // Wider than the strip: always its start (alternating ends on each
+      // resize step would make it flicker).
+      delta = rtlOf(scroller) ? box.right - view.right : box.left - view.left;
+    } else {
+      const margin = room >= 2 * cue ? cue : room / 2;
+      if (box.left < view.left + margin) delta = box.left - (view.left + margin);
+      else if (box.right > view.right - margin) delta = box.right - (view.right - margin);
+    }
+    // scrollLeft grows to the right in either direction.
+    if (Math.abs(delta) >= 0.5) scroller.scrollLeft += delta;
+  }
+
+  function overflowPage(wrapper, dir) {
+    const scroller = scrollerOf(wrapper);
+    if (!scroller) return;
+    const amount = Math.max(48, scroller.clientWidth - 2 * cueOf(wrapper));
+    const left = (dir === 'end' ? 1 : -1) * (rtlOf(scroller) ? -1 : 1) * amount;
+    const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof scroller.scrollBy === 'function') scroller.scrollBy({ left, behavior: still ? 'auto' : 'smooth' });
+    else scroller.scrollLeft += left;
+  }
+
+  function overflowButton(wrapper, dir) {
+    const words = OVERFLOW_WORDS[(document.documentElement.lang || '').toLowerCase().startsWith('ar') ? 'ar' : 'en'];
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ux-overflow-btn';
+    button.dataset.uxOverflowDir = dir;
+    button.tabIndex = -1;
+    button.setAttribute('aria-hidden', 'true');
+    button.title = words[dir];
+    const icon = document.createElementNS(SVG_NS, 'svg');
+    icon.setAttribute('class', 'i-flip-rtl');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.setAttribute('stroke-width', '2.2');
+    icon.setAttribute('stroke-linecap', 'round');
+    icon.setAttribute('stroke-linejoin', 'round');
+    icon.setAttribute('aria-hidden', 'true');
+    const chevron = document.createElementNS(SVG_NS, 'polyline');
+    chevron.setAttribute('points', dir === 'start' ? '15 18 9 12 15 6' : '9 18 15 12 9 6');
+    icon.append(chevron);
+    button.append(icon);
+    // A press never takes focus from wherever it is.
+    button.addEventListener('mousedown', event => event.preventDefault());
+    button.addEventListener('click', () => overflowPage(wrapper, dir));
+    return button;
+  }
+
+  function wireOverflow(wrapper) {
+    if (!wrapper || overflows.has(wrapper)) return;
+    const scroller = scrollerOf(wrapper);
+    if (!scroller) return;
+    const state = { frame: 0, reveal: false };
+    overflows.set(wrapper, state);
+    wrapper.prepend(overflowButton(wrapper, 'start'));
+    wrapper.append(overflowButton(wrapper, 'end'));
+    const frame = window.requestAnimationFrame || (callback => setTimeout(callback, 16));
+    // One pass per frame: reveal first (it moves the strip), then the ends.
+    const schedule = reveal => {
+      state.reveal = state.reveal || reveal;
+      if (state.frame) return;
+      state.frame = frame(() => {
+        state.frame = 0;
+        if (!wrapper.isConnected) return;
+        if (state.reveal) overflowReveal(wrapper);
+        state.reveal = false;
+        overflowUpdate(wrapper);
+      });
+    };
+    scroller.addEventListener('scroll', () => schedule(false), { passive: true });
+    new MutationObserver(() => schedule(true)).observe(scroller, {
+      childList: true, subtree: true, characterData: true,
+      attributes: true, attributeFilter: ['aria-current', 'aria-selected', 'aria-checked', 'class', 'hidden'],
+    });
+    if (window.ResizeObserver) {
+      const resized = new ResizeObserver(() => schedule(true));
+      resized.observe(scroller);
+      resized.observe(wrapper);
+    }
+    if (document.fonts && typeof document.fonts.addEventListener === 'function') {
+      document.fonts.addEventListener('loadingdone', () => schedule(true));
+    }
+    schedule(true);
   }
 
   // ── Disclosure ────────────────────────────────────────────────
@@ -943,6 +1096,7 @@
     const scope = root || document;
     scope.querySelectorAll('button[aria-haspopup="menu"][aria-controls]').forEach(wireMenu);
     scope.querySelectorAll('.ux-tabs[role="tablist"]').forEach(wireTabs);
+    scope.querySelectorAll('.ux-overflow').forEach(wireOverflow);
   }
 
   // One outside-click closer for every menu.
@@ -953,6 +1107,17 @@
   window.UXControls = {
     wire, close: () => entries.forEach(entry => close(entry)), disclosure, redraw, roving, letterOf,
     dialog: { open: openDialog, close: closeDialog, isOpen: dialogIsOpen },
+    // `refresh(wrapper)`: measure again now (and keep the active item in
+    // view) after a change no observer sees, as a style switched by a class
+    // on an ancestor.
+    overflow: {
+      wire: wireOverflow,
+      refresh(wrapper) {
+        if (!overflows.has(wrapper)) return;
+        overflowReveal(wrapper);
+        overflowUpdate(wrapper);
+      },
+    },
   };
   // base.html loads this at the end of <body>, so the page's markup is already
   // there: wire it now, and again once parsing ends for anything later (wiring
