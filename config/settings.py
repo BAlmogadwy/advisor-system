@@ -70,6 +70,11 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Gzips the Timetable Workspace's JSON answers only (/ops/tw/, JSON, >= 1 KB,
+    # never a file or a stream), and only while TIMETABLE_WORKSPACE_JSON_GZIP is on
+    # (below). High in the list, so it compresses last, after every middleware
+    # below has finished with the body. Revert = this one line.
+    "config.middleware.TwJsonGZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     # Must be after SessionMiddleware and before CommonMiddleware.
     "django.middleware.locale.LocaleMiddleware",
@@ -82,6 +87,20 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# TIMETABLE_WORKSPACE_JSON_GZIP: let ``TwJsonGZipMiddleware`` gzip the workspace's
+# JSON answers (stage 3, B5). Default OFF: off, every answer leaves the app byte
+# for byte as before, with no new ``Vary`` header. Production keeps it off
+# (render.yaml, pinned by scripts/validate_render_blueprint.py): Render documents
+# that its load balancers already compress app responses with Brotli and gzip, so
+# gzip here would repeat that work on the 0.5-CPU host. Turn it on only where
+# nothing in front of the app compresses; docs/stage3/B5.md has the host gate.
+TIMETABLE_WORKSPACE_JSON_GZIP = os.getenv("TIMETABLE_WORKSPACE_JSON_GZIP", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 ROOT_URLCONF = "config.urls"
 
