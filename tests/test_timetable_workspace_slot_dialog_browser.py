@@ -15,9 +15,10 @@ act looks it; "08:00" fits its 76px field; a refused field's error reads at
 read at 4.5:1; nothing is under 11px; and Escape gives the keyboard back to ⋯.
 
 SDB2 (the keyboard alone): ⋯, Edit time slots…, an end before its start,
-Enter: the field is marked and has the keyboard; the right end, Enter: saved
-to the database (the online-only windows keep their rule), and the keyboard
-is back on ⋯.
+Enter: the field is marked and has the keyboard; the right end (in Arabic,
+typed in Arabic-Indic digits: its length shown, and saved as 0–9), Enter:
+saved to the database (the online-only windows keep their rule), and the
+keyboard is back on ⋯.
 
 SDB3: the 16:00 lecture column holds a meeting; removing it is reviewed (the
 meeting named), Save anyway saves it, and the meeting is drawn under its
@@ -25,6 +26,12 @@ table.
 
 SDB4: below 560px each row is two lines (its number and label; then its
 times, length, rule and buttons), nothing scrolling sideways.
+
+SDB5 (English and Arabic, light and dark): a draft kept from an earlier open
+is offered as current while the saved columns are the ones it started from
+(the board read again, from the real server); once they are saved elsewhere
+it says so, in words that read at 4.5:1, and "Start from the saved columns"
+gives the new ones. Nothing is sent.
 """
 
 from __future__ import annotations
@@ -159,6 +166,19 @@ WORDS = [
 
 OPEN = "document.getElementById('twSlotDialog').open && document.activeElement?.matches('#twSlotEditor input[data-field=\"label\"]')"
 FIRST_END = '#twSlotLectures tbody tr[data-row-key] input[data-field="end"]'
+FIRST_LENGTH = (
+    "document.querySelector('#twSlotLectures tbody tr[data-row-key] .ux-rows-length').textContent"
+)
+# Its shown state: the draft's notice, and its sentence that the saved columns changed.
+DRAFT_SHOWN = (
+    "[!document.getElementById('twSlotDraft').hidden,"
+    " !document.getElementById('twSlotDraftChanged').hidden]"
+)
+
+
+def arabic_digits(text: str) -> str:
+    """The text with its digits as Arabic-Indic ones (U+0660–0669)."""
+    return "".join(chr(0x0660 + int(c)) if c.isdigit() else c for c in text)
 
 
 class SlotDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
@@ -266,7 +286,12 @@ class SlotDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                 language,
             )
             page.keyboard.press("Control+A")
-            page.keyboard.type("10:20")
+            page.keyboard.type("10:20" if language == "en" else arabic_digits("10:20"))
+            self.assertEqual(
+                page.evaluate(FIRST_LENGTH),
+                "80 min" if language == "en" else "80 دقيقةً",
+                language,
+            )
             page.keyboard.press("Enter")
             page.wait_for_function(
                 "!document.getElementById('twSlotDialog').open"
@@ -355,3 +380,51 @@ class SlotDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
             self.assertEqual(len(sent), 2, language)
             self.assertEqual(errors, [], language)
             page.context.close()
+
+    def test_sdb5_a_draft_older_than_the_saved_columns_says_so(self) -> None:
+        problems: dict[str, list] = {}
+        first_label = '#twSlotLectures tbody tr[data-row-key] input[data-field="label"]'
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                TimetableScenario.objects.filter(pk=self.scenario.pk).update(
+                    slot_config=[], lab_slot_config=[]
+                )
+                page, sent, errors = self._load(language, theme, 1440, 790)
+                found: list = []
+                self._open(page)
+                page.fill(first_label, "Morning")
+                page.keyboard.press("Escape")
+                page.wait_for_function("!document.getElementById('twSlotDialog').open")
+                # The board read again, nothing saved meanwhile: the draft, as current.
+                page.evaluate("selectBoard(TW.boardId)")
+                self._open(page)
+                if page.evaluate(DRAFT_SHOWN) != [True, False]:
+                    found.append(f"unchanged: {page.evaluate(DRAFT_SHOWN)}")
+                page.keyboard.press("Escape")
+                page.wait_for_function("!document.getElementById('twSlotDialog').open")
+                # Saved elsewhere (as split view saves): the last lecture column gone.
+                saved = page.evaluate("TW.scenario.effective_slot_config")
+                TimetableScenario.objects.filter(pk=self.scenario.pk).update(slot_config=saved[:-1])
+                page.evaluate("selectBoard(TW.boardId)")
+                self._open(page)
+                if page.evaluate(DRAFT_SHOWN) != [True, True]:
+                    found.append(f"changed: {page.evaluate(DRAFT_SHOWN)}")
+                if page.input_value(first_label) != "Morning":
+                    found.append("the draft is not the rows shown")
+                found += page.evaluate(CONTRAST, ["#twSlotDialog #twSlotDraftChanged"])
+                found += page.evaluate(SMALL_TEXT)
+                page.click("#twSlotFromSaved")
+                rows = page.evaluate(
+                    "[...document.querySelectorAll('#twSlotLectures tbody tr[data-row-key]')]"
+                    ".map(tr => tr.querySelector('input[data-field=\"label\"]').value)"
+                )
+                if rows != [slot["label"] for slot in saved[:-1]]:
+                    found.append(f"from the saved columns: {rows}")
+                if page.evaluate(DRAFT_SHOWN)[0]:
+                    found.append("the notice stayed")
+                if sent or errors:
+                    found += [*sent, *errors]
+                if found:
+                    problems[f"{language} {theme}"] = found
+                page.context.close()
+        self.assertEqual(problems, {})

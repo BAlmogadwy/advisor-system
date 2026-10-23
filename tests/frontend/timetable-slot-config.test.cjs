@@ -100,12 +100,22 @@ test('save repeats once with the fingerprint, and stops when declined', async ()
   assert.deepEqual(plain(sent), [{}]);
 });
 
-test('a list that keeps changing under the user is reported, never a silent stop', async () => {
-  const { SC } = moduleIn();
-  const reports = [];
-  const send = async () => ({ data: null, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', details: { fingerprint: 'moving' } } });
-  assert.equal(await SC.save({ send, confirm: async () => true, report: text => reports.push(text) }), null);
-  assert.deepEqual(reports, ['The timetable kept changing while you reviewed it; nothing was saved. Try again.']);
+test('a list that keeps changing under the user is reported, never a silent stop; the last answer is never shown, since nothing would be sent after it', async () => {
+  for (const [lang, words] of [['en', 'The timetable kept changing while you reviewed it; nothing was saved. Try again.'],
+    ['ar', 'تغيّر الجدول أثناء المراجعة أكثر من مرة؛ لم يُحفظ شيء. أعد المحاولة.']]) {
+    const { SC } = moduleIn(lang);
+    const heard = [];
+    let n = 0;
+    const send = async extra => {
+      heard.push(['send', extra.confirm || null]);
+      return { data: null, error: { code: 'SLOT_EDIT_NEEDS_CONFIRMATION', details: { fingerprint: `fp${++n}` } } };
+    };
+    assert.equal(await SC.save({ send, confirm: async details => { heard.push(['review', details.fingerprint]); return true; },
+      report: text => heard.push(['report', text]) }), null);
+    // Four answers, three reviews (each followed by its send), then the words.
+    assert.deepEqual(heard, [['send', null], ['review', 'fp1'], ['send', 'fp1'], ['review', 'fp2'], ['send', 'fp2'],
+      ['review', 'fp3'], ['send', 'fp3'], ['report', words]], lang);
+  }
 });
 
 test('the MRI move pool offers the effective columns, never an evening one to a day meeting', () => {
@@ -275,6 +285,31 @@ test('SC5 a row’s words: headers, its list, its flags and its buttons named by
   ];
   assert.deepEqual(wrong.map(en.fieldErrorText), ['End: must be after the start', 'Start: repeats another column', 'row: must be an object', 'odd: is odd']);
   assert.deepEqual(wrong.map(ar.fieldErrorText), ['النهاية: يجب أن تكون بعد البداية', 'البداية: تكرر عموداً آخر', 'السطر: غير صالح', 'odd: is odd']);
+});
+
+test('SC6 a time typed in Arabic digits (Arabic-Indic or Eastern Arabic-Indic) is read as 0–9 for its length and its save; a label is sent as typed', () => {
+  // Built from their code points: U+0660–0669 and U+06F0–06F9.
+  const arabic = text => text.replace(/[0-9]/g, d => String.fromCharCode(0x0660 + Number(d)));
+  const eastern = text => text.replace(/[0-9]/g, d => String.fromCharCode(0x06F0 + Number(d)));
+  const { SC: en } = moduleIn();
+  const { SC: ar } = moduleIn('ar');
+  assert.deepEqual([
+    en.lengthText(arabic('09:00'), arabic('10:15')), en.lengthText(eastern('9:00'), eastern('10:40')),
+    en.lengthText('09:00', arabic('10:20')), en.lengthText(eastern('13:00'), '16:00'), en.lengthText(arabic('10:15'), arabic('09:00')),
+  ], ['75 min', '100 min', '80 min', '180 min', '—']);
+  assert.deepEqual([ar.lengthText(arabic('09:00'), arabic('10:15')), ar.lengthText(eastern('09:00'), eastern('09:02')), ar.lengthText(arabic('10:15'), arabic('09:00'))],
+    ['75 دقيقةً', 'دقيقتان', '—']);
+  // Every digit of both sets, and nothing else touched.
+  const all = [{ label: `Lab ${arabic('2')}`, start: ` ${arabic('0123')}:${arabic('45')} `, end: `${eastern('6789')}x` },
+    { label: eastern('7'), start: eastern('01:23'), end: `${eastern('4')}:${eastern('56')}` }];
+  for (const SC of [en, ar]) {
+    assert.deepEqual(plain(SC.rowsToPayload(all)), [
+      { label: `Lab ${arabic('2')}`, start: '0123:45', end: '6789x' },
+      { label: eastern('7'), start: '01:23', end: '4:56' },
+    ]);
+  }
+  // The server's rule is unchanged: minutes reads what the server stores.
+  assert.equal(en.minutes(arabic('09:00')), null);
 });
 
 /* ── The split view ── */

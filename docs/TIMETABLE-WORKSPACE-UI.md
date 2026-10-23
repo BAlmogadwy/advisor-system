@@ -1674,6 +1674,15 @@ findings changed the plan:
    every change, dropped when the rows would send what is saved, by "Start
    from the saved columns" (`#twSlotDraft`, shown on an open that has a
    draft) and by a save that lands; Cancel, Escape and a failure keep it.
+   A draft keeps `base`, the saved columns it started from (every lecture
+   and lab column's label, start, end and rule, as one string): an open
+   whose saved columns are no longer those (saved elsewhere, e.g. split
+   view, and read again with the board) still offers the draft, and its
+   notice adds "The saved columns changed since this draft."
+   (`#twSlotDraftChanged`, the warning ink, both arms), with "Start from the
+   saved columns" as before; the draft is never offered as current. A draft edited further
+   keeps its `base`; one started again from the saved columns takes theirs.
+   A draft that would send what is saved now is no draft at the open.
    **Escape while the save is out** (D17a) closes the dialog; the save
    ends and says how where the user is (the slot dialog open again, another
    helper dialog, or a toast). A confirmation it then needs is not given:
@@ -1685,7 +1694,13 @@ findings changed the plan:
    **The slot module** (`?v=5`, three templates) gains `editorRows`,
    `rowsToPayload`, `lengthText` (`pluralAr`), `rowWords` (headers, a row's
    list word, flags, Up/Down/Remove), `fieldErrorText`, `save({invalid})`
-   (without `invalid` the answer is as before: SC1 and split view's test)
+   (without `invalid` the answer is as before: SC1 and split view's test;
+   a fourth answer that the list changed again is never shown, since no
+   send would follow a yes to it: three reviews, then "The timetable kept
+   changing…", for split view and MRI too), the reading of a typed time
+   (`typedTime`: an Arabic-Indic (U+0660–0669) or Eastern Arabic-Indic
+   (U+06F0–06F9) digit, as an Arabic keyboard types it, is its 0–9; used by
+   `lengthText` and by `rowsToPayload` for start and end, never for a label)
    and `minutes`, the server's reading of a stored time (`_TIME`): the
    grid's `timeMinutes` (6e) now calls it, so the grid and the dialog share
    one client copy (PK5 still pins it against Python). The integration
@@ -1712,19 +1727,21 @@ findings changed the plan:
    `meetingsCount`. (9) A field's name is its row header, then its column
    header ("Lecture column 1 Start"), the spec's two parts in the order a
    row is read.
-   **Tests:** SC1–SC5 (`timetable-slot-config.test.cjs`); SD1–SD10
+   **Tests:** SC1–SC6 (`timetable-slot-config.test.cjs`); SD1–SD12
    (`timetable-workspace.test.cjs`) replace the textarea editor's four tests
    (a spec change): SD1 rows, pills, names, focus, a second open refused;
    SD2 the body; SD3 marks on the rows sent after a reorder, the alert, no
    toast; SD4 the review (Back, Save anyway by fingerprint and its step,
    Escape settling, the next open on the rows); SD4b a list that changed
    while it was reviewed (the new list reviewed and confirmed by its own
-   fingerprint; after four answers, the module's words and the rows back);
+   fingerprint; after four answers, three of them reviewed, the module's
+   words and the rows back);
    SD5 saved; SD6 Add, Remove,
    Up, Down and the one-row rule, an empty list never sent; SD7 drafts; SD8
    holds, inert, one save at a time, the open's refusals; SD9 Arabic (times
    left to right, `pluralAr` lengths, isolated names and review times, the
-   template's arms); SD10 a save the user left. Chrome
+   template's arms); SD10 a save the user left; SD11 a draft older than
+   the saved columns; SD12 a time typed in Arabic digits. Chrome
    (`tests/test_timetable_workspace_slot_dialog_browser.py`,
    `SlotDialogTests`): SDB1 at 1366×650 and 1440×790, light and dark, en
    and ar, wide font (the head and Save in view while the rows scroll, no
@@ -1733,10 +1750,15 @@ findings changed the plan:
    edge and the refused one's critical edge at 3:1, the words at 4.5:1,
    nothing under 11px, a button that cannot act faded, Escape back to ⋯);
    SDB2 the keyboard alone (⋯, the item, an end before its start, Enter:
-   marked and focused; fixed, Enter: saved to the database, the online-only
+   marked and focused; fixed — in Arabic typed in Arabic-Indic digits, its
+   length shown — Enter: saved to the database as 0–9, the online-only
    windows keeping their rule, the keyboard on ⋯); SDB3 removing the 16:00
    column that holds an ORM meeting (reviewed, Save anyway, the meeting
-   under its table); SDB4 below 560px each row two lines, nothing sideways.
+   under its table); SDB4 below 560px each row two lines, nothing sideways;
+   SDB5 en and ar, light and dark: a draft is current after the board is
+   read again from the real server, and says the saved columns changed once
+   they are saved elsewhere (its words at 4.5:1), "Start from the saved
+   columns" giving the new ones.
    The neutral-button inventory gains the dialog's buttons.
    Mutation-checked: 100 jsdom mutants and 15 Chrome mutants all go red but
    two, argued equivalent: the draft's defensive copy (every change to the
@@ -1749,8 +1771,27 @@ findings changed the plan:
    own rules already refuse, and the last-row rule now goes red), a second
    submit while out (its alert and status are pinned), a second open (no
    row is drawn again), a refusal marked on a reopened dialog's rows, the
-   scenario not taking the answer, and the label's cell not taking the spare
-   room (each time cell is pinned at its field's width).
+   scenario not taking the answer (skipping it; a replace for the merge
+   survives, equivalent: the server answers the full scenario), and the
+   label's cell not taking the spare room (each time cell is pinned at its
+   field's width).
+   **Review fixes (6f review, all non-blocking):** (1) M18 survived: SD7
+   read the alert's text only, so a reopen that left `#twSlotAlert` shown
+   and empty (a bare warning strip) passed; SD7 now pins `hidden`. (2) A
+   draft had no record of the saved columns it started from, so after a
+   save elsewhere the older draft came back as if current (saving it would
+   replace the newer columns unless meetings or rules made the server ask):
+   `base` and `#twSlotDraftChanged`, above (SD11, SDB5). (3) `save()` asked
+   a fourth time on the fourth 409 and then sent nothing: the last answer is
+   no longer shown (the module's test counts sends and reviews, en and ar;
+   SD4b). (4) A time typed in Arabic digits had no length and the server
+   refused it: `typedTime` (SC6 en and ar, SD12, SDB2 in Arabic). Mutants:
+   18 jsdom (28 runs) and 5 Chrome, all red. M1 (marking by the live order
+   instead of `sent`) stays, argued equivalent: the rows are inert while a
+   save is out and a dialog opened again gets no marks, so the live order
+   at the answer is the order sent; SD3 pins the marks against the order at
+   open (its reorder is before Save), not `sent` against a later order. M34
+   (a removed row's mark kept) is equivalent too: row keys are never reused.
    **Real data** (a copy of the QA database, read only): all five
    scenarios (662–666) are on the server's defaults (7 lecture and 8 lab
    columns, 3 online-only); each one's rows, sent back unchanged as the
@@ -1760,9 +1801,14 @@ findings changed the plan:
    does.
    Follow-ups (recorded, not done): split view's editor on this dialog
    (F13); `.im-form-error` and the exam repeater on `.ux-rows` and
-   `.ux-field-error` (F12). A row keeps its pill after its times are edited,
-   though the server will not carry the rule to the new times: the review
-   names the rule lost before anything is saved (E15b). Labels past 40
+   `.ux-field-error` (F12). A row's rule pill is drawn once, from the saved
+   flags: it stays after the row's times are edited, and a plain row given
+   a flagged column's start and end shows none, though the server carries
+   the rule by start and end; display only — the review names a rule lost
+   before anything is saved (E15b). The ⋯ item stays off while the page is
+   busy or a planner job runs, so a draft cannot be looked at then (the
+   spec's "opens, Save held" is reached only by a hold that starts while
+   the dialog is open). Labels past 40
    characters are cut by the server silently; the next open shows the saved
    label. Below 560px the rows are flex lines: table semantics there are
    not checked with a screen reader (the workspace's acceptance starts at

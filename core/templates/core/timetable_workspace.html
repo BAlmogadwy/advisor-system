@@ -430,7 +430,8 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
     <div class="ux-dialog-body" id="twSlotBody" tabindex="-1">
       {# The rows, inert while a save is out; hidden while the server's list is reviewed. #}
       <div class="tw-slot-step" id="twSlotEditor">
-        <p class="ux-field-hint" id="twSlotDraft" hidden>{% if LANGUAGE_CODE == 'ar' %}عادت أعمدتك غير المحفوظة.{% else %}Your unsaved columns are back.{% endif %} <button type="button" class="btn btn-sm btn-neutral" id="twSlotFromSaved">{% if LANGUAGE_CODE == 'ar' %}البدء من الأعمدة المحفوظة{% else %}Start from the saved columns{% endif %}</button></p>
+        {# A draft kept from an earlier open; it says when the saved columns are no longer the ones it started from. #}
+        <p class="ux-field-hint" id="twSlotDraft" hidden>{% if LANGUAGE_CODE == 'ar' %}عادت أعمدتك غير المحفوظة.{% else %}Your unsaved columns are back.{% endif %} <span class="tw-slot-draft-changed" id="twSlotDraftChanged" hidden>{% if LANGUAGE_CODE == 'ar' %}تغيّرت الأعمدة المحفوظة منذ هذه المسودة.{% else %}The saved columns changed since this draft.{% endif %}</span> <button type="button" class="btn btn-sm btn-neutral" id="twSlotFromSaved">{% if LANGUAGE_CODE == 'ar' %}البدء من الأعمدة المحفوظة{% else %}Start from the saved columns{% endif %}</button></p>
         <fieldset class="ux-field">
           <legend class="ux-field-label" id="twSlotLecturesLegend">{% if LANGUAGE_CODE == 'ar' %}المحاضرات (75 دقيقة){% else %}Lectures (75 min){% endif %}</legend>
           <table class="ux-rows" id="twSlotLectures" aria-labelledby="twSlotLecturesLegend"></table>

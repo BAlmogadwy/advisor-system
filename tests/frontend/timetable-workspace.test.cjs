@@ -6746,7 +6746,7 @@ test('SD4 the server’s list is reviewed inside the dialog: Back sends nothing 
   assert.equal(e.d.activeElement, slotInput(e, 'slot_config', 0, 'label'));
 });
 
-test('SD4b the list changed while it was reviewed: the new list is reviewed, confirmed by its own fingerprint; one that keeps changing is said after four answers', async t => {
+test('SD4b the list changed while it was reviewed: the new list is reviewed, confirmed by its own fingerprint; one that keeps changing is said after four answers, the last never reviewed', async t => {
   const other = { ...SLOT_HIDDEN, hidden: [{ ...SLOT_HIDDEN.hidden[0], placement_id: 11, course_code: 'AI777' }], fingerprint: 'def456' };
   const h = await slotHarness(t, { answer: body => (body.confirm === 'def456' ? slotSaved(body) : body.confirm === 'abc123' ? slotNeedsConfirm(other) : slotNeedsConfirm()) });
   await h.select();
@@ -6762,17 +6762,19 @@ test('SD4b the list changed while it was reviewed: the new list is reviewed, con
   slotSubmit(h);
   await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
   assert.deepEqual(h.posts.map(post => post.body.confirm), [undefined, 'abc123', 'def456']);
-  // A list that changes at every answer: after four, the module's words, the rows back.
+  // A list that changes at every answer: three reviews; the fourth answer is
+  // never shown (nothing would be sent after a Save anyway on it): the
+  // module's words, the rows back.
   let n = 0;
   const k = await slotHarness(t, { answer: () => slotNeedsConfirm({ ...SLOT_HIDDEN, fingerprint: `fp${++n}` }) });
   await k.select();
   await slotOpen(k);
   slotSubmit(k);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 3; i++) {
     await wait(() => slotShown(k, 'twSlotReview') && atRest(k) && k.posts.length === i + 1);
     slotSubmit(k);
   }
-  await wait(() => slotAlert(k) && atRest(k));
+  await wait(() => slotAlert(k) && atRest(k) && k.posts.length === 4);
   assert.deepEqual([k.posts.map(post => post.body.confirm), slotAlert(k), slotShown(k, 'twSlotEditor'), slotShown(k, 'twSlotReview'), k.d.activeElement],
     [[undefined, 'fp1', 'fp2', 'fp3'], 'The timetable kept changing while you reviewed it; nothing was saved. Try again.', true, false, slotSaveButton(k)]);
 });
@@ -6904,6 +6906,7 @@ test('SD7 edits are never lost: Cancel, Escape and a failure keep the scenario�
   await slotOpen(h);
   assert.equal(slotShown(h, 'twSlotDraft'), true);
   assert.match(h.d.getElementById('twSlotDraft').textContent, /Your unsaved columns are back\..*Start from the saved columns/);
+  assert.equal(slotShown(h, 'twSlotDraftChanged'), false, 'the saved columns are the ones it started from');
   assert.deepEqual([slotInput(h, 'slot_config', 1, 'label').value, slotValues(h, 'lab_slot_config').map(row => row[0])], ['Evening', ['Bundle', 'Lab 1', 'Online 1']]);
   assert.equal(h.d.activeElement, slotInput(h, 'slot_config', 0, 'label'));
   // Escape: the same.
@@ -6921,6 +6924,7 @@ test('SD7 edits are never lost: Cancel, Escape and a failure keep the scenario�
   keyOn(h, 'Escape');
   await slotOpen(h);
   assert.deepEqual([slotShown(h, 'twSlotDraft'), slotAlert(h)], [true, ''], 'offered again, the old alert gone');
+  assert.equal(h.d.getElementById('twSlotAlert').hidden, true, 'no empty warning strip');
   // "Start from the saved columns": the saved rows, the hint gone, the keyboard on the first label, the draft gone.
   slotSubmit(h);
   await wait(() => slotAlert(h) && atRest(h) && !slotOut(h));
@@ -7176,4 +7180,76 @@ test('SD10 a save the user left (Escape while it was out) ends where the user is
   assert.deepEqual([slotAlert(x), x.d.querySelectorAll('#twSlotDialog [aria-invalid="true"]').length,
     [...x.d.querySelectorAll('#twSlotDialog tr[data-error-for]')].every(row => row.hidden)],
   ['The columns were not saved: Lectures, line 2: end must be after the start', 0, true]);
+});
+
+test('SD11 a draft older than the saved columns (saved elsewhere, e.g. split view) says so and keeps “Start from the saved columns”; one that now equals them is none', async t => {
+  // The scenario's columns as the server has them now: the scenario and the board answer with them.
+  let stored = { ...SLOT_COLUMNS };
+  const h = await slotHarness(t, { more: url => (url === '/ops/tw/scenarios/1/' ? { scenario: { ...scenario, ...stored }, active_job: null }
+    : url === '/ops/tw/boards/2/' ? { placements: [placement], ...stored } : undefined) });
+  await h.select();
+  await slotOpen(h);
+  slotType(h, slotInput(h, 'slot_config', 1, 'label'), 'Evening');
+  keyOn(h, 'Escape');
+  // Read again with nothing changed: the draft, offered as current.
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged'), slotInput(h, 'slot_config', 1, 'label').value], [true, false, 'Evening']);
+  keyOn(h, 'Escape');
+  // Saved elsewhere: a lecture column more.
+  const night = { label: 'Night', start: '18:00', end: '19:15' };
+  stored = { ...SLOT_COLUMNS, effective_slot_config: [...SLOT_COLUMNS.effective_slot_config, night] };
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged'), slotValues(h, 'slot_config').map(row => row[0])],
+    [true, true, ['09:00-10:15', 'Evening']], 'the draft, said to be older than the saved columns');
+  assert.match(h.d.getElementById('twSlotDraft').textContent, /Your unsaved columns are back\..*The saved columns changed since this draft\..*Start from the saved columns/);
+  // Edited further, it is still that draft: said again on the next open.
+  slotType(h, slotInput(h, 'slot_config', 0, 'label'), 'Morning');
+  h.d.querySelector('#twSlotDialog .ux-dialog-foot [data-dialog-close]').click();
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraftChanged'), slotValues(h, 'slot_config').map(row => row[0])], [true, ['Morning', 'Evening']]);
+  // Start from the saved columns: the new ones; a draft from them is current.
+  h.d.getElementById('twSlotFromSaved').click();
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotValues(h, 'slot_config').map(row => row[0])], [false, ['09:00-10:15', 'Late', 'Night']]);
+  slotType(h, slotInput(h, 'slot_config', 2, 'end'), '19:30');
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged'), slotInput(h, 'slot_config', 2, 'end').value], [true, false, '19:30']);
+  keyOn(h, 'Escape');
+  // A rule the saved columns lost is a change too.
+  stored = { ...stored, effective_lab_slot_config: SLOT_COLUMNS.effective_lab_slot_config.map(slot => ({ ...slot, online_only: false })) };
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotShown(h, 'twSlotDraftChanged')], [true, true]);
+  keyOn(h, 'Escape');
+  // Saved elsewhere as exactly the draft: nothing to offer, and the draft is gone.
+  stored = { ...stored, effective_slot_config: [...SLOT_COLUMNS.effective_slot_config, { ...night, end: '19:30' }] };
+  await h.w.selectBoard(2);
+  await slotOpen(h);
+  assert.deepEqual([slotShown(h, 'twSlotDraft'), slotInput(h, 'slot_config', 2, 'end').value], [false, '19:30']);
+  keyOn(h, 'Escape');
+  await slotOpen(h);
+  assert.equal(slotShown(h, 'twSlotDraft'), false);
+  assert.deepEqual([h.posts, h.errors], [[], []]);
+  // Its words, in both arms of the template.
+  assert.ok(template.includes(`<span class="tw-slot-draft-changed" id="twSlotDraftChanged" hidden>{% if LANGUAGE_CODE == 'ar' %}تغيّرت الأعمدة المحفوظة منذ هذه المسودة.{% else %}The saved columns changed since this draft.{% endif %}</span>`));
+});
+
+test('SD12 a time typed in Arabic digits shows its length and is saved as 0–9, in English and in Arabic', async t => {
+  // Built from their code points: Arabic-Indic U+0660–0669, Eastern Arabic-Indic U+06F0–06F9.
+  const arabic = text => text.replace(/[0-9]/g, d => String.fromCharCode(0x0660 + Number(d)));
+  const eastern = text => text.replace(/[0-9]/g, d => String.fromCharCode(0x06F0 + Number(d)));
+  for (const [lang, start, end, length] of [['en', eastern, eastern, '80 min'], ['ar', arabic, eastern, '80 دقيقةً']]) {
+    const h = await slotHarness(t, { arabic: lang === 'ar' });
+    await h.select();
+    await slotOpen(h);
+    slotType(h, slotInput(h, 'slot_config', 0, 'start'), start('09:00'));
+    slotType(h, slotInput(h, 'slot_config', 0, 'end'), end('10:20'));
+    assert.equal(slotLengths(h, 'slot_config')[0], length, lang);
+    assert.deepEqual(slotValues(h, 'slot_config')[0], ['09:00-10:15', start('09:00'), end('10:20')], `${lang}: the field keeps what was typed`);
+    slotSubmit(h);
+    await wait(() => !slotDialogEl(h).hasAttribute('open') && atRest(h));
+    assert.deepEqual(h.posts.map(post => post.body.slot_config[0]), [{ label: '09:00-10:15', start: '09:00', end: '10:20' }], lang);
+  }
 });

@@ -34,6 +34,17 @@
     const match = SERVER_TIME.exec(value == null ? '' : String(value));
     return match ? Number(match[1]) * 60 + Number(match[2]) : null;
   }
+  /* A time as typed, its digits as the server reads them: an Arabic-Indic
+     (U+0660–0669) or Eastern Arabic-Indic (U+06F0–06F9) digit, which an
+     Arabic keyboard types, is its 0–9; nothing else changes. The one place a
+     typed time is read (a row's length, and what a save sends). */
+  const NATIVE_DIGIT = /[\u0660-\u0669\u06F0-\u06F9]/g;
+  function typedTime(value) {
+    return String(value ?? '').replace(NATIVE_DIGIT, digit => {
+      const code = digit.charCodeAt(0);
+      return String(code - (code >= 0x06F0 ? 0x06F0 : 0x0660));
+    });
+  }
   const DAY = AR
     ? { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس' }
     : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu' };
@@ -128,18 +139,19 @@
 
   /* The rows as a save sends them: label, start and end, trimmed, an empty
      value kept (the server names an empty time; an empty label is its
-     "start-end"), and no flag. */
+     "start-end"), and no flag. A time's Arabic digits are sent as 0–9; a
+     label is sent as typed. */
   function rowsToPayload(rows) {
     const text = value => String(value ?? '').trim();
-    return (rows || []).map(row => ({ label: text(row.label), start: text(row.start), end: text(row.end) }));
+    return (rows || []).map(row => ({ label: text(row.label), start: text(typedTime(row.start)), end: text(typedTime(row.end)) }));
   }
 
   /* A row's length, for display only: nothing is checked here (the server
      marks a wrong time); a start or end that is no time, or an end not after
-     the start, has no length. */
+     the start, has no length. Read as a save sends it (Arabic digits as 0–9). */
   function lengthText(start, end) {
-    const from = minutes(start);
-    const to = minutes(end);
+    const from = minutes(typedTime(start));
+    const to = minutes(typedTime(end));
     if (from === null || to === null || to <= from) return '—';
     const n = to - from;
     return AR
@@ -240,7 +252,9 @@
     let extra = {};
     // Another answer after a confirmation means the list changed while the
     // user read it (another edit landed): show the new list, a few times.
-    for (let attempt = 0; attempt < 4; attempt++) {
+    // The last answer is never shown: no send would follow a yes to it.
+    const ATTEMPTS = 4;
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       const { data, error } = await send(extra);
       if (!error) return data || null;
       if (error.code === 'VALIDATION_SLOTS') {
@@ -249,6 +263,7 @@
         return null;
       }
       if (error.code !== 'SLOT_EDIT_NEEDS_CONFIRMATION') return null;
+      if (attempt === ATTEMPTS - 1) break;
       if (!(await confirm(error.details || {}))) return null;
       extra = { confirm: error.details?.fingerprint };
     }

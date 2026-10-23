@@ -6202,7 +6202,8 @@ function setIssuesCount(total, critical) {
    before Save anyway. A list always keeps one row: an empty list is the
    server's defaults, never "no columns". A column's flags are shown and never
    edited (owner, Q4). Edits are never lost: every change is the scenario's
-   draft (page memory) until a save lands, and the next open offers it. */
+   draft (page memory) until a save lands, and the next open offers it —
+   saying so when the saved columns changed since the draft began. */
 const SLOT_WORDS = IS_AR ? {
   noScenario: 'اختر سيناريو أولا',
   progress: 'جارٍ حفظ الأعمدة…',
@@ -6231,14 +6232,16 @@ const SLOT_ICONS = {
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
   remove: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
-// Scenario id → its unsaved rows ({slot_config, lab_slot_config}).
+/* Scenario id → its draft: the unsaved rows ({slot_config, lab_slot_config})
+   and `base`, the saved columns they started from (slotSignature), so a
+   draft older than the saved columns is never offered as if it were current. */
 const SLOT_DRAFTS = new Map();
-/* The dialog's session: the scenario it edits, its rows, the server's marks
-   (row key → {fields, texts}), its write out, the step shown ('rows' or
-   'review'), the review waiting for an answer ({resolve}), and the page's
-   hold its alert is about. */
+/* The dialog's session: the scenario it edits, its rows and the saved
+   columns they started from, the server's marks (row key → {fields, texts}),
+   its write out, the step shown ('rows' or 'review'), the review waiting for
+   an answer ({resolve}), and the page's hold its alert is about. */
 const SLOT = {
-  token: 0, scenarioId: null, rows: { slot_config: [], lab_slot_config: [] }, marks: new Map(),
+  token: 0, scenarioId: null, rows: { slot_config: [], lab_slot_config: [] }, base: '', marks: new Map(),
   pending: false, step: 'rows', review: null, held: '',
 };
 function slotDialogOpen() {
@@ -6251,19 +6254,26 @@ function savedSlotRows() {
   const SC = window.TimetableSlotConfig;
   return { slot_config: SC.editorRows(scenarioLectureSlots()), lab_slot_config: SC.editorRows(scenarioLabSlots()) };
 }
-/* After every change: the rows are the scenario's draft, unless they would
-   send what is saved (then there is nothing to keep). */
-function rememberSlotDraft() {
+/* The saved columns as one string (every column's label, start, end and
+   flags, lectures then labs): what a draft started from. */
+function slotSignature() {
+  const saved = savedSlotRows();
+  return JSON.stringify(SLOT_LISTS.map(list => saved[list].map(row => [row.label, row.start, row.end, row.flags])));
+}
+/* Rows that would send what is saved: nothing to keep. */
+function slotRowsSendSaved(rows) {
   const SC = window.TimetableSlotConfig;
-  if (TW.scenarioId === SLOT.scenarioId) {
-    const saved = savedSlotRows();
-    const sends = list => JSON.stringify(SC.rowsToPayload(SLOT.rows[list]));
-    if (SLOT_LISTS.every(list => sends(list) === JSON.stringify(SC.rowsToPayload(saved[list])))) {
-      SLOT_DRAFTS.delete(SLOT.scenarioId);
-      return;
-    }
+  const saved = savedSlotRows();
+  return SLOT_LISTS.every(list => JSON.stringify(SC.rowsToPayload(rows[list])) === JSON.stringify(SC.rowsToPayload(saved[list])));
+}
+/* After every change: the rows are the scenario's draft, with the saved
+   columns they started from, unless they would send what is saved. */
+function rememberSlotDraft() {
+  if (TW.scenarioId === SLOT.scenarioId && slotRowsSendSaved(SLOT.rows)) {
+    SLOT_DRAFTS.delete(SLOT.scenarioId);
+    return;
   }
-  SLOT_DRAFTS.set(SLOT.scenarioId, copySlotRows(SLOT.rows));
+  SLOT_DRAFTS.set(SLOT.scenarioId, { rows: copySlotRows(SLOT.rows), base: SLOT.base });
 }
 function findSlotRow(key) {
   for (const list of SLOT_LISTS) {
@@ -6383,9 +6393,11 @@ function syncSlotDialog() {
 
 /* From the ⋯ menu. Any open dialog first; no scenario, or a published one,
    is a toast (no dialog is open to say it in). The rows are the scenario's
-   draft when it has one (said, with a way back to the saved columns), else
-   its saved columns. The keyboard starts on the first label and goes back
-   to the menu's button. */
+   draft when it has one (said, with a way back to the saved columns, and
+   that the saved columns changed when they are no longer the ones it started
+   from — saved elsewhere, e.g. in split view), else its saved columns. A
+   draft that would send what is saved now is none. The keyboard starts on
+   the first label and goes back to the menu's button. */
 function openSlotDialog() {
   if (anyDialogOpen()) return false;
   if (!TW.scenarioId || !TW.scenario) {
@@ -6399,10 +6411,15 @@ function openSlotDialog() {
   const dialog = $('twSlotDialog');
   const SC = window.TimetableSlotConfig;
   if (!dialog || !window.UXControls?.dialog || !SC) return false;
-  const draft = SLOT_DRAFTS.get(TW.scenarioId);
+  let draft = SLOT_DRAFTS.get(TW.scenarioId);
+  if (draft && slotRowsSendSaved(draft.rows)) {
+    SLOT_DRAFTS.delete(TW.scenarioId);
+    draft = undefined;
+  }
+  const base = slotSignature();
   Object.assign(SLOT, {
-    token: SLOT.token + 1, scenarioId: TW.scenarioId, rows: draft ? copySlotRows(draft) : savedSlotRows(), marks: new Map(),
-    pending: false, step: 'rows', review: null, held: '',
+    token: SLOT.token + 1, scenarioId: TW.scenarioId, rows: draft ? copySlotRows(draft.rows) : savedSlotRows(),
+    base: draft ? draft.base : base, marks: new Map(), pending: false, step: 'rows', review: null, held: '',
   });
   // What it is about, for the words another dialog's write says in it.
   dialog.dataset.twAbout = `slots:${TW.scenarioId}`;
@@ -6411,6 +6428,7 @@ function openSlotDialog() {
   alert.hidden = true;
   $('twSlotScenario').textContent = TW.scenario.name || '';
   $('twSlotDraft').hidden = !draft;
+  $('twSlotDraftChanged').hidden = !draft || draft.base === base;
   const flags = [SC.flaggedColumnsText(scenarioLectureSlots()), SC.flaggedColumnsText(scenarioLabSlots())].filter(Boolean).join(' ');
   $('twSlotFlags').textContent = flags;
   $('twSlotFlags').hidden = !flags;
@@ -6482,7 +6500,7 @@ function slotRowAction(kind, key) {
 function startFromSavedSlots() {
   if (SLOT.pending || SLOT.step !== 'rows' || TW.scenarioId !== SLOT.scenarioId) return;
   SLOT_DRAFTS.delete(SLOT.scenarioId);
-  Object.assign(SLOT, { rows: savedSlotRows(), marks: new Map() });
+  Object.assign(SLOT, { rows: savedSlotRows(), base: slotSignature(), marks: new Map() });
   $('twSlotDraft').hidden = true;
   dialogSay($('twSlotDialog'), '');
   drawSlotDialog();
