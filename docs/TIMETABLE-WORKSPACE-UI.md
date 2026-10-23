@@ -178,6 +178,23 @@ padding-aware for `p-0`.
   `.ux-choice-static` is a row that cannot be chosen, its reason written in it
   (no disabled radios); `.ux-choice-title` is a flex line (icon, code, words);
   `.ux-choice-status` is a row's small status line.
+- `.ux-rows` — a list edited as rows (the slot dialog, §7.2 item 6, 6f): a
+  table, one row per item, a row header (its number), text fields, then the
+  row's own icon buttons (`.ux-rows-actions`, each named by its row; one that
+  cannot act now is `aria-disabled`, so the keyboard stays on it, and drawn
+  faded). `.ux-rows-time` is a 24-hour time typed as text (76px, left to right
+  in either language), `.ux-rows-length` a computed value, `.ux-rows-flags`
+  the row's pills; `.ux-rows-grow` (the label's cell) takes the room the
+  others leave, each of them at least a fixed width, so two tables of one
+  dialog line up. Below 560px each row is two lines (its number and label,
+  then the rest), the header row out of sight only.
+- `.ux-field-error` — a field's error under it, named by the field's
+  `aria-describedby`; in a dialog a field the server refused
+  (`aria-invalid="true"`) takes a critical edge, inside and out (3:1).
+  Instructor management's `.im-form-error`, the exam timetable's period
+  repeater and
+  the older `.field-error` are to move onto it and `.ux-rows` (F12).
+- `.ux-dialog-wide` — an 800px dialog, for one that edits rows.
 - `.ux-job` — the shared planner job card, floating at the window's end edge.
 - `.pill-n` — neutral status pill.
 
@@ -302,7 +319,16 @@ Stage 3 (to evaluate): a time-proportional week grid.
   `data-tw-about`), the words lead with what they are about (course and
   section, isolated), so they never read as that dialog's own.
   Its commit checks the page's edit hold itself before it writes
-  (`dialogWrite`), since the page's busy guard answers with a toast.
+  (`dialogWrite`, which answers a failure as `{code, status, error}`, the
+  last the server's own error), since the page's busy guard answers with a
+  toast.
+- The grid's columns are edited on PR 1's contract (§7.2 item 6, 6f): the
+  page sends each list's rows as typed (label, start, end; never a flag, never
+  an empty list, which the server would save as its defaults) and checks no
+  time; the server's `VALIDATION_SLOTS` is marked on the row sent at its
+  index, and its `SLOT_EDIT_NEEDS_CONFIRMATION` list is confirmed only by
+  its fingerprint, after the user has read it. Unsaved edits are kept as the
+  scenario's draft until a save lands.
 - The filter and the programme lens are a view over the board
   (`applyGridView`, §7.2 item 6, 6c): they change attributes and text only —
   `data-dim`, `aria-describedby`, titles, a fold row's and rowgroup's
@@ -1314,6 +1340,155 @@ findings changed the plan:
    the fold's cell spans `numSlots + 1` columns: a screen reader may give
    their column positions loosely (the keyboard, by `data-ux-col`, is right
    and tested).
+   **As built, 6f (the slot dialog):** ⋯ › Edit time slots… opens
+   `#twSlotDialog`, a template dialog through `UXControls.dialog`, where the
+   textarea editor was (a `dlg.confirm`, with the confirmation stacked on it;
+   `openSlotEditor` is gone). It shows the scenario's effective columns as
+   rows, lectures then labs, from `editorRows`: a label (`dir=auto`), a
+   start and an end typed as text (`.ux-rows-time`: `inputmode=numeric`,
+   `dir=ltr`, no autocomplete or spellcheck), the length (`lengthText`,
+   display only), the column's rule as a pill (Online only, Policy column:
+   read only, owner Q4, with the old editor's line that an online window
+   keeps its rule while it keeps its times), and Up, Down and Remove, icon
+   buttons named by the row (its label, else "Lecture column 3"; the name
+   isolated) and `aria-disabled` where they cannot act, so the keyboard stays
+   on them. Each field is named by its row header and its column header. A
+   list always keeps one row (owner Q5): Remove is off on a list's only row,
+   described by `#twSlotOneRow`, which shows; and Save sends nothing while a
+   list is empty (the server's columns never are; an empty list would be
+   saved as its defaults). Add appends a row and focuses its label; Remove
+   focuses the next row's label, or Add; Up and Down keep the keyboard on
+   the same button. Typing updates the row's length and its buttons' names
+   in place: the rows are drawn again only when they change shape.
+   **Save** (E15, contract C): the rows in their order through
+   `rowsToPayload` (trimmed, an empty value sent as empty, never a flag; no
+   time checked), each list's row keys kept as `sent`. `SC.save` with
+   `send` (`dialogWrite`, which now also returns the server's `error`,
+   E18), `invalid` (each refused field `aria-invalid` on the row sent at its
+   index, the row's error line under it — "End: must be after the start",
+   `fieldErrorText`, the field named as its column header — and the first
+   marked field takes the keyboard; a list's own error, index −1, is the
+   alert's alone), `confirm` (the review, below) and `report` (the alert).
+   While the save is out the rows are `inert`, the status line says "Saving
+   the columns…", the keyboard waits on the body (Save turns off under it,
+   as a choice list holds it in Move), and a second submit sends nothing.
+   A failure is said in the alert: the gate's words for published, a
+   planner job or busy (the hold's words go when it does), else "The
+   columns were not saved."; the keyboard goes back to Save unless the user
+   moved to a way out. **The review** is a step of the dialog, never a
+   dialog over it: the rows hide, `confirmationHtml(details, {parked:
+   true})` shows under "Check before saving", which takes the keyboard,
+   Back shows, Save reads "Save anyway" (the template's
+   `data-review-label`). Save anyway repeats the same body with the
+   server's fingerprint; the review stays in view while it is out, Back
+   hidden. Back, or the dialog closing, answers the module false (the
+   promise always settles); Back puts the keyboard on Save. **Saved:** the
+   draft goes, the dialog closes (the keyboard back on ⋯), `TW.scenario`
+   takes the answer, the board is read again (`selectBoard`, so quality
+   too, E17), and the saved columns are said — "Columns saved: 7 lecture, 8
+   lab." or, when `hidden_count` > 0, a warning that adds "now under their
+   tables, outside the columns: 2 meetings" (`meetingsCount`) — through
+   `dialogSay`, so a dialog open by then says it. **Holds:** Save is
+   `data-tw-mutation`; its note gives the first hold. The ⋯ item stays off
+   while the page is busy, as before, so the dialog meets a hold that starts
+   while it is open. **Drafts (E15d):** page memory per scenario, written on
+   every change, dropped when the rows would send what is saved, by "Start
+   from the saved columns" (`#twSlotDraft`, shown on an open that has a
+   draft) and by a save that lands; Cancel, Escape and a failure keep it.
+   **Escape while the save is out** (D17a) closes the dialog; the save
+   ends and says how where the user is (the slot dialog open again, another
+   helper dialog, or a toast). A confirmation it then needs is not given:
+   nothing more is sent and it says "The columns were not saved."; when the
+   edits are kept and no slot dialog shows them, the words add "Your edits
+   come back when you open “Edit time slots” again." (a sentence beyond the
+   spec's strings). A refusal is never marked on the rows of a dialog opened
+   again meanwhile.
+   **The slot module** (`?v=5`, three templates) gains `editorRows`,
+   `rowsToPayload`, `lengthText` (`pluralAr`), `rowWords` (headers, a row's
+   list word, flags, Up/Down/Remove), `fieldErrorText`, `save({invalid})`
+   (without `invalid` the answer is as before: SC1 and split view's test)
+   and `minutes`, the server's reading of a stored time (`_TIME`): the
+   grid's `timeMinutes` (6e) now calls it, so the grid and the dialog share
+   one client copy (PK5 still pins it against Python). The integration
+   harness loads the module before the page, as the template does, and the
+   workspace harness sets `<html lang>` as `base.html` does (the module
+   reads it). **Global** (`global.css ?v=87`): `.ux-rows` with its cells,
+   `.ux-field-error`, the refused field's critical edge in a dialog, and
+   `.ux-dialog-wide` (§3.3); page CSS (`?v=20`): the two steps' rhythm and
+   the review's heading. PAGE `?v=60`.
+   **Deviations from the spec:** (1) the rows' section is `#twSlotEditor`:
+   `#twSlotEdit` is the ⋯ item's id. (2) Only that section goes inert, not
+   the whole body: the body (`tabindex=-1`) holds the keyboard while Save is
+   off. (3) The tables' headers and a row's words are drawn from the slot
+   module (one copy, which the field error reuses), not written in the
+   template; the legends, Add, the hints, the review's heading and the
+   buttons are template arms. (4) The field error names the field by its
+   header ("End: …"), not by `FIELD` ("end"). (5) The open's refusals use
+   the gate's words as warnings ("Select a scenario first";
+   `REFUSAL.published`), not the old error toasts. (6) The dialog is 800px
+   (`.ux-dialog-wide`); at 600px the label had 30px. (7) Cells are
+   middle-aligned (the spec's CSS said top), and the length, rule and
+   actions cells have minimum widths with the label taking the rest, so the
+   two tables line up. (8) `{meetings}` in the toast is the page's
+   `meetingsCount`. (9) A field's name is its row header, then its column
+   header ("Lecture column 1 Start"), the spec's two parts in the order a
+   row is read.
+   **Tests:** SC1–SC5 (`timetable-slot-config.test.cjs`); SD1–SD10
+   (`timetable-workspace.test.cjs`) replace the textarea editor's four tests
+   (a spec change): SD1 rows, pills, names, focus, a second open refused;
+   SD2 the body; SD3 marks on the rows sent after a reorder, the alert, no
+   toast; SD4 the review (Back, Save anyway by fingerprint and its step,
+   Escape settling, the next open on the rows); SD4b a list that changed
+   while it was reviewed (the new list reviewed and confirmed by its own
+   fingerprint; after four answers, the module's words and the rows back);
+   SD5 saved; SD6 Add, Remove,
+   Up, Down and the one-row rule, an empty list never sent; SD7 drafts; SD8
+   holds, inert, one save at a time, the open's refusals; SD9 Arabic (times
+   left to right, `pluralAr` lengths, isolated names and review times, the
+   template's arms); SD10 a save the user left. Chrome
+   (`tests/test_timetable_workspace_slot_dialog_browser.py`,
+   `SlotDialogTests`): SDB1 at 1366×650 and 1440×790, light and dark, en
+   and ar, wide font (the head and Save in view while the rows scroll, no
+   sideways scroll, the tables lined up with the label taking the spare
+   room, "08:00" whole in its 76px field and left to right, each field's
+   edge and the refused one's critical edge at 3:1, the words at 4.5:1,
+   nothing under 11px, a button that cannot act faded, Escape back to ⋯);
+   SDB2 the keyboard alone (⋯, the item, an end before its start, Enter:
+   marked and focused; fixed, Enter: saved to the database, the online-only
+   windows keeping their rule, the keyboard on ⋯); SDB3 removing the 16:00
+   column that holds an ORM meeting (reviewed, Save anyway, the meeting
+   under its table); SDB4 below 560px each row two lines, nothing sideways.
+   The neutral-button inventory gains the dialog's buttons.
+   Mutation-checked: 100 jsdom mutants and 15 Chrome mutants all go red but
+   two, argued equivalent: the draft's defensive copy (every change to the
+   rows writes the draft again, so an alias holds the same rows), and the
+   session check before a left save resets `pending` and the step (a dialog
+   opened again cannot be saving or reviewing while an older save is out:
+   every write waits for the one out). Survivors first found and
+   strengthened: the step not reset at open (SD4 now reopens while Save
+   anyway is out), the click's `aria-disabled` check (removed: the row's
+   own rules already refuse, and the last-row rule now goes red), a second
+   submit while out (its alert and status are pinned), a second open (no
+   row is drawn again), a refusal marked on a reopened dialog's rows, the
+   scenario not taking the answer, and the label's cell not taking the spare
+   room (each time cell is pinned at its field's width).
+   **Real data** (a copy of the QA database, read only): all five
+   scenarios (662–666) are on the server's defaults (7 lecture and 8 lab
+   columns, 3 online-only); each one's rows, sent back unchanged as the
+   dialog sends them, clean to exactly the columns it has (flags carried),
+   with nothing to confirm; no label is over 40 characters; and the
+   module's time rule reads all 788 stored starts and ends as the server
+   does.
+   Follow-ups (recorded, not done): split view's editor on this dialog
+   (F13); `.im-form-error` and the exam repeater on `.ux-rows` and
+   `.ux-field-error` (F12). A row keeps its pill after its times are edited,
+   though the server will not carry the rule to the new times: the review
+   names the rule lost before anything is saved (E15b). Labels past 40
+   characters are cut by the server silently; the next open shows the saved
+   label. Below 560px the rows are flex lines: table semantics there are
+   not checked with a screen reader (the workspace's acceptance starts at
+   1366px). The grid's column cells still read their start with the older
+   `minutesOf` for `data-ux-col` (the same minutes for every stored column).
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
