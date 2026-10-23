@@ -1158,6 +1158,29 @@ findings changed the plan:
    10.0 ms (max 16.7). Drawing the whole board again — what an edit does,
    and what the old filter did on every keystroke over the cards it kept —
    takes 16.2 ms, and 95 ms throttled.
+   **After review (6c):** a tone update builds the issue model once:
+   `applyCardTones` hands its `byPlacement` to `applyGridView`, which builds
+   the model itself only when no caller gives it (FL3 counts the builds).
+   The warning ink (`#9a3b06`; dark mode the shared `--sev-warning`) is one
+   custom property, `--tw-warning-ink` on `.tw-grid`, which the cards, the
+   folds and the legend all read (each set its own copy); Chrome computes the
+   same ring, mark and icon colours before and after. Four reviewer mutants
+   had survived; each test below now fails on its mutant. FL4: when a user
+   has opened a fold and new text still matches nothing in that table, its
+   rows hide while its fold row stays, and the board's stop leaves the
+   hidden rows. Only the `moved` flag on the rows does this, because the
+   fold row does not change. FL10: under a lens dim alone, a group heading
+   does not count the card as a match, and the legend's dim line shows.
+   FL10 also checks that adding or removing a programme token keeps an
+   opened fold open, since the memory is keyed on the board and the text
+   only. FB1: the fold label's effective opacity (its own times its boxes')
+   must be 1. The contrast helper cannot see opacity.
+   Follow-ups (recorded, not done): the fold label spans its table and
+   starts at the inline start. If the board scrolls sideways (a wide slot set
+   at a narrow width), the label scrolls out of view while the day column
+   stays sticky; it could be sticky at `inset-inline-start`. The legend's
+   "Dimmed: outside the filter" also covers a programme-lens dim, which it
+   fits only loosely; 6d decides its words along with the lens's roles.
    **As built, 6e (the parking strip):** a meeting no column of its kind has
    is drawn, under its own table, and was drawn nowhere before. One cell key
    for the renderer and the grid's rule (E14): `cellKey(day, start)` is the

@@ -2352,8 +2352,10 @@ function dimNotes(query) {
      table's one stop) and its rows hide, unless the user opened it for this
      board and text (TW.foldOpen); the fold's tone counts;
    - each group heading's matches, the legend's dim line and the count.
-   Roving reads its stops again only when a table folded or opened. */
-function applyGridView() {
+   Roving reads its stops again only when a table folded or opened. A caller
+   that has the issue model's `byPlacement` passes it (applyCardTones), so a
+   tone update builds the model once. */
+function applyGridView(byPlacement = buildBoardIssues().byPlacement) {
   const grid = $('twGrid');
   const query = filterQuery();
   const active = filterActive(query);
@@ -2363,7 +2365,6 @@ function applyGridView() {
     TW.foldOpen.clear();
   }
   const byId = new Map(TW.placements.map(p => [String(p.id), p]));
-  const { byPlacement } = buildBoardIssues();
   const notes = dimNotes(query);
   setText($('twDimNoteFilter'), notes.filter);
   setText($('twDimNoteLens'), notes.lens);
@@ -6159,7 +6160,7 @@ function applyCardTones() {
     // The title leads with it (applyGridView writes the title).
     card._twToneReason = reason;
   });
-  applyGridView();
+  applyGridView(byPlacement);
 }
 
 /* The counts and the card tones follow the data, whichever inspector tab is

@@ -218,7 +218,11 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 [draggable="false"] .tw-place-hint { display: none; }
 
 /* ── The board ──────────────────────────────────────────────────── */
-.tw-grid { min-width: 0; }
+/* The board's warning ink, one for its cards, its folds and its legend: a
+   ring and mark that reach 3:1 on every course colour (the shared amber
+   reaches 2.5:1 on the greys); dark mode keeps the shared amber. */
+.tw-grid { min-width: 0; --tw-warning-ink: #9a3b06; }
+html[data-theme="dark"] .tw-grid { --tw-warning-ink: var(--sev-warning); }
 .tw-group-head {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
   margin: 16px 0 6px;
@@ -294,9 +298,6 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
    never colour alone. */
 .tw-card {
   --tw-card-hue: #d4e6f1;
-  /* A warning ring and mark that reach 3:1 on every course colour (the
-     shared amber reaches 2.5:1 on the greys). */
-  --tw-warning-ink: #9a3b06;
   position: relative; min-width: 0;
   padding-block: 4px 5px; padding-inline: 8px 6px;
   border-radius: var(--radius-sm);
@@ -344,7 +345,6 @@ html[data-theme="dark"] .tw-section-item.is-complete { padding-block: 4px; backg
 .tw-card-marks .ux-icon { color: #374151; }
 .tw-card-marks .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
 html[data-theme="dark"] .tw-card {
-  --tw-warning-ink: var(--sev-warning);
   background: color-mix(in srgb, var(--tw-card-hue) 16%, var(--surface));
   border-color: rgba(255,255,255,0.08);
   border-inline-start-color: color-mix(in srgb, var(--tw-card-hue) 80%, transparent);
@@ -389,8 +389,6 @@ html body .tw-card.is-selected:focus-visible { outline-offset: 4px !important; b
 .tw-legend .ux-legend-swatch[data-swatch="selected"] { outline: 2px solid var(--t0); outline-offset: 1px; }
 .tw-legend .ux-legend-swatch[data-swatch="same"]     { outline: 1px dashed var(--t2); outline-offset: 1px; }
 .tw-legend .ux-tone-icon[data-tone="warning"] { color: var(--tw-warning-ink); }
-.tw-legend { --tw-warning-ink: #9a3b06; }
-html[data-theme="dark"] .tw-legend { --tw-warning-ink: var(--sev-warning); }
 .tw-workspace[data-busy="true"] .tw-card,
 .tw-workspace[data-busy="true"] .tw-section-item { cursor: progress; }
 
@@ -421,8 +419,6 @@ html[data-theme="dark"] .tw-legend .ux-legend-swatch[data-swatch="dim"] { backgr
 .tw-fold-tone { display: inline-flex; align-items: center; gap: 3px; }
 .tw-fold-tone .ux-tone-icon { width: 12px; height: 12px; }
 .tw-fold-tone[data-tone="warning"] .ux-tone-icon { color: var(--tw-warning-ink); }
-.tw-fold-toggle { --tw-warning-ink: #9a3b06; }
-html[data-theme="dark"] .tw-fold-toggle { --tw-warning-ink: var(--sev-warning); }
 
 /* ── The parking strip (design record §7.2 item 6, 6e) ─────────────
    A table's meetings whose day or start no column of their kind has: its
