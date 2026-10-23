@@ -13,7 +13,7 @@
  *   English pattern chooser, Remove, Undo and Redo;
  * - split view: a drop, Remove, Undo and Redo. A move's own "Move failed"
  *   stays quiet when the refusal was said in words (no double toast).
- * MRI calls neither endpoint (it only moves; stage 3's M1 makes it read-only).
+ * MRI calls neither endpoint (it only moves; owner decision 2026-10-23: no work on the MRI page).
  *
  * The free-label rule itself runs against tests/fixtures/section_label_cases.json,
  * the table the server's first_free_section_labels runs against too.
