@@ -36,8 +36,8 @@ async function harness(t, intercept = () => undefined, extra = {}, arabic = fals
     if (answer === undefined) {
       if (url.startsWith('/ops/tw/scenarios/?')) answer = { scenarios: [scenario] };
       else if (url === '/ops/tw/scenarios/1/') answer = { scenario: { ...scenario, ...extra }, active_job: extra.active_job || null };
+      // The classic page reads the lens with the quality (6d), never /plan-lens/.
       else if (url.includes('/quality/')) answer = quality;
-      else if (url.includes('/plan-lens/')) answer = { plans: [], courses: {}, sections: {} };
       else if (url.startsWith('/ops/tw/boards/?')) answer = { boards: [board] };
       else if (/\/boards\/\d+\/$/.test(url)) answer = { placements: [placement], slot_config: scenario.slot_config };
       else if (url.includes('/conflicts/')) answer = { summary: { critical: 0 }, cross_board_conflicts: [{ board_a_id: 2, board_b_id: 3, section_a: 'CS323', section_b: 'FE2', overlap_count: 14 }] };
@@ -1141,19 +1141,36 @@ test('the legend says what the marks mean, in both languages, under a board that
   }
 });
 
-test('two courses sharing a code are told apart on the board: colour by key, name read in its own direction', async t => {
+test('LN8 two courses sharing a code are told apart: colour by key, and named once the lens says so (one redraw; none for the same codes again)', async t => {
   const placements = [
     at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' }),
     at(11, { day: 'MON', course_code: 'CS112', course_key: 'CS112::PROGRAMMING_II', course_name: 'Programming II', term_section_id: 120 }),
   ];
-  // The plan lens is where the page learns that two courses share a code.
+  // The lens is where the page learns that two courses share a code: it comes
+  // with the quality read, after the board is first drawn.
+  let courses = { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} };
   const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements, slot_config: scenario.slot_config }
-    : url.includes('/plan-lens/') ? { plan_lens: { plans: [], sections: {}, courses: { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} } } }
+    : url.includes('/quality/') && url.endsWith('?lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses } }
     : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
+  const draws = [];
+  const draw = h.w.renderGridWithSlots;
+  h.w.renderGridWithSlots = (...args) => {
+    draw(...args);
+    draws.push([...h.d.querySelectorAll('#twGrid .tw-card-name')].map(name => name.textContent));
+  };
   await h.select();
+  assert.deepEqual(draws, [[], ['Programming I', 'Programming II']], 'drawn without names, then once more with them');
   const hue = id => card(h, id).style.getPropertyValue('--tw-card-hue');
   assert.notEqual(hue(10), hue(11), 'the card colours by course key, not by code');
   assert.equal(card(h, 10).querySelector('.tw-card-name').getAttribute('dir'), 'auto');
+  // The same codes again: the board is not drawn again.
+  await h.w.refreshWorkspaceQuality(true, { lens: true });
+  assert.equal(draws.length, 2, 'the same codes: no redraw');
+  // The codes no longer shared: drawn once more, without the names.
+  courses = { 'CS112::PROGRAMMING_I': {} };
+  await h.w.refreshWorkspaceQuality(true, { lens: true });
+  assert.deepEqual(draws.slice(2), [[]]);
+  assert.deepEqual(h.errors, []);
 });
 
 test('the tone mark is announced, with the reason', async t => {
@@ -1306,7 +1323,7 @@ test('search finds a section by the teacher its card names, never by a stale mee
    Every meeting stays drawn. A table the text matches nothing in folds to one
    row (its toggle, the table's one keyboard stop); the other cards the text
    misses are dimmed, by attributes only, so typing never draws the board
-   again. Programme tokens (the interim lens) dim and never fold. */
+   again. Programme tokens (the lens, 6d) dim and never fold. */
 const VIEW_LABS = [{ label: 'L1', start: '10:30', end: '12:10' }];
 function viewHarness(t, { placements, labs = VIEW_LABS, lens = null, q = noRooms, arabic = false, other = null } = {}) {
   return harness(t, url => {
@@ -1314,12 +1331,14 @@ function viewHarness(t, { placements, labs = VIEW_LABS, lens = null, q = noRooms
     if (other && url.startsWith('/ops/tw/boards/?')) return { boards: [board, { ...board, id: 3, label: 'Term 8', nominal_term: 8 }] };
     if (other && url === '/ops/tw/boards/3/') return { placements: other, slot_config: scenario.slot_config, lab_slot_config: labs };
     if (url.includes('/conflicts/')) return quiet;
-    if (url.includes('/quality/')) return q;
-    if (url.includes('/plan-lens/') && lens) return { plan_lens: lens };
+    // The lens comes with the quality read that asks for it (6d).
+    if (url.includes('/quality/')) return lens && url.endsWith('?lens=1') ? { ...q, plan_lens: lens } : q;
     if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     return undefined;
   }, {}, arabic);
 }
+// A programme or code as plain text isolates it (U+2066 … U+2069).
+const iso = text => `${String.fromCharCode(0x2066)}${text}${String.fromCharCode(0x2069)}`;
 // S1: two lectures; S2: a lecture and a lab. With labs on, each group has a lab table.
 const viewRows = () => [
   at(10, { course_code: 'CS101' }),
@@ -1408,14 +1427,17 @@ test('FL2 typing keeps the same card nodes and the keyboard on a focused card; t
   await h.select();
   const nodes = [...h.d.querySelectorAll('#twGrid .tw-card')];
   card(h, 11).focus();
-  const observer = new h.w.MutationObserver(() => {});
+  // Records are handed to the callback after each turn: keep them all.
+  const records = [];
+  const observer = new h.w.MutationObserver(list => records.push(...list));
   observer.observe(h.d.getElementById('twGrid'), { childList: true, subtree: true });
   for (const text of ['c', 'cs', 'cs1', 'math', 'zzz', '']) {
     await findText(h, text);
     assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')], nodes, `"${text}": the same cards`);
     assert.equal(h.d.activeElement, card(h, 11), `"${text}": the keyboard stays`);
   }
-  assert.deepEqual(observer.takeRecords(), [], 'no node of the board added or removed');
+  records.push(...observer.takeRecords());
+  assert.deepEqual(records, [], 'no node of the board added or removed');
 });
 
 test('FL3 a fold counts its toned meetings with the icon and the words; a later warning updates the count in place', async t => {
@@ -1659,61 +1681,78 @@ test('FL9 the count, its title and the folds count meetings by the language’s 
   }
 });
 
-test('FL10 a programme token (the interim lens) dims, by the union of the programmes, and never folds; SHARED narrows', async t => {
-  const lens = { plans: ['AI', 'AI2'], courses: {}, sections: {
-    110: { filter_plans: ['AI'] },
-    111: { filter_plans: ['AI2'], shared: true },
-    112: { filter_plans: ['AI2'] },
+test('FL10 a programme token dims what its per-plan file leaves out, by the union of the programmes, and never folds; SHARED reads the shared roles', async t => {
+  // The roles are the server's (programme_view, 6d): the page holds no copy of the rule.
+  const lens = { plans: ['AI', 'AI2'], courses: {}, sections: {}, seating: { assessed: true, students: 9 }, programme_view: {
+    programmes: ['AI', 'AI2'],
+    roles: { AI: { main: [10] }, AI2: { main: [11, 12] } },
+    shared_roles: { AI: {}, AI2: { main: [11] } },
+    placement_ids: [10, 11, 12, 20],
+    seating_assessed: true,
   } };
   for (const arabic of [false, true]) {
     const h = await viewHarness(t, { lens, labs: [], arabic, placements: [
       at(10, { course_code: 'CS101', term_section_id: 110 }),
       at(11, { course_code: 'MATH1', term_section_id: 111, day: 'MON' }),
       at(12, { course_code: 'PHYS1', term_section_id: 112, day: 'TUE' }),
-      at(20, { course_code: 'BIO1', section: 'S2', term_section_id: 220 }),  // in no programme: its table is all dimmed
+      at(20, { course_code: 'BIO1', section: 'S2', term_section_id: 220 }),  // in no programme's file: its table is all dimmed
     ] });
     await h.select();
     await findText(h, 'ai2');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', '', 'lens']);
     assert.deepEqual([foldOf(h, 'S1', 'lecture').state, foldOf(h, 'S2', 'lecture').state], [NO_FOLD, NO_FOLD], 'the lens never folds');
     assert.equal(card(h, 10).getAttribute('aria-describedby'), 'twDimNoteLens');
-    const note = arabic ? 'خارج تصفية البرامج: \u2066AI2\u2069' : 'Outside the programme filter: \u2066AI2\u2069';
+    const note = arabic ? `ليست في جدول ${iso('AI2')}` : `Not in ${iso('AI2')}’s timetable`;
     assert.equal(h.d.getElementById('twDimNoteLens').textContent, note);
     assert.equal(card(h, 10).title, note);
+    assert.equal(card(h, 11).title, arabic ? `${iso('AI2')}: شعبة خاصة به` : `${iso('AI2')}: its own section`, 'a card in the file says its role');
     assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? '2 من 4' : '2 of 4');
     assert.equal(h.d.getElementById('twSearch').title, arabic
-      ? 'المطابق للتصفية: 2 من 4 لقاءات؛ تصفية البرامج: \u2066AI2\u2069.' : '2 of 4 meetings match; programme filter: \u2066AI2\u2069.',
-      'the count’s words say the programme filter');
-    // A lens dim is a dim: a heading does not count it a match, and the legend says what it is.
+      ? `المطابق للتصفية: 2 من 4 لقاءات. ${iso('AI2')}: 2 من 4 لقاءات في جدوله.`
+      : `2 of 4 meetings match. ${iso('AI2')}: 2 of 4 meetings in its timetable.`,
+    'the count’s words say what the programme’s timetable holds');
+    // A lens dim is a dim: a heading does not count it a match, and the
+    // legend's programme line says what it is (the text's line stays hidden).
     assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-group-meta')].map(m => m.textContent), arabic
       ? ['3 مقررات · مطابقتان', 'مقرر واحد · لا شيء مطابق'] : ['3 courses · 2 matches', '1 course · 0 matches']);
-    assert.equal(h.d.getElementById('twLegendDim').hidden, false, 'the legend’s dim line, for a lens dim alone');
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [true, false]);
+    assert.equal(h.d.getElementById('twLegendDimLens').textContent, arabic ? `باهتة: ${note}` : `Dimmed: not in ${iso('AI2')}’s timetable`);
     await findText(h, 'ai ai2');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['', '', '', 'lens'], 'several programmes: a union');
-    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
-      ? 'خارج تصفية البرامج: \u2066AI\u2069، \u2066AI2\u2069' : 'Outside the programme filter: \u2066AI\u2069, \u2066AI2\u2069');
+    const several = arabic ? `ليست في أيٍّ من جداول: ${iso('AI')}، ${iso('AI2')}` : `In none of these timetables: ${iso('AI')}, ${iso('AI2')}`;
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, several);
+    assert.equal(h.d.getElementById('twLegendDimLens').textContent, arabic ? `باهتة: ${several}` : `Dimmed: in none of these timetables: ${iso('AI')}, ${iso('AI2')}`,
+      'the legend’s words follow the filter');
     await findText(h, 'shared ai2');
-    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED: the shared sections of the programmes');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED: the programme’s shared roles');
     assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
-      ? 'خارج تصفية البرامج: \u2066AI2\u2069، الشعب المشتركة' : 'Outside the programme filter: \u2066AI2\u2069, shared sections');
+      ? `ليست شعبة مشتركة في جدول ${iso('AI2')}` : `Not a shared section in ${iso('AI2')}’s timetable`);
     await findText(h, 'shared');
-    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED alone: every shared section');
+    assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['lens', '', 'lens', 'lens'], 'SHARED alone: every programme’s shared roles');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
+      ? 'ليست شعبة مشتركة في جدول أي برنامج' : 'Not a shared section in any programme’s timetable');
+    await findText(h, 'shared ai ai2');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, arabic
+      ? `ليست شعبة مشتركة في هذه الجداول: ${iso('AI')}، ${iso('AI2')}` : `Not a shared section in these timetables: ${iso('AI')}, ${iso('AI2')}`);
     // A programme and text: the text folds, the programme only dims.
     await findText(h, 'ai2 math');
     assert.deepEqual(dimsOf(h, [10, 11, 12, 20]), ['filter lens', '', 'filter', 'filter lens']);
     assert.equal(card(h, 10).getAttribute('aria-describedby'), 'twDimNoteFilter twDimNoteLens');
     assert.deepEqual([foldOf(h, 'S1', 'lecture').state, foldOf(h, 'S2', 'lecture').state], [NO_FOLD, FOLDED]);
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [false, false], 'both lines');
     assert.equal(h.d.getElementById('twSearch').title, arabic
-      ? 'المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1؛ تصفية البرامج: \u2066AI2\u2069.'
-      : '1 of 4 meetings match; tables folded for no match: 1; programme filter: \u2066AI2\u2069.');
+      ? `المطابق للتصفية: 1 من 4 لقاءات؛ الجداول المطويّة لعدم وجود مطابق: 1. ${iso('AI2')}: 2 من 4 لقاءات في جدوله.`
+      : `1 of 4 meetings match; tables folded for no match: 1. ${iso('AI2')}: 2 of 4 meetings in its timetable.`);
     // An opened fold is kept for the board and its TEXT: a programme token
     // removed or added, the text the same, keeps it open.
     foldOf(h, 'S2', 'lecture').toggle.click();
     assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED);
     await findText(h, 'math');
     assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED, 'a programme removed: still open');
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [false, true], 'the text’s line alone');
     await findText(h, 'math ai');
     assert.deepEqual(foldOf(h, 'S2', 'lecture').state, OPENED, 'a programme added: still open');
+    assert.deepEqual(h.errors, []);
   }
 });
 
@@ -2026,8 +2065,8 @@ test('PK4c a parked card drags onto a cell as any card does: the drop moves it t
 });
 
 /* ── Programme mark in Selection (PR 4b) ── */
-const LENS = sections => ({ plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } },
-  sections, programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 } } });
+const LENS = (sections, programme_view = null) => ({ plan_lens: { plans: ['AI', 'AI2'], courses: { CS112: { plans: { AI2: 4 } }, CS113: { plans: { AI: 9 } } },
+  sections, programme_grouping: { students_regrouped: 3, student_gap_minutes_change: -20 }, seating: { assessed: true, students: 44 }, programme_view } });
 const markRows = () => [
   at(10, { course_key: 'CS112', preferred_programme: '', preferred_programme_editable: true }),
   at(13, { day: 'WED', course_key: 'CS112', term_section_id: 110, preferred_programme: '', preferred_programme_editable: true }),  // its other meeting
@@ -2036,13 +2075,16 @@ const markRows = () => [
 ];
 async function markHarness(t, { sections = () => ({ 110: { actual_total: 38, actual_plans: { AI2: 30, AI: 6 } } }), lens = null,
   answer = null, hold = {}, extra = {}, arabic = false, rows = markRows() } = {}) {
+  // `lens` counts the quality reads that ask for the lens; `quality` every one.
   const seen = { posts: [], lens: 0, quality: 0, readiness: 0 };
   const h = await harness(t, async (url, opts) => {
     if (url === '/ops/tw/boards/2/') return { placements: rows, slot_config: scenario.slot_config };
-    if (url.includes('/plan-lens/')) {
+    if (url.includes('/quality/') && url.endsWith('?lens=1')) {
+      seen.quality++;
       const n = ++seen.lens;
       if (hold.lens) await hold.lens(n);
-      return lens ? lens(n) : LENS(sections());
+      const body = lens ? lens(n) : LENS(sections());
+      return body.httpError ? body : { ...noRooms, ...body };
     }
     if (url.endsWith('/programme-preference/') && opts.method === 'POST') {
       const body = JSON.parse(opts.body);
@@ -2136,7 +2178,7 @@ test('after an edit the mix and its trade-off say how old they are; Refresh read
   assert.match(h.body().textContent, /Loading programme mix/);
   const busy = h.body().querySelector('[data-tw-lens-refresh]');
   assert.equal(busy.disabled, true, 'Refresh waits while it reads');
-  busy.disabled = false; busy.click(); h.w.loadPlanLens();  // a second ask joins the read in flight
+  busy.disabled = false; busy.click(); h.w.refreshWorkspaceQuality(true, { lens: true });  // a second ask joins the read in flight
   await settle();
   assert.equal(h.seen.lens, before + 1, 'one read');
   held.resolve();
@@ -2150,9 +2192,9 @@ test('an older lens answer never replaces a newer one', async t => {
   const first = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI2: n } } }),
     hold: { lens: n => (n === 2 ? first.promise : null) } });
-  const older = h.w.loadPlanLens();  // the second read, held
+  const older = h.w.refreshWorkspaceQuality(true, { lens: true });  // the second read, held
   h.w.TW.dataVersion++;
-  await h.w.loadPlanLens();  // the third, about newer data, answers first
+  await h.w.refreshWorkspaceQuality(true, { lens: true });  // the third, about newer data, answers first
   first.resolve();
   await older;
   assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
@@ -2160,7 +2202,7 @@ test('an older lens answer never replaces a newer one', async t => {
   assert.equal(h.w.TW.planLens.loading, false);
 });
 
-test('saving posts once, keeps the keyboard, reads the lens, the quality and the publish check once each', async t => {
+test('LN7 saving posts once, keeps the keyboard, reads the quality once, with the lens, and the publish check', async t => {
   const post = deferred(), lensHeld = deferred();
   let gateLens = false;
   const h = await markHarness(t, { sections: () => ({ 110: { actual_total: 10, actual_plans: { AI2: 10 } } }),
@@ -2188,6 +2230,10 @@ test('saving posts once, keeps the keyboard, reads the lens, the quality and the
   assert.deepEqual(h.w.TW.placements.filter(p => p.term_section_id === 110).map(p => p.preferred_programme), ['AI2', 'AI2'], 'every meeting of the section');
   assert.ok(h.notices.some(n => n.type === 'success'));
   assert.equal(h.seen.lens, lens0 + 1, 'the lens once');
+  for (let i = 0; i < 10; i++) await settle();
+  assert.equal(h.seen.quality, quality0 + 1, 'one quality read: the one with the lens (LN7)');
+  assert.equal(h.requests.filter(r => r.url.includes('/plan-lens/')).length, 0, 'never /plan-lens/');
+  assert.equal(h.body().querySelector('[data-tw-lens-refresh]'), null, 'fresh: no Refresh');
   assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
   assert.equal(h.w.TW.readinessLoading, true, 'the publish check is scheduled');
   assert.equal(h.d.activeElement, h.select());
@@ -2263,20 +2309,21 @@ test('a keyboard choice saves once the arrow keys rest, or at once on Enter or o
   await wait(() => h.seen.quality === quality0 + 3 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
 });
 
-test('a programme search filters anew when the lens is read again', async t => {
-  let plans = ['AI'];
-  const h = await markHarness(t, { lens: () => ({ plan_lens: { plans: ['AI', 'AI2'], courses: {}, sections: { 110: { actual_total: 1, actual_plans: { AI: 1 }, filter_plans: plans } } } }) });
-  const search = h.d.getElementById('twSearch');
-  search.value = 'AI2';
-  search.dispatchEvent(new h.w.Event('input'));
-  await settle();
+test('a programme in the filter dims anew, in place, when the lens is read again', async t => {
+  let ai2 = [];
+  const view = () => ({ programmes: ['AI', 'AI2'], roles: { AI: { main: [10] }, AI2: { main: ai2 } }, shared_roles: {},
+    placement_ids: [10, 11, 12, 13], seating_assessed: true });
+  const h = await markHarness(t, { lens: () => LENS({ 110: { actual_total: 1, actual_plans: { AI: 1 } } }, view()) });
+  const lens0 = h.seen.lens;
+  await findText(h, 'AI2');
   const node = card(h, 10);
-  assert.equal(node.dataset.dim, 'lens', 'not an AI2 section yet: dimmed by the lens (6c), still on the board');
-  plans = ['AI', 'AI2'];
+  assert.equal(node.dataset.dim, 'lens', 'in no AI2 file yet: dimmed by the lens, still on the board');
+  ai2 = [10];
   h.w.TW.dataVersion++;
   await h.w.refreshPlanLens();
+  assert.equal(h.seen.lens, lens0 + 1);
   assert.equal(card(h, 10), node, 'a new lens dims anew in place: the same card');
-  assert.equal(node.dataset.dim, undefined, 'the new lens puts it in AI2');
+  assert.equal(node.dataset.dim, undefined, 'the new roles put it in AI2');
 });
 
 test('a lens that cannot be read offers Refresh and is not left loading', async t => {
@@ -2379,42 +2426,58 @@ test('each arrow key restarts the wait; a pointer choice saves at once', async t
 test('a lens read joins only a read about the same scenario and data', async t => {
   const held = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? held.promise : null) } });
-  const first = h.w.loadPlanLens();  // read 2, held
+  const first = h.w.refreshWorkspaceQuality(true, { lens: true });  // read 2, held
   assert.equal(h.w.TW.planLens.loading, true);
-  const joined = h.w.loadPlanLens();
+  const joined = h.w.refreshWorkspaceQuality(true, { lens: true });
+  const plain = h.w.refreshWorkspaceQuality(true, { lens: false });  // a read with no lens needed joins one with it
   assert.equal(h.seen.lens, 2, 'the same data: one read');
+  assert.equal(h.seen.quality, 2, 'and no plain read beside it');
   h.w.TW.scenarioId = 2;  // another scenario, the same data version
-  await h.w.loadPlanLens();
+  await h.w.refreshWorkspaceQuality(true, { lens: true });
   assert.equal(h.seen.lens, 3, 'a read for another scenario is its own');
   held.resolve();
-  await Promise.all([first, joined]);
+  await Promise.all([first, joined, plain]);
 });
 
 test('a reset (the scenario reloaded after a planner job) forgets the read in flight', async t => {
   const held = deferred();
   const h = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? held.promise : null) } });
-  const old = h.w.loadPlanLens();  // read 2, held; the data version does not move on a reload
+  const old = h.w.refreshWorkspaceQuality(true, { lens: true });  // read 2, held; the data version does not move on a reload
   h.w.resetPlanLens();
-  const fresh = h.w.loadPlanLens();
+  const fresh = h.w.refreshWorkspaceQuality(true, { lens: true });
   assert.equal(h.seen.lens, 3, 'a new read, never the old one');
   await fresh;
   held.resolve();
   await old;
   assert.equal(h.w.TW.planLens.sections['110'].actual_total, 3, 'the forgotten read does not land');
+  // A read forgotten before any other starts lands nowhere either: no lens,
+  // no quality (the reload reads both again).
+  const late = deferred();
+  const r = await markHarness(t, { lens: n => LENS({ 110: { actual_total: n, actual_plans: { AI: n } } }), hold: { lens: n => (n === 2 ? late.promise : null) } });
+  r.w.TW.quality = null;
+  const forgotten = r.w.refreshWorkspaceQuality(true, { lens: true });
+  r.w.resetPlanLens();
+  late.resolve();
+  await forgotten;
+  assert.deepEqual([r.w.TW.planLens.loaded, r.w.TW.planLens.failed, r.w.TW.quality, r.w.TW.qualityLoading], [false, undefined, null, false]);
 });
 
-test('an older read finishing never clears the newer read’s loading', async t => {
+test('an older read finishing never clears the newer read’s loading, and its caller waits for the newer one', async t => {
   const older = deferred(), newer = deferred();
   const h = await markHarness(t, { hold: { lens: n => (n === 2 ? older.promise : n === 3 ? newer.promise : null) } });
-  const a = h.w.loadPlanLens();
+  let done = false;
+  const a = h.w.refreshWorkspaceQuality(true, { lens: true }).then(() => { done = true; });
   h.w.TW.dataVersion++;
-  const b = h.w.loadPlanLens();
+  const b = h.w.refreshWorkspaceQuality(true, { lens: true });
   older.resolve();
-  await a;
+  for (let i = 0; i < 10; i++) await settle();
   assert.equal(h.w.TW.planLens.loading, true, 'the newer read is still loading');
+  assert.equal(h.w.TW.qualityLoading, true);
+  assert.equal(done, false, 'the older read’s caller waits for the read that overtook it');
   newer.resolve();
-  await b;
-  assert.equal(h.w.TW.planLens.loading, false);
+  await Promise.all([a, b]);
+  assert.equal(done, true);
+  assert.deepEqual([h.w.TW.planLens.loading, h.w.TW.qualityLoading], [false, false]);
 });
 
 test('a select drawn again while the keys move carries on the same wait: one save, the last choice', async t => {
@@ -2471,6 +2534,482 @@ test('a settled choice is saved once: leaving after it, or a pointer choice over
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.deepEqual(h.seen.posts.map(b => b.preferred_programme), ['AI2', ''], 'the waiting key never lands');
   await waitTimed(() => h.seen.quality === quality0 + 2 && h.w.TW.qualityVersion === h.w.TW.dataVersion);
+});
+
+/* ── The lens from the quality read (design record §7.2 item 6, 6d) ──
+   The plan lens comes with the quality read (`quality/?lens=1`) while it is
+   wanted, never from /plan-lens/; a programme in the filter dims what its
+   per-plan file leaves out, by the server's roles (`programme_view`), and the
+   page holds no copy of that rule. */
+const lensRows = () => [
+  at(10, { course_code: 'CS101', preferred_programme: '', preferred_programme_editable: true }),
+  at(11, { course_code: 'MATH1', day: 'MON' }),
+  at(12, { course_code: 'PHYS1', day: 'TUE' }),
+  at(13, { course_code: 'BIO1', day: 'WED' }),
+  at(14, { course_code: 'ENG1', day: 'THU' }),
+];
+// AI2's file: CS101 its own, MATH1 another programme's section it seats two
+// in, BIO1 mixed, ENG1 outside its plan; PHYS1 is in DS's file alone.
+const LENS_VIEW = () => ({
+  programmes: ['AI2', 'DS'],
+  roles: { AI2: { main: [10], mixed: [13], other: [11], outside: [14] }, DS: { main: [11, 12] } },
+  shared_roles: { AI2: { main: [11] }, DS: { main: [11] } },
+  placement_ids: [10, 11, 12, 13, 14],
+  seating_assessed: true,
+});
+// PHYS1 is allocated to AI2 yet in no AI2 file; BIO1 is a shared section that
+// the SHARED classification gives AI2 no role in: the roles decide, never the
+// allocation or the shared flag.
+const LENS_SECTIONS = () => ({
+  110: { actual_plans: { AI2: 20, DS: 0 }, actual_total: 20, filter_plans: ['AI2'] },
+  111: { actual_plans: { AI2: 2, DS: 28 }, actual_total: 30, filter_plans: ['DS'], shared: true },
+  112: { actual_plans: { AI2: 0, DS: 25 }, actual_total: 25, filter_plans: ['AI2'] },
+  113: { actual_plans: { AI2: 5, DS: 7 }, actual_total: 12, filter_plans: ['AI2'], shared: true },
+  114: { actual_plans: { AI2: 0, DS: 0 }, actual_total: 0, filter_plans: ['AI2'] },
+});
+const lensAnswer = ({ view = LENS_VIEW(), sections = LENS_SECTIONS(), courses = {}, plans = ['AI2', 'DS'], assessed = true } = {}) => ({
+  plans, courses, sections,
+  seating: assessed ? { assessed: true, students: 57 } : { assessed: false, students: 0, reason: 'assessment_failed' },
+  programme_view: view && { ...view, seating_assessed: assessed },
+});
+const ALL = [10, 11, 12, 13, 14];
+/* `reads` names each quality read: 'lens' (with `?lens=1`) or 'plain'.
+   `hold(n, lens)` may hold the n-th; `answer(n)` is the n-th lens (null:
+   `plan_lens: null`; an httpError: the read fails). */
+async function lensHarness(t, { rows = lensRows(), answer = () => lensAnswer(), hold = null, arabic = false, boards = [board], budget = [], select = true } = {}) {
+  const reads = [];
+  const h = await harness(t, async url => {
+    if (url === '/ops/tw/boards/2/') return { placements: rows.map(row => ({ ...row })), slot_config: scenario.slot_config };
+    if (url.startsWith('/ops/tw/boards/?')) return { boards };
+    if (url.includes('/budget/')) return { budget };
+    if (url.includes('/conflicts/')) return quiet;
+    if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
+    if (!url.includes('/quality/')) return undefined;
+    const lens = url.endsWith('/quality/?lens=1');
+    reads.push(lens ? 'lens' : 'plain');
+    const n = reads.length;
+    if (hold) await hold(n, lens);
+    if (!lens) return noRooms;
+    const body = answer(n);
+    return body?.httpError ? body : { ...noRooms, plan_lens: body };
+  }, {}, arabic);
+  if (select) await h.select();
+  return Object.assign(h, { reads, rows });
+}
+// An edit's end: the data moved on and the board is read again.
+const edit = async h => { h.w.TW.dataVersion++; await h.w.selectBoard(2); };
+const planLensReads = h => h.requests.filter(r => r.url.includes('/plan-lens/')).length;
+
+test('LN1 the lens comes with the quality read: on open, while the filter names a programme, never on a read of its own', async t => {
+  const h = await lensHarness(t);
+  assert.deepEqual(h.requests.filter(r => r.url.includes('/quality/')).map(r => r.url), ['/ops/tw/scenarios/1/quality/?lens=1'],
+    'open: the first quality read brings the lens');
+  await edit(h);
+  assert.deepEqual(h.reads, ['lens', 'plain'], 'an edit with no programme in the filter: a plain read');
+  await findText(h, 'cs1');
+  await settle();
+  assert.equal(h.reads.length, 2, 'text alone reads nothing');
+  await findText(h, 'ai2');
+  await wait(() => h.reads.length === 3 && !h.w.TW.planLens.loading);
+  assert.equal(h.reads[2], 'lens', 'a programme typed while the lens is from before an edit: one read, with the lens');
+  await findText(h, 'ds');
+  await findText(h, 'ai2 ds shared');
+  await settle();
+  assert.equal(h.reads.length, 3, 'another programme, the roles fresh: nothing read');
+  await edit(h);
+  await edit(h);
+  assert.deepEqual(h.reads.slice(3), ['lens', 'lens'], 'with a programme in the filter, every quality read has the lens');
+  // A board switch reuses the quality and the lens.
+  await h.w.selectBoard(2);
+  assert.equal(h.reads.length, 5);
+  await findText(h, 'math');
+  await edit(h);
+  assert.deepEqual(h.reads.slice(5), ['plain'], 'the programme gone: plain again');
+  // The quality is fresh but the lens is not: asking for the lens reads it; asked again, nothing.
+  await h.w.refreshWorkspaceQuality(false, { lens: true });
+  await h.w.refreshWorkspaceQuality(false, { lens: true });
+  assert.deepEqual(h.reads.slice(6), ['lens']);
+  assert.equal('plan_lens' in h.w.TW.quality, false, 'the lens is never part of the quality');
+  assert.equal(h.w.TW.planLens.version, h.w.TW.dataVersion);
+  assert.equal(planLensReads(h), 0, 'never /plan-lens/');
+  assert.deepEqual(h.notices.filter(n => n.type === 'error'), []);
+  assert.deepEqual(h.errors, []);
+});
+
+test('LN1b a scenario generated in place never shows the one before it: its board is drawn with no lens, and its first quality read brings its own', async t => {
+  const generated = { ...scenario, id: 7, name: 'Generated' };
+  const courses = { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} };
+  const reads = [];
+  const h = await harness(t, url => {
+    if (url === '/ops/tw/generate-workspace/') return { scenario: generated, boards: [board], build_summary: {}, seed: 1 };
+    if (url === '/ops/tw/boards/2/') return { placements: [at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' })], slot_config: scenario.slot_config };
+    if (url.includes('/quality/')) {
+      reads.push(url);
+      return url.endsWith('?lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses: url.includes('/scenarios/1/') ? courses : {} } } : noRooms;
+    }
+    if (url.includes('/conflicts/')) return quiet;
+    return undefined;
+  });
+  await h.select();
+  assert.equal(card(h, 10).querySelector('.tw-card-name')?.textContent, 'Programming I', 'scenario 1’s lens names it');
+  const names = [];
+  const draw = h.w.renderGridWithSlots;
+  h.w.renderGridWithSlots = (...args) => { draw(...args); names.push(card(h, 10)?.querySelector('.tw-card-name')?.textContent || ''); };
+  await h.w.runGenerate('classic', GENERATE);
+  assert.deepEqual(names, [''], 'the new board is drawn without the old scenario’s lens');
+  assert.ok(reads.includes('/ops/tw/scenarios/7/quality/?lens=1'), JSON.stringify(reads));
+  assert.deepEqual([h.w.TW.planLens.loaded, Object.keys(h.w.TW.planLens.courses)], [true, []], 'its own lens');
+});
+
+test('LN2 a programme dims what its per-plan file leaves out, by the server’s roles, never by the allocation; each card’s title says its role', async t => {
+  for (const arabic of [false, true]) {
+    const h = await lensHarness(t, { arabic });
+    await findText(h, 'ai2');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', 'lens', '', ''],
+      'PHYS1 (allocated to AI2, in no AI2 file) is dimmed; MATH1 (two AI2 seated, mainly DS’s: "other") is not');
+    const P = iso('AI2');
+    const titles = arabic ? [
+      `${P}: شعبة خاصة به`,
+      `${P}: فيها 2 من 30؛ ومعظمها لبرنامج آخر`,
+      `ليست في جدول ${P}`,
+      `${P}: شعبة مختلطة (5 من 12)`,
+      `${P}: خارج خطته؛ يذكر ملفه المقرر بين المقررات المطروحة`,
+    ] : [
+      `${P}: its own section`,
+      `${P}: seats 2 of 30; mainly another programme’s`,
+      `Not in ${P}’s timetable`,
+      `${P}: mixed section (5 of 12)`,
+      `${P}: outside its plan; its file lists the course as placed`,
+    ];
+    assert.deepEqual(ALL.map(id => card(h, id).title), titles);
+    assert.equal(card(h, 12).getAttribute('aria-describedby'), 'twDimNoteLens');
+    assert.equal(h.d.getElementById('twDimNoteLens').textContent, titles[2]);
+    assert.equal(h.d.getElementById('twSearchCount').textContent, arabic ? '4 من 5' : '4 of 5');
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? `المطابق للتصفية: 4 من 5 لقاءات. ${P}: 4 من 5 لقاءات في جدوله.`
+      : `4 of 5 meetings match. ${P}: 4 of 5 meetings in its timetable.`);
+    assert.equal(h.d.getElementById('twSearchNote').textContent, h.d.getElementById('twSearch').title);
+    assert.deepEqual([h.d.getElementById('twLegendDim').hidden, h.d.getElementById('twLegendDimLens').hidden], [true, false]);
+    assert.equal(h.d.getElementById('twLegendDimLens').textContent, arabic ? `باهتة: ليست في جدول ${P}` : `Dimmed: not in ${P}’s timetable`);
+    assert.equal(h.d.getElementById('twExportScope').textContent, arabic ? `برنامج ${P} فقط` : `Programme ${P} only`);
+    await findText(h, 'ds');
+    assert.deepEqual(dimsOf(h, ALL), ['lens', '', '', 'lens', 'lens']);
+    assert.equal(card(h, 11).title, arabic ? `${iso('DS')}: شعبة خاصة به` : `${iso('DS')}: its own section`);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
+test('LN3 several programmes are a union; SHARED reads the shared roles, never the shared flag; text folds, programmes only dim; switching programmes reads nothing', async t => {
+  const h = await lensHarness(t);
+  const reads = h.reads.length;
+  await findText(h, 'ai2 ds');
+  assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', '']);
+  assert.equal(card(h, 11).title, `${iso('AI2')}: seats 2 of 30; mainly another programme’s | ${iso('DS')}: its own section`, 'each programme’s role');
+  assert.equal(h.d.getElementById('twSearch').title,
+    `5 of 5 meetings match. ${iso('AI2')}: 4 of 5 meetings in its timetable; ${iso('DS')}: 2 of 5 meetings in its timetable.`);
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programmes ${iso('AI2')}, ${iso('DS')} only`);
+  await findText(h, 'shared ai2');
+  assert.deepEqual(dimsOf(h, ALL), ['lens', '', 'lens', 'lens', 'lens'],
+    'BIO1, a shared section with an AI2 role but no AI2 shared role, is dimmed');
+  assert.equal(card(h, 11).title, `${iso('AI2')}: its own section`, 'its role under SHARED');
+  assert.equal(h.d.getElementById('twSearch').title,
+    `1 of 5 meetings match. ${iso('AI2')} (shared sections only): 1 of 5 meetings in its timetable.`);
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programme ${iso('AI2')} only · Shared sections only`);
+  await findText(h, 'shared');
+  assert.deepEqual(dimsOf(h, ALL), ['lens', '', 'lens', 'lens', 'lens'], 'SHARED alone: every programme');
+  assert.equal(h.d.getElementById('twSearch').title, '1 of 5 meetings match. Shared sections: 1 of 5 meetings in the programmes’ timetables.');
+  assert.equal(h.d.getElementById('twExportScope').textContent, 'Shared sections only');
+  await findText(h, 'ds');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'three dimmed by the lens: nothing folds');
+  await findText(h, 'ds cs1');
+  assert.deepEqual(dimsOf(h, ALL), ['lens', 'filter', 'filter', 'filter lens', 'filter lens']);
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'the text matches CS101, which the lens dims: a match all the same');
+  await findText(h, 'ai2 zzz');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, FOLDED, 'the text folds');
+  await findText(h, 'ai2 cs1');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD);
+  assert.deepEqual(dimsOf(h, ALL), ['', 'filter', 'filter lens', 'filter', 'filter']);
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programme ${iso('AI2')} only · Only what matches "CS1"`);
+  assert.equal(h.reads.length, reads, 'switching programmes with fresh roles reads nothing');
+});
+
+test('LN4 roles arriving keep the board: the same cards and nodes, the keyboard on its card; before them, nothing is dimmed for the programme', async t => {
+  const held = deferred();
+  const h = await lensHarness(t, { hold: n => (n === 3 ? held.promise : null) });
+  await edit(h);  // read 2, plain: the lens is now from before the change
+  const nodes = [...h.d.querySelectorAll('#twGrid .tw-card')];
+  card(h, 12).focus();
+  // Records are handed to the callback after each turn: keep them all.
+  const records = [];
+  const observer = new h.w.MutationObserver(list => records.push(...list));
+  observer.observe(h.d.getElementById('twGrid'), { childList: true, subtree: true });
+  await findText(h, 'ai2');  // read 3, held
+  assert.deepEqual(h.reads, ['lens', 'plain', 'lens']);
+  assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', ''], 'a programme typed while its roles are read: no lens dims');
+  assert.equal(h.d.getElementById('twSearch').title, `5 of 5 meetings match. ${iso('AI2')}: checking…`);
+  assert.deepEqual(ALL.map(id => card(h, id).title), Array(5).fill('(checking)'));
+  assert.equal(h.d.getElementById('twLegendDimLens').hidden, true);
+  held.resolve();
+  await wait(() => card(h, 12).dataset.dim === 'lens');
+  assert.deepEqual([...h.d.querySelectorAll('#twGrid .tw-card')], nodes, 'the same cards');
+  assert.equal(h.d.activeElement, card(h, 12), 'the keyboard stays');
+  assert.equal(h.d.getElementById('twLegendDimLens').hidden, false);
+  assert.match(h.d.getElementById('twLegendDimLens').textContent, /^Dimmed: not in /);
+  records.push(...observer.takeRecords());
+  assert.deepEqual(records, [], 'no node of the board added or removed');
+});
+
+test('LN5 a lens that cannot be read: nothing is dimmed for the programme and the count says why; typing does not ask again, Selection’s Refresh does', async t => {
+  for (const failure of ['http', 'null', 'view']) {
+    let fail = true;
+    // With no programme view, the boards say which tokens are programmes.
+    const h = await lensHarness(t, { boards: [{ ...board, program: 'AI2,DS' }], answer: () => (!fail ? lensAnswer()
+      : failure === 'http' ? { httpError: 500, error: { message: 'down' } }
+        : failure === 'null' ? null : lensAnswer({ view: null })) });
+    assert.equal(h.w.TW.planLens.loading, false, failure);
+    await findText(h, 'ai2');
+    await settle();
+    assert.equal(h.reads.length, 1, `${failure}: not asked again by typing`);
+    assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', ''], failure);
+    assert.equal(h.d.getElementById('twSearch').title,
+      `5 of 5 meetings match. The programme view could not be read; nothing is dimmed for ${iso('AI2')}.`, failure);
+    assert.equal(card(h, 12).title, '', `${failure}: no "(checking)" for a lens that could not be read`);
+    await findText(h, 'ai2 shared');
+    assert.equal(h.d.getElementById('twSearch').title,
+      `5 of 5 meetings match. The programme view could not be read; nothing is dimmed for ${iso('AI2')}, shared sections.`, failure);
+    if (failure !== 'http') assert.equal(h.d.getElementById('twQualityRooms').textContent, '0', `${failure}: the quality is shown`);
+    card(h, 10).click();
+    const body = h.d.getElementById('twRightBody');
+    if (failure === 'view') {
+      // The seating read: Selection's mix is current; the dims wait for the next read.
+      assert.match(body.textContent, /20: AI2 20/);
+      assert.equal(body.querySelector('[data-tw-lens-refresh]'), null);
+      fail = false;
+      await edit(h);
+    } else {
+      assert.match(body.textContent, /The programme mix is not available/, failure);
+      fail = false;
+      body.querySelector('[data-tw-lens-refresh]').click();
+      await wait(() => !h.w.TW.planLens.loading && /20: AI2 20/.test(body.textContent));
+      assert.equal(h.d.getElementById('twInspectorStatus').textContent, 'Programme mix updated.');
+    }
+    await wait(() => card(h, 12).dataset.dim === 'lens');
+    assert.deepEqual(h.reads, ['lens', 'lens'], failure);
+    assert.equal(planLensReads(h), 0);
+  }
+});
+
+test('LN5b a seating that could not be evaluated: dims by the roles and the count says why; Selection reads "—" and the reason, never "nobody"', async t => {
+  // Unassessed, the files follow the allocation and the marks: main and outside only.
+  const view = { ...LENS_VIEW(), roles: { AI2: { main: [10, 11, 13], outside: [14] }, DS: { main: [11, 12] } } };
+  const sections = { 110: { actual_plans: { AI2: 0, DS: 0 }, actual_total: 0, filter_plans: ['AI2'] } };
+  for (const arabic of [false, true]) {
+    const h = await lensHarness(t, { arabic, answer: () => lensAnswer({ view, sections, assessed: false }) });
+    const [AI2, DS] = [iso('AI2'), iso('DS')];
+    await findText(h, 'ai2');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', 'lens', '', '']);
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? `المطابق للتصفية: 4 من 5 لقاءات. ${AI2}: 4 من 5 لقاءات في جدوله. تعذّر تقييم توزيع الطلاب على الشعب: تتبع شعب ${AI2} توزيع الخطة، كما في ملفه لكل برنامج.`
+      : `4 of 5 meetings match. ${AI2}: 4 of 5 meetings in its timetable. The seating could not be evaluated: ${AI2}’s sections follow the plan’s allocation, as its per-plan file does.`);
+    await findText(h, 'ai2 ds');
+    assert.match(h.d.getElementById('twSearch').title, arabic
+      ? new RegExp(`تعذّر تقييم توزيع الطلاب على الشعب: تتبع شعب ${AI2}، ${DS} توزيع خططها، كما في ملفاتها لكل برنامج\\.$`)
+      : new RegExp(`The seating could not be evaluated: the sections of ${AI2}, ${DS} follow their plans’ allocation, as their per-plan files do\\.$`));
+    await findText(h, 'shared');
+    const none = arabic
+      ? 'تعذّر تقييم توزيع الطلاب على الشعب: تتبع الشعب توزيع الخطة، كما في الملفات لكل برنامج.'
+      : 'The seating could not be evaluated: sections follow the plan’s allocation, as the per-plan files do.';
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(` ${none}`), h.d.getElementById('twSearch').title);
+    card(h, 10).click();
+    const seated = [...h.d.querySelectorAll('#twRightBody .tw-sel-field')].find(f => f.querySelector('dt').textContent === (arabic ? 'المقاعد' : 'Seated')).querySelector('dd');
+    assert.match(seated.textContent, /^—/);
+    assert.ok(seated.textContent.includes(none), seated.textContent);
+    assert.doesNotMatch(seated.textContent, /No student|لا يُقعَد/);
+  }
+});
+
+test('LN5c a lens read again that fails keeps the one before it and says so in Selection, how old it is too; while it reads, the count says checking', async t => {
+  for (const arabic of [false, true]) {
+    let fail = false;
+    const held = deferred();
+    const h = await lensHarness(t, { arabic, answer: () => (fail ? { httpError: 500, error: { message: 'down' } } : lensAnswer()),
+      hold: n => (n === 2 ? held.promise : null) });
+    await findText(h, 'ai2');
+    card(h, 10).click();
+    const body = h.d.getElementById('twRightBody');
+    fail = true;
+    const again = h.w.refreshPlanLens();  // read again, for the same data
+    await wait(() => h.reads.length === 2);
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(arabic ? `${iso('AI2')}: 4 من 5 لقاءات في جدوله.` : `${iso('AI2')}: 4 of 5 meetings in its timetable.`),
+      'the roles are still those of this data');
+    held.resolve();
+    await again;
+    assert.match(body.textContent, /20: AI2 20/, 'the mix it had');
+    assert.ok(body.textContent.includes(arabic ? 'تعذّرت قراءة توزيع البرامج مجدداً.' : 'The programme mix could not be read again.'), body.textContent);
+    assert.ok(!body.textContent.includes(arabic ? 'من قبل آخر تعديل.' : 'From before your last change.'), 'of this data still');
+    assert.ok(body.querySelector('[data-tw-lens-refresh]'), 'Refresh again');
+    assert.equal(h.d.getElementById('twInspectorStatus').textContent, arabic ? 'توزيع البرامج غير متاح.' : 'The programme mix is not available.');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', ''], 'nothing dimmed by a lens that could not be read again');
+    assert.equal(h.d.getElementById('twSearch').title, arabic
+      ? `المطابق للتصفية: 5 من 5 لقاءات. تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج ${iso('AI2')}.`
+      : `5 of 5 meetings match. The programme view could not be read; nothing is dimmed for ${iso('AI2')}.`);
+    await findText(h, 'ai2 ds');
+    await settle();
+    assert.equal(h.reads.length, 2, 'not asked again by typing');
+    // After an edit (its read fails too), the mix says how old it is.
+    await edit(h);
+    assert.deepEqual(h.reads, ['lens', 'lens', 'lens']);
+    assert.ok(body.textContent.includes(arabic ? 'تعذّرت قراءة توزيع البرامج مجدداً. من قبل آخر تعديل.' : 'The programme mix could not be read again. From before your last change.'), body.textContent);
+    // Refresh: the count says the programmes are being checked while it reads.
+    const next = deferred();
+    fail = false;
+    const refresh = body.querySelector('[data-tw-lens-refresh]');
+    h.w.fetch = (old => async (url, opts) => { if (url.includes('/quality/')) await next.promise; return old(url, opts); })(h.w.fetch);
+    refresh.click();
+    await settle();
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(arabic ? `${iso('AI2')}، ${iso('DS')}: جارٍ التحقق…` : `${iso('AI2')}, ${iso('DS')}: checking…`),
+      h.d.getElementById('twSearch').title);
+    next.resolve();
+    await wait(() => !h.w.TW.planLens.loading && card(h, 10).title !== '(checking)');
+    assert.deepEqual(dimsOf(h, ALL), ['', '', '', '', '']);
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(arabic ? 'في جدوله.' : 'in its timetable.'));
+  }
+});
+
+test('LN5d a lens that could not be read is not asked for by every read after it', async t => {
+  const h = await lensHarness(t, { answer: () => null });
+  await edit(h);
+  assert.deepEqual(h.reads, ['lens', 'plain']);
+});
+
+test('LN6 a meeting the roles never saw is not dimmed and says "(checking)"; an edit keeps the old roles, "updating…", until the new ones arrive', async t => {
+  // The roles of the first read never saw ENG1.
+  const first = { ...LENS_VIEW(), roles: { AI2: { main: [10], mixed: [13], other: [11] }, DS: { main: [11, 12] } }, placement_ids: [10, 11, 12, 13] };
+  const held = deferred();
+  const h = await lensHarness(t, { hold: n => (n === 2 ? held.promise : null),
+    answer: n => lensAnswer({ view: n === 1 ? first : { ...LENS_VIEW(), placement_ids: [...ALL, 15] } }) });
+  await findText(h, 'ai2');
+  assert.deepEqual(dimsOf(h, ALL), ['', '', 'lens', '', ''], 'ENG1 unknown: not dimmed');
+  assert.equal(card(h, 14).title, '(checking)');
+  // An edit: a new meeting, the board read again, its quality read held.
+  h.rows.push(at(15, { course_code: 'CHEM1', day: 'THU' }));
+  h.w.TW.dataVersion++;
+  const loading = h.w.selectBoard(2);
+  await wait(() => h.reads.length === 2);
+  assert.equal(h.reads[1], 'lens');
+  assert.deepEqual(dimsOf(h, [...ALL, 15]), ['', '', 'lens', '', '', ''], 'the old roles stay; the new meeting is unknown');
+  assert.equal(card(h, 15).title, '(checking)');
+  assert.equal(h.d.getElementById('twSearch').title, `5 of 6 meetings match. ${iso('AI2')}: updating…`);
+  // Another programme while the roles are read: none were shown for it.
+  await findText(h, 'ds');
+  assert.equal(h.reads.length, 2, 'joined');
+  assert.deepEqual(dimsOf(h, [...ALL, 15]), ['', '', '', '', '', '']);
+  assert.equal(h.d.getElementById('twSearch').title, `6 of 6 meetings match. ${iso('DS')}: checking…`);
+  await findText(h, 'ai2');
+  held.resolve();
+  await loading;
+  assert.deepEqual(dimsOf(h, [...ALL, 15]), ['', '', 'lens', '', '', 'lens'], 'the new roles: CHEM1 is in no AI2 file');
+  assert.equal(card(h, 14).title, `${iso('AI2')}: outside its plan; its file lists the course as placed`);
+  assert.equal(h.d.getElementById('twSearch').title, `4 of 6 meetings match. ${iso('AI2')}: 4 of 6 meetings in its timetable.`);
+});
+
+test('LN9 a read without the lens out when a programme is typed: a second read, with it, starts; one with the lens out is joined; the board’s load holds until it lands', async t => {
+  const plain = deferred(), withLens = deferred();
+  const h = await lensHarness(t, { hold: n => (n === 2 ? plain.promise : n === 3 ? withLens.promise : null) });
+  h.w.TW.dataVersion++;
+  const loading = h.w.selectBoard(2);
+  await wait(() => h.reads.length === 2);
+  assert.equal(h.reads[1], 'plain');
+  await findText(h, 'ai2');
+  await wait(() => h.reads.length === 3);
+  assert.equal(h.reads[2], 'lens', 'the read out has no lens: a new one, with it');
+  await findText(h, 'ai2 ds');
+  h.w.refreshWorkspaceQuality(false, { lens: true });
+  h.w.refreshWorkspaceQuality(true, { lens: false });
+  await settle();
+  assert.equal(h.reads.length, 3, 'a read with the lens out is joined, with or without the lens');
+  plain.resolve();
+  await settle(); await settle();
+  assert.equal(h.w.workspaceBusy(), true, 'the board’s load waits for the read that overtook its own');
+  withLens.resolve();
+  await loading;
+  assert.equal(h.w.workspaceBusy(), false);
+  await findText(h, 'ai2');
+  assert.equal(card(h, 12).dataset.dim, 'lens');
+  assert.equal(h.w.TW.qualityVersion, h.w.TW.dataVersion);
+});
+
+test('LN10 Arabic: the programmes isolated, the counts by the plural, the scope line, the checking and failure words', async t => {
+  const rowsOf = n => Array.from({ length: n }, (_, i) => at(10 + i, { course_code: `CS10${i}`, day: DAYS5[i % 5] }));
+  const viewOf = n => ({ programmes: ['AI2', 'DS'], roles: { AI2: { main: rowsOf(n).map(p => p.id) }, DS: {} }, shared_roles: {},
+    placement_ids: rowsOf(n).map(p => p.id), seating_assessed: true });
+  const counts = { 1: 'لقاء واحد', 2: 'لقاءين', 3: '3 لقاءات', 11: '11 لقاءً' };
+  for (const [n, of] of Object.entries(counts)) {
+    const h = await lensHarness(t, { arabic: true, rows: rowsOf(Number(n)), answer: () => lensAnswer({ view: viewOf(Number(n)) }) });
+    await findText(h, 'ai2');
+    assert.ok(h.d.getElementById('twSearch').title.endsWith(` ${iso('AI2')}: ${n} من ${of} في جدوله.`), h.d.getElementById('twSearch').title);
+  }
+  const h = await lensHarness(t, { arabic: true });
+  await findText(h, 'ai2 ds');
+  assert.equal(h.d.getElementById('twExportScope').textContent, `البرامج ${iso('AI2')}، ${iso('DS')} فقط`);
+  assert.equal(h.d.getElementById('twSearch').title,
+    `المطابق للتصفية: 5 من 5 لقاءات. ${iso('AI2')}: 4 من 5 لقاءات في جدوله؛ ${iso('DS')}: 2 من 5 لقاءات في جدوله.`);
+  await findText(h, 'shared ai2 cs1');
+  assert.equal(h.d.getElementById('twExportScope').textContent, `برنامج ${iso('AI2')} فقط · الشعب المشتركة فقط · ما يطابق «CS1» فقط`);
+  assert.ok(h.d.getElementById('twSearch').title.endsWith(` ${iso('AI2')} (الشعب المشتركة فقط): 1 من 5 لقاءات في جدوله.`), h.d.getElementById('twSearch').title);
+  await findText(h, 'shared');
+  assert.ok(h.d.getElementById('twSearch').title.endsWith(' الشعب المشتركة: 1 من 5 لقاءات في جداول البرامج.'), h.d.getElementById('twSearch').title);
+  // Checking, updating, and a lens that could not be read, in Arabic.
+  const held = deferred();
+  let fail = false;
+  const a = await lensHarness(t, { arabic: true, answer: () => (fail ? null : lensAnswer()), hold: n => (n === 2 ? held.promise : null) });
+  await findText(a, 'ai2');
+  a.w.TW.dataVersion++;
+  const loading = a.w.selectBoard(2);
+  await wait(() => a.reads.length === 2);
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` ${iso('AI2')}: جارٍ التحديث…`), a.d.getElementById('twSearch').title);
+  await findText(a, 'ds');
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` ${iso('DS')}: جارٍ التحقق…`), a.d.getElementById('twSearch').title);
+  assert.equal(card(a, 10).title, '(جارٍ التحقق)');
+  fail = true;
+  held.resolve();
+  await loading;
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج ${iso('DS')}.`), a.d.getElementById('twSearch').title);
+  await findText(a, 'ds ai2');
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(` تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء لتصفية البرامج: ${iso('DS')}، ${iso('AI2')}.`), a.d.getElementById('twSearch').title);
+  await findText(a, 'shared');
+  assert.ok(a.d.getElementById('twSearch').title.endsWith(' تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء لتصفية البرامج: الشعب المشتركة.'), a.d.getElementById('twSearch').title);
+  assert.equal(a.d.getElementById('twExportScope').textContent, 'الشعب المشتركة فقط');
+});
+
+test('LN11 a programme is known by the boards before the view is read; the left list asks whether it needs the course, anew when the lens arrives', async t => {
+  const held = deferred();
+  const budget = [
+    { course_code: 'CS101', course_key: 'CS101', programme_term: 7, remaining_sections: 1, used_sections: 0, planned_sections: 1, total_demand: 20 },
+    { course_code: 'PHYS1', course_key: 'PHYS1', programme_term: 7, remaining_sections: 1, used_sections: 0, planned_sections: 1, total_demand: 25 },
+  ];
+  const courses = { CS101: { plans: { AI2: 20 } }, PHYS1: { plans: { DS: 25 } } };
+  const h = await lensHarness(t, { select: false, budget, boards: [{ ...board, program: 'ai2, DS' }],
+    answer: n => lensAnswer({ courses, view: n === 1 ? LENS_VIEW() : null, plans: ['AI2'] }), hold: n => (n === 1 ? held.promise : null) });
+  const opening = h.select();
+  await wait(() => h.reads.length === 1);
+  const rows = () => [...h.d.querySelectorAll('#twSectionList [data-focus-key^="place:"]')].map(row => row.dataset.focusKey.split(':')[1].split('|')[0]);
+  assert.deepEqual(rows(), ['CS101', 'PHYS1']);
+  await findText(h, 'ai2');
+  assert.equal(h.reads.length, 1, 'the open read, with the lens, is joined');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD, 'a board programme: a programme, never text, before the view');
+  assert.equal(h.d.getElementById('twExportScope').textContent, `Programme ${iso('AI2')} only`);
+  assert.deepEqual(rows(), [], 'no course known to need it yet');
+  held.resolve();
+  await opening;
+  assert.deepEqual(rows(), ['CS101'], 'the lens arrives: the list asks again');
+  // A lens with no view: the board programmes it knows (DS has no demand here).
+  await edit(h);
+  await findText(h, 'ds');
+  await wait(() => !h.w.TW.planLens.loading);
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, FOLDED, 'DS is text now: it matches nothing');
+  await findText(h, 'ai2');
+  assert.deepEqual(foldOf(h, 'S1', 'lecture').state, NO_FOLD);
 });
 
 /* ── Keyboard: grid and list semantics, roving focus (design record §7.3, 5a) ── */

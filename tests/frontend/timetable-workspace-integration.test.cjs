@@ -38,8 +38,8 @@ async function harness(t, intercept = () => undefined) {
     if (body === undefined) {
       if (url.startsWith('/ops/tw/scenarios/?')) body = { scenarios: [scenario(1), scenario(2)] };
       else if (/\/ops\/tw\/scenarios\/[12]\/$/.test(url)) body = { scenario: scenario(Number(url.match(/\/(\d+)\/$/)[1])), active_job: null };
+      // The lens comes with the quality read (6d); the page never reads /plan-lens/.
       else if (url.includes('/quality/')) body = { ok: true };
-      else if (url.includes('/plan-lens/')) body = { plans: [], courses: {}, sections: {} };
       else if (url.startsWith('/ops/tw/boards/?')) body = { boards: [board] };
       else if (/\/boards\/\d+\/$/.test(url)) body = { placements: [placement], slot_config: scenario(1).slot_config };
       else if (url.includes('/conflicts/')) body = { summary: { critical: 0 } };
