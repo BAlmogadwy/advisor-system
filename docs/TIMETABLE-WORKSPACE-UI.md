@@ -1157,13 +1157,13 @@ findings changed the plan:
    lens from quality's seating and `/plan-lens/` both say
    `programme_grouping: null`; it kills a non-empty default for the
    evaluation's grouping. (4) SQ6 also ignores `lens=%201`, a padded `1`.
-   (5) The failure path is not cheap, as the docstring said and §7.4's
-   "fails cheaply" says. When quality's seating never ran, the lens seats on
+   (5) The failure path is not cheap, unlike what the docstring said and
+   §7.4's "fails cheaply" says. When quality's seating never ran, the lens seats on
    its own, and that seating reads the demand and builds every student's
    profile before the sections fail; the lens then reads the demand again.
    Measured on the QA copy (production flags, interleaved, 63 rounds,
    medians): on 662, plain quality 17.7 ms and `lens=1` 44.1 ms (2.49×). The
-   extra 26 ms is the profiles with their demand read (12.9 ms), the failing
+   extra 26 ms is mostly the profiles with their demand read (12.9 ms), the failing
    section build (3.3 ms) and the lens's own demand read (7.6 ms). That
    equals quality plus `/plan-lens/` (0.99×). On 664: 22.7 against 59.5 ms
    (2.62×, 1.00×). Python peak: quality 0.65 MiB, `lens=1` 3.62 MiB,
