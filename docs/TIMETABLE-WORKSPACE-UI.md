@@ -297,6 +297,14 @@ Stage 3 (to evaluate): a time-proportional week grid.
   (`dialogWrite`), since the page's busy guard answers with a toast.
 - Tests that pin a detail this design changes are updated in the same commit
   to pin the new contract; new tests are mutation-checked.
+- The quality read (`GET …/quality/`) answers exactly as it always did.
+  `?lens=1` (exactly `"1"`) adds `plan_lens` as its last key: the plan lens
+  built from the quality read's own seating, equal to `/plan-lens/` for the
+  same data, or `null` (logged) when it cannot be built; a lens failure never
+  costs the quality keys. Quality is never on the preview lane; `/plan-lens/`
+  keeps the lane and its own seating. Both lenses end with
+  `seating: {assessed, students[, reason]}`: `assessed: false` (reason
+  `assessment_failed`) is unknown, never "nobody sits here".
 
 ## 6. Acceptance
 
@@ -1055,6 +1063,118 @@ findings changed the plan:
    one evaluation per data fingerprint shared with quality; filter and lens
    per §7.1; the parking strip; the slot dialog replaces the textarea on the
    server contract from PR 1.
+   Specified in full in §7.4 (six sub-PRs, 6a–6f; the owner decided Q4 and
+   Q5 there).
+   **As built, 6a (one seating for quality and the lens, server):**
+   `GET …/quality/?lens=1` (exactly `"1"`; `true`, `0`, `yes`, `1.0` and an
+   empty value are ignored) answers quality plus `plan_lens`, last, built
+   inside the same one-teacher scope from the quality read's own seating.
+   Without the parameter both reads are what they were: the oracle
+   `tests/fixtures/tw_quality_legacy.json`, recorded at `b376afa` before any
+   change by `tests/record_tw_quality_legacy.py`, holds the full JSON of
+   `/quality/` and `/plan-lens/` (ids named, key order kept) and each
+   request's query count in three flag modes (the settings' defaults for the
+   three production flags, production, and production with the legacy seat
+   layout); SQ1 replays it. The only change to `/plan-lens/` is `seating`,
+   its new last key. One derivation, `seating_evidence(states, grouping=)`,
+   reads a seating's `assignment_states`; no path reads the section states a
+   seating mutated. `_section_assignment_evidence` keeps its name (the
+   export's seat-once pin is untouched) and returns a frozen
+   `SeatingEvidence`. A seating that cannot be evaluated used to be a silent
+   `{}` that read as "nobody sits here"; it is now logged once and reads
+   `{assessed: false, students: 0, reason: "assessment_failed"}` on both
+   endpoints (scenarios 662 and 664 on the QA copy). The hand-over: the
+   evaluation's states when the seating ran; nobody to seat without demand
+   (assessed, 0 students); otherwise, when the instructor step failed before
+   the seating or the seating step raised (also after the seating, for
+   instance while reading its score), the lens seats on its own (SQ8, SQ8b),
+   so it always equals `/plan-lens/`. Any failure building the lens is
+   `plan_lens: null`, logged, with the quality keys untouched (SQ9).
+   Found on the way, and fixed: (1) holding the evaluation while the lens
+   read its own inputs raised the read's Python peak by 1.08 MiB (the budget
+   is +1 MiB), so the evaluation is dropped once its evidence is read; (2)
+   the lens re-read the demand the quality read had just read (10 of its
+   15 ms on 665), so the quality read now reads the demand rows itself, at the
+   point the profile builder did, hands them to the builder (a new optional
+   `demand_rows=`) and, only when the lens is asked, holds them for the lens
+   (`demands=`); plain quality lets them go before the seating, as it always
+   did. Weakref tests pin both lifetimes; SQ1 pins that plain quality's reads
+   did not change.
+   **Budget, 665** (QA copy, production flags, this machine, SQLite):
+   `lens=1` adds 4 queries to quality's 44 (the seated students' programmes,
+   the demand's programmes, budgets, sections; SQ3 pins them; with no demand,
+   2), against 59 for quality plus `/plan-lens/`. Measured directly, the
+   extra work is the derivation (2.2 ms) and the lens with its seating and
+   demand handed over (3.6 ms; 14.3 ms when it read the demand itself), on a
+   quality median of 69–79 ms. Interleaved medians (budgets ≤ 1.25× quality
+   and ≤ 0.70× quality plus `/plan-lens/`): four runs of 63 rounds (fixed or
+   rotated order, with or without garbage collected before each call) read
+   1.09–1.14× and 0.58–0.64×, and 1.08–1.11× and 0.61–0.63× at the minimum;
+   two runs of the spec's 21 rounds read 1.12–1.13× and 0.72×, just over the
+   second line. The machine is shared with other builds: the separate reads'
+   median moved by up to 30 ms between runs, while the minima did not. The
+   same probe with memory measured (tracemalloc) before the timing read
+   1.29–1.42×, an artefact of that order, which F's probe (`combined2.py`)
+   shares, so F's +34 % may overstate the cost as well; the figures above
+   were timed first. Python peak: quality 3.36–3.74 MiB, as at the base;
+   `lens=1` 3.62–4.01 MiB (+0.3 MiB, the demand rows held for the lens; 663:
+   1.19 and 1.50–1.64). JSON: 6.6 KB without the lens, 58.5 KB with it
+   (5.3 KB gzipped). Real data: on all five QA scenarios (662–666), in both
+   flag modes, quality's JSON and query counts and `/plan-lens/`'s (less
+   `seating`) equal the base commit's, and `lens=1`'s lens equals
+   `/plan-lens/` from one seating (none where the sections cannot be built).
+   Not measured: the 0.5 vCPU host (F16).
+   **Deviations from the spec:** `build_scenario_plan_lens` takes `seating=`
+   and `demands=`; its `programme_view=` comes with 6b, which gives it a
+   behaviour. SQ3's N is 4, not 5 (the demand is not read twice). SQ7 is in
+   `tests/test_tw_preview_lane.py`: the quality view is listed as never laned
+   (`UNLANED_READS`), and a full lane still answers `quality/?lens=1`.
+   **Tests:** SQ1–SQ9 and SQ8b, the derivation (non-roster ids, a roster id
+   with no student row, an id with no section, a course key holding `_`),
+   the evaluation dropped and the demand rows held only for a lens, and the
+   profile builder's `demand_rows=` (`tests/test_tw_scenario_seating.py`,
+   22 cases). Of 41 mutants (each compiled first, so none goes red on a
+   syntax error) all go red, among them: truthy `lens`, the lens laned, a
+   second seating, grouping from the wrong run, the failure read as assessed
+   or as nobody, a silent failure, the lens failure failing quality, the
+   evaluation kept alive, the demand read twice or held by plain quality, the
+   seating key out of place, and an extra query or a key moved in plain
+   quality. Not mutated, by construction: the hand-over carries only the
+   evaluation and the demand rows, so the combined path cannot read the
+   section states the seating mutated; and the lens is built inside the
+   one-teacher scope, which memoises teacher reads the lens never makes.
+   **After review (approved; its non-blocking items fixed):** (1) SQ4b: when
+   the quality read's own demand read raises, the read still answers 200, the
+   three seat parts read `assessment_failed` (logged once), and `lens=1`'s
+   lens seats on its own and equals `/plan-lens/`. It kills the demand read
+   moved out of its `try`, which would make the read a 500. (2) SQ5b: with no
+   demand and no `lens`, both reads equal the base commit's, query counts
+   included. The oracle gained a fourth entry, `production_no_demand`,
+   recorded by the same recorder from `b376afa`'s code (a worktree at
+   `f518662`); the three earlier entries came out byte-identical. It kills
+   `if demand_rows is None` → `if not demand_rows` in the profile builder
+   (one more query). (3) SQ2b: with production flags and nothing marked, the
+   lens from quality's seating and `/plan-lens/` both say
+   `programme_grouping: null`; it kills a non-empty default for the
+   evaluation's grouping. (4) SQ6 also ignores `lens=%201`, a padded `1`.
+   (5) The failure path is not cheap, unlike what the docstring said and
+   §7.4's "fails cheaply" says. When quality's seating never ran, the lens seats on
+   its own, and that seating reads the demand and builds every student's
+   profile before the sections fail; the lens then reads the demand again.
+   Measured on the QA copy (production flags, interleaved, 63 rounds,
+   medians): on 662, plain quality 17.7 ms and `lens=1` 44.1 ms (2.49×). The
+   extra 26 ms is mostly the profiles with their demand read (12.9 ms), the failing
+   section build (3.3 ms) and the lens's own demand read (7.6 ms). That
+   equals quality plus `/plan-lens/` (0.99×). On 664: 22.7 against 59.5 ms
+   (2.62×, 1.00×). Python peak: quality 0.65 MiB, `lens=1` 3.62 MiB,
+   `/plan-lens/` alone 3.53 MiB (664: 0.83, 5.05 and 4.95). Queries: 20 + 10
+   = 30, with the demand read twice. So on such a scenario `lens=1` costs what
+   the two reads cost apart: no more, and no saving. The docstring now says
+   so. Building the sections before the profiles would make the failure
+   cheap; the triage kept the code and fixed the wording.
+   **Tests:** 26 cases; the six mutants of these fixes (the four above, the
+   seat failure left unlogged, and `remove_demand` removing nothing) all go
+   red on the intended test. Follow-ups: none.
 
 Follow-up (recorded in PR 2's review): the stat strip's "Meetings without a
 suitable room" is toned critical whenever the quality check reports any
@@ -2388,3 +2508,808 @@ section's own copies; online identity by display code everywhere.
 - **Q1.** Change room by hand: should a room **short of seats** or **of the wrong type** become a choosable warning row ("Room too small" / "Room unsuitable" are already warnings, PAGE:3203-3204), leaving only the wrong gender refused? PR 5 keeps split view's refusal (SPLIT:7095-7098). The rule is one function, `TimetableRoomChoice.fits`. **Answered by the owner (2026-10-22), restated in 5c-audit:** judged by the quality audit, seats short of its need are a choosable warning ("Room too small"); the wrong type and the wrong gender stay refused (`REFUSED_AUDIT_REASONS = ['gender', 'type']`, applied by the 5c-audit client).
 - **Q2.** Place for an **online** course: offer only the online (evening) windows? The 2026-07-28 rule for GS/GSE (timetable_autoplace.py:275-284) points that way. PR 5 offers the daytime columns, as the server does today (SVC:1428-1431), and shows a note.
 - **Q3.** Change room acts on **one meeting**, as split view does. Should it offer "all N meetings of this section" when they share the current room?
+
+### 7.4 PR 6 — what the grid shows (spec)
+
+This spec comes from a read-only audit and an adversarial critique of the draft. The code was read at master `d4c2dc2` (PR 5e merged) and at the two open PRs that touch the same files: #181 `feat/workspace-room-audit-client` (`48e213d`) and #182 `feat/workspace-place-dialog` (`d4a166d`, which contains #181). Neither open PR changes server code.
+
+Costs were measured on copies of the QA database (`scratchpad/pr6/probe.sqlite3`, `critic.sqlite3`) with read-only calls. "Prod flags" means `TIMETABLE_ONE_TEACHER_PER_SECTION`, `TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY` and `TIMETABLE_SECTION_PROGRAMME_PREFERENCE` on.
+
+**Line numbers.**
+- Server files, UXC, GCSS and SCJS: master `d4c2dc2`.
+- PAGE, TPL, TWCSS and `tests/frontend/timetable-workspace.test.cjs` (TWT): `d4a166d`, which PR 6's client sub-PRs build on.
+
+**Abbreviations.**
+- PAGE, UXC, GCSS, TWCSS, TPL, VIEWS, SVC, POLICY, PANES and SPLIT mean what they mean in §7.3.
+- BASE = `core/templates/core/base.html`
+- PLENS = `core/services/timetable_plan_lens.py`
+- PPE = `core/services/timetable_per_plan_export.py`
+- QUAL = `core/services/timetable_scenario_quality.py`
+- CE = `core/services/timetable_candidate_eval.py`
+- SSA = `core/services/timetable_student_assignment.py`
+- V2 = `core/services/timetable_optimizer_v2.py`
+- SLOTS = `core/services/timetable_slot_config.py`
+- SCJS = `static/js/timetable-slot-config.js`
+- LANES = `core/services/request_lanes.py`
+- REPAIR = `core/services/timetable_repair.py`
+- STA = `core/services/section_teacher_assignment.py`
+- MRI = `static/js/page-timetable-mri.js`
+
+**Notation.** `{t}`, `{c}` and isolation follow §7.3. In addition:
+- `{P}` is a programme code. In HTML it goes in `<bdi>`; in plain text it gets `\u2066…\u2069`, built as escapes and never as literal characters.
+- `{meetings}` is a nominative count: "1 meeting" / "{n} meetings"; Arabic `pluralAr {one:'لقاء واحد', two:'لقاءان', few:'{n} لقاءات', many:'{n} لقاءً', other:'{n} لقاء'}`.
+- `{meetingsAcc}` is SCJS's existing accusative `meetingsText`, used as an object.
+
+#### 7.4.0 Fact map
+
+**A. The plan lens and the per-plan export**
+
+| Fact | Evidence |
+|---|---|
+| The lens seats on its own: profiles, sections, rigidity and tiers, then `ssa.assign_students_to_sections(…, grouping_report=)`. It reads the **mutated** `section.enrolled_student_ids`. | PLENS:65-123 |
+| Any failure becomes `{}`, with no log. | PLENS:102-103 |
+| Seating evidence also drives allocation: `_assign_targets_to_sections` picks owners by it. | PLENS:189-240, 270 |
+| Fields: `owner`, `role`, `filter_plans` (allocation), `actual_plans` and `actual_total` (seating), `preferred_programme` and `programme_grouping` (flag). | PLENS:250-367 |
+| `/plan-lens/` takes the preview lane. | VIEWS:842-859 |
+| The export's programme set is the **board** programmes. | `get_scenario_programs` PPE:97-112; `_build_export_filter` PPE:196-219; files PPE:653-657 |
+| Per plan-term sheet, SHARED narrows the candidate sections **before** classification. | PPE:871-887 (`_section_passes_search` :879, `classify_course_sections` :887) |
+| Classification: R1 main = marked or ≥ 70 % seated; R2 mixed = no main, so the one that seats most; R4 other = seats ≥ 1. With nobody seated: allocated or marked sections are main. | PPE:267-353 |
+| Out-of-plan placements are kept by SHARED plus allocation, and `_section_allocated_to_plan` also passes **UNALLOCATED** sections and sections with no lens row. They are listed only as course codes on the coverage sheet. | PPE:235-262, 912-921, 1977, 2040-2048 |
+| The export seats once per export (pinned). | PPE:667; tests/test_per_plan_export_grouping.py:606-631 (spies `_section_assignment_evidence` by name) |
+| The workspace token is a third, allocation-based copy, over the observed-demand token set. | `itemMatchesPlanToken` PAGE:2116-2129; `planTokenFromSearch` PAGE:2109-2114 |
+| Split view and repair repeat the token rule. | SPLIT:517-531; REPAIR:277-340 |
+| Measured on 665 (prod flags), sections the token shows vs the export's file. | `scratchpad/pr6/roles.py` |
+| – AI: 36 vs 35 | |
+| – DS: 32 vs 33 | |
+| – AI2: 35 vs 40 | |
+| – DS2: 28 vs 38 | |
+| **Measured:** roles classified on all sections and then intersected with SHARED differ from the export's SHARED roles on 665. | `scratchpad/pr6/critic_roles.py` |
+| – DS / AI / AI2 / DS2: 1 / 0 / 12 / 19 placements change role | |
+| – membership agreed on the QA data; it can differ by R2's fallback | |
+| The text filter matches the lens's internal words (`owner`, `role`, `filter_plans`). | PAGE:2158-2182 |
+| The lens is read on open, before the boards. | PAGE:1191 |
+| After that it is read only on request: Refresh (PAGE:4863), or a mark save, which runs the lens and then quality, two seatings. | PAGE:4904-4905 |
+| Card names for codes that two courses share come from the lens's course keys. | `hasDuplicateCourseCode` PAGE:2131-2141, used at :2489 |
+
+**B. Quality and the page's reading of it**
+
+| Fact | Evidence |
+|---|---|
+| Order of work: rooms, then sections plus instructor metrics (**early return** on failure), then profiles, then `evaluate_generated_timetable_candidate`, then tiers and clash counts. | QUAL:153-266 (early return :224-227) |
+| In one-teacher mode it runs inside `assignment_scope`. | QUAL:142-150 |
+| The evaluator seats a working copy, with `grouping_report` and `reserve_shift`. | CE:48-116 |
+| `reserve_shift` only records. | SSA:1129-1138, 1197-1204 |
+| `/quality/` is not laned. | VIEWS:1015-1025 |
+| `TW.dataVersion` is bumped by `twFetch` on a write. | PAGE:503 |
+| Quality is read once per version; a board switch reuses it. | PAGE:5404-5437 |
+| **Every write ends in `selectBoard`, which holds `boardLoading` until the quality read returns, and `workspaceBusy()` counts it: the next edit waits for quality.** | PAGE:1320-1366 (:1363), 331-337 |
+| The workspace's GET retries a 503. MRI's `api` does not. | PAGE:476-485; MRI:39-44 |
+| **Parity measured** (663, 665, 666; local flags, and prod flags inside `assignment_scope`): the lens's seating and quality's evaluation give identical per-section programme counts and grouping reports. | `parity.py`, `critic_roles.py` |
+| **Silent failure measured:** on 662 and 664, `build_section_states_for_scenario` raises. Quality reports instructor `assessment_failed`, with seats unassessed and no reason. The lens reports 0 seated in every section. Selection then says "No student of this scenario sits here". | V2:232, 290; PAGE:4834-4836 |
+
+**C. Client filter and grid**
+
+| Fact | Evidence |
+|---|---|
+| The filter removes non-matching placements; groups and clashes outside it vanish. | PAGE:2251-2268 |
+| The input is debounced 120 ms and calls `renderGrid()`. | PAGE:801-805 |
+| One `[role=grid]` per group and kind. | `_renderSingleGrid` PAGE:2359-2441 |
+| Cells match by exact strings. | PAGE:2424 |
+| Board roving: `stop: '.tw-card'`. Enter is not intercepted on a native control. | PAGE:80-86; UXC:408-430 |
+| Layout skips anything under `hidden`. | UXC:459-475 |
+| Refresh runs on `childList` only. | UXC:686 |
+| A box appearing refreshes only from no box to a box. | UXC:687-693 |
+| Global disclosure: a delegated click toggles `hidden` and `aria-expanded`, keeps the choice per key, and fires no event. | UXC:249-278 |
+| Tones are applied in place and are attribute-only. | PAGE:5769-5790 |
+| The same-course echo is a **dashed outline**. | TWCSS:368 |
+| The card anatomy needs a `tw-cell` container. | TWCSS:275, 338 |
+| The day column is 56 px. | TWCSS:245, 263-271 |
+| The legend is drawn inside `#twGrid`. | PAGE:2333, 2550-2564 |
+| A locate moves the tab stop, not the keyboard. | PAGE:5312-5335 |
+| `TONE_LEAD` words. | PAGE:5609-5613 |
+
+**D. Off grid**
+
+| Fact | Evidence |
+|---|---|
+| The server checks the day first, then a column start of the meeting's kind. Policy meetings are drawn only on teaching days. | SLOTS:195-217 |
+| `_TIME` accepts `9:00` and `09:00:00`. | SLOTS:46, 92-94 |
+| The page compares `slice(0,5)`; the renderer compares raw strings. | PAGE:5629-5636, 2424 |
+| **An English meeting on FRI or SAT is off-grid under both rules, and the English table has no row for it.** | PAGE:2311-2318 |
+| `offGrid` is a warning with `locate: false`. | PAGE:5602, 5694 |
+| QA: 788 placements, all "HH:MM" on SUN–THU, 0 off-grid. | probe |
+| Day and time are `TextField`s. | core/models.py:1028-1030 |
+
+**E. Slot editor and PR 1's contract**
+
+| Fact | Evidence |
+|---|---|
+| `openSlotEditor`: textareas, emoji labels, a stacked `dlg.confirm` for the 409. On success it calls `renderGrid()` only. | PAGE:5818-5889 |
+| It refuses 0 lecture rows. | PAGE:5851 |
+| SCJS guards a list emptied by accident ("would quietly become the defaults"). | SCJS:39-41 |
+| The server takes an empty list as the defaults. | VIEWS:1035-1036; SLOTS:230-233, 300-302 |
+| `VALIDATION_SLOTS` carries `details.errors[{list,index,field,message}]`. Flags are carried by start and end. A 409 `SLOT_EDIT_NEEDS_CONFIRMATION` carries `{hidden≤200, hidden_count, dropped_flags, fingerprint}`. | VIEWS:1031-1121; SLOTS:115-184, 294-346 |
+| Labels are cut to 40 characters silently. | SLOTS:44, 151 |
+| `SC.save` loops up to 4 times; `confirm` must resolve. | SCJS:139-155 |
+| `dialogWrite` keeps no error object. | PAGE:242-256 |
+| SCJS is loaded by three templates (workspace :423, split :391, MRI :220). `global.css` and `ux-controls.js` are versioned in BASE (:32, :79). | |
+
+**F. Cost (QA copy; this machine; SQLite; 665 = 5 boards, 187 meetings, 82 sections, 401 students)**
+
+| Read (interleaved, prod flags, 21 runs) | Median (min; p90) ms | Queries | Python peak |
+|---|---|---|---|
+| quality alone | 79.1 (63.2; 99.9) | 44 | 3.7 MiB |
+| quality, then `/plan-lens/` | 144.2 (111.0; 178.1) | 59 | 4.8 MiB |
+| one seating, with lens and roles | 105.9 (87.0; 132.9) | 62 | 4.2 MiB |
+
+- JSON: 61 KB combined (6 KB gzipped; the app does not compress); roles 2.7 KB.
+- Process: about 104 MiB after imports. The seating is not what costs memory; **latency is**, because edits wait on it (B).
+- Not measured: the 0.5 vCPU host, and scenarios larger than 665.
+
+#### 7.4.1 Decisions
+
+| # | Decision | Evidence | Resolves |
+|---|---|---|---|
+| E1 | Six sub-PRs, **6a–6f**: two server, four client. Each ships alone with its tests. The client ones start after #182 merges. | 5e's size; PAGE overlap with #181/#182 | Size, conflicts |
+| E2 | **No server cache. `GET …/quality/?lens=1` returns quality and the lens from one seating.** "One evaluation per data fingerprint" is realised as one seating per page data version. | Parity (B); cost (F); a fingerprint would have to cover placements, marks, demand, programmes, budgets, teacher links and flags (REPAIR:115-127 bumped twice) | Plan line |
+| E2a | **The page asks for the lens only while it is wanted:** on the first quality read of an opened (or reset) scenario, while the filter holds a programme or SHARED token, on Refresh, and after a mark save. Any other read is plain `/quality/`: byte-identical and the same queries. | Edits wait on the quality read (B); §7.2 item 4 ("never re-read per edit") | Per-edit cost |
+| E2b | `/quality/` stays off the lane, with or without the lens. `/plan-lens/` keeps its lane and its own seating, and gains only `seating`. | tests/test_tw_preview_lane.py:32-54; MRI has no 503 retry | Lane |
+| E2c | A failure while building the lens or the roles never fails quality: `plan_lens: null` or `programme_view: null`, logged once. | QUAL's own pattern (unknown, never wrong) | Robustness |
+| E3 | **One seating-evidence derivation**, `seating_evidence(states)`, from `assignment_states`. No path reads mutated sections. When quality's evaluation did not run, the lens seats itself, so it always equals `/plan-lens/`. | PLENS:105-123; CE:56; QUAL:224-227 | Two derivations |
+| E4 | `seating: {assessed, students, reason?}`. A failure is logged and never reads as "nobody". | PLENS:102-103; 662 and 664 | Silent failure |
+| E5 | **Programme roles: one server module, moved verbatim out of PPE.** For each placement and programme: `main`, `mixed` or `other` on its own sheet, or `outside`. The export and the lens call the same function. | PPE:867-933 | "Roles including out-of-plan" |
+| E5a | `lens=1` **always** carries `programme_view`, with `roles` and `shared_roles` (the export's SHARED classification). No separate roles parameter. | Roles cost about +20 ms (F); a roles-only re-read would be a second seating; SHARED changes the roles (A) | Cost; SHARED |
+| E5b | **Programmes = the export's set:** board programmes (`get_scenario_programs`), upper-cased, in board order. The page recognises a token from `programme_view.programmes`; before that, from `TW.planLens.plans ∩ board programmes`, or from the board programmes the scenario lists. | PPE:97-112, 196-219, 653-657 | Token set |
+| E6 | **The lens = what P's per-plan file shows.** A card with any role for P is not dimmed. Several programmes are a union. SHARED uses `shared_roles` (alone: a union over every programme). **The client has no copy of the rule.** The lens only dims (§7.1 #5). | Owner file rule 2026-10-21 (PPE:21-29) | Semantics |
+| E6a | A placement not in `placement_ids` is unknown: not dimmed, and its note says "checking". | Scenario-wide snapshot | Stale roles |
+| E7 | The text filter matches what the card and Selection show, never the lens's internal words. | PAGE:2158-2163 | Filter words |
+| E8 | **Text tokens fold and dim, in place.** All placements are always drawn, so the filter never rebuilds the grid (`applyGridView`). A table without a match shows its fold row. The other non-matching cards dim. | §7.1 #5; PAGE:801-805 | §7.1 #5; drag and focus kept |
+| E8a | **The fold is a row of its own table, and its toggle is a roving stop** (`stop: '.tw-card, .tw-fold-toggle'`). The table's other rows sit in a `display: contents` `role=rowgroup` that is `hidden` while folded. Open state is page memory, keyed `{group}|{kind}` and cleared when the text changes. No sessionStorage key. | 5a: the board is one tab stop; UXC:459-475 | Keyboard |
+| E9 | **Dim = the hue mixed down, `--t2` ink and the code at weight 500. Not dashed** (the echo is dashed), and never opacity. Rings, marks, selection, echo and focus stay. Forced colours use a dotted GrayText border. | TWCSS:295-371; §6 contrast | Dim style |
+| E10 | **Dims are attribute-only:** `data-dim`, plus `aria-describedby` tokens pointing at shared visually hidden notes outside `#twGrid`, plus the `title`. A dimmed card stays a drag source and a stop; Enter, M and R work. | UXC:686 (`childList` refresh); PAGE:5769-5790 | Focus, churn |
+| E11 | The global disclosure listener dispatches a bubbling `ux-disclosure` event `{open, key}` from the toggle. `roving` refreshes on it. | UXC:269-278, 686-693 | Keyboard after unfold |
+| E12 | The left list stays a finder. Text hides rows; its programme token keeps the course's demand rule (a different question: "does P need this course"), over the E5b token set. | PAGE:2185-2215 | List scope |
+| E13 | **Parking strip:** a last row of the meeting's own table (lecture, lab or English), with "Off grid" as its row header. **One gridcell per parked card**, ordered by day and start, `data-ux-col` = start minutes, each a `tw-cell` container. ↓ from THU lands on the card nearest in time, ←/→ walk the strip, PgDn goes to the next table. The strip is not a drop target. The Issues `offGrid` row locates. The tone stays a warning. | §7.1 #4; UXC aligned(); TWCSS:275, 338 | §7.1 #4 |
+| E14 | **One cell key** for the renderer and the grid rule: `hhmm()` as SLOTS `_hhmm`, the day upper-cased to 3 letters. Shared cases gain "9:00", "09:00:00" and "sun". | PAGE:2424, 5629-5636; SLOTS:46, 92-94 | Rule parity |
+| E15 | **The slot dialog** is a template `<dialog>` through `UXControls.dialog`, with editable rows. No client validation of times: the server's `VALIDATION_SLOTS` marks the field. The 409 review is a step inside the dialog, and the fingerprint is unchanged. | PAGE:5818-5889; VIEWS:1031-1121 | Textarea |
+| E15a | Times are text inputs (`inputmode=numeric`, `dir=ltr`, 24-hour), never `type=time`. | GCSS:5489-5496 | |
+| E15b | Flags are read-only. The server's review names a lost flag. | SLOTS:163-184, 294-333 | Q4 (owner: read-only) |
+| E15c | **A list always keeps one row:** Remove is disabled on the last row, with its reason, because an empty list is the server's defaults, not "no columns". | SCJS:39-41; VIEWS:1035-1036 | No silent defaults; Q5 (owner: no defaults button) |
+| E15d | **Edits are never lost:** Cancel, Escape or a failure keep a per-scenario draft. Reopening offers it, with "Start from the saved columns". | PAGE:5815-5817 ("their edits are never lost") | Data safety |
+| E16 | The row model and words live in SCJS (`editorRows`, `rowsToPayload`, `lengthText`, `save({invalid})`). `.ux-rows` and `.ux-field-error` are global. Split view keeps its textarea until F13. | SCJS:1-14 | Global first |
+| E17 | After a columns save the board is read again (`selectBoard`). | STA:405-411, 470-471 | Stale tones |
+| E18 | `dialogWrite` also returns the server's `error` object: `{code, status, error}`. | PAGE:242-256 | Field errors |
+| E19 | Course names on cards come from the lens's course keys. The grid is drawn once more only when an answer changes the set of duplicated codes. | PAGE:1191, 2131-2141 | Open order |
+| E20 | Selection's programme block keeps 4b's words and Refresh. "Checking" while a lens read is out; "From before your last change" plus Refresh when stale; a failure says so, with Refresh. Refresh and a mark save make one quality read with the lens. | PAGE:4820-4846, 4896-4906 | 4b |
+| E21 | The count stays "{n} of {total}", where n = cards that are not dimmed. Fold count, programme and lens state go in the title and the accessible description. | Frame test (tests/test_timetable_workspace_frame_browser.py:238) | Chrome height |
+| E22 | Split view's chips and repair's plan scope keep the allocation rule until F8 and F9. | SPLIT:517-531; REPAIR:277-340 | Scope |
+| E23 | The export's free-text search keeps its own rule (F10). Its programme and SHARED parts are now what the grid dims by, so "Programme AI2 only" is true from 6d on. | PPE:174-219 | Export scope |
+| E24 | Asset versions follow D28. Base tips: BASE `global.css` 86 and `ux-controls.js` 5; TPL TWCSS 16 and PAGE 56; SCJS 3 in **three** templates; `timetable-room-choice.js` 2. A branch that bumps an asset another merged branch also bumped re-bumps after the merge. | BASE:32, 79; TPL:15, 422-429; split :391; MRI :220 | Assets |
+
+#### 7.4.2 Sub-PRs
+
+| PR | Contents | Depends on | Side |
+|---|---|---|---|
+| **6a** One seating for quality and lens | `?lens=1`; `seating_evidence`; `seating`; lens and roles failure isolation; budget recorded | — | server |
+| **6b** Programme roles shared with the export | The new module (moved code plus `programme_placement_roles` and `programme_view`); the export calls it (workbooks equal); `programme_view` on `lens=1` | 6a | server |
+| **6c** Text filter: fold and dim, in place | No removal; fold rows; attribute dims; `applyGridView`; `ux-disclosure` event; interim programme dims by today's token | #182 merged | client + UXC |
+| **6d** Lens from the quality read | `lensWanted()`; no `/plan-lens/` read; dims by roles; E20 states; names; count, scope and legend | 6b, 6c | client |
+| **6e** Parking strip | Strip rows (lecture, lab, English); locate; one cell key; parity cases; SCJS `{parked}` words | #182 merged | client + SCJS |
+| **6f** Slot dialog | `#twSlotDialog`; SCJS editor helpers; global `.ux-rows` and `.ux-field-error`; `dialogWrite` with `error`; draft; re-read | 6e | client + global |
+
+**Order:**
+- 6a and 6b can start now, on master.
+- 6c and 6e can run in parallel once #182 has merged. Both edit `renderGridWithSlots` and bump PAGE, so the later one rebases and re-bumps.
+- 6d comes after 6b and 6c; 6f after 6e.
+
+**Every sub-PR:**
+- the §6 frame acceptance;
+- its own bumps (E24);
+- every new test mutation-checked;
+- an "As built" note under §7.2 item 6;
+- §3.3 and §5 updated for new globals and contracts.
+
+#### 7.4.3 Contracts
+
+##### A. The quality read with the lens (6a; `programme_view` from 6b)
+
+```
+GET …/quality/          -> {ok, …quality}                       // byte-identical to today, same queries
+GET …/quality/?lens=1   -> {ok, …quality, plan_lens|null}       // one seating; plan_lens last
+GET …/plan-lens/        -> {ok, plan_lens}                      // own seating, laned; adds `seating` only
+```
+
+- `lens` counts only when it is exactly `"1"`.
+- `plan_lens` equals `/plan-lens/` for the same data, plus `programme_view` (6b).
+- `seating`:
+  - `{"assessed": true, "students": n}`, where n = distinct students seated in at least one section;
+  - `{"assessed": false, "students": 0, "reason": "assessment_failed"}`;
+  - no student demand: `{"assessed": true, "students": 0}`.
+- A lens build failure gives `plan_lens: null`; a roles failure gives `programme_view: null`. Each is logged once, and quality is unchanged.
+- The page splits the answer: `const { plan_lens, ...quality } = data`.
+
+##### B. `programme_view` (6b)
+
+```
+programme_view = {
+  programmes:     ["DS","AI","AI2","DS2"],                       // E5b: board programmes, board order
+  roles:          { P: { main:[ids], mixed:[ids], other:[ids], outside:[ids] } },   // ascending; empty lists omitted
+  shared_roles:   { P: { … } },                                  // the export's classification under SHARED
+  placement_ids:  [ids],                                         // every placement of the scenario at this read
+  seating_assessed: bool                                         // false: roles follow allocation and marks
+}
+```
+
+Each role answers "is this placement in P's per-plan file, and as what". `outside` means its course is listed on P's coverage sheet as placed outside the plan.
+
+##### C. Reading rule (6d)
+
+- `lensWanted()` is true when any of these holds:
+  - no lens has been read for this scenario since it opened or was reset;
+  - `filterQuery()` has programmes or SHARED;
+  - a Refresh or a mark save asked for it.
+- `refreshWorkspaceQuality(force, {lens})` keeps one read in flight: `{scenarioId, version, lens, promise}`.
+  - A request joins it when the scenario and version match and (it has the lens, or the lens is not needed).
+  - Otherwise a new read starts, and the newest revision wins.
+
+##### D. Dims, folds and the view (6c, 6d)
+
+- `filterQuery()` = `{programmes, shared, text}`: a token is a programme when it is in the E5b set, and `SHARED` is the shared token.
+- `textMatch(p)`: every text token is in `placementText(p)` (E7).
+- `inLens(p)`:
+  - `null` when there are no programme or SHARED tokens, roles are missing, or the id is not in `placement_ids`;
+  - otherwise membership in the union of `roles[P]` (or `shared_roles[P]` with SHARED; SHARED alone means every programme).
+- `applyGridView()`, in place, never a rebuild, runs after a draw, a filter change, a tone change and a lens change. It sets:
+  - `data-dim` (`filter` and/or `lens`, absent when none);
+  - the `aria-describedby` tokens `twDimNoteFilter` and `twDimNoteLens`;
+  - the title suffix;
+  - each table's fold row (`hidden`, label, tone counts, written only when the text differs) and its rowgroup's `hidden`;
+  - each group heading's "N matches";
+  - the count;
+  - the legend's dim item `hidden`.
+- Table structure:
+  - `[role=grid]` > `div.ux-grid-row.tw-fold-row[role=row][hidden]` > `div.tw-fold-cell[role=gridcell]` > `button.ux-disclosure-toggle.tw-fold-toggle[aria-expanded][aria-controls=twFoldBody-{i}][data-fold-key="{group}|{kind}"]`;
+  - then `div.tw-fold-body[role=rowgroup][id]`, holding the header row, the day rows and the strip row.
+- `openFoldOf(card)` removes `hidden`, sets `aria-expanded`, records the open state and dispatches `ux-disclosure`.
+
+---
+
+#### 6a: one seating for quality and lens (server)
+
+##### Server
+
+**PLENS:**
+- `SeatingEvidence` (frozen): `assessed`, `students`, `counts: {(course_key, label): Counter[programme]}`, `grouping: dict`, `reason`.
+- `seating_evidence(states, *, grouping) -> SeatingEvidence`. This is the only derivation: for each state, each `section_id` containing `_` adds one to the student's programme (`_student_program_map`, one query).
+- `_section_assignment_evidence(scenario_id) -> SeatingEvidence` keeps its name, so the export's pin is unchanged.
+  - It uses the `(states, _)` that `assign_students_to_sections` returns.
+  - No profiles or no sections: `assessed=True, students=0`.
+  - An exception: `logger.exception`, then `assessed=False, reason="assessment_failed"`.
+- `build_scenario_plan_lens(scenario_id, *, seating=None, programme_view=False)`: with `seating` given it does not seat. The payload gains `seating`; every other field and the field order are unchanged.
+
+**QUAL:**
+- `build_scenario_quality(scenario_id, *, with_lens=False)`. Inside the same one-teacher scope, after quality:
+  - the evaluation ran: `seating_evidence(evaluation.assignment_states, grouping=evaluation.quality_score.get("programme_grouping") or {})`;
+  - no demand: `assessed=True, students=0`;
+  - it never ran or it raised: the lens seats itself (E3), which fails cheaply when the sections cannot be built.
+- The lens build is wrapped: a failure gives `plan_lens: None`, logged.
+
+**VIEWS:** `tw_scenario_quality_view` reads `lens == "1"`. The answer is `_ok({**quality, "plan_lens": lens})`. No lane.
+
+##### Budget (As built; same method as F)
+
+- On 665, interleaved: `lens=1` ≤ quality median +25 % and ≤ 70 % of the two separate reads.
+- Python peak ≤ +1 MiB.
+- Queries: quality plus exactly the lens's own reads (SQ3).
+- Without `lens`: identical queries (SQ1).
+
+##### Tests (`tests/test_tw_scenario_seating.py`)
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| SQ1 | No parameter: the JSON equals an oracle recorded at the base commit (key order included) in three flag modes; the query count equals the oracle's. | `plan_lens` always added; key order changed; an extra query |
+| SQ2 | `?lens=1`: `plan_lens` deep-equals `/plan-lens/` with a marked section in both flag modes. `assign_students_to_sections` (`wraps`) runs once. | A second seating; grouping from the wrong run; evidence from the mutated sections |
+| SQ3 | Query count = SQ1 + N, with N and the SQL prefixes pinned. | Lens inputs loaded twice |
+| SQ4 | `build_section_states_for_scenario` raises: quality as today; `seating` is `{false, 0, "assessment_failed"}` on both endpoints; one log each. | `assessed` true; reason dropped; silent `{}` |
+| SQ5 | No demand: `{assessed: true, students: 0}`. | Reported as a failure |
+| SQ6 | `lens=true`, `lens=0` and `lens=` give no `plan_lens`. | Truthy parsing |
+| SQ7 | The lane lists gain "neither: quality". | Quality laned |
+| SQ8 | Instructor metrics raise while the sections build: `plan_lens` still equals `/plan-lens/` (its own seating). | `assessment_failed` without trying |
+| SQ9 | `build_scenario_plan_lens` raises on the combined path: HTTP 200, quality intact, `plan_lens: null`, one log. | Quality lost to a lens failure |
+
+##### Risks
+
+1. **The lens is per read, not per edit.** Plain edits pay nothing (E2a). While a programme token is in the filter, each edit pays about +34 % (F), and edits wait on it. This is recorded.
+2. **JSON** grows by about 55 KB uncompressed on 665 when the lens is asked (F15).
+
+---
+
+#### 6b: programme roles shared with the export (server)
+
+##### Server
+
+**New `core/services/timetable_programme_view.py`.** It imports neither OR-Tools nor the export.
+
+Moved **verbatim**, with PPE re-importing every name:
+- `MAIN_SECTION_SHARE`, `ROLE_*`, `SectionSeat`, `_lens_seating`, `classify_course_sections`;
+- `_section_allocated_to_plan`;
+- `_section_passes_search`, which takes `shared_only: bool` (PPE keeps a one-line adapter);
+- `get_plan_term_map`, `get_plan_elective_terms`, `_classify_placement_term`, `_placement_plan_term`, and the course-key helpers they need.
+
+Patching a moved name through `per_plan.*` no longer reaches the caller. Today's tests patch only `build_scenario_plan_lens` (tests/test_per_plan_export_grouping.py:235, 623).
+
+New:
+
+```python
+ROLE_OUTSIDE = "outside"
+
+def programme_context(program, scenario, course_keys) -> tuple[plan_map, elective_terms, elective_fills]   # PPE:680-688 moved
+def programme_placement_roles(program, placements, *, plan_map, elective_terms, board_terms, plan_lens,
+                              shared_only=False) -> dict[int, str]                                     # PPE:871-923 moved
+def programme_view(scenario, plan_lens) -> dict                                                          # contract B
+```
+
+`programme_placement_roles` keeps the export's order of work:
+1. SHARED narrows each sheet's sections;
+2. classify;
+3. an out-of-plan placement is `outside` when it passes SHARED and `_section_allocated_to_plan`.
+
+`programme_view`:
+- loads placements (`select_related("term_section")`), board terms and course keys once;
+- per board programme, one context and two role maps (`shared_only` false and true);
+- `seating_assessed = plan_lens["seating"]["assessed"]`.
+
+**PPE `_build_program_workbook`** gets its keep set from `programme_placement_roles(..., shared_only=export_filter.shared_only)`:
+- `is_other` = role `other`;
+- the text checks are unchanged (PPE:910-927).
+
+**PLENS:** `programme_view=True` adds the key. Only `quality/?lens=1` sets it.
+
+##### Tests (`tests/test_tw_programme_view.py`)
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| PV1 | For every scenario of `test_per_plan_export_grouping.py` and `_electives.py`, with `search` in {"", "SHARED", "AI2", "AI2 CS1", "SHARED DS"}: per-sheet digests of values, fills, fonts, merges and names equal an oracle recorded at the base commit with lxml blocked (`tests/fixtures/per_plan_export_digests.json`, plus a dump tool that names the first difference). | A non-verbatim move; SHARED applied after classification; out-of-plan without the shared check |
+| PV2 | Marked → main; 70 % → main and 69 % → not; mixed; other; outside (allocated, and **unallocated**); none → absent. | `filter_plans` used; the 0.70 boundary; `outside` missing for UNALLOCATED |
+| PV3 | An elective on slots 8 and 10: each placement takes its own sheet's role. | Roles per course |
+| PV4 | A fixture where non-shared S1 seats 2 AI2 and shared S2 seats 0 AI2 but is allocated to AI2: `shared_roles.AI2` holds S2 as main; `roles.AI2` does not hold S2. A mixed/other pair changes under SHARED. | Client-side intersection (one `shared` list) |
+| PV5 | `programmes` = board programmes in board order, upper-cased; an observed-only plan and a `scenario.programs`-only programme are absent. | The union; lexical order |
+| PV6 | Seating unassessed: roles follow allocation and marks; `seating_assessed: false`. | Empty roles |
+| PV7 | `lens=1` adds exactly 4 + 2 × programmes queries over 6a's count. | A query per placement |
+| PV8 | `classify_course_sections` and `programme_placement_roles` are defined only in the new module. The export calls the roles function once per file (spy). | A second copy |
+
+Budget (As built): on 665, `lens=1` ≤ quality median +45 % (critique: +34 %), ≤ 80 % of the separate reads, and `programme_view` JSON ≤ 6 KB.
+
+##### Risks
+
+1. **A shared section on two boards can have two roles**, one per sheet. That is correct, and PV3 pins it.
+2. **Moved names:** PV8 keeps one definition.
+
+---
+
+#### 6c: text filter folds and dims, in place (client)
+
+##### Global (UXC; BASE `?v` 5→6)
+
+- The disclosure listener, after toggling: `toggle.dispatchEvent(new CustomEvent('ux-disclosure', {bubbles: true, detail: {open, key}}))`.
+- `roving` listens for `ux-disclosure` on its region and calls `refresh()`.
+- §3.3 DISCLOSURE and ROVING say so.
+
+##### Markup and behaviour (PAGE)
+
+- `renderGridWithSlots` draws every placement. Each table has its fold row and its rowgroup (contract D). After the draw it calls `applyGridView()`.
+- `boardNav` uses `stop: '.tw-card, .tw-fold-toggle'`.
+- The `#twSearch` input (debounced 120 ms) calls `applyGridView()`, `renderBudgetSidebar()` and `updateSearchStatus()`. **No `renderGrid()`.**
+- A table folds when the text is not empty and no placement in it matches. An empty table folds too, with "0 meetings".
+- Fold open state:
+  - `TW.foldOpen` (a Set), cleared when the text changes;
+  - a click records it (from `ux-disclosure`);
+  - a locate opens the fold first (`openFoldOf`, in `highlightWorkspacePlacements` before `boardNav.active`).
+- Fold tone counts come from `buildBoardIssues().byPlacement`, through `applyCardTones` → `applyGridView`.
+- `placementText(p)` = `placementSearchText` without `lensBits`.
+- The interim lens: programme tokens dim by `itemMatchesPlanToken` (`data-dim="lens"`), never fold. 6d replaces it.
+- `#twDimNoteFilter` and `#twDimNoteLens` are visually hidden `<span>`s in `.tw-centre`, outside `#twGrid`.
+
+##### Page CSS (TWCSS)
+
+```css
+.tw-card[data-dim] { background: color-mix(in srgb, var(--tw-card-hue) 30%, var(--surface)); color: var(--t2); }
+.tw-card[data-dim] .cc { color: var(--t2); font-weight: 500; }
+.tw-card[data-dim] .ci, .tw-card[data-dim] .tw-card-name { color: var(--t2); }
+html[data-theme="dark"] .tw-card[data-dim] { background: color-mix(in srgb, var(--tw-card-hue) 6%, var(--surface)); }
+@media (forced-colors: active) { .tw-card[data-dim] { border: 1px dotted GrayText; } }
+.tw-fold-body { display: contents; }
+.tw-fold-cell { grid-column: 1 / -1; padding: 4px 8px; background: var(--surface); }
+.tw-fold-toggle { width: 100%; justify-content: flex-start; gap: 8px; font-size: var(--text-xs); }
+.tw-fold-tones { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
+```
+
+The ring rules (TWCSS:347-351) must still win: a dimmed card keeps `--tw-ring`.
+
+##### Keyboard
+
+- A folded table offers one stop, its toggle.
+- ↓ or PgDn from the previous table reaches it. Enter (native) unfolds; the event triggers a refresh and ↓ enters the table.
+- A dimmed card is an ordinary stop.
+
+##### States
+
+| State | Board |
+|---|---|
+| No text | No fold rows; no `filter` dims |
+| Text matches nothing | Every table folded; "0 of N" |
+| A fold holds a critical card | Its toggle shows the critical icon and count, with the words in its label |
+| A tone changes later | Counts update in place; same nodes |
+
+##### Strings
+
+| Where | English | Arabic |
+|---|---|---|
+| Fold label | {table} · no match · {meetings} | {table} · لا شيء مطابق · {meetings} |
+| Fold tones (words) | `TONE_LEAD`: {n} | `TONE_LEAD`: {n} |
+| Dim note (filter) | Outside the filter | خارج التصفية |
+| Legend | Dimmed: outside the filter | باهتة: خارج التصفية |
+| Count title | {n} of {total} meetings match; tables folded for no match: {k}. | {n} من {total} لقاء مطابق؛ الجداول المطويّة لعدم وجود مطابق: {k}. |
+
+##### Tests
+
+`timetable-accessibility.test.cjs`:
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| D1 | One bubbling `ux-disclosure` with `{open, key}`; roving reaches a region just shown; `applyCardTones` does not refresh roving (spy). | No event; no listener; an attribute observer |
+
+`timetable-workspace.test.cjs`. The tests at :1017, :1279 and :1533 now assert `data-dim`, not absence (a spec change):
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| FL1 | "CS1": tables without a match folded (`hidden` rowgroup, `aria-expanded=false`); non-matches in the open tables dimmed and described by `twDimNoteFilter`; every placement in the DOM. | Removal kept; per-group fold; no dim |
+| FL2 | Typing keeps the **same card nodes** and a focused card keeps focus. | `renderGrid` on input |
+| FL3 | A fold's critical count; a later warning updates the count without a rebuild. | Counts ignore tones |
+| FL4 | Open a fold, type: it is folded again. Same table, same text, after a tone redraw: still open. | Memory across queries; a tone redraw shuts it |
+| FL5 | A locate inside a fold opens it, pulses the card and sets the tab stop. | Fold left shut |
+| FL6 | "UNALLOCATED" and "core" match nothing; "No room" and a teacher's name match. | Lens words kept |
+| FL7 | ↓ from the previous table lands on the toggle; Enter opens; ↓ enters the table; no fold toggle is a Tab stop outside roving (`tabIndex -1` when not active). | Toggle outside roving |
+| FL8 | A dimmed card: draggable, Enter selects, M opens Move. | Dim disables |
+| FL9 | Count and title in en and ar (`pluralAr` for 1, 2, 3, 11). | `plural()` for Arabic |
+| FL10 | Interim "AI2" dims and never folds. | The lens folds |
+
+Chrome (`tests/test_timetable_workspace_grid_view_browser.py`):
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| FB1 | 1366×650 and 1440×790, light and dark, en and ar: dimmed code and room ≥ 4.5:1; a dimmed critical ring ≥ 3:1; the fold label ≥ 12 px and ≥ 4.5:1; a dimmed card is distinguishable from an echoed one (no dashed border); no horizontal page scroll. | Opacity dim; dashed dim; ring lost |
+| FB2 | Keyboard only: ↓ to a toggle, Enter, ↓ into the table; the accessibility tree shows an expandable button inside the grid. | Event or refresh removed |
+
+##### Risks
+
+1. Every placement is drawn (≤ 187 cards per board on 665, as with no filter today).
+2. A sessionStorage key per query is avoided on purpose: page memory only.
+
+---
+
+#### 6d: the lens from the quality read (client)
+
+##### Behaviour (PAGE)
+
+- **Removed:** `loadPlanLens`, `planLensRead` and its revision, and the `/plan-lens/` read on open (PAGE:1191). `resetPlanLens` stays. `refreshPlanLens` becomes `refreshWorkspaceQuality(true, {lens: true})` plus the announcement.
+- `refreshWorkspaceQuality(force, {lens})`, per contract C:
+  - URL `…/quality/` or `…/quality/?lens=1`;
+  - `TW.quality = quality`;
+  - with a lens: `TW.planLens = {...plan_lens, loaded: true, version}`;
+  - `plan_lens: null` or a failure: the lens keeps what it had and is marked `failed`;
+  - then `applyGridView()`, `renderBudgetSidebar()` when a programme token is set, and `renderGrid()` only when the duplicated-code set changed (E19).
+- `selectBoard`'s quality read passes `{lens: lensWanted()}`.
+- Filter input: when `lensWanted()` and the lens or its `programme_view` is stale (`version !== TW.dataVersion`), one forced read with the lens, joined per contract C.
+- Dims follow `inLens(p)`. `twDimNoteLens` says the programme(s). The title carries the role words. `null` means no dim and "(checking)".
+- Selection (E20): the 4b words. `seating.assessed === false` reads "—" plus the "seating unknown" words, never "nobody". Refresh appears when stale or failed.
+- `saveWorkspaceProgrammeMark`: after a changed save, one `refreshWorkspaceQuality(true, {lens: true})`.
+- `#twExportScope` names the programme tokens, "Shared sections only", or the text.
+
+##### States
+
+| State | Count | Dims |
+|---|---|---|
+| Token, roles fresh | "{n} of {total}"; title "{P}: …" | By roles |
+| Token typed, read out | "{n} of {total}" by text only; title "{P}: checking…" | None for the lens |
+| Read failed or `plan_lens: null` | Text-only count; title "could not be read" | None for the lens |
+| Seating unassessed | By roles; title with the allocation words | By roles |
+| Edit in flight | Old roles; title "updating…" | Old roles; new ids not dimmed |
+
+##### Strings
+
+| Where | English | Arabic |
+|---|---|---|
+| Dim note (one) | Not in {P}'s timetable | ليست في جدول {P} |
+| Dim note (several) | In none of these timetables: {P}, {P} | ليست في أيٍّ من جداول: {P}، {P} |
+| Dim note (shared) | Not a shared section in these timetables | ليست شعبة مشتركة في هذه الجداول |
+| Roles (title) | {P}: its own section · {P}: mixed section ({c} of {t}) · {P}: seats {c} of {t}; mainly another programme's · {P}: outside its plan; its file lists the course as placed | {P}: شعبة خاصة به · {P}: شعبة مختلطة ({c} من {t}) · {P}: فيها {c} من {t}؛ ومعظمها لبرنامج آخر · {P}: خارج خطته؛ يذكر ملفه المقرر بين المقررات المطروحة |
+| Unknown | (checking) | (جارٍ التحقق) |
+| Count title | {P}: {n} of {total} meetings in its timetable · {P}: checking… · {P}: updating… | {P}: {n} من {total} لقاء في جدوله · {P}: جارٍ التحقق… · {P}: جارٍ التحديث… |
+| Unavailable | The programme view could not be read; nothing is dimmed for {P}. | تعذّرت قراءة عرض البرامج؛ لم يُبهَت شيء للبرنامج {P}. |
+| Seating unknown | The seating could not be evaluated: {P}'s sections follow the plan's allocation, as its per-plan file does. | تعذّر تقييم توزيع الطلاب على الشعب: تتبع شعب {P} توزيع الخطة، كما في ملفه لكل برنامج. |
+| Legend | Dimmed: not in {P}'s timetable | باهتة: ليست في جدول {P} |
+| Export scope | Programmes {P}, {P} only · Shared sections only | البرامج {P}، {P} فقط · الشعب المشتركة فقط |
+
+`{c}` = `actual_plans[P]` and `{t}` = `actual_total`, both from the section's lens row.
+
+##### Tests
+
+The 4b and lens-mechanics tests at TWT:1337-1700 move from `/plan-lens/` reads to `quality/?lens=1` reads (a spec change). That includes :1416 "older answer", :1644 "joins", :1658 "reset" and :1671 "older read finishing", re-pinned on the quality read.
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| LN1 | Open: no `/plan-lens/`; the first quality read has `lens=1`. An edit with no token: a plain `quality/` (no `lens`). With "AI2" in the filter: every quality read has `lens=1`. | Lens on every read; lens read on open kept |
+| LN2 | "AI2": a card allocated to AI2 with no role is dimmed; a card with role `other` is not; notes and titles as in the table. | `filter_plans` used; `other` dimmed |
+| LN3 | "AI2 DS" is a union; "SHARED AI2" uses `shared_roles` (fixture: a card in `roles.AI2` ∩ shared but absent from `shared_roles.AI2` is dimmed); "AI2 CS1" folds by CS1 only; "AI2" → "DS" reads nothing. | Client intersection; the lens folds; a read per switch |
+| LN4 | Roles arriving: same nodes, focus kept. | Rebuild on lens |
+| LN5 | Failure or `plan_lens: null`: quality shown, no lens dims, Selection Refresh forces a lens read. `seating_assessed: false`: dims by roles plus the allocation words. | Quality lost; "nobody" |
+| LN6 | An id not in `placement_ids`: not dimmed, "(checking)". | Unknown dimmed |
+| LN7 | Mark save: exactly one `quality/?lens=1`, no `/plan-lens/`; "checking", then fresh, with no Refresh. | Two reads |
+| LN8 | Duplicated codes: names after the lens (one redraw); the same set again: no redraw. | Redraw every answer |
+| LN9 | A read in flight without the lens plus a token typed: a second read with the lens starts; one with the lens is joined. | Join drops the lens; a duplicate read |
+| LN10 | Arabic: isolation (`\u2066`), `pluralAr`, the scope line. | No isolation |
+
+Chrome (`LensTests`): en and ar, light and dark; type "AI2". The DS-only card is dimmed and the "other" card is not. Export reads "Programme AI2 only". Exactly one `quality/?lens=1`, no `/plan-lens/`.
+
+##### Risks
+
+1. "AI2" is a programme token, so a code prefix needs a longer token ("AI23").
+2. With a token set, edits wait about +34 % longer (F). That is accepted, and the user chose it.
+3. A board programme with no plan requirements has only `outside` roles.
+
+---
+
+#### 6e: parking strip (client)
+
+##### Markup and behaviour (PAGE)
+
+- `cellKey(day, start)` = `${String(day).toUpperCase().slice(0,3)}|${hhmm(start)}`, where `hhmm` mirrors `_hhmm`. Both the renderer and `isPlacementOnGrid` use it.
+- Each placement that is not on the grid goes to its group's table of its kind (`isLabPlacement`; English by `isEnglish`). An English meeting off the grid is one on a non-teaching day. The English table's columns come from `gridSlots` over its on-grid meetings.
+- `_renderSingleGrid` appends inside the rowgroup, only when there are any:
+
+```html
+<div class="ux-grid-row tw-park-row" role="row">
+  <div class="tw-grid-slot-label tw-park-head" role="rowheader">Off grid<span class="visually-hidden"> — outside the grid's columns</span></div>
+  <div class="tw-park">
+    <div class="tw-park-cell" role="gridcell" data-ux-col="{start minutes}" data-focus-key="park:{group}:{kind}|{id}">
+      …createPlacementCard(p) with <div class="tw-card-when"><bdi dir="ltr">{day} {t}</bdi></div>…
+    </div>…
+  </div>
+</div>
+```
+
+- Cells are ordered by day (SUN…SAT), then start, then course. There are no drag listeners on the strip.
+- Day words: SUN–THU as `DAY_LABELS`; FRI and SAT named (Fri / الجمعة, Sat / السبت); anything else is the raw value, isolated.
+- Issues: `offGrid` drops `locate: false`, and its detail adds "under its table".
+- Legend: one item when any strip is drawn.
+- SCJS: `confirmationHtml(details, {parked = false})`. The workspace passes `true`. Without the option the output is byte-identical (split view).
+
+##### Page CSS (TWCSS)
+
+```css
+.tw-park { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 3px;
+  padding: 3px; background: color-mix(in srgb, var(--sev-warning) 6%, var(--card)); border-bottom: 1px solid var(--line); }
+.tw-park-cell { container: tw-cell / inline-size; min-width: 0; }
+.tw-park-head { white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
+.tw-card-when { font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
+```
+
+##### Keyboard
+
+- ↓ from THU goes to the parked card nearest in start time; ←/→ walk the strip (mirrored in RTL); PgDn goes to the next table.
+- M opens Move with the manual offer. R as usual. A drag onto a cell moves the card.
+
+##### Strings
+
+| Where | English | Arabic |
+|---|---|---|
+| Row header (visible + hidden) | Off grid — outside the grid's columns | خارج الشبكة — خارج أعمدة الجدول |
+| Issues detail | … · under its table | … · أسفل جدوله |
+| Legend | Under a table: its meetings outside the columns (M moves one onto the grid) | أسفل الجدول: لقاءاته خارج الأعمدة (المفتاح M ينقل أحدها إلى الجدول) |
+| Confirmation lead (parked) | This change leaves {meetingsAcc} outside the grid's columns. They stay in the timetable and are still published; each is shown under its table until a column has its time again: | هذا التغيير يترك {meetingsAcc} خارج أعمدة الجدول. تبقى في الجدول وتُنشر، ويظهر كلٌّ منها أسفل جدوله حتى يعود عمود بوقته: |
+
+##### Tests
+
+The test at TWT:907 changes: the row now locates (a spec change).
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| PK1 | MON 18:30 lecture: in no cell; in the lecture strip with its when-line; its Issues row locates (pulse plus tab stop). | `locate:false` kept; no strip |
+| PK2 | A lab in S2 goes to S2's lab strip; a SAT English meeting goes to the English strip; no strip elsewhere. | Wrong table; English unparked |
+| PK3 | No off-grid meeting: no `.tw-park-row`. | Empty strip |
+| PK4 | ↓ from THU 09:00 reaches the nearest parked card; ←/→ walk; `dragover` on the strip is not `defaultPrevented`. | A drop target; stops unreachable |
+| PK5 | `grid_rule_cases.json` gains "9:00"/"10:15", "09:00:00" and "sun". Python and jsdom agree. Each case is drawn in a cell exactly when it is on-grid, and otherwise in a strip. | `slice(0,5)`; a raw renderer match; the day not upper-cased |
+| PK6 | `confirmationHtml(X, {parked: true})` has the parked words (en, ar); without the option it is byte-identical. | Split's words changed |
+| PK7 | Arabic: the when-line is `bdi dir=ltr`; SAT named; an unknown day isolated. | No isolation |
+| PK8 | A parked card's teacher shows at ≥ 130 px (the container query holds). | No `tw-cell` container |
+
+Chrome (`ParkingTests`; an ORM meeting at MON 18:30), at 1366×650 and 1440×790, en and ar:
+- the strip sits under its table;
+- the row header wraps without clipping at 12 px;
+- contrast ≥ 4.5:1;
+- M → 09:00 moves the card into a cell and the strip goes.
+
+##### Risks
+
+1. No live instance in QA: fixtures and an ORM-made meeting only.
+2. Page `isEnglish` vs server `policy_meeting` (F11).
+3. SCJS bump in three templates.
+
+---
+
+#### 6f: slot dialog (client + global)
+
+##### Global (GCSS, beside `.ux-field` :2389; BASE `?v` 86→87)
+
+```css
+.ux-rows { width: 100%; border-collapse: collapse; }
+.ux-rows th { padding: 4px 6px; color: var(--t2); font-size: var(--text-xs); font-weight: 600; text-align: start; border-bottom: 1px solid var(--line-strong); }
+.ux-rows td { padding: 4px 6px; vertical-align: top; border-bottom: 1px solid var(--line); }
+.ux-rows-time { inline-size: 76px; min-inline-size: 76px; direction: ltr; text-align: center; font-variant-numeric: tabular-nums; }
+.ux-rows-actions { white-space: nowrap; text-align: end; }
+.ux-field-error { margin: 2px 0 0; color: var(--sev-critical); font-size: var(--text-xs); font-weight: 600; }
+.ux-dialog [aria-invalid="true"] { border-color: var(--sev-critical); box-shadow: inset 0 0 0 1px var(--sev-critical); }
+@media (max-width: 560px) { /* each row a two-line card: label; then start, end, length, actions; header row visually hidden, inputs keep their labels */ }
+```
+
+§3.3 adds both components and names `.im-form-error`, the exam repeater and `.field-error` for F12.
+
+##### SCJS (`?v` 3→4 in three templates)
+
+- `editorRows(slots)` returns `{key, label, start, end, flags}`, with keys stable for the dialog's life.
+- `rowsToPayload(rows)` returns `[{label, start, end}]`, trimmed, with '' kept and no flags.
+- `lengthText(start, end)` is display only.
+- `save({send, confirm, report, invalid})`: with `invalid`, a `VALIDATION_SLOTS` answer calls `invalid(errors)` and then `report(errorsText(errors))`. Without `invalid`, behaviour is byte-identical.
+
+##### Template (TPL; copy in `{% if LANGUAGE_CODE == 'ar' %}` arms)
+
+```html
+<dialog id="twSlotDialog" class="ux-dialog ux-dialog-scroll" aria-labelledby="twSlotTitle" aria-describedby="twSlotSub">
+ <form method="dialog" id="twSlotForm" novalidate>
+  <div class="ux-dialog-head">…title, sub, × [data-dialog-close]…</div>
+  <p id="twSlotStatus" class="ux-choice-status tw-dialog-status" role="status" aria-live="polite"></p>
+  <div class="ux-dialog-body" id="twSlotBody" tabindex="-1">
+    <p id="twSlotDraft" class="ux-field-hint" hidden>…draft words + <button type="button" id="twSlotFromSaved">…</button></p>
+    <section id="twSlotEdit"> <fieldset class="ux-field">Lectures: <table class="ux-rows">…</table> Add</fieldset> <fieldset class="ux-field">Labs …</fieldset></section>
+    <section id="twSlotReview" hidden tabindex="-1"><h3 id="twSlotReviewTitle">…</h3> confirmationHtml(parked)</section>
+  </div>
+  <p class="tw-dialog-alert" id="twSlotAlert" role="alert" hidden></p>
+  <div class="ux-dialog-foot"><p class="ux-dialog-foot-note" id="twSlotNote"></p>
+   <button type="button" class="btn btn-sm btn-neutral" data-dialog-close>Cancel</button>
+   <button type="button" class="btn btn-sm btn-neutral" id="twSlotBack" hidden>Back to editing</button>
+   <button type="submit" class="btn btn-sm btn-primary" id="twSlotSave" data-tw-mutation aria-describedby="twSlotNote">Save</button></div>
+ </form></dialog>
+```
+
+A row (`<tr data-row-key>`):
+- `<th scope="row" id>` with the column number, plus a visually hidden "Lecture column" / "Lab column";
+- the label: `input[type=text][dir=auto]`;
+- start and end: `input.ux-rows-time[type=text][inputmode=numeric][dir=ltr][autocomplete=off][spellcheck=false]`;
+- every input `aria-labelledby` = its column header plus the row's th;
+- a length cell; flag pills; Up, Down and Remove buttons (`type=button`, named by the label);
+- a hidden `p.ux-field-error` in a full-width cell, which the inputs reference with `aria-describedby`.
+
+##### Behaviour
+
+**Open** (`#twSlotEdit`, TPL:70):
+- No scenario, or published: the toast as today.
+- Otherwise `UXControls.dialog.open(dlg, {initialFocus: first label, returnFocus: () => $('twMoreMenu')})`.
+- Rows come from the effective columns, or from this scenario's draft with `#twSlotDraft` shown.
+
+**Edit:**
+- Add appends a row and focuses its label.
+- Remove deletes the row and focuses the next row's label, or Add. **It is disabled (`aria-disabled`, with its reason) on a list's last row.**
+- Up and Down swap rows and keep focus on the same button.
+- The length updates on input.
+- Every change updates the draft.
+
+**Save** (submit; `preventDefault` as in 5c):
+1. Clear the marks. The body becomes `inert` and the row order is frozen as `sent = [rowKeys]`.
+2. `SC.save` with:
+   - `send`: `dialogWrite` → `{data}` | `{error}` (the two codes) | `{data: null}`, with the failure in `#twSlotAlert` (REFUSAL words; otherwise "The columns were not saved.");
+   - `invalid`: `aria-invalid` plus the row's error (`FIELD`, `problemText`) on `sent[index]` of that list; focus the first one; `index −1` goes to the alert;
+   - `confirm`: show the review (the parked lead), show Back, relabel Save "Save anyway", focus the review heading, resolve `true` on submit and `false` on Back **or on dialog close**. Back restores the rows and focuses Save;
+   - `report`: write the alert.
+3. Lift `inert`.
+4. On data:
+   - clear the draft;
+   - `UXControls.dialog.close`;
+   - `TW.scenario = {...TW.scenario, ...data.scenario}`;
+   - `await selectBoard(TW.boardId)`;
+   - a success toast, or a warning naming the parked meetings when `hidden_count > 0` (through `dialogSay` if a dialog is open).
+
+**Holds:** Save is `data-tw-mutation`; the note gives the first hold. Escape during a write follows §7.3 D17a.
+
+**Cancel or Escape:** closes and keeps the draft (E15d).
+
+**Removed:** `openSlotEditor` (PAGE:5818-5889).
+
+##### States
+
+| State | Dialog |
+|---|---|
+| Published, or no scenario | Not opened; toast |
+| A job or a write in flight | Opens; Save held with its reason |
+| Server invalid | Fields marked on the rows sent; alert; edits kept |
+| 409 | Review step; Back or Save anyway |
+| The list changed while reviewing | The new list; after 4 attempts, the module's words |
+| 503 or network | Alert; edits kept |
+| Closed unsaved | Draft kept; offered on the next open |
+| Saved | Closes; board read again; toast |
+
+##### Strings
+
+| Where | English | Arabic |
+|---|---|---|
+| Title, sub | Edit time slots · The grid's columns, for every board of this scenario · {scenario} | تعديل الفترات الزمنية · أعمدة الجدول لكل لوحات هذا السيناريو · {scenario} |
+| Lists | Lectures (75 min) · Labs (100 min) | المحاضرات (75 دقيقة) · المعامل (100 دقيقة) |
+| Headers | Label · Start · End · Length · Rule | الاسم · البداية · النهاية · المدة · القيد |
+| Length | {n} min / — | pluralAr {one:'دقيقة واحدة', two:'دقيقتان', few:'{n} دقائق', many:'{n} دقيقةً', other:'{n} دقيقة'} |
+| Flags | Online only · Policy column | عن بُعد فقط · عمود سياسة |
+| Row actions | Move {label} up · Move {label} down · Remove {label} | نقل {label} إلى الأعلى · نقل {label} إلى الأسفل · حذف {label} |
+| Last row | A list keeps at least one column: an empty list would mean the default columns. | تبقى في القائمة فترة واحدة على الأقل: القائمة الفارغة تعني الأعمدة الافتراضية. |
+| Add | Add a lecture column · Add a lab column | إضافة عمود محاضرات · إضافة عمود معامل |
+| Draft | Your unsaved columns are back. · Start from the saved columns | عادت أعمدتك غير المحفوظة. · البدء من الأعمدة المحفوظة |
+| Review | Check before saving · Back to editing · Save anyway | راجِع قبل الحفظ · العودة إلى التعديل · حفظ على أي حال |
+| Progress, failure | Saving the columns… · The columns were not saved. | جارٍ حفظ الأعمدة… · لم تُحفظ الأعمدة. |
+| Field error | {field}: {problem} | {field}: {problem} |
+| Toasts | Columns saved: {n} lecture, {m} lab. · …; now under their tables, outside the columns: {meetings}. | حُفظت الأعمدة: المحاضرات {n}، المعامل {m}. · …؛ أسفل جداولها الآن خارج الأعمدة: {meetings}. |
+
+##### Tests
+
+Module (`timetable-slot-config.test.cjs`):
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| SC1 | `invalid` is called once, then `report`; without it, the old answer. `rowsToPayload` drops flags and keeps ''. | `invalid` ignored; flags sent |
+
+Page (the tests at TWT:740-817 are replaced, a spec change):
+
+| Test | What it checks | Mutants it must kill |
+|---|---|---|
+| SD1 | One row per effective column, flags as pills, focus on the first label; a second open is refused. | Page defaults |
+| SD2 | The POST body deep-equals the rows in order, with no flag keys, and '' sent as ''. | Flags sent; a client time check |
+| SD3 | A 400 on `{lab_slot_config, 1, end}` after the user reordered rows **before** Save: the mark lands on the row that was sent second; focus is there; the alert is set; no toast. | Index applied to the live order |
+| SD4 | 409: the review names the meeting (bdi) with the parked lead; Save anyway sends `confirm`; Back sends nothing and restores the edits; Escape during review resolves `confirm` false (the `save()` promise settles). | Stacked dialog; a hanging promise |
+| SD5 | Success with `hidden_count: 2`: closes; `/boards/2/` and `quality/` are read; a warning toast. | No `selectBoard` |
+| SD6 | Add, Remove, Up, Down and the focus rules; Remove on the last row is disabled with its reason. | An empty list sent |
+| SD7 | Cancel after edits, then reopen: the draft and the hint are back; "Start from the saved columns" restores the saved columns. | Edits dropped |
+| SD8 | Holds (busy, job, published); rows are `inert` during the write. | Edits during the write |
+| SD9 | Arabic: times `dir=ltr`, the label `dir=auto`, `pluralAr` lengths, review times isolated, "حفظ على أي حال". | No ltr; `plural()` |
+
+Chrome (`SlotDialogTests`):
+- SDB1, at 1366×650 and 1440×790, light and dark, en and ar:
+  - the foot stays visible while the body scrolls;
+  - "08:00" is not clipped in the 76 px input with the wide font;
+  - the error and the invalid edge are ≥ 3:1;
+  - no text under 11 px.
+- SDB2, keyboard only: an invalid end is marked and focused; fixing it saves to the database; focus returns to `#twMoreMenu`.
+- SDB3: remove the 16:00 column holding an ORM meeting; the review; Save anyway; the meeting is in the strip.
+
+##### Risks
+
+1. Bulk entry is slower than a textarea. Columns change rarely, and split view keeps its textarea until F13.
+2. Labels are cut to 40 characters silently (SLOTS:151); the re-read shows the saved label.
+3. Order is data (PAGE:2380-2386); Up and Down keep that power.
+
+---
+
+#### Follow-ups (recorded, not in PR 6)
+
+- **F8.** Split view's chips and badges on `programme_view` and `seating` (`/plan-lens/` gains `programme_view` then).
+- **F9.** Repair's plan scope on roles, with an oracle.
+- **F10.** Whether the export's free-text search should follow the grid's words.
+- **F11.** One meeting-policy rule for the page and the server in the grid rule.
+- **F12.** Move `.im-form-error`, the exam repeater and `.field-error` onto `.ux-field-error` and `.ux-rows`.
+- **F13.** Split view's slot editor on the 6f dialog.
+- **F14.** A 503 retry in MRI's `api`; then decide whether quality takes the lane.
+- **F15.** Compress JSON answers.
+- **F16.** Measure `lens=1` on the 0.5 vCPU host and on a scenario larger than 665, before any default change to E2a.
+
+#### Owner questions (decided by the owner)
+
+- **Q4.** Should the slot dialog set or remove the online-only mark? **Decided by the owner:** no. The dialog shows the online-only mark read-only (E15b); the server's review names a mark a change would lose.
+- **Q5.** Should the dialog offer "Use the default columns" explicitly? **Decided by the owner:** no. A list always keeps one row, and there is no "Use the default columns" button (E15c), because an empty list silently means the defaults.
+
+**Provenance.** The measurement and roles probe is `scratchpad/pr6/critic_roles.py` (the session's scratch directory), run on the QA copy `scratchpad/pr6/critic.sqlite3`. The cost figures in F come from re-running `scratchpad/pr6/combined2.py` on that copy.

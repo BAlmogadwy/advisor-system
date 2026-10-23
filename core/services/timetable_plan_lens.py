@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter, defaultdict
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.models import ScenarioSectionBudget, Student, TermSection
 from core.services import timetable_student_assignment as ssa
+from core.services.timetable_assignment_models import StudentAssignmentState
 from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
 from core.services.timetable_flags import is_section_programme_preference_enabled
 from core.services.timetable_optimizer_v2 import (
@@ -14,8 +18,12 @@ from core.services.timetable_optimizer_v2 import (
     build_student_profiles_for_scenario,
 )
 
+logger = logging.getLogger(__name__)
+
 PREFERRED_PLAN_ORDER = ("AI", "DS", "AI2", "DS2", "CS", "CS2", "IS", "IS2", "CYB", "COE")
 SHARED_OWNER = "SHARED"
+#: Why a seating has no evidence: it could not be evaluated (``seating.reason``).
+SEATING_FAILED = "assessment_failed"
 
 
 def _clean_program(value: object | None) -> str:
@@ -62,21 +70,75 @@ def _demand_by_course_and_plan(
     return dict(by_course), plans
 
 
-def _section_assignment_evidence(
-    scenario_id: int, grouping_report: dict | None = None
-) -> dict[tuple[str, str], Counter[str]]:
-    """Return current evaluator enrollment by (course_key, section).
+@dataclass(frozen=True)
+class SeatingEvidence:
+    """One seating of the scenario's students, as the lens reads it.
 
-    This is intentionally read-only. It runs the same assignment evaluator
-    used by the optimiser, but does not persist assignment states. The states
-    carry any "mainly for programme" mark (under the flag), so the counts are
-    the grouped seating; ``grouping_report`` receives what the grouping did.
+    ``counts`` holds, per ``(course_key, section label)``, how many seated
+    students each programme has there; ``grouping`` is what the "mainly for
+    programme" grouping did (empty when nothing is marked). ``assessed`` false
+    means the seating could not be evaluated (``reason`` says why): its empty
+    counts are unknown, never "nobody sits here". ``students`` counts the
+    distinct students seated in at least one section.
+    """
+
+    assessed: bool
+    students: int
+    counts: dict[tuple[str, str], Counter[str]] = field(default_factory=dict)
+    grouping: dict = field(default_factory=dict)
+    reason: str | None = None
+
+    def payload(self) -> dict[str, Any]:
+        """The lens's ``seating``: ``{assessed, students[, reason]}``."""
+        out: dict[str, Any] = {"assessed": self.assessed, "students": self.students}
+        if self.reason:
+            out["reason"] = self.reason
+        return out
+
+
+def seating_evidence(
+    states: Mapping[str, StudentAssignmentState], *, grouping: dict
+) -> SeatingEvidence:
+    """The only derivation of the lens's evidence from a seating.
+
+    Read from the seating's own ``assignment_states`` (never from the section
+    states a seating mutated): each section id ``{course_key}_{label}`` a
+    student is seated in adds one to that student's programme there. Ids that
+    are not numbers name no roster student and are left out, as they always
+    were; a roster id with no student row counts as ``UNKNOWN``.
+    """
+    seated = {
+        int(student_id): [section_id for section_id in state.section_ids if "_" in section_id]
+        for student_id, state in states.items()
+        if str(student_id).isdigit()
+    }
+    seated = {student_id: sections for student_id, sections in seated.items() if sections}
+    programs = _student_program_map(sorted(seated))
+    counts: dict[tuple[str, str], Counter[str]] = {}
+    for student_id, section_ids in seated.items():
+        programme = programs.get(student_id, "UNKNOWN")
+        for section_id in section_ids:
+            course_key, section_label = section_id.rsplit("_", 1)
+            counts.setdefault((course_key, section_label), Counter())[programme] += 1
+    return SeatingEvidence(
+        assessed=True, students=len(seated), counts=counts, grouping=dict(grouping)
+    )
+
+
+def _section_assignment_evidence(scenario_id: int) -> SeatingEvidence:
+    """Seat the scenario's students once, read-only, for the lens.
+
+    It runs the same assignment evaluator the optimiser uses and persists
+    nothing. The states carry any "mainly for programme" mark (under the
+    flag), so the counts are the grouped seating, and ``grouping`` says what
+    the grouping did. No demand or no placed section: nobody to seat, which is
+    assessed (0 students). A failure is logged and reads as not assessed.
     """
     try:
         profiles = build_student_profiles_for_scenario(scenario_id)
         sections = build_section_states_for_scenario(scenario_id)
         if not profiles or not sections:
-            return {}
+            return SeatingEvidence(assessed=True, students=0)
         sections_by_id = ssa.build_sections_by_id(sections)
         sections_by_course = ssa.build_sections_by_course(sections_by_id)
         rigidity = build_course_rigidity_for_scenario(scenario_id)
@@ -91,36 +153,21 @@ def _section_assignment_evidence(
             if is_tiered_objective_enabled()
             else None
         )
-        ssa.assign_students_to_sections(
+        grouping: dict = {}
+        states, _unresolved = ssa.assign_students_to_sections(
             profiles,
             sections_by_id,
             sections_by_course,
             rigidity,
             course_tiers=course_tiers,
-            grouping_report=grouping_report,
+            grouping_report=grouping,
         )
+        return seating_evidence(states, grouping=grouping)
     except Exception:
-        return {}
-
-    student_ids = [
-        int(sid)
-        for section in sections
-        for sid in section.enrolled_student_ids
-        if str(sid).isdigit()
-    ]
-    programs = _student_program_map(student_ids)
-    evidence: dict[tuple[str, str], Counter[str]] = {}
-    for section in sections:
-        if "_" not in section.section_id:
-            continue
-        course_key, section_label = section.section_id.rsplit("_", 1)
-        counts = Counter(
-            programs.get(int(sid), "UNKNOWN")
-            for sid in section.enrolled_student_ids
-            if str(sid).isdigit()
+        logger.exception(
+            "Could not seat the students of scenario %s for the plan lens", scenario_id
         )
-        evidence[(course_key, section_label)] = counts
-    return evidence
+        return SeatingEvidence(assessed=False, students=0, reason=SEATING_FAILED)
 
 
 def _allocation_targets(
@@ -247,9 +294,22 @@ def _assign_targets_to_sections(
     return assigned
 
 
-def build_scenario_plan_lens(scenario_id: int) -> dict[str, Any]:
-    """Build a read-only programme/plan lens over one shared scenario pool."""
-    demands = load_scenario_course_demands(scenario_id)
+def build_scenario_plan_lens(
+    scenario_id: int,
+    *,
+    seating: SeatingEvidence | None = None,
+    demands: list[StudentCourseDemand] | None = None,
+) -> dict[str, Any]:
+    """Build a read-only programme/plan lens over one shared scenario pool.
+
+    ``seating``: a seating already made for this data (the quality read's), so
+    the lens does not seat again; without it the lens seats on its own.
+    ``demands``: this scenario's ``load_scenario_course_demands`` rows, when
+    the caller has read them already. The payload ends with ``seating``
+    (``SeatingEvidence.payload``).
+    """
+    if demands is None:
+        demands = load_scenario_course_demands(scenario_id)
     demand_by_course, observed_plans = _demand_by_course_and_plan(demands)
     plans = _ordered_plans(observed_plans)
 
@@ -266,8 +326,10 @@ def build_scenario_plan_lens(scenario_id: int) -> dict[str, Any]:
     # "Mainly for programme": with the flag on, each section says its mark and the
     # lens says what the grouping did; off, the payload is exactly as before.
     marks_on = is_section_programme_preference_enabled()
-    grouping: dict = {}
-    evidence = _section_assignment_evidence(scenario_id, grouping)
+    if seating is None:
+        seating = _section_assignment_evidence(scenario_id)
+    evidence = seating.counts
+    grouping = seating.grouping
     course_keys = sorted(
         set(budgets) | set(demand_by_course) | set(sections_by_course),
         key=lambda key: (
@@ -364,4 +426,5 @@ def build_scenario_plan_lens(scenario_id: int) -> dict[str, Any]:
     }
     if marks_on:
         lens["programme_grouping"] = grouping or None
+    lens["seating"] = seating.payload()
     return lens

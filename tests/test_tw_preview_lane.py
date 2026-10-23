@@ -52,6 +52,10 @@ UNGATED_VIEWS = [
     views.tw_boards_list_view,
     views.tw_board_conflicts_view,
 ]
+#: Neither a heavy preview nor a write, and never laned: the quality read, with
+#: or without the lens (``?lens=1``, one seating for both). The workspace waits
+#: on it after every edit and MRI reads it with no 503 retry.
+UNLANED_READS = [views.tw_scenario_quality_view]
 
 
 @pytest.fixture
@@ -250,8 +254,20 @@ def test_a_move_and_the_health_check_run_while_the_lane_is_full(http, placement)
 def test_every_heavy_preview_carries_the_lane_and_no_write_does() -> None:
     for view in HEAVY_PREVIEW_VIEWS:
         assert getattr(view, request_lanes.LANE_MARKER, False), view.__name__
-    for view in UNGATED_VIEWS:
+    for view in UNGATED_VIEWS + UNLANED_READS:
         assert not getattr(view, request_lanes.LANE_MARKER, False), view.__name__
+
+
+def test_the_quality_read_with_the_lens_answers_while_the_lane_is_full(http, placement) -> None:
+    """``quality/?lens=1`` runs a seating like ``/plan-lens/``, yet is not
+    refused while every lane token is held."""
+    with lane_full():
+        response = http.get(f"/ops/tw/scenarios/{placement.board.scenario_id}/quality/?lens=1")
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["ok"] is True
+    assert body["plan_lens"]["seating"] == {"assessed": True, "students": 0}
+    assert lane_free()
 
 
 @pytest.mark.parametrize("source", ["render.yaml", "Procfile"])
