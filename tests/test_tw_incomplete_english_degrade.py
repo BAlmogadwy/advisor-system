@@ -552,3 +552,16 @@ def test_no_persist_drops_an_unknown_sections_row(production) -> None:
     sta.persist_assignment(fx.sc.id, assignment, only_missing=False, incomplete="collect")
 
     assert engine_rows(fx.sc)[(fx.eng.upper(), "S1")] == "Dr E"
+
+
+@pytest.mark.django_db
+def test_a_held_row_is_neither_a_seed_nor_reported_stale(production) -> None:
+    """The map's report says which stored rows it ignored (and the next
+    persist drops them): an unknown section's row is held, not stale."""
+    fx = Fx()
+
+    report = sta.load_assignment(fx.sc.id, incomplete="collect").report
+
+    assert report["stale_rows_ignored"] == 0
+    assert report["ignored_row_keys"] == []
+    assert f"{fx.eng}_S1" not in report["closure_keys"]
