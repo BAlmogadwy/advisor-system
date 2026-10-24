@@ -864,9 +864,9 @@ body.tws-block-mode .tws-pane .block-grid .cell:not(.filled):hover {
   gap: 3px;
   font: 900 var(--text-micro)/1 var(--font-mono, 'JetBrains Mono'), monospace;
 }
-.tws-assist-counts span em { font-style: normal; font-size: var(--text-micro); opacity: .82; }
-.tws-assist-counts .clean { color: var(--tws-ok-ink); background: rgba(46,201,160,.13); border: 1px solid rgba(46,201,160,.28); }
-.tws-assist-counts .risky { color: var(--tws-warn-ink); background: rgba(245,183,49,.11); border: 1px solid rgba(245,183,49,.26); }
+.tws-assist-counts span em { font-style: normal; font-size: var(--text-micro); }
+.tws-assist-counts .clean { color: var(--tws-ok-ink); background: rgba(46,201,160,.08); border: 1px solid rgba(46,201,160,.28); }
+.tws-assist-counts .risky { color: var(--tws-warn-ink); background: rgba(245,183,49,.08); border: 1px solid rgba(245,183,49,.26); }
 .tws-assist-counts .avoid { color: var(--tws-bad-ink); background: rgba(240,96,96,.10); border: 1px solid rgba(240,96,96,.24); }
 .tws-assist-clear {
   width: 22px; height: 22px; border: 1px solid var(--control-edge); border-radius: 5px;

@@ -561,6 +561,56 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
                     self.assertGreaterEqual(seen["tab"], 4.29 if theme == "light" else 5.81)
                 self.assertEqual(seen["scheme"], theme, "split follows the theme (style check S3)")
 
+    # The strip a card click draws under the pane (slot assist): the JS builds
+    # it on click (before the pane body, in an assist-active pane), so the test
+    # builds the same markup there. Its small labels
+    # (OK, Risk, Block; Done, Solving, Rejected) had `opacity: .82` and read
+    # 3.38:1 to 4.17:1 in light, which the first S3 pass missed because nothing
+    # opened a card.
+    ASSIST_STRIP = (
+        "() => {"
+        + MEASURE
+        + r"""
+  const pane = document.querySelector('.tws-pane');
+  pane.classList.add('assist-active');
+  const make = (loading, labels) => {
+    const box = document.createElement('div');
+    box.className = 'tws-assist-summary' + (loading ? ' loading' : '');
+    box.innerHTML = '<div class="tws-assist-main"><b>CS112</b><span>Sun 09:00-10:40</span></div>'
+      + '<div class="tws-assist-counts">'
+      + '<span class="clean"><em>' + labels[0] + '</em>1</span>'
+      + '<span class="risky"><em>' + labels[1] + '</em>2</span>'
+      + '<span class="avoid"><em>' + labels[2] + '</em>3</span></div>';
+    pane.querySelector('.pane-body').before(box);
+    return box;
+  };
+  const out = [];
+  for (const box of [make(false, ['OK', 'Risk', 'Block']), make(true, ['Done', 'Solving', 'Rejected'])]) {
+    for (const el of box.querySelectorAll('b, em, .tws-assist-main span, .tws-assist-counts span')) {
+      const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+      if (!own) continue;
+      let alpha = 1;
+      for (let n = el; n && n !== document.body; n = n.parentElement) alpha *= +getComputedStyle(n).opacity;
+      const fg = parse(getComputedStyle(el).color), bgs = bgsOf(el);
+      const worst = Math.min(...bgs.map(bg => +ratio(over({...fg, a: fg.a * alpha}, bg), bg).toFixed(2)));
+      out.push({text: el.textContent.trim(), ratio: worst, size: parseFloat(getComputedStyle(el).fontSize)});
+    }
+  }
+  return out;
+}"""
+    )
+
+    def test_the_slot_assist_strip_reads_in_both_themes(self) -> None:
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                seen = self._open("split", theme).evaluate(self.ASSIST_STRIP)
+                self.assertGreaterEqual(len(seen), 12, "the strip's texts were not all measured")
+                for item in seen:
+                    self.assertGreaterEqual(
+                        item["ratio"], 4.5, f"{item['text']} on the assist strip"
+                    )
+                    self.assertGreaterEqual(item["size"], 11, f"{item['text']} on the assist strip")
+
     # ── the browser's own colour scheme ─────────────────────────────────────
 
     def test_a_light_theme_tells_the_browser_it_is_light_even_on_a_dark_os(self) -> None:
