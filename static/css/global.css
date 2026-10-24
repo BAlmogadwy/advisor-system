@@ -253,7 +253,16 @@
 
   /* glow ring — geometry for the recurring "0 0 Npx var(--brand-glow)" pattern */
   --shadow-glow:    0 0 6px var(--brand-glow);
+
+  /* the sidebar's width at this viewport (it steps down with the media queries
+     below), so a bar fixed to the page can sit in the content column */
+  --sb-w:           252px;
+
+  /* the smallest an Arabic page lets running text be: 12px. Latin keeps the sizes
+     it was designed at (0 = no floor); a rule writes max(var(--fs-floor), 0.72rem). */
+  --fs-floor:       0px;
 }
+html[dir="rtl"] { --fs-floor: 12px; }
 
 /* ============================================================
    DARK MODE — Deep Navy
@@ -1535,7 +1544,7 @@ main.p-0 .page-header {
 /* ── Page-header chips ── */
 .ph-chip {
   display: inline-block;
-  font-size: 0.7rem; font-weight: 600;
+  font-size: max(var(--fs-floor), 0.7rem); font-weight: 600;
   padding: 0.15rem 0.5rem; border-radius: var(--radius-pill);
   letter-spacing: 0.01em; white-space: nowrap;
 }
@@ -6723,7 +6732,7 @@ details > summary::-webkit-details-marker   { display: none; }
 [dir="rtl"] .ms-auto                        { margin-left: 0 !important; margin-right: auto !important; }
 
 /* Inline visual style utility classes */
-.pl-text-xs { font-size: 0.7rem; }
+.pl-text-xs { font-size: max(var(--fs-floor), 0.7rem); }
 .pl-summary-label { color: var(--t3); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .pl-diag-heading { margin-bottom: 6px; color: var(--navy); font-size: 13px; font-weight: 600; }
 .pl-legend-dot-black { background: var(--ink); }
@@ -7338,7 +7347,7 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   padding: 0.65rem 0.75rem;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   color: var(--ink);
   background: rgba(255,255,255,0.55);
   border: 1px solid rgba(255,255,255,0.65);
@@ -7527,7 +7536,7 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   border-radius: var(--radius-pill);
   background: rgba(0,174,218,0.09);
   color: var(--t2);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   font-weight: 700;
 }
 .dcc-scenario-name {
@@ -7541,7 +7550,7 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   margin-top: 0.2rem;
   color: var(--t3);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
 }
 .dcc-mini-grid {
   display: grid;
@@ -7565,7 +7574,7 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   display: block;
   margin-top: 0.18rem;
   color: var(--t3);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
 }
 .dcc-panel-actions {
   display: flex;
@@ -7578,7 +7587,7 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 }
 .dcc-activity-time {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   color: var(--t4);
 }
 .dcc-activity-row > span:not(.dcc-activity-time) {
@@ -7651,7 +7660,7 @@ html[data-theme="dark"] .dcc-empty {
   display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0; border-bottom: var(--border-subtle); font-size: 0.82rem; }
 .student-ctx-row:last-child { border-bottom: none; }
 .student-ctx-label {
-  color: var(--t3); font-weight: 600; font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  color: var(--t3); font-weight: 600; font-family: var(--font-mono); font-size: max(var(--fs-floor), 0.72rem); text-transform: uppercase; letter-spacing: 0.04em; }
 .student-ctx-value { font-weight: 700; color: var(--ink); font-family: var(--font-mono); font-size: 0.85rem; }
 .student-ctx-link {
   display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.75rem; padding: 0.45rem 0.85rem; border-radius: var(--radius-sm); background: var(--teal-dim);  color: var(--text-brand); font-weight: 600; font-size: 0.78rem; text-decoration: none; transition: all 0.15s; }
@@ -8206,13 +8215,13 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     /* Output wrapper (collapsible details) */
     .dba-output-wrap { margin-top: 0.75rem; }
     .dba-output-wrap summary {
-      cursor: pointer; font-size: 0.72rem; font-weight: 700;
+      cursor: pointer; font-size: max(var(--fs-floor), 0.72rem); font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.04em;
       color: var(--t3); padding: 4px 0; user-select: none;
       display: inline-flex; align-items: center; gap: 4px;
     }
     .dba-output-wrap summary::marker { content: ''; }
-    .dba-output-wrap summary::before { content: '▸'; font-size: 0.7rem; transition: transform 0.15s; }
+    .dba-output-wrap summary::before { content: '▸'; font-size: max(var(--fs-floor), 0.7rem); transition: transform 0.15s; }
     .dba-output-wrap[open] summary::before { transform: rotate(90deg); }
 
     /* Action section within panel */
@@ -8281,7 +8290,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       gap: 0.4rem;
       margin-top: 0.75rem;
       color: var(--t3);
-      font-size: 0.72rem;
+      font-size: max(var(--fs-floor), 0.72rem);
       line-height: 1.5;
     }
     .dba-snapshot-lock-note > span:first-child { flex: 0 0 auto; }
@@ -8305,7 +8314,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       border-radius: var(--radius-pill);
       color: var(--sev-ok);
       background: color-mix(in srgb, var(--success) 7%, var(--card));
-      font-size: 0.69rem;
+      font-size: max(var(--fs-floor), 0.69rem);
       font-weight: 800;
     }
 
@@ -8328,7 +8337,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     }
     .dba-snapshot-metric span {
       color: var(--t3);
-      font-size: 0.71rem;
+      font-size: max(var(--fs-floor), 0.71rem);
       font-weight: 700;
     }
     .dba-snapshot-metric strong {
@@ -8354,7 +8363,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       color: var(--t2);
       font-size: 0.76rem;
     }
-    .dba-snapshot-table-head span { color: var(--t3); font-size: 0.7rem; }
+    .dba-snapshot-table-head span { color: var(--t3); font-size: max(var(--fs-floor), 0.7rem); }
     .dba-snapshot-table-wrap {
       max-height: 320px;
       border: 1px solid var(--line);
@@ -8440,7 +8449,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       gap: 0.15rem;
     }
     .dba-snapshot-actions strong { color: var(--t1); font-size: 0.8rem; }
-    .dba-snapshot-actions span { color: var(--t3); font-size: 0.72rem; }
+    .dba-snapshot-actions span { color: var(--t3); font-size: max(var(--fs-floor), 0.72rem); }
     .dba-snapshot-actions .btn { flex: 0 0 auto; }
 
     /* Current-section CSV merge workflow */
@@ -8471,7 +8480,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     .dba-current-import-route strong,
     .dba-current-import-confirm strong { color: var(--t1); font-size: 0.8rem; }
     .dba-current-import-route span,
-    .dba-current-import-confirm span { color: var(--t3); font-size: 0.73rem; line-height: 1.5; }
+    .dba-current-import-confirm span { color: var(--t3); font-size: max(var(--fs-floor), 0.73rem); line-height: 1.5; }
     .dba-current-import-route .btn { flex: 0 0 auto; }
 
     .dba-source-choice {
@@ -8514,7 +8523,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     .dba-default-programmes p {
       margin-bottom: 0.55rem;
       color: var(--t3);
-      font-size: 0.72rem;
+      font-size: max(var(--fs-floor), 0.72rem);
       line-height: 1.5;
     }
     .dba-programme-selector { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
@@ -8529,7 +8538,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       cursor: pointer;
       color: var(--t2);
       background: var(--glass-bg-data);
-      font-size: 0.72rem;
+      font-size: max(var(--fs-floor), 0.72rem);
       font-weight: 800;
     }
     .dba-programme-option:has(input:checked) {
@@ -8546,7 +8555,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     .dba-current-import-actions > span {
       max-width: 54rem;
       color: var(--t3);
-      font-size: 0.72rem;
+      font-size: max(var(--fs-floor), 0.72rem);
       line-height: 1.55;
     }
     .dba-current-import-actions .btn { flex: 0 0 auto; }
@@ -8589,18 +8598,18 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       border-radius: 8px;
       color: var(--t2);
       background: color-mix(in srgb, var(--teal) 5%, var(--card));
-      font-size: 0.74rem;
+      font-size: max(var(--fs-floor), 0.74rem);
       line-height: 1.55;
     }
     .dba-current-import-table-head { margin-bottom: 0.45rem; }
     .dba-current-import-table-head strong { color: var(--t2); font-size: 0.76rem; }
-    .dba-current-import-table-head span { color: var(--t3); font-size: 0.69rem; }
+    .dba-current-import-table-head span { color: var(--t3); font-size: max(var(--fs-floor), 0.69rem); }
     .dba-current-import-table-wrap {
       max-height: 340px;
       border: 1px solid var(--line);
       border-radius: 10px;
     }
-    .dba-current-import-table { color: var(--t2); font-size: 0.74rem; }
+    .dba-current-import-table { color: var(--t2); font-size: max(var(--fs-floor), 0.74rem); }
     .dba-current-import-table thead th {
       position: sticky;
       z-index: 1;
@@ -8704,7 +8713,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
         flex-shrink: 0;
       }
       .dba-risk-badge { display: none; }
-      .dba-nav-name  { font-size: 0.72rem; }
+      .dba-nav-name  { font-size: max(var(--fs-floor), 0.72rem); }
       .dba-snapshot-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .dba-snapshot-preserved ul { grid-template-columns: 1fr; }
       .dba-snapshot-actions { align-items: stretch; flex-direction: column; }
@@ -8958,7 +8967,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
     /* -- Issue #19: Color-only status indicators — icon prefixes -- */
     .audit-status-icon { display: inline-flex; align-items: center; gap: 0.25rem; }
-    .audit-status-icon::before { font-size: 0.7rem; line-height: 1; }
+    .audit-status-icon::before { font-size: max(var(--fs-floor), 0.7rem); line-height: 1; }
     .audit-status-icon.audit-status-success::before,
     .audit-status-icon.audit-status-allow::before { content: '\2713'; }
     .audit-status-icon.audit-status-error::before,
@@ -9129,10 +9138,12 @@ html[data-theme="dark"] .btn-export {
    Moved out of core/templates/core/section_planning.html.
    ============================================================ */
     .sp-caps { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 10px 16px; border-radius: var(--radius); background: color-mix(in srgb, var(--teal) 3%, transparent); border: 1px dashed color-mix(in srgb, var(--teal) 20%, transparent); margin-bottom: 4px; }
-    .sp-caps-lbl { font-size: .72rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.04em; font-weight: 700; margin-bottom: 2px; }
+    /* an upper-cased code field: its placeholder is a sentence, not a code */
+    .text-caps::placeholder { text-transform: none; letter-spacing: normal; }
+    .sp-caps-lbl { font-size: max(var(--fs-floor), .72rem); color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.04em; font-weight: 700; margin-bottom: 2px; }
     .sp-cap-grp { display: flex; flex-direction: column; min-width: 100px; }
     .sp-cap-grp input { width: 80px; text-align: center; }
-    .sp-caps-info { font-size: .72rem; color: var(--t3); align-self: center; margin-inline-start: auto; }
+    .sp-caps-info { font-size: max(var(--fs-floor), .72rem); color: var(--t3); align-self: center; margin-inline-start: auto; }
     .sp-toggle-caps { font-size: .78rem; color: var(--text-brand); cursor: pointer; background: none; border: none; font-weight: 600; padding: 2px 0; text-decoration: underline; text-underline-offset: 2px; }
 
     /* Scope fields: each as wide as its value, never the 80px compact cap.
@@ -9203,7 +9214,7 @@ html[data-theme="dark"] .btn-export {
     .sp-progress-bar { height: 100%; background: var(--teal); width: 0%; transition: width 0.3s var(--ease); }
 
     /* Status pills */
-    .sp-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .72rem; font-weight: 700; text-transform: capitalize; }
+    .sp-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: max(var(--fs-floor), .72rem); font-weight: 700; text-transform: capitalize; }
     .sp-pill-full { background: color-mix(in srgb, var(--teal) 12%, transparent); color: var(--brand-dark); }
     .sp-pill-under { background: rgba(192,48,48,0.10); color: var(--danger); }
     .sp-pill-ext { background: rgba(100,120,140,0.10); color: var(--t4); font-size: var(--text-micro); font-weight: 600; }
@@ -9237,7 +9248,7 @@ html[data-theme="dark"] .btn-export {
 
     /* Export bar */
     .sp-export-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 0; }
-    .sp-export-bar .sp-ts { font-size: .72rem; color: var(--t3); margin-inline-start: auto; }
+    .sp-export-bar .sp-ts { font-size: max(var(--fs-floor), .72rem); color: var(--t3); margin-inline-start: auto; }
 
     /* Alert */
     .sp-alert { padding: 8px 14px; border-radius: var(--radius); font-size: .82rem; margin-bottom: 10px; }
@@ -9247,14 +9258,14 @@ html[data-theme="dark"] .btn-export {
     /* Advanced per-course table */
     .sp-adv-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
     .sp-adv-search { width: 24ch; min-width: 220px; }
-    .sp-adv-count { font-size: .72rem; color: var(--t3); margin-inline-start: auto; }
+    .sp-adv-count { font-size: max(var(--fs-floor), .72rem); color: var(--t3); margin-inline-start: auto; }
     .sp-adv-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
     .sp-adv-table th { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .04em; color: var(--t3); font-weight: 700; font-family: var(--font-mono); padding: 5px 8px; border-bottom: 1.5px solid var(--t5); text-align: start; white-space: nowrap; }
     .sp-adv-table td { padding: 4px 8px; border-bottom: 1px solid var(--t5); vertical-align: middle; }
     .sp-adv-table tr:hover { background: color-mix(in srgb, var(--teal) 3%, transparent); }
     .sp-adv-table .adv-input { width: 60px; text-align: center; padding: 2px 4px; font-size: .8rem; }
     .sp-adv-table .adv-input:not(:placeholder-shown) { border-color: var(--teal); background: color-mix(in srgb, var(--teal) 4%, transparent); font-weight: 700; }
-    .sp-adv-table .adv-default { color: var(--t3); font-size: .72rem; }
+    .sp-adv-table .adv-default { color: var(--t3); font-size: max(var(--fs-floor), .72rem); }
     .sp-adv-wrap { max-height: 400px; overflow-y: auto; border: var(--border-subtle); border-radius: var(--radius); padding: 0; }
     .sp-adv-reset { font-size: .75rem; color: var(--t3); cursor: pointer; background: none; border: 1px solid var(--t4); border-radius: 4px; padding: 2px 8px; }
     .sp-adv-reset:hover { color: var(--danger); border-color: var(--danger); }
@@ -9271,7 +9282,7 @@ html[data-theme="dark"] .btn-export {
     .sp-adv-table tr.sp-adv-invalid .adv-input { border-color: var(--danger); }
     .sp-adv-state { display: block; font-size: var(--text-micro); font-weight: 700; color: var(--sev-warning); min-height: 0; }
     .sp-adv-table tr.sp-adv-invalid .sp-adv-state { color: var(--danger); }
-    .sp-adv-all { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--t3); cursor: pointer; white-space: nowrap; }
+    .sp-adv-all { display: inline-flex; align-items: center; gap: 4px; font-size: max(var(--fs-floor), .72rem); color: var(--t3); cursor: pointer; white-space: nowrap; }
     .sp-limit-review { margin-top: 8px; }
     /* A line under a cell's value (where a limit comes from) */
     .sp-cell-sub { font-size: .75rem; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -9437,7 +9448,7 @@ html[data-theme="dark"] .btn-export {
   display: flex; align-items: center; gap: 0.3rem;
 }
 .ap-advisor-bar .ap-loaded-label .ap-loaded-time {
-  font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted-light);
+  font-family: var(--font-mono); font-size: max(var(--fs-floor), 0.72rem); color: var(--muted-light);
 }
 
 /* ── Insight chips (compact alert banner) ─── */
@@ -9484,7 +9495,7 @@ html[data-theme="dark"] .btn-export {
   outline-offset: 2px;
 }
 .ap-prog-pill .ap-prog-n {
-  font-family: var(--font-mono); font-size: 0.72rem;
+  font-family: var(--font-mono); font-size: max(var(--fs-floor), 0.72rem);
   background: rgba(59,63,160,0.1); padding: 0.05rem 0.3rem;
   border-radius: var(--radius-pill);
 }
@@ -9867,7 +9878,7 @@ html[data-theme="dark"] .btn-export {
   background: var(--teal-dim);
 }
 .ap-grad-provenance strong { color: var(--brand-dark); font-size: .82rem; }
-.ap-grad-provenance p { margin: .2rem 0 0; color: var(--muted); font-size: .72rem; }
+.ap-grad-provenance p { margin: .2rem 0 0; color: var(--muted); font-size: max(var(--fs-floor), .72rem); }
 .ap-grad-provenance dl { display: flex; flex-wrap: wrap; gap: .8rem; margin: 0; }
 .ap-grad-provenance dl div { min-width: 88px; }
 .ap-grad-provenance dt { color: var(--muted); font-size: var(--text-micro); }
@@ -9893,7 +9904,7 @@ html[data-theme="dark"] .btn-export {
   padding: .45rem .55rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  font-size: .73rem;
+  font-size: max(var(--fs-floor), .73rem);
 }
 .ap-grad-course-code { color: var(--text-brand); font-family: var(--font-mono); font-weight: 800; }
 .ap-grad-course-name { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
@@ -9910,7 +9921,7 @@ html[data-theme="dark"] .btn-export {
   width: 100%;
   min-width: 710px;
   border-collapse: collapse;
-  font-size: .73rem;
+  font-size: max(var(--fs-floor), .73rem);
 }
 .ap-grad-term-table th {
   padding: .5rem;
@@ -9978,7 +9989,7 @@ html[data-theme="dark"] .btn-export {
 .ap-grad-tree-fallback { display: grid; gap: .6rem; padding: .75rem; }
 .ap-grad-tree-fallback section { border-inline-start: 2px solid var(--teal); padding-inline-start: .65rem; }
 .ap-grad-tree-fallback h4 { margin: 0 0 .35rem; }
-.ap-grad-tree-fallback li { display: flex; gap: .5rem; padding: .2rem 0; font-size: .72rem; }
+.ap-grad-tree-fallback li { display: flex; gap: .5rem; padding: .2rem 0; font-size: max(var(--fs-floor), .72rem); }
 .ap-grad-tree-fallback bdi { color: var(--text-brand); font-family: var(--font-mono); font-weight: 750; }
 .ap-grad-tree-fallback span { color: var(--muted); }
 
@@ -10207,7 +10218,7 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
 }
 .admin-grad-journey strong {
   color: var(--navy);
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
   line-height: 1.25;
 }
 .admin-grad-journey small {
@@ -10290,7 +10301,7 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
 }
 .admin-grad-search-form.admin-grad-landing-form label {
   margin: 0;
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   letter-spacing: .035em;
   text-transform: uppercase;
 }
@@ -10416,7 +10427,7 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
 }
 .admin-grad-capabilities strong {
   color: var(--navy);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
 }
 .admin-grad-search .admin-grad-capabilities p {
   margin: 0;
@@ -10485,7 +10496,7 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
 .admin-grad-field p {
   margin: .25rem 0 0;
   color: var(--muted);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   line-height: 1.5;
 }
 .admin-grad-readonly-badge {
@@ -10513,7 +10524,7 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
   display: block;
   margin-bottom: .35rem;
   color: var(--navy);
-  font-size: .74rem;
+  font-size: max(var(--fs-floor), .74rem);
   font-weight: 800;
 }
 .admin-grad-picker-controls {
@@ -10590,7 +10601,7 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
 .admin-grad-selection-empty {
   align-self: center;
   color: var(--muted);
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
 }
 .admin-grad-exception-toggle {
   display: flex;
@@ -10618,7 +10629,7 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
 .admin-grad-scenario-result {
   padding: .8rem;
   border-radius: 11px;
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   line-height: 1.5;
 }
 .admin-grad-scenario-alert.is-error {
@@ -11564,7 +11575,7 @@ body:has(.login-wrap) {
 .pf-badge {
   display: inline-flex; align-items: center; gap: 0.25rem;
   padding: 0.18rem 0.6rem; border-radius: var(--radius-pill);
-  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  font-size: max(var(--fs-floor), 0.72rem); font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .pf-badge-role { background: #ecf9f4; color: var(--text-brand); border: 1px solid #a8e6d4; }
@@ -11656,7 +11667,7 @@ body:has(.login-wrap) {
 .pf-pwd-toggle.showing .pf-eye-off { display: block; }
 
 .pf-hint {
-  font-size: 0.7rem; color: var(--muted-light);
+  font-size: max(var(--fs-floor), 0.7rem); color: var(--muted-light);
   margin-top: 0.25rem;
 }
 
@@ -12025,7 +12036,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
 }
 .um-panel-edit .um-close-btn {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 10px; border-radius: 10px; font-size: 0.72rem;
+  padding: 4px 10px; border-radius: 10px; font-size: max(var(--fs-floor), 0.72rem);
   font-weight: 600; border: 1px solid var(--line);
   background: var(--glass-bg); color: var(--muted); cursor: pointer;
   transition: all 0.12s;
@@ -12054,7 +12065,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
 }
 .um-edit-row .um-edit-actions .um-act-btn {
   height: 36px; padding: 0 14px; border: none; border-radius: 14px;
-  font-size: 0.74rem; font-weight: 700; cursor: pointer;
+  font-size: max(var(--fs-floor), 0.74rem); font-weight: 700; cursor: pointer;
   white-space: nowrap; transition: all 0.12s; display: inline-flex;
   align-items: center; gap: 5px;
 }
@@ -12112,8 +12123,8 @@ html[data-theme="dark"] .pf-card.pf-saved {
 .bulk-bar .bulk-cancel:hover { background: #f1f5f9; }
 
 /* Subtle time display */
-.um-time { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
-.um-time-never { font-size: 0.7rem; color: var(--t4); font-style: italic; }
+.um-time { font-size: max(var(--fs-floor), 0.72rem); color: var(--muted); white-space: nowrap; }
+.um-time-never { font-size: max(var(--fs-floor), 0.7rem); color: var(--t4); font-style: italic; }
 
 /* Checkbox in table */
 #umTable .um-check { width: 14px; height: 14px; cursor: pointer; accent-color: var(--brand); }
@@ -12276,7 +12287,7 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
 }
 
 .va-kicker {
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
 }
 
 .va-panel h2,
@@ -12335,7 +12346,7 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
 .va-runtime dt,
 .va-context-row span {
   color: var(--t4);
-  font-size: 0.74rem;
+  font-size: max(var(--fs-floor), 0.74rem);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -12466,7 +12477,7 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
 
 .va-tool-card-head span {
   color: var(--text-brand);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   font-weight: 800;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -12580,7 +12591,7 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
   place-items: center;
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   font-weight: 800;
 }
 
@@ -13302,8 +13313,8 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
   letter-spacing: -.03em;
   box-shadow: 0 7px 18px color-mix(in srgb, var(--teal) 22%, transparent);
 }
-.sa-workspace-mark { width: 2.25rem; height: 2.25rem; font-size: .7rem; }
-.sa-workspace-kicker { margin: 0 0 .08rem; color: var(--t3); font-size: .7rem; }
+.sa-workspace-mark { width: 2.25rem; height: 2.25rem; font-size: max(var(--fs-floor), .7rem); }
+.sa-workspace-kicker { margin: 0 0 .08rem; color: var(--t3); font-size: max(var(--fs-floor), .7rem); }
 .sa-workspace-program {
   display: inline-flex;
   margin-inline-start: .3rem;
@@ -13958,7 +13969,7 @@ html.sa-overlay-open { overflow: hidden; }
   border-radius: var(--radius-pill);
   background: var(--surface-2);
   color: var(--t2);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 700;
 }
 .sa-grad-course.is-passed { border-color: color-mix(in srgb, var(--success) 45%, var(--line)); color: var(--sev-ok); }
@@ -14346,7 +14357,7 @@ html.sa-overlay-open { overflow: hidden; }
 .sp-filter:hover, .sp-filter.is-active { border-color: var(--brand); background: var(--teal-dim); color: var(--text-brand); }
 .sp-catalog-scope {
   margin: -.1rem 0 .65rem; padding-inline-start: .65rem; border-inline-start: 2px solid var(--teal-border);
-  color: var(--t2); font-size: .74rem; line-height: 1.55;
+  color: var(--t2); font-size: max(var(--fs-floor), .74rem); line-height: 1.55;
 }
 .sp-catalog { display: flex; flex-direction: column; gap: .45rem; max-height: 30rem; overflow-y: auto; padding-inline-end: .2rem; }
 .sp-course-card {
@@ -14426,7 +14437,7 @@ html body .btn.sp-requested-remove {
 .sp-option-coverage { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; }
 .sp-option-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .75rem 0; }
 .sp-option-facts > div { display: flex; flex-direction: column; padding: .5rem .6rem; border-radius: var(--radius-sm); background: var(--teal-dim); }
-.sp-option-facts span { color: var(--t2); font-size: .72rem; }
+.sp-option-facts span { color: var(--t2); font-size: max(var(--fs-floor), .72rem); }
 .sp-option-facts strong { color: var(--t1); font-variant-numeric: tabular-nums; }
 .sp-option-week { margin-bottom: .75rem; }
 .sp-option-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: .25rem 0 .65rem; color: var(--t2); font-size: .75rem; }
@@ -14451,7 +14462,7 @@ html body .btn.sp-requested-remove {
 .sp-muted { color: var(--t2); }
 .sp-note { margin: .75rem 0 .25rem; font-weight: 600; }
 .sp-status { min-height: 1.5em; color: var(--t2); }
-.sp-scroll-hint { margin: .35rem 0 0; color: var(--t2); font-size: .72rem; }
+.sp-scroll-hint { margin: .35rem 0 0; color: var(--t2); font-size: max(var(--fs-floor), .72rem); }
 
 /* Present to a screen reader, absent to the eye. The table caption names which
    option a row belongs to; on screen the heading above it already says so. */
@@ -14728,7 +14739,7 @@ html body .btn.sp-requested-remove {
 .student-timetable-calendar .wg-blocks .wg-h {
   background: var(--glass-bg-header);
   color: var(--t1);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 800;
   letter-spacing: .015em;
 }
@@ -14750,7 +14761,7 @@ html body .btn.sp-requested-remove {
   min-height: 42px;
   padding: .3rem .6rem;
   color: var(--t2);
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
   font-weight: 750;
   line-height: 1.35;
   text-align: center;
@@ -14950,8 +14961,8 @@ html body .btn.sp-requested-remove {
   grid-column: 1 / -1;
   line-height: 1.45;
 }
-.student-timetable-name { color: var(--t1); font-size: .78rem; }
-.student-timetable-meta { color: var(--t3); font-size: .7rem; }
+.student-timetable-name { color: var(--t1); font-size: .78rem; overflow-wrap: anywhere; }
+.student-timetable-meta { color: var(--t3); font-size: max(var(--fs-floor), .7rem); }
 .student-timetable-empty {
   margin: 0;
   padding: .75rem;
@@ -15024,7 +15035,7 @@ html body .btn.sp-requested-remove {
 .student-timetable-table thead th {
   background: var(--glass-bg-header);
   color: var(--t2);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -15091,7 +15102,7 @@ html body .btn.sp-requested-remove {
   flex: 0 0 auto;
   color: var(--text-brand);
   font-family: var(--font-mono);
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
   font-weight: 800;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -15311,7 +15322,7 @@ html body .btn.sp-requested-remove {
   .sp-week .student-timetable-agenda { margin-top: .1rem; }
   .sp-scroll-hint { display: none; }
   .student-course-jumps { gap: .35rem; }
-  .student-course-jumps a { min-height: 44px; padding: .4rem .62rem; font-size: .73rem; }
+  .student-course-jumps a { min-height: 44px; padding: .4rem .62rem; font-size: max(var(--fs-floor), .73rem); }
   .student-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .student-kpi-grid .kpi { padding: .55rem; }
   .student-next-step { align-items: flex-start; flex-direction: column; gap: .25rem; }
@@ -15451,7 +15462,7 @@ html body .btn.sp-requested-remove {
 }
 .student-grad-support > span { color: var(--t2); font-size: .78rem; font-weight: 750; }
 .student-grad-support > strong { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--text-brand); font-size: 1.35rem; }
-.student-grad-support > small { grid-column: 1; color: var(--t3); font-size: .7rem; line-height: 1.4; }
+.student-grad-support > small { grid-column: 1; color: var(--t3); font-size: max(var(--fs-floor), .7rem); line-height: 1.4; }
 .student-grad-assumptions,
 .student-grad-code-list {
   display: flex;
@@ -15466,7 +15477,7 @@ html body .btn.sp-requested-remove {
   border-radius: var(--radius-pill);
   background: var(--glass-bg-data);
   color: var(--t2);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 700;
 }
 .student-grad-current-assumption {
@@ -15623,7 +15634,7 @@ html body .btn.sp-requested-remove {
 .student-grad-term-head > div { display: flex; flex-direction: column; gap: .08rem; }
 .student-grad-term-head > div span { color: var(--t1); font-size: .8rem; font-weight: 800; }
 .student-grad-term-head > div strong,
-.student-grad-term-head > span { color: var(--t3); font-size: .72rem; }
+.student-grad-term-head > span { color: var(--t3); font-size: max(var(--fs-floor), .72rem); }
 .student-grad-term-courses { list-style: none; margin: 0; padding: .35rem .75rem .55rem; }
 .student-grad-term-courses li {
   display: grid;
@@ -15811,3 +15822,31 @@ html[dir="rtl"] :is(.nav-lbl, .logo-sub, .u-rl, .ph-chip, .um-time, .um-time-nev
 html[dir="rtl"] .form-label { font-size: max(12px, 0.75rem) !important; }
 /* (not the viewport-filling tool pages: their footer is one pinned 11px line) */
 html[dir="rtl"] main:not([data-fill="viewport"]) .system-footer { font-size: max(12px, 0.75rem); }
+
+/* ── Database admin: the scope form's three controls share one baseline ─────
+   The help line under "Academic programme" made that column 44px taller, and the
+   row aligns to the bottom, so "Section group" and the button sat lower than their
+   neighbour. The line hangs below the field instead of stretching its column
+   (the columns stack under 768px, where it stays in the flow). */
+@media (min-width: 768px) {
+  .dba-section:has(#ssProgram) .row > .col-md-5 { position: relative; }
+  .dba-section:has(#ssProgram) .row > .col-md-5 > .form-text {
+    position: absolute; inset-inline: 0.375rem; top: 100%; margin-top: 0.25rem;
+  }
+  .dba-section:has(#ssProgram) .row { margin-block-end: 3.5rem; }
+}
+
+/* G5 (Arabic), the pages the first block did not name: the portfolio's status
+   pills and row count, the graduation graph's mode buttons, a planner toggle and
+   a graduation note were still 11-11.9px. The classic workspace is left to its own
+   sheet, whose cards and slots are sized to a 96px slot and pinned by tests. */
+html[dir="rtl"] :is(#apTable .pill-status, #apShowing, .pg-mode, .pg-info,
+    .filter-bar > label.text-t3, p.small.text-secondary) {
+  font-size: max(12px, 0.75rem);
+}
+
+/* Small hit areas: the portfolio's "View (n)" pill was 23px high and the section
+   planner's two disclosure toggles 20px; 28px is a comfortable pointer target
+   and does not move the row they sit in. */
+.ap-hp-btn { min-height: 28px; }
+#spToggleCaps, #spToggleAdv { min-height: 28px; display: inline-flex; align-items: center; }
