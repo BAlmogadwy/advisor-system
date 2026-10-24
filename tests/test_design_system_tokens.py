@@ -150,7 +150,7 @@ SPLIT_CSS = (
 
 
 def _split(token: str) -> str:
-    start = SPLIT_CSS.index("html body.tws-root {")
+    start = SPLIT_CSS.index('html[data-theme="dark"] body.tws-root {')
     block = SPLIT_CSS[start : SPLIT_CSS.index("\n}", start)]
     found = re.search(rf"{re.escape(token)}:\s*(#[0-9a-fA-F]{{6}})\b", block)
     assert found, f"split view's token block has no plain hex {token}"
@@ -159,9 +159,10 @@ def _split(token: str) -> str:
 
 @pytest.mark.parametrize("surface", ["--card", "--bg"])
 def test_split_views_dark_palette_gives_brand_text_its_dark_value(surface: str) -> None:
-    # Split view is dark in both themes, so the shared rules it renders in
-    # --text-brand (the English heading) must not take the light value, which
-    # is 2.53:1 on its card; teal, before C1, was 4.29:1 there.
+    # Split view's own dark palette (it follows the theme since style check S3)
+    # must give the shared rules it renders in --text-brand (the English heading)
+    # the dark value: the light value is 2.53:1 on its card; teal, before C1, was
+    # 4.29:1 there.
     ratio = _ratio(_split("--text-brand"), _split(surface))
     assert ratio >= 4.5, f"split --text-brand on {surface}: {ratio:.2f}:1"
     light = _ratio(_hex("light", "--text-brand"), _split(surface))
@@ -242,7 +243,7 @@ def _under(theme: str, background: str) -> list[tuple[str, str]]:
 
 
 def test_every_brand_text_rule_on_a_teal_wash_clears_4_5() -> None:
-    # Every stylesheet's rules (split's and MRI's excepted, as in the lint),
+    # Every stylesheet's rules (MRI's excepted, as in the lint),
     # each wash at its own strength: the strongest today is 16% (--teal-border).
     # A rule that repaints only the wash (a hover: `.pl-btn-teal:hover` on
     # --teal-border) is read with the brand ink a rule for its element gives it.

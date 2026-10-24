@@ -15,14 +15,15 @@ each of its stops, the worst counting):
 - every control drawn in the primary pair still passes with :hover and with
   :active forced (the sign-in button's hover was 3.04:1, the graph's Sync 1:1),
   and so do the confirm dialog's primary and the student adviser's avatar;
-- no text is painted in the `--teal` fill any more, outside split view's own
-  stylesheet (left for stage 4);
+- no text is painted in the `--teal` fill any more (split view's own sheet too,
+  since style check S3);
 - the sidebar's text never goes under 11px, at 1440, 1100 and in the phone
   drawer at 400 (it was 8.9, 7.4 and 6.5px);
 - the workspace's "Draft" pill (4.17:1), its filter placeholder (2.02:1) and
   its English heading (3.63:1) pass, and the pill lies flat in the toolbar;
 - split view's brand text is no lower than it was (its English heading reads
-  the shared rule; split is dark in both themes);
+  the shared rule), and split follows the theme: its colour scheme is the
+  theme's, light or dark;
 - a light theme tells the browser it is light, even when the OS is dark;
 - in forced colours the skip link and the pills keep a visible box.
 
@@ -325,8 +326,7 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
         self.assertGreater(seen["checked"], 0, "nothing in a C1 token was measured")
         for part in MEASURED.get(name, ()):
             self.assertTrue(any(part in line for line in seen["named"]), f"{part} not measured")
-        if name != "split":  # split's own sheet keeps teal (stage 4)
-            self.assertEqual(seen["teal"], [])
+        self.assertEqual(seen["teal"], [])
         self._assert_primaries_keep_the_pair_in_every_state(name, page)
         return seen
 
@@ -559,7 +559,7 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
                 self.assertGreaterEqual(seen["heading"], 5.81 if theme == "dark" else 4.29)
                 if seen["tab"] is not None:
                     self.assertGreaterEqual(seen["tab"], 4.29 if theme == "light" else 5.81)
-                self.assertEqual(seen["scheme"], "dark", "split is a dark page in both themes")
+                self.assertEqual(seen["scheme"], theme, "split follows the theme (style check S3)")
 
     # ── the browser's own colour scheme ─────────────────────────────────────
 
