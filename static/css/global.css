@@ -1823,6 +1823,12 @@ html body .btn {
   transition:      all .20s var(--ease) !important;
 }
 
+/* A link drawn as a button is not underlined: "Search another student" and
+   "Back to portfolio" read as text links beside the Logout button. */
+html body a.btn:not(.btn-link),
+html body a.btn:not(.btn-link):hover,
+html body a.btn:not(.btn-link):focus { text-decoration: none; }
+
 /* ── Filled buttons — raised neumorphic with colour fill ── */
 /* The fill and ink are the passing pair from :root (--btn-primary-*): white on the
    old --teal fill was 4.11:1 in light and 3.04:1 in dark, and the hover went
@@ -6979,7 +6985,7 @@ html[data-theme="dark"] {
   --pl-overlay-5:     rgba(255,255,255,0.08);
   --pl-overlay-6:     rgba(255,255,255,0.025);
   --pl-danger-bg:     rgba(240,96,96,0.08);
-  --pl-danger-text:   #f06060;
+  --pl-danger-text:   #f97066;   /* was #f06060: 4.1:1 on its own 10% wash, 5.0:1 here */
   --pl-danger-btn:    rgba(240,96,96,0.10);
   --pl-danger-btn-h:  rgba(240,96,96,0.18);
   --pl-danger-border: rgba(240,96,96,0.15);
@@ -9593,6 +9599,14 @@ html[data-theme="dark"] .btn-export {
 
 /* ── Table — using global .tbl-card + .cr-row ─── */
 #apTable .ap-check { width:15px; height:15px; cursor:pointer; }
+/* The cells are start-aligned and the headers were centred, so each title sat
+   20-130px off its column. */
+#apTable thead th { text-align: start; }
+/* "<2" and "2–3" are LTR runs: in an Arabic page "<" mirrored to ">" and the
+   range ran backwards ("3–2"). */
+.ap-gpa-labels > span { direction: ltr; unicode-bidi: isolate; }
+/* the CSV pill is a link; it is a pill, not underlined text */
+a.fb-dd, a.fb-dd:hover { text-decoration: none; }
 .ap-expand[aria-expanded="true"] { transform:rotate(90deg); }
 .ap-expand[aria-expanded="true"] .i { color:var(--text-brand); }
 
@@ -10009,7 +10023,7 @@ html[data-theme="dark"] .btn-export {
 .ap-grad-term-courses li { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; gap: .45rem; }
 .ap-grad-term-courses bdi { color: var(--text-brand); font-family: var(--font-mono); font-weight: 750; }
 .ap-grad-term-courses span { color: var(--ink); }
-.ap-grad-term-courses small { color: var(--muted); }
+.ap-grad-term-courses small { color: var(--muted); font-size: var(--text-micro); }
 .ap-grad-wait-text { color: #9a5b08; font-style: italic; }
 .ap-grad-blockers { display: grid; gap: .4rem; }
 .ap-grad-blockers li {
@@ -10054,7 +10068,7 @@ html[data-theme="dark"] .btn-export {
 /* ── Dedicated adviser graduation workspace ──────────────── */
 main[data-page="advisor-student-graduation"] > .content-wrap {
   width: 100%;
-  max-width: 1440px;
+  max-width: 1480px; /* the wide tier, as the instructor and exam pages */
 }
 
 .advisor-grad-page,
@@ -10563,7 +10577,8 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
   border: 1px solid color-mix(in srgb, var(--royal) 28%, var(--line));
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--royal) 8%, transparent);
-  color: var(--royal);
+  /* --royal on the dark page was 4.2:1; the info severity ink passes in both themes */
+  color: var(--sev-info);
   font-size: var(--text-micro);
   font-weight: 800;
   white-space: nowrap;
@@ -10883,7 +10898,8 @@ html[data-theme="dark"] .ap-prog-pill[aria-pressed="true"] {
   border-color: #8b8fff;
 }
 html[data-theme="dark"] .ap-prog-pill .ap-prog-n {
-  background: rgba(139,143,255,0.12);
+  /* a second 12% wash over the pill's own took the count to 3.4-4.5:1 */
+  background: rgba(139,143,255,0.06);
 }
 
 /* Detail row */
@@ -11097,6 +11113,14 @@ body:has(.login-wrap) {
     font-size: 0.85rem; color: var(--t4);
     text-align: center; margin-bottom: 2rem;
   }
+  /* "Staff sign in" and "Use a different ID" were the browser's link blue
+     (rgb(0,0,238) on the card, rgb(158,158,255) in dark): the brand text colour */
+  .login-sub a {
+    color: var(--text-brand); font-weight: 600;
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+  .login-sub a:hover { color: var(--btn-primary-hover); }
+  .login-sub a:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; border-radius: 3px; }
 
   /* ─── Neumorphic input groups ─── */
   .neu-input-group {
@@ -12173,12 +12197,21 @@ html[data-theme="dark"] .pf-card.pf-saved {
   transition: opacity 0.15s, background 0.15s;
 }
 .bulk-bar button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
-.bulk-bar .bulk-deactivate { background: #fef2f2; color: var(--pl-danger-text); border-color: #fca5a5; }
-.bulk-bar .bulk-deactivate:hover { background: #fee2e2; }
-.bulk-bar .bulk-activate { background: #f0fdf4; color: #166534; border-color: #86efac; }
-.bulk-bar .bulk-activate:hover { background: #dcfce7; }
-.bulk-bar .bulk-cancel { background: transparent; }
-.bulk-bar .bulk-cancel:hover { background: #f1f5f9; }
+/* the severity vocabulary, so both themes take the pair that passes (the old
+   fixed greens and reds were hand-picked for light and re-picked for dark) */
+.bulk-bar .bulk-deactivate {
+  /* 7% of the ink over the card: --sev-critical-bg (12% in dark) left the label at 4.4:1 */
+  background: color-mix(in srgb, var(--sev-critical) 7%, var(--card)); color: var(--sev-critical);
+  border-color: color-mix(in srgb, var(--sev-critical) 45%, transparent);
+}
+.bulk-bar .bulk-deactivate:hover { background: color-mix(in srgb, var(--sev-critical) 18%, transparent); }
+.bulk-bar .bulk-activate {
+  background: var(--sev-ok-bg); color: var(--sev-ok);
+  border-color: color-mix(in srgb, var(--sev-ok) 45%, transparent);
+}
+.bulk-bar .bulk-activate:hover { background: color-mix(in srgb, var(--sev-ok) 18%, transparent); }
+.bulk-bar .bulk-cancel { background: transparent; color: var(--t2); border-color: var(--control-edge); }
+.bulk-bar .bulk-cancel:hover { background: var(--btn-neutral-bg); }
 
 /* Subtle time display */
 .um-time { font-size: max(var(--fs-floor), 0.72rem); color: var(--muted); white-space: nowrap; }
@@ -12432,10 +12465,12 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  border: 1px solid var(--line);
+  /* the shared control edge (3:1+), not --line (1.2:1): the field was the
+     faintest thing in its panel */
+  border: 1px solid var(--control-edge);
   background: var(--surface);
   color: var(--t1);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 0.65rem 0.75rem;
   outline: none;
 }
@@ -12679,8 +12714,14 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
 
 .va-composer .btn {
   min-width: 104px;
-  align-self: stretch;
+  /* the button is a 40px control at the foot of the box, not a 76px slab */
+  align-self: end;
+  min-height: 40px;
 }
+/* The opening line is pretty-printed in the template: under pre-wrap its leading
+   newline and indent showed as a blank first line and an indented second.
+   Replies are written by script and keep pre-wrap. */
+.va-messages > .va-message:first-child .va-bubble { white-space: normal; }
 
 @media (max-width: 980px) {
   .va-shell {
@@ -12743,6 +12784,18 @@ html[data-theme="dark"] .va-tool-meta span {
   background: rgba(255,255,255,0.035);
   border-color: rgba(255,255,255,0.08);
 }
+html[data-theme="dark"] .va-input,
+html[data-theme="dark"] .va-composer textarea { border-color: var(--control-edge); }
+/* a select draws the design-system chevron instead of the browser's (after the
+   dark surface rule above, whose background shorthand would reset the image) */
+html body select.va-input.va-input {
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  padding-inline-end: 2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239aa5b4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+}
+html[dir="rtl"] body select.va-input.va-input { background-position: left 0.75rem center; }
 
 /* ============================================================
    COURSE ASSIGNMENT
@@ -13654,7 +13707,8 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
 .sa-fb-reason:focus-visible,
 .sa-retry:focus-visible { outline: 2px solid var(--accent, #4c8bf5); outline-offset: 2px; }
 
-.sa-muted { color: var(--text-muted, #6b7280); font-size: .875rem; }
+/* --text-muted was never defined, so the fallback grey (3.75:1 on the dark page) always applied */
+.sa-muted { color: var(--t3); font-size: .875rem; }
 .sa-empty { padding: .75rem .25rem; }
 .sa-error { color: var(--danger, #b42318); padding: .75rem; }
 /* The answer body. `pre-wrap` moved off the container and onto the paragraph:
@@ -14912,6 +14966,10 @@ html body .btn.sp-requested-remove {
   font-size: .78rem;
   font-weight: 850;
 }
+/* Dark: the blocks are light washes over a light segment, so the grey text on
+   them was 3.6-4.1:1; the brightest ink gives 4.8:1 or better. */
+html[data-theme="dark"] .student-timetable-calendar :is(.wg-h, .wg-cid, .wg-meta,
+  .student-timetable-block-name, .student-timetable-block-time) { color: var(--t0); }
 .student-timetable-block-name {
   display: -webkit-box;
   overflow: hidden;
