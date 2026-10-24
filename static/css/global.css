@@ -113,6 +113,37 @@
   --sev-ok:           #067858;
   --sev-ok-bg:        rgba(6,120,88,0.08);
 
+  /* ── prerequisite / plan-map graph (static/js/prereq-graph.js draws the SVG) ──
+     The node fills and inks were hard-coded light-theme constants, so in dark mode
+     the course codes measured about 1.6:1 (passed, in progress) and 1.2:1 (open).
+     Each state is now a fill / edge / ink / legend-dot set; the light values are the
+     old constants unchanged (5.6:1 and better), the dark set is below. */
+  --pg-node-fill:     rgba(255,255,255,0.65);
+  --pg-node-edge:     rgba(17,17,68,0.08);
+  --pg-passed-fill:   rgba(10,142,110,0.24);
+  --pg-passed-edge:   rgba(10,142,110,0.72);
+  --pg-passed-ink:    #075f49;
+  --pg-passed-dot:    rgba(10,142,110,0.55);
+  --pg-studying-fill: rgba(64,86,227,0.20);
+  --pg-studying-edge: rgba(64,86,227,0.68);
+  --pg-studying-ink:  #3043bd;
+  --pg-studying-dot:  rgba(64,86,227,0.50);
+  --pg-open-fill:     rgba(255,255,255,0.92);
+  --pg-open-edge:     #0a8e6e;
+  --pg-locked-fill:   rgba(120,124,150,0.09);
+  --pg-locked-edge:   rgba(120,124,150,0.42);
+  --pg-locked-ink:    #596173;
+  --pg-locked-dot:    rgba(120,124,150,0.45);
+  --pg-found-fill:    rgba(10,142,110,0.08);
+  --pg-found-edge:    rgba(10,142,110,0.22);
+  --pg-found-ink:     #087a5e;
+  --pg-term-fill:     rgba(64,86,227,0.08);
+  --pg-term-edge:     rgba(64,86,227,0.22);
+  --pg-term-ink:      #3548c9;
+  --pg-gate-fill:     rgba(180,83,9,0.07);
+  --pg-gate-edge:     rgba(180,83,9,0.30);
+  --pg-warn:          #b45309;
+
   /* ── the neutral button ─────────────────────────────────────
      Its own tokens, because it is the one control that has to look right on FOUR
      different backdrops — a card, a `.va-bubble`, a modal footer and a glass
@@ -363,6 +394,33 @@ html[data-theme="dark"] {
   --sev-info-bg:      rgba(128,147,255,0.12);
   --sev-ok:           #2ec9a0;
   --sev-ok-bg:        rgba(46,201,160,0.10);
+
+  /* plan-map graph, dark: tinted fills with light inks of the same hue */
+  --pg-node-fill:     rgba(255,255,255,0.07);
+  --pg-node-edge:     rgba(255,255,255,0.24);
+  --pg-passed-fill:   rgba(46,201,160,0.16);
+  --pg-passed-edge:   rgba(46,201,160,0.75);
+  --pg-passed-ink:    #7ee8c8;
+  --pg-passed-dot:    rgba(46,201,160,0.85);
+  --pg-studying-fill: rgba(128,147,255,0.18);
+  --pg-studying-edge: rgba(128,147,255,0.78);
+  --pg-studying-ink:  #b7c2ff;
+  --pg-studying-dot:  rgba(128,147,255,0.9);
+  --pg-open-fill:     rgba(255,255,255,0.10);
+  --pg-open-edge:     #2ec9a0;
+  --pg-locked-fill:   rgba(160,164,184,0.08);
+  --pg-locked-edge:   rgba(160,164,184,0.50);
+  --pg-locked-ink:    #a9aec3;
+  --pg-locked-dot:    rgba(160,164,184,0.75);
+  --pg-found-fill:    rgba(46,201,160,0.10);
+  --pg-found-edge:    rgba(46,201,160,0.40);
+  --pg-found-ink:     #6fe0bd;
+  --pg-term-fill:     rgba(128,147,255,0.10);
+  --pg-term-edge:     rgba(128,147,255,0.40);
+  --pg-term-ink:      #aab6ff;
+  --pg-gate-fill:     rgba(245,183,49,0.10);
+  --pg-gate-edge:     rgba(245,183,49,0.45);
+  --pg-warn:          #f5b731;
 
   /* shadows — darker */
   --shadow-card:    0 1px 3px rgba(0,0,0,.20), 0 8px 24px rgba(0,0,0,.30);
@@ -3078,7 +3136,7 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .pg-node:focus{outline:none}
 .pg-node:focus-visible rect{stroke:var(--teal)!important;stroke-width:3;filter:drop-shadow(0 2px 8px color-mix(in srgb, var(--teal) 28%, transparent))}
 .pg-node.hl rect{stroke:var(--teal)!important;stroke-width:2.2}
-.pg-node.hl text{fill:var(--teal)!important}
+.pg-node.hl text{fill:var(--text-brand)!important}
 .pg-edge.hl{stroke:var(--teal);stroke-width:3;stroke-opacity:0.9}
 .pg-node.dm{opacity:0.16;transition:opacity .25s}.pg-edge.dm{opacity:0.06;transition:opacity .25s}
 .pg-legend{display:flex;align-items:center;flex-wrap:wrap;gap:10px 18px;padding:14px 16px 2px;font-size:.75rem;line-height:1.45;font-weight:650;color:var(--t2);font-family:var(--font-mono);letter-spacing:0.01em}
@@ -3095,12 +3153,12 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .pg-band-note{font-family:var(--font-mono);font-size:11px;font-weight:650;fill:var(--t3);opacity:0.65;letter-spacing:0.01em}
 .pg-node-gate rect{stroke-dasharray:4 3}
 .pg-node-inferred rect{stroke-dasharray:5 3}
-.pg-edge-warn{stroke:#b45309;stroke-opacity:0.55;stroke-dasharray:5 4}
-.pg-edge-warn.hl{stroke:#b45309;stroke-opacity:0.95}
+.pg-edge-warn{stroke:var(--pg-warn);stroke-opacity:0.55;stroke-dasharray:5 4}
+.pg-edge-warn.hl{stroke:var(--pg-warn);stroke-opacity:0.95}
 .pg-warn{
   display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin:10px 16px 0;padding:8px 12px;
   border-radius:10px;background:rgba(180,83,9,0.07);border:1px solid rgba(180,83,9,0.22);
-  font-size:11px;font-weight:600;color:#b45309;line-height:1.5;
+  font-size:11px;font-weight:600;color:var(--pg-warn);line-height:1.5;
 }
 .pg-warn-detail{font-family:var(--font-mono);font-weight:500;opacity:0.8}
 
