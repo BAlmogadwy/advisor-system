@@ -432,7 +432,7 @@ function runSeedText(result) {
 
 function renderRunSeed(result) {
   const label = runSeedText(result);
-  return label ? `<div class="tw-run-seed" style="margin-bottom:12px"><b>${label}</b><div style="font-size:11px;color:var(--t3)">${IS_AR ? 'احتفظ بهذه البذرة لإعادة استخدام نقطة بدء البحث. قد تختلف النتائج بسبب حدود الوقت.' : 'Keep this seed to reuse the search starting point. Time limits may still change the outcome.'}</div></div>` : '';
+  return label ? `<div class="tw-run-seed" style="margin-bottom:12px"><b>${label}</b><div style="font-size:var(--text-xs);color:var(--t3)">${IS_AR ? 'احتفظ بهذه البذرة لإعادة استخدام نقطة بدء البحث. قد تختلف النتائج بسبب حدود الوقت.' : 'Keep this seed to reuse the search starting point. Time limits may still change the outcome.'}</div></div>` : '';
 }
 
 function instructorScheduleOf(result) {
@@ -465,7 +465,7 @@ function renderSecondaryRecoveryOutcome(result) {
     <b>${IS_AR ? 'تحسين المقاعد والقاعات' : 'Seat and room recovery'}</b>
     <div>${IS_AR ? 'مقاعد المقررات المرنة غير المعينة' : 'Soft-course unresolved seats'}: ${number(recovery.soft_unresolved_before)} → ${number(recovery.soft_unresolved_after)}</div>
     <div>${IS_AR ? 'الاجتماعات دون قاعة مناسبة' : 'Meetings without a suitable room'}: ${number(recovery.room_shortages_before)} → ${number(recovery.room_shortages_after)}</div>
-    <div style="font-size:11px;color:var(--t3)">${IS_AR ? 'يشمل نقص القاعات القاعات الأصغر من السعة المطلوبة. تمت حماية أيام وفراغات كل مدرس.' : 'Room shortages include undersized rooms. Each instructor’s days and gaps were protected.'}</div>
+    <div style="font-size:var(--text-xs);color:var(--t3)">${IS_AR ? 'يشمل نقص القاعات القاعات الأصغر من السعة المطلوبة. تمت حماية أيام وفراغات كل مدرس.' : 'Room shortages include undersized rooms. Each instructor’s days and gaps were protected.'}</div>
   </div>`;
 }
 
@@ -495,11 +495,11 @@ function renderInstructorOutcome(result) {
   const number = value => Number.isFinite(value) ? value.toLocaleString() : '—';
   const row = (label, key) => `<div>${label}: <b>${before ? `${number(before[key])} → ` : ''}${number(after?.[key])}</b></div>`;
   return `<div style="padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:8px">
-    <div style="font-weight:700;color:var(--teal)">${IS_AR ? 'جدول المدرسين' : 'Instructor schedule'}</div>
+    <div style="font-weight:700;color:var(--text-brand)">${IS_AR ? 'جدول المدرسين' : 'Instructor schedule'}</div>
     ${row(IS_AR ? 'مجموع أيام العمل' : 'Total working days', 'working_days')}
     ${row(IS_AR ? 'دقائق الانتظار' : 'Idle minutes', 'idle_minutes')}
     ${coverage ? `<div>${esc(teacherCoverageText(coverage))}</div>` : ''}
-    ${priority ? `<div style="font-size:11px;color:var(--t3);margin-top:5px">${IS_AR ? 'الأولوية لتقليل أيام المدرسين ثم الانتظار، مع حماية التسجيل والقيود الأساسية. قد تتغير فراغات الطلاب.' : 'Priority: fewer instructor days, then less idle time, with hard enrolment and operational constraints protected. Student gaps may change.'}</div>` : ''}
+    ${priority ? `<div style="font-size:var(--text-xs);color:var(--t3);margin-top:5px">${IS_AR ? 'الأولوية لتقليل أيام المدرسين ثم الانتظار، مع حماية التسجيل والقيود الأساسية. قد تتغير فراغات الطلاب.' : 'Priority: fewer instructor days, then less idle time, with hard enrolment and operational constraints protected. Student gaps may change.'}</div>` : ''}
   </div>`;
 }
 
@@ -780,7 +780,7 @@ const COURSE_COLORS = [
   ['#3D5A80', '#6D94C4'],  // slate blue
   ['#456B52', '#72A687'],  // forest
   ['#8C4A4A', '#C47A7A'],  // dusty red
-  ['#8C7A3D', '#C4A86D'],  // mustard
+  ['#85733A', '#C4A86D'],  // mustard (white ink 4.7:1)
   ['#5C3D73', '#8C6DA6'],  // plum
   ['#3D6B52', '#6DA687'],  // emerald
   ['#8C6B3D', '#C4A06D'],  // bronze
@@ -3046,7 +3046,7 @@ function renderGridHTML(slots, placements, issueMap, kind) {
         // Per-course pastel palette (user request) — matches XLSX export.
         const bg = courseColor(placement.course_code);
         const accent = courseColorBorder(placement.course_code);
-        const style = `background:${bg};border-left-color:${accent}`;
+        const style = `background:${bg};border-inline-start-color:${accent}`;
         const cls = `cell filled${hasClash ? ' clash clash-' + clashTone : ''}${placement.is_locked ? ' locked' : ''}`;
         const title = issueTitle || ` title="${esc(placementTitle)}"`;
         h += `<div class="${cls}" ${cellAttrs}${title} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
@@ -7623,7 +7623,7 @@ async function openGenerateModal() {
           <option value="compact">${IS_AR ? 'المولد الحالي: مقارنة 7 استراتيجيات' : 'Classic: compare 7 strategies'}</option>
         </select></div>
       <div class="hint">${IS_AR ? 'يمكن تحديد عدة برامج بفصلها بفاصلة (مثال: AI,DS)' : 'Multiple programs may be comma-separated (e.g. AI,DS). Leave section blank for all sections.'}</div>
-      <div id="twsGenStatus" class="full" style="color:var(--t4);font-size:11px;min-height:16px"></div>
+      <div id="twsGenStatus" class="full" style="color:var(--t4);font-size:var(--text-xs);min-height:16px"></div>
     </div>
   `;
   openModal({
@@ -8072,13 +8072,13 @@ async function loadElectivesInto(listEl) {
   listEl.innerHTML = placeholders.map(ph => {
     const selected = mapLookup[ph.course_code] || new Set();
     return safeHtml`<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
-      <div style="font-weight:700;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:6px">
+      <div style="font-weight:700;color:var(--text-brand);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:6px">
         ${ph.course_code}
-        <span style="font-weight:400;color:var(--t4);font-size:10px">· T${ph.programme_term || '?'} · ${ph.type || 'Elective'} · ${ph.credit_hours || 3}cr</span>
+        <span style="font-weight:400;color:var(--t4);font-size:var(--text-micro)">· T${ph.programme_term || '?'} · ${ph.type || 'Elective'} · ${ph.credit_hours || 3}cr</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 12px">
         ${catalogue.map(c => safeHtml`
-          <label style="display:flex;gap:6px;align-items:center;font-size:11px;cursor:pointer;padding:2px 0">
+          <label style="display:flex;gap:6px;align-items:center;font-size:var(--text-xs);cursor:pointer;padding:2px 0">
             <input type="checkbox" class="elec-chk" data-ph="${ph.course_code}" data-code="${c.course_code}"${selected.has(c.course_code) ? ' checked' : ''}>
             <span style="font-family:'JetBrains Mono',monospace;font-weight:700">${c.course_code}</span>
             <span style="color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.course_name || ''}</span>
@@ -9145,14 +9145,14 @@ function showOptimiseResults(o, mode) {
     : [];
   const candList = (o.all_scores && o.all_scores.length > 1) ? `
     <div class="section-title">${IS_AR ? 'مقارنة المرشحين' : 'Candidate comparison'} (${o.candidates_evaluated || o.all_scores.length})</div>
-    <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:11px">
+    <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:var(--text-xs)">
       <thead><tr style="color:var(--t4);border-bottom:1px solid var(--line)">
-        <th style="text-align:left;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Strategy</th>
-        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Tier-A</th>
-        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Unres.</th>
-        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Clash</th>
-        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Gaps</th>
-        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Quality</th>
+        <th style="text-align:left;padding:4px 6px;font-size:var(--text-micro);text-transform:uppercase">Strategy</th>
+        <th style="text-align:right;padding:4px 6px;font-size:var(--text-micro);text-transform:uppercase">Tier-A</th>
+        <th style="text-align:right;padding:4px 6px;font-size:var(--text-micro);text-transform:uppercase">Unres.</th>
+        <th style="text-align:right;padding:4px 6px;font-size:var(--text-micro);text-transform:uppercase">Clash</th>
+        <th style="text-align:right;padding:4px 6px;font-size:var(--text-micro);text-transform:uppercase">Gaps</th>
+        <th style="text-align:right;padding:4px 6px;font-size:var(--text-micro);text-transform:uppercase">Quality</th>
       </tr></thead>
       <tbody>
         ${o.all_scores.map(s => {
@@ -9197,14 +9197,14 @@ function showOptimiseResults(o, mode) {
       [IS_AR ? 'تشتّت أقسام المقرر' : 'Same-course spread', score[7], false],
     ];
     scoreRows = tieredRows.map(([label, v, danger]) => {
-      const clr = danger && v > 0 ? '#F06060' : (danger ? 'var(--teal)' : 'var(--ink)');
-      return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${label}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${Number(v).toLocaleString()}</td></tr>`;
+      const clr = danger && v > 0 ? 'var(--tws-bad)' : (danger ? 'var(--text-brand)' : 'var(--ink)');
+      return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${label}</td><td style="text-align:end;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${Number(v).toLocaleString()}</td></tr>`;
     }).join('');
   } else {
     scoreRows = score.slice(0, 6).map((v, i) => {
       const display = i === 4 ? Number(v).toLocaleString() : v;
-      const clr = (i === 3 && v > 0) ? '#F06060' : (i === 3 ? 'var(--teal)' : 'var(--ink)');
-      return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
+      const clr = (i === 3 && v > 0) ? 'var(--tws-bad)' : (i === 3 ? 'var(--text-brand)' : 'var(--ink)');
+      return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:end;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
     }).join('');
   }
   const quality = o.quality_score || {};
@@ -9224,21 +9224,21 @@ function showOptimiseResults(o, mode) {
     </div>` : '';
   const safetyBlock = safetyBlocked ? `
     <div style="padding:10px 12px;border-radius:6px;background:rgba(240,96,96,0.1);border:1px solid rgba(240,96,96,0.3);margin:10px 0">
-      <div style="font-weight:800;color:#F06060;margin-bottom:5px">Result not applied</div>
-      <div style="font-size:11px;color:var(--t3)">The optimiser candidate was rejected because it worsened protected student enrolment, hard operational constraints, or an instructor's working days.</div>
+      <div style="font-weight:800;color:var(--tws-bad);margin-bottom:5px">Result not applied</div>
+      <div style="font-size:var(--text-xs);color:var(--t3)">The optimiser candidate was rejected because it worsened protected student enrolment, hard operational constraints, or an instructor's working days.</div>
       ${safetyRegressions.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">${safetyRegressions.map(r => {
         // Rows that concern courses (a dropped required section) name the first few.
         const labels = Array.isArray(r.course_labels) ? r.course_labels : [];
         const courses = labels.length
           ? ` (${esc(labels.slice(0, 3).join(', '))}${labels.length > 3 ? ` +${labels.length - 3}` : ''})`
           : '';
-        return `<span class="tws-repair-chip" style="border-color:rgba(240,96,96,0.35);color:#F06060">${esc(r.label || r.metric)}: ${Number(r.before || 0).toLocaleString()} -> ${Number(r.after || 0).toLocaleString()}${courses}</span>`;
+        return `<span class="tws-repair-chip" style="border-color:rgba(240,96,96,0.35);color:var(--tws-bad)">${esc(r.label || r.metric)}: ${Number(r.before || 0).toLocaleString()} -> ${Number(r.after || 0).toLocaleString()}${courses}</span>`;
       }).join('')}</div>` : ''}
     </div>` : '';
   const crossTradeoffBlock = (!safetyBlocked && hasCrossMetric && crossPrimaryDelta < 0) ? `
-    <div style="padding:8px 12px;border-radius:6px;background:rgba(245,183,49,0.08);border:1px solid rgba(245,183,49,.25);margin-top:10px;color:#F5B731;font-weight:600">
+    <div style="padding:8px 12px;border-radius:6px;background:rgba(245,183,49,0.08);border:1px solid rgba(245,183,49,.25);margin-top:10px;color:var(--tws-warn);font-weight:600">
       Tradeoff: ${hasCrossAffectedMetric ? 'students with potential course-demand overlaps' : 'cross-board overlaps'} increased from ${crossPrimaryBefore} to ${crossPrimaryAfter}.
-      <div style="margin-top:4px;font-size:11px;color:var(--t3);font-weight:500">${o.optimisation_policy === 'instructor_first' ? 'Instructor days and idle lead quality selection, with hard student enrolment protected.' : 'Student unresolved outcome remains the primary optimisation target.'}</div>
+      <div style="margin-top:4px;font-size:var(--text-xs);color:var(--t3);font-weight:500">${o.optimisation_policy === 'instructor_first' ? 'Instructor days and idle lead quality selection, with hard student enrolment protected.' : 'Student unresolved outcome remains the primary optimisation target.'}</div>
     </div>` : '';
   let diffBlock = '';
   if (mode === 'current' && Array.isArray(o.baseline_score) && Array.isArray(o.final_score)
@@ -9249,55 +9249,55 @@ function showOptimiseResults(o, mode) {
     );
     const safeToLocale = v => (typeof v === 'number' ? v.toLocaleString() : String(v ?? '—'));
     diffBlock = safetyBlocked
-      ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(240,96,96,0.08);border:1px solid rgba(240,96,96,.24);margin-top:10px;color:#F06060;font-weight:700">
+      ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(240,96,96,0.08);border:1px solid rgba(240,96,96,.24);margin-top:10px;color:var(--tws-bad);font-weight:700">
           No timetable changes were applied.
         </div>`
       : improved
       ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(10,142,110,0.1);border:1px solid rgba(10,142,110,0.25);margin-top:10px">
-          <div style="font-weight:700;color:var(--teal);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
-          <div style="font-size:11px">Unresolved: <b>${bs.unresolved}</b> → <b style="color:var(--teal)">${fs.unresolved}</b></div>
-          ${bs.clashes !== fs.clashes ? `<div style="font-size:11px">Clashes: <b>${bs.clashes}</b> → <b style="color:var(--teal)">${fs.clashes}</b></div>` : ''}
-          ${hasCrossMetric && crossPrimaryBefore !== crossPrimaryAfter ? `<div style="font-size:11px">${hasCrossAffectedMetric ? 'Potential demand overlap students' : 'Cross-board demand overlaps'}: <b>${crossPrimaryBefore}</b> → <b style="color:${crossPrimaryDelta > 0 ? 'var(--teal)' : '#F06060'}">${crossPrimaryAfter}</b>${hasCrossAffectedMetric ? ` <span style="color:var(--t4)">(${crossAfter} potential course-demand overlaps)</span>` : ''}</div>` : ''}
-          <div style="font-size:11px">Gaps: <b>${safeToLocale(bs.gap)}</b> → <b>${safeToLocale(fs.gap)}</b></div>
+          <div style="font-weight:700;color:var(--text-brand);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
+          <div style="font-size:var(--text-xs)">Unresolved: <b>${bs.unresolved}</b> → <b style="color:var(--text-brand)">${fs.unresolved}</b></div>
+          ${bs.clashes !== fs.clashes ? `<div style="font-size:var(--text-xs)">Clashes: <b>${bs.clashes}</b> → <b style="color:var(--text-brand)">${fs.clashes}</b></div>` : ''}
+          ${hasCrossMetric && crossPrimaryBefore !== crossPrimaryAfter ? `<div style="font-size:var(--text-xs)">${hasCrossAffectedMetric ? 'Potential demand overlap students' : 'Cross-board demand overlaps'}: <b>${crossPrimaryBefore}</b> → <b style="color:${crossPrimaryDelta > 0 ? 'var(--text-brand)' : 'var(--tws-bad)'}">${crossPrimaryAfter}</b>${hasCrossAffectedMetric ? ` <span style="color:var(--t4)">(${crossAfter} potential course-demand overlaps)</span>` : ''}</div>` : ''}
+          <div style="font-size:var(--text-xs)">Gaps: <b>${safeToLocale(bs.gap)}</b> → <b>${safeToLocale(fs.gap)}</b></div>
         </div>`
-      : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);border:1px solid rgba(80,104,240,.22);margin-top:10px;color:#aeb9ff;font-weight:600">
+      : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);border:1px solid rgba(80,104,240,.22);margin-top:10px;color:var(--tws-info-ink);font-weight:600">
           ━ ${IS_AR ? 'لم يتم العثور على تحسين تلقائي' : 'No automatic improvement was found'}
-          ${hasCrossMetric && crossPrimaryAfter > 0 ? `<div style="margin-top:5px;font-size:11px;color:var(--t3);font-weight:500">${hasCrossAffectedMetric ? 'Students with potential course-demand overlaps' : 'Cross-board overlaps'} remain <b style="color:#F06060">${crossPrimaryAfter}</b>. Use guided fixes or Full rebuild to target this metric.</div>` : ''}
+          ${hasCrossMetric && crossPrimaryAfter > 0 ? `<div style="margin-top:5px;font-size:var(--text-xs);color:var(--t3);font-weight:500">${hasCrossAffectedMetric ? 'Students with potential course-demand overlaps' : 'Cross-board overlaps'} remain <b style="color:var(--tws-bad)">${crossPrimaryAfter}</b>. Use guided fixes or Full rebuild to target this metric.</div>` : ''}
         </div>`;
   }
   const crossCard = hasCrossMetric ? `
       <div style="padding:12px;border-radius:8px;background:rgba(240,96,96,0.08);text-align:center">
-        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'عبر اللوحات' : 'Cross'}</div>
-        <div style="font-weight:700;color:${crossPrimaryAfter > 0 ? '#F06060' : 'var(--teal)'};font-size:20px">${crossPrimaryAfter}<span style="color:var(--t4);font-size:12px;font-weight:400">${crossPrimaryBefore !== crossPrimaryAfter ? `/${crossPrimaryBefore}` : ''}</span></div>
-        ${hasCrossAffectedMetric ? `<div style="font-size:10px;color:var(--t4);margin-top:2px">${crossAfter} potential course-demand overlaps</div>` : ''}
+        <div style="font-size:var(--text-micro);color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'عبر اللوحات' : 'Cross'}</div>
+        <div style="font-weight:700;color:${crossPrimaryAfter > 0 ? 'var(--tws-bad)' : 'var(--text-brand)'};font-size:20px">${crossPrimaryAfter}<span style="color:var(--t4);font-size:12px;font-weight:400">${crossPrimaryBefore !== crossPrimaryAfter ? `/${crossPrimaryBefore}` : ''}</span></div>
+        ${hasCrossAffectedMetric ? `<div style="font-size:var(--text-micro);color:var(--t4);margin-top:2px">${crossAfter} potential course-demand overlaps</div>` : ''}
       </div>` : '';
   // Courses that left students without a section (shared with the classic page).
   const hotspots = window.TimetableHotspots?.html(o, IS_AR) || '';
   const reservePressure = (o.reserve_heavy_sections || []).length ? `
-    <div class="section-title" style="color:#F5B731;margin-top:12px">${IS_AR ? 'ضغط احتياطي' : 'Reserve pressure'}</div>
+    <div class="section-title" style="color:var(--tws-warn);margin-top:12px">${IS_AR ? 'ضغط احتياطي' : 'Reserve pressure'}</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px">${o.reserve_heavy_sections.slice(0, 8).map(s =>
-      `<span style="padding:3px 9px;border-radius:999px;background:rgba(245,183,49,0.12);color:#F5B731;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${esc(s.section)} ${Math.round(s.ratio * 100)}%</span>`
+      `<span style="padding:3px 9px;border-radius:999px;background:rgba(245,183,49,0.12);color:var(--tws-warn);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:var(--text-xs)">${esc(s.section)} ${Math.round(s.ratio * 100)}%</span>`
     ).join('')}</div>
   ` : '';
   const body = `
     ${renderRunSeed(o)}${renderInstructorOutcome(o)}${renderSecondaryRecoveryOutcome(o)}
     <div style="display:grid;grid-template-columns:repeat(${hasCrossMetric ? 4 : 3},1fr);gap:8px;margin-bottom:14px">
       <div style="padding:12px;border-radius:8px;background:rgba(10,142,110,0.08);text-align:center">
-        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>
-        <div style="font-weight:700;color:var(--teal);font-size:20px">${assigned}<span style="color:var(--t4);font-size:12px;font-weight:400">/${o.total_students || 0}</span></div>
+        <div style="font-size:var(--text-micro);color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>
+        <div style="font-weight:700;color:var(--text-brand);font-size:20px">${assigned}<span style="color:var(--t4);font-size:12px;font-weight:400">/${o.total_students || 0}</span></div>
       </div>
       <div style="padding:12px;border-radius:8px;background:rgba(245,183,49,0.08);text-align:center">
-        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>
-        <div style="font-weight:700;color:#F5B731;font-size:20px">${o.unresolved_students || 0}</div>
+        <div style="font-size:var(--text-micro);color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>
+        <div style="font-weight:700;color:var(--tws-warn);font-size:20px">${o.unresolved_students || 0}</div>
       </div>
       <div style="padding:12px;border-radius:8px;background:rgba(80,104,240,0.08);text-align:center">
-        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'الوقت' : 'Time'}</div>
-        <div style="font-weight:700;color:#5068F0;font-size:20px">${o.elapsed_seconds || '?'}s</div>
+        <div style="font-size:var(--text-micro);color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'الوقت' : 'Time'}</div>
+        <div style="font-weight:700;color:var(--sev-info);font-size:20px">${o.elapsed_seconds || '?'}s</div>
       </div>
       ${crossCard}
     </div>
     ${candList}
-    <div class="section-title" style="color:var(--teal);margin-top:12px">${finalLabel}</div>
+    <div class="section-title" style="color:var(--text-brand);margin-top:12px">${finalLabel}</div>
     <table style="width:100%;border-collapse:collapse;font-size:12px">${scoreRows}</table>
     ${qualityBlock}
     ${safetyBlock}
