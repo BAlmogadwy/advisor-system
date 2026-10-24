@@ -2462,7 +2462,8 @@ html body [role="gridcell"][tabindex]:focus-visible { outline-offset: -2px !impo
   font-variant-numeric: tabular-nums; text-align: center;
 }
 .ux-tab-count:empty { display: none; }
-.ux-tab-count[data-tone="critical"] { background: var(--sev-critical-bg); color: var(--sev-critical); }
+/* 8% wash: the 12% --sev-critical-bg put the dark count at 4.4:1 */
+.ux-tab-count[data-tone="critical"] { background: color-mix(in srgb, var(--sev-critical) 8%, transparent); color: var(--sev-critical); }
 .ux-tab-count[data-tone="warning"]  { background: var(--sev-warning-bg);  color: var(--sev-warning); }
 
 /* ── Stat strip: numbers that say scope, meaning and direction ─
