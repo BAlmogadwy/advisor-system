@@ -1442,7 +1442,7 @@ html[data-theme="dark"] .system-footer {
 .s-usr-row .s-usr { flex: 1; min-width: 0; }
 .s-usr-logout {
   display: flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; border-radius: 8px;
+  width: 32px; height: 32px; border-radius: var(--radius-sm);
   /* A <button>: without a background and border it was the browser's grey
      button (light: ButtonFace with a 2px black border; dark: grey with a 2px
      white one). The same recipe as the theme toggle beside it. */
