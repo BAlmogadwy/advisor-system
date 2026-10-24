@@ -31,7 +31,7 @@
 <!-- ─── Assignments: one instructor per course, per programme and section ─── -->
 <section class="im-pane" role="tabpanel" id="imTabAssignments" aria-labelledby="imTabBtnAssignments">
   <div class="filter-bar fb-fit sticky-cta mb-0">
-    <div class="fb-search">
+    <div class="fb-search fb-sm">
       <label class="fb-lbl" for="caProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</label>
       <select id="caProgram">
         <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر برنامجاً…{% else %}Choose a programme…{% endif %}</option>
@@ -53,7 +53,7 @@
       <button type="button" class="ux-seg-item" data-sec="M" role="radio" aria-checked="true">{% if LANGUAGE_CODE == 'ar' %}طلاب (M){% else %}Male (M){% endif %}</button>
       <button type="button" class="ux-seg-item" data-sec="F" role="radio" aria-checked="false" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}طالبات (F){% else %}Female (F){% endif %}</button>
     </div>
-    <div class="fb-search fb-grow">
+    <div class="fb-search fb-sm fb-grow">
       <label class="fb-lbl" for="caSearch">{% if LANGUAGE_CODE == 'ar' %}البحث{% else %}Search{% endif %}</label>
       <input id="caSearch" type="search" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الرمز أو الاسم أو المدرس…{% else %}Code, name or instructor…{% endif %}">
     </div>
@@ -103,7 +103,7 @@
 <!-- ─── Roster ─── -->
 <section class="im-pane" role="tabpanel" id="imTabRoster" aria-labelledby="imTabBtnRoster" hidden>
   <div class="filter-bar fb-fit mb-0">
-    <div class="fb-search fb-grow">
+    <div class="fb-search fb-sm fb-grow">
       <label class="fb-lbl" for="imInstructorSearch">{% if LANGUAGE_CODE == 'ar' %}البحث{% else %}Search{% endif %}</label>
       <input id="imInstructorSearch" type="search" class="fb-w-20ch"
              placeholder="{% if LANGUAGE_CODE == 'ar' %}الاسم أو البريد أو القسم أو رقم الموظف…{% else %}Name, email, department or employee no…{% endif %}">

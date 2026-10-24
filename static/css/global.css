@@ -2849,6 +2849,7 @@ html body .ux-dialog-body:focus-visible { outline-offset: -2px !important; box-s
 
 /* ── ≤1200px — Compact sidebar for mid-size screens ──────── */
 @media (max-width: 1200px) {
+  :root { --sb-w: 210px; }
   .sidebar { width: 210px; }
 
   .logo-area {
@@ -3448,6 +3449,8 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
               color 9999s ease-in-out 0s !important;
 }
 .fb-search input::placeholder { color:var(--t4); }
+/* a long placeholder ends in an ellipsis instead of being cut mid-word */
+.fb-search input { text-overflow: ellipsis; }
 /* Datalist inputs: position the native dropdown arrow cleanly */
 .fb-search input[list] { padding-inline-end: 0.25rem; }
 .fb-search input[list]::-webkit-calendar-picker-indicator {
@@ -4118,6 +4121,7 @@ pre, .pre-output {
 
 /* ── 992px — Narrow desktop / large tablet ──────────────────── */
 @media (max-width: 992px) {
+  :root { --sb-w: 195px; }
   .sidebar { width: 195px; }
 
   .logo-area { padding: 12px 12px 14px; gap: 8px; }
@@ -4149,6 +4153,7 @@ pre, .pre-output {
 
 /* ── 768px — Tablet / large phone (sidebar becomes overlay) ── */
 @media (max-width: 768px) {
+  :root { --sb-w: 0px; }
 
   /* Show hamburger */
   .sidebar-toggle { display: flex; }
@@ -7492,6 +7497,10 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 .dcc-panel-wide {
   grid-column: span 2;
 }
+/* The dashboard grid has five fixed panels in three columns, so the closing wide
+   panel (recent activity) sat in the first two with a 370px blank strip beside it.
+   Last, it takes the whole row. */
+.dcc-grid > .dcc-panel-wide:last-child { grid-column: 1 / -1; }
 .dcc-panel-head {
   display: flex;
   align-items: flex-start;
@@ -8177,14 +8186,17 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       display: none;
     }
 
+    /* SAFE / WARNING / DANGER is the only cue that separates a harmless
+       operation from a destructive one, and it was 8.3px: it is 12px now, the
+       same as body labels, with room around it. */
     .dba-risk-badge {
       flex-shrink: 0;
-      font-size:   var(--text-micro);
+      font-size:   var(--text-xs);
       font-weight: 700;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      padding:     0.1rem 0.3rem;
-      border-radius: 4px;
+      padding:     0.12rem 0.4rem;
+      border-radius: 5px;
     }
     .risk-danger  { background: #fee2e2; color: #991b1b; }
     .risk-danger-icon { font-size: 1em; line-height: 1; }
@@ -8969,6 +8981,12 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     }
     .audit-filter-row .form-control,
     .audit-filter-row .form-select { max-width: 180px; }
+    /* One 36px control height: the date fields were 39px, the text fields 37px
+       and Apply 30px, so the LIMIT row and the FROM / TO labels sat 2-9px apart. */
+    .audit-filter-row .form-control,
+    .audit-filter-row .form-select,
+    .audit-filter-row .btn { box-sizing: border-box; height: 36px; min-height: 36px; }
+    .audit-filter-row #audit-f-limit { width: 96px !important; }
     .audit-table-wrap {
       background: rgba(255,255,255,0.45);
       backdrop-filter: var(--glass-blur);
@@ -12015,7 +12033,8 @@ html[data-theme="dark"] .pf-card.pf-saved {
 /* Row actions — always visible, compact icons */
 .um-row-actions { display: inline-flex; gap: 2px; }
 .um-row-btn {
-  width: 26px; height: 26px; border-radius: 5px; border: 1px solid transparent;
+  /* 32px: the 26px square was the whole hit area, three to a row */
+  width: 32px; height: 32px; border-radius: var(--radius-sm); border: 1px solid transparent;
   background: transparent; cursor: pointer; display: inline-flex;
   align-items: center; justify-content: center;
   color: var(--t4); transition: all 0.1s; padding: 0;
@@ -12179,20 +12198,30 @@ html[data-theme="dark"] .pf-card.pf-saved {
 
 /* ── Fixed-bottom floating bulk action bar ─────────────────── */
 .bulk-bar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 900;
+  /* A floating panel inside the content column. It was full width from edge to
+     edge, so when it rose it covered the sidebar, with square corners and a
+     translucent white that read as a second footer. */
+  position: fixed; bottom: 12px; z-index: 900;
+  inset-inline: calc(var(--sb-w) + 16px) 16px;
   display: flex; align-items: center; gap: 14px;
-  padding: 12px 24px;
-  background: rgba(255,255,255,0.95);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid var(--line);
-  box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
-  transform: translateY(100%);
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lift);
+  /* parked below the viewport, margin included */
+  transform: translateY(calc(100% + 24px));
   transition: transform 0.25s var(--ease);
 }
 .bulk-bar.visible { transform: translateY(0); }
+/* The page's entry animation holds a transform on .content-wrap, which made it the
+   containing block of this "fixed" bar: it sat at the foot of the page, under the
+   footer, instead of the window. This page does not animate in. */
+.content-wrap:has(#bulkBar) { animation: none; }
 .bulk-bar .bulk-count { font-weight: 600; color: var(--text-brand); }
 .bulk-bar button {
-  border-radius: 8px; padding: 6px 16px; font-size: 0.85rem;
+  border-radius: var(--radius); padding: 6px 16px; font-size: var(--text-sm);
+  font-weight: 600;
   border: 1px solid var(--line); cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
 }
@@ -12218,7 +12247,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
 .um-time-never { font-size: max(var(--fs-floor), 0.7rem); color: var(--t4); font-style: italic; }
 
 /* Checkbox in table */
-#umTable .um-check { width: 14px; height: 14px; cursor: pointer; accent-color: var(--brand); }
+#umTable .um-check { width: 17px; height: 17px; cursor: pointer; accent-color: var(--brand); }
 
 /* Empty state */
 .um-empty { text-align: center; padding: 2.5rem 1.5rem; color: var(--t4); }
@@ -12312,18 +12341,8 @@ html[data-theme="dark"] .um-pw-wrap .um-gen-pw {
 }
 html[data-theme="dark"] .um-pw-wrap .um-gen-pw:hover { background: rgba(255,255,255,0.08); color: var(--text-brand); border-color: rgba(10,142,110,0.3); }
 
-html[data-theme="dark"] .bulk-bar {
-  background: rgba(13,15,26,0.95);
-  border-top-color: rgba(255,255,255,0.06);
-  box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
-}
-html[data-theme="dark"] .bulk-bar button { border-color: rgba(255,255,255,0.08); }
-html[data-theme="dark"] .bulk-bar .bulk-deactivate { background: rgba(185,28,28,0.12); color: #f87171; border-color: rgba(239,68,68,0.25); }
-html[data-theme="dark"] .bulk-bar .bulk-deactivate:hover { background: rgba(185,28,28,0.18); }
-html[data-theme="dark"] .bulk-bar .bulk-activate { background: rgba(22,101,52,0.12); color: #4ade80; border-color: rgba(134,239,172,0.25); }
-html[data-theme="dark"] .bulk-bar .bulk-activate:hover { background: rgba(22,101,52,0.18); }
-html[data-theme="dark"] .bulk-bar .bulk-cancel { background: transparent; color: #a0a4b8; }
-html[data-theme="dark"] .bulk-bar .bulk-cancel:hover { background: rgba(255,255,255,0.04); }
+/* (the dark bulk bar needs no overrides: --card, --line-strong and the severity
+   tokens are the dark values) */
 
 html[data-theme="dark"] .um-time { color: #a0a4b8; }
 html[data-theme="dark"] .um-time-never { color: var(--t4); }
