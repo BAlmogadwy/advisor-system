@@ -2917,8 +2917,9 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .tbl-card thead th.sorted { color:var(--text-brand); }
 .tbl-card thead th .sort-arrow {
   /* The only sort cue on some pages: 8px at 30% opacity was 1.5:1 (light) and
-     1.8:1 (dark). At 70% the --t3 arrow measures 3.3:1 or better in both themes. */
-  display:inline-block; font-size:var(--text-micro); opacity:0.7; margin-inline-start:3px;
+     1.8:1 (dark). At 75% the --t3 arrow measures 3.4:1 (light, on the page) to
+     4.1:1 (dark). */
+  display:inline-block; font-size:var(--text-micro); opacity:0.75; margin-inline-start:3px;
   transition:opacity .12s;
 }
 .tbl-card thead th:hover .sort-arrow { opacity:1; }
@@ -5213,9 +5214,9 @@ kbd {
 /* ── Button disabled state polish ──────────────────────────── */
 html body .btn:disabled,
 html body .btn.disabled {
-  /* .5 left the label of an outline or neutral button at 2.3-2.7:1 against its
-     card: hard to tell from the card at all. .62 keeps it clearly disabled and
-     puts the label at 3.4:1 (light) and 4.4:1 (dark). */
+  /* .5 left the label of an outline or neutral button at 2.5:1 (light) against
+     its card: hard to tell from the card at all. .62 keeps it clearly disabled
+     and puts the label at 3.3:1 or better (light) and 4.6:1 (dark). */
   opacity: 0.62;
   cursor: not-allowed;
   pointer-events: none;
