@@ -356,7 +356,7 @@
     let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="${sizing}" role="img">`;
     s += '<defs>';
     s += `<marker id="pgA" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--teal)" opacity="0.78"/></marker>`;
-    s += `<marker id="pgAW" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#b45309" opacity="0.9"/></marker>`;
+    s += `<marker id="pgAW" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--pg-warn)" opacity="0.9"/></marker>`;
     s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(17,17,68,0.12)"/></filter>`;
     s += '</defs>';
 
@@ -417,27 +417,27 @@
       const gate = PG_GATE_RE.exec(c);
       const isInferred = inferred.has(c);
       const hasP = (prereqs[c] || []).length > 0, isP = isPreOf.has(c);
-      let fl = 'rgba(255,255,255,0.65)', st = 'rgba(17,17,68,0.08)', tc = 'var(--navy)';
+      let fl = 'var(--pg-node-fill)', st = 'var(--pg-node-edge)', tc = 'var(--navy)';
       let dash = '', rx = 8, label = c, cls = 'pg-node';
       if (gate) {
         anyGate = true;
-        fl = 'rgba(180,83,9,0.07)'; st = 'rgba(180,83,9,0.30)'; tc = '#b45309';
+        fl = 'var(--pg-gate-fill)'; st = 'var(--pg-gate-edge)'; tc = 'var(--pg-warn)';
         rx = renderedNodeH / 2; dash = ' stroke-dasharray="4 3"'; cls += ' pg-node-gate';
         label = IS_AR ? `الساعات المعتمدة: ${gate[1]}` : `${gate[1]} hrs`;
       } else if (statusOf[c]) {
         /* personalised: the student's own progress outranks the structural role */
         const S = {
-          passed:   ['rgba(10,142,110,0.24)', 'rgba(10,142,110,0.72)', '#075f49'],
-          studying: ['rgba(64,86,227,0.20)',  'rgba(64,86,227,0.68)',  '#3043bd'],
-          open:     ['rgba(255,255,255,0.92)', '#0a8e6e',              'var(--navy)'],
-          locked:   ['rgba(120,124,150,0.09)', 'rgba(120,124,150,0.42)', '#596173'],
+          passed:   ['var(--pg-passed-fill)', 'var(--pg-passed-edge)', 'var(--pg-passed-ink)'],
+          studying: ['var(--pg-studying-fill)', 'var(--pg-studying-edge)', 'var(--pg-studying-ink)'],
+          open:     ['var(--pg-open-fill)', 'var(--pg-open-edge)', 'var(--navy)'],
+          locked:   ['var(--pg-locked-fill)', 'var(--pg-locked-edge)', 'var(--pg-locked-ink)'],
         }[statusOf[c]];
         if (S) { fl = S[0]; st = S[1]; tc = S[2]; cls += ' pg-node-' + statusOf[c]; }
         if (statusOf[c] === 'open') { cls += ' pg-node-open'; }
         if (isInferred) { anyInferred = true; dash = ' stroke-dasharray="5 3"'; cls += ' pg-node-inferred'; }
       } else {
-        if (!hasP && isP) { fl = 'rgba(10,142,110,0.08)'; st = 'rgba(10,142,110,0.22)'; tc = '#087a5e'; }
-        else if (hasP && !isP) { fl = 'rgba(64,86,227,0.08)'; st = 'rgba(64,86,227,0.22)'; tc = '#3548c9'; }
+        if (!hasP && isP) { fl = 'var(--pg-found-fill)'; st = 'var(--pg-found-edge)'; tc = 'var(--pg-found-ink)'; }
+        else if (hasP && !isP) { fl = 'var(--pg-term-fill)'; st = 'var(--pg-term-edge)'; tc = 'var(--pg-term-ink)'; }
         if (isInferred) { anyInferred = true; dash = ' stroke-dasharray="5 3"'; cls += ' pg-node-inferred'; }
       }
       /* tooltip: course name and term make the band label concrete */
@@ -467,10 +467,10 @@
     if (hasStatus) {
       const seen = new Set(Object.keys(statusOf).filter(c => all.has(c)).map(c => statusOf[c]));
       const L = [
-        ['passed', 'rgba(10,142,110,0.55)', t.pgPassed],
-        ['studying', 'rgba(64,86,227,0.50)', t.pgStudying],
-        ['open', '#0a8e6e', t.pgOpen],
-        ['locked', 'rgba(120,124,150,0.45)', t.pgLocked],
+        ['passed', 'var(--pg-passed-dot)', t.pgPassed],
+        ['studying', 'var(--pg-studying-dot)', t.pgStudying],
+        ['open', 'var(--pg-open-edge)', t.pgOpen],
+        ['locked', 'var(--pg-locked-dot)', t.pgLocked],
       ].filter(x => seen.has(x[0]));
       leg = L.map(([, col, lab]) =>
         `<span><span class="pg-legend-dot" style="color:${col};background:${col}"></span>${pgEsc(lab)}</span>`
@@ -480,9 +480,9 @@
       + `<span><span class="pg-legend-dot text-royal" style="background:var(--royal)"></span>${pgEsc(t.pgTerminal)}</span>`
       + `<span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>${pgEsc(t.pgIntermediate)}</span>`;
     }
-    if (anyGate) leg += `<span><span class="pg-legend-dot" style="color:#b45309;background:#b45309"></span>${pgEsc(t.pgGate)}</span>`;
+    if (anyGate) leg += `<span><span class="pg-legend-dot" style="color:var(--pg-warn);background:var(--pg-warn)"></span>${pgEsc(t.pgGate)}</span>`;
     if (anyInferred) leg += `<span><span class="pg-legend-dash"></span>${pgEsc(t.pgInferred)}</span>`;
-    leg += `<span style="margin-inline-start:auto;opacity:0.4;font-weight:400">${pgEsc(t.pgHoverHint)}</span>`;
+    leg += `<span style="margin-inline-start:auto;color:var(--t4);font-weight:400">${pgEsc(t.pgHoverHint)}</span>`;
     s += `<div class="pg-legend">${leg}</div>`;
 
     /* surface term-order defects the band layout exposes */

@@ -43,6 +43,10 @@ const dlg = (() => {
     return () => container.removeEventListener('keydown', handler);
   }
 
+  /* The labels a caller did not supply follow the page language. Text only: the
+     buttons, their order and what they do are the same in both. */
+  const isArabic = () => (document.documentElement.lang || '').toLowerCase().startsWith('ar');
+
   /* ── Normalize caller options ── */
   function norm(opts) {
     const kind = opts.kind || opts.icon || opts.confirmClass || '';
@@ -50,8 +54,8 @@ const dlg = (() => {
       title:       opts.title || '',
       body:        opts.body || '',
       kind,
-      confirmLabel: opts.confirmText || opts.confirmLabel || 'Confirm',
-      cancelLabel:  opts.cancelText  || opts.cancelLabel  || 'Cancel',
+      confirmLabel: opts.confirmText || opts.confirmLabel || (isArabic() ? 'تأكيد' : 'Confirm'),
+      cancelLabel:  opts.cancelText  || opts.cancelLabel  || (isArabic() ? 'إلغاء' : 'Cancel'),
       typedConfirm: opts.typed       || opts.typedConfirm || '',
       inputLabel:       opts.inputLabel || opts.label || '',
       inputPlaceholder: opts.inputPlaceholder || opts.placeholder || '',
@@ -83,7 +87,9 @@ const dlg = (() => {
     if (o.typedConfirm) {
       inputHtml =
         `<div class="dlg-input-row">` +
-          `<label for="dlg-typed-field">Type <strong>${esc(o.typedConfirm)}</strong> to confirm</label>` +
+          `<label for="dlg-typed-field">${isArabic()
+            ? `اكتب <strong>${esc(o.typedConfirm)}</strong> للتأكيد`
+            : `Type <strong>${esc(o.typedConfirm)}</strong> to confirm`}</label>` +
           `<input id="dlg-typed-field" class="dlg-input" type="text" placeholder="${esc(o.typedConfirm)}" autocomplete="off">` +
         `</div>`;
     }

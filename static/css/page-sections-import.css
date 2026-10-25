@@ -37,7 +37,7 @@
 .sections-import-page .si-eyebrow {
   margin: 0 0 0.25rem;
   color: var(--text-brand);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -61,7 +61,7 @@
   border-radius: 999px;
   color: var(--t2);
   background: var(--si-soft);
-  font-size: 0.74rem;
+  font-size: max(var(--fs-floor), 0.74rem);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -75,7 +75,7 @@
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--text-micro);
 }
 
 .sections-import-page .si-input-grid {
@@ -166,7 +166,7 @@
 .sections-import-page .si-dropzone-copy small {
   color: var(--t3);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--text-micro);
 }
 
 .sections-import-page .si-dropzone-file {
@@ -178,7 +178,7 @@
   background: var(--card);
   color: var(--text-brand);
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: max(var(--fs-floor), 0.7rem);
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -213,7 +213,7 @@
 
 .sections-import-page .si-switch-row small {
   color: var(--t3);
-  font-size: 0.74rem;
+  font-size: max(var(--fs-floor), 0.74rem);
   line-height: 1.6;
 }
 
@@ -223,6 +223,39 @@
   flex: 0 0 auto;
   accent-color: var(--teal);
   cursor: pointer;
+  /* It is a role="switch" and was a native checkbox stretched to 2.7rem. Drawn
+     as the switch it announces: a track with a 3:1 edge, a thumb that moves. The
+     checked state, the label and the keyboard behaviour are the input's own. */
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  position: relative;
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.sections-import-page .si-switch-row input::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 0.2rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--t3);
+  transform: translateY(-50%);
+  transition: inset-inline-start 0.18s ease, background-color 0.18s ease;
+}
+.sections-import-page .si-switch-row input:checked {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg);
+}
+.sections-import-page .si-switch-row input:checked::before {
+  inset-inline-start: calc(100% - 1.2rem);
+  background: var(--btn-primary-ink);
+}
+.sections-import-page .si-switch-row input:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 
 .sections-import-page .si-program-selector {
@@ -245,9 +278,11 @@
   background: transparent;
   color: var(--text-brand);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 800;
   cursor: pointer;
+  /* "Select all" wrapped onto two lines in its narrow column */
+  white-space: nowrap;
 }
 
 .sections-import-page .si-text-button:hover {
@@ -311,7 +346,7 @@
   background: var(--card);
   color: var(--t2);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   font-weight: 800;
   transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
@@ -335,7 +370,7 @@
 .sections-import-page .si-selection-status {
   margin: 0.65rem 0 0;
   color: var(--text-brand);
-  font-size: 0.74rem;
+  font-size: max(var(--fs-floor), 0.74rem);
   font-weight: 700;
 }
 
@@ -372,8 +407,9 @@
   height: 2rem;
   place-items: center;
   border-radius: 50%;
-  background: color-mix(in srgb, #d97706 14%, transparent);
-  color: #b45309;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  /* the warning ink: #b45309 was 4.46:1 on the amber wash, 2.7:1 in dark */
+  color: var(--sev-warning);
 }
 
 .sections-import-page .si-merge-icon svg {
@@ -389,7 +425,7 @@
 .sections-import-page .si-merge-note p {
   margin: 0.18rem 0 0;
   color: var(--t2);
-  font-size: 0.74rem;
+  font-size: max(var(--fs-floor), 0.74rem);
   line-height: 1.6;
 }
 
@@ -397,8 +433,8 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  color: #b45309;
-  font-size: 0.73rem;
+  color: var(--sev-warning);
+  font-size: var(--text-xs);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -430,7 +466,7 @@
   direction: ltr;
   background: color-mix(in srgb, var(--t1) 4%, var(--card));
   color: var(--t2);
-  font-size: 0.7rem;
+  font-size: max(var(--fs-floor), 0.7rem);
   text-align: left;
   white-space: pre-wrap;
 }
@@ -463,7 +499,7 @@
 
 .sections-import-page .si-impact-card span {
   color: var(--t3);
-  font-size: 0.7rem;
+  font-size: max(var(--fs-floor), 0.7rem);
   font-weight: 700;
   line-height: 1.4;
 }
@@ -491,7 +527,7 @@
 .sections-import-page .si-impact-details {
   margin: 0.8rem 0 0;
   color: var(--t3);
-  font-size: 0.73rem;
+  font-size: max(var(--fs-floor), 0.73rem);
   line-height: 1.6;
 }
 
@@ -503,7 +539,7 @@
 .sections-import-page .si-table-heading p {
   margin: 0.25rem 0 0;
   color: var(--t3);
-  font-size: 0.73rem;
+  font-size: max(var(--fs-floor), 0.73rem);
 }
 
 .sections-import-page .si-table-panel {
@@ -528,7 +564,7 @@
   border-block-end-color: var(--si-line);
   background: var(--si-soft);
   color: var(--t2);
-  font-size: 0.7rem;
+  font-size: max(var(--fs-floor), 0.7rem);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -537,7 +573,7 @@
   padding: 0.68rem 0.6rem;
   border-color: color-mix(in srgb, var(--t4) 18%, transparent);
   color: var(--t2);
-  font-size: 0.73rem;
+  font-size: max(var(--fs-floor), 0.73rem);
   vertical-align: middle;
 }
 
@@ -557,7 +593,7 @@
 .sections-import-page .si-program-tags .si-program-tag {
   min-width: 2rem;
   padding: 0.2rem 0.42rem;
-  font-size: 0.64rem;
+  font-size: var(--text-micro);
 }
 
 .sections-import-page .si-source-tag {
@@ -566,7 +602,7 @@
   border-radius: 999px;
   background: var(--si-soft-strong);
   color: var(--text-brand);
-  font-size: 0.64rem;
+  font-size: var(--text-micro);
   font-weight: 800;
 }
 
@@ -628,7 +664,7 @@
 
 .sections-import-page .si-filter-pop label {
   color: var(--t2);
-  font-size: 0.68rem;
+  font-size: var(--text-micro);
 }
 
 .sections-import-page .si-filter-pop input {
@@ -639,7 +675,7 @@
   background: var(--card);
   color: var(--t1);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: max(var(--fs-floor), 0.72rem);
   outline: none;
 }
 
@@ -655,7 +691,7 @@
   border: 0;
   background: transparent;
   color: var(--danger);
-  font-size: 0.68rem;
+  font-size: var(--text-micro);
   cursor: pointer;
 }
 
@@ -676,7 +712,7 @@
 .sections-import-page .empty-hint {
   margin-block-start: 0.35rem;
   color: var(--t3);
-  font-size: 0.73rem;
+  font-size: max(var(--fs-floor), 0.73rem);
 }
 
 html[data-theme="dark"] .sections-import-page {
@@ -776,7 +812,7 @@ html[data-theme="dark"] .sections-import-page .si-merge-icon {
 
   .sections-import-page .si-steps li {
     padding-inline: 0.3rem;
-    font-size: 0.66rem;
+    font-size: var(--text-micro);
   }
 
   .sections-import-page .si-action-row .btn {

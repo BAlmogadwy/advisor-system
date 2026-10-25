@@ -1,4 +1,9 @@
+/* The sheet drew its cards' edges and washes in white at 3-8% alpha: invisible on
+   a light page, so most of its inner borders were missing in light mode. The navy
+   token flips with the theme, so one value serves both. */
 .tg-shell {
+  --tg-hair: color-mix(in srgb, var(--navy) 16%, transparent);
+  --tg-wash: color-mix(in srgb, var(--navy) 5%, transparent);
   min-height: calc(100vh - 24px);
   padding: 18px;
   background:
@@ -42,7 +47,7 @@
 }
 
 .tg-kicker {
-  font-size: .68rem;
+  font-size: var(--text-micro);
 }
 
 .tg-actions,
@@ -66,7 +71,7 @@
 
 .tg-console label span {
   color: var(--text-muted);
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -127,7 +132,7 @@
 }
 
 .tg-btn-secondary {
-  background: rgba(255, 255, 255, .04);
+  background: var(--tg-wash);
 }
 
 .tg-btn:disabled,
@@ -175,7 +180,7 @@
   border-radius: 999px;
   color: var(--text-muted);
   padding: 0 9px;
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -222,7 +227,7 @@
   margin: 0;
   max-width: 64%;
   overflow-wrap: anywhere;
-  text-align: right;
+  text-align: end;
   font-size: .78rem;
   font-weight: 800;
 }
@@ -246,7 +251,7 @@
   border-radius: 7px;
   padding: 7px 8px;
   text-align: center;
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
 }
 
 .tg-contract strong {
@@ -254,13 +259,14 @@
 }
 
 .tg-contract span {
-  color: #2672d9;
+  /* the info severity ink: #2672d9 was 3.7:1 in dark, 4.4:1 in light */
+  color: var(--sev-info);
   font-weight: 800;
 }
 
 .tg-path {
   margin: 0;
-  padding-left: 20px;
+  padding-inline-start: 20px;
   color: var(--text-muted);
   font-size: .84rem;
 }
@@ -275,7 +281,7 @@
 .tg-count {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .035);
+  background: var(--tg-wash);
   padding: 10px;
 }
 
@@ -283,7 +289,7 @@
 .tg-count span {
   display: block;
   color: var(--text-muted);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -370,7 +376,7 @@
   border-radius: 999px;
   background: rgba(8, 17, 31, .9);
   color: #dbeafe;
-  font-size: .56rem;
+  font-size: var(--text-micro);
   font-weight: 850;
   letter-spacing: 0;
   white-space: nowrap;
@@ -437,10 +443,10 @@
   min-height: 30px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, .04);
+  background: var(--tg-wash);
   color: var(--text-muted);
   padding: 0 10px;
-  font-size: .74rem;
+  font-size: max(var(--fs-floor), .74rem);
   font-weight: 800;
   cursor: pointer;
 }
@@ -457,9 +463,9 @@
   flex-wrap: wrap;
   gap: 8px;
   margin: -2px 0 12px;
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--tg-hair);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .03);
+  background: var(--tg-wash);
   padding: 10px;
 }
 
@@ -474,7 +480,7 @@
 
 .tg-plan-controls label span {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -496,7 +502,7 @@
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, .04);
+  background: var(--tg-wash);
   padding: 0 9px;
 }
 
@@ -535,7 +541,7 @@
 
 .tg-graph-tools label span {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -562,10 +568,10 @@
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, .045);
+  background: var(--tg-wash);
   color: var(--text);
   padding: 0 10px;
-  font-size: .74rem;
+  font-size: max(var(--fs-floor), .74rem);
   font-weight: 850;
   cursor: pointer;
 }
@@ -665,7 +671,7 @@
 .tg-explorer-detail {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, .035);
+  background: var(--tg-wash);
   padding: 12px;
   max-height: 560px;
   overflow: auto;
@@ -699,7 +705,7 @@
 
 .tg-explorer-detail dt {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -726,10 +732,10 @@
   min-height: 28px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(255, 255, 255, .045);
+  background: var(--tg-wash);
   color: var(--text);
   padding: 0 8px;
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 850;
   text-decoration: none;
   cursor: pointer;
@@ -752,7 +758,7 @@
 
 .tg-detail-title {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -761,18 +767,18 @@
   display: grid;
   gap: 2px;
   width: 100%;
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--tg-hair);
   border-radius: 7px;
-  background: rgba(255, 255, 255, .035);
+  background: var(--tg-wash);
   color: var(--text);
   padding: 7px 8px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
 .tg-detail-row span {
   color: var(--text-muted);
-  font-size: .64rem;
+  font-size: var(--text-micro);
   font-weight: 850;
   text-transform: uppercase;
 }
@@ -792,9 +798,9 @@
 .tg-section-current {
   display: grid;
   gap: 3px;
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--tg-hair);
   border-radius: 7px;
-  background: rgba(255, 255, 255, .035);
+  background: var(--tg-wash);
   padding: 8px;
 }
 
@@ -805,16 +811,16 @@
 
 .tg-section-current span {
   color: var(--text-muted);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 750;
 }
 
 .tg-candidate-row {
   display: grid;
   gap: 7px;
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--tg-hair);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .035);
+  background: var(--tg-wash);
   padding: 8px;
 }
 
@@ -857,7 +863,7 @@
 
 .tg-candidate-row span {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 850;
 }
 
@@ -867,7 +873,7 @@
   background: rgba(45, 212, 191, .075);
   color: var(--text);
   padding: 4px 7px;
-  font-size: .64rem;
+  font-size: var(--text-micro);
   font-weight: 900;
   cursor: pointer;
 }
@@ -887,14 +893,14 @@
 .tg-candidate-row dl div {
   display: grid;
   gap: 1px;
-  border: 1px solid rgba(255, 255, 255, .07);
+  border: 1px solid var(--tg-hair);
   border-radius: 6px;
   padding: 5px;
 }
 
 .tg-candidate-row dt {
   color: var(--text-muted);
-  font-size: .56rem;
+  font-size: var(--text-micro);
   font-weight: 850;
   text-transform: uppercase;
 }
@@ -902,7 +908,7 @@
 .tg-candidate-row dd {
   margin: 0;
   color: var(--text);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 900;
 }
 
@@ -938,7 +944,7 @@
 
 .tg-move-preview-head span {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 850;
 }
 
@@ -951,52 +957,52 @@
 .tg-before-after div {
   display: grid;
   gap: 2px;
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--tg-hair);
   border-radius: 7px;
   padding: 7px;
 }
 
 .tg-before-after span {
   color: var(--text-muted);
-  font-size: .58rem;
+  font-size: var(--text-micro);
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .tg-before-after strong {
   color: var(--text);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
 }
 
 .tg-preview-evidence {
   display: grid;
   gap: 2px;
-  border-left: 3px solid rgba(255, 255, 255, .18);
-  padding-left: 7px;
+  border-inline-start: 3px solid var(--tg-hair);
+  padding-inline-start: 7px;
 }
 
 .tg-preview-evidence[data-tone="critical"] {
-  border-left-color: #ef6262;
+  border-inline-start-color: #ef6262;
 }
 
 .tg-preview-evidence[data-tone="warning"] {
-  border-left-color: #efb94a;
+  border-inline-start-color: #efb94a;
 }
 
 .tg-preview-evidence strong {
   color: var(--text);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
 }
 
 .tg-preview-evidence span {
   color: var(--text-muted);
-  font-size: .68rem;
+  font-size: var(--text-micro);
   font-weight: 750;
 }
 
 .tg-detail-more {
   color: var(--text-muted);
-  font-size: .72rem;
+  font-size: max(var(--fs-floor), .72rem);
   font-weight: 750;
   padding: 2px 1px;
 }
@@ -1128,7 +1134,7 @@
 
 .tg-sample-row strong {
   color: var(--text-brand);
-  font-size: .7rem;
+  font-size: max(var(--fs-floor), .7rem);
 }
 
 .tg-sample-row em {

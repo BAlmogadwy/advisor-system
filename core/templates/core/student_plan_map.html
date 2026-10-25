@@ -64,7 +64,7 @@
 {% if report and report.graph and report.graph.items %}
   {{ report.graph|json_script:"scGraphData" }}
   <script>window.__STUDENT_GRAPH__ = JSON.parse(document.getElementById('scGraphData').textContent);</script>
-  <script src="{% static 'js/prereq-graph.js' %}?v=4"></script>
+  <script src="{% static 'js/prereq-graph.js' %}?v=7"></script>
   <script src="{% static 'js/page-student-graph.js' %}?v=5"></script>
 {% endif %}
 {% endblock %}

@@ -10,12 +10,12 @@ inks), so a stylesheet that reaches for a fill as text again fails here, by
 file, selector and line. `--t5` is the same kind of token: a stroke under
 `--t4` (2.2:1 as text), so text takes `--t4`.
 
-Two stylesheets are left as they are, on purpose:
-- `timetable-workspace-split.css`: split view forces a dark palette of its own
-  (stage 4 rethemes it). Its token block gives `--text-brand` its dark value
-  instead, so the shared rules it renders stay readable.
+One stylesheet is left as it is, on purpose:
 - `timetable-mri.css`: the owner's decision of 2026-10-23, no work on MRI.
-Their counts may only fall.
+Its count may only fall. (`timetable-workspace-split.css` was the other until
+style check S3 gave split view the light and dark theme, with its text on
+`--text-brand`, the `--tws-*` state inks and the primary pair; it is held to the
+same rules as every sheet now.)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import pytest
 CSS_DIR = pathlib.Path(__file__).resolve().parents[1] / "static" / "css"
 
 #: file -> the most text declarations in a fill colour it may keep.
-EXCLUDED = {"timetable-workspace-split.css": 31, "timetable-mri.css": 3}
+EXCLUDED = {"timetable-mri.css": 3}
 
 #: The brand and success fills, by token (with or without a fallback) or as the
 #: teal literals themselves: a background in one of these, under white text.
