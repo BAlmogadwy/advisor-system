@@ -109,6 +109,10 @@ services:
       # Sections marked "mainly for programme X" seat X's students there first; never costs a seat.
       - key: TIMETABLE_SECTION_PROGRAMME_PREFERENCE
         value: "true"
+      # Spread a section's own meetings (owner 2026-10-25): 2 meetings avoid back-to-back days;
+      # 3 meetings never all on consecutive days (2+1 allowed, penalised). "false" restores the old placement.
+      - key: TIMETABLE_SECTION_DAY_SPREAD
+        value: "true"
       # Workspace JSON gzip (stage 3, B5) stays OFF here. Render documents that its
       # load balancers already compress app responses (Brotli and gzip), so gzip in
       # the app would repeat that work on this 0.5-CPU instance. Pinned by

@@ -564,13 +564,16 @@ def test_flag_helpers_read_the_settings(settings) -> None:
     assert get_section_day_spread_weight() == 25
 
 
-def test_the_flag_is_off_by_default_and_not_in_render_yaml() -> None:
+def test_the_flag_is_off_by_default_and_production_turns_it_on() -> None:
+    # Default OFF in settings; the owner turned it on for production (2026-10-26)
+    # explicitly in render.yaml, so removing that line restores the old placement.
     settings_source = (REPO / "config" / "settings.py").read_text(encoding="utf-8")
     assert re.search(
         r'TIMETABLE_SECTION_DAY_SPREAD = os\.getenv\(\s*"TIMETABLE_SECTION_DAY_SPREAD",\s*"false"',
         settings_source,
     )
-    assert "TIMETABLE_SECTION_DAY_SPREAD" not in (REPO / "render.yaml").read_text(encoding="utf-8")
+    render = (REPO / "render.yaml").read_text(encoding="utf-8")
+    assert re.search(r'key: TIMETABLE_SECTION_DAY_SPREAD\s*\n\s*value: "true"', render)
 
 
 # ── nothing else reads the flag ───────────────────────────────────────
