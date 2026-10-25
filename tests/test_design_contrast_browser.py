@@ -15,14 +15,15 @@ each of its stops, the worst counting):
 - every control drawn in the primary pair still passes with :hover and with
   :active forced (the sign-in button's hover was 3.04:1, the graph's Sync 1:1),
   and so do the confirm dialog's primary and the student adviser's avatar;
-- no text is painted in the `--teal` fill any more, outside split view's own
-  stylesheet (left for stage 4);
+- no text is painted in the `--teal` fill any more (split view's own sheet too,
+  since style check S3);
 - the sidebar's text never goes under 11px, at 1440, 1100 and in the phone
   drawer at 400 (it was 8.9, 7.4 and 6.5px);
 - the workspace's "Draft" pill (4.17:1), its filter placeholder (2.02:1) and
   its English heading (3.63:1) pass, and the pill lies flat in the toolbar;
 - split view's brand text is no lower than it was (its English heading reads
-  the shared rule; split is dark in both themes);
+  the shared rule), and split follows the theme: its colour scheme is the
+  theme's, light or dark;
 - a light theme tells the browser it is light, even when the OS is dark;
 - in forced colours the skip link and the pills keep a visible box.
 
@@ -325,8 +326,7 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
         self.assertGreater(seen["checked"], 0, "nothing in a C1 token was measured")
         for part in MEASURED.get(name, ()):
             self.assertTrue(any(part in line for line in seen["named"]), f"{part} not measured")
-        if name != "split":  # split's own sheet keeps teal (stage 4)
-            self.assertEqual(seen["teal"], [])
+        self.assertEqual(seen["teal"], [])
         self._assert_primaries_keep_the_pair_in_every_state(name, page)
         return seen
 
@@ -559,7 +559,57 @@ class ContrastAndTypeFloorBrowserTests(StaticLiveServerTestCase):
                 self.assertGreaterEqual(seen["heading"], 5.81 if theme == "dark" else 4.29)
                 if seen["tab"] is not None:
                     self.assertGreaterEqual(seen["tab"], 4.29 if theme == "light" else 5.81)
-                self.assertEqual(seen["scheme"], "dark", "split is a dark page in both themes")
+                self.assertEqual(seen["scheme"], theme, "split follows the theme (style check S3)")
+
+    # The strip a card click draws under the pane (slot assist): the JS builds
+    # it on click (before the pane body, in an assist-active pane), so the test
+    # builds the same markup there. Its small labels
+    # (OK, Risk, Block; Done, Solving, Rejected) had `opacity: .82` and read
+    # 3.38:1 to 4.17:1 in light, which the first S3 pass missed because nothing
+    # opened a card.
+    ASSIST_STRIP = (
+        "() => {"
+        + MEASURE
+        + r"""
+  const pane = document.querySelector('.tws-pane');
+  pane.classList.add('assist-active');
+  const make = (loading, labels) => {
+    const box = document.createElement('div');
+    box.className = 'tws-assist-summary' + (loading ? ' loading' : '');
+    box.innerHTML = '<div class="tws-assist-main"><b>CS112</b><span>Sun 09:00-10:40</span></div>'
+      + '<div class="tws-assist-counts">'
+      + '<span class="clean"><em>' + labels[0] + '</em>1</span>'
+      + '<span class="risky"><em>' + labels[1] + '</em>2</span>'
+      + '<span class="avoid"><em>' + labels[2] + '</em>3</span></div>';
+    pane.querySelector('.pane-body').before(box);
+    return box;
+  };
+  const out = [];
+  for (const box of [make(false, ['OK', 'Risk', 'Block']), make(true, ['Done', 'Solving', 'Rejected'])]) {
+    for (const el of box.querySelectorAll('b, em, .tws-assist-main span, .tws-assist-counts span')) {
+      const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+      if (!own) continue;
+      let alpha = 1;
+      for (let n = el; n && n !== document.body; n = n.parentElement) alpha *= +getComputedStyle(n).opacity;
+      const fg = parse(getComputedStyle(el).color), bgs = bgsOf(el);
+      const worst = Math.min(...bgs.map(bg => +ratio(over({...fg, a: fg.a * alpha}, bg), bg).toFixed(2)));
+      out.push({text: el.textContent.trim(), ratio: worst, size: parseFloat(getComputedStyle(el).fontSize)});
+    }
+  }
+  return out;
+}"""
+    )
+
+    def test_the_slot_assist_strip_reads_in_both_themes(self) -> None:
+        for theme in THEMES:
+            with self.subTest(theme=theme):
+                seen = self._open("split", theme).evaluate(self.ASSIST_STRIP)
+                self.assertGreaterEqual(len(seen), 12, "the strip's texts were not all measured")
+                for item in seen:
+                    self.assertGreaterEqual(
+                        item["ratio"], 4.5, f"{item['text']} on the assist strip"
+                    )
+                    self.assertGreaterEqual(item["size"], 11, f"{item['text']} on the assist strip")
 
     # ── the browser's own colour scheme ─────────────────────────────────────
 

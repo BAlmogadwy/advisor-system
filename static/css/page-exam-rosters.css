@@ -16,7 +16,7 @@ main.exam-builder-page .et-view-tab-reason { align-self: center; margin: 0 0 4px
 
 /* ── The card's "N students" link (first of .et-review-badges) ── */
 main.exam-builder-page .et-review-badges:has(> .et-roster-link) { display: flex; }
-main.exam-builder-page .et-roster-link { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin: 0; padding: 0 4px; border: 0; border-radius: 3px; background: transparent; color: var(--et-accent); font: inherit; font-size: .6875rem; font-weight: 600; line-height: 1.3; cursor: pointer; }
+main.exam-builder-page .et-roster-link { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin: 0; padding: 0 4px; border: 0; border-radius: 3px; background: transparent; color: var(--et-accent-text); font: inherit; font-size: var(--text-micro); font-weight: 600; line-height: 1.3; cursor: pointer; }
 main.exam-builder-page .et-roster-link svg { flex: 0 0 12px; width: 12px; height: 12px; }
 main.exam-builder-page .et-roster-link:hover,
 main.exam-builder-page .et-roster-link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
@@ -37,7 +37,7 @@ main.exam-builder-page .et-roster-drawer h2:focus-visible { outline: 2px solid v
 main.exam-builder-page .et-icon-button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 32px; height: 32px; margin: -4px 0 0; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--et-muted); cursor: pointer; }
 main.exam-builder-page .et-icon-button:hover { border-color: var(--et-border); background: var(--et-subtle); color: var(--et-text); }
 main.exam-builder-page .et-icon-button:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
-main.exam-builder-page .et-back-link { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; margin: 0 0 6px; padding: 0 8px 0 4px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--et-accent); font: inherit; font-size: .8125rem; font-weight: 600; cursor: pointer; }
+main.exam-builder-page .et-back-link { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; margin: 0 0 6px; padding: 0 8px 0 4px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--et-accent-text); font: inherit; font-size: .8125rem; font-weight: 600; cursor: pointer; }
 main.exam-builder-page .et-back-link:hover { background: var(--et-accent-soft); }
 main.exam-builder-page .et-back-link:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
 main.exam-builder-page :is(.et-back-glyph, .et-chevron) { display: inline-block; }
@@ -45,7 +45,7 @@ html[dir="rtl"] main.exam-builder-page :is(.et-back-glyph, .et-chevron) { transf
 main.exam-builder-page .et-roster-meta { margin: 2px 0 0; color: var(--et-muted); font-size: .8125rem; overflow-wrap: anywhere; }
 main.exam-builder-page .et-provenance-line { margin: 4px 0 0; color: var(--et-muted); font-size: .8125rem; overflow-wrap: anywhere; }
 main.exam-builder-page .et-check-mark-line { display: inline-flex; align-items: baseline; gap: 2px; }
-main.exam-builder-page .et-check-mark-line.is-matches { color: var(--et-accent); }
+main.exam-builder-page .et-check-mark-line.is-matches { color: var(--et-accent-text); }
 main.exam-builder-page .et-check-mark-line.is-changed { color: var(--et-warning); }
 main.exam-builder-page .et-check-glyph { font-weight: 700; }
 main.exam-builder-page .et-roster-notice { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--et-related); border-radius: 5px; background: var(--et-related-soft); color: var(--et-text); font-size: .8125rem; }
@@ -57,7 +57,7 @@ main.exam-builder-page .et-roster-drawer-foot p { margin: 0; }
 main.exam-builder-page .et-audit-note { display: flex; align-items: flex-start; gap: 6px; color: var(--et-muted); font-size: .75rem; }
 main.exam-builder-page .et-audit-note svg { flex: 0 0 auto; margin-top: 2px; }
 main.exam-builder-page .et-roster-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
-main.exam-builder-page .et-roster-status-line { margin-top: 6px !important; color: var(--et-accent); }
+main.exam-builder-page .et-roster-status-line { margin-top: 6px !important; color: var(--et-accent-text); }
 main.exam-builder-page .et-roster-status-line:empty { display: none; }
 main.exam-builder-page .et-roster-reason { margin-top: 6px !important; color: var(--et-muted); }
 main.exam-builder-page .et-roster-reason:empty { display: none; }
@@ -72,9 +72,9 @@ main.exam-builder-page .et-menu [role^="menuitem"]:hover,
 main.exam-builder-page .et-menu [role^="menuitem"]:focus { background: var(--et-subtle); outline: none; }
 main.exam-builder-page .et-menu [role^="menuitem"]:focus-visible { outline: 2px solid var(--et-focus); outline-offset: -2px; }
 main.exam-builder-page .et-menu [aria-disabled="true"] { color: var(--et-muted); cursor: not-allowed; }
-main.exam-builder-page .et-menu-hint { display: block; color: var(--et-muted); font-size: .6875rem; }
+main.exam-builder-page .et-menu-hint { display: block; color: var(--et-muted); font-size: var(--text-micro); }
 main.exam-builder-page .et-menu [role="separator"] { height: 1px; margin: 4px 0; background: var(--et-border); }
-main.exam-builder-page .et-menu-group-label { padding: 4px 10px 2px; color: var(--et-muted); font-size: .6875rem; font-weight: 600; }
+main.exam-builder-page .et-menu-group-label { padding: 4px 10px 2px; color: var(--et-muted); font-size: var(--text-micro); font-weight: 600; }
 main.exam-builder-page .et-menu [role="menuitemradio"]::before { content: ''; flex: 0 0 14px; width: 14px; height: 14px; border: 1px solid var(--et-field-border); border-radius: 50%; }
 main.exam-builder-page .et-menu [role="menuitemradio"][aria-checked="true"]::before { border: 4px solid var(--et-accent); }
 
@@ -94,7 +94,7 @@ main.exam-builder-page .et-roster-tools { display: flex; flex-wrap: wrap; align-
 main.exam-builder-page .et-flag-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 main.exam-builder-page .et-flag-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-surface); color: var(--et-text); font: inherit; font-size: .75rem; cursor: pointer; font-variant-numeric: tabular-nums; }
 main.exam-builder-page .et-flag-chip:hover { background: var(--et-subtle); border-color: var(--et-field-border); }
-main.exam-builder-page .et-flag-chip[aria-checked="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent); font-weight: 650; }
+main.exam-builder-page .et-flag-chip[aria-checked="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent-text); font-weight: 650; }
 main.exam-builder-page .et-roster-filters { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 main.exam-builder-page .et-roster-filters .form-control { width: min(260px, 100%); min-height: 36px; }
 main.exam-builder-page .et-roster-filters .form-select { width: auto; min-height: 36px; }
@@ -107,8 +107,13 @@ main.exam-builder-page :is(.et-section-tab, .et-flag-chip, .et-sort):focus-visib
    wider one wraps inside its cells, never out of the pane. */
 main.exam-builder-page .et-roster-table { width: 100%; margin: 0; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: .8125rem; }
 main.exam-builder-page .et-roster-table :is(th, td) { overflow-wrap: anywhere; }
-main.exam-builder-page .et-roster-table thead th { position: sticky; top: 0; z-index: 2; padding: 6px 10px; border-bottom: 1px solid var(--et-field-border); background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; font-weight: 600; text-align: start; }
+main.exam-builder-page .et-roster-table thead th { position: sticky; top: var(--et-roster-stick, 0px); z-index: 2; padding: 6px 10px; border-bottom: 1px solid var(--et-field-border); background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; font-weight: 600; text-align: start; }
 main.exam-builder-page .et-roster-table td { padding: 6px 10px; border-bottom: 1px solid var(--et-border); vertical-align: top; text-align: start; }
+/* The header sticks inside its scroll container's padding, so with a padded
+   container the rows scrolled through a 24px (page) or 12px (drawer) gap above
+   it. The offset is the padding, negated. */
+main.exam-rosters-page .et-roster-table { --et-roster-stick: -1.5rem; }
+.et-roster-drawer-body .et-roster-table { --et-roster-stick: -12px; }
 /* A code, an ID or a time stays whole while its column can hold it, and
    breaks only in a column narrower than the code itself. */
 main.exam-builder-page .et-roster-table :is(th, td) bdi[dir="ltr"] { display: inline-block; max-width: 100%; white-space: normal; }
@@ -143,13 +148,13 @@ main.exam-builder-page .et-room-part { display: block; color: var(--et-muted); f
 main.exam-builder-page .et-room-noseat { color: var(--et-danger); font-weight: 600; }
 main.exam-builder-page .et-room-none { color: var(--et-muted); }
 main.exam-builder-page .et-muted-dash { color: var(--et-muted); }
-main.exam-builder-page .et-change-marker { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; color: var(--et-warning); font-size: .6875rem; font-weight: 600; }
+main.exam-builder-page .et-change-marker { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; color: var(--et-warning); font-size: var(--text-micro); font-weight: 600; }
 main.exam-builder-page :is(.et-roster, .et-lookup-table, .et-roster-meta, .et-nav-list, .et-find-list, .et-provenance-line, .et-provenance) bdi[dir="ltr"] { white-space: nowrap; }
 
 /* Flags: a word and an icon, never colour alone. A flag too long for its
    column puts its code on a line of its own, still whole. */
 main.exam-builder-page .et-col-flags { white-space: normal; }
-main.exam-builder-page .et-flag { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 4px; max-width: 100%; min-height: 20px; margin: 1px; margin-inline-start: 0; padding: 0 6px; border: 1px solid; border-radius: 3px; font-size: .6875rem; font-weight: 600; line-height: 1.3; text-decoration: none; }
+main.exam-builder-page .et-flag { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 4px; max-width: 100%; min-height: 20px; margin: 1px; margin-inline-start: 0; padding: 0 6px; border: 1px solid; border-radius: 3px; font-size: var(--text-micro); font-weight: 600; line-height: 1.3; text-decoration: none; }
 main.exam-builder-page a.et-flag:hover { text-decoration: underline; }
 main.exam-builder-page a.et-flag:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 1px; }
 main.exam-builder-page .et-flag--clash { border-color: var(--et-danger); background: var(--et-danger-soft); color: var(--et-danger); }
@@ -166,7 +171,7 @@ main.exam-builder-page .et-flag--unrecorded { --et-flag-glyph: url("data:image/s
 main.exam-builder-page .et-roster-empty { padding: 24px 12px; color: var(--et-muted); text-align: center; }
 main.exam-builder-page .et-roster-empty p { margin: 0 0 10px; }
 main.exam-builder-page .et-roster-empty.is-good { color: var(--et-text); }
-main.exam-builder-page .et-good-mark { color: var(--et-accent); font-weight: 700; }
+main.exam-builder-page .et-good-mark { color: var(--et-accent-text); font-weight: 700; }
 main.exam-builder-page .et-roster-legend { margin: 10px 0 0; color: var(--et-muted); font-size: .75rem; }
 main.exam-builder-page .et-roster-skeleton { display: grid; gap: 4px; }
 main.exam-builder-page .et-skeleton-bar { display: block; height: 36px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-subtle); }
@@ -233,7 +238,7 @@ main.exam-rosters-page .et-find-help { margin-top: 4px; color: var(--et-muted); 
 main.exam-rosters-page .et-find-help summary { width: fit-content; cursor: pointer; }
 main.exam-rosters-page .et-find-help label { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; margin-top: 4px; }
 main.exam-rosters-page .et-find-list { position: absolute; inset-block-start: calc(100% + 4px); inset-inline: 0; z-index: 40; max-height: min(420px, 60dvh); margin: 0; padding: 4px; overflow-y: auto; border: 1px solid var(--et-field-border); border-radius: 6px; background: var(--et-surface); list-style: none; }
-main.exam-rosters-page .et-find-group { padding: 6px 10px 2px; color: var(--et-muted); font-size: .6875rem; font-weight: 600; }
+main.exam-rosters-page .et-find-group { padding: 6px 10px 2px; color: var(--et-muted); font-size: var(--text-micro); font-weight: 600; }
 main.exam-rosters-page .et-find-option { display: block; min-height: 36px; padding: 7px 10px; border-radius: 4px; font-size: .8125rem; cursor: pointer; overflow-wrap: anywhere; }
 main.exam-rosters-page .et-find-option[aria-selected="true"] { background: var(--et-accent-soft); box-shadow: inset 3px 0 0 var(--et-accent); }
 html[dir="rtl"] main.exam-rosters-page .et-find-option[aria-selected="true"] { box-shadow: inset -3px 0 0 var(--et-accent); }
@@ -245,26 +250,26 @@ main.exam-rosters-page .et-roster-pane { min-width: 0; margin: 0; padding: 20px 
 main.exam-rosters-page .et-view-switch { display: grid; grid-template-columns: 1fr 1fr; margin: 0 0 14px; border: 1px solid var(--et-field-border); border-radius: 6px; overflow: hidden; }
 main.exam-rosters-page .et-view-switch button { min-height: 36px; padding: 4px 8px; border: 0; background: var(--et-surface); color: var(--et-text); font: inherit; font-size: .8125rem; cursor: pointer; }
 main.exam-rosters-page .et-view-switch button + button { border-inline-start: 1px solid var(--et-field-border); }
-main.exam-rosters-page .et-view-switch button[aria-checked="true"] { background: var(--et-accent-soft); color: var(--et-accent); font-weight: 650; }
+main.exam-rosters-page .et-view-switch button[aria-checked="true"] { background: var(--et-accent-soft); color: var(--et-accent-text); font-weight: 650; }
 main.exam-rosters-page .et-view-switch button:focus-visible { outline: 2px solid var(--et-focus); outline-offset: -3px; }
-main.exam-rosters-page .et-nav-label { display: block; margin: 12px 0 6px; color: var(--et-muted); font-size: .6875rem; font-weight: 600; }
+main.exam-rosters-page .et-nav-label { display: block; margin: 12px 0 6px; color: var(--et-muted); font-size: var(--text-micro); font-weight: 600; }
 main.exam-rosters-page .et-day-grid { display: grid; grid-template-columns: 28px repeat(var(--et-day-columns, 5), minmax(0, 1fr)); gap: 4px; }
 main.exam-rosters-page .et-day-grid.is-one-week { grid-template-columns: repeat(var(--et-day-columns, 5), minmax(0, 1fr)); }
-main.exam-rosters-page .et-week-label { align-self: center; color: var(--et-muted); font-size: .6875rem; font-weight: 600; }
+main.exam-rosters-page .et-week-label { align-self: center; color: var(--et-muted); font-size: var(--text-micro); font-weight: 600; }
 main.exam-rosters-page .et-day-tab { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 44px; padding: 2px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-surface); color: var(--et-text); font: inherit; font-size: .75rem; font-weight: 600; line-height: 1.2; cursor: pointer; }
-main.exam-rosters-page .et-day-tab small { color: var(--et-muted); font-size: .625rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+main.exam-rosters-page .et-day-tab small { color: var(--et-muted); font-size: var(--text-micro); font-weight: 500; font-variant-numeric: tabular-nums; }
 main.exam-rosters-page .et-day-tab:hover { background: var(--et-subtle); }
-main.exam-rosters-page .et-day-tab[aria-selected="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent); }
+main.exam-rosters-page .et-day-tab[aria-selected="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent-text); }
 main.exam-rosters-page :is(.et-period-chips, .et-group-chips, .et-nav-toggles) { display: flex; flex-wrap: wrap; gap: 4px; }
 main.exam-rosters-page :is(.et-nav-chip, .et-nav-toggle) { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 3px 8px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-surface); color: var(--et-text); font: inherit; font-size: .75rem; cursor: pointer; font-variant-numeric: tabular-nums; }
 main.exam-rosters-page :is(.et-nav-chip, .et-nav-toggle):hover { background: var(--et-subtle); border-color: var(--et-field-border); }
 main.exam-rosters-page .et-nav-chip[aria-checked="true"],
-main.exam-rosters-page .et-nav-toggle[aria-pressed="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent); font-weight: 650; }
+main.exam-rosters-page .et-nav-toggle[aria-pressed="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent-text); font-weight: 650; }
 main.exam-rosters-page .et-nav-chip.is-empty { border-style: dashed; color: var(--et-muted); }
-main.exam-rosters-page .et-nav-chip small { color: var(--et-muted); font-size: .6875rem; }
+main.exam-rosters-page .et-nav-chip small { color: var(--et-muted); font-size: var(--text-micro); }
 main.exam-rosters-page .et-nav-toggles { margin-top: 10px; }
 main.exam-rosters-page .et-nav-fields { display: grid; gap: 8px; }
-main.exam-rosters-page .et-nav-fields label { display: block; margin: 0 0 3px; color: var(--et-muted); font-size: .6875rem; font-weight: 600; }
+main.exam-rosters-page .et-nav-fields label { display: block; margin: 0 0 3px; color: var(--et-muted); font-size: var(--text-micro); font-weight: 600; }
 main.exam-rosters-page .et-nav-fields .form-select { min-height: 36px; font-size: .8125rem !important; }
 main.exam-rosters-page :is(.et-day-tab, .et-nav-chip, .et-nav-toggle, .et-nav-item):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
 main.exam-rosters-page .et-nav-list { margin: 12px -16px 0; padding: 0; list-style: none; border-top: 1px solid var(--et-border); }
@@ -292,7 +297,7 @@ main.exam-rosters-page .et-pane-head h3:focus { outline: none; }
 main.exam-rosters-page .et-pane-head h3:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
 main.exam-rosters-page .et-pane-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 main.exam-rosters-page .et-pane-empty { padding: 32px 12px; color: var(--et-muted); text-align: center; }
-main.exam-rosters-page .et-online-badge { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 6px; padding: 0 6px; border: 1px solid var(--et-accent); border-radius: 3px; color: var(--et-accent); font-size: .6875rem; font-weight: 600; }
+main.exam-rosters-page .et-online-badge { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 6px; padding: 0 6px; border: 1px solid var(--et-accent); border-radius: 3px; color: var(--et-accent-text); font-size: var(--text-micro); font-weight: 600; }
 /* The lookup's table form (900px and wider): the course takes the rest, at
    least 244px. Under 900px each exam is a card. */
 main.exam-rosters-page .et-lookup-table th.et-col-day { width: 80px; }

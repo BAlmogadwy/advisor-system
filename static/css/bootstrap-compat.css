@@ -120,7 +120,7 @@
 .text-center          { text-align: center !important; }
 .text-secondary       { color: var(--muted, #64748b) !important; }
 .text-success         { color: var(--sev-ok, #067858) !important; }
-.text-danger          { color: var(--danger, #e03434) !important; }
+.text-danger          { color: var(--sev-critical, #b42318) !important; }
 .text-decoration-none { text-decoration: none !important; }
 .fw-semibold          { font-weight: 600 !important; }
 .fw-bold              { font-weight: 700 !important; }
@@ -140,7 +140,7 @@
 .badge {
   display: inline-block;
   padding: 0.25em 0.5em;
-  font-size: 0.72em;
+  font-size: max(0.72em, var(--text-micro));
   font-weight: 700;
   line-height: 1;
   text-align: center;
@@ -153,6 +153,11 @@
 .text-bg-success   { background-color: var(--btn-primary-bg, #067858) !important; color: var(--btn-primary-ink, #fff) !important; }
 .text-bg-danger    { background-color: var(--danger, #e03434) !important; color: #fff !important; }
 .text-bg-light     { background-color: var(--glass-bg, #f8f9fa) !important; color: var(--ink, #212529) !important; }
+/* Dark theme: --muted and --danger are LIGHT fills there (#a0a4b8, #F06060), and
+   white on them is 2.47:1 and 3.21:1. Dark ink is the same answer the primary
+   fill gives (--btn-primary-ink): 6.8:1 and 5.3:1. */
+html[data-theme="dark"] .text-bg-secondary,
+html[data-theme="dark"] .text-bg-danger { color: var(--btn-primary-ink) !important; }
 
 /* ── ALERTS ──────────────────────────────────────────────── */
 .alert {
@@ -186,7 +191,7 @@
   line-height: 1.5;
   color: var(--ink, #0d1526);
   background-color: var(--glass-bg-data);
-  border: var(--border-mid);
+  border: 1px solid var(--control-edge);
   border-radius: 999px;
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
   appearance: none;
@@ -216,7 +221,7 @@
   background-repeat: no-repeat;
   background-position: right 0.85rem center;
   background-size: 14px 10px;
-  border: var(--border-mid);
+  border: 1px solid var(--control-edge);
   border-radius: 999px;
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
   appearance: none;
@@ -240,7 +245,7 @@ html[dir="rtl"] .form-select {
 }
 
 .form-check          { display: flex; align-items: center; gap: 0.4rem; min-height: 1.5rem; }
-.form-check-input    { width: 1rem; height: 1rem; margin: 0; border: 1px solid var(--line, #dde3ed); border-radius: 0.25rem; appearance: none; background-color: var(--card); cursor: pointer; }
+.form-check-input    { width: 1rem; height: 1rem; margin: 0; border: 1px solid var(--control-edge); border-radius: 0.25rem; appearance: none; background-color: var(--card); cursor: pointer; }
 .form-check-input:checked { background-color: var(--brand, #0A8E6E); border-color: var(--brand, #0A8E6E); background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='none' stroke='%23fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='m6 10 3 3 6-6'/%3e%3c/svg%3e"); background-size: 100%; background-position: center; }
 .form-check-label    { cursor: pointer; font-size: 0.88rem; }
 

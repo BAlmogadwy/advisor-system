@@ -519,6 +519,10 @@ html[data-theme="dark"] .tw-legend .ux-legend-swatch[data-swatch="dim"] { backgr
 /* Selection */
 .tw-sel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 2px 10px; }
 .tw-sel-title { color: var(--t0); font-size: var(--text-md); font-weight: 700; }
+/* "CS163 S1" is a code and a section: one left-to-right run. In an Arabic page its
+   two <bdi> flowed right to left and read "S1 CS163", the reverse of the issue
+   rows beside it. The block keeps its place at the line's start. */
+html[dir="rtl"] .tw-sel-title { direction: ltr; unicode-bidi: isolate; text-align: right; }
 .tw-sel-sub { flex-basis: 100%; color: var(--t3); font-size: var(--text-xs); }
 .tw-sel-fields { margin: 0; }
 .tw-sel-field {
