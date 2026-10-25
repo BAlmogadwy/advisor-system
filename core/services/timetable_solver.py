@@ -46,6 +46,10 @@ from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
 )
+from core.services.timetable_flags import (
+    get_section_day_spread_weight,
+    is_section_day_spread_enabled,
+)
 from core.services.timetable_online import (
     OnlineCourseLookup,
     normalise_course_code,
@@ -61,6 +65,23 @@ from core.services.timetable_same_course import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Cost of one consecutive-day pair of a section's own meetings (uniform, no S1
+# priority). ``TIMETABLE_SECTION_DAY_SPREAD`` raises it for two-meeting sections.
+CONSECUTIVE_DAY_WEIGHT = 5
+
+
+def _consecutive_day_weight(sec: dict, spread_weight: int) -> int:
+    """The coefficient of a section's ``consec_*`` variables.
+
+    ``spread_weight`` is 0 with the flag OFF, so every section keeps the legacy 5.
+    Only a two-meeting section without a meeting policy (ENG intensive) takes the
+    heavier weight; 3+ meetings are untouched. The model's size never changes.
+    """
+    if spread_weight and len(sec["pattern"]) == 2 and sec.get("meeting_policy") is None:
+        return spread_weight
+    return CONSECUTIVE_DAY_WEIGHT
 
 
 def _within_model_budget(**extra):
@@ -680,10 +701,11 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     # (4) Day spacing: penalize consecutive-day meetings for the same section
     # Prefer at least 1 gap day between meetings (e.g. SUN+TUE over SUN+MON)
+    spread_weight = get_section_day_spread_weight() if is_section_day_spread_enabled() else 0
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 5  # uniform (no S1 priority)
+        w = _consecutive_day_weight(sec, spread_weight)
         for m_a in range(len(sec["pattern"])):
             for m_b in range(m_a + 1, len(sec["pattern"])):
                 opts_a = sec_options[i][m_a]
@@ -1215,10 +1237,11 @@ def solve_board_with_hints(
                             penalties.append(both * diff * w)
 
     # (4) Day spacing: penalize consecutive-day meetings for the same section
+    spread_weight = get_section_day_spread_weight() if is_section_day_spread_enabled() else 0
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 5  # uniform (no S1 priority)
+        w = _consecutive_day_weight(sec, spread_weight)
         for m_a in range(len(sec["pattern"])):
             for m_b in range(m_a + 1, len(sec["pattern"])):
                 opts_a = sec_options[i][m_a]

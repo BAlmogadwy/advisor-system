@@ -24,6 +24,8 @@ TIERED_T2_TOLERANCE_SETTING = "TIMETABLE_TIERED_T2_TOLERANCE"
 TIERED_SOFT_GAP_BUDGET_SETTING = "TIMETABLE_TIERED_SOFT_GAP_BUDGET"
 GAP_REGULAR_STUDENTS_ONLY_SETTING = "TIMETABLE_GAP_REGULAR_STUDENTS_ONLY"
 REQUIRED_SECTION_GUARANTEE_SETTING = "TIMETABLE_REQUIRED_SECTION_GUARANTEE_ENABLED"
+SECTION_DAY_SPREAD_SETTING = "TIMETABLE_SECTION_DAY_SPREAD"
+SECTION_DAY_SPREAD_WEIGHT_SETTING = "TIMETABLE_SECTION_DAY_SPREAD_WEIGHT"
 
 
 def is_stage_telemetry_enabled() -> bool:
@@ -131,6 +133,25 @@ def is_section_programme_preference_enabled() -> bool:
     return bool(getattr(settings, SECTION_PROGRAMME_PREFERENCE_SETTING, False))
 
 
+def is_section_day_spread_enabled() -> bool:
+    """Prefer a two-meeting section's meetings on non-consecutive days — default OFF.
+
+    Read ONCE per board by the greedy placer and once per solve by the two CP-SAT
+    builders, never by manual moves, validation, the evaluator or any improvement
+    stage. Off, no engine reads the weight and all output is byte-identical.
+    """
+    return bool(getattr(settings, SECTION_DAY_SPREAD_SETTING, False))
+
+
+def get_section_day_spread_weight() -> int:
+    """Soft-cost units one consecutive-day pair costs a two-meeting section (default 40).
+
+    Floored at 0, like ``get_tiered_t2_tolerance``: a negative setting would
+    reward consecutive days.
+    """
+    return max(0, int(getattr(settings, SECTION_DAY_SPREAD_WEIGHT_SETTING, 40)))
+
+
 def is_async_planner_enabled() -> bool:
     return bool(getattr(settings, ASYNC_PLANNER_SETTING, False))
 
@@ -154,11 +175,14 @@ __all__ = [
     "GAP_REGULAR_STUDENTS_ONLY_SETTING",
     "ONE_TEACHER_PER_SECTION_SETTING",
     "REQUIRED_SECTION_GUARANTEE_SETTING",
+    "SECTION_DAY_SPREAD_SETTING",
+    "SECTION_DAY_SPREAD_WEIGHT_SETTING",
     "SECTION_PROGRAMME_PREFERENCE_SETTING",
     "STAGE_TELEMETRY_SETTING",
     "TIERED_OBJECTIVE_SETTING",
     "TIERED_SOFT_GAP_BUDGET_SETTING",
     "TIERED_T2_TOLERANCE_SETTING",
+    "get_section_day_spread_weight",
     "get_tiered_soft_gap_budget",
     "get_tiered_t2_tolerance",
     "is_async_job_ui_effective",
@@ -167,6 +191,7 @@ __all__ = [
     "is_gap_regular_students_only_enabled",
     "is_one_teacher_active",
     "is_required_section_guarantee_enabled",
+    "is_section_day_spread_enabled",
     "is_section_programme_preference_enabled",
     "is_stage_telemetry_enabled",
     "is_tiered_objective_enabled",

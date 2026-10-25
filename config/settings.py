@@ -946,6 +946,22 @@ TIMETABLE_SECTION_PROGRAMME_PREFERENCE = os.getenv(
     "TIMETABLE_SECTION_PROGRAMME_PREFERENCE", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_SECTION_DAY_SPREAD: prefer a TWO-meeting section's meetings on
+# non-consecutive days (SUN+TUE / SUN+WED over SUN+MON) — owner wish 2026-10-25.
+# Two-meeting sections only: 3+ meetings are untouched (a strong spacing term once
+# piled every 3-meeting course onto SUN+TUE+THU and left MON/WED labs empty).
+# SOFT only: the greedy placer adds WEIGHT to the option's soft-cost bucket (below
+# a roomless meeting's 100, below every clash / overlap term) and CP-SAT raises the
+# consecutive-pair coefficient from 5 to WEIGHT. It never touches manual moves or
+# validation. Off, every engine is byte-identical. Default OFF until the owner decides.
+TIMETABLE_SECTION_DAY_SPREAD = os.getenv("TIMETABLE_SECTION_DAY_SPREAD", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+TIMETABLE_SECTION_DAY_SPREAD_WEIGHT = int(os.getenv("TIMETABLE_SECTION_DAY_SPREAD_WEIGHT", "40"))
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised
