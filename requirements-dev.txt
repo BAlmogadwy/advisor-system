@@ -14,7 +14,7 @@ pytest-django==4.9.0
 coverage==7.10.6
 bandit==1.8.6
 pip-audit==2.9.0
-# setuptools 83.0.0 resolves PYSEC-2026-3447 in the audited CI environment.
+# setuptools 84.1.0 resolves PYSEC-2026-3447 and GHSA-xmj3-9gf7-h52w in the audited CI environment.
 setuptools==84.1.0
 pre-commit==4.3.0
 django-stubs==5.2.2
