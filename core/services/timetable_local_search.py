@@ -56,12 +56,14 @@ from core.services.timetable_board_persistence import (
     external_shared_section_ids,
     locked_physical_section_ids,
 )
+from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
     meeting_signature,
 )
 from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_pr4_instructor import (
     build_section_instructor_ids,
@@ -132,6 +134,18 @@ def _has_same_course_overlap(schedule: dict[int, list[dict]], sections: list[dic
         same_course_windows_overlap([m for rows in meetings for m in rows])
         for meetings in _same_course_windows_by_course(schedule, sections).values()
     )
+
+
+def _section_is_day_run(schedule: dict[int, list[dict]], sections: list[dict], idx: int) -> bool:
+    """True iff section ``idx`` has three meetings on three consecutive weekdays.
+
+    ``TIMETABLE_SECTION_DAY_SPREAD`` (callers read the flag): the relocate loops
+    reject a move that turns a section INTO a run. A section with a meeting policy
+    fixes its own days and is exempt.
+    """
+    if sections[idx].get("meeting_policy") is not None:
+        return False
+    return days_form_day_run(m["day"] for m in schedule[idx])
 
 
 def _compute_cost(
@@ -855,6 +869,8 @@ def optimize_board(
     iterations = 0
     improvements = 0
     start_time = time.time()
+    # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
+    day_spread_on = is_section_day_spread_enabled()
 
     # PR6 commit 4 — SA stage boundary fence (perf_counter for sub-ms
     # resolution; monotonic across Python stdlib contract). Instrument
@@ -873,7 +889,14 @@ def optimize_board(
             continue
 
         sec_idx, m_idx, new_opt = move
+        was_day_run = day_spread_on and _section_is_day_run(schedule, sections, sec_idx)
         old_opt = _apply_move(schedule, sec_idx, m_idx, new_opt)
+
+        # Section day-run reject (flag-gated): a run the section already had may
+        # stay; a move must not create a new one.
+        if day_spread_on and not was_day_run and _section_is_day_run(schedule, sections, sec_idx):
+            _undo_move(schedule, sec_idx, m_idx, old_opt)
+            continue
 
         # Check hard constraints
         if not _check_hard_constraints(schedule, sections, overlap_matrix):

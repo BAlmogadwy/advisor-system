@@ -136,9 +136,12 @@ def is_section_programme_preference_enabled() -> bool:
 def is_section_day_spread_enabled() -> bool:
     """Prefer a two- or three-meeting section's meetings on non-consecutive days — default OFF.
 
-    Read ONCE per board by the greedy placer and once per solve by the two CP-SAT
-    builders, never by manual moves, validation, the evaluator or any improvement
-    stage. Off, no engine reads the weight and all output is byte-identical.
+    Read ONCE per board by the greedy placer, once per solve by the two CP-SAT
+    builders and once per run by the improvement stages that move meetings (local
+    search v2, chains, annealing, the load balancer, the CP-SAT polisher, secondary
+    recovery, the instructor cap / clash repairs and compaction), never by manual
+    moves, validation or the evaluator. Off, no engine reads the weight and all
+    output is byte-identical.
     """
     return bool(getattr(settings, SECTION_DAY_SPREAD_SETTING, False))
 

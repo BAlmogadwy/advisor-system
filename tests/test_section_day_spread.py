@@ -149,8 +149,7 @@ def _model_fingerprint(model) -> dict:
     }
 
 
-@pytest.fixture
-def capture_models(monkeypatch):
+def make_capture_models(monkeypatch):
     """``capture(scenario)`` runs both CP-SAT builders on the scenario's Term 4
     board and returns ``{builder: model}``.
 
@@ -181,6 +180,11 @@ def capture_models(monkeypatch):
         return models
 
     return capture
+
+
+@pytest.fixture
+def capture_models(monkeypatch):
+    return make_capture_models(monkeypatch)
 
 
 # ── recorder (skipped unless asked) ───────────────────────────────────
@@ -499,9 +503,12 @@ def test_flag_on_cpsat_weights_two_and_three_meeting_sections(flag_on, capture_m
 
 
 @pytest.mark.django_db
-def test_flag_on_cpsat_model_has_the_same_size_and_only_the_weights_differ(
+def test_flag_on_cpsat_model_grows_only_by_the_three_meeting_day_run_guard(
     flag_off, capture_models
 ) -> None:
+    """The weights change the objective; the stronger rule (no three meetings on
+    three consecutive days) adds exactly 3 booleans, 3 linear constraints and 3
+    objective terms per policy-free three-meeting section, nothing else."""
     scenario = build_corpus(11)
     off = {name: _model_fingerprint(m) for name, m in capture_models(scenario).items()}
     flag_off.TIMETABLE_SECTION_DAY_SPREAD = True
@@ -509,7 +516,10 @@ def test_flag_on_cpsat_model_has_the_same_size_and_only_the_weights_differ(
     size = ("objective_terms", "variables", "constraints")
     for name, model in capture_models(scenario).items():
         on = _model_fingerprint(model)
-        assert {k: on[k] for k in size} == {k: off[name][k] for k in size}, name
+        three_meeting_sections = sum(1 for n in _meetings_per_section(model).values() if n == 3)
+        assert three_meeting_sections > 0, name
+        grown = 3 * three_meeting_sections
+        assert {k: on[k] - off[name][k] for k in size} == dict.fromkeys(size, grown), name
         assert on["objective_sha256"] != off[name]["objective_sha256"], name
 
 
@@ -525,22 +535,18 @@ def test_flag_on_cpsat_uses_the_configured_weight(flag_on, capture_models) -> No
 
 
 @pytest.mark.django_db
-def test_a_negative_weight_is_read_as_zero_and_a_zero_weight_changes_nothing(
+def test_a_negative_weight_is_read_as_zero_and_a_zero_weight_changes_no_coefficient(
     flag_on, capture_models
 ) -> None:
+    """Weight 0 is the legacy 5 on every ``consec_*`` variable. The three-in-a-row
+    rule is the flag's, not the weight's, so the guard variables are still added."""
     from core.services.timetable_flags import get_section_day_spread_weight
 
     scenario = build_corpus(11)
-    off = {}
-    flag_on.TIMETABLE_SECTION_DAY_SPREAD = False
-    for name, model in capture_models(scenario).items():
-        off[name] = _model_fingerprint(model)
-
-    flag_on.TIMETABLE_SECTION_DAY_SPREAD = True
     flag_on.TIMETABLE_SECTION_DAY_SPREAD_WEIGHT = -7
     assert get_section_day_spread_weight() == 0
     for name, model in capture_models(scenario).items():
-        assert _model_fingerprint(model) == off[name], name
+        assert all(coeffs == {5} for coeffs in _consec_coefficients(model).values()), name
 
 
 @pytest.mark.django_db
@@ -569,11 +575,22 @@ def test_the_flag_is_off_by_default_and_not_in_render_yaml() -> None:
 
 # ── nothing else reads the flag ───────────────────────────────────────
 
+# The placers, plus the improvement stages that move a section's meetings (the
+# three-in-a-row rule). Manual moves, validation, the evaluator, the day-off policy,
+# the scheduler package and every view are NOT in this set, and must never be.
 ALLOWED_READERS = {
     "config/settings.py",
     "core/services/timetable_flags.py",
     "core/services/timetable_autoplace.py",
     "core/services/timetable_solver.py",
+    "core/services/timetable_local_search.py",
+    "core/services/timetable_local_search_v2.py",
+    "core/services/timetable_local_search_chains.py",
+    "core/services/timetable_load_balanced.py",
+    "core/services/timetable_cpsat_polisher.py",
+    "core/services/timetable_secondary_recovery.py",
+    "core/services/timetable_instructor_cap_repair.py",
+    "core/services/timetable_instructor_compaction.py",
 }
 FLAG_NAMES = re.compile(
     r"is_section_day_spread_enabled|get_section_day_spread_weight"
@@ -581,9 +598,9 @@ FLAG_NAMES = re.compile(
 )
 
 
-def test_only_the_two_placers_read_the_flag() -> None:
-    """Manual moves, validation, the evaluator, local search, the polisher, the
-    day-off policy, the scheduler package and every view never see it."""
+def test_only_the_placers_and_the_meeting_moving_stages_read_the_flag() -> None:
+    """Manual moves, validation, the evaluator, the day-off policy, the scheduler
+    package and every view never see it."""
     readers = set()
     for root in ("config", "core", "scheduler"):
         for path in (REPO / root).rglob("*.py"):

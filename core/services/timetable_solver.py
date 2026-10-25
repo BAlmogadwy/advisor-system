@@ -87,6 +87,41 @@ def _consecutive_day_weight(sec: dict, spread_weight: int) -> int:
     return CONSECUTIVE_DAY_WEIGHT
 
 
+# Cost of a three-meeting section sitting on three consecutive weekdays, under
+# ``TIMETABLE_SECTION_DAY_SPREAD``. Prohibitive next to every other objective term
+# (gap x shared-student terms stay in the thousands) but not a hard constraint, so
+# a board whose options force a run (blocked slots, locked siblings) still solves
+# and places the section instead of coming back infeasible.
+DAY_RUN_PENALTY = 10**6
+
+
+def _add_day_run_penalties(model, sections, sec_options, assign, penalties) -> None:
+    """Forbid (at ``DAY_RUN_PENALTY``) three meetings on three consecutive days.
+
+    One boolean and one linear constraint per three-day window of each policy-free
+    three-meeting section, over the EXISTING assign variables: the meetings sit on
+    distinct days (hard constraint above), so the assign variables whose day falls in
+    a window sum to 3 exactly when all three meetings are in that window, i.e. the
+    section sits SUN-MON-TUE, MON-TUE-WED or TUE-WED-THU.
+    """
+    for i, sec in enumerate(sections):
+        if len(sec["pattern"]) != 3 or sec.get("meeting_policy") is not None:
+            continue
+        for first in range(len(WEEKDAYS) - 2):
+            window = range(first, first + 3)
+            in_window = [
+                assign[i][m][o]
+                for m in range(3)
+                for o, opt in enumerate(sec_options[i][m])
+                if opt[0] in window
+            ]
+            if len(in_window) < 3:
+                continue
+            run = model.new_bool_var(f"day_run_{i}_{first}")
+            model.add(sum(in_window) - 2 <= run)
+            penalties.append(run * DAY_RUN_PENALTY)
+
+
 def _within_model_budget(**extra):
     """Answer a model that outgrew ``TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS`` the way
     a solve that ran out of time is answered: no placements, so nothing is
@@ -723,6 +758,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                             model.add(both <= assign[i][m_b][ob])
                             penalties.append(both * w)
 
+    if is_section_day_spread_enabled():
+        _add_day_run_penalties(model, sections, sec_options, assign, penalties)
+
     if penalties:
         model.minimize(sum(penalties))
 
@@ -1258,6 +1296,9 @@ def solve_board_with_hints(
                             model.add(both <= assign[i][m_a][oa])
                             model.add(both <= assign[i][m_b][ob])
                             penalties.append(both * w)
+
+    if is_section_day_spread_enabled():
+        _add_day_run_penalties(model, sections, sec_options, assign, penalties)
 
     if penalties:
         model.minimize(sum(penalties))

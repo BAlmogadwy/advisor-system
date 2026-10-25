@@ -28,11 +28,14 @@ from core.services.timetable_assignment_models import (
 from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
+    before_meetings_of,
     move_exceeds_instructor_daily_cap,
+    move_introduces_day_run,
     move_introduces_instructor_clash,
     move_introduces_same_course_overlap,
 )
 from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_optimisation_policy import (
     evaluation_is_better,
     instructor_focus_courses,
@@ -392,6 +395,8 @@ def chain_local_search(
         if chain_time_limit_seconds and chain_time_limit_seconds > 0
         else None
     )
+    # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
+    day_spread_on = is_section_day_spread_enabled()
 
     for iteration in range(max_iterations):
         if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
@@ -465,6 +470,17 @@ def chain_local_search(
             # overlap in time (registrar convention: one instructor per course).
             # Delta-scoped to the chain's moved sections.
             if move_introduces_same_course_overlap(sections_by_id, _moved):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                chains_tried += 1
+                continue
+
+            # Section day-run reject (flag-gated): neither leg may leave a
+            # three-meeting section newly on three consecutive days. The "before"
+            # of a section both legs moved is its first snapshot's.
+            if day_spread_on and move_introduces_day_run(
+                sections_by_id,
+                before_meetings_of([*snap_a.snapshots, *snap_b.snapshots]),
+            ):
                 _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
                 chains_tried += 1
                 continue

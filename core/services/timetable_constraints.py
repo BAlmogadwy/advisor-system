@@ -359,14 +359,81 @@ def move_introduces_same_course_overlap(
     return False
 
 
+# ── Section day run (the section day-spread flag) ─────────────────────────
+# Owner 2026-10-25: a section with exactly three meetings must not sit on three
+# consecutive weekdays (SUN-MON-TUE, MON-TUE-WED, TUE-WED-THU). Under the section
+# day-spread flag the improvement stages treat it like the same-course rule above: a
+# move that CREATES a new such run is rejected, while a run that already exists may
+# stay or improve. The callers read the flag; nothing here does, so manual moves and
+# validation can never reach it. A section with a meeting policy (ENG intensive) fixes its own
+# days and is exempt, like everywhere else.
+
+_DAY_NAMES = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+
+
+def _day_number(day: Any) -> int | None:
+    """A weekday as 0..6 from an int (``SectionMeeting.day``) or a name (``"SUN"``)."""
+    if isinstance(day, int):
+        return day
+    name = str(day or "").strip().upper()
+    return _DAY_NAMES.index(name) if name in _DAY_NAMES else None
+
+
+def days_form_day_run(days: Iterable[Any]) -> bool:
+    """True iff ``days`` are exactly three DISTINCT, consecutive weekdays."""
+    numbers = [_day_number(day) for day in days]
+    if len(numbers) != 3 or None in numbers or len(set(numbers)) != 3:
+        return False
+    ordered = sorted(n for n in numbers if n is not None)
+    return ordered[1] - ordered[0] == 1 and ordered[2] - ordered[1] == 1
+
+
+def move_introduces_day_run(
+    sections_by_id: Mapping[str, Any],
+    before_meetings_by_id: Mapping[str, Iterable[Any]],
+) -> bool:
+    """Delta form: True iff a section in ``before_meetings_by_id`` is now a day run
+    that it was not before.
+
+    ``before_meetings_by_id`` maps each moved section id to its meetings BEFORE the
+    move (``SectionMeeting`` objects); ``sections_by_id`` holds the moved board. A
+    section that was already a run and still is one does not count.
+    """
+    for section_id, before in before_meetings_by_id.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None or get_course_meeting_policy(sec.course_code):
+            continue
+        if days_form_day_run(m.day for m in sec.meetings) and not days_form_day_run(
+            m.day for m in before
+        ):
+            return True
+    return False
+
+
+def before_meetings_of(snapshots: Iterable[Any]) -> dict[str, list[Any]]:
+    """The pre-move meetings of every section in ``snapshots`` (the first wins).
+
+    ``snapshots`` are ``SectionGridSnapshot`` objects (``section_id``,
+    ``old_meetings``); when a chain moves one section twice its original meetings
+    are the first snapshot's.
+    """
+    before: dict[str, list[Any]] = {}
+    for snap in snapshots:
+        before.setdefault(snap.section_id, list(snap.old_meetings))
+    return before
+
+
 __all__ = [
+    "before_meetings_of",
     "count_instructor_clashes",
     "count_instructor_daily_overloads",
+    "days_form_day_run",
     "exceeds_instructor_daily_cap",
     "has_instructor_clash",
     "has_same_course_overlap",
     "list_instructor_clashes",
     "move_exceeds_instructor_daily_cap",
+    "move_introduces_day_run",
     "move_introduces_instructor_clash",
     "move_introduces_same_course_overlap",
 ]

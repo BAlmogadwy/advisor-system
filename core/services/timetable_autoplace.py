@@ -78,6 +78,7 @@ from core.services.course_instructor_assignment import (
 )
 from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_board_persistence import locked_physical_section_ids
+from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -670,6 +671,18 @@ def _section_day_spread_penalty(option: list[dict], weight: int) -> int:
     indices.sort()
     pairs = sum(1 for a, b in zip(indices, indices[1:], strict=False) if b - a == 1)
     return weight * pairs + (weight if pairs == 2 else 0)
+
+
+# Rank added to the FIRST score element of a three-meeting option that sits on three
+# consecutive weekdays, under ``TIMETABLE_SECTION_DAY_SPREAD``. It is a guard like the
+# teacher guard (1e9), only smaller: such an option is chosen when NO other option
+# exists, so the rule can never leave a section unplaced.
+DAY_RUN_GUARD_RANK = 10**6
+
+
+def _option_is_day_run(option: list[dict]) -> bool:
+    """True iff a three-meeting option sits on three consecutive weekdays."""
+    return len(option) == 3 and days_form_day_run(meeting["day"] for meeting in option)
 
 
 def _score_option(
@@ -1425,7 +1438,8 @@ def auto_place_board(
     daily_cap = get_instructor_daily_cap()
     # Soft preference for spacing a two- or three-meeting section's days. 0 with the flag
     # OFF, which makes the penalty below 0 for every option (byte-identical).
-    day_spread_weight = get_section_day_spread_weight() if is_section_day_spread_enabled() else 0
+    day_spread_on = is_section_day_spread_enabled()
+    day_spread_weight = get_section_day_spread_weight() if day_spread_on else 0
     # One teacher per section: keeps the free-option rule while this board is
     # placed (``PlacerGuard``). None with the flag off, so nothing changes.
     teacher_guard = None
@@ -2002,6 +2016,10 @@ def auto_place_board(
                 guard_rank = (
                     teacher_guard.RANK if guard_check is not None and guard_check(option) else 0
                 )
+                # Three meetings on three consecutive days: a guard, not a cost
+                # (flag-gated; the ENG intensive policy fixes its own days).
+                if day_spread_on and not meeting_policy and _option_is_day_run(option):
+                    guard_rank += DAY_RUN_GUARD_RANK
                 score = (
                     raw_score[0] + guard_rank,
                     raw_score[1],

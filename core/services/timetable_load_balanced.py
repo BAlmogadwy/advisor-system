@@ -46,6 +46,7 @@ from core.services.timetable_board_persistence import (
     locked_physical_section_ids,
 )
 from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_local_search import (
     _apply_move,
     _capture_persist_guard,
@@ -57,6 +58,7 @@ from core.services.timetable_local_search import (
     _persist_guard_rejections,
     _policy_bundles,
     _reject_external_shared_candidate,
+    _section_is_day_run,
     _serializable_sections,
     _undo_move,
 )
@@ -367,6 +369,8 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     improvements = 0
     start_time = time.time()
     temperature = 300.0
+    # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
+    day_spread_on = is_section_day_spread_enabled()
 
     while time.time() - start_time < max_seconds:
         iterations += 1
@@ -376,7 +380,12 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         if move is None:
             continue
         sec_idx, m_idx, new_opt = move
+        was_day_run = day_spread_on and _section_is_day_run(schedule, sections, sec_idx)
         old = _apply_move(schedule, sec_idx, m_idx, new_opt)
+        if day_spread_on and not was_day_run and _section_is_day_run(schedule, sections, sec_idx):
+            # Section day-run reject (flag-gated): never create a new run.
+            _undo_move(schedule, sec_idx, m_idx, old)
+            continue
         if not _check_constraints(schedule, sections, overlap_matrix):
             _undo_move(schedule, sec_idx, m_idx, old)
             continue

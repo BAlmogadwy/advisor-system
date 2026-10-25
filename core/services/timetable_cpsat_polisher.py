@@ -37,12 +37,14 @@ from core.services.timetable_autoplace import (
     placeable_slots,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_constraints import move_introduces_day_run
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
 )
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_optimisation_policy import evaluation_is_better
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
@@ -615,6 +617,17 @@ def polish_scenario_with_cpsat(
 
     # Add fixed sections back
     all_sections = improved_sections + fixed_sections
+
+    # Section day-run reject (flag-gated, whole pass like the same-course check
+    # below): the polished board must not leave a three-meeting section newly on
+    # three consecutive days. A run the section already had may stay. Checked
+    # before the expensive full evaluation.
+    if is_section_day_spread_enabled() and move_introduces_day_run(
+        {s.section_id: s for s in all_sections},
+        {s.section_id: s.meetings for s in current_sections},
+    ):
+        logger.info("CP-SAT polisher rejected: a section newly sits on three consecutive days")
+        return None
 
     # ── Build decision trace for changed sections ────────────────────
     decision_trace = {}

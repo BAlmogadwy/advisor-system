@@ -24,12 +24,17 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
+    before_meetings_of,
     move_exceeds_instructor_daily_cap,
+    move_introduces_day_run,
     move_introduces_instructor_clash,
     move_introduces_same_course_overlap,
 )
 from core.services.timetable_exact_rooming import ExactRoomingError
-from core.services.timetable_flags import is_gap_regular_students_only_enabled
+from core.services.timetable_flags import (
+    is_gap_regular_students_only_enabled,
+    is_section_day_spread_enabled,
+)
 from core.services.timetable_local_search_v2 import (
     generate_all_repattern_moves,
     generate_swap_moves,
@@ -156,6 +161,8 @@ def recover_secondary_quality(
     """
     started = time.monotonic()
     regular_gap_only = is_gap_regular_students_only_enabled()
+    # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
+    day_spread_on = is_section_day_spread_enabled()
     deadline = started + max(0.0, time_limit_seconds)
     sections = deepcopy(sections_by_id)
     current = current_eval
@@ -267,6 +274,12 @@ def recover_secondary_quality(
                     continue
                 if (
                     move_introduces_same_course_overlap(sections, moved)
+                    or (
+                        day_spread_on
+                        and move_introduces_day_run(
+                            sections, before_meetings_of(snapshot.snapshots)
+                        )
+                    )
                     or (
                         section_instructor_ids
                         and move_introduces_instructor_clash(

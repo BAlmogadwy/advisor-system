@@ -23,11 +23,14 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
+    before_meetings_of,
     move_exceeds_instructor_daily_cap,
+    move_introduces_day_run,
     move_introduces_instructor_clash,
     move_introduces_same_course_overlap,
 )
 from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_optimisation_policy import (
     evaluation_is_better,
     instructor_focus_courses,
@@ -255,6 +258,8 @@ def diagnostic_driven_local_search(
         0.0, float(getattr(settings, "TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS", 180.0))
     )
     deadline = _time.monotonic() + time_budget_seconds
+    # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
+    day_spread_on = is_section_day_spread_enabled()
 
     if use_first_improvement:
         logger.info(
@@ -380,6 +385,15 @@ def diagnostic_driven_local_search(
             # Same-course hard-reject: two sections of the same course cannot
             # overlap (the same instructor teaches all sections). Delta-scoped.
             if move_introduces_same_course_overlap(sections_by_id, _moved):
+                _rollback(snapshot, sections_by_id, room_occupancies)
+                continue
+
+            # Section day-run reject (flag-gated): a three-meeting section must
+            # not newly land on three consecutive days. Delta-scoped: a run the
+            # section already had may stay.
+            if day_spread_on and move_introduces_day_run(
+                sections_by_id, before_meetings_of(snapshot.snapshots)
+            ):
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue
 
