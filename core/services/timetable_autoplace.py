@@ -645,22 +645,31 @@ def _same_course_back_to_back_penalty(
 _WEEKDAY_INDEX = {day: index for index, day in enumerate(WEEKDAYS)}
 
 
-def _two_meeting_day_spread_penalty(option: list[dict], weight: int) -> int:
-    """``weight`` when a TWO-meeting option sits on consecutive weekdays, else 0.
+def _section_day_spread_penalty(option: list[dict], weight: int) -> int:
+    """Soft cost of a section's own meetings sitting on consecutive weekdays.
 
-    Owner wish 2026-10-25 (``TIMETABLE_SECTION_DAY_SPREAD``): SUN+TUE / SUN+WED over
-    SUN+MON. Soft only — it joins the soft-cost bucket, below every hard,
-    same-course and overlap term. One and three meetings are never charged (a strong
-    spacing term once piled every 3-meeting course onto SUN+TUE+THU), and THU->SUN
-    does not wrap. ``weight`` 0 is the flag-off state.
+    Owner wish 2026-10-25 (``TIMETABLE_SECTION_DAY_SPREAD``). It joins the soft-cost
+    bucket, below every hard, same-course and overlap term. THU->SUN does not wrap.
+    ``weight`` 0 is the flag-off state and costs nothing.
+
+    - 2 meetings: ``weight`` when the two days are adjacent, else 0.
+    - 3 meetings: ``weight`` per adjacent pair, plus ``weight`` more when BOTH
+      neighbours are adjacent (all three in a row), so SUN+MON+TUE costs
+      ``3 * weight``, SUN+MON+WED (two and one) costs ``weight`` and SUN+TUE+THU
+      (fully spread) costs 0. The owner accepts "two and one", at a penalty.
+    - 1 meeting, or 4+ meetings (four in five days cannot avoid adjacency): 0.
     """
-    if not weight or len(option) != 2:
+    if not weight or len(option) not in (2, 3):
         return 0
-    first = _WEEKDAY_INDEX.get(option[0]["day"])
-    second = _WEEKDAY_INDEX.get(option[1]["day"])
-    if first is None or second is None:
-        return 0
-    return weight if abs(first - second) == 1 else 0
+    indices = []
+    for meeting in option:
+        index = _WEEKDAY_INDEX.get(meeting["day"])
+        if index is None:
+            return 0
+        indices.append(index)
+    indices.sort()
+    pairs = sum(1 for a, b in zip(indices, indices[1:], strict=False) if b - a == 1)
+    return weight * pairs + (weight if pairs == 2 else 0)
 
 
 def _score_option(
@@ -1414,7 +1423,7 @@ def auto_place_board(
     # so output is byte-identical to before.
     daily_cap_on = instructor_clash_on and is_instructor_daily_cap_enabled()
     daily_cap = get_instructor_daily_cap()
-    # Soft preference for spacing a two-meeting section's days. 0 with the flag
+    # Soft preference for spacing a two- or three-meeting section's days. 0 with the flag
     # OFF, which makes the penalty below 0 for every option (byte-identical).
     day_spread_weight = get_section_day_spread_weight() if is_section_day_spread_enabled() else 0
     # One teacher per section: keeps the free-option rule while this board is
@@ -1960,13 +1969,11 @@ def auto_place_board(
                     code,
                 )
 
-                # Two-meeting day spacing (flag-gated): in the soft bucket, so it
-                # never outranks a clash, an overlap or a roomless meeting. The
-                # ENG intensive policy fixes its own days and is exempt.
+                # Two- and three-meeting day spacing (flag-gated): in the soft
+                # bucket, so it never outranks a clash, an overlap or a roomless
+                # meeting. The ENG intensive policy fixes its own days and is exempt.
                 day_spread_penalty = (
-                    0
-                    if meeting_policy
-                    else _two_meeting_day_spread_penalty(option, day_spread_weight)
+                    0 if meeting_policy else _section_day_spread_penalty(option, day_spread_weight)
                 )
 
                 # raw_score[5] = student_overlap_penalty (sum of shared counts

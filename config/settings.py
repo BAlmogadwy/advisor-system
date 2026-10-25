@@ -946,14 +946,20 @@ TIMETABLE_SECTION_PROGRAMME_PREFERENCE = os.getenv(
     "TIMETABLE_SECTION_PROGRAMME_PREFERENCE", "false"
 ).lower() in ("1", "true", "yes", "on")
 
-# TIMETABLE_SECTION_DAY_SPREAD: prefer a TWO-meeting section's meetings on
-# non-consecutive days (SUN+TUE / SUN+WED over SUN+MON) — owner wish 2026-10-25.
-# Two-meeting sections only: 3+ meetings are untouched (a strong spacing term once
-# piled every 3-meeting course onto SUN+TUE+THU and left MON/WED labs empty).
-# SOFT only: the greedy placer adds WEIGHT to the option's soft-cost bucket (below
-# a roomless meeting's 100, below every clash / overlap term) and CP-SAT raises the
-# consecutive-pair coefficient from 5 to WEIGHT. It never touches manual moves or
-# validation. Off, every engine is byte-identical. Default OFF until the owner decides.
+# TIMETABLE_SECTION_DAY_SPREAD: prefer a section's own meetings on non-consecutive
+# days (SUN+TUE / SUN+WED over SUN+MON) — owner wish 2026-10-25, extended the same
+# day to 3-meeting (4-credit) sections: "not on sequence days, or at least two and
+# one, but with a penalty". Sections with 1 or 4+ meetings, and ENG-intensive, are
+# untouched (four meetings in five days cannot avoid adjacency).
+# SOFT only. Greedy placer, with W = WEIGHT, in the option's soft-cost bucket (below
+# a roomless meeting's 100, below every clash / overlap term): 2 meetings cost W when
+# adjacent; 3 meetings cost W per adjacent pair plus W more when all three are in a
+# row, so SUN+TUE+THU = 0, SUN+MON+WED (two and one) = W, SUN+MON+TUE = 3W.
+# CP-SAT raises the per-pair consecutive-day coefficient from 5 to W for 2- and
+# 3-meeting sections: two and one = W, three in a row = 2W (no extra variable, so the
+# model size and the 40000-element production budget are unchanged).
+# It never touches manual moves or validation. Off, every engine is byte-identical.
+# Default OFF until the owner decides.
 TIMETABLE_SECTION_DAY_SPREAD = os.getenv("TIMETABLE_SECTION_DAY_SPREAD", "false").lower() in (
     "1",
     "true",

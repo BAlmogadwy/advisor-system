@@ -1,8 +1,10 @@
-"""``TIMETABLE_SECTION_DAY_SPREAD``: a soft wish to space a section's two meetings.
+"""``TIMETABLE_SECTION_DAY_SPREAD``: a soft wish to space a section's own meetings.
 
-Owner wish 2026-10-25: a section's own two meetings should not sit on
-consecutive days (SUN+MON) when SUN+TUE / SUN+WED would do. It ships behind a
-flag that defaults OFF, and OFF must be exactly today's engine:
+Owner wish 2026-10-25: a section's own meetings should not sit on consecutive
+days (SUN+MON) when SUN+TUE / SUN+WED would do; a 3-meeting (4-credit) section
+should not sit on three days in a row, and "two and one" (SUN+MON+WED) is allowed
+at a penalty. It ships behind a flag that defaults OFF, and OFF must be exactly
+today's engine:
 
 - **Flag OFF = baseline.** The greedy placer reproduces a golden recorded on the
   UNCHANGED engine (three strategies x seeds 3 / 11 / 29 plus one unseeded legacy
@@ -11,10 +13,11 @@ flag that defaults OFF, and OFF must be exactly today's engine:
   objective) and the same variable / constraint counts. Only the model is
   compared, never the solution: CP-SAT solutions differ between Windows and
   Linux (see ``test_one_teacher_flag_parity``), the proto is pure Python.
-- **Flag ON.** Two-meeting sections prefer non-adjacent days; sections with one
-  or three meetings, and ENG-intensive options, are untouched; a roomless
-  meeting (100) still costs more than a consecutive pair (default 40); the
-  CP-SAT model keeps its size.
+- **Flag ON.** Two- and three-meeting sections prefer non-adjacent days (greedy:
+  0 / w / 3w for spread / two-and-one / three in a row; CP-SAT: 0 / w / 2w, per
+  pair, no extra variable); sections with one or four meetings, and
+  ENG-intensive options, are untouched; a roomless meeting (100) still costs
+  more than a consecutive pair (default 40); the CP-SAT model keeps its size.
 - **Nothing else reads the flag.** Manual moves and validation never see it.
 
 The golden lives in ``tests/fixtures/section_day_spread_flag_off_golden.json``.
@@ -237,8 +240,8 @@ def _meeting(day: str) -> dict:
     return {"day": day, "start": "08:00", "end": "09:15", "slot_idx": 0}
 
 
-def test_helper_charges_only_adjacent_two_meeting_options() -> None:
-    from core.services.timetable_autoplace import _two_meeting_day_spread_penalty as penalty
+def test_helper_charges_adjacent_two_meeting_options() -> None:
+    from core.services.timetable_autoplace import _section_day_spread_penalty as penalty
 
     assert penalty([_meeting("SUN"), _meeting("MON")], 40) == 40
     assert penalty([_meeting("MON"), _meeting("SUN")], 40) == 40  # order never matters
@@ -247,20 +250,51 @@ def test_helper_charges_only_adjacent_two_meeting_options() -> None:
     assert penalty([_meeting("SUN"), _meeting("WED")], 40) == 0
     # THU -> SUN wraps the week, it is not "consecutive".
     assert penalty([_meeting("SUN"), _meeting("THU")], 40) == 0
-    # One and three meetings are never charged, whatever their days.
+    # One meeting is never charged.
     assert penalty([_meeting("SUN")], 40) == 0
-    assert penalty([_meeting("SUN"), _meeting("MON"), _meeting("TUE")], 40) == 0
     # Weight 0 is the flag-off state.
     assert penalty([_meeting("SUN"), _meeting("MON")], 0) == 0
+    assert penalty([_meeting("SUN"), _meeting("MON"), _meeting("TUE")], 0) == 0
 
 
-def _tiny_board(credit_hours: int, planned: int = 1, name: str = "day spread") -> TimetableScenario:
+def test_helper_three_meetings_rank_spread_then_two_and_one_then_three_in_a_row() -> None:
+    from core.services.timetable_autoplace import _section_day_spread_penalty as penalty
+
+    def cost(*days: str, weight: int = 40) -> int:
+        return penalty([_meeting(d) for d in days], weight)
+
+    assert cost("SUN", "TUE", "THU") == 0
+    assert cost("SUN", "MON", "WED") == 40  # two and one: one adjacent pair
+    assert cost("SUN", "WED", "THU") == 40
+    assert cost("MON", "WED", "THU") == 40
+    assert cost("SUN", "MON", "THU") == 40
+    assert cost("SUN", "MON", "TUE") == 120  # three in a row: 2 pairs + 1 extra = 3w
+    assert cost("TUE", "WED", "THU") == 120
+    assert cost("THU", "TUE", "WED") == 120  # order never matters
+    assert cost("SUN", "TUE", "WED", weight=25) == 25
+    assert cost("SUN", "MON", "TUE", weight=25) == 75
+    # THU -> SUN never wraps: THU, SUN, WED has exactly one adjacent pair.
+    assert cost("THU", "SUN", "WED") == 40
+    assert 0 == cost("SUN", "TUE", "THU") < cost("SUN", "MON", "WED") < cost("SUN", "MON", "TUE")
+
+
+def test_helper_never_charges_four_or_more_meetings() -> None:
+    from core.services.timetable_autoplace import _section_day_spread_penalty as penalty
+
+    assert penalty([_meeting(d) for d in ("SUN", "MON", "TUE", "WED")], 40) == 0
+    assert penalty([_meeting(d) for d in ("SUN", "MON", "TUE", "WED", "THU")], 40) == 0
+    assert penalty([], 40) == 0
+
+
+def _tiny_board(
+    credit_hours: int, planned: int = 1, name: str = "day spread", course_code: str = "AI101"
+) -> TimetableScenario:
     scenario = TimetableScenario.objects.create(academic_year="1448", term="2", name=name)
     DeliveryBoard.objects.create(scenario=scenario, label="Term 1", nominal_term=1)
     ScenarioSectionBudget.objects.create(
         scenario=scenario,
-        course_code="AI101",
-        course_key="AI101",
+        course_code=course_code,
+        course_key=course_code,
         department="AI",
         programme_term=1,
         credit_hours=credit_hours,
@@ -295,13 +329,17 @@ def _consecutive(days: list[str]) -> bool:
     return any(b - a == 1 for a, b in zip(idx, idx[1:], strict=False))
 
 
-def _place(strategy: str, seed: int, *, credit_hours: int, planned: int = 1) -> dict:
+def _place(
+    strategy: str, seed: int, *, credit_hours: int, planned: int = 1, course_code: str = "AI101"
+) -> dict:
     """Place a fresh one-course board; every call gets its own scenario (unique name)."""
     from core.services.timetable_autoplace import auto_place_scenario
     from core.services.timetable_run_seed import seeded_timetable_run
 
     _place.calls += 1
-    scenario = _tiny_board(credit_hours, planned, name=f"day spread #{_place.calls}")
+    scenario = _tiny_board(
+        credit_hours, planned, name=f"day spread #{_place.calls}", course_code=course_code
+    )
     with seeded_timetable_run(seed):
         auto_place_scenario(scenario.id, strategy=strategy)
     return _days_by_section(scenario)
@@ -328,16 +366,67 @@ def test_flag_off_the_same_board_does_land_on_consecutive_days_for_some_seed(fla
 
 
 @pytest.mark.django_db
-def test_flag_on_leaves_a_three_meeting_section_exactly_as_it_was(settings) -> None:
-    for name, value in PRODUCTION_FLAGS.items():
-        setattr(settings, name, value)
-    for seed in range(6):
-        results = {}
-        for enabled in (False, True):
-            settings.TIMETABLE_SECTION_DAY_SPREAD = enabled
-            results[enabled] = _place("compact", seed, credit_hours=4)
-        assert results[False] == results[True], seed
-        assert results[False] and all(len(v) == 3 for v in results[False].values())
+def test_flag_on_three_meeting_section_lands_on_sun_tue_thu_for_every_seed(flag_on) -> None:
+    """SUN+TUE+THU is the only fully spread triple in five days, so with everything
+    else equal the placer must pick it over two-and-one and three in a row."""
+    for seed in range(12):
+        days = _place("compact", seed, credit_hours=4)
+        assert days and all(v == ["SUN", "THU", "TUE"] for v in days.values()), (seed, days)
+
+
+@pytest.mark.django_db
+def test_flag_off_the_same_three_meeting_board_does_not_always_spread(flag_off) -> None:
+    """The control: without the flag some seed lands on adjacent days, so the ON
+    test above is not passing for free."""
+    placed = [_place("compact", seed, credit_hours=4) for seed in range(12)]
+
+    assert all(len(v) == 3 for days in placed for v in days.values())
+    assert any(_consecutive(v) for days in placed for v in days.values())
+
+
+@pytest.mark.django_db
+def test_flag_on_the_placer_scores_three_meeting_options_at_every_cost_level(
+    flag_on, monkeypatch
+) -> None:
+    """Through the real scoring loop: the helper is called for 3-meeting options and
+    sees the spread (0), two-and-one (w) and three-in-a-row (3w) costs."""
+    from core.services import timetable_autoplace as autoplace
+
+    seen: list[tuple[int, int]] = []
+    real = autoplace._section_day_spread_penalty
+
+    def spy(option, weight):
+        value = real(option, weight)
+        seen.append((len(option), value))
+        return value
+
+    monkeypatch.setattr(autoplace, "_section_day_spread_penalty", spy)
+    _place("compact", 1, credit_hours=4)
+
+    assert {value for count, value in seen if count == 3} >= {0, 40, 120}
+
+
+@pytest.mark.django_db
+def test_flag_on_the_eng_intensive_policy_is_never_scored_for_spacing(flag_on, monkeypatch) -> None:
+    """ENG101 meets SUN+MON+WED+THU by policy; the placer must not even ask for a
+    spacing cost, and the result is identical with the flag off."""
+    from core.services import timetable_autoplace as autoplace
+
+    calls: list[int] = []
+    real = autoplace._section_day_spread_penalty
+
+    def spy(option, weight):
+        calls.append(len(option))
+        return real(option, weight)
+
+    monkeypatch.setattr(autoplace, "_section_day_spread_penalty", spy)
+    on = _place("compact", 3, credit_hours=3, course_code="ENG101")
+    flag_on.TIMETABLE_SECTION_DAY_SPREAD = False
+    off = _place("compact", 3, credit_hours=3, course_code="ENG101")
+
+    assert on == off
+    assert on and all(v == ["MON", "SUN", "THU", "WED"] for v in on.values())
+    assert calls == []
 
 
 def test_default_weight_is_cheaper_than_a_roomless_meeting() -> None:
@@ -382,27 +471,31 @@ def _meetings_per_section(model) -> dict[int, int]:
     return count
 
 
-def test_cpsat_weight_helper_changes_only_policy_free_two_meeting_sections() -> None:
+def test_cpsat_weight_helper_changes_only_policy_free_two_and_three_meeting_sections() -> None:
     from core.services.timetable_course_policy import ENGLISH_INTENSIVE_POLICY
     from core.services.timetable_solver import _consecutive_day_weight as weight
 
     two, three = {"pattern": [75, 75]}, {"pattern": [75, 75, 100]}
     assert weight(two, 40) == 40
     assert weight(two, 0) == 5  # the flag-off state: legacy weight
-    assert weight(three, 40) == 5
+    assert weight(three, 40) == 40
+    assert weight(three, 0) == 5
     assert weight({"pattern": [100]}, 40) == 5
+    assert weight({"pattern": [75, 75, 75, 75]}, 40) == 5  # four meetings: legacy
     assert weight({**two, "meeting_policy": None}, 40) == 40
+    assert weight({**three, "meeting_policy": None}, 40) == 40
     assert weight({**two, "meeting_policy": ENGLISH_INTENSIVE_POLICY}, 40) == 5
+    assert weight({**three, "meeting_policy": ENGLISH_INTENSIVE_POLICY}, 40) == 5
 
 
 @pytest.mark.django_db
-def test_flag_on_cpsat_weights_two_meeting_sections_only(flag_on, capture_models) -> None:
+def test_flag_on_cpsat_weights_two_and_three_meeting_sections(flag_on, capture_models) -> None:
     for name, model in capture_models(build_corpus(11)).items():
         coefficients = _consec_coefficients(model)
         meetings = _meetings_per_section(model)
         assert {2, 3} <= set(meetings.values()), name  # the corpus has both shapes
         for i, count in meetings.items():
-            assert coefficients[i] == ({40} if count == 2 else {5}), (name, i, count)
+            assert coefficients[i] == ({40} if count in (2, 3) else {5}), (name, i, count)
 
 
 @pytest.mark.django_db
@@ -427,7 +520,7 @@ def test_flag_on_cpsat_uses_the_configured_weight(flag_on, capture_models) -> No
         coefficients = _consec_coefficients(model)
         meetings = _meetings_per_section(model)
         assert all(
-            coefficients[i] == ({80} if count == 2 else {5}) for i, count in meetings.items()
+            coefficients[i] == ({80} if count in (2, 3) else {5}) for i, count in meetings.items()
         )
 
 

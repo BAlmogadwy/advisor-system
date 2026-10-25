@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 
 # Cost of one consecutive-day pair of a section's own meetings (uniform, no S1
-# priority). ``TIMETABLE_SECTION_DAY_SPREAD`` raises it for two-meeting sections.
+# priority). ``TIMETABLE_SECTION_DAY_SPREAD`` raises it for 2- and 3-meeting sections.
 CONSECUTIVE_DAY_WEIGHT = 5
 
 
@@ -76,10 +76,13 @@ def _consecutive_day_weight(sec: dict, spread_weight: int) -> int:
     """The coefficient of a section's ``consec_*`` variables.
 
     ``spread_weight`` is 0 with the flag OFF, so every section keeps the legacy 5.
-    Only a two-meeting section without a meeting policy (ENG intensive) takes the
-    heavier weight; 3+ meetings are untouched. The model's size never changes.
+    Only a section with TWO or THREE meetings and no meeting policy (ENG intensive)
+    takes the heavier weight; 1 and 4+ meetings keep 5. The model stays per-pair, so
+    SUN+MON+TUE costs 2w, SUN+MON+WED w and SUN+TUE+THU 0. The greedy placer adds a
+    further w for three in a row (a different, accepted difference: another variable
+    per triple would grow the model past the 40000-element production budget).
     """
-    if spread_weight and len(sec["pattern"]) == 2 and sec.get("meeting_policy") is None:
+    if spread_weight and len(sec["pattern"]) in (2, 3) and sec.get("meeting_policy") is None:
         return spread_weight
     return CONSECUTIVE_DAY_WEIGHT
 

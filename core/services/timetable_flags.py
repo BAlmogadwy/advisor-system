@@ -134,7 +134,7 @@ def is_section_programme_preference_enabled() -> bool:
 
 
 def is_section_day_spread_enabled() -> bool:
-    """Prefer a two-meeting section's meetings on non-consecutive days — default OFF.
+    """Prefer a two- or three-meeting section's meetings on non-consecutive days — default OFF.
 
     Read ONCE per board by the greedy placer and once per solve by the two CP-SAT
     builders, never by manual moves, validation, the evaluator or any improvement
@@ -144,7 +144,7 @@ def is_section_day_spread_enabled() -> bool:
 
 
 def get_section_day_spread_weight() -> int:
-    """Soft-cost units one consecutive-day pair costs a two-meeting section (default 40).
+    """Soft-cost units one consecutive-day pair costs a 2- or 3-meeting section (default 40).
 
     Floored at 0, like ``get_tiered_t2_tolerance``: a negative setting would
     reward consecutive days.
