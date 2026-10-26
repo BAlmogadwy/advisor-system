@@ -1,8 +1,5 @@
 /* Exam builder: a task-oriented workspace. Kept local so the shared shell and
    other planning screens retain their existing visual treatment. */
-/* The global ribbon sits outside main and above the shell's stacking context;
-   suppress that decoration only while this workspace is present. */
-body:has(main.exam-builder-page) > .side-decor { display: none; }
 
 main.exam-builder-page,
 #matrixPanel {
@@ -73,14 +70,7 @@ html[data-theme="dark"] #matrixPanel {
 
 main.exam-builder-page > .content-wrap { max-width: 1480px; }
 main.exam-builder-page .page-intro { margin-block: 1.5rem; }
-main.exam-builder-page .page-intro h2 {
-  color: var(--et-text);
-  font-family: var(--font-body);
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -.02em;
-  margin-bottom: .4rem;
-}
+main.exam-builder-page .page-intro h2 { color: var(--et-text); }
 main.exam-builder-page .panel-sub,
 main.exam-builder-page .text-secondary,
 main.exam-builder-page .form-text { color: var(--et-muted) !important; }
@@ -1188,7 +1178,6 @@ html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
   main.exam-builder-page #schedGrid .et-grid td { min-width: 198px; }
   main.exam-builder-page { padding: 16px !important; }
   main.exam-builder-page .page-intro { margin-block: 18px; }
-  main.exam-builder-page .page-intro h2 { font-size: 1.25rem !important; }
   main.exam-builder-page .panel-sub { font-size: .8125rem; }
   main.exam-builder-page .et-section,
   main.exam-builder-page .et-panel { padding: 16px; margin-bottom: 16px; border-radius: 8px; }

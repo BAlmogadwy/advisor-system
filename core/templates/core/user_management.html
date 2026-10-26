@@ -10,12 +10,10 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}إدارة المستخدمين{% else %}User Management{% endif %}{% endblock %}
 
 {% block page_chips %}
-            <span class="ph-chip ph-chip-role">{{ role }}</span>
             <span class="ph-chip ph-chip-gray" id="umUserCount">—</span>
 {% endblock %}
 
 {% block page_intro %}
-      <h2>{% if LANGUAGE_CODE == 'ar' %}إدارة المستخدمين{% else %}User Management{% endif %}</h2>
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء وتعديل وإدارة مستخدمي النظام والأدوار والصلاحيات.{% else %}Create, edit, and manage system users, roles, and permissions.{% endif %}</div>
 {% endblock %}
 

@@ -16,6 +16,10 @@
               {% elif role == "ADVISOR" %}مرشد أكاديمي
               {% elif role == "EXAM_COMMITTEE" %}لجنة الاختبارات
               {% else %}{{ role }}{% endif %}
+            {% elif role == "STUDENT" %}Student
+            {% elif role == "SUPER_ADMIN" %}Super Admin
+            {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}General Advisor
+            {% elif role == "ADVISOR" %}Advisor
             {% elif role == "EXAM_COMMITTEE" %}Exam Committee
             {% else %}{{ role }}{% endif %}
           </span>
@@ -29,8 +33,6 @@
         {% elif LANGUAGE_CODE == 'ar' %}إدارة اسم المستخدم وكلمة المرور.{% else %}Manage your username and password.{% endif %}
       </div>
 {% endblock %}
-
-{% comment %}page_header_right: inherit default Logout button from base.html{% endcomment %}
 
 {% block content %}
 <div class="pf-grid">

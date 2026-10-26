@@ -499,9 +499,6 @@ html[data-theme="dark"] .color-mesh {
 }
 
 
-/* ── Dark side decor ── */
-html[data-theme="dark"] .side-decor { opacity: 0.12; }
-
 /* ── Dark selection ── */
 html[data-theme="dark"] ::selection { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }
 
@@ -716,8 +713,7 @@ html[data-theme="dark"] body .btn-outline-success:hover,
 html[data-theme="dark"] body .btn-outline-warning:hover,
 html[data-theme="dark"] body .btn-outline-info:hover,
 html[data-theme="dark"] body .btn-outline-dark:hover,
-html[data-theme="dark"] body .btn-export:hover,
-html[data-theme="dark"] .page-header-right .btn-outline-secondary:hover {
+html[data-theme="dark"] body .btn-export:hover {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
 }
 
@@ -790,9 +786,6 @@ html[data-theme="dark"] .ux-toast {
 }
 html[data-theme="dark"] .ux-toast-icon {
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.2) !important;
-}
-html[data-theme="dark"] .page-header-right .btn-outline-secondary {
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
 }
 
 /* ── Dark: cpanel header ─── */
@@ -1112,66 +1105,6 @@ body::after {
     linear-gradient(160deg, #f2f5f2 0%, #f0f3f5 25%, #f2f0f3 50%, #f5f3f0 75%, #f2f5f3 100%);
 }
 
-/* ── Side decorative wave lines ─────────────────────────────
-   Flowing ribbon art that peeks in from page edges.
-   Sits BELOW the shell (z-index 0) so it never blocks
-   sidebar text or main content.  CSS masks feather every edge
-   so the ribbon dissolves naturally into the background.
-   ──────────────────────────────────────────────────────────── */
-.side-decor {
-  position: fixed;
-  top:  0;
-  width: 420px;
-  height: 100vh;
-  pointer-events: none;
-  z-index: 2;
-  background-image: url('../img/side-decor1.png');
-  background-repeat: no-repeat;
-  background-size: auto 105%;          /* slight over-scale so ribbon fills full height */
-  background-position: center center;
-  opacity: 0.35;
-  transition: opacity 0.6s var(--ease);
-}
-
-/* ── Left ribbon: lives inside the sidebar, follows its visibility ── */
-.side-decor-l {
-  position: absolute;                   /* relative to .sidebar */
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  transform: scaleX(-1);
-  background-position: center center;
-  background-size: auto 105%;
-  opacity: 0.3;                        /* boost — compensate for sidebar's glass overlay */
-  /* Mask: fade inner edge + soft top/bottom */
-  -webkit-mask-image:
-    linear-gradient(to right,  rgba(0,0,0,1) 0%, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 85%),
-    linear-gradient(to bottom, transparent 0%, rgba(0,0,0,1) 5%, rgba(0,0,0,1) 90%, transparent 100%);
-  -webkit-mask-composite: source-in;
-  mask-image:
-    linear-gradient(to right,  rgba(0,0,0,1) 0%, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 85%),
-    linear-gradient(to bottom, transparent 0%, rgba(0,0,0,1) 5%, rgba(0,0,0,1) 90%, transparent 100%);
-  mask-composite: intersect;
-}
-
-/* ── Right ribbon: max 10% of viewport width, always visible ── */
-.side-decor-r {
-  right: 0;
-  width: 10vw;                          /* always 10% of screen width */
-  max-width: 300px;                     /* cap on very wide screens */
-  background-position: center center;
-  background-size: auto 105%;
-  /* Mask: fade inner edge + soft top/bottom */
-  -webkit-mask-image:
-    linear-gradient(to left,  rgba(0,0,0,1) 0%, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 90%),
-    linear-gradient(to bottom, transparent 0%, rgba(0,0,0,1) 5%, rgba(0,0,0,1) 90%, transparent 100%);
-  -webkit-mask-composite: source-in;
-  mask-image:
-    linear-gradient(to left,  rgba(0,0,0,1) 0%, rgba(0,0,0,1) 30%, rgba(0,0,0,0) 90%),
-    linear-gradient(to bottom, transparent 0%, rgba(0,0,0,1) 5%, rgba(0,0,0,1) 90%, transparent 100%);
-  mask-composite: intersect;
-}
-/* Left decoration lives inside sidebar — follows its visibility */
-
 /* [hidden] always hides. The UA rule is a weak `display:none`, so any component
    that sets `display` (`html body .btn{display:inline-flex}`, Bootstrap's
    `.d-flex{display:flex!important}`, which loads after this file) silently
@@ -1190,20 +1123,23 @@ html [hidden] { display: none !important; }
   overflow: hidden;
 }
 
-/* ── Content wrap — constrains page content to readable width ── */
+/* ── Content wrap — constrains page content to a working width ──
+   1440px: the 1120px column it replaced used a third of a wide screen and left
+   the page floating in empty background. Prose stays readable on its own
+   (.panel-sub and the intros stop at 80ch); cards and tables use the room. */
 .content-wrap {
-  max-width: 1120px;
+  max-width: 1440px;
   margin: 0 auto;
 }
 
 /* ── Content width tiers ──────────────────────────────────────
-   base.html renders `<main data-width="{% block content_width %}">`. A reading
-   page keeps the 1120px column above. A builder page may take `wide`; a tool
+   base.html renders `<main data-width="{% block content_width %}">`. A page
+   keeps the 1440px column above. A builder page may take `wide`; a tool
    page — a board, a canvas, a grid that is the whole job — takes `full` and
-   uses the window. Opt-in per page, so no reading page widens by accident and
+   uses the window. Opt-in per page, so no page widens by accident and
    `.content-wrap` itself (which the mobile menu's inert logic targets) is
    unchanged. Below 1025px every tier is already 100% (the 1024px block). */
-main[data-width="wide"] > .content-wrap { max-width: 1480px; }
+main[data-width="wide"] > .content-wrap { max-width: 1760px; }
 main[data-width="full"] > .content-wrap { max-width: none; }
 /* The entry animation's end state (`transform: translateY(0)` held by
    `animation-fill-mode: both`) makes .content-wrap the containing block of every
@@ -1226,8 +1162,6 @@ main[data-width="full"] > .content-wrap { animation: none; }
   main[data-fill="viewport"] > .content-wrap > .app-fill { flex: 1 1 auto; min-height: 0; }
   main[data-fill="viewport"] > .content-wrap > :not(.app-fill) { flex: none; }
 }
-/* An empty intro still carried its 2rem of margin into the frame. */
-main[data-fill="viewport"] .page-intro:empty { display: none; }
 main[data-fill="viewport"] .system-footer {
   margin: 0; padding: 3px 12px;
   font-size: var(--text-2xs); line-height: 1.4;
@@ -1582,21 +1516,57 @@ main.p-0 .page-header {
 .page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
 .page-header-module { font-weight: 700; font-size: clamp(0.875rem, 0.831rem + 0.19vw, 1rem); /* 14px → 16px */ color: var(--navy); letter-spacing: -0.01em; }
 .page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-/* A page without chips must not keep their row's gap under its title. */
-.page-header-chips:not(:has(*)) { display: none; }
+/* A page without chips (or with only a hidden one a script fills later) must not
+   keep their row's gap under its title. */
+.page-header-chips:not(:has(> :not(.d-none, [hidden]))) { display: none; }
 .page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
+.page-header-right:empty { display: none; }
 
-/* ── Header logout (smaller, flatter) ── */
-.page-header-right .btn-outline-secondary {
-  font-size:      0.7rem !important;
-  min-height:     unset !important;
-  padding:        0.22rem 0.65rem !important;
-  border-radius:  8px !important;
-  box-shadow:     var(--shadow-neu-sm) !important;
-  letter-spacing: 0.01em;
-}
-.page-header-right .btn-outline-secondary:hover {
-  box-shadow:     var(--shadow-neu) !important;
+/* ── Page masthead ─────────────────────────────────────────────
+   A page says its title once, as its headline. The header used to be a glass
+   strip holding a 16px module label, with a second, serif copy of the same
+   title under it in .page-intro. On a page that is read rather than operated
+   the header is now the masthead: the h1 is the headline, its chips beside it,
+   the page's actions on the right, and no strip. Unchanged:
+   - tool pages (data-width="full", data-fill="viewport", the edge-to-edge
+     p-0 boards): their bar is measured chrome
+     (tests/test_ux_layout_primitives_browser.py);
+   - phones (768px and below), where the bar carries the menu button. */
+@media (min-width: 769px) {
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) > .content-wrap > .page-header {
+    margin: 0 0 0.4rem !important;     /* the 992px block's bleed is !important */
+    padding: 0.25rem 0 0 !important;
+    background: none !important;       /* so is the dark theme's strip */
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    align-items: flex-start;
+  }
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) > .content-wrap > .page-header::after {
+    content: none;
+  }
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) > .content-wrap > .page-header:has(+ .page-intro:empty) {
+    margin-bottom: 1.25rem !important;
+  }
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-left {
+    flex-direction: row; flex-wrap: wrap; align-items: center;
+    gap: 0.4rem 0.75rem; min-width: 0;
+  }
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-module {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;                  /* G11: DM Serif Display has one weight */
+    font-size: clamp(1.5rem, 1.25rem + 0.6vw, 1.875rem);   /* 24px → 30px */
+    line-height: 1.2;
+  }
+  html[dir="rtl"] main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-module {
+    letter-spacing: 0;
+  }
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-right {
+    padding-top: 0.2rem;
+  }
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) > .content-wrap > .page-intro {
+    margin-top: 0;
+  }
 }
 
 /* ── Page-header chips ── */
@@ -1663,9 +1633,22 @@ main.p-0 .page-header {
 }
 .empty-state .i { display: inline-flex; align-items: center; justify-content: center; opacity: 0.45; }
 .empty-icon { display: block; font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.6; }
-.empty-title { font-family: var(--font-serif); font-weight: 400; font-size: clamp(0.8125rem, 0.742rem + 0.38vw, 0.9375rem); /* 13px → 15px */ color: var(--t2); margin-bottom: 4px; }
-.empty-hint  { font-size: clamp(0.6875rem, 0.664rem + 0.09vw, 0.75rem); /* 11px → 12px */ color: var(--t3); line-height: 1.5; font-weight: 300; }
-.empty-hint strong { color: var(--text-brand); }
+/* An empty state is an invitation, not a disabled panel: at 11-12px weight-300
+   text and a 30-45% icon it read as broken. The icon sits on a soft brand tile,
+   the title is a heading, the hint is body text. */
+.empty-state > .empty-icon,
+.empty-state > .i:first-child,
+.ap-empty-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box; width: 52px; height: 52px; padding: 13px;
+  margin: 0 0 12px; border-radius: 16px;
+  background: var(--teal-dim); color: var(--text-brand); opacity: 1;
+}
+.empty-state > .empty-icon > .i,
+.ap-empty-icon > .i { width: 100%; height: 100%; opacity: 1; }
+.empty-title, .ap-empty-title { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1rem, 0.95rem + 0.25vw, 1.125rem); /* 16px → 18px */ color: var(--navy); margin-bottom: 4px; }
+.empty-hint, .ap-empty-hint { font-size: max(13px, 0.8125rem); color: var(--t3); line-height: 1.55; font-weight: 400; max-width: 52ch; }
+.empty-hint strong, .ap-empty-hint strong { color: var(--text-brand); }
 
 /* Remove table-striped odd-row override */
 .table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
@@ -1698,7 +1681,12 @@ main.p-0 .page-header {
 
 /* ── Page intro (h2 heading + subtitle below page-header) ── */
 .page-intro { margin: 0.75rem 0 1.25rem; }
-.page-intro h2     { font-family: var(--font-serif); font-weight: 700; font-size: clamp(1.125rem, 0.948rem + 0.75vw, 1.375rem); /* 18px → 22px */ color: var(--navy); letter-spacing: -0.01em; margin: 0 0 4px; }
+/* An empty intro still carried its 2rem of margin into the page. */
+.page-intro:empty { display: none; }
+/* The page's title is the header's h1. An intro heading, where a page has one,
+   names the view inside the page (Exam Timetable: "Student lists"; a student's
+   name on their graduation plan), so it reads as a subtitle, not a second title. */
+.page-intro h2 { font-family: var(--font-body); font-weight: 600; font-size: clamp(1rem, 0.95rem + 0.2vw, 1.125rem); /* 16px → 18px */ color: var(--t1); margin: 0 0 4px; }
 
 .panel-sub {
   color:         var(--t3);
@@ -1824,7 +1812,7 @@ html body .btn {
 }
 
 /* A link drawn as a button is not underlined: "Search another student" and
-   "Back to portfolio" read as text links beside the Logout button. */
+   "Back to portfolio" read as text links in the page header. */
 html body a.btn:not(.btn-link),
 html body a.btn:not(.btn-link):hover,
 html body a.btn:not(.btn-link):focus { text-decoration: none; }
@@ -3571,7 +3559,9 @@ html[data-theme="dark"] .fb-search.fb-sm { box-shadow: inset 0 0 0 1px var(--btn
 .fb-search.fb-sm select { padding: 0.3rem 0; font-size: var(--text-sm); line-height: 1.5; }
 .fb-search.fb-sm select { padding-inline-end: 1.3rem; background-position: right 0.15rem center; }
 html[dir="rtl"] .fb-search.fb-sm select { background-position: left 0.15rem center; }
-.fb-search.fb-sm .fb-lbl { color: var(--t3); font-size: var(--text-xs); font-weight: 600; }
+/* A field's name stays visible next to its value: a capsule that opens holding
+   "1448" or "80" said nothing once the placeholder had gone. */
+.fb-lbl { flex: none; white-space: nowrap; color: var(--t3); font-size: var(--text-xs); font-weight: 600; }
 .fb-search.fb-sm > svg { width: 14px; height: 14px; flex: none; color: var(--t3); }
 .fb-fit .fb-search.fb-sm:focus-within { box-shadow: inset 0 0 0 1px var(--btn-neutral-border), 0 0 0 2px var(--teal); }
 html[data-theme="dark"] .fb-fit .fb-search.fb-sm:focus-within { box-shadow: inset 0 0 0 1px var(--btn-neutral-border), 0 0 0 2px var(--teal) !important; }
@@ -4255,30 +4245,11 @@ pre, .pre-output {
     overflow: hidden;
     flex-wrap: nowrap;
   }
-
-  /* Logout button: icon-only on mobile (specificity must beat html body .btn.btn-sm) */
-  .page-header .page-header-right .btn.btn-sm.btn-outline-secondary {
-    font-size: 0 !important;       /* hide text */
-    padding: 0 !important;
-    min-height: unset !important;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    border-radius: 7px !important;
-  }
-  /* Logout icon (door-arrow SVG via pseudo-element) */
-  .page-header-right .btn-outline-secondary::before {
-    content: '';
-    display: block;
-    width: 16px;
-    height: 16px;
-    background: currentColor;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/%3E%3Cpolyline points='16 17 21 12 16 7'/%3E%3Cline x1='21' y1='12' x2='9' y2='12'/%3E%3C/svg%3E") center/contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/%3E%3Cpolyline points='16 17 21 12 16 7'/%3E%3Cline x1='21' y1='12' x2='9' y2='12'/%3E%3C/svg%3E") center/contain no-repeat;
-  }
+  /* A page's own actions take a row under the title: the menu button, a title
+     and two text buttons ("Export this scenario", "Search another student") do
+     not fit in 390px, and the title was squeezed out and a button cut off. */
+  .page-header:has(> .page-header-right:not(:empty)) { flex-wrap: wrap !important; }
+  .page-header-right:not(:empty) { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
 
   /* main padding: keep gutter, page-header bleeds out via negative margin */
   main.flex-grow-1 {
@@ -4397,17 +4368,6 @@ pre, .pre-output {
   .ph-chip-scope  { display: none; }
   .ph-chip-dept   { display: none; }
   .ph-chip-role   { font-size: var(--text-micro); padding: 0.1rem 0.35rem; }
-
-  /* Logout icon: slightly smaller */
-  .page-header .page-header-right .btn.btn-sm.btn-outline-secondary {
-    width: 28px;
-    height: 28px;
-    padding: 0 !important;
-  }
-  .page-header-right .btn-outline-secondary::before {
-    width: 14px;
-    height: 14px;
-  }
 
   /* Form inputs: always full width */
   .row > [class*="col-md-"],
@@ -5501,7 +5461,6 @@ html body .btn-export:hover {
   .sidebar-toggle,
   .sidebar-backdrop,
   .color-mesh,
-  .side-decor,
   .back-to-top,
   .skip-link,
   .page-header-right,
@@ -7894,10 +7853,6 @@ html[data-theme="dark"] .dcc-empty {
 .metrics-row-14 { display: flex; gap: 14px; }
 .skel-row { display: flex; gap: 12px; align-items: center; }
 
-.ghost-muted { pointer-events: none; opacity: 0.5; }
-.ghost-faded { pointer-events: none; opacity: 0.40; }
-.skel-pad { padding: 0 14px 6px; }
-
 .overflow-x { overflow-x: auto; }
 
 .empty-icon-32 { width: 32px; height: 32px; }
@@ -7906,8 +7861,6 @@ html[data-theme="dark"] .dcc-empty {
 
 .fb-search-full { max-width: none; }
 .fb-w-110 { max-width: 110px; }
-.fb-w-120 { max-width: 120px; }
-.fb-w-100 { max-width: 100px; }
 .filter-bar-sm { padding: 8px 14px; }
 
 .meta-mono { font-family: var(--font-mono); font-size: 12px; border-radius: var(--radius-sm); padding: 10px 14px; }
@@ -7932,17 +7885,16 @@ html[data-theme="dark"] .dcc-empty {
 .mc-val-mono-sm { font-size: 16px; font-family: var(--font-mono); letter-spacing: 0; }
 
 .adv-textarea { border-radius: var(--radius-sm); border: var(--border-subtle); background: var(--glass-bg); font-size: 13px; }
-.cp-flex-col { display: flex; flex-direction: column; gap: 10px; }
 .sticky-16 {  }
 
 .plan-side-col { width: 340px; flex-shrink: 0; }
 .plan-layout { display: flex; gap: 16px; align-items: flex-start; }
+/* Before a plan is loaded the term column is empty, and a "Course Inspector ·
+   LIVE" card with nothing to inspect stood alone under the empty state. Both
+   arrive with the plan (an error message fills the column, so it shows too). */
+.plan-layout:has(#studentPlanTerms:empty) { display: none; }
 
 .can-register-pill { background: var(--teal-dim); }
-.skel-m0 { margin: 0; }
-.skel-code { width: 70px; height: 14px; }
-.skel-status { width: 50px; height: 10px; }
-.skel-half { width: 50%; }
 .preset-actions { display: flex; gap: 6px; margin-top: 8px; }
 .scrape-metrics-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 
@@ -10087,7 +10039,7 @@ a.fb-dd, a.fb-dd:hover { text-decoration: none; }
 /* ── Dedicated adviser graduation workspace ──────────────── */
 main[data-page="advisor-student-graduation"] > .content-wrap {
   width: 100%;
-  max-width: 1480px; /* the wide tier, as the instructor and exam pages */
+  max-width: 1480px; /* a little wider than the 1440px default, as the exam pages */
 }
 
 .advisor-grad-page,
@@ -10832,10 +10784,8 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
 /* Row count / pagination: using global .pg-bar, .pg-btn */
 
 /* ── Empty state ─── */
-.ap-empty { text-align: center; padding: 2.5rem 1.5rem; color: var(--t4); }
-.ap-empty-icon { display: block; font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.6; }
-.ap-empty-title { font-weight: 600; font-size: 0.9rem; color: var(--t4); margin-bottom: 0.3rem; }
-.ap-empty-hint { font-size: 0.78rem; color: var(--t4); }
+.ap-empty { text-align: center; padding: 2.5rem 1.5rem; color: var(--t4); display: flex; flex-direction: column; align-items: center; }
+/* .ap-empty-icon, -title and -hint share the global look ("Empty states"). */
 
 /* Override: remove default table styling on tbl-card */
 
@@ -11052,10 +11002,6 @@ html[data-theme="dark"] .ap-batch-bar {
   color: #5ee8b7;
 }
 
-/* Empty state */
-html[data-theme="dark"] .ap-empty { color: var(--t4); }
-html[data-theme="dark"] .ap-empty-title { color: #a0a4b8; }
-html[data-theme="dark"] .ap-empty-hint { color: var(--t4); }
 
 /* ============================================================
    LOGIN — feature-specific styles
@@ -15869,7 +15815,7 @@ html[dir="rtl"] .student-timetable-calendar .wg-blocks .wg-h { letter-spacing: 0
 
 /* G11 — DM Serif Display has ONE weight (400). Every element set in it says so,
    so nothing is asked for a bold that the browser would have to fake. */
-.logo-title, .empty-title, .panel h2, .page-intro h2, .tbl-title, .metric .v,
+.logo-title, .empty-title, .panel h2, .tbl-title, .metric .v,
 .mc-val, .term-header-sticky h4, .kpi .v, .cb-title, .ov-greeting,
 .ov-kpi-value, .dcc-title, .dcc-kpi strong, .dcc-mini-grid strong,
 .student-ctx-card h3, .section-heading h3, .dba-snapshot-metric strong,

@@ -10,14 +10,12 @@
 {% block page_h1_attrs %}id="currentModule" class="page-header-module"{% endblock %}
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مركز القيادة{% else %}Dashboard Command Center{% endif %}{% endblock %}
 {% block page_chips %}
-          <span class="ph-chip ph-chip-role">{{ role }}</span>
-          <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
+          {% if role != "SUPER_ADMIN" %}<span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint }}</span>{% endif %}
           {% if scope_departments %}<span class="ph-chip ph-chip-dept">{{ scope_departments|join:", " }}</span>{% endif %}
           <span class="ph-chip ph-chip-context d-none" id="phContextChip"></span>
 {% endblock %}
 
 {% block page_intro %}
-      <h2 id="pageIntroTitle">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة{% else %}Dashboard Command Center{% endif %}</h2>
       <div class="panel-sub" id="pageIntroSub">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة التشغيلي للإرشاد والجداول والتدقيق.{% else %}Live command center for advising, timetable health, audit integrity, and system readiness.{% endif %}</div>
 {% endblock %}
 
