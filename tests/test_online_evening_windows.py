@@ -1084,7 +1084,7 @@ def test_flag_on_full_optimiser_run_keeps_online_in_windows_and_readiness_silent
 # ── nothing else reads the flag ───────────────────────────────────────
 
 
-def test_the_flag_is_off_by_default_and_not_turned_on_in_production(settings) -> None:
+def test_the_flag_is_off_by_default_and_production_turns_it_on(settings) -> None:
     from core.services.timetable_flags import is_online_evening_windows_enabled
 
     settings_source = (REPO / "config" / "settings.py").read_text(encoding="utf-8")
@@ -1094,7 +1094,7 @@ def test_the_flag_is_off_by_default_and_not_turned_on_in_production(settings) ->
         settings_source,
     )
     render = (REPO / "render.yaml").read_text(encoding="utf-8")
-    assert "TIMETABLE_ONLINE_EVENING_WINDOWS" not in render
+    assert re.search(r'key: TIMETABLE_ONLINE_EVENING_WINDOWS\s*\n\s*value: "true"', render)
     del settings.TIMETABLE_ONLINE_EVENING_WINDOWS
     assert is_online_evening_windows_enabled() is False
     settings.TIMETABLE_ONLINE_EVENING_WINDOWS = True
