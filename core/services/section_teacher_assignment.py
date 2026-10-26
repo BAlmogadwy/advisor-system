@@ -396,9 +396,11 @@ class _Static:
     resolved: dict[tuple[str, str], tuple[int, ...]] = field(default_factory=dict)
     placer_options: dict[str, tuple] = field(default_factory=dict)
     # nominal term -> the programme list of each board placed at that term (the
-    # boards a budget of that term is built on); read on first need, only with
+    # boards a budget of that term is built on), and one online-course lookup
+    # shared by every course; read on first need, only with
     # TIMETABLE_ONLINE_EVENING_WINDOWS on.
     board_programmes: dict[int, list[list[str]]] | None = None
+    online_lookup: Any = None
 
     def eligible(self, course_key: str, display_code: str) -> tuple[int, ...]:
         cache_key = (course_key, display_code)
@@ -460,9 +462,13 @@ class _Static:
     ) -> tuple[bool, list[list[dict]]]:
         """``(online on every board of its term, window options)`` for the
         budget's course; ``(False, [])`` when it is online on none of them, with
-        the flag off, or without a drawable window."""
+        the flag off, or without a drawable window.
+
+        A budget whose term has no board (FE2 at term 10, say) is placed by the
+        greedy's cross-term step (1b) on a board of another term and judged
+        online there, so every board of the scenario is asked for it."""
         from core.services.timetable_autoplace import get_meeting_pattern
-        from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+        from core.services.timetable_online import normalise_course_code
         from core.services.timetable_online_windows import (
             active_online_windows,
             online_window_meeting_options,
@@ -474,7 +480,7 @@ class _Static:
             return False, []
         if self.board_programmes is None:
             from core.models import DeliveryBoard
-            from core.services.timetable_online import programmes_for_board
+            from core.services.timetable_online import OnlineCourseLookup, programmes_for_board
 
             self.board_programmes = {}
             for board in DeliveryBoard.objects.filter(scenario_id=self.scenario_id).order_by(
@@ -484,11 +490,15 @@ class _Static:
                     self.board_programmes.setdefault(board.nominal_term, []).append(
                         programmes_for_board(board)
                     )
-        lookup = OnlineCourseLookup()
+            self.online_lookup = OnlineCourseLookup()
+        boards = self.board_programmes.get(budget.programme_term) or [
+            programmes
+            for term_boards in self.board_programmes.values()
+            for programmes in term_boards
+        ]
         code = normalise_course_code(budget.course_code)
         online = [
-            code in lookup.codes_for_programmes(programmes)
-            for programmes in self.board_programmes.get(budget.programme_term, [])
+            code in self.online_lookup.codes_for_programmes(programmes) for programmes in boards
         ]
         if not any(online):
             return False, []

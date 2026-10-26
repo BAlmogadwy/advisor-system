@@ -843,6 +843,13 @@ def test_flag_on_guard_gives_a_course_online_on_some_boards_both_option_sets(fla
     windows_only = _load_static(scenario.id).options("IS482", budget)
     assert len(windows_only) == 90
     assert all((_m("15:50") <= start) for option in windows_only for _d, start, _e in option)
+    # A budget whose term has no board: the greedy's step 1b places it on a
+    # board of another term and judges it online there, so the guard asks every
+    # board of the scenario for it.
+    budget.programme_term = 10
+    budget.save(update_fields=["programme_term"])
+    cross_term = _load_static(scenario.id).options("IS482", budget)
+    assert cross_term == windows_only
 
 
 @pytest.mark.django_db
@@ -864,6 +871,52 @@ def test_flag_on_annealing_and_the_load_balancer_keep_online_meetings_in_windows
             rebalance_and_persist_board(board.id, max_seconds=0.5)
             _assert_windows_only_for_online(scenario)
     assert _online_sections_placed(scenario) == PLANNED_ONLINE
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("module", "mover", "score"),
+    (
+        ("timetable_local_search", "optimize_board", "_compute_cost"),
+        ("timetable_load_balanced", "rebalance_board", "_compute_balance_score"),
+    ),
+)
+def test_flag_on_a_mover_never_takes_a_profitable_daytime_move_for_an_online_meeting(
+    flag_on, monkeypatch, module, mover, score
+) -> None:
+    """Each mover on its own, scored so that every online meeting moved into the
+    day would pay: the only moves it has are window to window, so none pays."""
+    import importlib
+
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    scenario = _tiny_online_scenario(planned=2)
+    auto_place_scenario(scenario.id, strategy="compact")
+    board = DeliveryBoard.objects.get(scenario=scenario)
+    service = importlib.import_module(f"core.services.{module}")
+
+    def daytime_pays(schedule, sections, online_codes, overlap_matrix=None):
+        return float(
+            sum(
+                1000
+                for index, meetings in schedule.items()
+                if sections[index]["is_online"]
+                for meeting in meetings
+                if _m(meeting["start"]) >= _m("15:50")
+            )
+        )
+
+    monkeypatch.setattr(service, score, daytime_pays)
+    result = getattr(service, mover)(board.id, max_seconds=0.5, seed=7)
+
+    online = [
+        meeting
+        for index, meetings in result["schedule"].items()
+        if result["sections"][index]["is_online"]
+        for meeting in meetings
+    ]
+    assert len(online) == 2 * 2  # two GS101 sections, two meetings each
+    assert all((meeting["start"], meeting["end"]) in WINDOW_CELLS for meeting in online)
 
 
 def _overloaded_online_teacher() -> TimetableScenario:
