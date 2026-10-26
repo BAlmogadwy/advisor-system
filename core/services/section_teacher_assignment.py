@@ -491,6 +491,9 @@ class _Static:
                         programmes_for_board(board)
                     )
             self.online_lookup = OnlineCourseLookup()
+        # Known residual: a budget whose term HAS boards but which step 1b picks
+        # up on another term's board is still judged by its own term's boards
+        # (the flag-on golden pins the term rule for courses not online there).
         boards = self.board_programmes.get(budget.programme_term) or [
             programmes
             for term_boards in self.board_programmes.values()

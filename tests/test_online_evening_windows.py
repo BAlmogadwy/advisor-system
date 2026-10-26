@@ -853,6 +853,45 @@ def test_flag_on_guard_gives_a_course_online_on_some_boards_both_option_sets(fla
 
 
 @pytest.mark.django_db
+def test_flag_on_guard_asks_every_board_for_a_budget_whose_term_has_none(flag_on) -> None:
+    """A budget with no board at its term: online on some boards of the
+    scenario gives both option sets, online on none gives the day alone."""
+    from core.services.section_teacher_assignment import _load_static
+    from core.services.timetable_autoplace import generate_course_meeting_options
+
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="2", name="cross", gender="M", programs=["AI", "AI2"]
+    )
+    DeliveryBoard.objects.create(scenario=scenario, label="A", nominal_term=4, program="AI2")
+    DeliveryBoard.objects.create(scenario=scenario, label="B", nominal_term=6, program="AI")
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="IS482", course_name="X", programme_term=10, is_online=True
+    )
+    budget = ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_key="IS482",
+        course_code="IS482",
+        department="AI",
+        credit_hours=3,
+        planned_sections=1,
+        max_per_section=40,
+        total_demand=10,
+        programme_term=10,
+    )
+    daytime = {
+        tuple(sorted((DAYS.index(m["day"]), _m(m["start"]), _m(m["end"])) for m in option))
+        for option in generate_course_meeting_options("IS482", 3, [], [], [], course_key="IS482")
+    }
+
+    mixed = _load_static(scenario.id).options("IS482", budget)
+    assert daytime < set(mixed)
+    assert len(mixed) == len(daytime) + 90
+    # The board where it is online is the second one: every board is asked.
+    DeliveryBoard.objects.filter(scenario=scenario, label="B").delete()
+    assert set(_load_static(scenario.id).options("IS482", budget)) == daytime
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("seed", (3, 11, 29))
 def test_flag_on_annealing_and_the_load_balancer_keep_online_meetings_in_windows(
     flag_on, seed
