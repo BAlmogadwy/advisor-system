@@ -46,6 +46,10 @@ from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
 )
+from core.services.timetable_flags import (
+    get_section_day_spread_weight,
+    is_section_day_spread_enabled,
+)
 from core.services.timetable_online import (
     OnlineCourseLookup,
     normalise_course_code,
@@ -61,6 +65,61 @@ from core.services.timetable_same_course import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Cost of one consecutive-day pair of a section's own meetings (uniform, no S1
+# priority). ``TIMETABLE_SECTION_DAY_SPREAD`` raises it for 2- and 3-meeting sections.
+CONSECUTIVE_DAY_WEIGHT = 5
+
+
+def _consecutive_day_weight(sec: dict, spread_weight: int) -> int:
+    """The coefficient of a section's ``consec_*`` variables.
+
+    ``spread_weight`` is 0 with the flag OFF, so every section keeps the legacy 5.
+    Only a section with TWO or THREE meetings and no meeting policy (ENG intensive)
+    takes the heavier weight; 1 and 4+ meetings keep 5. The model stays per-pair, so
+    SUN+MON+TUE costs 2w, SUN+MON+WED w and SUN+TUE+THU 0. The greedy placer adds a
+    further w for three in a row (a different, accepted difference: another variable
+    per triple would grow the model past the 40000-element production budget).
+    """
+    if spread_weight and len(sec["pattern"]) in (2, 3) and sec.get("meeting_policy") is None:
+        return spread_weight
+    return CONSECUTIVE_DAY_WEIGHT
+
+
+# Cost of a three-meeting section sitting on three consecutive weekdays, under
+# ``TIMETABLE_SECTION_DAY_SPREAD``. Prohibitive next to every other objective term
+# (gap x shared-student terms stay in the thousands) but not a hard constraint, so
+# a board whose options force a run (blocked slots, locked siblings) still solves
+# and places the section instead of coming back infeasible.
+DAY_RUN_PENALTY = 10**6
+
+
+def _add_day_run_penalties(model, sections, sec_options, assign, penalties) -> None:
+    """Forbid (at ``DAY_RUN_PENALTY``) three meetings on three consecutive days.
+
+    One boolean and one linear constraint per three-day window of each policy-free
+    three-meeting section, over the EXISTING assign variables: the meetings sit on
+    distinct days (hard constraint above), so the assign variables whose day falls in
+    a window sum to 3 exactly when all three meetings are in that window, i.e. the
+    section sits SUN-MON-TUE, MON-TUE-WED or TUE-WED-THU.
+    """
+    for i, sec in enumerate(sections):
+        if len(sec["pattern"]) != 3 or sec.get("meeting_policy") is not None:
+            continue
+        for first in range(len(WEEKDAYS) - 2):
+            window = range(first, first + 3)
+            in_window = [
+                assign[i][m][o]
+                for m in range(3)
+                for o, opt in enumerate(sec_options[i][m])
+                if opt[0] in window
+            ]
+            if len(in_window) < 3:
+                continue
+            run = model.new_bool_var(f"day_run_{i}_{first}")
+            model.add(sum(in_window) - 2 <= run)
+            penalties.append(run * DAY_RUN_PENALTY)
 
 
 def _within_model_budget(**extra):
@@ -680,10 +739,11 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     # (4) Day spacing: penalize consecutive-day meetings for the same section
     # Prefer at least 1 gap day between meetings (e.g. SUN+TUE over SUN+MON)
+    spread_weight = get_section_day_spread_weight() if is_section_day_spread_enabled() else 0
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 5  # uniform (no S1 priority)
+        w = _consecutive_day_weight(sec, spread_weight)
         for m_a in range(len(sec["pattern"])):
             for m_b in range(m_a + 1, len(sec["pattern"])):
                 opts_a = sec_options[i][m_a]
@@ -697,6 +757,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                             model.add(both <= assign[i][m_a][oa])
                             model.add(both <= assign[i][m_b][ob])
                             penalties.append(both * w)
+
+    if is_section_day_spread_enabled():
+        _add_day_run_penalties(model, sections, sec_options, assign, penalties)
 
     if penalties:
         model.minimize(sum(penalties))
@@ -1215,10 +1278,11 @@ def solve_board_with_hints(
                             penalties.append(both * diff * w)
 
     # (4) Day spacing: penalize consecutive-day meetings for the same section
+    spread_weight = get_section_day_spread_weight() if is_section_day_spread_enabled() else 0
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 5  # uniform (no S1 priority)
+        w = _consecutive_day_weight(sec, spread_weight)
         for m_a in range(len(sec["pattern"])):
             for m_b in range(m_a + 1, len(sec["pattern"])):
                 opts_a = sec_options[i][m_a]
@@ -1232,6 +1296,9 @@ def solve_board_with_hints(
                             model.add(both <= assign[i][m_a][oa])
                             model.add(both <= assign[i][m_b][ob])
                             penalties.append(both * w)
+
+    if is_section_day_spread_enabled():
+        _add_day_run_penalties(model, sections, sec_options, assign, penalties)
 
     if penalties:
         model.minimize(sum(penalties))

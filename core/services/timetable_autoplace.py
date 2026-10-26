@@ -78,6 +78,7 @@ from core.services.course_instructor_assignment import (
 )
 from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_board_persistence import locked_physical_section_ids
+from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import (
     get_course_meeting_policy,
     meeting_options_for_policy,
@@ -95,7 +96,11 @@ from core.services.timetable_demand import (
     compute_course_students_index,
     load_scenario_course_demands,
 )
-from core.services.timetable_flags import is_one_teacher_active
+from core.services.timetable_flags import (
+    get_section_day_spread_weight,
+    is_one_teacher_active,
+    is_section_day_spread_enabled,
+)
 from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
@@ -636,6 +641,48 @@ def _same_course_back_to_back_penalty(
         _option_same_course_windows(option, my_code),
         _placed_same_course_windows(placed_schedule, my_code),
     )
+
+
+_WEEKDAY_INDEX = {day: index for index, day in enumerate(WEEKDAYS)}
+
+
+def _section_day_spread_penalty(option: list[dict], weight: int) -> int:
+    """Soft cost of a section's own meetings sitting on consecutive weekdays.
+
+    Owner wish 2026-10-25 (``TIMETABLE_SECTION_DAY_SPREAD``). It joins the soft-cost
+    bucket, below every hard, same-course and overlap term. THU->SUN does not wrap.
+    ``weight`` 0 is the flag-off state and costs nothing.
+
+    - 2 meetings: ``weight`` when the two days are adjacent, else 0.
+    - 3 meetings: ``weight`` per adjacent pair, plus ``weight`` more when BOTH
+      neighbours are adjacent (all three in a row), so SUN+MON+TUE costs
+      ``3 * weight``, SUN+MON+WED (two and one) costs ``weight`` and SUN+TUE+THU
+      (fully spread) costs 0. The owner accepts "two and one", at a penalty.
+    - 1 meeting, or 4+ meetings (four in five days cannot avoid adjacency): 0.
+    """
+    if not weight or len(option) not in (2, 3):
+        return 0
+    indices = []
+    for meeting in option:
+        index = _WEEKDAY_INDEX.get(meeting["day"])
+        if index is None:
+            return 0
+        indices.append(index)
+    indices.sort()
+    pairs = sum(1 for a, b in zip(indices, indices[1:], strict=False) if b - a == 1)
+    return weight * pairs + (weight if pairs == 2 else 0)
+
+
+# Rank added to the FIRST score element of a three-meeting option that sits on three
+# consecutive weekdays, under ``TIMETABLE_SECTION_DAY_SPREAD``. It is a guard like the
+# teacher guard (1e9), only smaller: such an option is chosen when NO other option
+# exists, so the rule can never leave a section unplaced.
+DAY_RUN_GUARD_RANK = 10**6
+
+
+def _option_is_day_run(option: list[dict]) -> bool:
+    """True iff a three-meeting option sits on three consecutive weekdays."""
+    return len(option) == 3 and days_form_day_run(meeting["day"] for meeting in option)
 
 
 def _score_option(
@@ -1389,6 +1436,10 @@ def auto_place_board(
     # so output is byte-identical to before.
     daily_cap_on = instructor_clash_on and is_instructor_daily_cap_enabled()
     daily_cap = get_instructor_daily_cap()
+    # Soft preference for spacing a two- or three-meeting section's days. 0 with the flag
+    # OFF, which makes the penalty below 0 for every option (byte-identical).
+    day_spread_on = is_section_day_spread_enabled()
+    day_spread_weight = get_section_day_spread_weight() if day_spread_on else 0
     # One teacher per section: keeps the free-option rule while this board is
     # placed (``PlacerGuard``). None with the flag off, so nothing changes.
     teacher_guard = None
@@ -1932,6 +1983,13 @@ def auto_place_board(
                     code,
                 )
 
+                # Two- and three-meeting day spacing (flag-gated): in the soft
+                # bucket, so it never outranks a clash, an overlap or a roomless
+                # meeting. The ENG intensive policy fixes its own days and is exempt.
+                day_spread_penalty = (
+                    0 if meeting_policy else _section_day_spread_penalty(option, day_spread_weight)
+                )
+
                 # raw_score[5] = student_overlap_penalty (sum of shared counts
                 # for overlapping course pairs).  Placed in its own score
                 # position between same_course_overlap and gap, so it
@@ -1958,6 +2016,10 @@ def auto_place_board(
                 guard_rank = (
                     teacher_guard.RANK if guard_check is not None and guard_check(option) else 0
                 )
+                # Three meetings on three consecutive days: a guard, not a cost
+                # (flag-gated; the ENG intensive policy fixes its own days).
+                if day_spread_on and not meeting_policy and _option_is_day_run(option):
+                    guard_rank += DAY_RUN_GUARD_RANK
                 score = (
                     raw_score[0] + guard_rank,
                     raw_score[1],
@@ -1967,7 +2029,8 @@ def auto_place_board(
                     + time_var_penalty
                     + room_penalty
                     + density_penalty
-                    + instructor_gap_penalty * gap_weight,
+                    + instructor_gap_penalty * gap_weight
+                    + day_spread_penalty,
                     raw_score[3],
                     raw_score[4],
                 )

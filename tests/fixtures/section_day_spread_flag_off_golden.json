@@ -1,0 +1,11510 @@
+{
+ "cpsat:solve_board": {
+  "constraints": 307344,
+  "objective_sha256": "579f1d426cf148a695bb0dd7b66e8c3b18748bbe7f4bfca54d75d5b495602563",
+  "objective_terms": 98269,
+  "variables": 100077
+ },
+ "cpsat:solve_board_with_hints": {
+  "constraints": 307344,
+  "objective_sha256": "579f1d426cf148a695bb0dd7b66e8c3b18748bbe7f4bfca54d75d5b495602563",
+  "objective_terms": 98269,
+  "variables": 100077
+ },
+ "greedy:compact|11": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "TUE",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "TUE",
+    "10:50",
+    "12:05",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:compact|29": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "MON",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "MON",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "MON",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "MON",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:compact|3": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:compact|unseeded": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:load_balanced|11": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 23
+ },
+ "greedy:load_balanced|29": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:00",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:00",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "MON",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ]
+  ],
+  "total_placed": 23
+ },
+ "greedy:load_balanced|3": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "10:50",
+    "12:05",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:50",
+    "12:05",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:50",
+    "12:05",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ]
+  ],
+  "total_placed": 23
+ },
+ "greedy:load_balanced|unseeded": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:45",
+    "16:00",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "13:00",
+    "14:40",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:45",
+    "16:00",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "13:00",
+    "14:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ]
+  ],
+  "total_placed": 23
+ },
+ "greedy:morning|11": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "WED",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "WED",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "WED",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:morning|29": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "WED",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:morning|3": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "WED",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "SUN",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "TUE",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "THU",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "THU",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ]
+  ],
+  "total_placed": 22
+ },
+ "greedy:morning|unseeded": {
+  "first_placed": 23,
+  "meetings": [
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:40",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:45",
+    "12:25",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Ghada"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:25",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:30",
+    "18:10",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Badr"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "",
+    "Dr Amal"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Iman"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Dana"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "",
+    "Dr Eyad"
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "",
+    ""
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "",
+    "Dr Hani"
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ],
+   [
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "",
+    ""
+   ]
+  ],
+  "placements": [
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S1",
+    "WED",
+    "09:00",
+    "10:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S2",
+    "WED",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "AI124::INTRO_TO_AI",
+    "S3",
+    "WED",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S4",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 2",
+    "CS112::PROGRAMMING_I",
+    "S5",
+    "TUE",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "MON",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S1",
+    "THU",
+    "09:00",
+    "10:15",
+    "L1",
+    true
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "MON",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S2",
+    "THU",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "MON",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S3",
+    "THU",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S4",
+    "THU",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "MON",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "CS114::ALGORITHMS__DATA_STRUCTURES",
+    "S5",
+    "THU",
+    "16:00",
+    "17:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S1",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "SUN",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 2",
+    "MATH203::CALCULUS_II",
+    "S2",
+    "TUE",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "THU",
+    "09:00",
+    "10:40",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S1",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "THU",
+    "10:45",
+    "12:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S2",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "SUN",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "THU",
+    "14:45",
+    "16:25",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S3",
+    "TUE",
+    "13:00",
+    "14:15",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "MON",
+    "14:30",
+    "15:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "THU",
+    "16:30",
+    "18:10",
+    "LAB1",
+    false
+   ],
+   [
+    "Term 4",
+    "AI201::MACHINE_LEARNING",
+    "S4",
+    "WED",
+    "14:30",
+    "15:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "MON",
+    "10:30",
+    "11:45",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S1",
+    "WED",
+    "10:30",
+    "11:45",
+    "L1",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "MON",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "CS112::PROGRAMMING_II",
+    "S2",
+    "WED",
+    "09:00",
+    "10:15",
+    "L2",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "SUN",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S1",
+    "TUE",
+    "10:30",
+    "11:45",
+    "L3",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "SUN",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ],
+   [
+    "Term 4",
+    "DS210::DATA_VISUALISATION",
+    "S2",
+    "TUE",
+    "09:00",
+    "10:15",
+    "L4",
+    false
+   ]
+  ],
+  "total_placed": 22
+ }
+}

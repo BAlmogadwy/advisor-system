@@ -53,7 +53,9 @@ from core.services.timetable_board_persistence import (
     external_shared_section_ids,
     locked_physical_section_ids,
 )
+from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
@@ -127,6 +129,40 @@ def _display_code(section: TermSection) -> str:
 def _offering_key(section: TermSection) -> str:
     """Stable offering identity for occupancy; split code prefixes are not IDs."""
     return section.course_key or _display_code(section)
+
+
+def _move_makes_day_run(p, day2: str, section_days: dict[int, set[str]]) -> bool:
+    """True iff moving ``p`` to ``day2`` leaves its section newly on three
+    consecutive weekdays (``TIMETABLE_SECTION_DAY_SPREAD``; callers read the flag).
+
+    ``section_days`` holds each section's distinct days; the callers never offer a
+    day the section already uses, so three distinct days mean exactly three
+    meetings. A run the section already had does not count; a meeting-policy
+    course fixes its own days and is exempt.
+    """
+    current = (p.day or "").upper()
+    days = section_days.get(p.term_section_id, set())
+    if current not in days or get_course_meeting_policy(_display_code(p.term_section)):
+        return False
+    return not days_form_day_run(days) and days_form_day_run((days - {current}) | {day2})
+
+
+def _prefer_no_day_run(candidates, makes_run, enabled: bool):
+    """Yield the candidates that create no day run; only when there are none, the
+    ones that do.
+
+    These repairs fix HARD violations (an instructor over the cap or double-booked),
+    so the day-run rule must never be the reason a session is left unrepaired or
+    unplaced. With the flag off it is the identity (same order, still lazy).
+    """
+    if not enabled:
+        yield from candidates
+        return
+    free: list = []
+    forced: list = []
+    for candidate in candidates:
+        (forced if makes_run(candidate) else free).append(candidate)
+    yield from free or forced
 
 
 def _physical_groups(rows):
@@ -244,6 +280,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     )
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
+    day_spread_on = is_section_day_spread_enabled()
     cap = get_instructor_daily_cap()
     course_tiers = (
         build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
@@ -397,7 +434,11 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 # Mon/Wed. Among relocations we still choose the least-student-harm
                 # slot (and short-circuit on the first zero-harm one).
                 best = None  # (score, kind, day2, s2, e2)
-                for day2, s2, e2 in _candidate_slots(p, iid_set):
+                for day2, s2, e2 in _prefer_no_day_run(
+                    _candidate_slots(p, iid_set),
+                    lambda c, p=p: _move_makes_day_run(p, c[0], section_days),
+                    day_spread_on,
+                ):
                     if orig_meeting is not None:
                         s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
                         sc = _score()
@@ -543,6 +584,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         scenario_id, repair_clashes=True
     )
     scenario = TimetableScenario.objects.get(id=scenario_id)
+    day_spread_on = is_section_day_spread_enabled()
     cap_map = build_section_instructor_map_for_scenario(scenario_id)
     cap_on = is_instructor_daily_cap_enabled()
     cap = get_instructor_daily_cap() if cap_on else 10**9
@@ -807,6 +849,19 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                         for iid in _instr_ids(placement)
                     ):
                         return None
+                if day_spread_on:
+                    # The coordinated search is optional: never create a day run
+                    # (the single-move fallback below keeps the hard repair).
+                    for placement, *_slot in changes:
+                        tsid = placement.term_section_id
+                        if (
+                            not get_course_meeting_policy(_display_code(placement.term_section))
+                            and not days_form_day_run(section_days.get(tsid, ()))
+                            and days_form_day_run(
+                                [q.day.upper() for q in placements if q.term_section_id == tsid]
+                            )
+                        ):
+                            return None
                 teachers = instructor_schedule_metrics(states, cap_map)
                 if instructor_schedule_regressions(
                     teacher_baseline, teachers
@@ -974,7 +1029,15 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
             if safe is not None:
                 score, choices = safe
                 best = (score, *choices[0][1:])
-            for day2, s2, e2 in () if safe is not None else _candidates(p, iid_set):
+            for day2, s2, e2 in (
+                ()
+                if safe is not None
+                else _prefer_no_day_run(
+                    _candidates(p, iid_set),
+                    lambda c, p=p: _move_makes_day_run(p, c[0], section_days),
+                    day_spread_on,
+                )
+            ):
                 if orig is not None:
                     s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
                     sc = _score()

@@ -46,7 +46,9 @@ from django.db import transaction
 from core.services.course_identity import course_display_code
 from core.services.timetable_assignment_models import RiskTier, SectionMeeting
 from core.services.timetable_board_persistence import external_shared_section_ids
+from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_optimisation_policy import (
     MAX_WORKING_DAYS,
     current_day_off_policy,
@@ -129,6 +131,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     cfg = get_instructor_compaction_config()
     cap = get_instructor_daily_cap()
+    day_spread_on = is_section_day_spread_enabled()
     instructor_priority = is_instructor_priority_enabled()
     # Bounded student-gap-for-instructor-day trade. Only meaningful under the
     # instructor-first policy (days are a ranked quantity there); default OFF.
@@ -354,9 +357,21 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         slots = lab if dur > 75 else lec
         others = section_days[sid] - {meeting.day}
         course = code_of[sid]
+        # TIMETABLE_SECTION_DAY_SPREAD: compaction is optional, so it never makes
+        # a three-meeting section newly sit on three consecutive days (a run the
+        # section already had may stay).
+        current_days = [m.day for m in sbi[sid].meetings]
+        was_day_run = day_spread_on and days_form_day_run(current_days)
         for day2 in range(len(WEEKDAYS)):
             same_day = day2 == meeting.day
             if not same_day and day2 in others:
+                continue
+            if (
+                day_spread_on
+                and not same_day
+                and not was_day_run
+                and days_form_day_run([*current_days[:midx], day2, *current_days[midx + 1 :]])
+            ):
                 continue
             if not same_day and any(
                 sum(1 for (d, _s, _e) in instr_slots[iid] if d == day2) >= cap for iid in iids

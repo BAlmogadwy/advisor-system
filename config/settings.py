@@ -946,6 +946,37 @@ TIMETABLE_SECTION_PROGRAMME_PREFERENCE = os.getenv(
     "TIMETABLE_SECTION_PROGRAMME_PREFERENCE", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_SECTION_DAY_SPREAD: prefer a section's own meetings on non-consecutive
+# days (SUN+TUE / SUN+WED over SUN+MON) — owner wish 2026-10-25, extended the same
+# day to 3-meeting (4-credit) sections: "not on sequence days, or at least two and
+# one, but with a penalty". Sections with 1 or 4+ meetings, and ENG-intensive, are
+# untouched (four meetings in five days cannot avoid adjacency).
+# SOFT only. Greedy placer, with W = WEIGHT, in the option's soft-cost bucket (below
+# a roomless meeting's 100, below every clash / overlap term): 2 meetings cost W when
+# adjacent; 3 meetings cost W per adjacent pair plus W more when all three are in a
+# row, so SUN+TUE+THU = 0, SUN+MON+WED (two and one) = W, SUN+MON+TUE = 3W.
+# CP-SAT raises the per-pair consecutive-day coefficient from 5 to W for 2- and
+# 3-meeting sections: two and one = W, three in a row = 2W.
+# STRONGER RULE (owner 2026-10-25): a section with exactly 3 meetings must not sit on
+# three consecutive days (SUN-MON-TUE, MON-TUE-WED, TUE-WED-THU) at all. The greedy
+# placer treats it as a guard (chosen only when no other option exists, so a section is
+# never left unplaced); local search v2, chain search, simulated annealing, the load
+# balancer, the CP-SAT polisher, secondary recovery and instructor compaction reject a
+# move or pass that CREATES a new such section (one that already exists may stay); the
+# instructor cap / clash repairs prefer a run-free relocation and fall back to one that
+# makes a run only when nothing else repairs the hard violation; both CP-SAT builders
+# add a 1,000,000 penalty per three-day window (3 booleans + 3 linear constraints per
+# 3-meeting section). Independent of the weight.
+# It never touches manual moves or validation. Off, every engine is byte-identical.
+# Default OFF until the owner decides.
+TIMETABLE_SECTION_DAY_SPREAD = os.getenv("TIMETABLE_SECTION_DAY_SPREAD", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+TIMETABLE_SECTION_DAY_SPREAD_WEIGHT = int(os.getenv("TIMETABLE_SECTION_DAY_SPREAD_WEIGHT", "40"))
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised
