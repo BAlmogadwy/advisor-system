@@ -26,6 +26,7 @@ GAP_REGULAR_STUDENTS_ONLY_SETTING = "TIMETABLE_GAP_REGULAR_STUDENTS_ONLY"
 REQUIRED_SECTION_GUARANTEE_SETTING = "TIMETABLE_REQUIRED_SECTION_GUARANTEE_ENABLED"
 SECTION_DAY_SPREAD_SETTING = "TIMETABLE_SECTION_DAY_SPREAD"
 SECTION_DAY_SPREAD_WEIGHT_SETTING = "TIMETABLE_SECTION_DAY_SPREAD_WEIGHT"
+ONLINE_EVENING_WINDOWS_SETTING = "TIMETABLE_ONLINE_EVENING_WINDOWS"
 
 
 def is_stage_telemetry_enabled() -> bool:
@@ -153,6 +154,17 @@ def get_section_day_spread_weight() -> int:
     reward consecutive days.
     """
     return max(0, int(getattr(settings, SECTION_DAY_SPREAD_WEIGHT_SETTING, 40)))
+
+
+def is_online_evening_windows_enabled() -> bool:
+    """Online courses meet only in the online evening windows — default OFF.
+
+    Read only by ``timetable_online_windows.active_online_windows``, which the
+    automatic placers and movers call (never manual moves, validation, previews,
+    the readiness check or the evaluator). Off, it returns no window and every
+    engine is byte-identical.
+    """
+    return bool(getattr(settings, ONLINE_EVENING_WINDOWS_SETTING, False))
 
 
 def is_async_planner_enabled() -> bool:

@@ -106,6 +106,10 @@ from core.services.timetable_lab_predicate import (
     meeting_requires_lab_room,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_online_windows import (
+    active_online_windows,
+    online_window_meeting_options,
+)
 from core.services.timetable_pr4_instructor import (
     build_section_instructor_ids,
     get_instructor_daily_cap,
@@ -148,6 +152,7 @@ from core.services.timetable_stage_telemetry import (
 from core.services.timetable_validation import (
     LOCK_RESPECT,
     RejectionReason,
+    blocked_slot_keys,
     is_lock_enforcement_enabled,
 )
 from core.services.timetable_warm_start import (
@@ -284,7 +289,9 @@ DEFAULT_LAB_SLOTS = [
     # They are columns so an online class placed in one can be drawn, and
     # `online_only` keeps them out of every automatic placer's options -- nothing
     # in the estate is open in the evening, so a room-consuming class must never
-    # be put here.
+    # be put here. With TIMETABLE_ONLINE_EVENING_WINDOWS on (owner, 2026-10-26),
+    # an ONLINE section's options are these windows and nothing else
+    # (`timetable_online_windows`); every other section still never gets them.
     {"label": "Online 1", "start": "15:50", "end": "17:30", "online_only": True},
     {"label": "Online 2", "start": "17:40", "end": "19:20", "online_only": True},
     {"label": "Online 3", "start": "19:30", "end": "21:10", "online_only": True},
@@ -306,7 +313,10 @@ def placeable_slots(slots: list[dict] | None) -> list[dict]:
     Every automatic path must go through this — the option generator, the
     CP-SAT polisher, and the availability grid all read the same declared list.
     Manual placement deliberately does not: a human choosing an online-only
-    window for an online course is making a decision, not an error.
+    window for an online course is making a decision, not an error. With
+    ``TIMETABLE_ONLINE_EVENING_WINDOWS`` on, the automatic placers give a section
+    that is online for its board the windows instead of this list
+    (:mod:`core.services.timetable_online_windows`), never alongside it.
     """
     return [s for s in (slots or []) if not s.get("online_only") and not s.get("policy_only")]
 
@@ -697,6 +707,7 @@ def _score_option(
     online_codes_in_group: set[str] | None = None,
     overlap_matrix: dict | None = None,
     slot_density: dict[str, int] | None = None,
+    late_nudge: bool = True,
 ) -> tuple[int, int, int, int, int, int]:
     """Score a candidate meeting option.  **Lower is better.**
 
@@ -752,6 +763,11 @@ def _score_option(
     online_codes_in_group : set[str] | None
         Course codes flagged as online within the current group (reserved
         for future per-entry gap filtering).
+    late_nudge : bool
+        Whether an online course's options are pushed toward later slots
+        (``instructor_spread``). False when its options are the online evening
+        windows (``TIMETABLE_ONLINE_EVENING_WINDOWS``): they are all after
+        campus hours, so the nudge would only make Online 3 win every tie.
 
     Returns
     -------
@@ -888,8 +904,9 @@ def _score_option(
     }
     instructor_spread = 0
     if is_online:
-        for m in option:
-            instructor_spread += 10 - m["slot_idx"]
+        if late_nudge:
+            for m in option:
+                instructor_spread += 10 - m["slot_idx"]
     else:
         for m in option:
             instructor_spread += _SLOT_PENALTY_BY_START.get(m["start"], 8)
@@ -1200,6 +1217,18 @@ def auto_place_board(
     room_tracker = RoomTracker(room_list) if room_list else None
     online_lookup = OnlineCourseLookup()
     online_codes: set[str] = online_lookup.codes_for_board(board)
+    # TIMETABLE_ONLINE_EVENING_WINDOWS: the windows an online section of this board
+    # is offered instead of the day grid ([] with the flag off, or when this board
+    # has no online course, or when the scenario's columns have no drawable window).
+    online_windows = (
+        active_online_windows(
+            scenario.slot_config,
+            scenario.lab_slot_config,
+            warn_for=f"board {board.label!r} of scenario {scenario.id}",
+        )
+        if online_codes
+        else []
+    )
     # Board-wide gender derived from linked students (homogeneous in
     # practice). Restricts the room pool to matching-section rooms.
     board_gender = get_board_gender(board_id)
@@ -1637,8 +1666,16 @@ def auto_place_board(
         if to_place == 0:
             continue
         blocked = scenario.blocked_slots if scenario.blocked_slots else []
-        all_options = generate_course_meeting_options(
-            display_code, credit_hours, slot_config, lab_slot_config, blocked, course_key=code
+        is_online_course = normalise_course_code(display_code) in online_codes
+        # An online section meets only in the online windows (flag-gated); a
+        # course meeting policy keeps its own bundles (no online course has one).
+        in_windows = bool(online_windows) and is_online_course and policy is None
+        all_options = (
+            online_window_meeting_options(len(pattern), online_windows, blocked_slot_keys(blocked))
+            if in_windows
+            else generate_course_meeting_options(
+                display_code, credit_hours, slot_config, lab_slot_config, blocked, course_key=code
+            )
         )
         if not all_options:
             total_skipped += to_place
@@ -1656,7 +1693,8 @@ def auto_place_board(
                 "to_place": to_place,
                 "all_options": all_options,
                 "students": course_students.get(code, set()),
-                "is_online": normalise_course_code(display_code) in online_codes,
+                "is_online": is_online_course,
+                "online_windows": in_windows,
             }
         )
 
@@ -1937,6 +1975,7 @@ def auto_place_board(
                     is_online=is_online,
                     overlap_matrix=overlap_matrix,
                     slot_density=slot_density,
+                    late_nudge=not cd.get("online_windows", False),
                 )
                 if meeting_policy:
                     raw_score = (raw_score[0], 0, *raw_score[2:])

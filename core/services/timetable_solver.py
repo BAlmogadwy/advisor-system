@@ -55,6 +55,7 @@ from core.services.timetable_online import (
     normalise_course_code,
     programmes_for_board,
 )
+from core.services.timetable_online_windows import active_online_windows, online_window_cells
 from core.services.timetable_run_seed import seed_for
 from core.services.timetable_same_course import (
     SAME_COURSE_DIFFERENT_DAY_PENALTY,
@@ -157,7 +158,36 @@ def _to_min(t: str) -> int:
 MIDDAY_BOUNDARY = 13 * 60
 
 
+def _online_window_options(scenario, online_codes, blocked_set) -> tuple:
+    """The CP-SAT option tuples of the online evening windows for this board.
+
+    ``(day_idx, window_idx, day, start, end, mask, start_min)`` per weekday x
+    window cell that is not blocked, like the ordinary grids' tuples. Empty with
+    ``TIMETABLE_ONLINE_EVENING_WINDOWS`` off, when the board has no online
+    course, or when the scenario's columns have no drawable window.
+    """
+    if not online_codes:
+        return ()
+    windows = active_online_windows(scenario.slot_config, scenario.lab_slot_config)
+    return tuple(
+        (
+            WEEKDAYS.index(cell["day"]),
+            cell["slot_idx"],
+            cell["day"],
+            cell["start"],
+            cell["end"],
+            _time_mask(cell["day"], cell["start"], cell["end"]),
+            _to_min(cell["start"]),
+        )
+        for cell in online_window_cells(windows, blocked_set)
+    )
+
+
 def _scoped_meeting_options(section, meeting_index, ordinary_options):
+    if section.get("online_windows"):
+        # TIMETABLE_ONLINE_EVENING_WINDOWS: an online section meets only in the
+        # online windows, whatever its meetings' lengths.
+        return list(section["online_windows"])
     if section.get("meeting_policy") is None:
         return ordinary_options
     return [
@@ -442,6 +472,11 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     def get_options(duration: int):
         return slots_75 if duration <= 75 else slots_lab
 
+    # TIMETABLE_ONLINE_EVENING_WINDOWS: an online section's only options ([] with
+    # the flag off or without an online course; a scenario without a drawable
+    # window keeps today's options).
+    window_opts = _online_window_options(scenario, online_codes, blocked_set)
+
     # Build sections to place
     sections = []
     for budget in budgets:
@@ -478,6 +513,13 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                     "meeting_policy": policy,
                     "bundles": bundles,
                     "is_online": normalise_course_code(display_code) in online_codes,
+                    "online_windows": (
+                        window_opts
+                        if window_opts
+                        and policy is None
+                        and normalise_course_code(display_code) in online_codes
+                        else None
+                    ),
                     "capacity": budget.max_per_section,
                 }
             )
@@ -691,9 +733,11 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
                                 penalties.append(both * gap * w)
 
-    # (2) Online courses: prefer late slots
+    # (2) Online courses: prefer late slots (not when their options are the
+    # evening windows: all are after campus hours, the nudge would only make the
+    # last window win every tie)
     for i, sec in enumerate(sections):
-        if not sec["is_online"]:
+        if not sec["is_online"] or sec.get("online_windows"):
             continue
         for m_idx in range(len(sec["pattern"])):
             options = sec_options[i][m_idx]
@@ -1033,6 +1077,11 @@ def solve_board_with_hints(
     def get_options(duration: int):
         return slots_75 if duration <= 75 else slots_lab
 
+    # TIMETABLE_ONLINE_EVENING_WINDOWS: an online section's only options ([] with
+    # the flag off or without an online course; a scenario without a drawable
+    # window keeps today's options).
+    window_opts = _online_window_options(scenario, online_codes, blocked_set)
+
     sections = []
     for budget in budgets:
         code = budget.course_key or budget.course_code
@@ -1068,6 +1117,13 @@ def solve_board_with_hints(
                     "meeting_policy": policy,
                     "bundles": bundles,
                     "is_online": normalise_course_code(display_code) in online_codes,
+                    "online_windows": (
+                        window_opts
+                        if window_opts
+                        and policy is None
+                        and normalise_course_code(display_code) in online_codes
+                        else None
+                    ),
                     "capacity": budget.max_per_section,
                 }
             )
@@ -1240,7 +1296,7 @@ def solve_board_with_hints(
                                 penalties.append(both * gap * w)
 
     for i, sec in enumerate(sections):
-        if not sec["is_online"]:
+        if not sec["is_online"] or sec.get("online_windows"):
             continue
         for m_idx in range(len(sec["pattern"])):
             for o_idx, opt in enumerate(sec_options[i][m_idx]):
