@@ -977,6 +977,26 @@ TIMETABLE_SECTION_DAY_SPREAD = os.getenv("TIMETABLE_SECTION_DAY_SPREAD", "false"
 )
 TIMETABLE_SECTION_DAY_SPREAD_WEIGHT = int(os.getenv("TIMETABLE_SECTION_DAY_SPREAD_WEIGHT", "40"))
 
+# TIMETABLE_ONLINE_EVENING_WINDOWS: online courses meet ONLY in the scenario's online
+# evening windows (owner, 2026-10-26; the defaults are Online 1 15:50-17:30, Online 2
+# 17:40-19:20 and Online 3 19:30-21:10). When ON, every AUTOMATIC placer or mover that
+# chooses a time for a section online for its board (the greedy placer, both CP-SAT
+# builders, simulated annealing, the load balancer and the instructor cap / clash
+# repairs, plus the one-teacher guard that mirrors the placer) offers its meetings the
+# windows, on any weekday, and nothing else. A meeting in a window takes the window's
+# own start and end, so the grid draws it there. Sections that are not online never
+# get a window. The windows are the scenario's drawable ``online_only`` columns
+# (``timetable_online_windows.active_online_windows``); a scenario whose columns have
+# none keeps today's candidates. Locks (time only) and externally owned sections are
+# unchanged; manual moves, validation, previews, the readiness check and the
+# evaluator never read it. Online meetings still need no room and are still out of
+# the gap metrics (TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED, default on: with it off,
+# evening online meetings would inflate the evaluator's student gaps).
+# Off, every engine is byte-identical. Default OFF until the owner turns it on.
+TIMETABLE_ONLINE_EVENING_WINDOWS = os.getenv(
+    "TIMETABLE_ONLINE_EVENING_WINDOWS", "false"
+).lower() in ("1", "true", "yes", "on")
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised

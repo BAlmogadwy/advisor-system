@@ -1683,6 +1683,9 @@ _RAW_SLOT_READERS_ALLOWED = {
     "group_availability.py",  # already filters at its one call site
     "timetable_cpsat_polisher.py",  # already filters
     "timetable_slot_config.py",  # the effective columns: draws, edits, checks; never places
+    # Keeps ONLY the drawable online_only windows, which only ONLINE sections are
+    # offered (TIMETABLE_ONLINE_EVENING_WINDOWS); no room-consuming class reaches them.
+    "timetable_online_windows.py",
 }
 
 

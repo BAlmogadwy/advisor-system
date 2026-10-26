@@ -57,6 +57,7 @@ from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_online import OnlineCourseLookup
+from core.services.timetable_online_windows import active_online_windows
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
@@ -101,10 +102,14 @@ def _repair_slot_domain(
     )
     if online:
         # Remote repair never falls back to a campus grid. It needs explicit
-        # online windows configured by the owner.
+        # online windows configured by the owner -- or, with
+        # TIMETABLE_ONLINE_EVENING_WINDOWS on, the scenario's drawable online
+        # windows (the defaults' Online 1-3 when its columns are the defaults).
         lecture = cast(list[dict[str, Any]], scenario.slot_config) or []
         lab = cast(list[dict[str, Any]], scenario.lab_slot_config) or []
-        slots = [slot for slot in [*lecture, *lab] if slot.get("online_only")]
+        slots = active_online_windows(scenario.slot_config, scenario.lab_slot_config) or [
+            slot for slot in [*lecture, *lab] if slot.get("online_only")
+        ]
     else:
         slots = (
             placeable_slots(

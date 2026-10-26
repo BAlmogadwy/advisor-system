@@ -395,6 +395,10 @@ class _Static:
     grids: tuple[list, list, list] = ([], [], [])
     resolved: dict[tuple[str, str], tuple[int, ...]] = field(default_factory=dict)
     placer_options: dict[str, tuple] = field(default_factory=dict)
+    # nominal term -> the programme list of each board placed at that term (the
+    # boards a budget of that term is built on); read on first need, only with
+    # TIMETABLE_ONLINE_EVENING_WINDOWS on.
+    board_programmes: dict[int, list[list[str]]] | None = None
 
     def eligible(self, course_key: str, display_code: str) -> tuple[int, ...]:
         cache_key = (course_key, display_code)
@@ -405,7 +409,12 @@ class _Static:
     def options(self, course_key: str, budget) -> tuple:
         """The weekly options ``auto_place_board`` tries for a missing section
         of ``course_key`` — the same generator, display code, credit hours and
-        the scenario's own grids — as distinct ``(day, start, end)`` meetings."""
+        the scenario's own grids — as distinct ``(day, start, end)`` meetings.
+
+        With ``TIMETABLE_ONLINE_EVENING_WINDOWS`` on, a course online on every
+        board of its term gets the online-window options the placer gives it; a
+        course online on some of those boards only gets both sets (the guard
+        only ranks options, so the superset never hides a real one)."""
         if course_key not in self.placer_options:
             from core.services.timetable_autoplace import (
                 DEFAULT_LAB_SLOTS,
@@ -415,15 +424,23 @@ class _Static:
             )
 
             slot_config, lab_slot_config, blocked = self.grids
+            online_everywhere, window_options = self._online_window_options(
+                budget, slot_config, lab_slot_config, blocked
+            )
+            daytime = (
+                []
+                if online_everywhere
+                else generate_course_meeting_options(
+                    budget.course_code,
+                    budget.credit_hours or 3,
+                    slot_config or DEFAULT_SLOTS,
+                    lab_slot_config or DEFAULT_LAB_SLOTS,
+                    blocked or [],
+                    course_key=course_key,
+                )
+            )
             found: set[tuple[tuple[int, int, int], ...]] = set()
-            for option in generate_course_meeting_options(
-                budget.course_code,
-                budget.credit_hours or 3,
-                slot_config or DEFAULT_SLOTS,
-                lab_slot_config or DEFAULT_LAB_SLOTS,
-                blocked or [],
-                course_key=course_key,
-            ):
+            for option in [*daytime, *window_options]:
                 cells = set()
                 for meeting in option:
                     day = str(meeting.get("day", "")).upper()
@@ -437,6 +454,52 @@ class _Static:
                         found.add(tuple(sorted(cells)))
             self.placer_options[course_key] = tuple(sorted(found))
         return self.placer_options[course_key]
+
+    def _online_window_options(
+        self, budget, slot_config: list, lab_slot_config: list, blocked: list
+    ) -> tuple[bool, list[list[dict]]]:
+        """``(online on every board of its term, window options)`` for the
+        budget's course; ``(False, [])`` when it is online on none of them, with
+        the flag off, or without a drawable window."""
+        from core.services.timetable_autoplace import get_meeting_pattern
+        from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+        from core.services.timetable_online_windows import (
+            active_online_windows,
+            online_window_meeting_options,
+        )
+        from core.services.timetable_validation import blocked_slot_keys
+
+        windows = active_online_windows(slot_config, lab_slot_config)
+        if not windows:
+            return False, []
+        if self.board_programmes is None:
+            from core.models import DeliveryBoard
+            from core.services.timetable_online import programmes_for_board
+
+            self.board_programmes = {}
+            for board in DeliveryBoard.objects.filter(scenario_id=self.scenario_id).order_by(
+                "display_order", "pk"
+            ):
+                if board.nominal_term is not None:
+                    self.board_programmes.setdefault(board.nominal_term, []).append(
+                        programmes_for_board(board)
+                    )
+        lookup = OnlineCourseLookup()
+        code = normalise_course_code(budget.course_code)
+        online = [
+            code in lookup.codes_for_programmes(programmes)
+            for programmes in self.board_programmes.get(budget.programme_term, [])
+        ]
+        if not any(online):
+            return False, []
+        return (
+            all(online),
+            online_window_meeting_options(
+                len(get_meeting_pattern(budget.credit_hours or 3)),
+                windows,
+                blocked_slot_keys(blocked),
+            ),
+        )
 
 
 def _minutes(value: object) -> int:

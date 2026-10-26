@@ -10,7 +10,9 @@ so the grid could show columns the scheduler does not use).
 
 A column may carry flags besides ``label``, ``start`` and ``end``:
 ``online_only`` (the evening windows only online GS/GSE use; no automatic
-placer may use them, see ``placeable_slots``) and ``policy_only`` (display
+placer may use them, see ``placeable_slots``, except for an online section when
+``TIMETABLE_ONLINE_EVENING_WINDOWS`` is on, see ``timetable_online_windows``)
+and ``policy_only`` (display
 columns for course-scoped bundles). Losing a flag is a data defect: an
 ``online_only`` window that loses it becomes a place where an engine may book
 a room at 18:30. So a save carries each flag over from the column it replaces

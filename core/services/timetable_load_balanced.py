@@ -63,6 +63,10 @@ from core.services.timetable_local_search import (
     _undo_move,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_online_windows import (
+    active_online_windows,
+    online_window_relocate_domain,
+)
 from core.services.timetable_optimisation_policy import (
     instructor_schedule_regressions,
     is_instructor_priority_enabled,
@@ -301,6 +305,13 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     # Blocked cells are excluded from the move domain (always on); locked
     # sections are never chosen as a move target (flag-gated).
     blocked_set = blocked_slot_keys(board.scenario.blocked_slots)
+    # TIMETABLE_ONLINE_EVENING_WINDOWS: an online section's meetings move only
+    # between the online windows ([] with the flag off or no online course).
+    online_windows = (
+        active_online_windows(board.scenario.slot_config, board.scenario.lab_slot_config)
+        if online_codes
+        else []
+    )
     locked_idx: set[int] = (
         {i for i, sec in enumerate(sections) if sec.get("is_locked")}
         if is_lock_enforcement_enabled()
@@ -326,6 +337,11 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
             )
             continue
         for m_idx, m in enumerate(meetings):
+            if online_windows and sections[i]["is_online"]:
+                valid_opts[(i, m_idx)] = online_window_relocate_domain(
+                    online_windows, blocked_set, m["start"], m["end"]
+                )
+                continue
             duration = _to_min(m["end"]) - _to_min(m["start"])
             opts = []
             for day in WEEKDAYS:

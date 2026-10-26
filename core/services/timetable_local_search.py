@@ -65,6 +65,10 @@ from core.services.timetable_course_policy import (
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_online_windows import (
+    active_online_windows,
+    online_window_relocate_domain,
+)
 from core.services.timetable_pr4_instructor import (
     build_section_instructor_ids,
     get_instructor_daily_cap,
@@ -670,6 +674,13 @@ def optimize_board(
     lab_slot_config = placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
 
     online_codes = OnlineCourseLookup().codes_for_board(board)
+    # TIMETABLE_ONLINE_EVENING_WINDOWS: an online section's meetings move only
+    # between the online windows ([] with the flag off or no online course).
+    online_windows = (
+        active_online_windows(scenario.slot_config, scenario.lab_slot_config)
+        if online_codes
+        else []
+    )
 
     # Load current placements as the initial solution
     placements = list(
@@ -819,6 +830,11 @@ def optimize_board(
             continue
         sec_opts = []
         for m in meetings:
+            if online_windows and _sec["is_online"]:
+                sec_opts.append(
+                    online_window_relocate_domain(online_windows, blocked_set, m["start"], m["end"])
+                )
+                continue
             # Determine duration from current meeting
             duration = _to_min(m["end"]) - _to_min(m["start"])
             options = []
