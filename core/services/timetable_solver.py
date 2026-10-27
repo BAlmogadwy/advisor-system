@@ -38,6 +38,7 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     _board_seed_scope,
     _time_mask,
+    free_section_labels,
     get_meeting_pattern,
     placeable_slots,
 )
@@ -501,14 +502,14 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
             .count()
         )
         to_place = max(0, budget.planned_sections - already)
-        for sec_num in range(already + 1, already + to_place + 1):
+        for label in free_section_labels(board, code, to_place):
             sections.append(
                 {
                     "code": code,
                     "display_code": display_code,
                     "course_name": budget.course_name or display_code,
-                    "sec_num": sec_num,
-                    "label": f"S{sec_num}",
+                    "sec_num": int(label[1:]),
+                    "label": label,
                     "pattern": pattern,
                     "meeting_policy": policy,
                     "bundles": bundles,
@@ -1105,14 +1106,14 @@ def solve_board_with_hints(
             .count()
         )
         to_place = max(0, budget.planned_sections - already)
-        for sec_num in range(already + 1, already + to_place + 1):
+        for label in free_section_labels(board, code, to_place):
             sections.append(
                 {
                     "code": code,
                     "display_code": display_code,
                     "course_name": budget.course_name or display_code,
-                    "sec_num": sec_num,
-                    "label": f"S{sec_num}",
+                    "sec_num": int(label[1:]),
+                    "label": label,
                     "pattern": pattern,
                     "meeting_policy": policy,
                     "bundles": bundles,
