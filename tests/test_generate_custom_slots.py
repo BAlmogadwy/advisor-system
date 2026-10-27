@@ -8,7 +8,7 @@ the safety gate compares with the default-slot board (owner, 2026-10-27).
 from __future__ import annotations
 
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 
 import pytest
 from django.contrib.auth.models import Group, User
@@ -17,7 +17,7 @@ from django.test import Client
 from core.models import TimeSlotTemplate, TimetableScenario
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
 from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
-from core.services.timetable_generate import default_generate_slots
+from core.services.timetable_generate import default_generate_slots, generate_workspace_scenario
 
 MORNING = [
     {"label": "08:30-09:45", "start": "08:30", "end": "09:45"},
@@ -33,13 +33,14 @@ def generate(monkeypatch):
     http = Client()
     http.force_login(user)
     scenario = TimetableScenario.objects.create(academic_year="1448", term="2", programs=["AI"])
-    scaffold = Mock(
+    scaffold = create_autospec(
+        generate_workspace_scenario,
         return_value={
             "scenario": {"id": scenario.pk},
             "boards": [],
             "section_budget": [],
             "student_summary": {"classified": 1},
-        }
+        },
     )
     monkeypatch.setattr("core.timetable_workspace_views.generate_workspace_scenario", scaffold)
     monkeypatch.setattr(
@@ -60,20 +61,23 @@ def generate(monkeypatch):
 @pytest.mark.django_db
 def test_custom_columns_reach_the_new_draft_cleaned(generate):
     _, post, scaffold = generate
-    labs = [
-        {"label": "Lab A", "start": "08:30", "end": "10:10"},
-        {"label": "Online 1", "start": "15:50", "end": "17:30"},
+    windows = [
+        {"label": f"Online {n}", "start": start, "end": end}
+        for n, (start, end) in enumerate(
+            (("15:50", "17:30"), ("17:40", "19:20"), ("19:30", "21:10")), 1
+        )
     ]
+    labs = [{"label": "Lab A", "start": "08:30", "end": "10:10"}, *windows]
     assert post(slot_config=MORNING, lab_slot_config=labs).status_code == 201
     kwargs = scaffold.call_args.kwargs
     assert kwargs["slot_config"] == [
         {"label": "08:30-09:45", "start": "08:30", "end": "09:45"},
         {"label": "09:55-11:10", "start": "09:55", "end": "11:10"},
     ]
-    # Sent as a plain row, the evening window keeps its online-only rule.
+    # Sent as plain rows, the evening windows keep their online-only rule.
     assert kwargs["lab_slot_config"] == [
         {"label": "Lab A", "start": "08:30", "end": "10:10"},
-        {"label": "Online 1", "start": "15:50", "end": "17:30", "online_only": True},
+        *({**window, "online_only": True} for window in windows),
     ]
 
 
@@ -155,3 +159,120 @@ def test_the_scaffold_stores_the_chosen_columns_and_defaults_otherwise(monkeypat
     )
     scenario = TimetableScenario.objects.get(pk=plain["scenario"]["id"])
     assert scenario.slot_config == list(DEFAULT_SLOTS)
+
+
+def online_windows(**changes):
+    """The default lab columns as the dialog sends them (no flags), changed."""
+    rows = [
+        {"label": slot["label"], "start": slot["start"], "end": slot["end"]}
+        for slot in DEFAULT_LAB_SLOTS
+    ]
+    for label, value in changes.items():
+        index = next(i for i, row in enumerate(rows) if row["label"] == label.replace("_", " "))
+        if value is None:
+            rows.pop(index)
+        else:
+            rows[index] = {**rows[index], **value}
+    return rows
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "labs",
+    [
+        pytest.param(online_windows(Online_1={"end": "17:20"}), id="moved"),
+        pytest.param(online_windows(Online_2=None), id="left-out"),
+        pytest.param(online_windows(Online_3={"online_only": False}), id="set-false"),
+    ],
+)
+def test_a_custom_list_that_moves_or_drops_an_online_window_is_refused(generate, labs):
+    _, post, scaffold = generate
+    before = TimetableScenario.objects.count()
+    response = post(slot_config=MORNING, lab_slot_config=labs)
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "SLOT_FLAGS_DROPPED"
+    dropped = error["details"]["dropped_flags"]
+    assert len(dropped) == 1
+    assert dropped[0]["list"] == "lab_slot_config"
+    assert dropped[0]["flags"] == ["online_only"]
+    scaffold.assert_not_called()
+    assert TimetableScenario.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_the_online_windows_sent_unchanged_are_accepted(generate):
+    _, post, scaffold = generate
+    assert post(lab_slot_config=online_windows()).status_code == 201
+    stored = scaffold.call_args.kwargs["lab_slot_config"]
+    assert [slot for slot in stored if slot.get("online_only")] == [
+        slot for slot in DEFAULT_LAB_SLOTS if slot.get("online_only")
+    ]
+    assert "slot_config" not in scaffold.call_args.kwargs, (
+        "a lab-only custom keeps the default lectures"
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("lists", [{"slot_config": MORNING}, {"lab_slot_config": online_windows()}])
+def test_custom_columns_are_refused_for_the_scheduler_engine_before_any_scenario(generate, lists):
+    _, post, scaffold = generate
+    before = TimetableScenario.objects.count()
+    response = post(engine="scheduler", section="M", **lists)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "SLOTS_NEED_CLASSIC"
+    scaffold.assert_not_called()
+    assert TimetableScenario.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_the_scheduler_engine_still_generates_on_the_defaults(generate):
+    _, post, scaffold = generate
+    assert (
+        post(engine="scheduler", section="M", slot_config=[], lab_slot_config=None).status_code
+        == 201
+    )
+    assert "slot_config" not in scaffold.call_args.kwargs
+
+
+@pytest.mark.django_db
+def test_flags_are_carried_from_the_admin_default_template(generate):
+    _, post, scaffold = generate
+    TimeSlotTemplate.objects.create(
+        name="With policy",
+        slots=[
+            {"label": "08:30-09:45", "start": "08:30", "end": "09:45"},
+            {"label": "English", "start": "09:00", "end": "12:00", "policy_only": True},
+        ],
+        is_default=True,
+    )
+    plain = [
+        {"label": "08:30-09:45", "start": "08:30", "end": "09:45"},
+        {"label": "English", "start": "09:00", "end": "12:00"},
+    ]
+    assert post(slot_config=plain).status_code == 201
+    assert scaffold.call_args.kwargs["slot_config"][1] == {
+        "label": "English",
+        "start": "09:00",
+        "end": "12:00",
+        "policy_only": True,
+    }
+
+
+@pytest.mark.django_db
+def test_the_scaffold_takes_custom_labs_alone_and_the_template_lectures(monkeypatch):
+    monkeypatch.setattr("core.services.timetable_generate.get_student_ids", lambda **_kw: [])
+    monkeypatch.setattr(
+        "core.services.recommender_batch.batch_recommend_multi_program",
+        lambda student_ids, _year, _term: {},
+    )
+    TimeSlotTemplate.objects.create(name="Morning", slots=MORNING[:1], is_default=True)
+    labs = [{"label": "Lab A", "start": "08:30", "end": "10:10"}]
+    result = generate_workspace_scenario(
+        year=1448, semester=2, program="AI", run_autoplace=False, lab_slot_config=labs
+    )
+    scenario = TimetableScenario.objects.get(pk=result["scenario"]["id"])
+    assert scenario.lab_slot_config == labs
+    # No lectures chosen: the admin's default template, as the page shows it.
+    assert scenario.slot_config == MORNING[:1]
+    assert default_generate_slots()[0] == MORNING[:1]

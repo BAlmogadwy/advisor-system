@@ -8028,12 +8028,21 @@ test('GS5 a line Custom cannot read, or no lecture column, is refused in the dia
   h.d.getElementById('twGenSlotLectures').value = '08:30-09:45\t08:30\t09:45\nmorning';
   submitGenerate(h);
   await settle();
-  assert.equal(h.d.getElementById('twGenError').hidden, false);
-  assert.match(h.d.getElementById('twGenError').textContent, /not understood.*Lectures: line 2/);
+  // Said under the boxes, on the box it is about, which has the focus.
+  assert.equal(h.d.getElementById('twGenSlotError').hidden, false);
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /not understood.*Lectures: line 2/);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLectures'));
+  assert.equal(h.d.getElementById('twGenError').hidden, true);
   h.d.getElementById('twGenSlotLectures').value = '   ';
   submitGenerate(h);
   await settle();
-  assert.match(h.d.getElementById('twGenError').textContent, /at least one lecture column/);
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /at least one lecture column/);
+  // Editing the box takes the problem back.
+  h.d.getElementById('twGenSlotLectures').value = '08:30-09:45\t08:30\t09:45';
+  h.d.getElementById('twGenSlotLectures').dispatchEvent(new h.w.Event('input'));
+  assert.equal(h.d.getElementById('twGenSlotError').hidden, true);
+  assert.equal(h.d.getElementById('twGenSlotLectures').hasAttribute('aria-invalid'), false);
   assert.deepEqual(generatePosts(h), []);
 });
 
@@ -8047,9 +8056,111 @@ test('GS6 time slots the server refuses bring the dialog back, as it was left, w
   h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
   h.d.getElementById('twGenSlotLectures').value = 'A\t08:30\t09:45\nB\t10:00\t09:00';
   submitGenerate(h);
-  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenError').hidden);
-  assert.match(h.d.getElementById('twGenError').textContent, /Nothing was generated.*Lectures column 2: End: must be after the start/);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /Nothing was generated.*Lectures column 2: End: must be after the start/);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLectures'), 'the box it is about has the focus, the words beside it');
   assert.equal(h.d.getElementById('twGenSlotLectures').value, 'A\t08:30\t09:45\nB\t10:00\t09:00');
   assert.equal(h.notices.filter(n => n.type === 'error').length, 0, 'said in the dialog, not behind it');
   assert.equal(h.d.getElementById('twGenerate').disabled, false);
+});
+
+test('GS7 the new scheduler engine is not offered Custom: it builds on its own fixed grid, and the note says so', async t => {
+  const h = await harness(t);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  const custom = h.d.querySelector('input[name="twGenSlots"][value="custom"]');
+  custom.click();
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, false);
+  h.d.querySelector('input[name="twGenEngine"][value="scheduler"]').click();
+  assert.equal(custom.disabled, true);
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'default');
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
+  assert.equal(h.d.getElementById('twGenSlotsEngineNote').hidden, false);
+  h.d.querySelector('input[name="twGenEngine"][value="classic"]').click();
+  assert.equal(custom.disabled, false);
+  assert.equal(h.d.getElementById('twGenSlotsEngineNote').hidden, true);
+  assert.equal(h.w.generateDialogValues().slots, null, 'Default again: nothing to send');
+});
+
+test('GS8 an open scenario on the default columns starts Generate on Default: a stored copy of the defaults is not its own', async t => {
+  const h = await harness(t, undefined, {
+    slot_config: DEFAULT_COLUMNS.slot_config, lab_slot_config: DEFAULT_COLUMNS.lab_slot_config,
+    effective_slot_config: DEFAULT_COLUMNS.slot_config, effective_lab_slot_config: DEFAULT_COLUMNS.lab_slot_config,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'default');
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
+});
+
+test('GS9 Custom from an open scenario keeps its columns’ flags when sent unchanged', async t => {
+  const own = {
+    slot_config: [{ label: '08:30-09:45', start: '08:30', end: '09:45' }, { label: 'English', start: '09:00', end: '12:00', policy_only: true }],
+    lab_slot_config: [{ label: 'Lab 1', start: '08:30', end: '10:10' }, { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }],
+  };
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined,
+    { ...own, effective_slot_config: own.slot_config, effective_lab_slot_config: own.lab_slot_config });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'custom');
+  fillGenerate(h);
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  const body = generatePosts(h)[0];
+  assert.deepEqual(body.slot_config, own.slot_config);
+  assert.deepEqual(body.lab_slot_config, own.lab_slot_config);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS10 Custom reads Arabic-Indic digits as 0–9, as a slot save does', async t => {
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLectures').value = 'صباحي\t٠٨:٣٠\t٠٩:٤٥\n۰۹:۵۵  ۱۱:۱۰';
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  assert.deepEqual(generatePosts(h)[0].slot_config, [
+    { label: 'صباحي', start: '08:30', end: '09:45' },
+    { label: '09:55-11:10', start: '09:55', end: '11:10' },
+  ]);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS11 a moved online window brings the dialog back naming the window, on the lab box', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOT_FLAGS_DROPPED', message: 'The online windows must stay as they are', details: { dropped_flags: [{ list: 'lab_slot_config', label: 'Online 1', start: '15:50', end: '17:30', flags: ['online_only'] }] } } }
+    : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:20';
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /online windows must stay as they are: Online 1 \(.*15:50–17:30.*\)/);
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.d.getElementById('twGenSlotLectures').hasAttribute('aria-invalid'), false);
+  assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLabs'));
+});
+
+test('GS12 the server refusing custom columns for the new engine is said in the dialog’s own alert', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOTS_NEED_CLASSIC', message: 'x' } } : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenError').hidden);
+  assert.match(h.d.getElementById('twGenError').textContent, /own fixed grid: custom time slots need the current generator/);
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 0);
 });

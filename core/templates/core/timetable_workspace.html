@@ -328,18 +328,20 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
           <label class="ux-seg-item"><input type="radio" name="twGenSlots" value="custom">{% if LANGUAGE_CODE == 'ar' %}مخصصة{% else %}Custom{% endif %}</label>
         </div>
         <p class="ux-field-hint" id="twGenSlotsHint">{% if LANGUAGE_CODE == 'ar' %}أعمدة الجدول في المسودة الجديدة. يضع البناء الأول المحاضرات فيها فقط.{% else %}The new draft's grid columns. Its first build places classes only in these.{% endif %}</p>
+        <p class="ux-field-hint" id="twGenSlotsEngineNote" hidden>{% if LANGUAGE_CODE == 'ar' %}المحرك الجديد يبني على شبكته الثابتة، فتأخذ مسوداته الفترات الافتراضية. للفترات المخصصة اختر المولد الحالي.{% else %}The new scheduler engine builds on its own fixed grid, so its drafts get the default time slots. For custom ones, choose the current generator.{% endif %}</p>
         <div class="tw-gen-slots" id="twGenSlotEditor" hidden>
           <div class="ux-field-row">
             <div class="ux-field">
               <label class="fb-lbl" for="twGenSlotLectures">{% if LANGUAGE_CODE == 'ar' %}أعمدة المحاضرات{% else %}Lecture columns{% endif %}</label>
-              <textarea id="twGenSlotLectures" rows="7" dir="ltr" spellcheck="false" autocomplete="off" aria-describedby="twGenSlotFormat"></textarea>
+              <textarea id="twGenSlotLectures" rows="7" dir="ltr" spellcheck="false" autocomplete="off" aria-describedby="twGenSlotFormat twGenSlotError"></textarea>
             </div>
             <div class="ux-field">
               <label class="fb-lbl" for="twGenSlotLabs">{% if LANGUAGE_CODE == 'ar' %}أعمدة المعامل{% else %}Lab columns{% endif %}</label>
-              <textarea id="twGenSlotLabs" rows="7" dir="ltr" spellcheck="false" autocomplete="off" aria-describedby="twGenSlotFormat"></textarea>
+              <textarea id="twGenSlotLabs" rows="7" dir="ltr" spellcheck="false" autocomplete="off" aria-describedby="twGenSlotFormat twGenSlotError"></textarea>
             </div>
           </div>
           <p class="ux-field-hint" id="twGenSlotFormat">{% if LANGUAGE_CODE == 'ar' %}عمود في كل سطر: الاسم ثم البداية ثم النهاية، مثل <bdi dir="ltr">08:30-09:45&nbsp;&nbsp;08:30&nbsp;&nbsp;09:45</bdi>. تبقى نوافذ المساء للمقررات عن بُعد فقط. المحاضرة التي تبدأ بين 11:30 و12:59 تقع في وقت صلاة الظهر.{% else %}One column per line: name, start, end, e.g. <bdi dir="ltr">08:30-09:45&nbsp;&nbsp;08:30&nbsp;&nbsp;09:45</bdi>. The evening windows stay online-only. A lecture that starts between 11:30 and 12:59 falls in the midday prayer time.{% endif %}</p>
+          <p class="ux-field-error" id="twGenSlotError" role="alert" hidden></p>
         </div>
       </fieldset>
       <fieldset class="ux-field">
