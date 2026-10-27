@@ -10,13 +10,11 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}{% endblock %}
 
 {% block page_chips %}
-            <span class="ph-chip ph-chip-role">{{ role }}</span>
             <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → ج{% else %}Steps A → C{% endif %}</span>
             <span class="ph-chip ph-chip-gray d-none" id="plannerContextChip"></span>
 {% endblock %}
 
 {% block page_intro %}
-      <h2>{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}</h2>
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}بناء وتحسين جداول المقررات للطلاب باستخدام التخطيط القائم على القيود.{% else %}Build and optimize student course schedules with constraint-based planning.{% endif %}</div>
 {% endblock %}
 
@@ -53,8 +51,8 @@
           <!-- Input bar -->
           <div class="filter-bar fb-fit" style="margin-top:10px;margin-bottom:0;padding:10px 14px;flex-wrap:wrap">
             <div class="fb-search"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentId" class="fb-w-12ch" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
-            <div class="fb-search"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input class="fb-w-6ch" id="year" value="{{ default_year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}"></div>
-            <div class="fb-search"><input class="fb-w-6ch" id="term" value="{{ default_term }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}"></div>
+            <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}</span><input class="fb-w-6ch" id="year" value="{{ default_year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}"></div>
+            <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}</span><input class="fb-w-6ch" id="term" value="{{ default_term }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}"></div>
             <div class="fb-search"><select id="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التسجيل{% else %}Registration mode{% endif %}">
               <option value="keep">{% if LANGUAGE_CODE == 'ar' %}الإبقاء على المسجّل{% else %}Keep Registered{% endif %}</option>
               <option value="ignore">{% if LANGUAGE_CODE == 'ar' %}تجاهل المسجّل (تخطيط فقط){% else %}Ignore Registered (planning only){% endif %}</option>

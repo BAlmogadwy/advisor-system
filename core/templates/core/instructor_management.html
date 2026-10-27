@@ -12,12 +12,10 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}إدارة هيئة التدريس{% else %}Instructor Management{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-role">{{ role }}</span>
   <span class="ph-chip ph-chip-gray" id="imInstructorCount" aria-live="polite">—</span>
 {% endblock %}
 
 {% block page_intro %}
-  <h2>{% if LANGUAGE_CODE == 'ar' %}إدارة هيئة التدريس وتوزيع الأعباء{% else %}Faculty management and assignment{% endif %}</h2>
   <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}أسند المقررات إلى أعضاء هيئة التدريس، وحدّث بياناتهم، وراجع أعباءهم التدريسية.{% else %}Assign courses to instructors, keep their records up to date, and review their teaching load.{% endif %}</div>
 {% endblock %}
 

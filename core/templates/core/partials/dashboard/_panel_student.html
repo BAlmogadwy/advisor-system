@@ -1,14 +1,14 @@
     <div id="student" class="panel" role="region">
       <form method="get" action="/" class="filter-bar fb-fit sticky-cta mb-14">
         <div class="fb-search"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" class="fb-w-12ch" type="text" inputmode="numeric" pattern="[0-9]*" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
-        <div class="fb-search"><input class="fb-w-6ch" type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
-        <div class="fb-search"><input class="fb-w-9ch" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
+        <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</span><input class="fb-w-6ch" type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
+        <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</span><input class="fb-w-9ch" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
         <div class="fb-search"><select id="studentRecommendationMode" name="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="strict"{% if recommendation_mode == "strict" %} selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed"{% if recommendation_mode == "relaxed" %} selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
         <div class="fb-actions">
           <button class="btn btn-primary">
             <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}توصية{% else %}Recommend{% endif %}
           </button>
-          <button id="loadStudentPlan" type="button" class="fb-dd">
+          <button id="loadStudentPlan" type="button" class="btn btn-outline-primary">
             <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}
           </button>
         </div>
@@ -63,66 +63,6 @@
               <svg width="14" height="14" viewBox="0 0 24 24" class="step-arrow"><polyline points="9 18 15 12 9 6"/></svg>
               <span class="step-circle">3</span>
               <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}استعرض النتائج{% else %}Explore results{% endif %}</span>
-            </div>
-          </div>
-
-          <!-- Ghost metric cards -->
-          <div class="metrics-row-12 mb-16">
-            <div class="flex-card"><div class="mc mc-teal ghost-muted">
-              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
-              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
-              <div class="spark"><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div><div class="b" style="height:30%"></div><div class="b" style="height:90%"></div><div class="b" style="height:55%"></div></div>
-            </div></div>
-            <div class="flex-card"><div class="mc mc-royal ghost-muted">
-              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
-              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
-              <div class="spark"><div class="b" style="height:60%"></div><div class="b" style="height:40%"></div><div class="b" style="height:80%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div></div>
-            </div></div>
-            <div class="flex-card"><div class="mc mc-sky ghost-muted">
-              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
-              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
-              <div class="spark"><div class="b" style="height:45%"></div><div class="b" style="height:65%"></div><div class="b" style="height:85%"></div><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div></div>
-            </div></div>
-            <div class="flex-card"><div class="mc mc-err ghost-muted">
-              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
-              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
-              <div class="spark"><div class="b" style="height:75%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div><div class="b" style="height:60%"></div><div class="b" style="height:90%"></div></div>
-            </div></div>
-          </div>
-
-          <!-- Ghost terms table -->
-          <div class="cpanel ghost-faded">
-            <div class="cp-h">
-              <div class="skel-block skel-m0" style="width:120px;height:12px"></div>
-              <div class="flex-spacer"></div>
-              <div class="skel-block skel-m0" style="width:60px;height:10px"></div>
-            </div>
-            <div class="cp-b cp-flex-col">
-              <div class="skel-row">
-                <div class="skel-block skel-m0 skel-code"></div>
-                <div class="skel-block skel-m0" style="width:75%;height:12px"></div>
-                <div class="skel-block skel-m0 skel-status"></div>
-              </div>
-              <div class="skel-row">
-                <div class="skel-block skel-m0 skel-code"></div>
-                <div class="skel-block skel-m0" style="width:60%;height:12px"></div>
-                <div class="skel-block skel-m0 skel-status"></div>
-              </div>
-              <div class="skel-row">
-                <div class="skel-block skel-m0 skel-code"></div>
-                <div class="skel-block skel-m0" style="width:50%;height:12px"></div>
-                <div class="skel-block skel-m0 skel-status"></div>
-              </div>
-              <div class="skel-row">
-                <div class="skel-block skel-m0 skel-code"></div>
-                <div class="skel-block skel-m0" style="width:65%;height:12px"></div>
-                <div class="skel-block skel-m0 skel-status"></div>
-              </div>
-              <div class="skel-row">
-                <div class="skel-block skel-m0 skel-code"></div>
-                <div class="skel-block skel-m0" style="width:70%;height:12px"></div>
-                <div class="skel-block skel-m0 skel-status"></div>
-              </div>
             </div>
           </div>
         </div>

@@ -3,7 +3,7 @@
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}مستعرض سجل التدقيق{% else %}Audit Explorer{% endif %}{% endblock %}
 
-{# A data table: the wide tier (1480px) instead of the 1120px reading column, so the Endpoint / Error / Hash columns are not behind a sideways scroll. #}
+{# A data table: the wide tier (1760px) instead of the 1440px default column, so the Endpoint / Error / Hash columns are not behind a sideways scroll. #}
 {% block content_width %}wide{% endblock %}
 
 {% block extra_css %}{# All audit-explorer styles live in static/css/global.css (AUDIT EXPLORER section). #}{% endblock %}
@@ -11,7 +11,6 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}{% endblock %}
 
 {% block page_chips %}
-          <span class="ph-chip ph-chip-role">{{ role }}</span>
           {% if chain.ok %}
           <span class="ph-chip ph-chip-status" role="status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
           {% else %}
@@ -22,7 +21,6 @@
 {% endblock %}
 
 {% block page_intro %}
-      <h2>{% if LANGUAGE_CODE == 'ar' %}مستعرض سجل التدقيق{% else %}Audit Explorer{% endif %}</h2>
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تصفح سجل التدقيق وتصفية إجراءات النظام.{% else %}Browse the tamper-proof audit trail and filter system actions.{% endif %}</div>
 {% endblock %}
 

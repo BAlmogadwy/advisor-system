@@ -29,18 +29,17 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=92" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=93" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}?v=5" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
 <body{% if embed_mode %} class="embed-mode"{% endif %}>
 <a href="#main-content" class="skip-link">{% if LANGUAGE_CODE == 'ar' %}الانتقال إلى المحتوى الرئيس{% else %}Skip to content{% endif %}</a>
 <div class="color-mesh"></div>
-<div class="side-decor side-decor-r" aria-hidden="true"></div>
 {% block body %}
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
-  {# content_width: default (1120px reading column) | wide (1480px) | full (tool pages). content_fill: "viewport" makes the page fill the window with its own panes scrolling (global.css, "Content width tiers"). #}
+  {# content_width: default (1440px column) | wide (1760px) | full (tool pages). content_fill: "viewport" makes the page fill the window with its own panes scrolling (global.css, "Content width tiers"). #}
   <main id="main-content" class="flex-grow-1 {% block main_padding %}p-4{% endblock %}" role="main" data-width="{% block content_width %}default{% endblock %}"{% block content_fill %}{% endblock %} {% block main_attrs %}{% endblock %}>
     <div class="content-wrap">
     <header class="page-header" role="banner">
@@ -50,9 +49,8 @@
           {% block page_chips %}{% endblock %}
         </div>
       </div>
-      <div class="page-header-right">
-        {% block page_header_right %}<form method="post" action="/logout/" style="display:inline">{% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</button></form>{% endblock %}
-      </div>
+      {# Page actions only: logging out is the sidebar account card's job (the menu's, on a phone). #}
+      <div class="page-header-right">{% block page_header_right %}{% endblock %}</div>
     </header>
     <div class="page-intro">{% block page_intro %}{% endblock %}</div>
     {% block content %}{% endblock %}

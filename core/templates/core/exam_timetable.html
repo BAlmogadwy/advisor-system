@@ -6,17 +6,15 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}" data-can-edit-exam-timetable="{{ can_edit_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=32" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=3" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=33" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=3" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-role">{% if role == 'EXAM_COMMITTEE' %}{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %}{% else %}{{ role }}{% endif %}</span>
   <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء → جدولة → تقرير{% else %}Create → Schedule → Report{% endif %}</span>
 {% endblock %}
 
 {% block page_intro %}
-      <h2>{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الاختبارات{% else %}Exam Timetable Builder{% endif %}</h2>
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}أنشئ جدول الاختبارات وراجع المواعيد والتعارضات بناءً على تسجيل الطلاب.{% else %}Build an exam timetable and review exam times and conflicts using student enrollments.{% endif %}</div>
 {% endblock %}
 

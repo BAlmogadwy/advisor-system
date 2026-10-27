@@ -1562,7 +1562,10 @@ test('Exam Committee sees the shared history and can load and edit it without an
   ] });
   assert.equal(ui.$('main-content').dataset.canDeleteExamTimetable, 'false');
   assert.deepEqual(Array.from(ui.$('menu').querySelectorAll('a'), a => a.getAttribute('href')), ['/exam-timetable/']);
-  assert.match(ui.window.document.querySelector('.ph-chip-role').textContent, language === 'ar' ? /لجنة الاختبارات/ : /Exam Committee/);
+  // The role is named once, localized, in the sidebar account card (test_exam_committee_frontend.py);
+  // the page header no longer repeats it, and never as the raw EXAM_COMMITTEE code.
+  assert.equal(ui.window.document.querySelector('.ph-chip-role'), null);
+  assert.doesNotMatch(ui.window.document.querySelector('.page-header').textContent, /EXAM_COMMITTEE/);
   assert.equal(ui.$('historyList').querySelectorAll('.et-history-item').length, 2);
   assert.equal(ui.$('etLabel').value, run.label);
   assert.equal(ui.$('historyList').querySelectorAll('.et-del-btn').length, 0);

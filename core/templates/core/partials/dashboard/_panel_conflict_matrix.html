@@ -1,13 +1,13 @@
     <div id="conflictmatrix" class="panel" role="region">
       <div class="filter-bar fb-fit mb-14">
-        <div class="fb-search"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="cmYear" class="fb-w-6ch" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
-        <div class="fb-search"><input id="cmSemester" class="fb-w-6ch" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</span><input id="cmYear" class="fb-w-6ch" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</span><input id="cmSemester" class="fb-w-6ch" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
         <div class="fb-search"><input id="cmSection" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Sec{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
         <div class="fb-search"><input id="cmProgram" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
         <div class="fb-search"><input id="cmJoin" class="fb-w-12ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
         {# The last field and the button wrap as one, so the button never sits alone on a line. #}
         <div class="fb-tail">
-          <div class="fb-search"><input id="cmLimit" class="fb-w-6ch" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
+          <div class="fb-search"><span class="fb-lbl" aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}</span><input id="cmLimit" class="fb-w-6ch" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
           <div class="fb-actions">
             <button id="cmRun" class="btn btn-primary">
               <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تشغيل{% else %}Run{% endif %}
