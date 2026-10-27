@@ -12,7 +12,9 @@ today's engine:
   ``solve_board_with_hints``) emit the same objective (SHA-256 of the serialised
   objective) and the same variable / constraint counts. Only the model is
   compared, never the solution: CP-SAT solutions differ between Windows and
-  Linux (see ``test_one_teacher_flag_parity``), the proto is pure Python.
+  Linux (see ``test_one_teacher_flag_parity``), the proto is pure Python. The
+  load balancer runs on a step clock (``LOAD_BALANCER_STEP_SECONDS``), so its
+  search is the same length on every machine.
 - **Flag ON.** Two- and three-meeting sections prefer non-adjacent days (greedy:
   0 / w / 3w for spread / two-and-one / three in a row; CP-SAT: 0 / w / 2w, per
   pair, no extra variable); sections with one or four meetings, and
@@ -27,7 +29,9 @@ To re-check it, check out the commit BEFORE the flag was added and run::
         tests/test_section_day_spread.py -k record
 
 then diff ``<file>`` against the fixture. Never re-record it from a branch that
-changes the planner: a golden that follows the code proves nothing.
+changes the planner: a golden that follows the code proves nothing. That commit's
+harness reads the real clock; it records the same golden, which holds from 10,000
+load-balancer moves a board on.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ import json
 import os
 import re
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from ortools.sat.python import cp_model
@@ -72,6 +77,25 @@ RUN_SEEDS = (3, 11, 29, None)  # None = the legacy unseeded call, ties by option
 GREEDY_CASES = [(strategy, seed) for strategy in STRATEGIES for seed in RUN_SEEDS]
 CPSAT_CASES = ("solve_board", "solve_board_with_hints")
 
+# The load balancer stops on the wall clock (5 s a board), so how far its search
+# gets depends on the machine: on 2026-10-26 a slow CI runner stopped seed 11
+# short and roomed one meeting differently. The golden builds give it a clock that
+# moves one fixed step per reading instead: 30,000 moves a board on every
+# machine. The golden (real clock, 30k-860k moves a board) holds from 10,000 on.
+LOAD_BALANCER_STEP_SECONDS = 5.0 / 30_000
+
+
+class _StepClock:
+    """A stand-in for the ``time`` module: each reading is one step later."""
+
+    def __init__(self, step: float) -> None:
+        self._step = step
+        self._readings = 0
+
+    def time(self) -> float:
+        self._readings += 1
+        return self._readings * self._step
+
 
 @pytest.fixture
 def flag_off(settings):
@@ -97,12 +121,17 @@ def _case_key(strategy: str, seed: int | None) -> str:
 
 def run_greedy_case(strategy: str, seed: int | None) -> dict:
     """A build, a lock, a rebuild: the rebuild exercises every instructor filter."""
+    from core.services import timetable_load_balanced
     from core.services.timetable_autoplace import auto_place_scenario
     from core.services.timetable_board_persistence import reset_scenario
     from core.services.timetable_run_seed import seeded_timetable_run
 
     scenario = build_corpus(seed or 11)
-    with seeded_timetable_run(seed):
+    step_clock = _StepClock(LOAD_BALANCER_STEP_SECONDS)
+    with (
+        seeded_timetable_run(seed),
+        mock.patch.object(timetable_load_balanced, "time", step_clock),
+    ):
         first = auto_place_scenario(scenario.id, strategy=strategy)
         SectionPlacement.objects.filter(
             board__scenario=scenario,
