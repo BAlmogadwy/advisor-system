@@ -7931,3 +7931,401 @@ test('SD12 a time typed in Arabic digits shows its length and is saved as 0–9,
     assert.deepEqual(h.posts.map(post => post.body.slot_config[0]), [{ label: '09:00-10:15', start: '09:00', end: '10:20' }], lang);
   }
 });
+
+/* ── Generate: the new draft's time slots ── */
+const DEFAULT_COLUMNS = {
+  slot_config: [{ label: '09:00-10:15', start: '09:00', end: '10:15' }, { label: '10:30-11:45', start: '10:30', end: '11:45' }],
+  lab_slot_config: [{ label: 'Lab 1', start: '09:00', end: '10:40' }, { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }],
+};
+// The page's json_script, which the harness strips with every {{ }}.
+function withDefaultColumns(h, columns = DEFAULT_COLUMNS) {
+  const node = h.d.createElement('script');
+  node.type = 'application/json'; node.id = 'twGenDefaultSlots';
+  node.textContent = JSON.stringify(columns);
+  h.d.body.appendChild(node);
+}
+// First-strong isolates, built here so no invisible character sits in this file.
+const LRI = String.fromCharCode(0x2066);
+const PDI = String.fromCharCode(0x2069);
+function fillGenerate(h, programme = 'AI') {
+  h.d.querySelectorAll('input[name="twGenProgramme"]').forEach(box => { box.checked = box.value === programme; });
+  if (![...h.d.querySelectorAll('input[name="twGenProgramme"]')].some(box => box.checked)) {
+    // The harness strips the template's programme loop: add the chip it would draw.
+    const label = h.d.createElement('label');
+    label.innerHTML = `<input type="checkbox" name="twGenProgramme" value="${programme}" checked>`;
+    h.d.getElementById('twGenProgrammes').appendChild(label);
+  }
+}
+const submitGenerate = h => h.d.getElementById('twGenerateForm').dispatchEvent(new h.w.Event('submit', { cancelable: true }));
+const generatePosts = h => h.requests.filter(r => r.url === '/ops/tw/generate-workspace/').map(r => JSON.parse(r.opts.body));
+
+test('GS1 with no scenario open, Generate offers Default and fills Custom from the defaults', async t => {
+  const h = await harness(t);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'default');
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
+  assert.equal(h.d.getElementById('twGenSlotLectures').value, '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45');
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, false);
+  h.d.querySelector('input[name="twGenSlots"][value="default"]').click();
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
+  assert.deepEqual(h.errors, []);
+});
+
+test('GS2 an open scenario with its own columns starts Generate on Custom, filled with them', async t => {
+  const h = await harness(t);
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'custom');
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, false);
+  assert.equal(h.d.getElementById('twGenSlotLectures').value, '09:00\t09:00\t10:15');
+});
+
+test('GS3 Custom sends both lists as typed; a column kept from the source keeps its online-only flag', async t => {
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLectures').value = '08:30-09:45\t08:30\t09:45\n\n09:55  11:10';
+  h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:30';
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  const body = generatePosts(h)[0];
+  assert.deepEqual(body.slot_config, [
+    { label: '08:30-09:45', start: '08:30', end: '09:45' },
+    { label: '09:55-11:10', start: '09:55', end: '11:10' },
+  ]);
+  assert.deepEqual(body.lab_slot_config, [
+    { label: 'Lab 1', start: '09:00', end: '10:40' },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
+  ]);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS4 Default sends no columns: the draft gets the server’s defaults', async t => {
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  const body = generatePosts(h)[0];
+  assert.equal('slot_config' in body, false);
+  assert.equal('lab_slot_config' in body, false);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS5 a line Custom cannot read, or no lecture column, is refused in the dialog and nothing is sent', async t => {
+  const h = await harness(t);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLectures').value = '08:30-09:45\t08:30\t09:45\nmorning';
+  submitGenerate(h);
+  await settle();
+  // Said under the boxes, on the box it is about, which has the focus.
+  assert.equal(h.d.getElementById('twGenSlotError').hidden, false);
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /not understood.*Lectures: line 2/);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLectures'));
+  assert.equal(h.d.getElementById('twGenError').hidden, true);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-describedby'), 'twGenSlotFormat twGenSlotError');
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-describedby'), 'twGenSlotFormat', 'not described on the box it is not about');
+  // Both lists wrong: both marked; fixing one keeps the words for the other.
+  h.d.getElementById('twGenSlotLabs').value = 'lab?';
+  submitGenerate(h);
+  await settle();
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /Lectures: line 2; Labs: line 1/);
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-invalid'), 'true');
+  h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40';
+  h.d.getElementById('twGenSlotLabs').dispatchEvent(new h.w.Event('input'));
+  assert.equal(h.d.getElementById('twGenSlotLabs').hasAttribute('aria-invalid'), false);
+  assert.equal(h.d.getElementById('twGenSlotError').hidden, false, 'the lectures box is still marked');
+  h.d.getElementById('twGenSlotLectures').value = '08:30-09:45\t08:30\t09:45';
+  h.d.getElementById('twGenSlotLabs').value = '  ';
+  submitGenerate(h);
+  await settle();
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /Enter the lab columns/);
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-invalid'), 'true');
+  h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40';
+  h.d.getElementById('twGenSlotLabs').dispatchEvent(new h.w.Event('input'));
+  h.d.getElementById('twGenSlotLectures').value = '   ';
+  submitGenerate(h);
+  await settle();
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /at least one lecture column/);
+  // Editing the box takes the problem back.
+  h.d.getElementById('twGenSlotLectures').value = '08:30-09:45\t08:30\t09:45';
+  h.d.getElementById('twGenSlotLectures').dispatchEvent(new h.w.Event('input'));
+  assert.equal(h.d.getElementById('twGenSlotError').hidden, true);
+  assert.equal(h.d.getElementById('twGenSlotLectures').hasAttribute('aria-invalid'), false);
+  assert.deepEqual(generatePosts(h), []);
+});
+
+test('GS6 time slots the server refuses bring the dialog back, as it was left, with which column and why', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'VALIDATION_SLOTS', message: 'Some time slots are not valid', details: { errors: [{ list: 'slot_config', index: 1, field: 'end', message: 'must be after the start' }] } } }
+    : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLectures').value = 'A\t08:30\t09:45\nB\t10:00\t09:00';
+  const scrolled = [];
+  h.w.Element.prototype.scrollIntoView = function () { scrolled.push(this.id); };
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  assert.ok(scrolled.includes('twGenSlotError'), 'the words are brought into view with the focused box');
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /Nothing was generated.*Lectures column 2: End: must be after the start/);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLectures'), 'the box it is about has the focus, the words beside it');
+  assert.equal(h.d.getElementById('twGenSlotLectures').value, 'A\t08:30\t09:45\nB\t10:00\t09:00');
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 0, 'said in the dialog, not behind it');
+  assert.equal(h.d.getElementById('twGenerate').disabled, false);
+});
+
+test('GS7 the new scheduler engine is not offered Custom: it builds on its own fixed grid, and the note says so', async t => {
+  const h = await harness(t);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  const custom = h.d.querySelector('input[name="twGenSlots"][value="custom"]');
+  custom.click();
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, false);
+  h.d.querySelector('input[name="twGenEngine"][value="scheduler"]').click();
+  assert.equal(custom.disabled, true);
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'default');
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
+  const note = h.d.getElementById('twGenSlotsEngineNote');
+  assert.equal(note.getAttribute('role'), 'status');
+  assert.equal(note.textContent, note.dataset.message);
+  assert.equal(custom.getAttribute('aria-describedby'), 'twGenSlotsEngineNote');
+  h.d.querySelector('input[name="twGenEngine"][value="classic"]').click();
+  assert.equal(custom.disabled, false);
+  assert.equal(note.textContent, '');
+  assert.equal(custom.hasAttribute('aria-describedby'), false);
+  assert.equal(h.w.generateDialogValues().slots, null, 'Default again: nothing to send');
+});
+
+test('GS8 an open scenario on the default columns starts Generate on Default: a stored copy of the defaults is not its own', async t => {
+  const h = await harness(t, undefined, {
+    slot_config: DEFAULT_COLUMNS.slot_config, lab_slot_config: DEFAULT_COLUMNS.lab_slot_config,
+    effective_slot_config: DEFAULT_COLUMNS.slot_config, effective_lab_slot_config: DEFAULT_COLUMNS.lab_slot_config,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'default');
+  assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
+});
+
+test('GS9 Custom from an open scenario keeps its columns’ flags when sent unchanged', async t => {
+  const own = {
+    slot_config: [{ label: '08:30-09:45', start: '08:30', end: '09:45' }, { label: 'English', start: '09:00', end: '12:00', policy_only: true }],
+    lab_slot_config: [{ label: 'Lab 1', start: '08:30', end: '10:10' }, { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }],
+  };
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined,
+    { ...own, effective_slot_config: own.slot_config, effective_lab_slot_config: own.lab_slot_config });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'custom');
+  fillGenerate(h);
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  const body = generatePosts(h)[0];
+  assert.deepEqual(body.slot_config, own.slot_config);
+  assert.deepEqual(body.lab_slot_config, own.lab_slot_config);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS10 Custom reads Arabic-Indic digits as 0–9, as a slot save does', async t => {
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLectures').value = 'صباحي ٣\t٠٨:٣٠\t٠٩:٤٥\n۰۹:۵۵  ۱۱:۱۰\nRoom  ٣\t١٣:٠٠\t١٤:١٥\nMorning ٤ ١٤:٣٠ ١٥:٤٥';
+  h.d.getElementById('twGenSlotLabs').value = 'معمل ١\t٠٩:٠٠\t١٠:٤٠\nOnline 1\t١٥:٥٠\t١٧:٣٠';
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  assert.deepEqual(generatePosts(h)[0].slot_config, [
+    { label: 'صباحي ٣', start: '08:30', end: '09:45' },
+    { label: '09:55-11:10', start: '09:55', end: '11:10' },
+    { label: 'Room ٣', start: '13:00', end: '14:15' },
+    { label: 'Morning ٤', start: '14:30', end: '15:45' },
+  ], 'times read as 0–9; the label as typed (parts joined as the slot module joins them)');
+  assert.deepEqual(generatePosts(h)[0].lab_slot_config, [
+    { label: 'معمل ١', start: '09:00', end: '10:40' },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
+  ]);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS11 a moved online window brings the dialog back naming the window, on the lab box', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOT_FLAGS_DROPPED', message: 'The online windows must stay as they are', details: { dropped_flags: [{ list: 'lab_slot_config', label: 'Online 1', start: '15:50', end: '17:30', flags: ['online_only'] }] } } }
+    : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:20';
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  const words = h.d.getElementById('twGenSlotError').textContent;
+  assert.ok(words.includes(`must stay as they are, the online windows: ${LRI}Online 1 (15:50–17:30)${PDI}. Put their lines back unchanged`), words);
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.d.getElementById('twGenSlotLectures').hasAttribute('aria-invalid'), false);
+  assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLabs'));
+});
+
+test('GS12 the server refusing custom columns for the new engine is said in the dialog’s own alert', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOTS_NEED_CLASSIC', message: 'x' } } : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenError').hidden);
+  assert.match(h.d.getElementById('twGenError').textContent, /own fixed grid: custom time slots need the current generator/);
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 0);
+});
+
+test('GS13 an open scenario whose lab columns alone are its own starts Generate on Custom', async t => {
+  const labs = [{ label: 'Lab A', start: '08:30', end: '10:10' }, { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }];
+  const h = await harness(t, undefined, {
+    slot_config: DEFAULT_COLUMNS.slot_config, lab_slot_config: labs,
+    effective_slot_config: DEFAULT_COLUMNS.slot_config, effective_lab_slot_config: labs,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'custom');
+  assert.equal(h.d.getElementById('twGenSlotLabs').value, 'Lab A\t08:30\t10:10\nOnline 1\t15:50\t17:30');
+});
+
+test('GS14 Custom from a scenario without the default online windows puts them back, so it is never refused unchanged', async t => {
+  const labs = [{ label: 'Lab 1', start: '09:00', end: '10:40' }];
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined, {
+    slot_config: [{ label: 'Early', start: '08:30', end: '09:45' }], lab_slot_config: labs,
+    effective_slot_config: [{ label: 'Early', start: '08:30', end: '09:45' }], effective_lab_slot_config: labs,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.getElementById('twGenSlotLabs').value, 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:30');
+  fillGenerate(h);
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  assert.deepEqual(generatePosts(h)[0].lab_slot_config, [
+    { label: 'Lab 1', start: '09:00', end: '10:40' },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
+  ]);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS15 a dropped policy column is named as one, not as an online window', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOT_FLAGS_DROPPED', message: 'x', details: { dropped_flags: [{ list: 'slot_config', label: 'English', start: '09:00', end: '12:00', flags: ['policy_only'] }] } } }
+    : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  const words = h.d.getElementById('twGenSlotError').textContent;
+  assert.ok(words.includes(`the policy display columns: ${LRI}English (09:00–12:00)${PDI}`), words);
+  assert.doesNotMatch(words, /online/);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
+});
+
+test('GS16 in Arabic, each column a refusal names is isolated whole, so a list of them keeps its order', async t => {
+  const dropped = [
+    { list: 'lab_slot_config', label: 'Online 1', start: '15:50', end: '17:30', flags: ['online_only'] },
+    { list: 'lab_slot_config', label: 'Online 2', start: '17:40', end: '19:20', flags: ['online_only'] },
+  ];
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOT_FLAGS_DROPPED', message: 'x', details: { dropped_flags: dropped } } } : undefined, {}, true);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  const words = h.d.getElementById('twGenSlotError').textContent;
+  assert.ok(words.includes(`${LRI}Online 1 (15:50–17:30)${PDI}، ${LRI}Online 2 (17:40–19:20)${PDI}`), words);
+});
+
+test('GS17 a put-back online window goes where the defaults have it, not at the end', async t => {
+  const defaults = {
+    slot_config: DEFAULT_COLUMNS.slot_config,
+    lab_slot_config: [
+      { label: 'Lab 1', start: '09:00', end: '10:40' },
+      { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
+      { label: 'Online 2', start: '17:40', end: '19:20', online_only: true },
+    ],
+  };
+  const labs = [{ label: 'Lab 1', start: '09:00', end: '10:40' }, { label: 'Online 2', start: '17:40', end: '19:20', online_only: true }];
+  const h = await harness(t, undefined, {
+    slot_config: [{ label: 'Early', start: '08:30', end: '09:45' }], lab_slot_config: labs,
+    effective_slot_config: [{ label: 'Early', start: '08:30', end: '09:45' }], effective_lab_slot_config: labs,
+  });
+  withDefaultColumns(h, defaults);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.getElementById('twGenSlotLabs').value, 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:30\nOnline 2\t17:40\t19:20');
+});
+
+test('GS18 columns stored with seconds are written as HH:MM, so the unchanged prefill is sent', async t => {
+  const stored = [{ label: 'Early', start: '08:30:00', end: '09:45:00' }];
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined, {
+    slot_config: stored, lab_slot_config: DEFAULT_COLUMNS.lab_slot_config,
+    effective_slot_config: stored, effective_lab_slot_config: DEFAULT_COLUMNS.lab_slot_config,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.getElementById('twGenSlotLectures').value, 'Early\t08:30\t09:45');
+  fillGenerate(h);
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  assert.deepEqual(generatePosts(h)[0].slot_config, [{ label: 'Early', start: '08:30', end: '09:45' }]);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS19 the Custom the dialog opened with comes back on the current generator, unless the user chose', async t => {
+  const h = await harness(t);
+  withDefaultColumns(h);
+  await h.select();
+  const checked = () => h.d.querySelector('input[name="twGenSlots"]:checked').value;
+  h.w.openGenerateDialog();
+  assert.equal(checked(), 'custom');
+  h.d.querySelector('input[name="twGenEngine"][value="scheduler"]').click();
+  assert.equal(checked(), 'default');
+  h.w.closeGenerateDialog();
+  h.w.openGenerateDialog();
+  assert.equal(checked(), 'default', 'the engine was left on the new scheduler');
+  h.d.querySelector('input[name="twGenEngine"][value="classic"]').click();
+  assert.equal(checked(), 'custom', 'back on the current generator, the preselection is back');
+  h.d.querySelector('input[name="twGenSlots"][value="default"]').click();
+  h.d.querySelector('input[name="twGenEngine"][value="scheduler"]').click();
+  h.d.querySelector('input[name="twGenEngine"][value="classic"]').click();
+  assert.equal(checked(), 'default', 'the user chose Default: it stays');
+});

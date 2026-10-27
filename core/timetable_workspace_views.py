@@ -102,7 +102,7 @@ from core.services.timetable_flags import (
     is_one_teacher_active,
     is_section_programme_preference_enabled,
 )
-from core.services.timetable_generate import generate_workspace_scenario
+from core.services.timetable_generate import default_generate_slots, generate_workspace_scenario
 from core.services.timetable_graph_twin import (
     TimetableGraphError,
     build_scenario_graph_summary,
@@ -571,6 +571,9 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
         # The programmes with a degree plan (ProgrammeRequirement), one
         # DISTINCT query: the Generate dialog's chips, not student data.
         "programme_choices": sorted(known_programmes()),
+        # The columns a draft is generated with when the dialog sets none:
+        # the Generate dialog's time slots start from these.
+        "generate_default_slots": _generate_default_slots_payload(),
         "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED": pr8_on,
         "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED": getattr(
             _settings, "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", False
@@ -631,6 +634,46 @@ def timetable_workspace_graph_page(request: HttpRequest) -> HttpResponse:
 # ── Generate Workspace Endpoint ──────────────────────────────────
 
 
+def _generate_default_slots_payload() -> dict[str, list[dict]]:
+    lectures, labs = default_generate_slots()
+    return {"slot_config": lectures, "lab_slot_config": labs}
+
+
+def _generate_slot_lists(payload: dict) -> tuple[dict[str, list[dict]], list, list[dict]]:
+    """The grid columns a new draft is generated with, from the request.
+
+    ``slot_config`` (lecture columns) and ``lab_slot_config`` (lab columns) are
+    optional, each an array of ``{label, start, end}`` validated as a slot
+    save validates them (``clean_slot_rows``). A list left out, null or empty
+    is the defaults (``default_generate_slots``). A column keeps the flags of
+    the default column with the same start and end unless the row sets them,
+    so the online evening windows stay online-only when they are sent as
+    plain rows.
+
+    Returns the lists, their errors, and the flags a custom list would take
+    off a default column (``dropped_flagged_columns``): an online window moved
+    or left out. A slot save asks to confirm that; a new draft refuses it,
+    since the dialog cannot mark a column online-only and a window without
+    its flag is a place an engine may book a room in the evening. All of it is
+    checked before the scaffold exists: refused columns must not leave an
+    empty scenario behind.
+    """
+    defaults = dict(zip(("slot_config", "lab_slot_config"), default_generate_slots(), strict=True))
+    lists: dict[str, list[dict]] = {}
+    errors: list = []
+    dropped: list[dict] = []
+    for name, default_rows in defaults.items():
+        rows = payload.get(name)
+        if rows is None:
+            continue
+        cleaned, list_errors = clean_slot_rows(rows, name)
+        errors += list_errors
+        if cleaned:
+            lists[name] = carry_slot_flags(cleaned, default_rows)
+            dropped += dropped_flagged_columns(default_rows, lists[name], name)
+    return lists, errors, dropped
+
+
 @login_required(login_url="login")
 @require_POST
 def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
@@ -673,6 +716,21 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         return _err("year and semester must be integers", code="VALIDATION_GENERATE", status=400)
 
     section = str(payload.get("section", "")).strip().upper() or None
+    custom_slots, slot_errors, dropped_flags = _generate_slot_lists(payload)
+    if slot_errors:
+        return _err(
+            "Some time slots are not valid",
+            code="VALIDATION_SLOTS",
+            status=400,
+            details={"errors": [error.as_dict() for error in slot_errors]},
+        )
+    if dropped_flags:
+        return _err(
+            "Flagged default columns (online windows, policy columns) must stay as they are",
+            code="SLOT_FLAGS_DROPPED",
+            status=400,
+            details={"dropped_flags": dropped_flags},
+        )
     strategy = str(payload.get("strategy", "compact")).strip().lower()
     scenario_name = str(payload.get("scenario_name", "")).strip()
     max_local_4cr = int(payload.get("max_local_4cr", 25))
@@ -685,6 +743,16 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     engine = str(payload.get("engine") or "classic").strip().lower()
     if engine not in {"classic", "scheduler"}:
         return _err("Unknown timetable engine", code="VALIDATION_GENERATE", status=400)
+    if engine == "scheduler" and custom_slots:
+        # The new engine builds on its own fixed grid (scheduler.intake
+        # default_grid) and writes the windows it used back into the draft's
+        # columns, so custom ones would be ignored, then widened.
+        return _err(
+            "The new scheduler engine builds on its own fixed grid: custom time "
+            "slots need the current generator.",
+            code="SLOTS_NEED_CLASSIC",
+            status=400,
+        )
     scheduler_params: dict | None = None
     if engine == "scheduler":
         if section not in {"M", "F"}:
@@ -759,6 +827,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             course_overrides=course_overrides,
             created_by=request.user.username,
             run_autoplace=False,
+            **custom_slots,
         )
     except Exception as exc:
         logger.exception("Generate workspace failed")
@@ -832,6 +901,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             "program": program,
             "boards": len(result["boards"]),
             "students": result["student_summary"]["classified"],
+            "custom_slot_lists": sorted(custom_slots),
         },
     )
     return _ok(result, status=201)
