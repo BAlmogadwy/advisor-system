@@ -161,7 +161,7 @@ from core.services.timetable_warm_start import (
     compute_perturbation_metric,
     is_warm_start_enabled,
 )
-from core.services.timetable_workspace import _time_mask
+from core.services.timetable_workspace import _time_mask, first_free_section_labels
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +296,24 @@ DEFAULT_LAB_SLOTS = [
     {"label": "Online 2", "start": "17:40", "end": "19:20", "online_only": True},
     {"label": "Online 3", "start": "19:30", "end": "21:10", "online_only": True},
 ]
+
+
+def free_section_labels(board: DeliveryBoard, course_key: str, count: int) -> list[str]:
+    """The labels for ``count`` new sections of a course on ``board``.
+
+    The first S-numbers the board's placed sections of that course do not
+    hold. Numbering on from how many are placed (``already + 1``) collides
+    when the kept ones are not S1..Sn: with S2 alone locked it named the new
+    sections S2 and S3, so every pass of a full rebuild added another meeting
+    pattern to the locked S2 (18 meetings after eight passes) and S1 was never
+    placed (scenario 52, STAT103).
+    """
+    used = (
+        SectionPlacement.objects.filter(board=board, term_section__course_key=course_key)
+        .values_list("term_section__section", flat=True)
+        .distinct()
+    )
+    return first_free_section_labels(used, count)
 
 
 def placeable_slots(slots: list[dict] | None) -> list[dict]:
@@ -1691,6 +1709,7 @@ def auto_place_board(
                 "meeting_policy": policy,
                 "already": already,
                 "to_place": to_place,
+                "new_labels": free_section_labels(board, code, to_place),
                 "all_options": all_options,
                 "students": course_students.get(code, set()),
                 "is_online": is_online_course,
@@ -1742,7 +1761,6 @@ def auto_place_board(
         )
 
         for cd in course_data_sorted:
-            sec_idx = cd["already"] + sec_round
             if sec_round > cd["to_place"]:
                 continue
 
@@ -1754,7 +1772,7 @@ def auto_place_board(
 
             code = cd["code"]
             display_code = cd.get("display_code", code)
-            sec_label = f"S{sec_idx}"
+            sec_label = cd["new_labels"][sec_round - 1]
             my_students = cd["students"]
             all_options = cd["all_options"]
 
