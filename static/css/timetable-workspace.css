@@ -595,6 +595,20 @@ html[dir="rtl"] .tw-sel-title { direction: ltr; unicode-bidi: isolate; text-alig
 /* ── Generate dialog ────────────────────────────────────────────── */
 .tw-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .tw-gen-section { align-self: flex-start; }
+/* Custom time slots: the lecture and lab lists side by side, one column per
+   line, wrapping to one above the other on a narrow dialog. */
+.tw-gen-slots { display: grid; gap: 6px; margin-top: 6px; }
+.tw-gen-slots .ux-field-row > .ux-field { flex: 1 1 220px; min-width: 0; margin: 0; }
+.tw-gen-slots textarea {
+  /* The slot editor's own field (.ux-rows inputs), in a fixed-width font. */
+  box-sizing: border-box; width: 100%; min-height: 9rem; resize: vertical;
+  padding: 6px 8px; margin: 0;
+  border: 1px solid var(--btn-neutral-border); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--t1);
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5;
+  /* A tab reaches past "09:00-10:15" so the start and end line up. */
+  tab-size: 13;
+}
 .tw-gen-error,
 .tw-dialog-alert {
   margin: 0; padding: 8px 10px;

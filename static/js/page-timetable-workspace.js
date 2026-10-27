@@ -899,7 +899,88 @@ function generateDialogValues() {
     programs: programmes,
     section: (document.querySelector('input[name="twGenSection"]:checked')?.value || '').toUpperCase(),
     engine: document.querySelector('input[name="twGenEngine"]:checked')?.value || 'classic',
+    slots: generateDialogSlots(),
   };
+}
+/* ── Generate: the new draft's time slots ──
+   Default sends nothing (the server's defaults). Custom sends both lists as
+   typed in its two boxes, one column per line (the slot module's text rows).
+   A line that cannot be read is refused here, by its number, never dropped:
+   a list emptied that way would quietly become the defaults. A column the
+   source listed with a flag (online-only, policy) keeps it when its start
+   and end are unchanged; the server also carries the default columns' flags. */
+function generateDefaultSlots() {
+  try {
+    const data = JSON.parse($('twGenDefaultSlots')?.textContent || '{}');
+    return { slot_config: data.slot_config || [], lab_slot_config: data.lab_slot_config || [] };
+  } catch {
+    return { slot_config: [], lab_slot_config: [] };
+  }
+}
+/* What Custom starts from: the open scenario's columns when it has its own,
+   else the generator's defaults. */
+function generateSlotSource() {
+  const own = Boolean(TW.scenario && ((TW.scenario.slot_config || []).length || (TW.scenario.lab_slot_config || []).length));
+  if (!own) return { own: false, ...generateDefaultSlots() };
+  return { own: true, slot_config: scenarioLectureSlots(), lab_slot_config: scenarioLabSlots() };
+}
+function generateSlotsCustom() {
+  return document.querySelector('input[name="twGenSlots"]:checked')?.value === 'custom';
+}
+function syncGenerateSlots() {
+  const editor = $('twGenSlotEditor');
+  if (editor) editor.hidden = !generateSlotsCustom();
+}
+function withSourceFlags(rows, source) {
+  const bySpan = new Map((source || []).map(slot => [`${slot.start}|${slot.end}`, slot]));
+  return rows.map(row => {
+    const match = bySpan.get(`${row.start}|${row.end}`) || {};
+    const out = { label: row.label, start: row.start, end: row.end };
+    ['online_only', 'policy_only'].forEach(flag => { if (match[flag] === true) out[flag] = true; });
+    return out;
+  });
+}
+/* null for Default; otherwise both lists and, per list, the line numbers
+   that could not be read. */
+function generateDialogSlots() {
+  if (!generateSlotsCustom()) return null;
+  const SC = window.TimetableSlotConfig;
+  const source = TW.generateSlotSource || generateSlotSource();
+  const lectures = SC.parseLines($('twGenSlotLectures')?.value || '');
+  const labs = SC.parseLines($('twGenSlotLabs')?.value || '');
+  return {
+    slot_config: withSourceFlags(lectures.rows, source.slot_config),
+    lab_slot_config: withSourceFlags(labs.rows, source.lab_slot_config),
+    rejected: { slot_config: lectures.rejected, lab_slot_config: labs.rejected },
+  };
+}
+/* A Custom list the dialog cannot send, in words; '' when both can go. */
+function generateSlotsProblem(slots) {
+  if (!slots) return '';
+  const { slot_config: lectureLines, lab_slot_config: labLines } = slots.rejected;
+  if (lectureLines.length || labLines.length) {
+    const part = (lines, en, ar) => (lines.length ? (IS_AR ? `${ar}: السطر ${lines.join('، ')}` : `${en}: line ${lines.join(', ')}`) : '');
+    const parts = [part(lectureLines, 'Lectures', 'المحاضرات'), part(labLines, 'Labs', 'المعامل')].filter(Boolean);
+    return IS_AR
+      ? `لم تُفهم هذه الأسطر (الاسم ثم البداية ثم النهاية): ${parts.join('؛ ')}`
+      : `These lines were not understood (name, start, end): ${parts.join('; ')}`;
+  }
+  if (!slots.slot_config.length) {
+    return IS_AR ? 'أدخل عمود محاضرات واحداً على الأقل، أو اختر الافتراضية.' : 'Enter at least one lecture column, or choose Default.';
+  }
+  return '';
+}
+/* A VALIDATION_SLOTS answer to Generate, in words: the list, the line and why. */
+function generateSlotErrorsText(errors) {
+  const SC = window.TimetableSlotConfig;
+  const lines = (errors || []).slice(0, 6).map(error => {
+    const list = error.list === 'lab_slot_config' ? (IS_AR ? 'المعامل' : 'Labs') : (IS_AR ? 'المحاضرات' : 'Lectures');
+    // The server names a column by its place in the list sent (blank lines
+    // are not sent), so this is its column number, not its line.
+    const where = error.index >= 0 ? (IS_AR ? ` العمود ${error.index + 1}` : ` column ${error.index + 1}`) : '';
+    return `${list}${where}: ${SC.fieldErrorText(error)}`;
+  });
+  return (IS_AR ? 'لم يُنشأ شيء — الفترات الزمنية غير صحيحة: ' : 'Nothing was generated — some time slots are not valid: ') + lines.join(IS_AR ? '؛ ' : '; ');
 }
 function generateDialogError(message) {
   const error = $('twGenError');
@@ -938,8 +1019,27 @@ function openGenerateDialog() {
   const gender = String(TW.scenario?.gender || '').trim().toUpperCase();
   const genderRadio = document.querySelector(`input[name="twGenSection"][value="${gender === 'M' || gender === 'F' ? gender : ''}"]`);
   if (genderRadio) genderRadio.checked = true;
+  // And its time slots: Custom, filled with its own columns, when it has its
+  // own; otherwise Default, with Custom filled from the defaults.
+  const SC = window.TimetableSlotConfig;
+  const source = generateSlotSource();
+  TW.generateSlotSource = source;
+  $('twGenSlotLectures').value = SC.rowsToText(source.slot_config);
+  $('twGenSlotLabs').value = SC.rowsToText(source.lab_slot_config);
+  const slotsRadio = document.querySelector(`input[name="twGenSlots"][value="${source.own ? 'custom' : 'default'}"]`);
+  if (slotsRadio) slotsRadio.checked = true;
+  syncGenerateSlots();
   syncGenerateDialog();
   generateDialogError('');
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+}
+/* Generate refused the time slots after the dialog closed: show it again as
+   it was left, with the server's words. */
+function reopenGenerateDialog(message) {
+  const dialog = $('twGenerateDialog');
+  if (!dialog) return;
+  generateDialogError(message);
   if (typeof dialog.showModal === 'function') dialog.showModal();
   else dialog.setAttribute('open', '');
 }
@@ -954,6 +1054,7 @@ function wireGenerateDialog() {
   if (!dialog) return;
   dialog.querySelectorAll('[data-dialog-close]').forEach(button => button.addEventListener('click', closeGenerateDialog));
   dialog.querySelectorAll('input[name="twGenEngine"]').forEach(radio => radio.addEventListener('change', syncGenerateDialog));
+  dialog.querySelectorAll('input[name="twGenSlots"]').forEach(radio => radio.addEventListener('change', syncGenerateSlots));
   $('twGenerateForm')?.addEventListener('submit', event => {
     event.preventDefault();
     const request = generateDialogValues();
@@ -967,6 +1068,11 @@ function wireGenerateDialog() {
     }
     if (request.engine === 'scheduler' && !request.section) {
       generateDialogError(IS_AR ? 'المحرك الجديد يبني شعبة واحدة: اختر M أو F.' : 'The new engine builds one section at a time: choose M or F.');
+      return;
+    }
+    const slotsProblem = generateSlotsProblem(request.slots);
+    if (slotsProblem) {
+      generateDialogError(slotsProblem);
       return;
     }
     closeGenerateDialog();
@@ -1022,7 +1128,15 @@ async function runGenerate(engine = 'classic', request = {}) {
         strategy: 'compact',
         engine: engine,     // 'classic' = the original placer, 'scheduler' = the new engine
         defer_build: true,  // place sections via an async job (won't block the request)
+        // Custom time slots: the draft is created with them, so its first
+        // build uses them. Left out, the draft gets the defaults.
+        ...(request.slots ? { slot_config: request.slots.slot_config, lab_slot_config: request.slots.lab_slot_config } : {}),
       }),
+      _onError: body => {
+        if (body?.error?.code !== 'VALIDATION_SLOTS') return false;
+        reopenGenerateDialog(generateSlotErrorsText(body.error.details?.errors));
+        return true;
+      },
     });
 
     if (!data) { $('twGenStatus').textContent = ''; return; }

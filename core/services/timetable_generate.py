@@ -230,6 +230,26 @@ def _limit_electives_per_placeholder(
     return all_recs
 
 
+def default_generate_slots() -> tuple[list[dict], list[dict]]:
+    """The lecture and lab columns a new draft gets when none are chosen.
+
+    Lectures: the admin-configured default template, else ``DEFAULT_SLOTS``.
+    Labs: ``DEFAULT_LAB_SLOTS`` (with the online evening windows). The Generate
+    dialog prefills its time slots from these, so what it shows as the defaults
+    is what a draft generated without its own columns gets.
+    """
+    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+
+    lectures: list[dict] = []
+    default_tpl = TimeSlotTemplate.objects.filter(is_default=True).first()
+    if default_tpl and isinstance(default_tpl.slots, list):
+        lectures = [dict(slot) for slot in default_tpl.slots if isinstance(slot, dict)]
+    return (
+        lectures or [dict(slot) for slot in DEFAULT_SLOTS],
+        [dict(slot) for slot in DEFAULT_LAB_SLOTS],
+    )
+
+
 def generate_workspace_scenario(
     year: int,
     semester: int,
@@ -243,6 +263,8 @@ def generate_workspace_scenario(
     course_overrides: dict[str, int] | None = None,
     created_by: str = "",
     run_autoplace: bool = True,
+    slot_config: list[dict] | None = None,
+    lab_slot_config: list[dict] | None = None,
 ) -> dict:
     """Create a fully scaffolded timetable workspace scenario end-to-end.
 
@@ -606,29 +628,18 @@ def generate_workspace_scenario(
         sec_label = f" {section}" if section else ""
         scenario_name = f"{program_label}{sec_label} T{semester} Draft {ts}"
 
-    # Resolve the time-slot grid.  Prefer the admin-configured default
-    # template; fall back to the hardcoded DEFAULT_SLOTS from the
-    # auto-placement engine if no template has been marked as default.
-    slot_config: list[object] = []
-    default_tpl = TimeSlotTemplate.objects.filter(is_default=True).first()
-    if default_tpl:
-        slot_config = default_tpl.slots  # type: ignore[assignment]
-    if not slot_config:
-        from core.services.timetable_autoplace import DEFAULT_SLOTS
-
-        slot_config = DEFAULT_SLOTS
-
-    # Lab slot grid: dedicated 100-min time slots (separate from lectures)
-    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS
-
-    lab_slot_config: list[object] = DEFAULT_LAB_SLOTS
+    # Resolve the time-slot grid: the caller's columns (the Generate dialog's
+    # own time slots, validated by the view), else the generator's defaults.
+    default_lectures, default_labs = default_generate_slots()
+    lecture_columns: list[object] = list(slot_config or default_lectures)
+    lab_columns: list[object] = list(lab_slot_config or default_labs)
 
     scenario = TimetableScenario.objects.create(
         academic_year=str(year),
         term=str(semester),
         name=scenario_name,
-        slot_config=slot_config,
-        lab_slot_config=lab_slot_config,
+        slot_config=lecture_columns,
+        lab_slot_config=lab_columns,
         created_by=created_by,
         # Structured cohort identity so the planner resolves course instructors
         # without parsing the scenario name. Only M/F are valid gender values.

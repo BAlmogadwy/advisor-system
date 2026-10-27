@@ -12,7 +12,7 @@
 {% block extra_css %}
   {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
   <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
-  <link href="{% static 'css/timetable-workspace.css' %}?v=23" rel="stylesheet">
+  <link href="{% static 'css/timetable-workspace.css' %}?v=24" rel="stylesheet">
   <link href="{% static 'css/timetable-meeting-policy.css' %}?v=4" rel="stylesheet">
 {% endblock %}
 
@@ -320,6 +320,28 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
           <label class="ux-seg-item"><input type="radio" name="twGenSection" value="" checked>{% if LANGUAGE_CODE == 'ar' %}الاثنان{% else %}Both{% endif %}</label>
         </div>
       </fieldset>
+      {# The draft's grid columns, set before its first build: the build places classes only in them. Custom starts from the open scenario's columns, else the defaults (twGenDefaultSlots). #}
+      <fieldset class="ux-field">
+        <legend class="ux-field-label">{% if LANGUAGE_CODE == 'ar' %}الفترات الزمنية{% else %}Time slots{% endif %}</legend>
+        <div class="ux-seg">
+          <label class="ux-seg-item"><input type="radio" name="twGenSlots" value="default" checked>{% if LANGUAGE_CODE == 'ar' %}الافتراضية{% else %}Default{% endif %}</label>
+          <label class="ux-seg-item"><input type="radio" name="twGenSlots" value="custom">{% if LANGUAGE_CODE == 'ar' %}مخصصة{% else %}Custom{% endif %}</label>
+        </div>
+        <p class="ux-field-hint" id="twGenSlotsHint">{% if LANGUAGE_CODE == 'ar' %}أعمدة الجدول في المسودة الجديدة. يضع البناء الأول المحاضرات فيها فقط.{% else %}The new draft's grid columns. Its first build places classes only in these.{% endif %}</p>
+        <div class="tw-gen-slots" id="twGenSlotEditor" hidden>
+          <div class="ux-field-row">
+            <div class="ux-field">
+              <label class="fb-lbl" for="twGenSlotLectures">{% if LANGUAGE_CODE == 'ar' %}أعمدة المحاضرات{% else %}Lecture columns{% endif %}</label>
+              <textarea id="twGenSlotLectures" rows="7" dir="ltr" spellcheck="false" autocomplete="off" aria-describedby="twGenSlotFormat"></textarea>
+            </div>
+            <div class="ux-field">
+              <label class="fb-lbl" for="twGenSlotLabs">{% if LANGUAGE_CODE == 'ar' %}أعمدة المعامل{% else %}Lab columns{% endif %}</label>
+              <textarea id="twGenSlotLabs" rows="7" dir="ltr" spellcheck="false" autocomplete="off" aria-describedby="twGenSlotFormat"></textarea>
+            </div>
+          </div>
+          <p class="ux-field-hint" id="twGenSlotFormat">{% if LANGUAGE_CODE == 'ar' %}عمود في كل سطر: الاسم ثم البداية ثم النهاية، مثل <bdi dir="ltr">08:30-09:45&nbsp;&nbsp;08:30&nbsp;&nbsp;09:45</bdi>. تبقى نوافذ المساء للمقررات عن بُعد فقط. المحاضرة التي تبدأ بين 11:30 و12:59 تقع في وقت صلاة الظهر.{% else %}One column per line: name, start, end, e.g. <bdi dir="ltr">08:30-09:45&nbsp;&nbsp;08:30&nbsp;&nbsp;09:45</bdi>. The evening windows stay online-only. A lecture that starts between 11:30 and 12:59 falls in the midday prayer time.{% endif %}</p>
+        </div>
+      </fieldset>
       <fieldset class="ux-field">
         <legend class="ux-field-label">{% if LANGUAGE_CODE == 'ar' %}المحرك{% else %}Engine{% endif %}</legend>
         <div class="ux-choice-grid">
@@ -479,12 +501,13 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
   const defaultYear = "{{ default_year|default:''|escapejs }}";
   const defaultTerm = "{{ default_term|default:''|escapejs }}";
 </script>
+{{ generate_default_slots|json_script:"twGenDefaultSlots" }}
 <script src="{% static 'js/timetable-meeting-policy.js' %}?v=4"></script>
 <script src="{% static 'js/timetable-slot-config.js' %}?v=5"></script>
 <script src="{% static 'js/timetable-section-teacher.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-room-choice.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=66"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=67"></script>
 <script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}
