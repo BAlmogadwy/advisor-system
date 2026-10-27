@@ -904,21 +904,40 @@ function generateDialogValues() {
 }
 /* ── Generate: the new draft's time slots ──
    Default sends nothing (the server's defaults). Custom sends both lists as
-   typed in its two boxes, one column per line (the slot module's text rows;
-   Arabic-Indic digits are read as 0–9, as a slot save reads them). A line that
-   cannot be read is refused here, by its number, never dropped: a list emptied
-   that way would quietly become the defaults. A column the source listed with
-   a flag (online-only, policy) keeps it when its start and end are unchanged;
-   the server also carries the default columns' flags, and refuses a list that
-   moves or leaves out an online window (SLOT_FLAGS_DROPPED). The new scheduler
-   engine builds on its own fixed grid, so Custom is not offered with it. A
-   problem with the columns is said under the boxes, on the box it is about. */
+   typed in its two boxes, one column per line (the slot module's text rows).
+   A time's Arabic-Indic digits are read as 0–9, as a slot save reads them; a
+   label is sent as typed. A line that cannot be read is refused here, by its
+   number, never dropped: a list emptied that way would quietly become the
+   defaults. A column the source listed with a flag (online-only, policy)
+   keeps it when its start and end are unchanged; the server also carries the
+   default columns' flags, and refuses a list that moves or leaves out a
+   flagged default column (SLOT_FLAGS_DROPPED), so Custom always starts with
+   the default online windows in it. The new scheduler engine builds on its
+   own fixed grid, so Custom is not offered with it. A problem with the
+   columns is said under the boxes and described on each box it is about. */
 const GEN_SLOT_BOXES = { slot_config: 'twGenSlotLectures', lab_slot_config: 'twGenSlotLabs' };
-const GEN_SLOT_DIGITS = /[٠-٩۰-۹]/g;
+const GEN_SLOT_DIGITS = /[\u0660-\u0669\u06F0-\u06F9]/g;
 const generateSlotText = value => String(value ?? '').replace(GEN_SLOT_DIGITS, digit => {
   const code = digit.charCodeAt(0);
   return String(code - (code >= 0x06F0 ? 0x06F0 : 0x0660));
 });
+/* One box's text as columns: each line read with its digits as 0–9, its
+   label taken from the line as typed (a digit is read one character for one,
+   so the label's place in the line is its place as typed). */
+function parseGenerateSlotBox(text) {
+  const SC = window.TimetableSlotConfig;
+  const rows = [];
+  const rejected = [];
+  String(text ?? '').replace(/\r\n/g, '\n').split('\n').forEach((raw, index) => {
+    if (!raw.trim()) return;
+    const line = generateSlotText(raw);
+    const row = SC.parseLines(line).rows[0];
+    if (!row) { rejected.push(index + 1); return; }
+    const at = row.label ? line.indexOf(row.label) : -1;
+    rows.push({ ...row, label: at >= 0 ? raw.slice(at, at + row.label.length) : row.label });
+  });
+  return { rows, rejected };
+}
 function generateDefaultSlots() {
   try {
     const data = JSON.parse($('twGenDefaultSlots')?.textContent || '{}');
@@ -927,8 +946,23 @@ function generateDefaultSlots() {
     return { slot_config: [], lab_slot_config: [] };
   }
 }
-// Columns compared by what a placer reads: start, end and flags.
-const slotSpans = slots => JSON.stringify((slots || []).map(slot => [slot.start, slot.end, Boolean(slot.online_only), Boolean(slot.policy_only)]));
+// A time as HH:MM (a stored "8:30" or "08:30:00" is the same column).
+const genSlotTime = value => {
+  const match = /^\s*(\d{1,2}):(\d{2})/.exec(String(value ?? ''));
+  return match ? `${match[1].padStart(2, '0')}:${match[2]}` : String(value ?? '');
+};
+const genSlotKey = slot => `${genSlotTime(slot.start)}|${genSlotTime(slot.end)}`;
+// Columns compared by everything a new draft keeps: label, times and flags.
+const genSlotSignature = slots => JSON.stringify((slots || []).map(slot => [
+  String(slot.label ?? ''), genSlotTime(slot.start), genSlotTime(slot.end), Boolean(slot.online_only), Boolean(slot.policy_only),
+]));
+/* A list with every flagged default column it lacks (matched by start and
+   end) put back at its end: the server refuses a list without them. */
+function withDefaultFlagged(slots, defaults) {
+  const have = new Set((slots || []).map(genSlotKey));
+  const missing = (defaults || []).filter(slot => (slot.online_only || slot.policy_only) && !have.has(genSlotKey(slot)));
+  return [...(slots || []), ...missing];
+}
 /* What Custom starts from: the open scenario's columns, and whether they are
    its own rather than the generator's defaults. A generated draft stores the
    defaults it got, so a stored list alone says nothing. */
@@ -938,11 +972,11 @@ function generateSlotSource() {
   const lectures = scenarioLectureSlots();
   const labs = scenarioLabSlots();
   const source = {
-    slot_config: lectures.length ? lectures : defaults.slot_config,
-    lab_slot_config: labs.length ? labs : defaults.lab_slot_config,
+    slot_config: withDefaultFlagged(lectures.length ? lectures : defaults.slot_config, defaults.slot_config),
+    lab_slot_config: withDefaultFlagged(labs.length ? labs : defaults.lab_slot_config, defaults.lab_slot_config),
   };
-  const own = slotSpans(source.slot_config) !== slotSpans(defaults.slot_config)
-    || slotSpans(source.lab_slot_config) !== slotSpans(defaults.lab_slot_config);
+  const own = genSlotSignature(source.slot_config) !== genSlotSignature(defaults.slot_config)
+    || genSlotSignature(source.lab_slot_config) !== genSlotSignature(defaults.lab_slot_config);
   return { own, ...source };
 }
 function generateSlotsCustom() {
@@ -952,18 +986,33 @@ function syncGenerateSlots() {
   const editor = $('twGenSlotEditor');
   if (editor) editor.hidden = !generateSlotsCustom();
 }
-/* The columns' problem under the boxes, and on the box it is about
-   (aria-invalid); '' clears both. Returns that box. */
-function generateSlotError(message, list) {
+/* The columns' problem under the boxes, described on and marking
+   (aria-invalid) each box it is about; '' clears it. Returns the first of
+   those boxes. */
+function generateSlotError(message, lists = []) {
   const line = $('twGenSlotError');
   if (line) { line.textContent = message || ''; line.hidden = !message; }
-  Object.entries(GEN_SLOT_BOXES).forEach(([name, id]) => setAttr($(id), 'aria-invalid', message && name === list ? 'true' : ''));
-  return message ? $(GEN_SLOT_BOXES[list] || GEN_SLOT_BOXES.slot_config) : null;
+  const about = new Set(message ? (lists.length ? lists : ['slot_config']) : []);
+  Object.entries(GEN_SLOT_BOXES).forEach(([name, id]) => {
+    const box = $(id);
+    if (!box) return;
+    setAttr(box, 'aria-invalid', about.has(name) ? 'true' : '');
+    setAttr(box, 'aria-describedby', about.has(name) ? 'twGenSlotFormat twGenSlotError' : 'twGenSlotFormat');
+  });
+  const first = Object.keys(GEN_SLOT_BOXES).find(name => about.has(name));
+  return first ? $(GEN_SLOT_BOXES[first]) : null;
+}
+/* Focus the box a problem is about, and keep the words in view with it. */
+function showGenerateSlotError(message, lists) {
+  const box = generateSlotError(message, lists);
+  if (!box) return;
+  box.focus();
+  $('twGenSlotError')?.scrollIntoView?.({ block: 'nearest' });
 }
 function withSourceFlags(rows, source) {
-  const bySpan = new Map((source || []).map(slot => [`${slot.start}|${slot.end}`, slot]));
+  const bySpan = new Map((source || []).map(slot => [genSlotKey(slot), slot]));
   return rows.map(row => {
-    const match = bySpan.get(`${row.start}|${row.end}`) || {};
+    const match = bySpan.get(genSlotKey(row)) || {};
     const out = { label: row.label, start: row.start, end: row.end };
     ['online_only', 'policy_only'].forEach(flag => { if (match[flag] === true) out[flag] = true; });
     return out;
@@ -973,17 +1022,16 @@ function withSourceFlags(rows, source) {
    that could not be read. */
 function generateDialogSlots() {
   if (!generateSlotsCustom()) return null;
-  const SC = window.TimetableSlotConfig;
   const source = TW.generateSlotSource || generateSlotSource();
-  const lectures = SC.parseLines(generateSlotText($('twGenSlotLectures')?.value));
-  const labs = SC.parseLines(generateSlotText($('twGenSlotLabs')?.value));
+  const lectures = parseGenerateSlotBox($('twGenSlotLectures')?.value);
+  const labs = parseGenerateSlotBox($('twGenSlotLabs')?.value);
   return {
     slot_config: withSourceFlags(lectures.rows, source.slot_config),
     lab_slot_config: withSourceFlags(labs.rows, source.lab_slot_config),
     rejected: { slot_config: lectures.rejected, lab_slot_config: labs.rejected },
   };
 }
-/* A Custom list the dialog cannot send: {text, list}, or null when both can go. */
+/* A Custom list the dialog cannot send: {text, lists}, or null when both can go. */
 function generateSlotsProblem(slots) {
   if (!slots) return null;
   const { slot_config: lectureLines, lab_slot_config: labLines } = slots.rejected;
@@ -991,20 +1039,21 @@ function generateSlotsProblem(slots) {
     const part = (lines, en, ar) => (lines.length ? (IS_AR ? `${ar}: السطر ${lines.join('، ')}` : `${en}: line ${lines.join(', ')}`) : '');
     const parts = [part(lectureLines, 'Lectures', 'المحاضرات'), part(labLines, 'Labs', 'المعامل')].filter(Boolean);
     return {
-      list: lectureLines.length ? 'slot_config' : 'lab_slot_config',
+      lists: [lectureLines.length && 'slot_config', labLines.length && 'lab_slot_config'].filter(Boolean),
       text: IS_AR
         ? `لم تُفهم هذه الأسطر (الاسم ثم البداية ثم النهاية): ${parts.join('؛ ')}`
         : `These lines were not understood (name, start, end): ${parts.join('; ')}`,
     };
   }
   if (!slots.slot_config.length) {
-    return { list: 'slot_config', text: IS_AR ? 'أدخل عمود محاضرات واحداً على الأقل، أو اختر الافتراضية.' : 'Enter at least one lecture column, or choose Default.' };
+    return { lists: ['slot_config'], text: IS_AR ? 'أدخل عمود محاضرات واحداً على الأقل، أو اختر الافتراضية.' : 'Enter at least one lecture column, or choose Default.' };
   }
   return null;
 }
 const GEN_SLOT_LIST_WORD = IS_AR ? { slot_config: 'المحاضرات', lab_slot_config: 'المعامل' } : { slot_config: 'Lectures', lab_slot_config: 'Labs' };
-/* Generate's refusal of the columns, as {text, list} for under the boxes, or
-   {general} for the dialog's own alert; null when the refusal is another. */
+const genSlotLists = items => [...new Set((items || []).map(item => item.list).filter(name => name in GEN_SLOT_BOXES))];
+/* Generate's refusal of the columns, as {text, lists} for under the boxes,
+   or {general} for the dialog's own alert; null when the refusal is another. */
 function generateRefusal(error) {
   const SC = window.TimetableSlotConfig;
   const details = error?.details || {};
@@ -1017,18 +1066,25 @@ function generateRefusal(error) {
       return `${GEN_SLOT_LIST_WORD[item.list] || item.list}${where}: ${SC.fieldErrorText(item)}`;
     });
     return {
-      list: errors[0]?.list,
+      lists: genSlotLists(errors),
       text: (IS_AR ? 'لم يُنشأ شيء — الفترات الزمنية غير صحيحة: ' : 'Nothing was generated — some time slots are not valid: ') + lines.join(IS_AR ? '؛ ' : '; '),
     };
   }
   if (error?.code === 'SLOT_FLAGS_DROPPED') {
     const dropped = details.dropped_flags || [];
-    const names = dropped.map(column => `${column.label} (⁦${column.start}–${column.end}⁩)`).join(IS_AR ? '، ' : ', ');
+    const named = flag => dropped.filter(column => (column.flags || []).includes(flag))
+      .map(column => `${column.label} (${isolatedText(`${column.start}–${column.end}`)})`).join(IS_AR ? '، ' : ', ');
+    const online = named('online_only');
+    const policy = named('policy_only');
+    const parts = [
+      online && (IS_AR ? `نوافذ المقررات عن بُعد: ${online}` : `the online windows: ${online}`),
+      policy && (IS_AR ? `أعمدة عرض السياسة: ${policy}` : `the policy display columns: ${policy}`),
+    ].filter(Boolean);
     return {
-      list: dropped[0]?.list,
+      lists: genSlotLists(dropped),
       text: IS_AR
-        ? `لم يُنشأ شيء — يجب أن تبقى نوافذ المقررات عن بُعد كما هي: ${names}. أبقِ أسطرها دون تغيير، أو اختر الافتراضية.`
-        : `Nothing was generated — the online windows must stay as they are: ${names}. Keep their lines unchanged, or choose Default.`,
+        ? `لم يُنشأ شيء — يجب أن تبقى هذه الأعمدة كما هي: ${parts.join('؛ ')}. أعد أسطرها دون تغيير، أو اختر الافتراضية.`
+        : `Nothing was generated — these columns must stay as they are, ${parts.join('; ')}. Put their lines back unchanged, or choose Default.`,
     };
   }
   if (error?.code === 'SLOTS_NEED_CLASSIC') {
@@ -1044,7 +1100,8 @@ function generateDialogError(message) {
 }
 /* The new engine builds one section (M or F) at a time: "Both" is not offered
    with it, rather than refused after the click. Nor is Custom: it builds on
-   its own fixed grid, and the note says so. */
+   its own fixed grid. The note says so, described on the Custom choice, and
+   is said as it appears (a status line, empty with the current generator). */
 function syncGenerateDialog() {
   const engine = document.querySelector('input[name="twGenEngine"]:checked')?.value || 'classic';
   const scheduler = engine === 'scheduler';
@@ -1059,6 +1116,7 @@ function syncGenerateDialog() {
   const custom = document.querySelector('input[name="twGenSlots"][value="custom"]');
   if (custom) {
     custom.disabled = scheduler;
+    setAttr(custom, 'aria-describedby', scheduler ? 'twGenSlotsEngineNote' : '');
     if (scheduler && custom.checked) {
       const plain = document.querySelector('input[name="twGenSlots"][value="default"]');
       if (plain) plain.checked = true;
@@ -1066,7 +1124,7 @@ function syncGenerateDialog() {
     }
   }
   const note = $('twGenSlotsEngineNote');
-  if (note) note.hidden = !scheduler;
+  if (note) setText(note, scheduler ? note.dataset.message || '' : '');
   syncGenerateSlots();
 }
 function openGenerateDialog() {
@@ -1105,7 +1163,7 @@ function openGenerateDialog() {
 }
 /* Generate refused the time slots after the dialog closed: show it again as
    it was left, the refusal said where it belongs, and the box it is about
-   focused (so the words are in view and announced with it). */
+   focused with the words in view. */
 function reopenGenerateDialog(refusal) {
   const dialog = $('twGenerateDialog');
   if (!dialog) return;
@@ -1115,11 +1173,11 @@ function reopenGenerateDialog(refusal) {
     if (custom) custom.checked = true;
     syncGenerateSlots();
   }
-  const box = refusal.general ? null : generateSlotError(refusal.text, refusal.list);
+  if (refusal.general) generateSlotError('');
   if (typeof dialog.showModal === 'function') dialog.showModal();
   else dialog.setAttribute('open', '');
-  if (box) box.focus();
-  else $('twGenError')?.scrollIntoView?.({ block: 'nearest' });
+  if (refusal.general) $('twGenError')?.scrollIntoView?.({ block: 'nearest' });
+  else showGenerateSlotError(refusal.text, refusal.lists);
 }
 function closeGenerateDialog() {
   const dialog = $('twGenerateDialog');
@@ -1136,7 +1194,11 @@ function wireGenerateDialog() {
   // Editing the box a problem was about takes the problem back.
   // (Wired while the page script still loads: the boxes, not GEN_SLOT_BOXES.)
   dialog.querySelectorAll('#twGenSlotEditor textarea').forEach(box => box.addEventListener('input', () => {
-    if (box.getAttribute('aria-invalid') === 'true') generateSlotError('');
+    if (box.getAttribute('aria-invalid') !== 'true') return;
+    // This box is fixed in the reader's eyes; the words stay while another is marked.
+    setAttr(box, 'aria-invalid', '');
+    setAttr(box, 'aria-describedby', 'twGenSlotFormat');
+    if (!dialog.querySelector('#twGenSlotEditor textarea[aria-invalid="true"]')) generateSlotError('');
   }));
   $('twGenerateForm')?.addEventListener('submit', event => {
     event.preventDefault();
@@ -1156,7 +1218,7 @@ function wireGenerateDialog() {
     const slotsProblem = generateSlotsProblem(request.slots);
     if (slotsProblem) {
       generateDialogError('');
-      generateSlotError(slotsProblem.text, slotsProblem.list)?.focus();
+      showGenerateSlotError(slotsProblem.text, slotsProblem.lists);
       return;
     }
     generateSlotError('');

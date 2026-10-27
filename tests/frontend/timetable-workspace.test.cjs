@@ -8034,6 +8034,18 @@ test('GS5 a line Custom cannot read, or no lecture column, is refused in the dia
   assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
   assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLectures'));
   assert.equal(h.d.getElementById('twGenError').hidden, true);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-describedby'), 'twGenSlotFormat twGenSlotError');
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-describedby'), 'twGenSlotFormat', 'not described on the box it is not about');
+  // Both lists wrong: both marked; fixing one keeps the words for the other.
+  h.d.getElementById('twGenSlotLabs').value = 'lab?';
+  submitGenerate(h);
+  await settle();
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /Lectures: line 2; Labs: line 1/);
+  assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-invalid'), 'true');
+  h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40';
+  h.d.getElementById('twGenSlotLabs').dispatchEvent(new h.w.Event('input'));
+  assert.equal(h.d.getElementById('twGenSlotLabs').hasAttribute('aria-invalid'), false);
+  assert.equal(h.d.getElementById('twGenSlotError').hidden, false, 'the lectures box is still marked');
   h.d.getElementById('twGenSlotLectures').value = '   ';
   submitGenerate(h);
   await settle();
@@ -8055,8 +8067,11 @@ test('GS6 time slots the server refuses bring the dialog back, as it was left, w
   fillGenerate(h);
   h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
   h.d.getElementById('twGenSlotLectures').value = 'A\t08:30\t09:45\nB\t10:00\t09:00';
+  const scrolled = [];
+  h.w.Element.prototype.scrollIntoView = function () { scrolled.push(this.id); };
   submitGenerate(h);
   await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  assert.ok(scrolled.includes('twGenSlotError'), 'the words are brought into view with the focused box');
   assert.match(h.d.getElementById('twGenSlotError').textContent, /Nothing was generated.*Lectures column 2: End: must be after the start/);
   assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
   assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLectures'), 'the box it is about has the focus, the words beside it');
@@ -8076,10 +8091,14 @@ test('GS7 the new scheduler engine is not offered Custom: it builds on its own f
   assert.equal(custom.disabled, true);
   assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'default');
   assert.equal(h.d.getElementById('twGenSlotEditor').hidden, true);
-  assert.equal(h.d.getElementById('twGenSlotsEngineNote').hidden, false);
+  const note = h.d.getElementById('twGenSlotsEngineNote');
+  assert.equal(note.getAttribute('role'), 'status');
+  assert.equal(note.textContent, note.dataset.message);
+  assert.equal(custom.getAttribute('aria-describedby'), 'twGenSlotsEngineNote');
   h.d.querySelector('input[name="twGenEngine"][value="classic"]').click();
   assert.equal(custom.disabled, false);
-  assert.equal(h.d.getElementById('twGenSlotsEngineNote').hidden, true);
+  assert.equal(note.textContent, '');
+  assert.equal(custom.hasAttribute('aria-describedby'), false);
   assert.equal(h.w.generateDialogValues().slots, null, 'Default again: nothing to send');
 });
 
@@ -8124,12 +8143,17 @@ test('GS10 Custom reads Arabic-Indic digits as 0–9, as a slot save does', asyn
   h.w.openGenerateDialog();
   fillGenerate(h);
   h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
-  h.d.getElementById('twGenSlotLectures').value = 'صباحي\t٠٨:٣٠\t٠٩:٤٥\n۰۹:۵۵  ۱۱:۱۰';
+  h.d.getElementById('twGenSlotLectures').value = 'صباحي ٣\t٠٨:٣٠\t٠٩:٤٥\n۰۹:۵۵  ۱۱:۱۰';
+  h.d.getElementById('twGenSlotLabs').value = 'معمل ١\t٠٩:٠٠\t١٠:٤٠\nOnline 1\t١٥:٥٠\t١٧:٣٠';
   submitGenerate(h);
   await wait(() => generatePosts(h).length === 1);
   assert.deepEqual(generatePosts(h)[0].slot_config, [
-    { label: 'صباحي', start: '08:30', end: '09:45' },
+    { label: 'صباحي ٣', start: '08:30', end: '09:45' },
     { label: '09:55-11:10', start: '09:55', end: '11:10' },
+  ], 'times read as 0–9; the label sent as typed');
+  assert.deepEqual(generatePosts(h)[0].lab_slot_config, [
+    { label: 'معمل ١', start: '09:00', end: '10:40' },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
   ]);
   pending.resolve({ httpError: 500, error: { message: 'stop here' } });
   await wait(() => !h.d.getElementById('twGenerate').disabled);
@@ -8146,7 +8170,7 @@ test('GS11 a moved online window brings the dialog back naming the window, on th
   h.d.getElementById('twGenSlotLabs').value = 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:20';
   submitGenerate(h);
   await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
-  assert.match(h.d.getElementById('twGenSlotError').textContent, /online windows must stay as they are: Online 1 \(.*15:50–17:30.*\)/);
+  assert.match(h.d.getElementById('twGenSlotError').textContent, /must stay as they are, the online windows: Online 1 \(.*15:50–17:30.*\)\. Put their lines back unchanged/);
   assert.equal(h.d.getElementById('twGenSlotLabs').getAttribute('aria-invalid'), 'true');
   assert.equal(h.d.getElementById('twGenSlotLectures').hasAttribute('aria-invalid'), false);
   assert.equal(h.d.activeElement, h.d.getElementById('twGenSlotLabs'));
@@ -8163,4 +8187,55 @@ test('GS12 the server refusing custom columns for the new engine is said in the 
   await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenError').hidden);
   assert.match(h.d.getElementById('twGenError').textContent, /own fixed grid: custom time slots need the current generator/);
   assert.equal(h.notices.filter(n => n.type === 'error').length, 0);
+});
+
+test('GS13 an open scenario whose lab columns alone are its own starts Generate on Custom', async t => {
+  const labs = [{ label: 'Lab A', start: '08:30', end: '10:10' }, { label: 'Online 1', start: '15:50', end: '17:30', online_only: true }];
+  const h = await harness(t, undefined, {
+    slot_config: DEFAULT_COLUMNS.slot_config, lab_slot_config: labs,
+    effective_slot_config: DEFAULT_COLUMNS.slot_config, effective_lab_slot_config: labs,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.querySelector('input[name="twGenSlots"]:checked').value, 'custom');
+  assert.equal(h.d.getElementById('twGenSlotLabs').value, 'Lab A\t08:30\t10:10\nOnline 1\t15:50\t17:30');
+});
+
+test('GS14 Custom from a scenario without the default online windows puts them back, so it is never refused unchanged', async t => {
+  const labs = [{ label: 'Lab 1', start: '09:00', end: '10:40' }];
+  const pending = deferred();
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/' ? pending.promise : undefined, {
+    slot_config: [{ label: 'Early', start: '08:30', end: '09:45' }], lab_slot_config: labs,
+    effective_slot_config: [{ label: 'Early', start: '08:30', end: '09:45' }], effective_lab_slot_config: labs,
+  });
+  withDefaultColumns(h);
+  await h.select();
+  h.w.openGenerateDialog();
+  assert.equal(h.d.getElementById('twGenSlotLabs').value, 'Lab 1\t09:00\t10:40\nOnline 1\t15:50\t17:30');
+  fillGenerate(h);
+  submitGenerate(h);
+  await wait(() => generatePosts(h).length === 1);
+  assert.deepEqual(generatePosts(h)[0].lab_slot_config, [
+    { label: 'Lab 1', start: '09:00', end: '10:40' },
+    { label: 'Online 1', start: '15:50', end: '17:30', online_only: true },
+  ]);
+  pending.resolve({ httpError: 500, error: { message: 'stop here' } });
+  await wait(() => !h.d.getElementById('twGenerate').disabled);
+});
+
+test('GS15 a dropped policy column is named as one, not as an online window', async t => {
+  const h = await harness(t, url => url === '/ops/tw/generate-workspace/'
+    ? { httpError: 400, error: { code: 'SLOT_FLAGS_DROPPED', message: 'x', details: { dropped_flags: [{ list: 'slot_config', label: 'English', start: '09:00', end: '12:00', flags: ['policy_only'] }] } } }
+    : undefined);
+  withDefaultColumns(h);
+  h.w.openGenerateDialog();
+  fillGenerate(h);
+  h.d.querySelector('input[name="twGenSlots"][value="custom"]').click();
+  submitGenerate(h);
+  await wait(() => h.d.getElementById('twGenerateDialog').hasAttribute('open') && !h.d.getElementById('twGenSlotError').hidden);
+  const words = h.d.getElementById('twGenSlotError').textContent;
+  assert.match(words, /the policy display columns: English/);
+  assert.doesNotMatch(words, /online/);
+  assert.equal(h.d.getElementById('twGenSlotLectures').getAttribute('aria-invalid'), 'true');
 });

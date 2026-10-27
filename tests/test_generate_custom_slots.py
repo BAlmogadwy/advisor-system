@@ -276,3 +276,30 @@ def test_the_scaffold_takes_custom_labs_alone_and_the_template_lectures(monkeypa
     # No lectures chosen: the admin's default template, as the page shows it.
     assert scenario.slot_config == MORNING[:1]
     assert default_generate_slots()[0] == MORNING[:1]
+
+
+@pytest.mark.django_db
+def test_a_template_policy_column_left_out_is_refused_by_its_flag(generate):
+    _, post, scaffold = generate
+    TimeSlotTemplate.objects.create(
+        name="With policy",
+        slots=[
+            {"label": "08:30-09:45", "start": "08:30", "end": "09:45"},
+            {"label": "English", "start": "09:00", "end": "12:00", "policy_only": True},
+        ],
+        is_default=True,
+    )
+    response = post(slot_config=[{"label": "08:30-09:45", "start": "08:30", "end": "09:45"}])
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "SLOT_FLAGS_DROPPED"
+    assert error["details"]["dropped_flags"] == [
+        {
+            "list": "slot_config",
+            "label": "English",
+            "start": "09:00",
+            "end": "12:00",
+            "flags": ["policy_only"],
+        }
+    ]
+    scaffold.assert_not_called()

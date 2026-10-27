@@ -726,7 +726,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         )
     if dropped_flags:
         return _err(
-            "The online windows must stay as they are",
+            "Flagged default columns (online windows, policy columns) must stay as they are",
             code="SLOT_FLAGS_DROPPED",
             status=400,
             details={"dropped_flags": dropped_flags},
