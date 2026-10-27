@@ -598,8 +598,9 @@ html[dir="rtl"] .tw-sel-title { direction: ltr; unicode-bidi: isolate; text-alig
 /* Custom time slots: the lecture and lab lists side by side, one column per
    line, wrapping to one above the other on a narrow dialog. */
 .tw-gen-slots { display: grid; gap: 6px; margin-top: 6px; }
-/* The engine note stays in the page (a status line) and takes no room while empty. */
-.tw-gen-engine-note:empty { margin: 0; padding: 0; }
+/* The engine note stays in the page (a status line, so never display:none);
+   while empty it is out of the fieldset's grid flow, so it adds no grid gap. */
+.tw-gen-engine-note:empty { position: absolute; }
 .tw-gen-slots .ux-field-row > .ux-field { flex: 1 1 220px; min-width: 0; margin: 0; }
 .tw-gen-slots textarea {
   /* The slot editor's own field (.ux-rows inputs), in a fixed-width font. */

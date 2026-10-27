@@ -921,9 +921,27 @@ const generateSlotText = value => String(value ?? '').replace(GEN_SLOT_DIGITS, d
   const code = digit.charCodeAt(0);
   return String(code - (code >= 0x06F0 ? 0x06F0 : 0x0660));
 });
+/* A line's label as typed, read by the slot module's own rules (parseLines):
+   the parts before the two times joined by one space, or, on a line of
+   single spaces, everything before them. A digit is read one character for
+   one and whitespace is left alone, so the typed line splits where the read
+   one does. A line of two times has no label of its own. */
+const GEN_SLOT_TIME = /^\d{1,2}:\d{2}$/;
+const GEN_SLOT_SPLIT = /\t|\s{2,}/;
+function typedSlotLabel(raw, line, row) {
+  const parts = line.split(GEN_SLOT_SPLIT).map(part => part.trim()).filter(Boolean);
+  const typed = raw.split(GEN_SLOT_SPLIT).map(part => part.trim()).filter(Boolean);
+  if (parts.length >= 3 && GEN_SLOT_TIME.test(parts[parts.length - 2]) && GEN_SLOT_TIME.test(parts[parts.length - 1])) {
+    return typed.length === parts.length ? typed.slice(0, -2).join(' ') : row.label;
+  }
+  if (parts.length === 2) return row.label;
+  const match = line.trim().match(/^(.+?)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+  if (!match) return row.label;
+  const lead = line.length - line.trimStart().length;
+  return raw.slice(lead, lead + match[1].length);
+}
 /* One box's text as columns: each line read with its digits as 0–9, its
-   label taken from the line as typed (a digit is read one character for one,
-   so the label's place in the line is its place as typed). */
+   label as typed. */
 function parseGenerateSlotBox(text) {
   const SC = window.TimetableSlotConfig;
   const rows = [];
@@ -933,8 +951,7 @@ function parseGenerateSlotBox(text) {
     const line = generateSlotText(raw);
     const row = SC.parseLines(line).rows[0];
     if (!row) { rejected.push(index + 1); return; }
-    const at = row.label ? line.indexOf(row.label) : -1;
-    rows.push({ ...row, label: at >= 0 ? raw.slice(at, at + row.label.length) : row.label });
+    rows.push({ ...row, label: typedSlotLabel(raw, line, row) });
   });
   return { rows, rejected };
 }
@@ -957,11 +974,26 @@ const genSlotSignature = slots => JSON.stringify((slots || []).map(slot => [
   String(slot.label ?? ''), genSlotTime(slot.start), genSlotTime(slot.end), Boolean(slot.online_only), Boolean(slot.policy_only),
 ]));
 /* A list with every flagged default column it lacks (matched by start and
-   end) put back at its end: the server refuses a list without them. */
+   end) put back where the defaults have it: after the nearest earlier default
+   column the list keeps, else before the nearest later one, else at the end.
+   The server refuses a list without them. A kept column at another end (an
+   online window moved and confirmed) stays beside it, as the source had it. */
 function withDefaultFlagged(slots, defaults) {
-  const have = new Set((slots || []).map(genSlotKey));
-  const missing = (defaults || []).filter(slot => (slot.online_only || slot.policy_only) && !have.has(genSlotKey(slot)));
-  return [...(slots || []), ...missing];
+  const out = [...(slots || [])];
+  const at = slot => out.findIndex(item => genSlotKey(item) === genSlotKey(slot));
+  (defaults || []).forEach((slot, index) => {
+    if (!(slot.online_only || slot.policy_only) || at(slot) >= 0) return;
+    for (let j = index - 1; j >= 0; j--) {
+      const place = at(defaults[j]);
+      if (place >= 0) { out.splice(place + 1, 0, slot); return; }
+    }
+    for (let j = index + 1; j < defaults.length; j++) {
+      const place = at(defaults[j]);
+      if (place >= 0) { out.splice(place, 0, slot); return; }
+    }
+    out.push(slot);
+  });
+  return out;
 }
 /* What Custom starts from: the open scenario's columns, and whether they are
    its own rather than the generator's defaults. A generated draft stores the
@@ -1048,6 +1080,10 @@ function generateSlotsProblem(slots) {
   if (!slots.slot_config.length) {
     return { lists: ['slot_config'], text: IS_AR ? 'أدخل عمود محاضرات واحداً على الأقل، أو اختر الافتراضية.' : 'Enter at least one lecture column, or choose Default.' };
   }
+  // An emptied list would quietly be the defaults on the server.
+  if (!slots.lab_slot_config.length) {
+    return { lists: ['lab_slot_config'], text: IS_AR ? 'أدخل أعمدة المعامل (ونوافذ المقررات عن بُعد معها)، أو اختر الافتراضية.' : 'Enter the lab columns (the online windows with them), or choose Default.' };
+  }
   return null;
 }
 const GEN_SLOT_LIST_WORD = IS_AR ? { slot_config: 'المحاضرات', lab_slot_config: 'المعامل' } : { slot_config: 'Lectures', lab_slot_config: 'Labs' };
@@ -1073,7 +1109,7 @@ function generateRefusal(error) {
   if (error?.code === 'SLOT_FLAGS_DROPPED') {
     const dropped = details.dropped_flags || [];
     const named = flag => dropped.filter(column => (column.flags || []).includes(flag))
-      .map(column => `${column.label} (${isolatedText(`${column.start}–${column.end}`)})`).join(IS_AR ? '، ' : ', ');
+      .map(column => isolatedText(`${column.label} (${column.start}–${column.end})`)).join(IS_AR ? '، ' : ', ');
     const online = named('online_only');
     const policy = named('policy_only');
     const parts = [
@@ -1117,6 +1153,9 @@ function syncGenerateDialog() {
   if (custom) {
     custom.disabled = scheduler;
     setAttr(custom, 'aria-describedby', scheduler ? 'twGenSlotsEngineNote' : '');
+    // Back on the current generator, the choice the dialog opened with comes
+    // back unless the user picked Default or Custom themselves.
+    if (!scheduler && !custom.checked && TW.generateSlotSource?.own && !TW.generateSlotsChosen) custom.checked = true;
     if (scheduler && custom.checked) {
       const plain = document.querySelector('input[name="twGenSlots"][value="default"]');
       if (plain) plain.checked = true;
@@ -1151,8 +1190,11 @@ function openGenerateDialog() {
   const SC = window.TimetableSlotConfig;
   const source = generateSlotSource();
   TW.generateSlotSource = source;
-  $('twGenSlotLectures').value = SC.rowsToText(source.slot_config);
-  $('twGenSlotLabs').value = SC.rowsToText(source.lab_slot_config);
+  TW.generateSlotsChosen = false;
+  // Times written as HH:MM: a box reads no seconds (a stored 08:30:00 is 08:30).
+  const asTyped = slots => slots.map(slot => ({ ...slot, start: genSlotTime(slot.start), end: genSlotTime(slot.end) }));
+  $('twGenSlotLectures').value = SC.rowsToText(asTyped(source.slot_config));
+  $('twGenSlotLabs').value = SC.rowsToText(asTyped(source.lab_slot_config));
   const slotsRadio = document.querySelector(`input[name="twGenSlots"][value="${source.own ? 'custom' : 'default'}"]`);
   if (slotsRadio) slotsRadio.checked = true;
   generateSlotError('');
@@ -1190,7 +1232,11 @@ function wireGenerateDialog() {
   if (!dialog) return;
   dialog.querySelectorAll('[data-dialog-close]').forEach(button => button.addEventListener('click', closeGenerateDialog));
   dialog.querySelectorAll('input[name="twGenEngine"]').forEach(radio => radio.addEventListener('change', syncGenerateDialog));
-  dialog.querySelectorAll('input[name="twGenSlots"]').forEach(radio => radio.addEventListener('change', () => { generateSlotError(''); syncGenerateSlots(); }));
+  dialog.querySelectorAll('input[name="twGenSlots"]').forEach(radio => radio.addEventListener('change', () => {
+    TW.generateSlotsChosen = true;
+    generateSlotError('');
+    syncGenerateSlots();
+  }));
   // Editing the box a problem was about takes the problem back.
   // (Wired while the page script still loads: the boxes, not GEN_SLOT_BOXES.)
   dialog.querySelectorAll('#twGenSlotEditor textarea').forEach(box => box.addEventListener('input', () => {
