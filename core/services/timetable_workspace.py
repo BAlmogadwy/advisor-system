@@ -3048,8 +3048,21 @@ def create_planned_section_placements(
     section_label: str,
     capacity: int,
     meetings: list[dict],
+    required_meetings: int | None = None,
 ) -> dict:
     """Create a planned section and all required placement rows atomically.
+
+    ``required_meetings`` states the pattern the caller already knows, for a
+    caller that has one. It is the whole section's shape, so a count that does
+    not match ``meetings`` is still refused - it moves the decision, it does not
+    remove the check. Left out (the page's own creates), the count is inferred
+    from the scenario: see :func:`infer_required_meeting_count`, whose fallback
+    reads 3 meetings for a 4-credit course and 1 for everything else, because on
+    the page a course's first section is dropped into one cell. An importer that
+    carries a whole timetable knows better - a 3-credit course meets twice
+    (``MEETING_PATTERNS``) - and nothing has been placed yet for the inference to
+    read, so it passes the pattern in rather than being held to the one-cell
+    fallback.
 
     A label already placed anywhere in the scenario is refused
     (``SectionLabelInUse``), whichever section holds it; a label whose section
@@ -3075,11 +3088,16 @@ def create_planned_section_placements(
         ScenarioSectionBudget.objects.filter(scenario=board.scenario, course_key=key).first()
         or ScenarioSectionBudget.objects.filter(scenario=board.scenario, course_code=code).first()
     )
-    required_meetings = infer_required_meeting_count(
-        board.scenario_id,
-        key,
-        fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
-    )
+    if required_meetings is None:
+        required_meetings = infer_required_meeting_count(
+            board.scenario_id,
+            key,
+            fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
+        )
+    elif int(required_meetings) < 1:
+        raise ValueError("required_meetings must be at least 1.")
+    else:
+        required_meetings = int(required_meetings)
     meeting_rows = _normalise_planned_meeting_rows(meetings)
     policy = get_course_meeting_policy(code, key)
     if policy:
