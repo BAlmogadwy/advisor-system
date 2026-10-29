@@ -35,6 +35,7 @@ Dependencies:
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable, Mapping
 
 from core.models import (
     BoardStudentLink,
@@ -144,90 +145,204 @@ def _is_excluded_course(code: str, course_name: object) -> bool:
     return False
 
 
-def _limit_electives_per_placeholder(
+def _resolve_elective_slots(
     all_recs: dict[int, list[str]],
-    elective_map: dict[str, list],
-    picks: list[tuple[int, str, str]] | None = None,
-) -> dict[int, list[str]]:
-    """Limit elective expansion to 1 course per placeholder per student.
+    elective_map: Mapping[tuple[str, str], list],
+    programme_of: Callable[[int], str],
+    passed: Mapping[int, set[str]],
+    studying: Mapping[int, set[str]],
+) -> tuple[dict[int, list[str]], list[tuple[int, str, str]], list[tuple[int, str, str]]]:
+    """Turn each student's elective placeholders into the real courses they take.
 
-    After the recommender expands elective placeholders (CS1 → CS403,
-    CS468, CS487), a student eligible for all 3 gets all 3 recommended.
-    But they only need to register for ONE course per placeholder slot.
+    The recommender returns plan codes as they stand (``DS1``, ``AI2``). A
+    placeholder is a *slot*: one course the student must pick from the list the
+    department mapped onto it. This resolves every slot a student still owes and
+    reports the ones that cannot be filled.
 
-    This function keeps only the first elective per placeholder group,
-    spreading students across electives to balance demand. A student
-    who already got CS403 for CS1 won't get CS403 again for CS2 —
-    they'll get the next available (CS468).
+    Two rules, and the second is why this is one function rather than two:
 
-    Remove this function call in generate_workspace_scenario() to
-    restore the original behaviour (all eligible electives recommended).
+    * **One course per slot.** A student eligible for 13 electives needs one of
+      them, not 13.
+    * **A course fills the slot it was picked for.** Expanding first and
+      assigning afterwards loses which slots the student owed, so a course that
+      several slots offer was credited to the lowest-numbered one — a student who
+      had passed ``DS1`` and owed only ``DS3`` had their course booked against
+      ``DS1``, at ``DS1``'s term. The slot decides the section's size
+      (:func:`slot_declared_limits`) and its term, so that was wrong twice over.
 
-    Pass ``picks`` to learn which slot each kept elective fills: one
-    (student id, placeholder, elective) per pick, so the elective can be
-    sized with its slot's declared limit (``slot_declared_limits``).
+    A student is never given one course for two of their own slots: nobody clears
+    two requirements by sitting one class, and a course they have passed or are
+    sitting now fills nothing. A slot left with no course of its own stays
+    **unserved** and is returned with the reason, because the alternative is what
+    used to happen — it vanished, and with it the demand, the sections and any
+    sign that something was missing. Demand is one count per owed slot, so a
+    student owing two gets two courses. The slots are matched to courses as a
+    whole (:func:`_match_slots_to_courses`) rather than one at a time, so a slot
+    is called unserved only when no assignment could have filled it.
+
+    Students are spread across the courses a slot offers, least-used first, so
+    demand does not pile onto whichever course happens to sort first.
+
+    Args:
+        all_recs: student id -> recommended codes, placeholders included.
+        elective_map: (programme, placeholder) -> the mapped elective rows.
+            Keyed by programme as well as slot: ``AI3`` is term 10 in the AI plan
+            and term 9 in AI2, and the two plans may offer different courses.
+        programme_of: a student's programme code.
+        passed: student id -> normalised codes already passed.
+        studying: student id -> normalised codes being taken now.
+
+    Returns:
+        ``(recs, picks, unserved)``. ``recs`` is ``all_recs`` with each
+        placeholder replaced by the course picked for it; ``picks`` is one
+        ``(student, slot, course)`` per filled slot; ``unserved`` is one
+        ``(student, slot, reason)`` per slot no course could fill, the reason
+        being ``no_eligible_course`` or ``courses_exhausted``.
     """
+    picks: list[tuple[int, str, str]] = []
+    unserved: list[tuple[int, str, str]] = []
     if not elective_map:
-        return all_recs
+        return all_recs, picks, unserved
 
-    # Build reverse map: elective_code → placeholder_code
-    # e.g. CS403 → CS1, CS468 → CS1, CS403 → CS2, ...
-    elective_to_placeholders: dict[str, set[str]] = defaultdict(set)
-    placeholder_electives: dict[str, list[str]] = {}
-    for placeholder_norm, elective_courses in elective_map.items():
-        codes = [normalize_code(ec.course_code) for ec in elective_courses]
-        placeholder_electives[placeholder_norm] = codes
-        for code in codes:
-            elective_to_placeholders[code].add(placeholder_norm)
+    slots_by_programme: dict[str, set[str]] = defaultdict(set)
+    for programme, slot in elective_map:
+        slots_by_programme[programme].add(slot)
 
-    # Track global assignment counts to spread students evenly
-    # across electives (first student gets CS403, second gets CS468, etc.)
-    elective_assignment_count: Counter[str] = Counter()
+    # Global tally, so the first student takes the first course, the second the
+    # next, and no single course absorbs a whole cohort.
+    assigned_count: Counter[str] = Counter()
 
     for sid, recs in all_recs.items():
-        # Separate regular courses from elective courses
-        regular: list[str] = []
-        elective_codes_in_recs: list[str] = []
-        for code in recs:
-            norm = normalize_code(code)
-            if norm in elective_to_placeholders:
-                if norm not in elective_codes_in_recs:
-                    elective_codes_in_recs.append(norm)
-            else:
-                regular.append(code)
-
-        if not elective_codes_in_recs:
+        programme = programme_of(int(sid))
+        owned_slots = slots_by_programme.get(programme)
+        if not owned_slots:
             continue
 
-        # For each placeholder this student has electives for,
-        # pick the one with the lowest global assignment count
-        # (spreads demand evenly across elective courses).
-        assigned_for_student: set[str] = set()
-        placeholders_seen: set[str] = set()
+        kept: list[str] = []
+        owed: list[str] = []
+        for code in recs:
+            norm = normalize_code(code)
+            if norm in owned_slots:
+                if norm not in owed:
+                    owed.append(norm)
+            else:
+                kept.append(code)
+        if not owed:
+            continue
 
-        for placeholder_norm in sorted(placeholder_electives.keys()):
-            eligible_for_this = [
-                c
-                for c in elective_codes_in_recs
-                if placeholder_norm in elective_to_placeholders.get(c, set())
-                and c not in assigned_for_student
+        student_passed = set(passed.get(int(sid), ()))
+        student_studying = set(studying.get(int(sid), ()))
+        already_done = student_passed | student_studying
+
+        # What each owed slot could be filled with, least-used course first so
+        # demand spreads. Sorted slots keep a rebuild of the same data stable.
+        candidates: dict[str, list[str]] = {}
+        for slot in sorted(owed):
+            eligible = [
+                code
+                for code in dict.fromkeys(
+                    normalize_code(ec.course_code)
+                    for ec in elective_map.get((programme, slot), ())
+                    if all(
+                        p in student_passed or p in student_studying
+                        for p in (
+                            normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
+                        )
+                    )
+                )
+                # A course already passed, or being taken right now, cannot fill
+                # a slot: the student would be sitting it twice.
+                if code not in already_done
             ]
-            if not eligible_for_this:
+            candidates[slot] = sorted(eligible, key=lambda c: (assigned_count[c], c))
+
+        matched = _match_slots_to_courses(candidates)
+        for slot in sorted(owed):
+            pick = matched.get(slot)
+            if pick is None:
+                # Said apart so the report can tell "nothing this student can
+                # take" from "a course existed but their other slots took it".
+                reason = "courses_exhausted" if candidates[slot] else "no_eligible_course"
+                unserved.append((int(sid), slot, reason))
                 continue
-            if placeholder_norm in placeholders_seen:
+            assigned_count[pick] += 1
+            picks.append((int(sid), slot, pick))
+            kept.append(pick)
+
+        all_recs[sid] = kept
+
+    return all_recs, picks, unserved
+
+
+def _match_slots_to_courses(candidates: Mapping[str, list[str]]) -> dict[str, str]:
+    """Give as many of one student's slots as possible a course of their own.
+
+    Taking each slot's best course in turn can strand a later slot whose only
+    course an earlier one took, when the earlier slot had another course it
+    could just as well have had: ``DS1`` offering A and B and ``DS3`` offering
+    only A is served in full by DS1->B, DS3->A, but handing A to DS1 first
+    leaves DS3 with nothing. That mattered little while an unfillable slot was
+    dropped in silence; now that it is reported, a greedy pass would send the
+    department looking for a course to map that it does not actually need.
+
+    So this is a maximum bipartite matching (Kuhn's algorithm) over a handful of
+    slots, which is exact. Each slot's list is already in preference order, and
+    augmenting paths are followed in that order, so the result stays stable and
+    still favours the least-used courses.
+    """
+    course_of_slot: dict[str, str] = {}
+    slot_of_course: dict[str, str] = {}
+
+    def augment(slot: str, seen: set[str]) -> bool:
+        for course in candidates.get(slot, ()):
+            if course in seen:
                 continue
+            seen.add(course)
+            holder = slot_of_course.get(course)
+            if holder is None or augment(holder, seen):
+                slot_of_course[course] = slot
+                course_of_slot[slot] = course
+                return True
+        return False
 
-            # Pick the elective with the fewest assignments so far
-            pick = min(eligible_for_this, key=lambda c: elective_assignment_count[c])
-            assigned_for_student.add(pick)
-            placeholders_seen.add(placeholder_norm)
-            elective_assignment_count[pick] += 1
-            if picks is not None:
-                picks.append((sid, placeholder_norm, pick))
+    for slot in sorted(candidates):
+        augment(slot, set())
+    return course_of_slot
 
-        all_recs[sid] = regular + list(assigned_for_student)
 
-    return all_recs
+def _summarise_unserved_slots(
+    unserved: list[tuple[int, str, str]],
+    programme_of: Callable[[int], str],
+    placeholder_terms: Mapping[tuple[str, str], int],
+) -> list[dict]:
+    """Group unfilled elective slots into one row per (programme, slot, reason).
+
+    Each row carries the term the slot sits at, so a reader can see which board
+    will have nothing for it, and why — the two reasons call for different
+    answers and must not be read as one number:
+
+    ``no_eligible_course``
+        This student can take none of the courses the slot offers: they have not
+        met a prerequisite, or they have already taken them. Nothing for the
+        department to do; the student is simply not ready for it this term.
+    ``courses_exhausted``
+        The slot's courses all went to other slots the same student owes. One
+        course cannot clear two requirements, so the department has to map a
+        further course onto the slot before anyone can be given it.
+    """
+    counts: Counter[tuple[str, str, str]] = Counter()
+    for sid, slot, reason in unserved:
+        counts[(programme_of(int(sid)), slot, reason)] += 1
+    return [
+        {
+            "programme": programme,
+            "slot": slot,
+            "programme_term": placeholder_terms.get((programme, slot)),
+            "reason": reason,
+            "students": n,
+        }
+        for (programme, slot, reason), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
 
 
 def default_generate_slots() -> tuple[list[dict], list[dict]]:
@@ -401,19 +516,35 @@ def generate_workspace_scenario(
         programme__in=programs,
     ).select_related("elective")
 
-    elective_map: dict[str, list] = defaultdict(list)
-    placeholder_terms: dict[str, int] = {}
+    # Keyed by (programme, placeholder), never the bare placeholder code: a plan
+    # names its own slots and may offer its own courses for them, and the same
+    # code sits at different terms in different plans (``AI3`` is term 10 in AI
+    # and term 9 in AI2). One shared key let the first plan loaded decide both
+    # the course list and the term for every other plan.
+    elective_map: dict[tuple[str, str], list] = defaultdict(list)
     for m in etm_qs:
-        norm = normalize_code(m.placeholder_code)
-        elective_map[norm].append(m.elective)
-        if norm not in placeholder_terms:
-            pr = ProgrammeRequirement.objects.filter(
-                program=m.programme,
-                course_code=m.placeholder_code,
-            ).first()
-            if pr and pr.programme_term:
-                placeholder_terms[norm] = pr.programme_term
+        elective_map[(str(m.programme), normalize_code(m.placeholder_code))].append(m.elective)
 
+    # Each slot's own term, from the plan that declares it. One query, not one
+    # per mapping row.
+    placeholder_terms: dict[tuple[str, str], int] = {}
+    if elective_map:
+        for prog, code, pt in (
+            ProgrammeRequirement.objects.filter(
+                program__in=sorted({p for p, _ in elective_map}),
+                course_code__in=sorted({s for _, s in elective_map}),
+                # A term of 0 is not a term; the old lookup rejected it too.
+                programme_term__gte=1,
+            )
+            # Ordered and first-one-wins, so two rows for one slot cannot make
+            # the term depend on the order the database happens to return.
+            .order_by("program", "course_code", "programme_term")
+            .values_list("program", "course_code", "programme_term")
+        ):
+            placeholder_terms.setdefault((str(prog), normalize_code(code)), int(pt))
+
+    slot_picks: list[tuple[int, str, str]] = []
+    unserved_slots: list[tuple[int, str, str]] = []
     if elective_map:
         # Load passed/studying courses for eligibility checking
         sc_qs = StudentCourse.objects.filter(
@@ -428,29 +559,24 @@ def generate_workspace_scenario(
             elif sc.status == "studying":
                 stu_studying[sc.student_id].add(code)
 
-        for sid, recs in all_recs.items():
-            expanded: list[str] = []
-            passed = stu_passed.get(sid, set())
-            studying = stu_studying.get(sid, set())
-            for code in recs:
-                norm = normalize_code(code)
-                if norm in elective_map:
-                    for ec in elective_map[norm]:
-                        prereqs = [
-                            normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
-                        ]
-                        if all(p in passed or p in studying for p in prereqs):
-                            expanded.append(normalize_code(ec.course_code))
-                else:
-                    expanded.append(code)
-            all_recs[sid] = expanded
+        all_recs, slot_picks, unserved_slots = _resolve_elective_slots(
+            all_recs,
+            elective_map,
+            _student_program,
+            stu_passed,
+            stu_studying,
+        )
 
-    # Limit elective expansion: each placeholder slot gets at most 1 course
-    # per student. Without this, a student eligible for 13 electives gets
-    # all 13 recommended, creating an impossible scheduling load.
-    # This is a separate post-processing step so it can be removed easily.
-    slot_picks: list[tuple[int, str, str]] = []
-    all_recs = _limit_electives_per_placeholder(all_recs, elective_map, picks=slot_picks)
+    # The term a resolved elective counts at is its SLOT's term, per student.
+    # One course may fill slots at two different terms (DS482 is offered for
+    # both DS1 at term 8 and DS3 at term 10), and a single course->term map
+    # cannot hold that: whichever slot was written last won, so the course was
+    # budgeted at one arbitrary term and the other term got nothing.
+    elective_pick_terms: dict[tuple[int, str], int] = {}
+    for pick_sid, pick_slot, pick_course in slot_picks:
+        pick_term = placeholder_terms.get((_student_program(int(pick_sid)), pick_slot))
+        if pick_term is not None:
+            elective_pick_terms[(int(pick_sid), normalize_code(pick_course))] = pick_term
 
     # Filter out non-schedulable courses (capstone, training, etc.) and
     # build three structures:
@@ -502,12 +628,9 @@ def generate_workspace_scenario(
         if pt is not None:
             course_term_by_program[prog][normalize_code(code)] = pt
 
-    # Extend each program's map: real electives inherit their placeholder's term
-    for norm_placeholder, pt in placeholder_terms.items():
-        for ec in elective_map.get(norm_placeholder, []):
-            for prog in programs:
-                if norm_placeholder in course_term_by_program.get(prog, {}):
-                    course_term_by_program[prog][normalize_code(ec.course_code)] = pt
+    # A resolved elective's term is NOT written into these maps. It belongs to
+    # the slot the student was given it for, which ``elective_pick_terms`` holds
+    # per student, so one course can count at two terms for two students.
 
     # Fallback: merged map for students whose program is unknown
     course_term_map: dict[str, int] = {}
@@ -534,7 +657,8 @@ def generate_workspace_scenario(
         # each curriculum term.
         term_counts: Counter[int] = Counter()
         for code in recs:
-            pt = term_map.get(normalize_code(code))
+            norm = normalize_code(code)
+            pt = elective_pick_terms.get((int(sid), norm), term_map.get(norm))
             if pt is not None:
                 term_counts[pt] += 1
 
@@ -569,7 +693,8 @@ def generate_workspace_scenario(
             else course_term_map
         )
         for code, key in zip(recs, student_course_keys.get(sid, []), strict=False):
-            pt = term_map.get(normalize_code(code))
+            norm = normalize_code(code)
+            pt = elective_pick_terms.get((int(sid), norm), term_map.get(norm))
             if pt is not None:
                 course_key_term_counts[key][pt] += 1
 
@@ -760,7 +885,12 @@ def generate_workspace_scenario(
                 else course_term_map
             )
             for code in s["recommended_courses"]:
-                ct = stu_term_map.get(normalize_code(code))
+                norm = normalize_code(code)
+                # The slot's term again: a resolved elective has no entry in the
+                # course->term maps, so without this a student counted as
+                # cross-term BECAUSE of their elective got no link to the board
+                # that elective sits on.
+                ct = elective_pick_terms.get((int(s["student_id"]), norm), stu_term_map.get(norm))
                 if ct and ct != s["primary_term"] and ct in board_by_term:
                     bsl_objs.append(
                         BoardStudentLink(
@@ -876,4 +1006,12 @@ def generate_workspace_scenario(
             "cross_term": cross_term,
             "by_term": dict(term_student_counts),
         },
+        # Elective slots no course could fill, per (programme, slot, reason).
+        # Nothing is scheduled for these, so they are reported rather than
+        # dropped. Only ``courses_exhausted`` asks anything of the department (a
+        # further course mapped onto the slot); ``no_eligible_course`` means the
+        # students themselves are not ready for what it already offers.
+        "unserved_elective_slots": _summarise_unserved_slots(
+            unserved_slots, _student_program, placeholder_terms
+        ),
     }
