@@ -254,14 +254,22 @@ def _one_elective_per_slot(
     count, and sections are the scarce resource that decides whether a cohort can
     be scheduled at all.
 
-    **This duplicates a rule that already exists** in the project, as
-    `_limit_electives_per_placeholder`. It is reimplemented rather than imported
-    because that function lives in `core.services.timetable_generate`, and this
-    subsystem is forbidden — by a test, not merely by convention — from importing
-    the old timetable engine. That isolation is the entire basis on which this
-    subsystem was allowed to exist, so it is not worth spending to save twenty
-    lines. The behaviour is pinned by tests; if the institution's rule changes,
-    both places must change, and this comment is the pointer.
+    **This duplicates a rule that already exists** in the project, and the two
+    have now DIVERGED. It is reimplemented rather than imported because the old
+    engine lives in `core.services.timetable_generate`, and this subsystem is
+    forbidden — by a test, not merely by convention — from importing it. That
+    isolation is the entire basis on which this subsystem was allowed to exist,
+    so it is not worth spending to save twenty lines.
+
+    What the old engine now does and this does not (its
+    `_resolve_elective_slots`, which replaced `_limit_electives_per_placeholder`):
+    it resolves the slots a student still OWES rather than inferring them from
+    the courses they were expanded into, so a course is credited to the slot it
+    was picked for; it never lets one course fill two of a student's slots (the
+    `filled |= slots` below does exactly that, which under-counts demand by one
+    course per extra slot); it excludes courses already passed or being studied;
+    and it reports slots nothing could fill. Bringing this in line is its own
+    change — the rule here still needs it.
     """
     mappings: dict[str, set[str]] = defaultdict(set)
     for mapping in ElectiveTermMapping.objects.filter(
