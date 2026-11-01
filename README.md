@@ -39,6 +39,12 @@ modes: **Optimise Current** (in-place improvements) and **Full Rebuild** (7
 strategies from scratch). Entry: `/timetable-workspace/` (JSON API under
 `/ops/tw/`).
 
+Saved draft scenarios can be extended from **Required sections → + Course / section**
+in both the main workspace and Split view. Choose an existing course to add more
+sections, or enter a new course with credits and capacity, then place its sections
+using the usual slot picker. Existing placements stay unchanged. Published
+scenarios must be copied to a draft first; active planner jobs block additions.
+
 Generate and Optimise prioritise instructor campus working days, then idle
 minutes, while protecting hard student coverage and operational constraints.
 Optimise Current cannot add a campus day or idle minutes for any instructor,

@@ -841,6 +841,14 @@ async function showSchedulerOutcome(jobId) {
   // keeps the focused, else the chosen, board in view through every render
   // and resize.
   $('twNewBoard').addEventListener('click', createBoardPrompt);
+  $('twAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
+    scenarioId: TW.scenarioId, published: TW.scenario?.status === 'published',
+    budget: TW.sectionBudget || [], request: twFetch, arabic: IS_AR,
+    onSaved: async () => {
+      await loadBudget();
+      notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
+    },
+  }));
   // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
   // place (applyGridView, which also writes the count), never redraws it, so
   // a drag or a focused card survives typing. A programme or SHARED typed

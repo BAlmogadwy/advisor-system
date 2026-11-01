@@ -71,6 +71,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from core.models import (
     DeliveryBoard,
+    ScenarioSectionBudget,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
@@ -908,7 +909,8 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
-@require_GET
+@require_http_methods(["GET", "POST"])
+@guard_manual_scenario_write
 def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Return the section budget consumption table for a scenario.
 
@@ -918,10 +920,64 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
     if deny:
         return deny
     try:
-        TimetableScenario.objects.get(id=scenario_id)
+        scenario = TimetableScenario.objects.get(id=scenario_id)
     except TimetableScenario.DoesNotExist:
         return _err("Scenario not found", code="NOT_FOUND", status=404)
 
+    if request.method == "POST":
+        if scenario.status == "published":
+            return _err("Cannot modify published scenario.", code="SCENARIO_PUBLISHED")
+        payload, err = _safe_json(request)
+        if err:
+            return err
+        key = str(payload.get("course_key") or payload.get("course_code") or "").strip().upper()
+        existing = ScenarioSectionBudget.objects.filter(scenario=scenario, course_key=key).first()
+        try:
+            count = int(str(payload.get("sections", 1)))
+            if not 1 <= count <= 100:
+                raise ValueError("Sections must be between 1 and 100.")
+            if not key or len(key) > 100:
+                raise ValueError("A course code is required (maximum 100 characters).")
+            if not existing:
+                code = str(payload.get("course_code") or key).strip().upper()
+                hours = int(str(payload.get("credit_hours", 3)))
+                capacity = int(str(payload.get("max_per_section", 40)))
+                term_raw = payload.get("programme_term")
+                programme_term = int(str(term_raw)) if term_raw not in (None, "") else None
+                if not code or len(code) > 100 or not 1 <= hours <= 12 or not 1 <= capacity <= 1000:
+                    raise ValueError("Enter a course code, 1–12 credit hours and capacity 1–1000.")
+                if programme_term is not None and not 1 <= programme_term <= 20:
+                    raise ValueError("Programme term must be between 1 and 20.")
+        except (TypeError, ValueError) as exc:
+            return _err(str(exc), code="VALIDATION_BUDGET")
+        if existing:
+            used = next(
+                (
+                    row["used_sections"]
+                    for row in compute_scenario_budget(scenario_id)
+                    if row["course_key"] == key
+                ),
+                0,
+            )
+            existing.planned_sections = max(existing.planned_sections, used) + count
+            existing.save(update_fields=["planned_sections"])
+        else:
+            ScenarioSectionBudget.objects.create(
+                scenario=scenario,
+                course_key=key,
+                course_code=code,
+                course_name=str(payload.get("course_name") or code).strip(),
+                credit_hours=hours,
+                max_per_section=capacity,
+                programme_term=programme_term,
+                planned_sections=count,
+            )
+        log_audit_event(
+            request,
+            action="tw.scenario.budget.add",
+            status="success",
+            details={"scenario_id": scenario_id, "course_key": key, "sections": count},
+        )
     budget = compute_scenario_budget(scenario_id)
     return _ok({"budget": budget})
 

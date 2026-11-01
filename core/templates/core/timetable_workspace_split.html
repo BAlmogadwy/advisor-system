@@ -146,6 +146,7 @@
         <div class="tws-sidebar-hd">
           <h3>{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Required sections{% endif %}</h3>
           <input id="twsSectionSearch" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية المقررات…{% else %}Filter courses…{% endif %}">
+          <button type="button" class="tws-btn" id="twsAddCourse">+ {% if LANGUAGE_CODE == 'ar' %}مقرر / شعبة{% else %}Course / section{% endif %}</button>
         </div>
         <div class="tws-sidebar-body" id="twsSidebarBody">
           <div class="tws-empty-state"><span class="ic">ⓘ</span>{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو أولاً{% else %}Select a scenario first{% endif %}</div>
@@ -392,5 +393,6 @@
 <script src="{% static 'js/timetable-section-teacher.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=141"></script>
+<script src="{% static 'js/timetable-course-editor.js' %}?v=1"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=142"></script>
 {% endblock %}

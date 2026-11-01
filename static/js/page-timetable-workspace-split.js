@@ -1682,12 +1682,15 @@ function renderSlotAssistSummary(pane, placement, candidates, opts = {}) {
 function createPayloadFromBudgetRow(b, usedOverride = null) {
   const code = String(b?.course_code || '').trim().toUpperCase();
   const used = Number.isFinite(usedOverride) ? usedOverride : parseInt(b?.used_sections || '0', 10);
+  const labels = new Set((b?.used_section_labels || []).map(label => String(label).toUpperCase()));
+  let nextLabel = Number.isFinite(used) ? used + 1 : 1;
+  while (labels.has(`S${nextLabel}`)) nextLabel++;
   return {
     type: 'create_planned',
     course_code: code,
     course_key: courseKeyOf(b) || code,
     course_name: b?.course_name || code,
-    section_label: `S${Number.isFinite(used) ? used + 1 : 1}`,
+    section_label: `S${nextLabel}`,
     department: b?.department || '',
     credit_hours: b?.credit_hours || 0,
     max_per_section: b?.max_per_section || 40,
@@ -9457,6 +9460,14 @@ function initDismissibleDetailsMenus() {
 
   // Sidebar toggle + search
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());
+  $('twsAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
+    scenarioId: S.scenarioId, published: S.scenarioMeta?.status === 'published',
+    budget: SB.budget || [], request: api, arabic: IS_AR,
+    onSaved: async () => {
+      await loadSidebarBudget();
+      notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
+    },
+  }));
   $('twsSearch')?.addEventListener('input', (e) => {
     S.search = e.target.value || '';
     for (let i = 0; i < paneCount(); i++) renderPane(i);

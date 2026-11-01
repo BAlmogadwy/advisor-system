@@ -226,6 +226,7 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
     <div class="tw-left-filter">
       <label class="visually-hidden" for="twSectionSearch">{% if LANGUAGE_CODE == 'ar' %}تصفية الشعب المطلوبة{% else %}Filter required sections{% endif %}</label>
       <input type="search" class="tw-search" id="twSectionSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية المقررات…{% else %}Filter courses…{% endif %}">
+      <button type="button" class="btn btn-sm btn-neutral" id="twAddCourse" data-tw-mutation>+ {% if LANGUAGE_CODE == 'ar' %}مقرر / شعبة{% else %}Course / section{% endif %}</button>
     </div>
     <div class="ux-pane-body tw-section-list" id="twSectionList" tabindex="-1">
       <p class="tw-pane-empty">{% if LANGUAGE_CODE == 'ar' %}افتح سيناريو لعرض الشعب المطلوبة.{% else %}Open a scenario to see its required sections.{% endif %}</p>
@@ -512,6 +513,7 @@ Issues tab, sections to place on the list's count, publish blockers on the Publi
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-room-choice.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=67"></script>
+<script src="{% static 'js/timetable-course-editor.js' %}?v=1"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=68"></script>
 <script src="{% static 'js/timetable-workspace-panes.js' %}?v=2"></script>
 {% endblock %}
