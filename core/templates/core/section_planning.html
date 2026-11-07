@@ -157,6 +157,7 @@
   <!-- Export + timestamp -->
   <div class="sp-export-bar">
     <button id="spExport" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}📥 تصدير XLSX{% else %}📥 Export XLSX{% endif %}</button>
+    <button id="spExportRosters" class="btn btn-sm btn-outline-secondary" title="{% if LANGUAGE_CODE == 'ar' %}ملف منفصل: أرقام الطلاب المتوقع تسجيلهم في كل مقرر{% else %}A separate file: the student IDs expected to register each course{% endif %}">{% if LANGUAGE_CODE == 'ar' %}👥 تصدير الطلاب (XLSX){% else %}👥 Export Students XLSX{% endif %}</button>
     <div class="sp-ts" id="spTimestamp"></div>
   </div>
 
@@ -211,5 +212,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=13"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=14"></script>
 {% endblock %}
