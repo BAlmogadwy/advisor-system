@@ -41,6 +41,7 @@ const LIMITS = '/ops/section-planning/limits/';
 const COURSES = '/ops/section-planning/courses/';
 const GENERATE = '/ops/section-planning/generate/';
 const EXPORT = '/ops/section-planning/export/';
+const ROSTERS = '/ops/section-planning/export-rosters/';
 const SECTION_KEY = 'sectionPlanning.section';
 
 /* As the server answers: with programmes, each one's saved limit; with none,
@@ -111,7 +112,7 @@ function limitsServer({ preview, commit } = {}) {
  * `stored`: what this browser remembered from an earlier visit.
  * `storage`: 'throws' when reading localStorage itself throws (blocked site
  * data), 'fails' when its reads and writes throw. */
-async function page(t, { program = 'AI', section = 'M', stored = null, storage = 'ok', limits = limitsServer(), confirm = async () => true, generate = body => answer(generated(undefined, body.section)), exportFile = () => fileAnswer(''), localDepartments = null, courses = prog => answer({ ok: true, courses: coursesFor(prog) }), realDialogs = false } = {}) {
+async function page(t, { program = 'AI', section = 'M', stored = null, storage = 'ok', limits = limitsServer(), confirm = async () => true, generate = body => answer(generated(undefined, body.section)), exportFile = () => fileAnswer(''), rosterFile = () => fileAnswer(''), localDepartments = null, courses = prog => answer({ ok: true, courses: coursesFor(prog) }), realDialogs = false } = {}) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
@@ -133,6 +134,7 @@ async function page(t, { program = 'AI', section = 'M', stored = null, storage =
     if (method === 'POST' && url === LIMITS) return limits(body);
     if (method === 'POST' && url === GENERATE) return generate(body);
     if (method === 'POST' && url === EXPORT) return exportFile(body);
+    if (method === 'POST' && url === ROSTERS) return rosterFile(body);
     const error = new Error(`Unexpected HTTP request: ${method} ${url}`);
     errors.push(error);
     throw error;
@@ -1510,4 +1512,80 @@ test('each summary row is named by a row header, the total too, and each program
     assert.equal(title.textContent.replace(/\s+/g, ' ').trim(), `${say('Department Summary', 'ملخص الأقسام')} · ${prog.program}`);
     rowHeaders(region, prog.summary);
   });
+});
+
+/* ── The second export: the students behind the plan ── */
+
+test('Export Students sends the result on screen to the roster endpoint, and saves under the server\'s name', async t => {
+  let disposition = 'attachment; filename="section_rosters_1448_1_AI_F.xlsx"';
+  const ui = await page(t, {
+    section: 'F',
+    generate: body => answer(sectionPlan(body.section)),
+    rosterFile: () => fileAnswer(disposition),
+  });
+  ui.$('spGenerate').click();
+  await settle();
+
+  ui.$('spSectionM').click();   // changed since: the result is still the women's
+  ui.$('spDeptFilter').value = 'cs';
+  ui.$('spExportRosters').click();
+  await settle();
+  disposition = '';             // no name from the server: one made the same way
+  ui.$('spExportRosters').click();
+  await settle();
+
+  const sent = ui.requests.filter(r => r.url === ROSTERS);
+  assert.deepEqual(sent.map(r => r.body.section), ['F', 'F']);
+  assert.deepEqual(sent.map(r => r.body.dept_filter), ['CS', 'CS']);
+  assert.deepEqual(sent.map(r => r.body.program), ['AI', 'AI']);
+  assert.deepEqual(ui.downloads, ['section_rosters_1448_1_AI_F.xlsx', 'section_rosters_1448_1_F.xlsx']);
+  assert.deepEqual(ui.requests.filter(r => r.url === EXPORT), []);   // never the plan endpoint
+});
+
+test('each export button asks only its own endpoint, and gets its own label back', async t => {
+  const ui = await page(t, {
+    generate: body => answer(sectionPlan(body.section)),
+    exportFile: () => fileAnswer('attachment; filename="section_plan_1448_1_AI_M.xlsx"'),
+    rosterFile: () => fileAnswer('attachment; filename="section_rosters_1448_1_AI_M.xlsx"'),
+  });
+  const labels = () => [ui.$('spExport').textContent, ui.$('spExportRosters').textContent];
+  const idle = labels();
+  ui.$('spGenerate').click();
+  await settle();
+
+  ui.$('spExport').click();
+  await settle();
+  ui.$('spExportRosters').click();
+  await settle();
+
+  assert.deepEqual(ui.requests.filter(r => r.url === EXPORT).length, 1);
+  assert.deepEqual(ui.requests.filter(r => r.url === ROSTERS).length, 1);
+  assert.deepEqual(ui.downloads, ['section_plan_1448_1_AI_M.xlsx', 'section_rosters_1448_1_AI_M.xlsx']);
+  assert.deepEqual(labels(), idle);                       // each button says what it said
+  assert.notEqual(idle[0], idle[1]);                      // and they are not the same words
+  assert.equal(ui.$('spExport').disabled, false);
+  assert.equal(ui.$('spExportRosters').disabled, false);
+});
+
+test('Export Students before a result asks nothing', async t => {
+  const ui = await page(t, { rosterFile: () => fileAnswer('') });
+  ui.$('spExportRosters').click();
+  await settle();
+  assert.deepEqual(ui.requests.filter(r => r.url === ROSTERS), []);
+  assert.deepEqual(ui.downloads, []);
+});
+
+test('a refused roster export is reported and leaves the button usable', async t => {
+  const ui = await page(t, {
+    generate: body => answer(sectionPlan(body.section)),
+    rosterFile: () => answer({ ok: false, code: 'export_failed', error: 'The file could not be made.' }, 500),
+  });
+  ui.$('spGenerate').click();
+  await settle();
+  ui.$('spExportRosters').click();
+  await settle();
+
+  assert.deepEqual(ui.downloads, []);
+  assert.match(ui.text('spStatus'), /could not be made|لم/);
+  assert.equal(ui.$('spExportRosters').disabled, false);
 });

@@ -825,3 +825,92 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                     # WCAG 1.4.11: a graphic that carries meaning needs 3:1.
                     self.assertGreaterEqual(ratio, 3, f"{theme} {band} on {name}: {ratio:.2f}")
             self.assertEqual(len({tuple(c) for c in facts["bands"].values()}), 3, theme)
+
+    # The export bar: both buttons' boxes, their whole labels, and whether the
+    # bar's own row holds them with the timestamp still pushed to its end.
+    EXPORT_BAR = """() => {
+      const bar = document.querySelector('.sp-export-bar');
+      const barBox = bar.getBoundingClientRect();
+      const stamp = document.getElementById('spTimestamp').getBoundingClientRect();
+      const buttons = ['spExport', 'spExportRosters'].map(id => {
+        const el = document.getElementById(id);
+        const box = el.getBoundingClientRect();
+        return { id, box, label: el.textContent.trim(),
+                 shown: !!(el.offsetWidth || el.offsetHeight),
+                 /* A label wrapped or cut off: the text is wider than its box. */
+                 clipped: el.scrollWidth > el.clientWidth + 1,
+                 inBar: box.left >= barBox.left - 0.5 && box.right <= barBox.right + 0.5,
+                 inView: box.left >= -0.5 && box.right <= innerWidth + 0.5 };
+      });
+      const [plan, rosters] = buttons.map(b => b.box);
+      /* "After" is along the reading direction: to the right in English, to
+       * the left in Arabic. A bar that wrapped puts it on a later line. */
+      const rtl = getComputedStyle(document.documentElement).direction === 'rtl';
+      const after = rtl
+        ? stamp.right <= Math.min(plan.left, rosters.left) + 0.5
+        : stamp.left >= Math.max(plan.right, rosters.right) - 0.5;
+      return {
+        buttons: buttons.map(({ box, ...rest }) => rest),
+        overlap: !(plan.right <= rosters.left + 0.5 || rosters.right <= plan.left + 0.5)
+                 && !(plan.bottom <= rosters.top + 0.5 || rosters.bottom <= plan.top + 0.5),
+        sameRow: Math.abs(plan.top - rosters.top) < 0.5,
+        stampAfter: after || stamp.top >= Math.max(plan.bottom, rosters.bottom) - 0.5,
+        page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    }"""
+
+    def _assert_export_bar(self, language: str, wide_font: bool) -> None:
+        """Both export buttons, whole and side by side, at every width."""
+        for theme in ("light", "dark"):
+            page = self._page(language, wide_font=wide_font, theme=theme)
+            self._generate(page)
+            for width in WIDTHS:
+                page.set_viewport_size({"width": width, "height": 900})
+                where = f"{language} {theme} {width}px{' wide font' if wide_font else ''}"
+                bar = page.evaluate(self.EXPORT_BAR)
+                self.assertEqual(len(bar["buttons"]), 2, where)
+                labels = [button["label"] for button in bar["buttons"]]
+                # Two files, two names: a reader must be able to tell them apart.
+                self.assertEqual(len(set(labels)), 2, f"{where}: {labels}")
+                for button in bar["buttons"]:
+                    self.assertTrue(button["shown"], f"{where}: {button}")
+                    self.assertFalse(button["clipped"], f"{where}: {button}")
+                    self.assertTrue(button["inBar"], f"{where}: {button}")
+                    self.assertTrue(button["inView"], f"{where}: {button}")
+                self.assertFalse(bar["overlap"], f"{where}: the buttons overlap")
+                self.assertTrue(bar["stampAfter"], f"{where}: the timestamp is not last")
+                self.assertLessEqual(bar["page"], 0, f"{where}: the page scrolls sideways")
+            page.context.close()
+
+    def test_both_export_buttons_fit_at_every_width(self) -> None:
+        for language in ("en", "ar"):
+            self._assert_export_bar(language, wide_font=False)
+
+    def test_both_export_buttons_fit_in_a_wide_font(self) -> None:
+        for language in ("en", "ar"):
+            self._assert_export_bar(language, wide_font=True)
+
+    def test_the_students_export_asks_its_own_endpoint_for_the_result_on_screen(self) -> None:
+        """The button a user clicks reaches the roster endpoint with the plan's
+        own section, and the page says nothing went wrong."""
+        page = self._page("en", section="F")
+        page.route(
+            "**/ops/section-planning/export-rosters/",
+            lambda route: route.fulfill(
+                status=200,
+                content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                headers={
+                    "Content-Disposition": 'attachment; filename="section_rosters_1448_1_F.xlsx"'
+                },
+                body=b"PK\x03\x04 not a real workbook, only a download",
+            ),
+        )
+        self._generate(page)
+        with page.expect_request(lambda r: "/export-rosters/" in r.url) as sent:
+            page.locator("#spExportRosters").click()
+        self.assertEqual(json.loads(sent.value.post_data)["section"], "F")
+        expect(page.locator("#spExportRosters")).to_be_enabled()
+        expect(page.locator("#spExportRosters")).to_have_text(
+            page.evaluate("document.getElementById('spExportRosters').textContent")
+        )
+        self.assertEqual([r for r in page.requests if "/export/" in r], [])

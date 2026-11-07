@@ -67,6 +67,8 @@ class _Aggregates:
     demand: Counter[str]
     metadata: dict[str, dict[str, object]]
     programs_of: dict[str, set[str]]
+    #: course identity -> the students counted in it, in the order they were counted.
+    students_of: dict[str, list[int]]
 
 
 def _department(code: str) -> str:
@@ -100,6 +102,7 @@ def _aggregate(students: Iterable[StudentDemand]) -> _Aggregates:
     demand: Counter[str] = Counter()
     metadata: dict[str, dict[str, object]] = {}
     programs_of: dict[str, set[str]] = defaultdict(set)
+    students_of: dict[str, list[int]] = defaultdict(list)
     for student in students:
         for code in student.courses:
             meta = dict(requirement_meta.get((student.program, code), {}))
@@ -110,9 +113,10 @@ def _aggregate(students: Iterable[StudentDemand]) -> _Aggregates:
             key = planner_course_key(code, meta.get("course_name"))
             metadata.setdefault(key, meta)
             demand[key] += 1
+            students_of[key].append(student.student_id)
             if student.program:
                 programs_of[key].add(student.program)
-    return _Aggregates(demand, metadata, programs_of)
+    return _Aggregates(demand, metadata, programs_of, students_of)
 
 
 def _dropped_report(dropped: Iterable[tuple[str, str, str, int]]) -> dict[str, Any]:
@@ -127,14 +131,31 @@ def _dropped_report(dropped: Iterable[tuple[str, str, str, int]]) -> dict[str, A
     return {"dropped": rows, "dropped_total": sum(merged.values())}
 
 
+def _distinct(student_ids: Iterable[int]) -> list[int]:
+    """The students of one course, each once, in ascending id order.
+
+    A student can be counted twice for one course: a recommendation of the
+    course itself and an elective slot that resolves to the same course both
+    add a seat. The seat demand keeps both (it is what sized the sections);
+    a roster names the student once, because they register once.
+    """
+    return sorted({int(sid) for sid in student_ids})
+
+
 def size_demand(
     demands: Iterable[PlanningDemand],
     *,
     capacity_programs: Iterable[str],
     rules: SizingRules,
     with_programs: bool = False,
+    with_rosters: bool = False,
 ) -> dict[str, Any]:
-    """Size one scope of ONE section: a row per course, the summary its KPIs total."""
+    """Size one scope of ONE section: a row per course, the summary its KPIs total.
+
+    ``with_rosters`` adds ``student_ids`` to every row: the students whose
+    recommendations made that course's demand, each once. It is off by default
+    so the page's own result never carries a student list it does not show.
+    """
     demands = list(demands)
     sections = {demand.section for demand in demands}
     if len(sections) != 1:
@@ -166,6 +187,8 @@ def size_demand(
         row["slots"] = sorted(slot["slots"]) if slot else []
         if with_programs:
             row["programs"] = sorted(aggregates.programs_of.get(row["course_key"], set()))
+        if with_rosters:
+            row["student_ids"] = _distinct(aggregates.students_of.get(row["course_key"], ()))
     return {
         "section": section,
         "student_count": sum(len(d.students) for d in demands),
@@ -177,15 +200,29 @@ def size_demand(
 
 
 def plan_programme(
-    year: int, semester: int, program: str, rules: SizingRules, *, section: str
+    year: int,
+    semester: int,
+    program: str,
+    rules: SizingRules,
+    *,
+    section: str,
+    with_rosters: bool = False,
 ) -> dict[str, Any]:
     """One programme's section, sized by the programme's own declared limits."""
     demand = build_planning_demand(year, semester, program, section=section)
-    return size_demand([demand], capacity_programs=[program], rules=rules)
+    return size_demand(
+        [demand], capacity_programs=[program], rules=rules, with_rosters=with_rosters
+    )
 
 
 def plan_programmes(
-    year: int, semester: int, programs: list[str], rules: SizingRules, *, section: str
+    year: int,
+    semester: int,
+    programs: list[str],
+    rules: SizingRules,
+    *,
+    section: str,
+    with_rosters: bool = False,
 ) -> dict[str, Any]:
     """Several programmes' section: each on its own, and pooled as the builder pools them."""
     per_programme = []
@@ -196,10 +233,21 @@ def plan_programmes(
         per_programme.append(
             {
                 "program": program,
-                **size_demand([demand], capacity_programs=[program], rules=rules),
+                **size_demand(
+                    [demand],
+                    capacity_programs=[program],
+                    rules=rules,
+                    with_rosters=with_rosters,
+                ),
             }
         )
-    combined = size_demand(demands, capacity_programs=programs, rules=rules, with_programs=True)
+    combined = size_demand(
+        demands,
+        capacity_programs=programs,
+        rules=rules,
+        with_programs=True,
+        with_rosters=with_rosters,
+    )
     return {
         "section": combined["section"],
         "student_count": combined["student_count"],
@@ -212,7 +260,12 @@ def plan_programmes(
 
 
 def plan_all_programmes(
-    year: int, semester: int, rules: SizingRules, *, section: str
+    year: int,
+    semester: int,
+    rules: SizingRules,
+    *,
+    section: str,
+    with_rosters: bool = False,
 ) -> dict[str, Any]:
     """Every student of the section, sized by the lowest limit any programme in scope declares.
 
@@ -221,4 +274,9 @@ def plan_all_programmes(
     programme's, not the section's).
     """
     demand = build_planning_demand(year, semester, None, section=section)
-    return size_demand([demand], capacity_programs=programmes_with_students(), rules=rules)
+    return size_demand(
+        [demand],
+        capacity_programs=programmes_with_students(),
+        rules=rules,
+        with_rosters=with_rosters,
+    )

@@ -172,6 +172,7 @@ from .scrape_views import (
 )
 from .section_plan_views import (
     section_plan_courses_view,
+    section_plan_export_rosters_view,
     section_plan_export_view,
     section_plan_generate_view,
     section_plan_page,
@@ -625,6 +626,11 @@ urlpatterns = [
         "ops/section-planning/export/",
         section_plan_export_view,
         name="section_plan_export",
+    ),
+    path(
+        "ops/section-planning/export-rosters/",
+        section_plan_export_rosters_view,
+        name="section_plan_export_rosters",
     ),
     path(
         "ops/section-planning/courses/",

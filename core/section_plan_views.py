@@ -6,6 +6,7 @@ Endpoints:
     GET  section_plan_page          – render the section planning page
     POST section_plan_generate_view – compute section demand from recommendations
     POST section_plan_export_view   – download section plan as styled .xlsx
+    POST section_plan_export_rosters_view – download the students behind the plan
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from core.services.section_planning import (
     compute_plan_summary,
     get_all_courses_with_defaults,
 )
+from core.services.section_roster_export import export_course_rosters_xlsx
 from core.services.student_helpers import normalize_code
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
@@ -249,22 +251,34 @@ def _rules(params: dict) -> SizingRules:
     )
 
 
-def _plan(params: dict) -> dict:
-    """The plan for the request's section and scope: one programme, several, or all."""
+def _plan(params: dict, *, with_rosters: bool = False) -> dict:
+    """The plan for the request's section and scope: one programme, several, or all.
+
+    ``with_rosters`` carries the students behind each course's demand into the
+    rows (the roster export's only extra); the page's own result never asks
+    for them.
+    """
     program = params["program"]
     rules = _rules(params)
     year, semester, section = params["year"], params["semester"], params["section"]
     if isinstance(program, list):
         return {
             "mode": "multi",
-            **plan_programmes(year, semester, program, rules, section=section),
+            **plan_programmes(
+                year, semester, program, rules, section=section, with_rosters=with_rosters
+            ),
         }
     if isinstance(program, str):
         return {
             "mode": "single",
-            **plan_programme(year, semester, program, rules, section=section),
+            **plan_programme(
+                year, semester, program, rules, section=section, with_rosters=with_rosters
+            ),
         }
-    return {"mode": "combined", **plan_all_programmes(year, semester, rules, section=section)}
+    return {
+        "mode": "combined",
+        **plan_all_programmes(year, semester, rules, section=section, with_rosters=with_rosters),
+    }
 
 
 # ── Courses list API (for advanced per-course settings) ───────
@@ -343,6 +357,32 @@ def section_plan_save_limits_view(request: HttpRequest) -> JsonResponse:
 # ── Export XLSX API ────────────────────────────────────────────
 
 
+def _kept_rows(plan: list[dict], dept_prefixes: list[str]) -> list[dict]:
+    """The plan rows the department filter keeps (every row when it is empty)."""
+    if not dept_prefixes:
+        return plan
+    return [
+        entry
+        for entry in plan
+        if any(normalize_code(entry["course_code"]).startswith(p) for p in dept_prefixes)
+    ]
+
+
+def _course_name_lookup() -> dict[str, str]:
+    """Normalised course code -> catalogue name, for rows whose plan has none."""
+    from core.models import Course as CourseModel
+    from core.models import ElectiveCourse as EC
+
+    names: dict[str, str] = {}
+    for code, desc in CourseModel.objects.values_list("course_code", "description"):
+        names[normalize_code(code)] = desc or ""
+    for code, name in EC.objects.values_list("course_code", "course_name"):
+        ncode = normalize_code(code)
+        if not names.get(ncode):
+            names[ncode] = name or ""
+    return names
+
+
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
 @throttle(max_calls=5, window_seconds=120)
@@ -358,13 +398,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
     dept_prefixes = params.get("dept_filter", [])
 
     def _filter_plan(plan: list[dict]) -> list[dict]:
-        if not dept_prefixes:
-            return plan
-        return [
-            entry
-            for entry in plan
-            if any(normalize_code(entry["course_code"]).startswith(p) for p in dept_prefixes)
-        ]
+        return _kept_rows(plan, dept_prefixes)
 
     def _scoped(plan: list[dict], result: dict) -> tuple[list[dict], dict]:
         """The rows the department filter keeps, and the totals of exactly those."""
@@ -407,6 +441,57 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
 
     except Exception:
         logger.exception("section_plan_export error")
+        return JsonResponse(
+            {"ok": False, "code": "export_failed", "error": "The file could not be made."},
+            status=500,
+        )
+
+
+# ── Export course rosters XLSX API ─────────────────────────────
+
+
+@role_required(ROLE_GENERAL_ADVISOR)
+@require_POST
+@throttle(max_calls=5, window_seconds=120)
+def section_plan_export_rosters_view(request: HttpRequest) -> HttpResponseBase:
+    """Download the student roster behind the plan: who registers each course.
+
+    The same scope, section and department filter as the plan export, so the
+    two files are the same plan seen twice: the plan export counts the
+    sections, this one names the students the count is made of. It assigns no
+    student to a numbered section — that is the registrar's at registration.
+    """
+    params, err = _parse_payload(request)
+    if err:
+        return err
+    assert params is not None
+
+    program = params["program"]
+    section = params["section"]
+    dept_prefixes = params.get("dept_filter", [])
+
+    try:
+        result = _plan(params, with_rosters=True)
+        plan = result["combined_plan"] if result["mode"] == "multi" else result["plan"]
+        rows = _kept_rows(plan, dept_prefixes)
+        path = export_course_rosters_xlsx(
+            rows,
+            section_label=SECTION_LABELS.get(section, section),
+            year=params["year"],
+            semester=params["semester"],
+            dept_filter=dept_prefixes,
+            no_section=int(result.get("no_section") or 0),
+            course_names=_course_name_lookup(),
+        )
+        stem = f"section_rosters_{params['year']}_{params['semester']}"
+        if result["mode"] == "multi":
+            filename = f"{stem}_multi_{section}.xlsx"
+        else:
+            scope = f"_{_filename_part(program)}" if isinstance(program, str) else ""
+            filename = f"{stem}{scope}_{section}.xlsx"
+        return FileResponse(path.open("rb"), as_attachment=True, filename=filename)
+    except Exception:
+        logger.exception("section_plan_export_rosters error")
         return JsonResponse(
             {"ok": False, "code": "export_failed", "error": "The file could not be made."},
             status=500,
@@ -492,19 +577,8 @@ def _export_section_plan_xlsx(
     wb = Workbook()
     headers = EXPORT_HEADERS
 
-    # Build course name lookup from Course + ProgrammeRequirement tables
-    from core.models import Course as CourseModel
-
-    _course_names: dict[str, str] = {}
-    for code, desc in CourseModel.objects.values_list("course_code", "description"):
-        _course_names[normalize_code(code)] = desc or ""
-    # Also check ElectiveCourse for elective names
-    from core.models import ElectiveCourse as EC
-
-    for code, name in EC.objects.values_list("course_code", "course_name"):
-        nc = normalize_code(code)
-        if nc not in _course_names or not _course_names[nc]:
-            _course_names[nc] = name or ""
+    # Course names for the rows whose own plan declares none.
+    _course_names = _course_name_lookup()
 
     # ── Styles ──
     thin = Side(style="thin", color="D5D8DC")

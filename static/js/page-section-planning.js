@@ -1120,8 +1120,8 @@ function reportRefusal(data, status) {
 }
 
 /* The file name the server gave the download (it names the section), else
- * one made the same way. */
-function downloadName(res, payload) {
+ * one made the same way from the export's own stem. */
+function downloadName(res, payload, stem) {
   const header = (res.headers && typeof res.headers.get === 'function' && res.headers.get('Content-Disposition')) || '';
   const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
   if (encoded) {
@@ -1129,24 +1129,25 @@ function downloadName(res, payload) {
   }
   const plain = /filename\s*=\s*(?:"([^"]+)"|([^;]+))/i.exec(header);
   const name = plain ? (plain[1] || plain[2] || '').trim() : '';
-  return name || `section_plan_${payload.year}_${payload.semester}_${payload.section}.xlsx`;
+  return name || `${stem || 'section_plan'}_${payload.year}_${payload.semester}_${payload.section}.xlsx`;
 }
 
 /* ── Export: exactly the result on screen (its payload, its section), even
- * if the scope fields or the Section radio changed since. ── */
-$('spExport').onclick = async () => {
+ * if the scope fields or the Section radio changed since. Two files from the
+ * one result — the plan, and the students the plan's counts are made of — so
+ * both go through here and differ only in their endpoint. ── */
+async function runExport(button, { url, stem, idleLabel }) {
   if (!_lastPayload) return;
 
-  const btn = $('spExport');
-  btn.disabled = true;
-  btn.textContent = T.exporting;
+  button.disabled = true;
+  button.textContent = T.exporting;
 
   try {
     const exportPayload = { ..._lastPayload };
     const deptFilter = ($('spDeptFilter').value || '').trim().toUpperCase();
     if (deptFilter) exportPayload.dept_filter = deptFilter;
 
-    const res = await fetch('/ops/section-planning/export/', {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
       body: JSON.stringify(exportPayload),
@@ -1160,24 +1161,39 @@ $('spExport').onclick = async () => {
 
     /* Download the blob as .xlsx */
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    const objectUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = downloadName(res, exportPayload);
+    a.href = objectUrl;
+    a.download = downloadName(res, exportPayload, stem);
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(objectUrl);
 
     if (typeof notify !== 'undefined') notify.success(T.exported);
 
   } catch (err) {
     showStatus(T.reqFailed + ': ' + err.message, 'err');
   } finally {
-    btn.disabled = false;
-    btn.textContent = IS_AR ? '📥 تصدير XLSX' : '📥 Export XLSX';
+    button.disabled = false;
+    button.textContent = idleLabel();
   }
-};
+}
+
+/* The plan: a row per course, the sections it needs. */
+$('spExport').onclick = () => runExport($('spExport'), {
+  url: '/ops/section-planning/export/',
+  stem: 'section_plan',
+  idleLabel: () => IS_AR ? '📥 تصدير XLSX' : '📥 Export XLSX',
+});
+
+/* The students: a row per student per course, the roster behind every count.
+ * It names who registers a course, never which numbered section they sit in. */
+$('spExportRosters').onclick = () => runExport($('spExportRosters'), {
+  url: '/ops/section-planning/export-rosters/',
+  stem: 'section_rosters',
+  idleLabel: () => IS_AR ? '👥 تصدير الطلاب (XLSX)' : '👥 Export Students XLSX',
+});
 
 /* ── Reset click: clears the scope and the result; the chosen section is a
  * preference, not a draft, so it stays chosen. ── */
