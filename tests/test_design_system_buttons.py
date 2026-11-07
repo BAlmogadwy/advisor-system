@@ -97,6 +97,7 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/timetable_workspace.html", "twExportMenu"),
     ("core/templates/core/timetable_workspace.html", "twPublish"),
     ("core/templates/core/timetable_workspace.html", "twNewBoard"),
+    ("core/templates/core/timetable_workspace.html", "twAddCourse"),
     ("core/templates/core/timetable_workspace.html", "twUndo"),
     ("core/templates/core/timetable_workspace.html", "twRedo"),
     ("core/templates/core/timetable_workspace.html", "twOpenMenu"),

@@ -248,6 +248,10 @@ class WorkspaceKeyboardBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestC
             "document.querySelectorAll('#twSectionList [tabindex=\"0\"]').length === 1"
         )
         page.focus("#twSectionSearch")
+        # The pane header's "+ Course / section" sits between the filter box and
+        # the list, so it takes the first Tab; the list's one stop is the next.
+        page.keyboard.press("Tab")
+        self.assertEqual(page.evaluate("document.activeElement.id"), "twAddCourse")
         page.keyboard.press("Tab")
         landed = page.evaluate(
             "[document.activeElement.getAttribute('tabindex'), document.getElementById('twSectionList').contains(document.activeElement)]"
@@ -1122,7 +1126,8 @@ class PlaceDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
             )
             self._open_list(page)
             page.focus("#twSectionSearch")
-            page.keyboard.press("Tab")
+            page.keyboard.press("Tab")  # the header's "+ Course / section"
+            page.keyboard.press("Tab")  # the list's one stop
             self.assertTrue(
                 page.evaluate(
                     "document.getElementById('twSectionList').contains(document.activeElement)"
@@ -1231,7 +1236,8 @@ class PlaceDialogTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                     page, sent, errors = self._load(language, theme, width, height)
                     self._open_list(page)
                     page.focus("#twSectionSearch")
-                    page.keyboard.press("Tab")
+                    page.keyboard.press("Tab")  # the header's "+ Course / section"
+                    page.keyboard.press("Tab")  # the list's one stop
                     for _ in range(10):
                         if page.evaluate(ON_S2):
                             break
