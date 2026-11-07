@@ -32,4 +32,4 @@ types-requests==2.32.4.20250809
 # EVERY version: the negations ألا / أن لا and the لإ of لإعطاء are dropped or
 # misplaced. The policy YAML records hold the correct wording; fixing that
 # evidence is a separate task.
-pypdf==6.21.2
+pypdf==6.21.4
