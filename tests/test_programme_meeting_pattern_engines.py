@@ -265,6 +265,27 @@ def test_generate_reports_every_course_a_programme_voted_on_and_what_its_budget_
     ]
 
 
+@pytest.mark.parametrize("first", ["AI", "AI2"])
+def test_generates_report_is_in_course_code_then_course_key_order(monkeypatch, first):
+    """Whichever programme's students come first. CS112 names two courses (the
+    plan keeps them in the order its students met them), and CS112 is a prefix
+    of CS1121, where course-key order alone would put CS1121 first (":" sorts
+    after the digits)."""
+    longer = ("CS1121", "DATA PROGRAMMING")
+    make_curriculum(
+        [
+            ("AI", PROG_II, 3, PROGRAMME_STANDARD),
+            ("AI2", PROG_I, 3, TWO_BY_100),
+            ("AI2", longer, 3, TWO_BY_100),
+        ]
+    )
+    make_students()
+    second = "AI2" if first == "AI" else "AI"
+    recommend_every_plan_course(monkeypatch, [*STUDENTS[first], *STUDENTS[second]])
+    report = generate()["department_meeting_patterns"]
+    assert [row["course_key"] for row in report] == [key(PROG_I), key(PROG_II), key(longer)]
+
+
 def test_generate_keeps_two_courses_behind_one_code_apart(department):
     patterns = budget_patterns(generate())
     # CS112 PROGRAMMING I is agreed 2 x 100; PROGRAMMING II, same code, standard.
@@ -273,27 +294,48 @@ def test_generate_keeps_two_courses_behind_one_code_apart(department):
     assert (patterns[key(LA)], patterns[key(LA_I)]) == (TWO_BY_100, "")
 
 
-def test_a_budget_of_four_credits_never_takes_two_by_100(monkeypatch):
-    """One identity, 3 credits in AI (2 x 100) and 4 in DS2 (unset): the merge
-    agrees on 2 x 100, but the budget is sized from its DS2 students' row, and
-    two 100-minute meetings are no choice for a 4-credit course."""
+@pytest.mark.parametrize("first", ["AI", "DS2"])
+def test_one_identity_at_two_credit_hours_keeps_the_default_in_both_engines(monkeypatch, first):
+    """One identity, 3 credits in AI (2 x 100) and 4 in DS2 (no vote possible),
+    both programmes' students recommended it, in either order. Classic Generate
+    sizes the budget from the first student it meets, the scheduler from the
+    largest row, so a 2 x 100 here would follow student order. The rows'
+    credit hours differ, so the programmes decide nothing: both engines keep
+    the default whoever comes first, and Generate reports the course as mixed.
+    (The budget's credit hours still follow the first student: that credit
+    divergence predates the weekly meetings and is not this rule's.)"""
     make_curriculum([("AI", FOUR_CREDITS, 3, TWO_BY_100), ("DS2", FOUR_CREDITS, 4, "")])
     make_students()
-    ds2 = list(STUDENTS["DS2"])
-    recommend_every_plan_course(monkeypatch, ds2)
+    second = "DS2" if first == "AI" else "AI"
+    recommend_every_plan_course(monkeypatch, [*STUDENTS[first], *STUDENTS[second]])
     result = generate()
     budget = ScenarioSectionBudget.objects.get(scenario_id=result["scenario"]["id"])
-    assert (budget.course_key, budget.credit_hours, budget.meeting_pattern) == (
+    assert (budget.course_key, budget.total_demand, budget.meeting_pattern) == (
         key(FOUR_CREDITS),
         4,
         "",
     )
-    [entry] = result["department_meeting_patterns"]
-    assert (entry["status"], entry["programme_pattern"], entry["meeting_pattern"]) == (
-        AGREE,
-        TWO_BY_100,
-        "",
-    )
+    assert result["department_meeting_patterns"] == [
+        {
+            "course_key": key(FOUR_CREDITS),
+            "course_code": FOUR_CREDITS[0],
+            "course_name": FOUR_CREDITS[1],
+            "status": MIXED,
+            "programme_pattern": "",
+            "meeting_pattern": "",
+            "programmes": [
+                {"program": "AI", "meeting_pattern": TWO_BY_100},
+                {"program": "DS2", "meeting_pattern": ""},
+            ],
+            "no_window": False,
+        }
+    ]
+    handed = {budget.course_key: budget.meeting_pattern}
+    for given in (handed, None):
+        offering = offerings_by_key(snapshot(meeting_patterns=given))[key(FOUR_CREDITS)]
+        assert (offering.credit_hours, offering.meeting_pattern) == (4, "")
+        assert offering.requirements == compile_requirements(4, is_online=False)
+        assert shape_for(budget.meeting_pattern, budget.credit_hours) is None
 
 
 def test_a_programme_with_no_students_in_the_course_still_has_its_say(monkeypatch):
@@ -507,6 +549,15 @@ def test_intake_reads_each_plan_row_as_classic_generate_does():
             "credit_hours": 4,
             "meeting_pattern": "",
         },
+        {
+            # A name of only spaces is no name: the row never votes, in
+            # either engine.
+            "program": "DS2",
+            "course_code": "IS233",
+            "course_name": "  ",
+            "credit_hours": 3,
+            "meeting_pattern": "2x100",
+        },
     ]
     assert programme_votes(rows) == pmp.pre_key(rows)
     assert [v.identity for v in programme_votes(rows)] == [
@@ -516,29 +567,64 @@ def test_intake_reads_each_plan_row_as_classic_generate_does():
         "IS232",
         "AR201",
         "AI201",
+        "IS233",
     ]
+    assert [v.named for v in programme_votes(rows)] == [True, True, False, False, True, True, False]
+    assert programme_votes(rows)[-1].vote == ""
+
+
+def test_intake_refuses_a_plan_row_read_without_its_vote():
+    """A query that forgot the column must fail loudly, not read every course
+    as "not set" and quietly drop the department's choices."""
+    row = {
+        "program": "AI2",
+        "course_code": "STAT103",
+        "course_name": "Principles of Probability and Statistics",
+        "credit_hours": 3,
+    }
+    with pytest.raises(KeyError, match="meeting_pattern"):
+        programme_votes([row])
 
 
 def test_without_generates_values_intake_decides_each_course_as_generate_does(department):
     """One fixture, both engines, every course both of them build.
 
-    Two known divergences sit outside that set and are named, not hidden: a
-    nameless plan row the catalogue names (classic keys it by the description,
-    the scheduler by the bare code: both keep the default), and a 101 course
-    with a stray vote (classic never budgets a 101 course; the scheduler
-    schedules it, and applies the vote). Section Planning never lets either
-    row hold a vote (``programme_meeting_patterns.ineligibility``).
+    Known divergences sit outside that set and are named, not hidden. They come
+    from how the engines key a nameless plan row the catalogue names: classic
+    Generate keys its students by the catalogue description, the scheduler by
+    the bare code.
+
+    * Alone (IS232), the row never votes and both engines keep the default.
+    * Beside another programme's row that names the course as the catalogue
+      does and votes 2 x 100 (IS234), classic pools the nameless programme's
+      students into that course's budget, which takes 2 x 100, while the
+      scheduler builds them a bare-code offering of their own at the default:
+      the nameless programme's students meet 2 x 75 there and 2 x 100 in
+      classic. That offering's key has no budget, so Check says nothing.
+    * A 101 course with a stray vote: classic never budgets a 101 course; the
+      scheduler schedules it, and applies the vote.
+
+    Section Planning never lets a nameless or 101 row hold a vote
+    (``programme_meeting_patterns.ineligibility``); the keying itself predates
+    the weekly meetings.
     """
+    nameless_pair = ("IS234", "DATABASE SYSTEMS")
     make_curriculum(
-        [("AI2", ("IS232", ""), 3, TWO_BY_100), ("AI", ("MATH101", "CALCULUS I"), 3, TWO_BY_100)]
+        [
+            ("AI2", ("IS232", ""), 3, TWO_BY_100),
+            ("AI", ("MATH101", "CALCULUS I"), 3, TWO_BY_100),
+            ("AI2", ("IS234", ""), 3, ""),
+            ("DS2", nameless_pair, 3, TWO_BY_100),
+        ]
     )
     Course.objects.create(course_code="IS232", description="SYSTEMS ANALYSIS", credit_hours=3)
+    Course.objects.create(course_code="IS234", description="DATABASE SYSTEMS", credit_hours=3)
 
     budgets = {
         row["course_key"]: row
         for row in ScenarioSectionBudget.objects.filter(
             scenario_id=generate()["scenario"]["id"]
-        ).values("course_key", "course_code", "credit_hours", "meeting_pattern")
+        ).values("course_key", "course_code", "credit_hours", "meeting_pattern", "total_demand")
     }
     offerings = offerings_by_key(snapshot())
     shared = sorted(set(budgets) & set(offerings))
@@ -564,6 +650,19 @@ def test_without_generates_values_intake_decides_each_course_as_generate_does(de
     assert "IS232" not in budgets and offerings["IS232"].meeting_pattern == ""
     assert "MATH101::CALCULUS_I" not in budgets
     assert offerings["MATH101::CALCULUS_I"].meeting_pattern == TWO_BY_100
+    # IS234: one classic budget for both programmes' students, at 2 x 100 ...
+    pooled = budgets[key(nameless_pair)]
+    assert (pooled["meeting_pattern"], pooled["total_demand"]) == (TWO_BY_100, 4)
+    assert "IS234" not in budgets
+    # ... but two scheduler offerings, the nameless programme's at the default,
+    # whether or not intake is handed Generate's values.
+    handed = {k: row["meeting_pattern"] for k, row in budgets.items()}
+    for snap_offerings in (offerings, offerings_by_key(snapshot(meeting_patterns=handed))):
+        named, bare = snap_offerings[key(nameless_pair)], snap_offerings["IS234"]
+        assert (named.programs, named.meeting_pattern) == ({"DS2"}, TWO_BY_100)
+        assert named.requirements == lectures(100, 2)
+        assert (bare.programs, bare.meeting_pattern) == ({"AI2"}, "")
+        assert bare.requirements == lectures(75, 2)
 
 
 def test_generates_values_reach_intake_and_win_over_the_live_curriculum(department):

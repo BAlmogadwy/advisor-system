@@ -608,8 +608,10 @@ def build_snapshot(
             else:
                 # The same rule Generate applies, over the same plan rows of the
                 # same programmes: the programmes that voted must agree, an
-                # unset one does not count, and the shape must be a choice for
-                # these credit hours (no English bundle reaches this branch).
+                # unset one does not count, rows of one identity at different
+                # credit hours decide nothing (`credits` is their max; Generate
+                # sizes from its first student), and the shape must be a choice
+                # for these credit hours (no English bundle reaches this branch).
                 pattern = department_budget_value(programme_shape_for(course_key, votes), credits)
             requirements = compile_requirements(credits, is_online=online, meeting_pattern=pattern)
             applied = shape_for(pattern, credits)

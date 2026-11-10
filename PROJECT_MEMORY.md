@@ -292,8 +292,10 @@ Important implementation detail:
   NEW scenario's budget the value the scenario's programmes agreed on
   (`timetable_meeting_shape.merge_programme_patterns`: a programme that set
   nothing abstains; any disagreement keeps the credit default and is listed in
-  `department_meeting_patterns`); the scheduler engine is handed Generate's
-  per-course map (`build_params["meeting_patterns"]`). A saved scenario never
+  `department_meeting_patterns`, and so does an identity its programmes' rows
+  teach at different credit hours, 3 in one plan and 4 in another); the
+  scheduler engine is handed Generate's per-course map
+  (`build_params["meeting_patterns"]`). A saved scenario never
   changes by itself: the workspace marks a course that differs from its
   programmes' value and offers "Use programme defaults". Importers keep a vote
   only on the same 3-credit course identity and report what they dropped; the

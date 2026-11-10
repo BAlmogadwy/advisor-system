@@ -97,6 +97,43 @@ def test_an_unknown_stored_value_abstains_and_is_never_raised():
     assert (decision.status, decision.meeting_pattern) == (AGREE, TWO_BY_100)
 
 
+@pytest.mark.parametrize("vote", [TWO_BY_100, PROGRAMME_STANDARD])
+def test_rows_teaching_a_course_at_different_credit_hours_decide_nothing(vote):
+    """AI teaches the course at 3 credits and voted; DS2 teaches the same
+    identity at 4, where no vote is possible. One scenario budget cannot be
+    both, and the engines size it differently (classic Generate from the first
+    student it meets, the scheduler from the largest), so a shape would depend
+    on student order: the default stands and the course is reported."""
+    ai, ds2 = row("AI", vote=vote), row("DS2", credits=4)
+    for rows in ([ai, ds2], [ds2, ai]):
+        assert merge_programme_patterns(rows) == ProgrammeShape(
+            MIXED, "", (("AI", vote), ("DS2", ""))
+        )
+        assert programme_shape_for(STAT, rows) == merge_programme_patterns(rows)
+        assert programme_shape_for("STAT103", rows).status == MIXED
+
+
+def test_different_credit_hours_with_nobody_voting_decide_nothing_either():
+    decision = merge_programme_patterns([row("AI"), row("DS2", credits=4)])
+    assert decision == ProgrammeShape(NO_VOTE, "", (("AI", ""), ("DS2", "")))
+
+
+def test_credit_hours_are_compared_as_the_engines_read_them():
+    # "3" and a missing value (read as 3) are three credit hours, like 3.
+    rows = [row("AI", vote=TWO_BY_100), row("AI2", credits="3"), row("DS2", credits=None)]
+    assert merge_programme_patterns(rows).status == AGREE
+    assert merge_programme_patterns(rows).meeting_pattern == TWO_BY_100
+
+
+def test_a_nameless_row_at_other_credit_hours_counts_too():
+    """An Arabic plan name keys as the bare code, and so does a nameless row:
+    the scheduler groups both into one offering sized at the larger credit
+    hours. Ignoring the nameless row would let classic Generate give a 3-credit
+    budget 2 x 100 that the scheduler builds at 4 credits."""
+    rows = [row("AI2", "AR201", TWO_BY_100), row("DS2", "AR201", credits=4, named=False)]
+    assert programme_shape_for("AR201", rows).status == MIXED
+
+
 def test_row_order_and_programme_case_never_matter():
     rows = [row("ds2", vote=TWO_BY_100), row("AI2", vote=PROGRAMME_STANDARD), row(" cs2 ")]
     assert merge_programme_patterns(rows) == merge_programme_patterns(list(reversed(rows)))
@@ -126,6 +163,17 @@ def test_a_row_whose_identity_is_the_bare_code_wins_over_the_code_rule():
     # An Arabic plan name normalises to nothing: that row's identity IS the code.
     rows = [row("IS", "MGT201", TWO_BY_100), row("IS2", "MGT201::MANAGEMENT", PROGRAMME_STANDARD)]
     assert programme_shape_for("MGT201", rows).meeting_pattern == TWO_BY_100
+
+
+def test_a_typed_code_is_read_as_a_whole_code_never_as_a_prefix():
+    rows = [
+        row("AI2", STAT, TWO_BY_100),
+        row("AI", LA, TWO_BY_100),
+        row("CYP2", LA_CYP2, PROGRAMME_STANDARD),
+    ]
+    # STAT10 is not STAT103, and MATH24 is neither MATH243 course.
+    assert programme_shape_for("STAT10", rows) == ProgrammeShape(NO_VOTE, "", ())
+    assert programme_shape_for("MATH24", rows) == ProgrammeShape(NO_VOTE, "", ())
 
 
 def test_a_named_key_no_row_has_is_undecided():
@@ -301,6 +349,79 @@ def test_a_scenarios_programmes_come_from_the_scenario_else_from_its_boards():
     assert pmp.scenario_programmes(named) == ["AI2", "DS2"]
     assert pmp.scenario_programmes(older) == ["AI2", "DS"]
     assert pmp.scenario_programmes(empty) == []
+
+
+@pytest.mark.django_db
+def test_a_scenarios_stored_programmes_win_over_its_boards_labels():
+    """Generate decided an AI2 scenario from AI2's rows. A board labelled CS2,
+    added later by hand, must not bring CS2's standard in: the workspace would
+    then call the course mixed while Generate agreed on 2 x 100."""
+    for program, vote in (("AI2", TWO_BY_100), ("CS2", PROGRAMME_STANDARD)):
+        ProgrammeRequirement.objects.create(
+            program=program,
+            course_code="STAT103",
+            course_name="Principles of Probability and Statistics",
+            credit_hours=3,
+            meeting_pattern=vote,
+        )
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="2", name="AI2 only", programs=["AI2"]
+    )
+    DeliveryBoard.objects.create(scenario=scenario, label="T3", program="CS2", nominal_term=3)
+    assert pmp.scenario_programmes(scenario) == ["AI2"]
+    decision = pmp.resolve_for_keys([STAT], pmp.scenario_programmes(scenario))[STAT]
+    assert (decision.status, decision.meeting_pattern) == (AGREE, TWO_BY_100)
+
+
+def test_a_course_name_of_only_spaces_is_no_name_and_never_votes():
+    base = {"course_code": "IS233", "credit_hours": 3, "type": "Mandatory"}
+    rows = pmp.pre_key(
+        [
+            {**base, "program": "AI2", "course_name": "  ", "meeting_pattern": TWO_BY_100},
+            {**base, "program": "DS2", "course_name": "", "meeting_pattern": ""},
+        ]
+    )
+    assert [(r.identity, r.named, r.vote) for r in rows] == [
+        ("IS233", False, ""),
+        ("IS233", False, ""),
+    ]
+    assert programme_shape_for("IS233", rows).status == NO_VOTE
+
+
+@pytest.mark.django_db
+def test_an_agreed_standard_is_put_in_the_budgets_own_credit_hours():
+    """Add course may store a course at other credit hours than its programmes'
+    rows (here 4, from 3-credit rows that chose standard). The budget is taught
+    at its own credit default, so the words say that one, not 2 x 75."""
+    from core.models import ScenarioSectionBudget
+    from core.services.timetable_workspace import compute_scenario_budget
+
+    ProgrammeRequirement.objects.create(
+        program="DS2",
+        course_code="DS201",
+        course_name="Data Wrangling",
+        credit_hours=3,
+        meeting_pattern=PROGRAMME_STANDARD,
+    )
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="2", name="Added at 4 credits", programs=["DS2"]
+    )
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_key="DS201::DATA_WRANGLING",
+        course_code="DS201",
+        course_name="Data Wrangling",
+        credit_hours=4,
+        planned_sections=1,
+    )
+    [budget] = compute_scenario_budget(scenario.id, department_for=scenario)
+    block = budget["programme_meeting_pattern"]
+    assert (block["status"], block["meeting_pattern"]) == (AGREE, PROGRAMME_STANDARD)
+    assert (block["label"], block["label_ar"]) == (
+        "Standard (75 + 75 + 100 min)",
+        "قياسي (٧٥ + ٧٥ + ١٠٠ دقيقة)",
+    )
+    assert budget["meeting_pattern_drift"] is False
 
 
 @pytest.mark.django_db

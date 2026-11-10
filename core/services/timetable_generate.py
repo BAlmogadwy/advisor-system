@@ -82,11 +82,14 @@ def _department_meeting_patterns(
     ``"2x100"``; owner, 2026-11-10). A course of this scenario is decided by
     the rows of the scenario's programmes that name that course identity: the
     programmes that voted must agree, an unset programme does not count, and a
-    disagreement keeps the credit default
-    (``timetable_meeting_shape.programme_shape_for``). The budget then takes a
-    shape only if it is a choice for the budget itself: its credit hours, and
-    no English bundle (``programme_meeting_patterns.budget_value``). The new
-    scheduler is handed these values, so both engines teach a course one way.
+    disagreement keeps the credit default, as does an identity those rows teach
+    at different credit hours: a budget takes the credit hours of the first
+    student's plan row (``course_metadata``), so a shape there would depend on
+    student order (``timetable_meeting_shape.programme_shape_for``). The budget
+    then takes a shape only if it is a choice for the budget itself: its credit
+    hours, and no English bundle (``programme_meeting_patterns.budget_value``).
+    The new scheduler is handed these values, so both engines teach a course
+    one way.
 
     Pure: no query, so it runs before anything is written.
 

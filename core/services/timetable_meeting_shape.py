@@ -31,8 +31,10 @@ Where it comes from: each programme sets its own courses (owner, 2026-11-10:
 on purpose) or a shape. A new scenario pools a course over its programmes, and
 :func:`merge_programme_patterns` decides it: the programmes that voted must
 agree, a programme that did not vote does not count, and a disagreement keeps
-the credit default and is reported, never guessed. Classic Generate copies the
-outcome into the scenario's budget (:func:`department_budget_value`); the new
+the credit default and is reported, never guessed. So does a course its
+programmes teach at different credit hours (3 in one plan, 4 in another): one
+budget cannot be both, so a vote decides nothing there. Classic Generate copies
+the outcome into the scenario's budget (:func:`department_budget_value`); the new
 scheduler is handed that copy, or runs the same merge when it plans on its own.
 
 The module is pure - no Django, no database - so the classic engines, the
@@ -267,7 +269,8 @@ class ProgrammeShape:
     """The programmes' decision for one course in one scenario.
 
     ``meeting_pattern`` is what they agreed on (``"standard"`` or a shape id),
-    ``""`` when nobody voted or the votes differ. ``programmes`` is every
+    ``""`` when nobody voted, the votes differ or the rows' credit hours differ
+    (both ``MIXED``). ``programmes`` is every
     contributing programme with its vote (``""`` = not set), sorted.
     """
 
@@ -302,13 +305,23 @@ def merge_programme_patterns(rows: Iterable[ProgrammeRow]) -> ProgrammeShape:
     A programme that has not voted abstains. The votes must agree; if they
     differ the status is ``MIXED`` and nothing is chosen (the credit default
     stands, and the caller says why). Row order never matters.
+
+    The rows must also teach the course at ONE number of credit hours. When
+    they do not (AI teaches it at 3 credits and voted 2 x 100, DS2 at 4, where
+    no vote is possible) and anyone voted, the status is ``MIXED`` too: one
+    scenario budget cannot be both, and the engines size it differently
+    (classic Generate from whichever student it meets first, the scheduler from
+    the largest), so a shape would depend on student order. The credit default
+    stands and the course is reported, never guessed. Credit hours are read as
+    the engines read them (missing means 3), over every row given, named or not.
     """
     rows = tuple(rows)
     programmes = tuple(sorted({(str(r.programme).strip().upper(), r.vote) for r in rows}))
     votes = {r.vote for r in rows} - {PROGRAMME_NOT_SET}
     if not votes:
         return ProgrammeShape(NO_VOTE, PROGRAMME_NOT_SET, programmes)
-    if len(votes) > 1:
+    credits = {_engine_credits(r.credit_hours) for r in rows}
+    if len(votes) > 1 or len(credits) > 1:
         return ProgrammeShape(MIXED, PROGRAMME_NOT_SET, programmes)
     return ProgrammeShape(AGREE, votes.pop(), programmes)
 
