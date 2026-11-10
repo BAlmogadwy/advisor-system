@@ -27,7 +27,9 @@ from core.models import (
     TermSectionProgram,
 )
 from core.services.curriculum_integrity import find_orphan_prerequisites
+from core.services.programme_meeting_patterns import ROW_FIELDS, ineligibility, row_identity
 from core.services.section_programmes import reconcile_observed_section_programs
+from core.services.timetable_meeting_shape import PROGRAMME_NOT_SET
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_REQ_CSV = BASE_DIR / "data" / "department_courses.csv"
@@ -144,6 +146,11 @@ def run_integrity_checks() -> dict[str, Any]:
     # exists behind a management command is documentation, not a guard.
     orphan_prerequisites = find_orphan_prerequisites()
 
+    # A programme's weekly meetings on a row that can no longer vote (it left
+    # 3 credits, lost its name, became an elective slot, ...). Section Planning
+    # lists such a row as clear-only; this screen is where someone notices it.
+    stranded_votes = _votes_not_eligible()
+
     return {
         "ok": True,
         "integrity_check": integrity_result,
@@ -155,6 +162,10 @@ def run_integrity_checks() -> dict[str, Any]:
         "orphan_prerequisite_details": [
             finding.describe() for finding in orphan_prerequisites[:50]
         ],
+        "meeting_patterns_not_eligible": len(stranded_votes),
+        "meeting_patterns_not_eligible_details": [
+            _describe_stranded_vote(row, reason) for row, reason in stranded_votes[:VOTE_REPORT_CAP]
+        ],
         "advice": {
             "orphan_student_courses": "Delete orphan rows or re-insert missing students.",
             "duplicate_prerequisite_triplets": "Deduplicate prerequisites table for exact triplets.",
@@ -165,8 +176,171 @@ def run_integrity_checks() -> dict[str, Any]:
                 "never be satisfied. Repoint it at the course the plan actually contains "
                 "(a renumbered equivalent), or remove it if the requirement is not real."
             ),
+            "meeting_patterns_not_eligible": MEETING_PATTERN_ADVICE,
         },
     }
+
+
+#: What to do about a vote on a row that can no longer have one (en / ar).
+MEETING_PATTERN_ADVICE = (
+    "These study-plan rows hold weekly meetings (standard or 2 × 100 min) that their "
+    "course can no longer take: it is not a named 3-credit course on the timetable, it "
+    "is an elective slot, or it is an English course with fixed meetings. Clear them in "
+    "Section Planning (Advanced: Weekly meetings), where they are listed as clear only."
+)
+MEETING_PATTERN_ADVICE_AR = (
+    "تحمل صفوف الخطة هذه لقاءات أسبوعية (قياسية أو ٢ × ١٠٠ دقيقة) لم يعد مقررها يقبلها: "
+    "فهو ليس مقرراً مسمّى من ٣ ساعات معتمدة على الجدول، أو هو خانة اختياري، أو مقرر "
+    "إنجليزي بلقاءات ثابتة. امسحها في تخطيط الشعب (إعدادات متقدمة: اللقاءات الأسبوعية)، حيث تظهر "
+    "للمسح فقط."
+)
+
+
+def _votes_not_eligible() -> list[tuple[dict[str, Any], str]]:
+    """Rows holding a weekly-meetings vote they may not hold, with the reason."""
+    rows = (
+        ProgrammeRequirement.objects.exclude(meeting_pattern=PROGRAMME_NOT_SET)
+        .order_by("program", "course_code", "id")
+        .values(*_VOTE_FIELDS)
+    )
+    return [(row, reason) for row in rows if (reason := ineligibility(row)) is not None]
+
+
+def _describe_stranded_vote(row: dict[str, Any], reason: str) -> str:
+    name = str(row["course_name"] or "").strip() or "(no course name)"
+    return (
+        f"{row['program']}/{row['course_code']} {name}: {row['meeting_pattern']} "
+        f"[{reason.upper()}] (programme_requirements.id={row['id']})"
+    )
+
+
+# -- A programme's weekly meetings across catalogue writes -------------------
+#
+# ``ProgrammeRequirement.meeting_pattern`` is the programme's vote on how a
+# 3-credit course meets each week ("" not set, "standard", "2x100"), written
+# only by Section Planning's audited editor. The three study-plan importers
+# rewrite the rows that carry it, so each runs one sequence inside its own
+# transaction:
+#
+# 1. lock the rows the import may rewrite and note those holding a vote (the
+#    whole programme for a replace, the file's exact stored (program, code)
+#    pairs for an upsert);
+# 2. clear those votes in one UPDATE, so no write of the import can trip
+#    ck_pr_meeting_pattern_fits_credits (a 3 -> 4 credit change), whatever the
+#    row order or a code named twice in one file;
+# 3. run the import unchanged: meeting_pattern is never in its defaults;
+# 4. read the rows back by their exact stored key and put each vote back only
+#    where the row still exists, has 3 credit hours, names the same course
+#    (CODE::NAME, so a case or spacing edit keeps it) and may still vote;
+#    otherwise report it dropped, with the first reason that applies, in the
+#    order row_gone, credits_changed, identity_changed, not_eligible.
+#
+# A vote never follows a code onto a renamed course: the department chose it
+# for that course, not for whatever the code names next. The answer (and the
+# view's best-effort audit) lists what was kept and dropped, per programme,
+# only when the import touched a vote.
+
+VOTE_ROW_GONE = "row_gone"
+VOTE_CREDITS_CHANGED = "credits_changed"
+VOTE_IDENTITY_CHANGED = "identity_changed"
+VOTE_NOT_ELIGIBLE = "not_eligible"
+#: The longest list of kept or dropped votes one answer (and its audit) carries.
+VOTE_REPORT_CAP = 50
+#: A vote exists only on a 3-credit row (ck_pr_meeting_pattern_fits_credits).
+_VOTING_CREDIT_HOURS = 3
+_VOTE_FIELDS = ("id", *ROW_FIELDS)
+
+
+def _lock_plan_rows(queryset: QuerySet[ProgrammeRequirement]) -> list[dict[str, Any]]:
+    """Step 1: lock the study-plan rows an import may rewrite, and read them.
+
+    On PostgreSQL a Section Planning save of one of these rows then waits for
+    the import and re-checks the row, instead of racing it. SQLite already
+    holds the write lock for the whole transaction (BEGIN IMMEDIATE), and
+    Django leaves FOR UPDATE out there.
+    """
+    return list(queryset.select_for_update().values(*_VOTE_FIELDS))
+
+
+def _clear_votes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Step 2: clear the votes these rows hold; return those rows in key order."""
+    held = sorted(
+        (row for row in rows if row["meeting_pattern"] != PROGRAMME_NOT_SET),
+        key=lambda row: (str(row["program"]), str(row["course_code"]), row["id"]),
+    )
+    if held:
+        ProgrammeRequirement.objects.filter(pk__in=[row["id"] for row in held]).update(
+            meeting_pattern=PROGRAMME_NOT_SET
+        )
+    return held
+
+
+def _restore_votes(held: list[dict[str, Any]]) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Step 4: put each vote back where its course is still the same course.
+
+    Returns ``{program: {"kept": [...], "dropped": [...]}}`` for the programmes
+    that held a vote, each list capped at ``VOTE_REPORT_CAP``. A dropped entry
+    is ``{program, course_code, course_key, old, reason}``, plus
+    ``new_course_key`` when the row now names another course.
+    """
+    if not held:
+        return {}
+    now = {
+        (row["program"], row["course_code"]): row
+        for row in ProgrammeRequirement.objects.filter(
+            program__in={row["program"] for row in held},
+            course_code__in={row["course_code"] for row in held},
+        ).values(*_VOTE_FIELDS)
+    }
+    report: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for old in held:
+        program, code, value = old["program"], old["course_code"], old["meeting_pattern"]
+        course_key = row_identity(old)
+        new = now.get((program, code))
+        if new is None:
+            reason: str | None = VOTE_ROW_GONE
+        elif new["credit_hours"] != _VOTING_CREDIT_HOURS:
+            reason = VOTE_CREDITS_CHANGED
+        elif row_identity(new) != course_key:
+            reason = VOTE_IDENTITY_CHANGED
+        elif ineligibility(new) is not None:
+            reason = VOTE_NOT_ELIGIBLE
+        else:
+            restored = ProgrammeRequirement.objects.filter(
+                pk=new["id"], credit_hours=_VOTING_CREDIT_HOURS, meeting_pattern=PROGRAMME_NOT_SET
+            ).update(meeting_pattern=value)
+            # The import never writes the vote and this transaction holds the
+            # row, so the update always finds it; if not, the row is not there.
+            reason = None if restored else VOTE_ROW_GONE
+        bucket = report.setdefault(program, {"kept": [], "dropped": []})
+        if reason is None:
+            entry = {
+                "program": program,
+                "course_code": code,
+                "course_key": course_key,
+                "meeting_pattern": value,
+            }
+            bucket["kept"].append(entry)
+            continue
+        dropped = {
+            "program": program,
+            "course_code": code,
+            "course_key": course_key,
+            "old": value,
+            "reason": reason,
+        }
+        if reason == VOTE_IDENTITY_CHANGED and new is not None:
+            dropped["new_course_key"] = row_identity(new)
+        bucket["dropped"].append(dropped)
+    for bucket in report.values():
+        bucket["kept"] = bucket["kept"][:VOTE_REPORT_CAP]
+        bucket["dropped"] = bucket["dropped"][:VOTE_REPORT_CAP]
+    return report
+
+
+def _plan_code(value: object) -> str:
+    """A course code as the CSV and Oracle importers store it."""
+    return str(value).strip().upper().replace(" ", "")
 
 
 def preview_delete_students(
@@ -236,14 +410,27 @@ def delete_students(program: str | None = None, section: str | None = None) -> d
     }
 
 
+def _votes_held_count(program: str) -> int:
+    """How many of a programme's rows hold a weekly-meetings vote."""
+    return (
+        ProgrammeRequirement.objects.filter(program=program)
+        .exclude(meeting_pattern=PROGRAMME_NOT_SET)
+        .count()
+    )
+
+
 def preview_delete_program_catalog(program: str) -> dict[str, Any]:
     requirements_count = ProgrammeRequirement.objects.filter(program=program).count()
     prerequisites_count = Prerequisite.objects.filter(program=program).count()
-    return {
+    preview: dict[str, Any] = {
         "program": program,
         "requirements_count": requirements_count,
         "prerequisites_count": prerequisites_count,
     }
+    # Only when there is something to lose, so the confirmation can say so.
+    if held := _votes_held_count(program):
+        preview["meeting_patterns_count"] = held
+    return preview
 
 
 def delete_program_catalog(program: str) -> dict[str, Any]:
@@ -251,10 +438,28 @@ def delete_program_catalog(program: str) -> dict[str, Any]:
     backup = create_backup_snapshot()
 
     with transaction.atomic():
+        # Which weekly-meetings votes go with the catalogue, so they can be set
+        # again in Section Planning (read under the lock, before the delete).
+        held = [
+            row
+            for row in _lock_plan_rows(ProgrammeRequirement.objects.filter(program=program))
+            if row["meeting_pattern"] != PROGRAMME_NOT_SET
+        ]
         Prerequisite.objects.filter(program=program).delete()
         ProgrammeRequirement.objects.filter(program=program).delete()
 
-    return {"ok": True, "backup": backup, **preview}
+    result: dict[str, Any] = {"ok": True, "backup": backup, **preview}
+    if held:
+        held.sort(key=lambda row: (str(row["course_code"]), row["id"]))
+        result["deleted_meeting_patterns"] = [
+            {
+                "course_code": row["course_code"],
+                "course_key": row_identity(row),
+                "meeting_pattern": row["meeting_pattern"],
+            }
+            for row in held[:VOTE_REPORT_CAP]
+        ]
+    return result
 
 
 def import_program_plan(
@@ -296,6 +501,20 @@ def import_program_plan(
 
     inserted = 0
     with transaction.atomic():
+        scope = ProgrammeRequirement.objects.filter(program=program)
+        if not replace_existing:
+            scope = scope.filter(course_code__in={r["course_code"] for r in rows})
+        in_scope = _lock_plan_rows(scope)
+        held = _clear_votes(in_scope)
+        # The CSV has no name column. A replace recreates every row, so it
+        # carries each code's course name forward: the name is half of the
+        # course's identity (CODE::NAME), and without it the row would stop
+        # naming the course every scenario and vote knows it by.
+        names = (
+            {row["course_code"]: row["course_name"] for row in in_scope if row["course_name"]}
+            if replace_existing
+            else {}
+        )
         if replace_existing:
             ProgrammeRequirement.objects.filter(program=program).delete()
 
@@ -307,14 +526,17 @@ def import_program_plan(
             }
             if "max_capacity" in r:
                 defaults["max_capacity"] = r["max_capacity"]
+            name = names.get(r["course_code"])
             ProgrammeRequirement.objects.update_or_create(
                 program=r["program"],
                 course_code=r["course_code"],
                 defaults=defaults,
+                create_defaults={**defaults, "course_name": name} if name else None,
             )
             inserted += 1
+        votes = _restore_votes(held).get(program)
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "program": program,
         "rows_processed": len(rows),
@@ -322,6 +544,9 @@ def import_program_plan(
         "replace_existing": replace_existing,
         "backup": backup,
     }
+    if votes:
+        result["meeting_patterns"] = votes
+    return result
 
 
 def legacy_load_department_files_exact(
@@ -347,18 +572,35 @@ def legacy_load_department_files_exact(
                 raise ValueError(
                     "requirements csv must include: program, course_code, type, programme_term, credit_hours"
                 )
+            # Each row's stored key, as the upsert below writes it.
+            keyed = [
+                (str(row["program"]).strip(), str(row["course_code"]).replace(" ", "").upper(), row)
+                for row in reader
+            ]
 
-            for row in reader:
-                ProgrammeRequirement.objects.update_or_create(
-                    program=str(row["program"]).strip(),
-                    course_code=str(row["course_code"]).replace(" ", "").upper(),
-                    defaults={
-                        "type": str(row["type"]).strip(),
-                        "programme_term": int(str(row["programme_term"]).strip()),
-                        "credit_hours": int(str(row["credit_hours"]).strip()),
-                    },
+        # One file may cover several programmes: the votes in scope are those
+        # of the file's exact (program, code) pairs, reported per programme.
+        pairs = {(program, code) for program, code, _row in keyed}
+        held = _clear_votes(
+            [
+                row
+                for row in _lock_plan_rows(
+                    ProgrammeRequirement.objects.filter(program__in={p for p, _c in pairs})
                 )
-                req_count += 1
+                if (row["program"], row["course_code"]) in pairs
+            ]
+        )
+        for program, code, row in keyed:
+            ProgrammeRequirement.objects.update_or_create(
+                program=program,
+                course_code=code,
+                defaults={
+                    "type": str(row["type"]).strip(),
+                    "programme_term": int(str(row["programme_term"]).strip()),
+                    "credit_hours": int(str(row["credit_hours"]).strip()),
+                },
+            )
+            req_count += 1
 
         with pre_path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
@@ -377,8 +619,9 @@ def legacy_load_department_files_exact(
                     .upper(),
                 )
                 pre_count += 1
+        votes = _restore_votes(held)
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "mode": "legacy_exact",
         "requirements_csv": str(req_path),
@@ -386,6 +629,9 @@ def legacy_load_department_files_exact(
         "requirements_loaded": req_count,
         "prerequisites_loaded": pre_count,
     }
+    if votes:
+        result["meeting_patterns"] = votes
+    return result
 
 
 def preview_oracle_plan(
@@ -428,6 +674,14 @@ def preview_oracle_plan(
     # Existing DB row counts for this program (helps the user decide).
     existing_requirements = ProgrammeRequirement.objects.filter(program=program).count()
     existing_prerequisites = Prerequisite.objects.filter(program=program).count()
+    existing_db: dict[str, int] = {
+        "requirements": existing_requirements,
+        "prerequisites": existing_prerequisites,
+    }
+    # The weekly-meetings votes an import may drop (a renamed course, a credit
+    # change, a course a replace leaves out), so the confirmation can say so.
+    if held := _votes_held_count(program):
+        existing_db["meeting_patterns"] = held
 
     return {
         "ok": True,
@@ -435,10 +689,7 @@ def preview_oracle_plan(
         "summary": parsed["summary"],
         "warnings": parsed["warnings"],
         "preview_rows": preview_rows,
-        "existing_db": {
-            "requirements": existing_requirements,
-            "prerequisites": existing_prerequisites,
-        },
+        "existing_db": existing_db,
     }
 
 
@@ -457,7 +708,10 @@ def import_oracle_plan_from_rows(
     ``en_name`` is stored both in the global Course catalogue and on the
     ProgrammeRequirement row so same-code courses can keep plan-specific names.
 
-    Returns counts: ``{requirements_upserted, prerequisites_inserted, courses_upserted}``.
+    Returns counts: ``{requirements_upserted, prerequisites_inserted, courses_upserted}``,
+    plus ``meeting_patterns: {kept, dropped}`` when the import touched a row
+    holding a weekly-meetings vote (see "A programme's weekly meetings across
+    catalogue writes" above: a renamed course loses its vote).
     """
     if not rows:
         raise ValueError("No rows to import")
@@ -469,12 +723,16 @@ def import_oracle_plan_from_rows(
     courses_upserted = 0
 
     with transaction.atomic():
+        scope = ProgrammeRequirement.objects.filter(program=program)
+        if not replace_existing:
+            scope = scope.filter(course_code__in={_plan_code(row.get("code", "")) for row in rows})
+        held = _clear_votes(_lock_plan_rows(scope))
         if replace_existing:
             Prerequisite.objects.filter(program=program).delete()
             ProgrammeRequirement.objects.filter(program=program).delete()
 
         for row in rows:
-            code = str(row.get("code", "")).strip().upper().replace(" ", "")
+            code = _plan_code(row.get("code", ""))
             if not code:
                 continue
 
@@ -523,8 +781,9 @@ def import_oracle_plan_from_rows(
                 },
             )
             courses_upserted += 1
+        votes = _restore_votes(held).get(program)
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "program": program,
         "replace_existing": replace_existing,
@@ -533,6 +792,9 @@ def import_oracle_plan_from_rows(
         "courses_upserted": courses_upserted,
         "backup": backup,
     }
+    if votes:
+        result["meeting_patterns"] = votes
+    return result
 
 
 def list_external_courses() -> dict[str, Any]:

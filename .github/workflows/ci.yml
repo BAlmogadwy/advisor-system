@@ -361,6 +361,8 @@ jobs:
               programme_term=1,
               credit_hours=3,
           )
+          # A programme's weekly-meetings vote must survive the release seed;
+          # it is allowed only on a 3-credit row (ck_pr_meeting_pattern_fits_credits).
           ProgrammeRequirement.objects.create(
               program="AI",
               course_code=planned_course.course_code,
@@ -368,6 +370,7 @@ jobs:
               type="mandatory",
               programme_term=2,
               credit_hours=3,
+              meeting_pattern="2x100",
           )
           Prerequisite.objects.create(
               program="AI",
@@ -785,6 +788,29 @@ jobs:
           assert set(counts["per_model"]) == set(ALLOWED_MODELS)
           for label in ALLOWED_MODELS:
               assert counts["per_model"][label]["exported"] == manifest["fixture"]["per_model"][label]["exported"]
+
+          # The programme's weekly-meetings vote arrived, and PostgreSQL itself
+          # refuses it on a row that is not 3 credits (the only PostgreSQL
+          # proof of ck_pr_meeting_pattern_fits_credits). The refused update
+          # rolls back, so the steps below see the data exactly as imported.
+          from django.db import IntegrityError, transaction
+
+          from core.models import ProgrammeRequirement
+
+          planned = ProgrammeRequirement.objects.get(program="AI", course_code="CS112")
+          assert (planned.meeting_pattern, planned.credit_hours) == ("2x100", 3), (
+              planned.meeting_pattern,
+              planned.credit_hours,
+          )
+          try:
+              with transaction.atomic():
+                  ProgrammeRequirement.objects.filter(pk=planned.pk).update(credit_hours=4)
+          except IntegrityError as exc:
+              assert "ck_pr_meeting_pattern_fits_credits" in str(exc), str(exc)
+          else:
+              raise AssertionError("PostgreSQL stored 2x100 weekly meetings on a 4-credit row")
+          planned.refresh_from_db()
+          assert (planned.meeting_pattern, planned.credit_hours) == ("2x100", 3)
           PY
       - name: Fail on Django deployment warnings
         run: python manage.py check --deploy --fail-level WARNING

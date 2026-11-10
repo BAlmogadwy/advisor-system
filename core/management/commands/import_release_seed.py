@@ -41,6 +41,7 @@ from core.management.commands.export_release_seed import (
     validate_release_signing_key,
 )
 from core.models import Student, StudentTermSection, TermSection
+from core.services.timetable_meeting_shape import PROGRAMME_NOT_SET, PROGRAMME_STANDARD, SHAPES
 
 FORMAT_VERSION = 1
 CONFIRMATION_VALUE = "REPLACE_TARGET_DATABASE_WITH_RELEASE_SEED"
@@ -394,6 +395,29 @@ def _validate_field_value(field: Any, value: Any) -> None:
         raise _fail("fixture contains an invalid field value") from exc
 
 
+def _programme_vote_refusal(fields: dict[str, Any]) -> str | None:
+    """Why a programme requirement's weekly-meetings vote cannot load, or None.
+
+    The rule of ck_pr_meeting_pattern_fits_credits, checked before the flush so
+    a bad seed is refused by name instead of failing the load as a generic
+    rollback. The stored values are compared exactly as written: the database
+    stores "2x100", never "2X100" or " 2x100", so nothing is normalised here.
+    """
+    value = fields["meeting_pattern"]
+    if value == PROGRAMME_NOT_SET:
+        return None
+    if value == PROGRAMME_STANDARD:
+        allowed = {shape.credit_hours for shape in SHAPES.values()}
+    elif isinstance(value, str) and value in SHAPES:
+        allowed = {SHAPES[value].credit_hours}
+    else:
+        return "fixture contains a programme requirement with an unknown weekly meeting pattern"
+    credits = fields["credit_hours"]
+    if isinstance(credits, bool) or not isinstance(credits, int) or credits not in allowed:
+        return "fixture contains weekly meetings that do not fit a programme requirement's credit hours"
+    return None
+
+
 def _validate_records(
     decompressed: bytes,
     expected_counts: dict[str, int],
@@ -442,6 +466,10 @@ def _validate_records(
             # Only a scenario's own section may be marked "mainly for programme"
             # (ck_term_sections_pref_scenario_only); refuse before any flush.
             raise _fail("fixture contains a global term section with a programme mark")
+        elif label == "core.programmerequirement" and (refusal := _programme_vote_refusal(fields)):
+            # A programme votes on a course's weekly meetings only on a 3-credit
+            # row (ck_pr_meeting_pattern_fits_credits); refuse before any flush.
+            raise _fail(refusal)
         elif label == "core.studenttermsection":
             try:
                 student_section_student_ids.add(

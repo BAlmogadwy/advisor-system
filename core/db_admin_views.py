@@ -1,7 +1,8 @@
 import json
+from typing import Any
 
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -10,6 +11,7 @@ from core.authz import role_required, throttle
 from core.models import ProgrammeRequirement, TermSectionProgram
 from core.services.audit import audit_actor, log_audit_event
 from core.services.db_admin_ops import (
+    MEETING_PATTERN_ADVICE_AR,
     SectionSnapshotClearError,
     clear_section_snapshot,
     create_backup_snapshot,
@@ -58,6 +60,32 @@ def _invalidate_course_catalogue() -> None:
     from core.services.course_catalogue import invalidate_cache
 
     invalidate_cache()
+
+
+def _is_arabic(request: HttpRequest) -> bool:
+    """The request's language (``LocaleMiddleware``), as the other pages read it."""
+    return str(getattr(request, "LANGUAGE_CODE", "") or "").lower().startswith("ar")
+
+
+def _import_refused(request: HttpRequest, exc: IntegrityError) -> str:
+    """The answer when the database refuses a row of an import (nothing is saved)."""
+    if _is_arabic(request):
+        return f"لم يُستورد شيء: رفضت قاعدة البيانات أحد الصفوف ({exc})."
+    return f"Nothing was imported: the database refused a row ({exc})."
+
+
+def _with_meeting_patterns(details: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """An import's audit details, plus the weekly-meetings votes it kept and dropped.
+
+    Only when the import touched one, so an import of a programme that set none
+    audits exactly as before. Like every importer audit here this is best
+    effort (``log_audit_event``, after the import commits) - a deliberate
+    choice: the votes are also in the import's own answer, and Section
+    Planning, which sets them, keeps the strict in-transaction audit.
+    """
+    if "meeting_patterns" in result:
+        details["meeting_patterns"] = result["meeting_patterns"]
+    return details
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -237,15 +265,20 @@ def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "program is required"}, status=400)
 
     result = delete_program_catalog(program=program)
+    details: dict[str, Any] = {
+        "program": program,
+        "deleted_requirements": result.get("requirements_count", 0),
+        "deleted_prerequisites": result.get("prerequisites_count", 0),
+    }
+    # The weekly-meetings votes deleted with the catalogue (only when there
+    # were any), so they can be set again in Section Planning.
+    if "deleted_meeting_patterns" in result:
+        details["deleted_meeting_patterns"] = result["deleted_meeting_patterns"]
     log_audit_event(
         request,
         action="db.delete_program_catalog",
         status="success",
-        details={
-            "program": program,
-            "deleted_requirements": result.get("requirements_count", 0),
-            "deleted_prerequisites": result.get("prerequisites_count", 0),
-        },
+        details=details,
     )
     return JsonResponse(result)
 
@@ -289,11 +322,14 @@ def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
             request,
             action="db.import_program_plan",
             status="success",
-            details={
-                "program": program,
-                "replace_existing": replace_existing,
-                "rows_upserted": result.get("rows_upserted", 0),
-            },
+            details=_with_meeting_patterns(
+                {
+                    "program": program,
+                    "replace_existing": replace_existing,
+                    "rows_upserted": result.get("rows_upserted", 0),
+                },
+                result,
+            ),
         )
         return JsonResponse(result)
     except ValueError as exc:
@@ -305,6 +341,16 @@ def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
             error_text=str(exc),
         )
         return JsonResponse({"error": str(exc)}, status=400)
+    except IntegrityError as exc:
+        # The import ran in one transaction, so nothing of it was saved.
+        log_audit_event(
+            request,
+            action="db.import_program_plan",
+            status="error",
+            details={"program": program},
+            error_text=str(exc),
+        )
+        return JsonResponse({"error": _import_refused(request, exc)}, status=400)
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -337,10 +383,13 @@ def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
             request,
             action="db.import_legacy_exact",
             status="success",
-            details={
-                "requirements_csv_path": req_path or "",
-                "prerequisites_csv_path": pre_path or "",
-            },
+            details=_with_meeting_patterns(
+                {
+                    "requirements_csv_path": req_path or "",
+                    "prerequisites_csv_path": pre_path or "",
+                },
+                result,
+            ),
         )
         return JsonResponse(result)
     except ValueError as exc:
@@ -355,6 +404,19 @@ def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
             error_text=str(exc),
         )
         return JsonResponse({"error": str(exc)}, status=400)
+    except IntegrityError as exc:
+        # The import ran in one transaction, so nothing of it was saved.
+        log_audit_event(
+            request,
+            action="db.import_legacy_exact",
+            status="error",
+            details={
+                "requirements_csv_path": req_path or "",
+                "prerequisites_csv_path": pre_path or "",
+            },
+            error_text=str(exc),
+        )
+        return JsonResponse({"error": _import_refused(request, exc)}, status=400)
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -644,13 +706,16 @@ def db_import_oracle_plan_view(request: HttpRequest) -> JsonResponse:
             request,
             action="db.import_oracle_plan",
             status="success",
-            details={
-                "program": program,
-                "replace_existing": replace_existing,
-                "requirements_upserted": result.get("requirements_upserted", 0),
-                "prerequisites_inserted": result.get("prerequisites_inserted", 0),
-                "courses_upserted": result.get("courses_upserted", 0),
-            },
+            details=_with_meeting_patterns(
+                {
+                    "program": program,
+                    "replace_existing": replace_existing,
+                    "requirements_upserted": result.get("requirements_upserted", 0),
+                    "prerequisites_inserted": result.get("prerequisites_inserted", 0),
+                    "courses_upserted": result.get("courses_upserted", 0),
+                },
+                result,
+            ),
         )
         return JsonResponse(result)
     except ValueError as exc:
@@ -662,6 +727,16 @@ def db_import_oracle_plan_view(request: HttpRequest) -> JsonResponse:
             error_text=str(exc),
         )
         return JsonResponse({"error": str(exc)}, status=400)
+    except IntegrityError as exc:
+        # The import ran in one transaction, so nothing of it was saved.
+        log_audit_event(
+            request,
+            action="db.import_oracle_plan",
+            status="error",
+            details={"program": program},
+            error_text=str(exc),
+        )
+        return JsonResponse({"error": _import_refused(request, exc)}, status=400)
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -681,6 +756,13 @@ def db_backup_snapshot_view(request: HttpRequest) -> JsonResponse:
 @require_GET
 def db_integrity_report_view(request: HttpRequest) -> JsonResponse:
     result = run_integrity_checks()
+    advice = result.get("advice")
+    if (
+        _is_arabic(request)
+        and isinstance(advice, dict)
+        and "meeting_patterns_not_eligible" in advice
+    ):
+        advice["meeting_patterns_not_eligible"] = MEETING_PATTERN_ADVICE_AR
     log_audit_event(
         request,
         action="db.integrity_report",
@@ -690,6 +772,11 @@ def db_integrity_report_view(request: HttpRequest) -> JsonResponse:
             "issues_count": len(result.get("issues", []))
             if isinstance(result.get("issues"), list)
             else 0,
+            # Votes on rows that may no longer hold one (Section Planning
+            # lists them as clear-only).
+            "meeting_patterns_not_eligible": int(
+                result.get("meeting_patterns_not_eligible", 0) or 0
+            ),
         },
     )
     return JsonResponse(result)
