@@ -224,3 +224,24 @@ test('a programme typed while the preview loads is not the one previewed', async
   ui.$('oProgram').dispatchEvent(new ui.window.Event('input', { bubbles: true }));
   assert.equal(ui.$('oImport').disabled, false);
 });
+
+test('a preview typed with spaces is the programme the server read, trimmed', async t => {
+  /* The server trims the programme it reads: " AI2" previews AI2, so the
+     import is on for " AI2" as typed and for "AI2", and its confirmation
+     says AI2's weekly meetings. */
+  const ui = await page(t, { [`POST ${ORACLE}`]: oraclePreview(4) });
+  await previewOracle(ui, ' AI2');
+  assert.equal(ui.$('oImport').disabled, false, 'the import is on for the programme previewed');
+
+  ui.$('oProgram').value = 'AI2';
+  ui.$('oProgram').dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  assert.equal(ui.$('oImport').disabled, false, 'AI2 is the programme previewed');
+  ui.$('oImport').click();
+  await settle();
+  assert.equal(ui.dialogs.length, 1);
+  assert.equal(ui.paragraphs(ui.dialogs[0].body)[1], say(
+    '4 of its courses have weekly meetings set in Section Planning. A course keeps them only if it keeps its name and 3 credit hours; the result lists every one the import drops.',
+    'لدى 4 من مقرراته لقاءات أسبوعية محددة في تخطيط الشعب. يحتفظ المقرر بها فقط إذا بقي اسمه وساعاته المعتمدة الثلاث؛ وتُدرج النتيجة كل ما يُسقطه الاستيراد.',
+  ));
+  assert.deepEqual(ui.warnings, []);
+});

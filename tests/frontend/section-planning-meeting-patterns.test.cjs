@@ -351,6 +351,28 @@ test('a row that may no longer vote offers only clearing, and says why', async t
   assert.deepEqual(ui.writes()[0].body.changes, [{ course_key: BARE, meeting_pattern: '', all_programmes: false }]);
 });
 
+test('a course its programmes teach at different credit hours says a new timetable keeps its standard weekly meetings', async t => {
+  /* AI2 teaches it at 3 credits and set 2 × 100; DS2 teaches it at 4 (its row
+     never votes, so it is not listed): the rule calls it mixed. The row still
+     shows what AI2 holds, which is what a save changes. */
+  const ML = 'AI201::MACHINE_LEARNING';
+  const ui = await page(t, {
+    listing: prog => listed(prog, [
+      ...coursesFor(prog),
+      course(ML, 'MACHINE LEARNING', [['AI2', '2x100']], { status: 'mixed', meeting_pattern: '', credit_hours_differ: true }),
+    ]),
+  });
+  const notes = [...ui.window.document.querySelectorAll('#spMeetBody .sp-meet-credits')];
+  assert.deepEqual(notes.map(note => note.closest('tr').dataset.key), [ML], 'only that course says it');
+  assert.equal(flat(notes[0]), say(
+    'Its programmes teach it at different credit hours, so timetables generated from now on keep its standard weekly meetings.',
+    'تدرّسه برامجه بساعات معتمدة مختلفة، فتبقى الجداول التي تُنشأ من الآن على لقاءاته الأسبوعية القياسية.',
+  ));
+  assert.equal(ui.select(ML).value, '2x100', 'what AI2 holds');
+  assert.deepEqual([...ui.row(ML).querySelectorAll('.sp-meet-prog')].map(flat), [`AI2 ${WORDS['2x100']}`]);
+  assert.ok(!ui.row(ML).classList.contains('sp-adv-draft'));
+});
+
 /* ── drafts ── */
 
 test('a choice is a draft: nothing is sent, the badge counts it, and Discard drops it without a request', async t => {

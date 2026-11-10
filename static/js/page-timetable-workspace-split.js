@@ -267,9 +267,15 @@ const BP = {
 };
 
 // Left sidebar state
+// `budgetFor`: the scenario `budget` was read for (null while nothing of the
+// scenario shown is read). `budgetReads`: changed when the page starts on
+// another scenario, so a sidebar read still in flight for the previous one is
+// dropped when it answers.
 const SB = {
   open: false,
   budget: [],
+  budgetFor: null,
+  budgetReads: 0,
   search: '',
 };
 
@@ -2743,6 +2749,8 @@ async function loadSplitScenario() {
   RP.globalRepair.plan = null;
   RP.globalRepair.busy = false;
   SB.budget = [];
+  SB.budgetFor = null;
+  SB.budgetReads += 1;
   // The weekly-meetings line said the previous scenario's courses, and its
   // "Use programme defaults" would act on whatever scenario is current when
   // clicked: drawn empty now, before anything of the next one is read (and
@@ -7550,8 +7558,11 @@ function renderSplitMeetingSummary() {
   const box = $('twsMeetingSummary');
   const editor = globalThis.TimetableCourseEditor;
   if (!box || typeof editor?.renderMeetingSummary !== 'function') return;
-  PROGRAMME_DEFAULTS.drawnFor = S.scenarioId || null;
-  editor.renderMeetingSummary(box, S.scenarioId ? SB.budget || [] : [], {
+  // Only rows read for the scenario shown are drawn, and the line acts only
+  // on the scenario they were read for.
+  const drawn = Boolean(S.scenarioId) && SB.budgetFor === S.scenarioId;
+  PROGRAMME_DEFAULTS.drawnFor = drawn ? SB.budgetFor : null;
+  editor.renderMeetingSummary(box, drawn ? SB.budget || [] : [], {
     arabic: IS_AR, applyClass: 'tws-btn',
     disabled: PROGRAMME_DEFAULTS.running || COPY_ACTIVITY.optimising || S.scenarioMeta?.status === 'published',
     onOpen: courseKey => openSplitCourseEditor(courseKey),
@@ -7616,10 +7627,17 @@ async function applySplitProgrammeDefaults(rows) {
   }
 }
 
+/* The sidebar's rows, read for the scenario shown. An answer that comes back
+   after the page moved to (or started loading) another scenario is dropped:
+   it is never drawn under, nor acted on for, the scenario chosen since. */
 async function loadSidebarBudget() {
   if (!S.scenarioId) { renderSidebar(); return; }
-  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/budget/`);
+  const scenarioId = S.scenarioId;
+  const reads = SB.budgetReads;
+  const data = await api(`/ops/tw/scenarios/${scenarioId}/budget/`);
+  if (S.scenarioId !== scenarioId || SB.budgetReads !== reads) return;
   SB.budget = (data && data.budget) || [];
+  SB.budgetFor = scenarioId;
   renderSidebar();
 }
 function renderSidebar() {

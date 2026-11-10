@@ -687,6 +687,11 @@ const TM = {
   allAria:       (label, others) => IS_AR ? `تطبيق اختيار ${label} على كل البرامج التي تدرّسه، ومنها: ${others}` : `Apply the ${label} choice to every programme that teaches it, also: ${others}`,
   alsoTaught:    IS_AR ? 'يدرّسه أيضاً:' : 'Also taught by:',
   clearOnly:     reason => IS_AR ? `لم يعد يُختار له (${reason})، ويمكن مسحه فقط.` : `No longer offered (${reason}); it can only be cleared.`,
+  /* The rule counts every programme's row of the course: at different credit
+     hours the programmes never agree, whatever they set. */
+  creditsDiffer: IS_AR
+    ? 'تدرّسه برامجه بساعات معتمدة مختلفة، فتبقى الجداول التي تُنشأ من الآن على لقاءاته الأسبوعية القياسية.'
+    : 'Its programmes teach it at different credit hours, so timetables generated from now on keep its standard weekly meetings.',
   /* Why a row may not take a value (programme_meeting_patterns.ineligibility). */
   reasons: {
     not_three_credits: IS_AR ? 'ليس من ٣ ساعات' : 'not 3 credits',
@@ -869,7 +874,7 @@ function meetRowHtml(row) {
   return safeHtml`<tr data-key="${row.course_key}" data-course="${row.course_code}" data-saved="${saved}" data-mixed="${mixed ? '1' : ''}">
     <td><bdi class="cr-id">${row.course_code}</bdi>${row.course_name ? safeHtml`<div class="sp-cell-sub"><bdi>${row.course_name}</bdi></div>` : ''}</td>
     <td>${taught.map(p => safeHtml`<div class="sp-meet-prog"><bdi class="fw-semibold">${p.program}</bdi> ${choiceLabel(p.meeting_pattern)}</div>`)}</td>
-    <td><select class="form-select form-select-sm meet-select" aria-label="${TM.selectAria(label)}">${mixed ? safeHtml`<option value="${MEET_KEEP}">${partly ? TM.partly : TM.mixed}</option>` : ''}${choices.map(c => safeHtml`<option value="${c.value}">${IS_AR ? (c.label_ar || c.label) : c.label}</option>`)}</select>${row.clear_only ? safeHtml`<div class="fs-sm text-t3 sp-meet-clear-only">${TM.clearOnly(TM.reasons[row.reason] || row.reason || '')}</div>` : ''}<span class="sp-adv-state text-t3" aria-live="polite"></span></td>
+    <td><select class="form-select form-select-sm meet-select" aria-label="${TM.selectAria(label)}">${mixed ? safeHtml`<option value="${MEET_KEEP}">${partly ? TM.partly : TM.mixed}</option>` : ''}${choices.map(c => safeHtml`<option value="${c.value}">${IS_AR ? (c.label_ar || c.label) : c.label}</option>`)}</select>${row.clear_only ? safeHtml`<div class="fs-sm text-t3 sp-meet-clear-only">${TM.clearOnly(TM.reasons[row.reason] || row.reason || '')}</div>` : ''}${row.credit_hours_differ ? safeHtml`<div class="fs-sm text-t3 sp-meet-credits">${TM.creditsDiffer}</div>` : ''}<span class="sp-adv-state text-t3" aria-live="polite"></span></td>
     <td>${owners.length ? safeHtml`<label class="sp-adv-all"><input type="checkbox" class="meet-all" aria-label="${TM.allAria(label, programmeValuesText(owners))}"><span aria-hidden="true">${TL.allProgs}</span></label><div class="fs-sm text-t3 sp-meet-owners">${TM.alsoTaught} ${programmeValues(owners)}</div>` : ''}</td>
   </tr>`;
 }

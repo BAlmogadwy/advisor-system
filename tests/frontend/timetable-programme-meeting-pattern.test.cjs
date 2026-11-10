@@ -406,7 +406,7 @@ const quality = { ok: true, scenario_id: 1, instructor: { assessed: true, workin
 const quiet = { summary: { critical: 0, warning: 0 }, overlaps: [], instructor_clashes: [], room_clashes: [], cross_board_conflicts: [], hard_overlap_threshold: 20 };
 const READY = { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] };
 
-async function classic(t, { arabic = false, budget = () => BUDGET, save = body => savedAnswer(BUDGET, body), status = 'draft', add = null } = {}) {
+async function classic(t, { arabic = false, budget = () => BUDGET, save = body => savedAnswer(BUDGET, body), status = 'draft', add = null, route = () => undefined } = {}) {
   const template = read('core/templates/core/timetable_workspace.html');
   const html = template.replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/timetable-workspace/' });
@@ -428,8 +428,9 @@ async function classic(t, { arabic = false, budget = () => BUDGET, save = body =
   const shownScenario = { ...scenario, status };
   w.fetch = async (url, opts = {}) => {
     requests.push({ url, opts });
-    let body;
-    if (url === '/ops/tw/scenarios/1/budget/meeting-pattern/' && opts.method === 'POST') body = await save(JSON.parse(opts.body));
+    let body = await route(url, opts);
+    if (body !== undefined) { /* the test's own answer */ }
+    else if (url === '/ops/tw/scenarios/1/budget/meeting-pattern/' && opts.method === 'POST') body = await save(JSON.parse(opts.body));
     else if (url === '/ops/tw/scenarios/1/budget/' && opts.method === 'POST' && add) body = add(JSON.parse(opts.body));
     else if (url.startsWith('/ops/tw/scenarios/?')) body = { scenarios: [shownScenario] };
     else if (url === '/ops/tw/scenarios/1/') body = { scenario: shownScenario, active_job: null };
@@ -615,6 +616,34 @@ test('classic: the dialog’s refused programme default reads the list again, an
   assert.deepEqual(h.notices, []);
 });
 
+test('classic: a list read again for the dialog after the page moved to another scenario never reaches the dialog', async t => {
+  let hold = false;
+  let held = null;
+  const h = await classic(t, {
+    save: () => CHANGED,
+    route: async url => {
+      if (!hold || url !== '/ops/tw/scenarios/1/budget/') return undefined;
+      await new Promise(resolve => { held = resolve; });
+      return { budget: BUDGET };
+    },
+  });
+  button(h.summary(), 'STAT103').click();
+  const form = h.d.querySelector(EDITOR);
+  const before = lineAfterNow(form);
+  hold = true;
+  const use = button(form, 'Use programme default');
+  use.click();
+  await wait(() => held);
+  // The page is on scenario 2 now, its list read: STAT103's programmes differ there.
+  h.w.TW.scenarioId = 2;
+  h.w.TW.sectionBudget = BUDGET.map(row => (row === STAT103 ? { ...row, programme_meeting_pattern: MIXED, meeting_pattern_drift: false } : row));
+  held();
+  await wait(() => !use.disabled);
+  assert.equal(form.querySelector('[role=alert]').textContent, 'Not saved: its programmes’ default changed since the list was drawn.');
+  assert.equal(lineAfterNow(form), before, 'the dialog keeps scenario 1’s course, never scenario 2’s row');
+  assert.equal(button(form, 'Use programme default'), use);
+});
+
 for (const [applied, said] of [
   [{ value: '2x100', source: 'programmes', status: 'agree' }, `Added ${iso('STAT109')} — 2 × 100 min from its programmes. Choose the section from Required sections to place it.`],
   [{ value: '', source: 'standard', status: 'none' }, 'Added. Choose the section from Required sections to place it.'],
@@ -678,8 +707,8 @@ async function split(t, { arabic = false, budget = () => BUDGET, save = body => 
   await settle();
   const { S: state, SB: sidebar, COPY_ACTIVITY: activity } = w.__splitAudit;
   state.scenarioId = 1; state.scenarioMeta = { id: 1, status };
-  sidebar.budget = budget();
-  w.renderSidebar();
+  // The sidebar read as the page reads it, for scenario 1.
+  await w.loadSidebarBudget();
   const card = key => d.querySelector(`.tws-sec-item[data-key="${key}"]`);
   const chips = key => [...card(key).querySelectorAll('.meta .dem')].map(span => span.textContent);
   const summary = () => d.getElementById('twsMeetingSummary');
@@ -799,7 +828,7 @@ test('split: choosing another scenario draws the line empty at once, before anyt
   gate();
   await loading;
   // No scenario chosen: empty too.
-  h.sidebar.budget = BUDGET; h.w.renderSidebar();
+  await h.w.loadSidebarBudget();
   assert.ok(button(h.summary(), 'Use programme defaults (2)'));
   select.value = '';
   await h.w.onScenarioChange();
@@ -825,6 +854,34 @@ for (const arabic of [false, true]) test(`(${arabic ? 'ar' : 'en'}) split: the d
   assert.deepEqual(h.notices, []);
 });
 
+test('split: a sidebar read again for the dialog after the page moved to another scenario never reaches the dialog', async t => {
+  let hold = false;
+  let held = null;
+  const h = await split(t, {
+    save: () => unavailable('mixed'),
+    route: async url => {
+      if (!hold || url !== '/ops/tw/scenarios/1/budget/') return undefined;
+      await new Promise(resolve => { held = resolve; });
+      return { budget: BUDGET };
+    },
+  });
+  button(h.summary(), 'STAT103').click();
+  const form = h.d.querySelector(EDITOR);
+  const before = lineAfterNow(form);
+  hold = true;
+  const use = button(form, 'Use programme default');
+  use.click();
+  await wait(() => held);
+  // The page is on scenario 2 now, its sidebar read: STAT103's programmes differ there.
+  h.state.scenarioId = 2;
+  Object.assign(h.sidebar, { budget: BUDGET.map(row => (row === STAT103 ? { ...row, programme_meeting_pattern: MIXED, meeting_pattern_drift: false } : row)), budgetFor: 2 });
+  held();
+  await wait(() => !use.disabled);
+  assert.equal(form.querySelector('[role=alert]').textContent, 'Not saved: its programmes differ now.');
+  assert.equal(lineAfterNow(form), before, 'the dialog keeps scenario 1’s course, never scenario 2’s row');
+  assert.equal(button(form, 'Use programme default'), use);
+});
+
 test('split: a line drawn for one scenario never acts on another', async t => {
   const h = await split(t);
   const apply = button(h.summary(), 'Use programme defaults (2)');
@@ -833,7 +890,94 @@ test('split: a line drawn for one scenario never acts on another', async t => {
   apply.click();
   await settle();
   assert.deepEqual(h.requests.filter(item => item.url.includes('/meeting-pattern/')), []);
+  // Drawn again on scenario 2 with the rows still read for 1: nothing is
+  // drawn, and the run acts on nothing.
+  h.w.renderSidebar();
+  assert.deepEqual([h.summary().hidden, h.summary().querySelector('button')], [true, null]);
+  await h.w.applySplitProgrammeDefaults([AI333]);
+  assert.deepEqual(h.requests.filter(item => item.url.includes('/meeting-pattern/')), []);
   assert.deepEqual(h.notices, []);
+});
+
+/* Scenario 2 as the page reads it once chosen: its sidebar has one course,
+   which its programmes said nothing about (so no line). */
+const SCENARIO_2 = { id: 2, name: 'Scenario 2', status: 'draft' };
+const B_BUDGET = [plain(MATH243)];
+for (const when of ['after scenario 2 is read', 'while scenario 2 is read']) {
+  test(`split: scenario 1’s sidebar answering ${when} is never drawn under 2, and “Use programme defaults” sends nothing to 2`, async t => {
+    const gates = {};
+    const held = (name, answer) => new Promise(resolve => { gates[name] = () => resolve(answer); });
+    let holdA = false;
+    const h = await split(t, {
+      route: async url => {
+        if (holdA && url === '/ops/tw/scenarios/1/budget/') { holdA = false; return held('a', { budget: BUDGET }); }
+        if (url === '/ops/tw/scenarios/2/') return when.startsWith('while') ? held('b', { scenario: SCENARIO_2, active_job: null }) : { scenario: SCENARIO_2, active_job: null };
+        if (url === '/ops/tw/scenarios/2/budget/') return held('bBudget', { budget: B_BUDGET });
+        return undefined;
+      },
+    });
+    h.sidebar.open = true;
+    holdA = true;
+    // Scenario 1's sidebar is read (opening it, say) and has not answered yet.
+    const late = h.w.loadSidebarBudget();
+    await wait(() => gates.a);
+    const select = h.d.getElementById('twsScenario');
+    select.add(new h.w.Option('Scenario 2', '2'));
+    select.value = '2';
+    const loading = h.w.onScenarioChange();
+    const notDrawn = async () => {
+      assert.deepEqual([h.summary().hidden, h.summary().querySelector('button')], [true, null], 'scenario 1’s line is not drawn');
+      [...h.summary().querySelectorAll('button')].forEach(item => item.click());
+      await settle();
+      assert.deepEqual(h.requests.filter(item => item.url.includes('/meeting-pattern/')), []);
+    };
+    if (when.startsWith('while')) {
+      await wait(() => gates.b);
+      gates.a();
+      await late;
+      await settle();
+      await notDrawn();
+      gates.b();
+    }
+    await wait(() => gates.bBudget);
+    assert.equal(h.state.scenarioId, 2);
+    if (!when.startsWith('while')) {
+      gates.a();
+      await late;
+      await settle();
+      await notDrawn();
+    }
+    gates.bBudget();
+    await loading;
+    await wait(() => h.card(MATH243.course_key));
+    await notDrawn();
+    assert.equal(h.card(STAT103.course_key), null, 'scenario 2’s sidebar has none of scenario 1’s courses');
+    assert.deepEqual(h.notices, []);
+  });
+}
+
+test('split: a sidebar answer for a scenario the page has left is dropped', async t => {
+  let hold = false;
+  let held = null;
+  const h = await split(t, {
+    route: async url => {
+      if (!hold || url !== '/ops/tw/scenarios/1/budget/') return undefined;
+      await new Promise(resolve => { held = resolve; });
+      return { budget: B_BUDGET };
+    },
+  });
+  hold = true;
+  const late = h.w.loadSidebarBudget();
+  await wait(() => held);
+  // The page shows scenario 2 now, its own sidebar drawn.
+  const second = BUDGET.map(row => (row === STAT103 ? { ...row, programme_meeting_pattern: MIXED, meeting_pattern_drift: false } : row));
+  h.state.scenarioId = 2;
+  Object.assign(h.sidebar, { budget: second, budgetFor: 2 });
+  h.w.renderSidebar();
+  held();
+  await late;
+  assert.deepEqual(h.chips(STAT103.course_key), ['30 stu', '3h', 'programmes differ', 'cap 40'], 'scenario 2’s sidebar stays');
+  assert.ok(button(h.summary(), 'Use programme defaults (1)'));
 });
 
 test('split: a run that ends after the page moved to another scenario says nothing there and reads nothing of it', async t => {
