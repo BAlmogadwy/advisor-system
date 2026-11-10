@@ -5278,11 +5278,14 @@ def _meeting_shape_mismatches(
     than its shape is not here, as ``incomplete_section_pattern`` already says
     what is wrong with it. Meetings are compared by column family
     (``meetings_match_shape``): two 75-minute meetings are not two 100-minute
-    ones, wherever they sit. ``skip`` leaves a placement of a configured
-    course out of the judgment (:func:`_online_window_placements`: an online
-    course's meeting in an online-only window, whatever its shape); it is
-    asked only about those placements. In board order, then course, then
-    section label in natural order.
+    ones, wherever they sit. ``skip`` names a placement of a configured
+    course that is not held to the shape (:func:`_online_window_placements`:
+    an online course's meeting in an online-only window, whatever its shape);
+    it is asked only about those placements. A section is left out only when
+    EVERY one of its meetings is such a placement: a section with one meeting
+    in a window and one moved into an ordinary column is judged whole, window
+    meeting included, so its item names every placement re-placing must take.
+    In board order, then course, then section label in natural order.
     """
     board_order: dict[int, int] = {}
     by_section: dict[int, dict] = {}
@@ -5291,8 +5294,6 @@ def _meeting_shape_mismatches(
         ts = placement.term_section
         key = ts.course_key or ts.course_code
         if key not in shapes:
-            continue
-        if skip is not None and skip(placement):
             continue
         entry = by_section.setdefault(
             ts.id,
@@ -5303,8 +5304,11 @@ def _meeting_shape_mismatches(
                 "ids": [],
                 "meetings": {},
                 "lock": False,
+                "all_skipped": True,
             },
         )
+        if skip is None or not skip(placement):
+            entry["all_skipped"] = False
         if placement.board_id not in entry["boards"]:
             entry["boards"].append(placement.board_id)
         entry["ids"].append(placement.id)
@@ -5314,6 +5318,8 @@ def _meeting_shape_mismatches(
 
     mismatches: list[_ShapeMismatch] = []
     for entry in by_section.values():
+        if skip is not None and entry["all_skipped"]:
+            continue
         shape, code = shapes[entry["key"]]
         minutes = sorted(entry["meetings"].values())
         if len(minutes) < len(shape.durations) or meetings_match_shape(minutes, shape):
@@ -5788,9 +5794,10 @@ def check_publish_readiness(scenario_id: int) -> dict:
           100-minute meetings) has a placed section of another shape, or has
           no in-person 100-minute column for its in-person sections. Never a
           blocker, and no write is refused for it (owner rule: save it and
-          show it). With the online evening windows on, a section of a course
-          online for its board is not judged by the shape: every engine
-          places it in those windows whatever the shape.
+          show it). A section of a course online for its board whose
+          meetings all sit in online-only windows is not judged by the shape:
+          it is placed by its number of meetings, as long as the windows are
+          (the flag is never read here).
 
     Parameters:
         scenario_id: PK of the ``Scenario``.
@@ -5855,9 +5862,9 @@ def check_publish_readiness(scenario_id: int) -> dict:
             the scenario's 100-minute columns hold no column an automatic
             placer may use for an in-person class (``placeable_slots``:
             online-only windows are not one), so every engine would leave its
-            in-person sections unplaced. A section online for its board is not
-            one of them while the online evening windows are on: the engines
-            place it in those windows, whatever its shape. In course order.
+            in-person sections unplaced. (A section online for its board may
+            still be placed in the online windows, by its number of meetings,
+            whatever its shape.) In course order.
         ``section_meeting_pattern_mismatch``
             board of the section's first placement / none / ``course_code``,
             ``course_key``, ``section``, ``placement_ids`` (every placement of

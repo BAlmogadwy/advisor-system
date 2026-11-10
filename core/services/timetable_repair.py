@@ -3089,17 +3089,19 @@ def _repair_state_fingerprint(scenario_id: int, blocked_ids: list[int]) -> str:
     # moves and what each move is called (_placement_meeting_kind), and changing
     # it moves no placement: so the shapes the scenario chose are part of the
     # fingerprint, and a change re-analyses rather than serving (or approving) a
-    # run made under the old one. Only when some course has one, so the
-    # fingerprint of every scenario without a shape is what it always was. The
-    # credit hours count too: a shape applies only to the credits it fits.
-    meeting_patterns = list(
+    # run made under the old one. Every budget row counts once any course has a
+    # shape - a plain row of the same code ends a bare key's loan of it
+    # (_placement_meeting_shape) - and the credit hours too, as a shape applies
+    # only to the credits it fits. With no shape anywhere nothing is added, so
+    # the fingerprint of every such scenario is what it always was; the one
+    # read this costs each analysis is the price of never serving a stale run.
+    budget_rows = list(
         ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
-        .exclude(meeting_pattern="")
         .order_by("id")
         .values_list("course_key", "course_code", "meeting_pattern", "credit_hours")
     )
-    if meeting_patterns:
-        payload["meeting_patterns"] = meeting_patterns
+    if any(row[2] for row in budget_rows):
+        payload["meeting_patterns"] = budget_rows
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

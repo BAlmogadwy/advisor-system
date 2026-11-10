@@ -1163,3 +1163,31 @@ def test_the_endpoint_lists_no_online_section_in_an_online_window(
         )
     ]
     assert audits == [1, 1]
+
+
+def test_an_online_section_with_one_meeting_moved_out_of_its_window_is_judged_whole(http):
+    """Only a section whose meetings ALL sit in online windows is left out. One meeting
+    in a window and one moved into an ordinary column (a manual move is never refused)
+    is judged whole, window meeting included, so Check and the weekly-meetings answer
+    name every placement re-placing must take."""
+
+    sc = _scenario()
+    board = _board(sc)
+    _budget(sc, STAT, pattern="2x100")
+    _online_for_the_boards("STAT103")
+    ids = _place(
+        board, _section(sc, STAT, "S1"), (("SUN", "15:50", "17:30"), ("TUE", "09:00", "10:15"))
+    )
+
+    items = _shape_items(check_publish_readiness(sc.id))
+    assert [
+        (item["code"], item["params"]["placement_ids"], item["params"]["placed_minutes"])
+        for item in items
+    ] == [("section_meeting_pattern_mismatch", ids, [75, 100])]
+
+    listed = _post(
+        http, MEETING_PATTERN_URL.format(sc.id), {"course_key": STAT, "meeting_pattern": "2x100"}
+    ).json()["mismatched_sections"]
+    assert [
+        (item["section"], item["placement_ids"], item["placed_minutes"]) for item in listed
+    ] == [("S1", ids, [75, 100])]

@@ -1032,10 +1032,10 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
     never moved) and is listed in ``mismatched_sections`` - with whether a lock
     or another scenario keeps its times - and, while the course is set to a
     shape, warned about by Check until it is re-placed. A section of a course
-    online for its board is not listed while the online evening windows are
-    on: every engine places it in those windows whatever its shape
-    (``course_meeting_shape_mismatches``). Not undoable, like Add course: set
-    the old value to go back.
+    online for its board whose meetings all sit in online-only windows is not
+    listed: it is placed by its number of meetings, as long as the windows are,
+    whatever its shape (``course_meeting_shape_mismatches``). Not undoable, like
+    Add course: set the old value to go back.
 
     400 ``SCENARIO_PUBLISHED`` for a published scenario; 404 ``NOT_FOUND`` for a
     course the scenario's budget does not have; 400

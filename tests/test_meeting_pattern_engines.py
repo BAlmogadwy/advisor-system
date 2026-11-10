@@ -632,7 +632,8 @@ def test_a_section_with_no_meeting_over_80_minutes_reads_no_budget_for_repair(
     flags, monkeypatch, move_scope
 ) -> None:
     """Only a meeting over 80 minutes needs the course's shape (lecture or lab), so a
-    2 x 75 section - configured or not - costs the repair panel no budget read."""
+    2 x 75 section - configured or not - costs the repair panel's candidate preparation
+    no budget read (the analysis fingerprint reads the budget once, for every course)."""
     from core.services import timetable_repair as repair_service
 
     _scenario, board = _repair_scenario()
@@ -739,8 +740,17 @@ def test_the_repair_fingerprint_names_the_shapes_only_when_a_course_has_one(
     unconfigured = repair_service._repair_state_fingerprint(scenario.id, [])
 
     assert configured != unconfigured
-    # (course_key, course_code, meeting_pattern, credit_hours) of each configured row.
-    assert payloads[0]["meeting_patterns"] == [(X_KEY, "CS112", TWO_BY_100, 3)]
+    # (course_key, course_code, meeting_pattern, credit_hours) of EVERY budget row once a
+    # course has a shape: a plain row of the same code ends a bare key's loan of it.
+    every_row = list(
+        ScenarioSectionBudget.objects.filter(scenario=scenario)
+        .order_by("id")
+        .values_list("course_key", "course_code", "credit_hours")
+    )
+    assert [(key, code, hours) for key, code, _p, hours in payloads[0]["meeting_patterns"]] == (
+        every_row
+    )
+    assert (X_KEY, "CS112", TWO_BY_100, 3) in payloads[0]["meeting_patterns"]
     assert set(payloads[1]) == {
         "version",
         "scenario_id",
@@ -896,3 +906,17 @@ def test_a_rooms_sheet_without_a_shape_is_what_it_was(flags, rooms_sheet) -> Non
 
     assert _notes(ws) == []
     assert _note_under(ws, "L1") is None
+
+
+def test_a_plain_row_that_ends_a_bare_keys_loan_changes_the_repair_fingerprint(flags) -> None:
+    """A section under the bare key borrows the only same-code row's shape; adding a
+    plain row of that code ends the loan (lecture becomes lab for "Lectures only"), so a
+    run cached before it must not be served after it."""
+    from core.services import timetable_repair as repair_service
+
+    scenario, _board = _repair_scenario()
+    before = repair_service._repair_state_fingerprint(scenario.id, [])
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario, course_key="CS112", course_code="CS112", credit_hours=3
+    )
+    assert repair_service._repair_state_fingerprint(scenario.id, []) != before
