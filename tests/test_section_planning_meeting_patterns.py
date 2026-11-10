@@ -845,17 +845,19 @@ def _scenario(
     status: str = "draft",
     budget_key: str | None = STAT,
     budget_pattern: str = "",
+    credit_hours: int = 3,
 ) -> TimetableScenario:
     scenario = TimetableScenario.objects.create(
         academic_year="1448", term="2", name=name, programs=programs, status=status
     )
     if budget_key:
+        code, _, name_key = budget_key.partition("::")
         ScenarioSectionBudget.objects.create(
             scenario=scenario,
             course_key=budget_key,
-            course_code="STAT103",
-            course_name="PRINCIPLES OF PROBABILITY AND STATISTICS",
-            credit_hours=3,
+            course_code=code,
+            course_name=name_key.replace("_", " ") or "PRINCIPLES OF PROBABILITY AND STATISTICS",
+            credit_hours=credit_hours,
             meeting_pattern=budget_pattern,
         )
     return scenario
@@ -874,6 +876,8 @@ def test_the_preview_names_co_owners_other_names_and_the_draft_scenarios_it_reac
     _scenario("no budget row", ["DS2"], budget_key=None)
     _scenario("other programmes", ["CS2"])
     _scenario("another course", ["DS2"], budget_key="STAT103::STATISTICS_FOR_EVERYONE")
+    # The same identity budgeted at 4 credits: 2 x 100 is no choice there.
+    four = _scenario("4-credit budget", ["DS2"], credit_hours=4)
     _login(client)
 
     response = _post(
@@ -896,11 +900,28 @@ def test_the_preview_names_co_owners_other_names_and_the_draft_scenarios_it_reac
     ]
     assert course["same_code_elsewhere"] == []
     # Only draft scenarios whose programmes include DS2 and that budget STAT103,
-    # each resolved over ITS programmes with the new value.
+    # each resolved over ITS programmes with the new value, newest first.
     assert course["scenarios"] == [
         {
-            "id": hand_made.id,
-            "name": "hand-made 1448-2",
+            "id": four.id,
+            "name": "4-credit budget",
+            "budget_pattern": "",
+            "programme_pattern": "2x100",
+            "status": "agree",
+            # Its own credit hours' choices: 2 x 100 is not one, so no drift.
+            "differs": False,
+        },
+        {
+            "id": bare.id,
+            "name": "bare key",
+            "budget_pattern": "",
+            "programme_pattern": "2x100",
+            "status": "agree",
+            "differs": True,
+        },
+        {
+            "id": older.id,
+            "name": "older run",
             "budget_pattern": "",
             "programme_pattern": "2x100",
             "status": "agree",
@@ -915,23 +936,79 @@ def test_the_preview_names_co_owners_other_names_and_the_draft_scenarios_it_reac
             "differs": False,
         },
         {
-            "id": older.id,
-            "name": "older run",
-            "budget_pattern": "",
-            "programme_pattern": "2x100",
-            "status": "agree",
-            "differs": True,
-        },
-        {
-            "id": bare.id,
-            "name": "bare key",
+            "id": hand_made.id,
+            "name": "hand-made 1448-2",
             "budget_pattern": "",
             "programme_pattern": "2x100",
             "status": "agree",
             "differs": True,
         },
     ]
+    assert course["scenarios_more"] == 0
     assert shared.id not in {s["id"] for s in course["scenarios"]}
+
+
+def test_the_preview_names_the_newest_draft_scenarios_and_counts_the_rest(
+    client: Client, plan, monkeypatch
+) -> None:
+    monkeypatch.setattr(editor, "MAX_SCENARIOS", 2)
+    made = [_scenario(f"run {n}", ["DS2"]) for n in range(4)]
+    # The oldest budgets the course twice (exact and bare): it is counted once.
+    ScenarioSectionBudget.objects.create(
+        scenario=made[0], course_key="STAT103", course_code="STAT103", credit_hours=3
+    )
+    # Not a DS2 timetable: neither named nor counted.
+    _scenario("not DS2", ["CS2"])
+    _login(client)
+
+    preview = _post(
+        client,
+        {
+            "programs": ["DS2"],
+            "changes": [{"course_key": STAT, "meeting_pattern": "2x100"}],
+            "dry_run": True,
+        },
+    ).json()
+
+    [course] = preview["courses"]
+    # The timetables being worked on now are the newest: they are named.
+    assert [s["id"] for s in course["scenarios"]] == [made[3].id, made[2].id]
+    assert course["scenarios_more"] == 2
+
+
+def test_an_english_course_budget_keeps_its_fixed_meetings_in_the_preview(client: Client) -> None:
+    """ENG101 meets in a fixed weekly bundle: a scenario's budget for it never
+    differs from its programmes, whatever they hold (here a vote left from
+    before the policy, being cleared)."""
+    _req("AI2", "ENG101", "ENGLISH LANGUAGE I", pattern="2x100")
+    _req("DS2", "ENG101", "ENGLISH LANGUAGE I", pattern="2x100")
+    english = _scenario("with English", ["AI2", "DS2"], budget_key="ENG101::ENGLISH_LANGUAGE_I")
+    _login(client)
+
+    preview = _post(
+        client,
+        {
+            "programs": ["DS2"],
+            "changes": [{"course_key": "ENG101::ENGLISH_LANGUAGE_I", "meeting_pattern": ""}],
+            "dry_run": True,
+        },
+    ).json()
+
+    assert [(c["program"], c["old"], c["new"]) for c in preview["changes"]] == [
+        ("DS2", "2x100", "")
+    ]
+    # AI2 still holds 2 x 100 and DS2 abstains: they agree, yet the budget's
+    # only choice is the English bundle, so it does not differ.
+    assert preview["courses"][0]["scenarios"] == [
+        {
+            "id": english.id,
+            "name": "with English",
+            "budget_pattern": "",
+            "programme_pattern": "2x100",
+            "status": "agree",
+            "differs": False,
+        }
+    ]
 
 
 def test_a_draft_of_a_targeted_programme_is_named_even_when_its_row_already_holds_the_value(
@@ -1017,6 +1094,10 @@ def test_a_preview_reads_a_fixed_number_of_queries_however_many_courses_change(
 ) -> None:
     for name in ("one", "two", "three"):
         _scenario(name, ["AI2", "DS2"])
+    # Older scenarios saved without their programmes: their boards stand in.
+    for name in ("old one", "old two", "old three"):
+        older = _scenario(name, [])
+        DeliveryBoard.objects.create(scenario=older, label="T3", program="AI2,DS2", nominal_term=3)
     body = {
         "programs": ["AI2", "DS2"],
         "changes": [
@@ -1027,9 +1108,39 @@ def test_a_preview_reads_a_fixed_number_of_queries_however_many_courses_change(
     }
     result = editor.save_meeting_patterns(body, actor=_actor(), source="test")
     assert result.status == 200
-    # The study plan, the budgets, their scenarios: three, not one per course.
-    with django_assert_max_num_queries(3):
+    assert {s["name"] for c in result.body["courses"] for s in c["scenarios"]} >= {
+        "old one",
+        "old two",
+        "old three",
+    }
+    # The study plan, the budgets, their scenarios, the older ones' boards:
+    # four, not one per course or per older scenario.
+    with django_assert_max_num_queries(4):
         editor.save_meeting_patterns(body, actor=_actor(), source="test")
+
+
+def test_many_scenarios_programmes_are_read_with_one_board_query(
+    django_assert_num_queries,
+) -> None:
+    from core.services.programme_meeting_patterns import (
+        scenario_programmes,
+        scenarios_programmes,
+    )
+
+    named = _scenario("named", [" ds2", "AI2", "ds2"], budget_key=None)
+    older = _scenario("older", [], budget_key=None)
+    DeliveryBoard.objects.create(scenario=older, label="T1", program="DS, ai2", nominal_term=1)
+    DeliveryBoard.objects.create(scenario=older, label="T2", program="AI2,DS2", nominal_term=2)
+    bare = _scenario("no boards", [], budget_key=None)
+    scenarios = [named, older, bare]
+
+    with django_assert_num_queries(1):
+        batch = scenarios_programmes(scenarios)
+
+    assert batch == {s.id: scenario_programmes(s) for s in scenarios}
+    assert batch == {named.id: ["AI2", "DS2"], older.id: ["AI2", "DS", "DS2"], bare.id: []}
+    with django_assert_num_queries(0):
+        assert scenarios_programmes([named]) == {named.id: ["AI2", "DS2"]}
 
 
 # ── the page ─────────────────────────────────────────────────────────────────

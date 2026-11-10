@@ -673,20 +673,23 @@ let _meetBusy = false;        // a review or save in flight: one at a time
 const _meetDrafts = new Map(); // course key -> { value, all, typed, saved }
 let _meetDropNote = '';       // drafts a programme change dropped, said until the next edit
 let _meetReloadNotes = [];    // what the last reload did to drafts, said until the next edit
+let _meetFailWords = '';      // why the list failed when trying again cannot help ('' otherwise)
 
 const TM = {
   chooseProgram: IS_AR ? 'اختر برنامجاً أولاً: اللقاءات الأسبوعية تُحدَّد لكل برنامج.' : 'Choose a programme first: weekly meetings are set per programme.',
-  noCourses:     IS_AR ? 'لا مقرر من 3 ساعات في هذه البرامج تُختار له اللقاءات الأسبوعية.' : 'These programmes have no 3-credit course whose weekly meetings can be chosen.',
+  noCourses:     IS_AR ? 'لا مقرر من ٣ ساعات في هذه البرامج تُختار له اللقاءات الأسبوعية.' : 'These programmes have no 3-credit course whose weekly meetings can be chosen.',
   listLoading:   IS_AR ? 'جارٍ تحميل اللقاءات الأسبوعية…' : 'The weekly meetings are loading…',
   listFailed:    IS_AR ? 'لم تُحمَّل اللقاءات الأسبوعية، فلا يمكن الحفظ. غيّر البرنامج أو حاول مرة أخرى.' : "The weekly meetings didn't load, so nothing can be saved. Change the programme or try again.",
+  listNotAllowed: IS_AR ? 'لا تملك صلاحية عرض اللقاءات الأسبوعية أو حفظها.' : 'You are not allowed to see or save weekly meetings.',
   mixed:         IS_AR ? 'البرامج مختلفة' : 'Programmes differ',
+  partly:        IS_AR ? 'محدد لبعض البرامج فقط' : 'Set for some programmes only',
   selectAria:    label => IS_AR ? `اللقاءات الأسبوعية لـ ${label}` : `Weekly meetings for ${label}`,
   allAria:       (label, others) => IS_AR ? `تطبيق اختيار ${label} على كل البرامج التي تدرّسه، ومنها: ${others}` : `Apply the ${label} choice to every programme that teaches it, also: ${others}`,
   alsoTaught:    IS_AR ? 'يدرّسه أيضاً:' : 'Also taught by:',
   clearOnly:     reason => IS_AR ? `لم يعد يُختار له (${reason})، ويمكن مسحه فقط.` : `No longer offered (${reason}); it can only be cleared.`,
   /* Why a row may not take a value (programme_meeting_patterns.ineligibility). */
   reasons: {
-    not_three_credits: IS_AR ? 'ليس من 3 ساعات' : 'not 3 credits',
+    not_three_credits: IS_AR ? 'ليس من ٣ ساعات' : 'not 3 credits',
     not_named:         IS_AR ? 'بلا اسم مقرر في خطة الدراسة' : 'no course name in the study plan',
     placeholder:       IS_AR ? 'خانة اختيارية' : 'an elective slot',
     excluded:          IS_AR ? 'لا يدخل الجدول' : 'not on the timetable',
@@ -719,6 +722,7 @@ const TM = {
   scenarioMatches: IS_AR ? 'مطابق لافتراضي البرامج' : 'already matches the programme default',
   scenarioMixed:   IS_AR ? 'برامجه مختلفة: يبقى كما هو' : 'its programmes differ: it stays as it is',
   scenarioNone:    IS_AR ? 'لا قيمة لبرامجه: يبقى كما هو' : 'no programme default there: it stays as it is',
+  scenariosMore:   n => IS_AR ? `وجداول مسودة أخرى عددها ${n} لم تُذكر.` : `and ${n} more draft timetable${n === 1 ? '' : 's'}, not listed.`,
   notAllowed:    IS_AR ? 'لا تملك صلاحية حفظ اللقاءات الأسبوعية.' : 'You are not allowed to save weekly meetings.',
   leave:         IS_AR ? 'لديك اختيارات لقاءات أسبوعية غير محفوظة.' : 'You have unsaved weekly-meetings choices.',
 };
@@ -814,9 +818,11 @@ async function loadMeetingPatterns() {
   }
   _meetState = 'loading';
   updateMeetState();
-  const failed = data => {
+  const failed = (data, status) => {
     _meetState = 'failed';
-    const words = data && MEET_ERRORS[data.code] ? meetError(data) : TM.listFailed;
+    /* Refused for the user's role: trying again cannot help, so say why. */
+    _meetFailWords = status === 401 || status === 403 ? TM.listNotAllowed : '';
+    const words = _meetFailWords || (data && MEET_ERRORS[data.code] ? meetError(data) : TM.listFailed);
     if (!meetRows().length) $('spMeetBody').innerHTML = meetEmptyRow(words);
     showStatus(words, 'err');
     updateMeetState();
@@ -825,7 +831,7 @@ async function loadMeetingPatterns() {
     const res = await fetch(`${MEET_URL}?program=${encodeURIComponent(prog)}`, { headers: { 'X-CSRFToken': CSRF } });
     const data = await res.json().catch(() => ({}));
     if (seq !== _meetSeq) return;   // a newer request owns the panel
-    if (!res.ok || !data.ok) { failed(data); return; }
+    if (!res.ok || !data.ok) { failed(data, res.status); return; }
     const rows = Array.isArray(data.courses) ? data.courses : [];
     _meetChoices = Array.isArray(data.choices) ? data.choices : [];
     adoptMeetProgramme(prog);
@@ -837,8 +843,22 @@ async function loadMeetingPatterns() {
   }
 }
 
+/* What the programmes on screen HOLD for a row, which is not what the rule
+ * decides: a programme that has not set a value abstains from the rule, yet a
+ * row shows one value only when every programme on screen stores that same
+ * value ("" not set included). Otherwise the row is drawn as mixed, so any
+ * value chosen is a change sent for every programme on screen (the server
+ * writes only the rows that differ): with AI2 2 × 100 and DS2 not set,
+ * choosing 2 × 100 gives it to DS2 too. `partly`: one value, and programmes
+ * that have not set it. */
+function meetSavedOf(row) {
+  const values = [...new Set((row.programmes || []).map(p => p.meeting_pattern || ''))];
+  if (values.length <= 1) return { saved: values.length ? values[0] : (row.meeting_pattern || ''), mixed: false, partly: false };
+  return { saved: '', mixed: true, partly: values.filter(Boolean).length === 1 };
+}
+
 function meetRowHtml(row) {
-  const mixed = row.status === 'mixed';
+  const { saved, mixed, partly } = meetSavedOf(row);
   const label = [row.course_code, row.course_name].filter(Boolean).join(' ');
   const owners = row.co_owners || [];
   const taught = row.programmes || [];
@@ -846,10 +866,10 @@ function meetRowHtml(row) {
   const choices = row.clear_only
     ? _meetChoices.filter(c => c.value === '' || taught.some(p => p.meeting_pattern === c.value))
     : _meetChoices;
-  return safeHtml`<tr data-key="${row.course_key}" data-course="${row.course_code}" data-saved="${mixed ? '' : (row.meeting_pattern || '')}" data-mixed="${mixed ? '1' : ''}">
+  return safeHtml`<tr data-key="${row.course_key}" data-course="${row.course_code}" data-saved="${saved}" data-mixed="${mixed ? '1' : ''}">
     <td><bdi class="cr-id">${row.course_code}</bdi>${row.course_name ? safeHtml`<div class="sp-cell-sub"><bdi>${row.course_name}</bdi></div>` : ''}</td>
     <td>${taught.map(p => safeHtml`<div class="sp-meet-prog"><bdi class="fw-semibold">${p.program}</bdi> ${choiceLabel(p.meeting_pattern)}</div>`)}</td>
-    <td><select class="form-select form-select-sm meet-select" aria-label="${TM.selectAria(label)}">${mixed ? safeHtml`<option value="${MEET_KEEP}">${TM.mixed}</option>` : ''}${choices.map(c => safeHtml`<option value="${c.value}">${IS_AR ? (c.label_ar || c.label) : c.label}</option>`)}</select>${row.clear_only ? safeHtml`<div class="fs-sm text-t3 sp-meet-clear-only">${TM.clearOnly(TM.reasons[row.reason] || row.reason || '')}</div>` : ''}<span class="sp-adv-state text-t3" aria-live="polite"></span></td>
+    <td><select class="form-select form-select-sm meet-select" aria-label="${TM.selectAria(label)}">${mixed ? safeHtml`<option value="${MEET_KEEP}">${partly ? TM.partly : TM.mixed}</option>` : ''}${choices.map(c => safeHtml`<option value="${c.value}">${IS_AR ? (c.label_ar || c.label) : c.label}</option>`)}</select>${row.clear_only ? safeHtml`<div class="fs-sm text-t3 sp-meet-clear-only">${TM.clearOnly(TM.reasons[row.reason] || row.reason || '')}</div>` : ''}<span class="sp-adv-state text-t3" aria-live="polite"></span></td>
     <td>${owners.length ? safeHtml`<label class="sp-adv-all"><input type="checkbox" class="meet-all" aria-label="${TM.allAria(label, programmeValuesText(owners))}"><span aria-hidden="true">${TL.allProgs}</span></label><div class="fs-sm text-t3 sp-meet-owners">${TM.alsoTaught} ${programmeValues(owners)}</div>` : ''}</td>
   </tr>`;
 }
@@ -941,7 +961,7 @@ function refreshMeetRow(tr) {
 /* Why Save cannot run now ('' when it can, given drafts). */
 function meetBlockReason() {
   if (_meetState === 'loading') return TM.listLoading;
-  if (_meetState === 'failed') return TM.listFailed;
+  if (_meetState === 'failed') return _meetFailWords || TM.listFailed;
   if (!_meetProgram) return TM.chooseProgram;
   return '';
 }
@@ -959,7 +979,7 @@ function updateMeetState() {
   if (drafts.length) parts.push(TL.drafts(drafts.length));
   if (_meetDropNote) parts.push(_meetDropNote);
   parts.push(..._meetReloadNotes);
-  if (drafts.length && (reason === TM.listLoading || reason === TM.listFailed)) parts.push(reason);
+  if (drafts.length && (_meetState === 'loading' || _meetState === 'failed')) parts.push(reason);
   $('spMeetDrafts').textContent = parts.length ? parts.join(' · ') : TL.noDrafts;
   const btn = $('spMeetSaveDb');
   btn.setAttribute('aria-disabled', _meetBusy || reason || !drafts.length ? 'true' : 'false');
@@ -1004,13 +1024,16 @@ function meetAfterHtml(course) {
   const owners = course.co_owners || [];
   const others = course.same_code_elsewhere || [];
   const scenarios = course.scenarios || [];
+  /* The server names the newest drafts it reaches and counts the rest. */
+  const more = Number(course.scenarios_more) || 0;
   if (!owners.length && !others.length && !scenarios.length) return '';
   return safeHtml`<div class="sp-meet-after" data-key="${course.course_key}">
     <p class="fs-sm mb-0"><bdi class="cr-id">${course.course_code}</bdi> <bdi>${course.course_name}</bdi></p>
     ${owners.length ? safeHtml`<p class="fs-sm text-t3 mb-0 sp-meet-owners">${TM.coOwners} ${programmeValues(owners)}</p>` : ''}
     ${others.map(o => safeHtml`<p class="fs-sm text-t3 mb-0 sp-meet-other"><bdi class="cr-id">${course.course_code}</bdi> <bdi>${o.course_name}</bdi> (<bdi>${(o.programmes || []).join(', ')}</bdi>) ${TM.otherName}</p>`)}
     ${scenarios.length ? safeHtml`<p class="fs-sm text-t3 mb-0">${TM.scenariosHead}</p>
-    <ul class="fs-sm sp-meet-scenarios">${scenarios.map(s => safeHtml`<li data-scenario="${s.id}"><a href="${scenarioUrl(s.id)}"><bdi>${s.name}</bdi></a> <bdi>(#${s.id})</bdi> — ${scenarioWords(s)}</li>`)}</ul>` : ''}
+    <ul class="fs-sm sp-meet-scenarios">${scenarios.map(s => safeHtml`<li data-scenario="${s.id}"><a href="${scenarioUrl(s.id)}"><bdi>${s.name}</bdi></a> <bdi>(#${s.id})</bdi> — ${scenarioWords(s)}</li>`)}</ul>
+    ${more ? safeHtml`<p class="fs-sm text-t3 mb-0 sp-meet-scenarios-more">${TM.scenariosMore(more)}</p>` : ''}` : ''}
   </div>`;
 }
 

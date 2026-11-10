@@ -127,6 +127,32 @@ def scenario_programmes(scenario: TimetableScenario) -> list[str]:
     return sorted(programmes)
 
 
+def scenarios_programmes(scenarios: Iterable[TimetableScenario]) -> dict[int, list[str]]:
+    """``scenario_programmes`` for many scenarios, keyed by scenario id.
+
+    The boards of every scenario saved without its programmes are read in ONE
+    query (none when every scenario has them), so a caller's query count does
+    not grow with the number of older scenarios it reaches.
+    """
+    out: dict[int, set[str]] = {}
+    older: list[int] = []
+    for scenario in scenarios:
+        out[scenario.id] = {
+            str(p).strip().upper() for p in (scenario.programs or []) if str(p).strip()
+        }
+        if not out[scenario.id]:
+            older.append(scenario.id)
+    if older:
+        boards = DeliveryBoard.objects.filter(scenario_id__in=older).values_list(
+            "scenario_id", "program"
+        )
+        for scenario_id, label in boards:
+            out[scenario_id].update(
+                p.strip().upper() for p in str(label or "").split(",") if p.strip()
+            )
+    return {scenario_id: sorted(programmes) for scenario_id, programmes in out.items()}
+
+
 def load_rows(programmes: Iterable[str]) -> list[ProgrammeRow]:
     """Every study-plan row of these programmes, as the rule's input (one query)."""
     wanted = sorted({str(p).strip().upper() for p in programmes if str(p).strip()})

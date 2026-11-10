@@ -292,6 +292,49 @@ test('a mixed row shows that its programmes differ, and All programmes waits for
   assert.deepEqual(ui.writes(), []);
 });
 
+test('a row set for only some programmes on screen says so, and any value is sent for them all', async t => {
+  const ui = await page(t, {
+    save: saveServer({
+      preview: body => answer({
+        ok: true, dry_run: true, programs: body.programs, unchanged: 1, skipped: [], courses: [], preview_token: 'token-s',
+        changes: [{ ...planned(body.changes[0], 'DS2', ''), course_name: 'PRINCIPLES OF PROBABILITY AND STATISTICS' }],
+      }),
+    }),
+  });
+  const stat = ui.select(STAT);
+  assert.equal(stat.value, 'keep', 'AI2 holds 2 × 100 and DS2 nothing: no one value is saved for both');
+  assert.equal(stat.selectedOptions[0].textContent, say('Set for some programmes only', 'محدد لبعض البرامج فقط'));
+  assert.deepEqual([...stat.options].map(o => o.value), ['keep', '', 'standard', '2x100']);
+  assert.ok(!ui.row(STAT).classList.contains('sp-adv-draft'));
+  assert.equal(ui.all(STAT).disabled, true, 'All programmes waits for a value, as on any mixed row');
+
+  await ui.choose(STAT, '2x100');   // AI2's value, for DS2 too
+  assert.ok(ui.row(STAT).classList.contains('sp-adv-draft'), 'a change: DS2 does not hold it');
+  assert.equal(ui.text('spMeetBadge'), '1');
+  ui.$('spMeetSaveDb').click();
+  await settle();
+
+  assert.deepEqual(ui.writes().map(w => w.body.dry_run), [true, false]);
+  assert.deepEqual(ui.writes()[0].body.changes, [{ course_key: STAT, meeting_pattern: '2x100', all_programmes: false }]);
+  const doc = shown(ui.dialogs[0].body);
+  assert.deepEqual([...doc.querySelectorAll('.sp-meet-review tbody tr')].map(tr => [
+    tr.querySelector('bdi.cr-id').textContent, ...[...tr.querySelectorAll('td')].slice(1).map(flat)]), [
+    ['STAT103', 'DS2', WORDS[''], WORDS['2x100'], say('Programmes on screen', 'البرامج المعروضة')],
+  ]);
+  assert.match(flat(doc.body), AR ? /1 صف مطابق أصلاً/ : /1 row already matches and will not change\./);
+});
+
+test('a row whose programmes hold two values and not set says they differ', async t => {
+  const ui = await page(t, {
+    program: 'AI2,DS2,IS2',
+    listing: prog => listed(prog, coursesFor(prog, { [COE]: { programmes: [
+      { program: 'AI2', meeting_pattern: 'standard' }, { program: 'DS2', meeting_pattern: '2x100' }, { program: 'IS2', meeting_pattern: '' },
+    ] } })),
+  });
+  assert.equal(ui.select(COE).value, 'keep');
+  assert.equal(ui.select(COE).selectedOptions[0].textContent, say('Programmes differ', 'البرامج مختلفة'));
+});
+
 test('a row that may no longer vote offers only clearing, and says why', async t => {
   const ui = await page(t);
   assert.deepEqual([...ui.select(BARE).options].map(o => o.value), ['', '2x100']);
@@ -325,7 +368,7 @@ test('a choice is a draft: nothing is sent, the badge counts it, and Discard dro
   ui.$('spMeetReset').focus();
   ui.$('spMeetReset').click();
   await settle();
-  assert.equal(ui.select(STAT).value, '2x100');
+  assert.equal(ui.select(STAT).value, 'keep', 'back to what AI2 and DS2 hold: set for AI2 only');
   assert.ok(!ui.row(STAT).classList.contains('sp-adv-draft'));
   assert.ok(ui.$('spMeetBadge').classList.contains('d-none'));
   assert.equal(ui.saveOff(), true);
@@ -395,7 +438,7 @@ test('a programme change drops the drafts, says so, and never brings them back',
   ui.$('spMeetReset').click();
 
   await ui.setProgram('AI2,DS2');
-  assert.equal(ui.select(STAT).value, '2x100', 'the dropped draft does not come back');
+  assert.equal(ui.select(STAT).value, 'keep', 'the dropped draft does not come back');
   assert.equal(ui.text('spMeetDrafts'), say('No unsaved changes', 'لا توجد تعديلات غير محفوظة'));
   assert.equal(ui.leave(), false);
 });
@@ -450,6 +493,10 @@ test('while a list loads, or after it failed, Save sends nothing; the refusal is
   assert.equal(ui.$('spStatus').getAttribute('role'), 'alert');
   assert.equal(ui.saveOff(), true);
   assert.equal(ui.$('spMeetSaveDb').title, say("The weekly meetings didn't load, so nothing can be saved. Change the programme or try again.", 'لم تُحمَّل اللقاءات الأسبوعية، فلا يمكن الحفظ. غيّر البرنامج أو حاول مرة أخرى.'));
+  assert.equal(ui.text('spMeetDrafts'), say(
+    "1 unsaved change · The weekly meetings didn't load, so nothing can be saved. Change the programme or try again.",
+    '1 تعديل غير محفوظ · لم تُحمَّل اللقاءات الأسبوعية، فلا يمكن الحفظ. غيّر البرنامج أو حاول مرة أخرى.',
+  ), 'the draft waits, and the line says why');
   ui.$('spMeetSaveDb').click();
   await settle();
   assert.deepEqual(ui.writes(), []);
@@ -459,6 +506,25 @@ test('while a list loads, or after it failed, Save sends nothing; the refusal is
 test('a list that fails before any row is shown says so in the table too', async t => {
   const ui = await page(t, { program: 'XYZ', listing: () => answer({ ok: false, code: 'unknown_program', program: 'XYZ' }, 400) });
   assert.equal(ui.text('spMeetBody'), say('Unknown programme: XYZ', 'برنامج غير معروف: XYZ'));
+});
+
+for (const status of [401, 403]) {
+  test(`a list refused with ${status} says the user is not allowed, not to try again`, async t => {
+    const ui = await page(t, { listing: () => answer({ error: 'Insufficient role' }, status) });
+    const words = say('You are not allowed to see or save weekly meetings.', 'لا تملك صلاحية عرض اللقاءات الأسبوعية أو حفظها.');
+    assert.equal(ui.text('spMeetBody'), words);
+    assert.equal(ui.text('spStatus'), words);
+    assert.equal(ui.saveOff(), true);
+    assert.equal(ui.$('spMeetSaveDb').title, words);
+  });
+}
+
+test('programmes with no course to choose for say so, with the page\'s digits', async t => {
+  const ui = await page(t, { listing: prog => listed(prog, []) });
+  assert.equal(ui.text('spMeetBody'), say(
+    'These programmes have no 3-credit course whose weekly meetings can be chosen.',
+    'لا مقرر من ٣ ساعات في هذه البرامج تُختار له اللقاءات الأسبوعية.',
+  ));
 });
 
 /* ── the review and the save ── */
@@ -540,6 +606,11 @@ test('the review names who else teaches the course, its other names and the draf
             { id: 662, name: 'IS run', budget_pattern: '', programme_pattern: '', status: 'mixed', differs: false },
             { id: 661, name: 'Old run', budget_pattern: '2x100', programme_pattern: '', status: 'none', differs: false },
           ],
+          scenarios_more: 3,
+        }, {
+          course_key: STAT, course_code: 'STAT103', course_name: 'PRINCIPLES OF PROBABILITY AND STATISTICS',
+          co_owners: [], same_code_elsewhere: [], scenarios_more: 0,
+          scenarios: [{ id: 670, name: 'Only one', budget_pattern: '', programme_pattern: '', status: 'none', differs: false }],
         }],
       }),
     }),
@@ -559,7 +630,7 @@ test('the review names who else teaches the course, its other names and the draf
     'MATH243 LINEAR ALGEBRA (CYP2) مخطط باسم آخر — حدّد صفه الخاص.',
   ));
   assert.equal(flat(doc.querySelector('.sp-meet-skipped')), say('Not set on: MATH243 (DS2): an elective slot', 'لا يُطبَّق على: MATH243 (DS2): خانة اختيارية'));
-  const links = [...doc.querySelectorAll('.sp-meet-scenarios li')];
+  const links = [...doc.querySelectorAll(`.sp-meet-after[data-key="${MATH}"] .sp-meet-scenarios li`)];
   assert.deepEqual(links.map(li => li.querySelector('a').getAttribute('href')),
     ['/timetable-workspace/?scenario=669', '/timetable-workspace/?scenario=663', '/timetable-workspace/?scenario=662', '/timetable-workspace/?scenario=661']);
   assert.deepEqual(links.map(flat), say([
@@ -574,6 +645,10 @@ test('the review names who else teaches the course, its other names and the draf
     'Old run (#661) — لا قيمة لبرامجه: يبقى كما هو',
   ]));
   assert.equal(doc.querySelectorAll('img').length, 0, 'a scenario name is text, never markup');
+  const more = [...doc.querySelectorAll('.sp-meet-scenarios-more')];
+  assert.equal(more.length, 1, 'said only where the server left drafts out');
+  assert.equal(more[0].closest('.sp-meet-after').dataset.key, MATH);
+  assert.equal(flat(more[0]), say('and 3 more draft timetables, not listed.', 'وجداول مسودة أخرى عددها 3 لم تُذكر.'));
   assert.deepEqual(ui.writes().map(w => w.body.dry_run), [true], 'cancelled: only the preview was asked for');
 });
 
@@ -588,12 +663,13 @@ test('All programmes sends the widened scope, and its name says who else it reac
     'يدرّسه أيضاً: CS2 قياسي (٢ × ٧٥ دقيقة) · IS2 غير محدد',
   ));
   assert.equal(ui.row(DB).querySelector('.meet-all'), null, 'no other programme teaches it: nothing to widen');
+  assert.equal(ui.all(STAT).disabled, true, 'STAT103 is set for AI2 only: no one value to widen yet');
 
-  await ui.tick(STAT);   // the value it shows, to every programme
-  assert.ok(ui.row(STAT).classList.contains('sp-adv-draft'), 'a ticked box is a pending change');
+  await ui.tick(MATH);   // the value it shows, to every programme
+  assert.ok(ui.row(MATH).classList.contains('sp-adv-draft'), 'a ticked box is a pending change');
   ui.$('spMeetSaveDb').click();
   await settle();
-  assert.deepEqual(ui.writes()[0].body.changes, [{ course_key: STAT, meeting_pattern: '2x100', all_programmes: true }]);
+  assert.deepEqual(ui.writes()[0].body.changes, [{ course_key: MATH, meeting_pattern: '2x100', all_programmes: true }]);
 });
 
 test('cancelling the review writes nothing and keeps the drafts', async t => {
@@ -636,32 +712,32 @@ for (const [where, status, data, words, reload] of [
 
 test('a scope-only draft survives a reload that still shows the value it was ticked on', async t => {
   const ui = await page(t, { save: saveServer({ commit: () => answer({ ok: false, code: 'preview_stale' }, 409) }) });
-  await ui.tick(STAT);
+  await ui.tick(MATH);
   ui.$('spMeetSaveDb').click();
   await settle();
 
   assert.equal(ui.lists().length, 2);
-  assert.equal(ui.all(STAT).checked, true, 'still 2 × 100: the choice stands');
-  assert.ok(ui.row(STAT).classList.contains('sp-adv-draft'));
+  assert.equal(ui.all(MATH).checked, true, 'still 2 × 100: the choice stands');
+  assert.ok(ui.row(MATH).classList.contains('sp-adv-draft'));
   assert.equal(ui.text('spMeetDrafts'), say('1 unsaved change', '1 تعديل غير محفوظ'));
 });
 
 test('a scope-only draft whose saved value moved on a reload is cleared, and the panel says so', async t => {
   let moved = false;
   const ui = await page(t, {
-    listing: prog => listed(prog, coursesFor(prog, moved ? { [STAT]: { meeting_pattern: 'standard', programmes: [{ program: 'AI2', meeting_pattern: 'standard' }, { program: 'DS2', meeting_pattern: '' }] } } : {})),
+    listing: prog => listed(prog, coursesFor(prog, moved ? { [MATH]: { meeting_pattern: 'standard', programmes: [{ program: 'AI2', meeting_pattern: 'standard' }, { program: 'DS2', meeting_pattern: 'standard' }] } } : {})),
     save: saveServer({ commit: () => { moved = true; return answer({ ok: false, code: 'row_changed' }, 409); } }),
   });
-  await ui.tick(STAT);   // ticked on 2 × 100
+  await ui.tick(MATH);   // ticked on 2 × 100
   ui.$('spMeetSaveDb').click();
   await settle();
 
-  assert.equal(ui.select(STAT).value, 'standard', 'the value someone else saved');
-  assert.equal(ui.all(STAT).checked, false, 'its All programmes is cleared: Standard everywhere was never asked for');
-  assert.ok(!ui.row(STAT).classList.contains('sp-adv-draft'));
+  assert.equal(ui.select(MATH).value, 'standard', 'the value someone else saved');
+  assert.equal(ui.all(MATH).checked, false, 'its All programmes is cleared: Standard everywhere was never asked for');
+  assert.ok(!ui.row(MATH).classList.contains('sp-adv-draft'));
   assert.equal(ui.text('spMeetDrafts'), say(
-    'STAT103: the saved value changed, so All programmes was cleared; tick it again to apply the value shown now',
-    `${isle('STAT103')}: تغيّرت القيمة المحفوظة فأُلغي تحديد «كل البرامج»؛ حدّده مرة أخرى لتطبيق القيمة المعروضة الآن`,
+    'MATH243: the saved value changed, so All programmes was cleared; tick it again to apply the value shown now',
+    `${isle('MATH243')}: تغيّرت القيمة المحفوظة فأُلغي تحديد «كل البرامج»؛ حدّده مرة أخرى لتطبيق القيمة المعروضة الآن`,
   ));
   ui.$('spMeetSaveDb').click();
   await settle();
@@ -685,6 +761,36 @@ test('a draft for a course no longer listed is dropped on a reload, and said', a
   ));
   assert.ok(ui.$('spMeetBadge').classList.contains('d-none'));
   assert.equal(ui.leave(), false, 'nothing left to lose');
+});
+
+test('a typed draft a reloaded row can no longer take is dropped, never turned into another value', async t => {
+  let retyped = false;
+  const ui = await page(t, {
+    listing: prog => listed(prog, coursesFor(prog, retyped ? { [DB]: {
+      programmes: [{ program: 'AI2', meeting_pattern: 'standard' }], status: 'agree', meeting_pattern: 'standard',
+      clear_only: true, reason: 'not_three_credits',
+    } } : {})),
+    save: saveServer({ commit: () => { retyped = true; return answer({ ok: false, code: 'preview_stale' }, 409); } }),
+  });
+  await ui.choose(DB, '2x100');
+  ui.$('spMeetSaveDb').click();
+  await settle();
+
+  assert.equal(ui.lists().length, 2);
+  assert.deepEqual([...ui.select(DB).options].map(o => o.value), ['', 'standard'], 'it can only be cleared now');
+  assert.equal(ui.select(DB).value, 'standard', 'what the row holds: no clear that nobody chose');
+  assert.ok(!ui.row(DB).classList.contains('sp-adv-draft'));
+  assert.equal(flat(ui.row(DB).querySelector('.sp-meet-clear-only')), say(
+    'No longer offered (not 3 credits); it can only be cleared.',
+    'لم يعد يُختار له (ليس من ٣ ساعات)، ويمكن مسحه فقط.',
+  ));
+  assert.equal(ui.text('spMeetDrafts'), say(
+    '1 unsaved change dropped: the course no longer takes that choice for these programmes',
+    'أُسقط 1 تعديل غير محفوظ: لم يعد المقرر يقبل هذا الاختيار لهذه البرامج',
+  ));
+  ui.$('spMeetSaveDb').click();
+  await settle();
+  assert.equal(ui.writes().length, 2, 'nothing more is sent: only the refused preview and commit');
 });
 
 test('a preview with nothing to change drops those drafts, says what it could not set, and reloads', async t => {

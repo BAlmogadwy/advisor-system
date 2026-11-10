@@ -57,7 +57,7 @@ from core.services.programme_meeting_patterns import (
     pre_key,
     resolve_for_keys,
     row_identity,
-    scenario_programmes,
+    scenarios_programmes,
 )
 from core.services.section_limits import SCOPE_ALL, SCOPE_PROGRAMMES
 from core.services.student_helpers import normalize_code
@@ -82,7 +82,8 @@ logger = logging.getLogger(__name__)
 AUDIT_ACTION = "section_planning.meeting_pattern_change"
 MAX_CHANGES = 300
 MAX_PROGRAMS = 20
-#: The most draft scenarios one previewed course names (newest last).
+#: The most draft scenarios one previewed course names: the newest, newest first
+#: (the preview says how many more it left out).
 MAX_SCENARIOS = 50
 
 #: The study-plan columns the editor reads: the rule's, and the row's id.
@@ -611,10 +612,11 @@ def _programme_label(program: object) -> str:
 class _DraftScenarios:
     """The saved draft scenarios that budget the changed courses, read once.
 
-    Two queries for any number of courses (the budget rows of draft scenarios
-    by code, then those scenarios), plus a board read for an older scenario
-    saved without its programmes (``scenario_programmes``). A published
-    scenario is never named: it cannot change any more.
+    At most three queries for any number of courses and scenarios: the budget
+    rows of draft scenarios by code (newest scenario first), those scenarios,
+    and one board read for every older scenario saved without its programmes
+    (``scenarios_programmes``). A published scenario is never named: it cannot
+    change any more.
     """
 
     def __init__(
@@ -623,7 +625,7 @@ class _DraftScenarios:
         self.budgets: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for budget in (
             ScenarioSectionBudget.objects.filter(scenario__status="draft", course_code__in=codes)
-            .order_by("scenario_id", "id")
+            .order_by("-scenario_id", "id")
             .values("scenario_id", "course_key", "course_code", "credit_hours", "meeting_pattern")
         ):
             self.budgets[str(budget["course_code"])].append(budget)
@@ -632,14 +634,15 @@ class _DraftScenarios:
             s.id: s
             for s in TimetableScenario.objects.filter(id__in=ids).only("id", "name", "programs")
         }
-        self.programmes = {sid: scenario_programmes(s) for sid, s in self.scenarios.items()}
+        self.programmes = scenarios_programmes(self.scenarios.values())
         # The study plan as it will read once the change is saved.
         self.after = [
             {**row, "meeting_pattern": new_values.get(int(row["id"]), _stored(row))} for row in rows
         ]
 
-    def reached_by(self, key: str, programs: set[str]) -> list[dict[str, Any]]:
-        """The draft scenarios a change to ``key`` reaches, as they would read it.
+    def reached_by(self, key: str, programs: set[str]) -> tuple[list[dict[str, Any]], int]:
+        """The draft scenarios a change to ``key`` reaches, as they would read it,
+        newest first: at most ``MAX_SCENARIOS``, and how many more it reaches.
 
         A scenario is reached when its programmes include one the change
         targets (``programs``: a row already holding the value counts, since a
@@ -647,9 +650,11 @@ class _DraftScenarios:
         has a budget row for the course. Each says what its budget holds now,
         what its programmes decide with the NEW values (the shared resolver),
         and whether the two differ: the timetable keeps its own copy until
-        someone uses the programme default there.
+        someone uses the programme default there. The newest are named, since
+        they are the timetables being worked on; the rest are only counted.
         """
         out: dict[int, dict[str, Any]] = {}
+        more: set[int] = set()
         for budget in self.budgets.get(key.split("::", 1)[0], []):
             sid = budget["scenario_id"]
             scenario = self.scenarios.get(sid)
@@ -661,6 +666,9 @@ class _DraftScenarios:
             )
             budget_key = str(budget["course_key"] or budget["course_code"])
             if _budget_course(budget_key, their_rows) != key:
+                continue
+            if len(out) >= MAX_SCENARIOS:
+                more.add(sid)
                 continue
             decision = resolve_for_keys([budget_key], theirs, rows=their_rows)[budget_key]
             pattern, choices = _budget_pattern(budget)
@@ -674,9 +682,7 @@ class _DraftScenarios:
                     decision, {"meeting_pattern": pattern, "meeting_pattern_choices": choices}
                 ),
             }
-            if len(out) >= MAX_SCENARIOS:
-                break
-        return [out[sid] for sid in sorted(out)]
+        return [out[sid] for sid in sorted(out, reverse=True)], len(more)
 
 
 def _consequences(plan: PatternPlan, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -695,6 +701,9 @@ def _consequences(plan: PatternPlan, rows: list[dict[str, Any]]) -> list[dict[st
     out = []
     for key, writes in by_course.items():
         first = writes[0]
+        scenarios, more = drafts.reached_by(
+            key, {_programme_label(p) for p in plan.reached.get(key, set())}
+        )
         out.append(
             {
                 "course_key": key,
@@ -702,9 +711,8 @@ def _consequences(plan: PatternPlan, rows: list[dict[str, Any]]) -> list[dict[st
                 "course_name": first.course_name.strip(),
                 "co_owners": catalogue.co_owners(key, plan.reached.get(key, set())),
                 "same_code_elsewhere": catalogue.same_code_elsewhere(key),
-                "scenarios": drafts.reached_by(
-                    key, {_programme_label(p) for p in plan.reached.get(key, set())}
-                ),
+                "scenarios": scenarios,
+                "scenarios_more": more,
             }
         )
     return out
