@@ -284,6 +284,21 @@ Important implementation detail:
   keyword is required on purpose. Changing it moves no placement: Check warns
   about sections of another shape (an online course's meetings in online-only
   windows excepted); remove them and Optimise (or Full rebuild).
+- A programme sets the default weekly meetings of its 3-credit courses
+  (`ProgrammeRequirement.meeting_pattern`: `""` not set, `"standard"` or
+  `"2x100"`; owner 2026-11-10 "per programme", Male and Female alike) in
+  Section Planning -> Advanced: Weekly meetings, whose service
+  `programme_meeting_pattern_editor` is the only writer. Generate copies into a
+  NEW scenario's budget the value the scenario's programmes agreed on
+  (`timetable_meeting_shape.merge_programme_patterns`: a programme that set
+  nothing abstains; any disagreement keeps the credit default and is listed in
+  `department_meeting_patterns`); the scheduler engine is handed Generate's
+  per-course map (`build_params["meeting_patterns"]`). A saved scenario never
+  changes by itself: the workspace marks a course that differs from its
+  programmes' value and offers "Use programme defaults". Importers keep a vote
+  only on the same 3-credit course identity and report what they dropped; the
+  release seed carries it. A course a programme reaches only through an
+  elective slot has no vote there yet: set it per scenario.
 
 - `StudentTermSection` is the persistent student-section assignment table.
 - Generated scenarios may initially have no `StudentTermSection` rows; the
