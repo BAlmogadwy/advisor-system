@@ -259,6 +259,35 @@ def test_an_oracle_edit_of_case_and_spacing_keeps_the_vote():
     assert result["meeting_patterns"]["dropped"] == []
 
 
+def test_an_oracle_row_finds_its_course_however_its_code_is_typed():
+    """The editable table sends codes as typed; the importer stores them
+    upper-case without spaces, and the votes in scope are read by that stored
+    code. "cs 112" and "Stat103" are CS112 and STAT103."""
+    plan_row("CS2", "CS112", "PROGRAMMING II", vote="2x100", term=2)
+    plan_row("CS2", "STAT103", STAT, vote="2x100")
+
+    result = import_oracle_plan_from_rows(
+        "CS2",
+        [
+            oracle_row("cs 112", "PROGRAMMING I", level=2),
+            oracle_row("Stat103", STAT, credits=4),
+        ],
+    )
+
+    assert (stored("CS2", "CS112").course_name, stored("CS2", "CS112").meeting_pattern) == (
+        "PROGRAMMING I",
+        "",
+    )
+    assert (stored("CS2", "STAT103").credit_hours, stored("CS2", "STAT103").meeting_pattern) == (
+        4,
+        "",
+    )
+    assert [(d["course_code"], d["reason"]) for d in result["meeting_patterns"]["dropped"]] == [
+        ("CS112", "identity_changed"),
+        ("STAT103", "credits_changed"),
+    ]
+
+
 def test_an_oracle_import_that_makes_the_course_an_elective_slot_drops_the_vote():
     plan_row("AI2", "STAT103", STAT, vote="standard")
 
@@ -362,6 +391,107 @@ def test_the_legacy_loader_reports_votes_per_programme(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Two catalogue writes to one programme (PostgreSQL; the race itself runs in
+# tests/test_programme_meeting_pattern_imports_postgres.py)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingConnection:
+    """A PostgreSQL connection as far as ``_lock_programme_catalogues`` looks."""
+
+    def __init__(self, vendor):
+        self.vendor = vendor
+        self.executed = []
+
+    def cursor(self):
+        connection = self
+
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, params):
+                connection.executed.append((sql, params))
+
+        return _Cursor()
+
+
+def test_the_catalogue_lock_is_one_advisory_lock_per_programme_in_key_order(monkeypatch):
+    """Two-key advisory locks never share a key with the one-key (bigint)
+    locks of the release seed and the timetable delta import. The second key
+    is stable across processes (SHA-256, never hash()), and the locks are
+    taken in key order so two writes never wait on each other in a cycle."""
+    recording = _RecordingConnection("postgresql")
+    monkeypatch.setattr(db_admin_ops, "connection", recording)
+
+    db_admin_ops._lock_programme_catalogues({"AI2", "CS2", "IS2"})
+
+    namespace = int.from_bytes(b"PRCG", "big")
+    assert recording.executed == [
+        ("SELECT pg_advisory_xact_lock(%s, %s)", [namespace, -2031420359]),  # IS2
+        ("SELECT pg_advisory_xact_lock(%s, %s)", [namespace, -516349299]),  # CS2
+        ("SELECT pg_advisory_xact_lock(%s, %s)", [namespace, 1558878253]),  # AI2
+    ]
+
+    elsewhere = _RecordingConnection("sqlite")
+    monkeypatch.setattr(db_admin_ops, "connection", elsewhere)
+    db_admin_ops._lock_programme_catalogues({"AI2"})
+    assert elsewhere.executed == []
+
+
+def _write_ai2_with_each(writer, tmp_path):
+    if writer == "csv":
+        return import_program_plan("AI2", csv_text(("STAT103", 1, 3)), replace_existing=True)
+    if writer == "oracle":
+        return import_oracle_plan_from_rows("AI2", [oracle_row("STAT103", STAT)])
+    if writer == "legacy":
+        requirements = tmp_path / "requirements.csv"
+        requirements.write_text(
+            "program,course_code,type,programme_term,credit_hours\n"
+            "AI2,STAT103,Mandatory,1,3\n"
+            "DS2,MATH243,Mandatory,3,3\n",
+            encoding="utf-8",
+        )
+        prerequisites = tmp_path / "prerequisites.csv"
+        prerequisites.write_text("program,course_code,prerequisite_course_code\n", encoding="utf-8")
+        return legacy_load_department_files_exact(str(requirements), str(prerequisites))
+    return delete_program_catalog("AI2")
+
+
+@pytest.mark.parametrize("writer", ["csv", "oracle", "legacy", "delete"])
+def test_each_catalogue_write_takes_its_programmes_lock_before_it_reads_them(
+    monkeypatch, tmp_path, writer
+):
+    """The catalogue lock serialises only what is read after it: the rows (and,
+    for a delete, the counts its answer gives) are read once it is held."""
+    plan_row("AI2", "STAT103", STAT, vote="2x100")
+    plan_row("DS2", "MATH243", ALGEBRA, vote="standard", term=3)
+    steps = []
+
+    def record(attr, step):
+        original = getattr(db_admin_ops, attr)
+
+        def recorded(*args, **kwargs):
+            steps.append(step(*args))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(db_admin_ops, attr, recorded)
+
+    record("_lock_programme_catalogues", lambda programs: ("catalogue lock", programs))
+    record("_lock_plan_rows", lambda _rows: "row lock")
+    record("preview_delete_program_catalog", lambda _program: "counts")
+
+    _write_ai2_with_each(writer, tmp_path)
+
+    programmes = {"AI2", "DS2"} if writer == "legacy" else {"AI2"}
+    reads = ["counts", "row lock"] if writer == "delete" else ["row lock"]
+    assert steps == [("catalogue lock", programmes), *reads]
+
+
+# ---------------------------------------------------------------------------
 # The DB Admin views: audits and refusals
 # ---------------------------------------------------------------------------
 
@@ -384,6 +514,64 @@ def test_an_import_audit_carries_the_votes_it_kept_and_dropped():
     assert details["meeting_patterns"] == response.json()["meeting_patterns"]
     assert [k["course_code"] for k in details["meeting_patterns"]["kept"]] == ["STAT103"]
     assert [d["course_code"] for d in details["meeting_patterns"]["dropped"]] == ["MATH243"]
+
+
+def test_an_oracle_import_audit_carries_the_votes_it_kept_and_dropped():
+    plan_row("AI2", "STAT103", STAT, vote="2x100")
+    plan_row("AI2", "MATH243", ALGEBRA, vote="2x100", term=3)
+    client = super_admin_client()
+
+    response = client.post(
+        "/ops/db/import-oracle-plan/",
+        data=json.dumps(
+            {
+                "program": "AI2",
+                "rows": [oracle_row("STAT103", STAT), oracle_row("MATH243", ALGEBRA, credits=4)],
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    _, details = audit_details("db.import_oracle_plan")
+    assert details["meeting_patterns"] == response.json()["meeting_patterns"]
+    assert [k["course_code"] for k in details["meeting_patterns"]["kept"]] == ["STAT103"]
+    assert [(d["course_code"], d["reason"]) for d in details["meeting_patterns"]["dropped"]] == [
+        ("MATH243", "credits_changed")
+    ]
+
+
+def test_a_legacy_import_audit_carries_the_votes_it_kept_and_dropped(tmp_path, monkeypatch):
+    plan_row("AI", "STAT103", STAT, vote="2x100")
+    plan_row("DS2", "MATH243", ALGEBRA, vote="standard", term=3)
+    requirements = tmp_path / "requirements.csv"
+    requirements.write_text(
+        "program,course_code,type,programme_term,credit_hours\n"
+        "AI,STAT103,Mandatory,1,3\n"
+        "DS2,MATH243,Mandatory,3,4\n",
+        encoding="utf-8",
+    )
+    prerequisites = tmp_path / "prerequisites.csv"
+    prerequisites.write_text("program,course_code,prerequisite_course_code\n", encoding="utf-8")
+    # The view reads the department's own files when no path is given.
+    monkeypatch.setattr(db_admin_ops, "DEFAULT_REQ_CSV", requirements)
+    monkeypatch.setattr(db_admin_ops, "DEFAULT_PRE_CSV", prerequisites)
+    client = super_admin_client()
+
+    response = client.post(
+        "/ops/db/import-legacy-exact/", data=json.dumps({}), content_type="application/json"
+    )
+
+    assert response.status_code == 200
+    _, details = audit_details("db.import_legacy_exact")
+    assert details["meeting_patterns"] == response.json()["meeting_patterns"]
+    assert {
+        program: (
+            [k["course_code"] for k in votes["kept"]],
+            [(d["course_code"], d["reason"]) for d in votes["dropped"]],
+        )
+        for program, votes in details["meeting_patterns"].items()
+    } == {"AI": (["STAT103"], []), "DS2": ([], [("MATH243", "credits_changed")])}
 
 
 @pytest.mark.parametrize(
@@ -544,6 +732,9 @@ def change_form(row, **changes):
 
 
 def test_the_admin_will_not_move_a_voted_course_off_three_credits_or_rename_it(admin_client):
+    """Every field the vote depends on (VOTE_BOUND_FIELDS) is locked: moving
+    it to another programme or code, renaming it, making it an elective slot
+    or changing its credit hours would hand the vote to another course."""
     row = plan_row("AI2", "STAT103", STAT, vote="2x100")
     url = f"/admin/core/programmerequirement/{row.pk}/change/"
 
@@ -553,12 +744,28 @@ def test_the_admin_will_not_move_a_voted_course_off_three_credits_or_rename_it(a
     assert f"/admin/core/programmerequirement/{row.pk}/delete/" not in page.content.decode()
 
     response = admin_client.post(
-        url, change_form(row, credit_hours="4", course_name="RENAMED", programme_term="2")
+        url,
+        change_form(
+            row,
+            program="DS2",
+            course_code="STAT104",
+            course_name="RENAMED",
+            type="Program Elective",
+            credit_hours="4",
+            programme_term="2",
+        ),
     )
 
     assert response.status_code == 302
     row.refresh_from_db()
-    assert (row.credit_hours, row.course_name, row.meeting_pattern) == (3, STAT, "2x100")
+    assert (
+        row.program,
+        row.course_code,
+        row.course_name,
+        row.type,
+        row.credit_hours,
+        row.meeting_pattern,
+    ) == ("AI2", "STAT103", STAT, "Mandatory", 3, "2x100")
     assert row.programme_term == 2  # the fields a vote does not depend on stay editable
     assert admin_client.get(f"/admin/core/programmerequirement/{row.pk}/delete/").status_code == 403
 
@@ -608,6 +815,24 @@ def test_the_admin_delete_queryset_itself_never_deletes_a_voted_row():
     assert ProgrammeRequirement.objects.filter(pk=voted.pk).exists()
     assert not ProgrammeRequirement.objects.filter(pk=plain.pk).exists()
     assert any("AI2 STAT103" in str(m) for m in request._messages)
+
+
+def test_the_admin_says_in_arabic_which_voted_rows_it_kept():
+    plan_row("AI2", "STAT103", STAT, vote="2x100")
+    plan_row("DS2", "MATH243", ALGEBRA, vote="standard", term=3)
+    request = RequestFactory().post("/admin/core/programmerequirement/")
+    request.LANGUAGE_CODE = "ar"  # type: ignore[attr-defined]
+    request.session = {}  # type: ignore[attr-defined]
+    request._messages = FallbackStorage(request)  # type: ignore[attr-defined]
+    model_admin = ProgrammeRequirementAdmin(ProgrammeRequirement, django_admin.site)
+
+    model_admin.delete_queryset(request, ProgrammeRequirement.objects.all())
+
+    assert [str(m) for m in request._messages] == [
+        "لم يُحذف ٢ من الصفوف لأن لها لقاءات أسبوعية محددة في تخطيط الشعب: "
+        "AI2 STAT103، DS2 MATH243. امسح لقاءاتها الأسبوعية هناك أولاً."
+    ]
+    assert ProgrammeRequirement.objects.count() == 2
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,8 @@ from core.services.timetable_meeting_shape import PROGRAMME_NOT_SET
 #: (programme, code, name), whether it may vote (type) and the credit hours the
 #: database requires of it (ck_pr_meeting_pattern_fits_credits).
 VOTE_BOUND_FIELDS = ("program", "course_code", "course_name", "type", "credit_hours")
+#: A count in Arabic text, in Arabic-Indic digits.
+_ARABIC_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
 
 
 def _is_arabic(request: HttpRequest) -> bool:
@@ -130,7 +132,8 @@ class ProgrammeRequirementAdmin(admin.ModelAdmin):
         ]
         if _is_arabic(request):
             text = (
-                f"لم يُحذف {len(rows)} صف لأن لها لقاءات أسبوعية محددة في تخطيط الشعب: "
+                f"لم يُحذف {str(len(rows)).translate(_ARABIC_DIGITS)} من الصفوف لأن لها "
+                "لقاءات أسبوعية محددة في تخطيط الشعب: "
                 f"{'، '.join(rows)}. امسح لقاءاتها الأسبوعية هناك أولاً."
             )
         else:

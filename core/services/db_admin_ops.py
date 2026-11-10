@@ -222,6 +222,10 @@ def _describe_stranded_vote(row: dict[str, Any], reason: str) -> str:
 # rewrite the rows that carry it, so each runs one sequence inside its own
 # transaction:
 #
+# 0. on PostgreSQL, take each touched programme's catalogue lock
+#    (``_lock_programme_catalogues``), so two catalogue writes to one
+#    programme (two imports, an import and a catalogue delete) run one after
+#    the other; SQLite already runs them so (BEGIN IMMEDIATE);
 # 1. lock the rows the import may rewrite and note those holding a vote (the
 #    whole programme for a replace, the file's exact stored (program, code)
 #    pairs for an upsert);
@@ -249,13 +253,50 @@ VOTE_REPORT_CAP = 50
 #: A vote exists only on a 3-credit row (ck_pr_meeting_pattern_fits_credits).
 _VOTING_CREDIT_HOURS = 3
 _VOTE_FIELDS = ("id", *ROW_FIELDS)
+#: The first key of every programme catalogue lock: "PRCG". PostgreSQL keeps
+#: the two-key advisory locks apart from the one-key (bigint) ones, so no
+#: programme's lock can ever be the release seed's
+#: (import_release_seed.POSTGRES_ADVISORY_LOCK_KEY) or the timetable delta
+#: import's, whatever the programme.
+_CATALOGUE_LOCK_NAMESPACE = int.from_bytes(b"PRCG", "big")
+
+
+def _catalogue_lock_key(program: str) -> int:
+    """A programme's catalogue lock (second key): stable across processes.
+
+    A signed 32-bit integer from SHA-256, never Python's per-process
+    ``hash()``. Two programmes sharing a key only wait for each other.
+    """
+    digest = hashlib.sha256(program.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big", signed=True)
+
+
+def _lock_programme_catalogues(programs: set[str]) -> None:
+    """Step 0: hold each programme's catalogue lock until this transaction ends.
+
+    The row lock of step 1 holds only the rows that exist when its statement
+    starts. A second import of the same programme, waiting there, gets none of
+    the rows the first one created, and its next statement then deletes or
+    rewrites them: their votes and course names are lost without a word. This
+    lock is taken before that read, so the second import (or catalogue delete)
+    reads the programme only once the first has committed. Taken in key order,
+    so two writes touching several programmes never wait on each other in a
+    cycle. On other databases a no-op: SQLite holds the write lock for the
+    whole transaction (BEGIN IMMEDIATE).
+    """
+    if connection.vendor != "postgresql" or not programs:
+        return
+    with connection.cursor() as cursor:
+        for key in sorted({_catalogue_lock_key(program) for program in programs}):
+            cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)", [_CATALOGUE_LOCK_NAMESPACE, key])
 
 
 def _lock_plan_rows(queryset: QuerySet[ProgrammeRequirement]) -> list[dict[str, Any]]:
     """Step 1: lock the study-plan rows an import may rewrite, and read them.
 
     On PostgreSQL a Section Planning save of one of these rows then waits for
-    the import and re-checks the row, instead of racing it. SQLite already
+    the import and re-checks the row, instead of racing it (Section Planning
+    does not take the catalogue lock of step 0). SQLite already
     holds the write lock for the whole transaction (BEGIN IMMEDIATE), and
     Django leaves FOR UPDATE out there.
     """
@@ -434,10 +475,13 @@ def preview_delete_program_catalog(program: str) -> dict[str, Any]:
 
 
 def delete_program_catalog(program: str) -> dict[str, Any]:
-    preview = preview_delete_program_catalog(program)
     backup = create_backup_snapshot()
 
     with transaction.atomic():
+        _lock_programme_catalogues({program})
+        # Counted under the catalogue lock, so the answer counts what this
+        # delete deletes, not what was there before an import it waited for.
+        preview = preview_delete_program_catalog(program)
         # Which weekly-meetings votes go with the catalogue, so they can be set
         # again in Section Planning (read under the lock, before the delete).
         held = [
@@ -501,6 +545,7 @@ def import_program_plan(
 
     inserted = 0
     with transaction.atomic():
+        _lock_programme_catalogues({program})
         scope = ProgrammeRequirement.objects.filter(program=program)
         if not replace_existing:
             scope = scope.filter(course_code__in={r["course_code"] for r in rows})
@@ -581,6 +626,7 @@ def legacy_load_department_files_exact(
         # One file may cover several programmes: the votes in scope are those
         # of the file's exact (program, code) pairs, reported per programme.
         pairs = {(program, code) for program, code, _row in keyed}
+        _lock_programme_catalogues({p for p, _c in pairs})
         held = _clear_votes(
             [
                 row
@@ -723,6 +769,7 @@ def import_oracle_plan_from_rows(
     courses_upserted = 0
 
     with transaction.atomic():
+        _lock_programme_catalogues({program})
         scope = ProgrammeRequirement.objects.filter(program=program)
         if not replace_existing:
             scope = scope.filter(course_code__in={_plan_code(row.get("code", "")) for row in rows})

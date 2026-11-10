@@ -50,7 +50,8 @@ async function page(t, routes) {
   const { window } = dom;
   t.after(() => { window.close(); assert.deepEqual(errors.map(error => error.message), []); });
   const dialogs = [];
-  window.notify = { success() {}, error() {}, warning() {} };
+  const warnings = [];
+  window.notify = { success() {}, error() {}, warning: message => warnings.push(message) };
   window.dlg = { confirm: async options => { dialogs.push(options); return false; } };
   const requests = [];
   window.fetch = async (url, options = {}) => {
@@ -71,7 +72,7 @@ async function page(t, routes) {
     box.innerHTML = html;
     return [...box.querySelectorAll('p')].map(p => p.textContent.replace(/\s+/g, ' ').trim());
   };
-  return { window, $, dialogs, requests, paragraphs };
+  return { window, $, dialogs, warnings, requests, paragraphs };
 }
 
 async function previewCatalogue(ui, program) {
@@ -175,4 +176,51 @@ test('an Oracle import of a programme without weekly meetings confirms exactly a
     'This will insert 1 courses into the database for program CS2.',
     'سيُدرج هذا 1 مقرر في قاعدة البيانات للبرنامج CS2.',
   )]);
+});
+
+test('an Oracle import of another programme than the one previewed needs a new preview', async t => {
+  /* The count belongs to the programme the preview read: typing another one
+     must never confirm with it, so the import waits for a new preview. */
+  const ui = await page(t, { [`POST ${ORACLE}`]: oraclePreview(4) });
+  await previewOracle(ui, 'AI2');
+  assert.equal(ui.$('oImport').disabled, false);
+
+  ui.$('oProgram').value = 'CS2';
+  ui.$('oProgram').dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  assert.equal(ui.$('oImport').disabled, true, 'the import waits for a preview of CS2');
+  /* The import itself checks too, whatever enabled its button. */
+  ui.$('oImport').disabled = false;
+  ui.$('oImport').click();
+  await settle();
+  assert.equal(ui.dialogs.length, 0, 'no confirmation names CS2 with the weekly meetings of AI2');
+  assert.deepEqual(ui.warnings, [say('Please run Parse + Preview first.', 'يرجى تشغيل تحليل + معاينة أولاً.')]);
+
+  ui.$('oProgram').value = ' AI2 ';
+  ui.$('oProgram').dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  assert.equal(ui.$('oImport').disabled, false, 'back to the programme previewed (as the server trims it)');
+  ui.$('oImport').click();
+  await settle();
+
+  assert.equal(ui.dialogs.length, 1);
+  assert.equal(ui.paragraphs(ui.dialogs[0].body)[1], say(
+    '4 of its courses have weekly meetings set in Section Planning. A course keeps them only if it keeps its name and 3 credit hours; the result lists every one the import drops.',
+    'لدى 4 من مقرراته لقاءات أسبوعية محددة في تخطيط الشعب. يحتفظ المقرر بها فقط إذا بقي اسمه وساعاته المعتمدة الثلاث؛ وتُدرج النتيجة كل ما يُسقطه الاستيراد.',
+  ));
+  assert.deepEqual(ui.requests.map(r => `${r.method} ${r.url}`), [`POST ${ORACLE}`], 'nothing is imported');
+});
+
+test('a programme typed while the preview loads is not the one previewed', async t => {
+  const ui = await page(t, { [`POST ${ORACLE}`]: oraclePreview(4) });
+  ui.$('oProgram').value = 'AI2';
+  const file = new ui.window.File(['code	name'], 'plan.csv', { type: 'text/csv' });
+  Object.defineProperty(ui.$('oFile'), 'files', { configurable: true, value: [file] });
+  ui.$('oPreview').click();
+  ui.$('oProgram').value = 'CS2';
+  ui.$('oProgram').dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  await settle();
+
+  assert.equal(ui.$('oImport').disabled, true, 'the preview read AI2, not CS2');
+  ui.$('oProgram').value = 'AI2';
+  ui.$('oProgram').dispatchEvent(new ui.window.Event('input', { bubbles: true }));
+  assert.equal(ui.$('oImport').disabled, false);
 });

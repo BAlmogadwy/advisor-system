@@ -68,9 +68,12 @@ def test_a_programme_vote_leaves_with_the_release_seed(tmp_path):
     assert exported[plain.pk]["meeting_pattern"] == ""
 
 
-def test_a_programme_vote_round_trips_into_the_target(tmp_path, monkeypatch):
+@pytest.mark.parametrize("vote", ["standard", "2x100"])
+def test_a_programme_vote_round_trips_into_the_target(tmp_path, monkeypatch, vote):
+    """Both votes a 3-credit row may hold load: the seed check refuses only
+    what ck_pr_meeting_pattern_fits_credits would."""
     _source_records()
-    row = _voted_row("standard")
+    row = _voted_row(vote)
     fixture, manifest = _export(tmp_path)
     _target_sentinel()
     # The target starts without the vote, so the loaded one came from the seed.
@@ -79,9 +82,7 @@ def test_a_programme_vote_round_trips_into_the_target(tmp_path, monkeypatch):
 
     with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
         _replace(fixture, manifest, database=alias)
-        assert ProgrammeRequirement.objects.using(alias).get(pk=row.pk).meeting_pattern == (
-            "standard"
-        )
+        assert ProgrammeRequirement.objects.using(alias).get(pk=row.pk).meeting_pattern == vote
 
 
 @pytest.mark.parametrize(

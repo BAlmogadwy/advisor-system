@@ -767,8 +767,18 @@ q('tImport').onclick = async () => {
 
 /* ── Section: Oracle plan import ── */
 let oraclePreviewReady = false;
+/* The programme the last preview read, as the server stores it (trimmed): the
+   count below and the existing rows on screen are that programme's. */
+let oraclePreviewProgram = '';
 /* The programme's courses with weekly meetings set, from the last preview. */
 let oracleHeldPatterns = 0;
+
+/* An import may run only for the programme the preview read, so its
+   confirmation never shows another programme's weekly meetings. Another
+   programme needs a new preview, as the catalogue delete does. */
+function oraclePreviewIsFor(program) {
+  return oraclePreviewReady && String(program || '').trim() === oraclePreviewProgram;
+}
 
 const ORACLE_TYPE_OPTIONS = [
   'Mandatory', 'Free Elective', 'Program Elective', 'University Elective', 'Elective'
@@ -853,9 +863,10 @@ q('oPreview').onclick = async () => {
   const fileInput = q('oFile');
   if (!fileInput.files.length) { notify.warning(IS_AR ? 'يرجى اختيار ملف.' : 'Please select a file.'); return; }
   setOracleStep(2);
+  const program = q('oProgram').value;
   const fd = new FormData();
   fd.append('file', fileInput.files[0]);
-  fd.append('program', q('oProgram').value);
+  fd.append('program', program);
   fd.append('encoding', q('oEncoding').value);
   const data = await callJson('/ops/db/preview-oracle-plan/', {
     method:'POST',
@@ -873,7 +884,8 @@ q('oPreview').onclick = async () => {
     });
     q('oTableWrap').classList.remove('d-none');
     oraclePreviewReady = true;
-    q('oImport').disabled = false;
+    oraclePreviewProgram = String(program || '').trim();
+    q('oImport').disabled = !oraclePreviewIsFor(q('oProgram').value);
     setOracleStep(3);
   } else {
     q('oTableWrap').classList.add('d-none');
@@ -883,6 +895,12 @@ q('oPreview').onclick = async () => {
     setOracleStep(1);
   }
 };
+
+/* A change of programme after a preview disables the import until the
+   programme is back to the one previewed, or a new preview reads it. */
+q('oProgram').addEventListener('input', () => {
+  q('oImport').disabled = !oraclePreviewIsFor(q('oProgram').value);
+});
 
 /* Delegate delete row clicks */
 q('oTableBody').addEventListener('click', (e) => {
@@ -903,7 +921,7 @@ q('oAddRow').onclick = () => {
 };
 
 q('oImport').onclick = async () => {
-  if (!oraclePreviewReady) { notify.warning(T.runPreviewFirst); return; }
+  if (!oraclePreviewIsFor(q('oProgram').value)) { notify.warning(T.runPreviewFirst); return; }
   const rows = collectOracleRows();
   if (rows.length === 0) { notify.warning(IS_AR ? 'لا توجد صفوف للإدراج.' : 'No rows to import.'); return; }
   const ok = await dlg.confirm({
