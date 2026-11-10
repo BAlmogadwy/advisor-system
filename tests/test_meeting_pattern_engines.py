@@ -23,6 +23,7 @@ that); a few tests here pin the configured-only conditions directly.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -626,6 +627,134 @@ def test_the_repair_shape_lookup_never_guesses_between_two_named_courses(flags) 
     assert shape_of(planner_course_key("STAT103", "APPLIED STATISTICS"), "STAT103") is None
 
 
+@pytest.mark.parametrize("move_scope", ("single_session", "all_sessions", "lectures_only"))
+def test_a_section_with_no_meeting_over_80_minutes_reads_no_budget_for_repair(
+    flags, monkeypatch, move_scope
+) -> None:
+    """Only a meeting over 80 minutes needs the course's shape (lecture or lab), so a
+    2 x 75 section - configured or not - costs the repair panel no budget read."""
+    from core.services import timetable_repair as repair_service
+
+    _scenario, board = _repair_scenario()
+    SectionPlacement.objects.filter(board=board).update(end_time="10:15")  # X and twin: 2 x 75
+    rows = [{"rank": 1, "kind": "lect", "day": "MON", "start": "13:00", "end": "14:15"}]
+    monkeypatch.setattr(
+        repair_service, "preview_placement_slot_candidates", lambda _pid: {"candidates": rows}
+    )
+    monkeypatch.setattr(
+        repair_service,
+        "_select_room_for_candidate",
+        lambda *_args, **_kwargs: ("L3", [], {"selected_room": "L3", "policy_clean": True}),
+    )
+    monkeypatch.setattr(repair_service, "hard_feasibility_rejections", lambda *_a, **_k: [])
+
+    for key in (X_KEY, TWIN_KEY):
+        anchor = _anchor(board, key)
+        with CaptureQueriesContext(connection) as queries:
+            prepared = repair_service._prepare_repair_candidate_rows(
+                anchor, limits={"max_candidates": 1}, move_scope=move_scope
+            )
+
+        budget_reads = [
+            q for q in queries.captured_queries if "scenario_section_budgets" in q["sql"]
+        ]
+        assert budget_reads == [], (key, budget_reads)
+        moves = [move for row in prepared for move in row["move_scope_payload"]["moves"]]
+        assert moves and {move["kind"] for move in moves} == {"lect"}, (key, moves)
+
+
+def _move_scopes(detail: dict) -> tuple[set[tuple[int, ...]], set[str]]:
+    """What a repair analysis's candidates move together, and what they call each move."""
+    scopes = [candidate["metrics"]["move_scope"] for candidate in detail["candidates"]]
+    return (
+        {tuple(scope["included_placement_ids"]) for scope in scopes},
+        {move["kind"] for scope in scopes for move in scope["moves"]},
+    )
+
+
+def test_a_changed_weekly_shape_is_analysed_again_never_served_from_the_repair_cache(
+    flags,
+) -> None:
+    """A shape change moves no placement, so the state fingerprint holds the shapes:
+    the "Lectures only" run made under the old shape is neither served again nor
+    approvable (stale), and going back to it serves that run again."""
+    from core.services.timetable_repair import analyse_timetable_repair, repair_run_detail
+
+    scenario, board = _repair_scenario()
+    twin = _anchor(board, TWIN_KEY)
+    companion = SectionPlacement.objects.get(board=board, term_section=twin.term_section, day="TUE")
+    budget = ScenarioSectionBudget.objects.get(scenario=scenario, course_key=TWIN_KEY)
+
+    def analyse() -> dict:
+        return analyse_timetable_repair(placement_id=twin.id, move_scope="lectures_only")
+
+    def set_pattern(value: str) -> None:
+        budget.meeting_pattern = value
+        budget.save(update_fields=["meeting_pattern"])
+
+    def freshness(detail: dict) -> str:
+        return repair_run_detail(detail["run"]["id"])["run_freshness"]["status"]
+
+    standard = analyse()
+    assert standard["cache"]["hit"] is False and standard["candidates"]
+    # Unconfigured, two 100-minute meetings read as labs: only the anchor moves.
+    assert _move_scopes(standard) == ({(twin.id,)}, {"lab"})
+
+    set_pattern(TWO_BY_100)
+    shaped = analyse()
+    assert shaped["cache"]["hit"] is False
+    assert shaped["cache"]["fingerprint"] != standard["cache"]["fingerprint"]
+    # Now both meetings are lectures and move together.
+    assert _move_scopes(shaped) == ({(twin.id, companion.id)}, {"lect"})
+    assert freshness(standard) == "stale"
+    assert freshness(shaped) == "fresh"
+
+    # Back to the credit default: the state is the first run's again.
+    set_pattern("")
+    back = analyse()
+    assert back["cache"] == {**standard["cache"], "hit": True}
+    assert _move_scopes(back) == ({(twin.id,)}, {"lab"})
+    assert freshness(shaped) == "stale"
+
+
+def test_the_repair_fingerprint_names_the_shapes_only_when_a_course_has_one(
+    flags, monkeypatch
+) -> None:
+    """Every scenario without a shape keeps the fingerprint it always had: its payload
+    holds exactly the keys it held before shapes existed."""
+    from core.services import timetable_repair as repair_service
+
+    scenario, _board = _repair_scenario()
+    real_dumps = repair_service.json.dumps
+    payloads: list[dict] = []
+
+    def spy(value, *args, **kwargs):
+        if isinstance(value, dict) and {"rooms", "term_sections"} <= set(value):
+            payloads.append(value)
+        return real_dumps(value, *args, **kwargs)
+
+    monkeypatch.setattr(repair_service.json, "dumps", spy)
+    configured = repair_service._repair_state_fingerprint(scenario.id, [])
+    ScenarioSectionBudget.objects.filter(scenario=scenario).update(meeting_pattern="")
+    unconfigured = repair_service._repair_state_fingerprint(scenario.id, [])
+
+    assert configured != unconfigured
+    # (course_key, course_code, meeting_pattern, credit_hours) of each configured row.
+    assert payloads[0]["meeting_patterns"] == [(X_KEY, "CS112", TWO_BY_100, 3)]
+    assert set(payloads[1]) == {
+        "version",
+        "scenario_id",
+        "blocked_ids",
+        "placements",
+        "term_sections",
+        "assignments",
+        "scenario_requests",
+        "students",
+        "prerequisites",
+        "rooms",
+    }
+
+
 # ── the export's Summary sheet ───────────────────────────────────────────
 
 
@@ -646,3 +775,124 @@ def test_the_export_summary_names_the_configured_shape(flags) -> None:
     meetings = sorted((row[0], row[3]) for row in rows[header + 1 :] if row[0])
     # One CS112 is X (configured), the other its twin (the credit default's count).
     assert meetings == [("AI201", "3x"), ("CS112", "2 × 100 min"), ("CS112", "2x")]
+
+
+# ── the Rooms sheets of both exports ─────────────────────────────────────
+
+ROOM_NOTE = "Also in this room, outside these time slots: "
+
+
+def _rooms_scenario(x_pattern: str = TWO_BY_100) -> TimetableScenario:
+    """X S1 meets MON + WED 10:45-12:25 in lecture room L1, where no lecture column
+    of the default grid starts; X S2 meets SUN + TUE 09:00-10:40 in L1, at a lecture
+    column's start; the twin (no shape) S1 meets MON + WED 10:45-12:25 in L2."""
+    scenario = build_scenario(x_pattern=x_pattern)
+    board = board_of(scenario)
+    for key, name, label, days, start, end, room in (
+        (X_KEY, "PROGRAMMING I", "S1", ("MON", "WED"), "10:45", "12:25", "L1"),
+        (X_KEY, "PROGRAMMING I", "S2", ("SUN", "TUE"), "09:00", "10:40", "L1"),
+        (TWIN_KEY, "PROGRAMMING II", "S1", ("MON", "WED"), "10:45", "12:25", "L2"),
+    ):
+        section = TermSection.objects.create(
+            scenario=scenario,
+            course_code="CS112",
+            course_number="CS112",
+            course_key=key,
+            course_name=name,
+            section=label,
+            available_capacity=30,
+            source_tag="test",
+        )
+        for day in days:
+            SectionPlacement.objects.create(
+                board=board,
+                term_section=section,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room=room,
+            )
+    return scenario
+
+
+def _note_under(ws, room: str) -> str | None:
+    """The note row under ``room``'s table (header, column row, five days), if any."""
+    header = next(
+        row[0].row for row in ws.iter_rows(min_col=1, max_col=1) if row[0].value == f"{room} (40)"
+    )
+    value = ws.cell(row=header + 7, column=1).value
+    if not (isinstance(value, str) and value.startswith(ROOM_NOTE)):
+        return None
+    assert any(  # one merged row across the room's table
+        rng.min_row == rng.max_row == header + 7 and rng.min_col == 1 and rng.max_col > 1
+        for rng in ws.merged_cells.ranges
+    )
+    return value
+
+
+def _notes(ws) -> list[str]:
+    return [
+        cell.value
+        for row in ws.iter_rows(min_col=1, max_col=1)
+        for cell in row
+        if isinstance(cell.value, str) and cell.value.startswith(ROOM_NOTE)
+    ]
+
+
+def _cells_of(ws, room: str) -> list[str]:
+    """Every filled day cell of ``room``'s table."""
+    header = next(
+        row[0].row for row in ws.iter_rows(min_col=1, max_col=1) if row[0].value == f"{room} (40)"
+    )
+    return [
+        str(cell.value).replace("\r\n", "\n")
+        for row in ws.iter_rows(min_row=header + 2, max_row=header + 6, min_col=2)
+        for cell in row
+        if cell.value
+    ]
+
+
+def _scenario_rooms_sheet(scenario: TimetableScenario):
+    from openpyxl import load_workbook
+
+    from core.services.timetable_export import export_scenario_xlsx
+
+    path = export_scenario_xlsx(scenario.id)
+    try:
+        return load_workbook(path)["Rooms"]
+    finally:
+        os.unlink(path)
+
+
+def _per_plan_rooms_sheet(scenario: TimetableScenario):
+    from tests.test_per_plan_export_grouping import _export
+
+    return _export(scenario)["AI"]["Rooms"]
+
+
+@pytest.mark.parametrize("rooms_sheet", (_scenario_rooms_sheet, _per_plan_rooms_sheet))
+def test_a_rooms_sheet_lists_the_100_minute_lectures_no_lecture_column_shows(
+    flags, rooms_sheet
+) -> None:
+    """A lecture room's table draws the lecture columns only, and no lecture column
+    starts at 10:45: X's 2 x 100 lectures there are listed under L1's table rather
+    than dropped (L1 would read as free). X S2, at a lecture column's start, is drawn
+    as before; the twin, which has no shape, is exactly as it was."""
+    ws = rooms_sheet(_rooms_scenario())
+
+    assert _note_under(ws, "L1") == (
+        ROOM_NOTE + "CS112 S1 Monday 10:45-12:25; CS112 S1 Wednesday 10:45-12:25"
+    )
+    assert sorted(_cells_of(ws, "L1")) == ["CS112 S2", "CS112 S2"]
+    assert _note_under(ws, "L2") is None
+    assert _notes(ws) == [_note_under(ws, "L1")]
+
+
+@pytest.mark.parametrize("rooms_sheet", (_scenario_rooms_sheet, _per_plan_rooms_sheet))
+def test_a_rooms_sheet_without_a_shape_is_what_it_was(flags, rooms_sheet) -> None:
+    """The same meetings with X at the credit default: no note (the byte-identical
+    contract; the gap for courses with no shape is an older, recorded one)."""
+    ws = rooms_sheet(_rooms_scenario(x_pattern=""))
+
+    assert _notes(ws) == []
+    assert _note_under(ws, "L1") is None

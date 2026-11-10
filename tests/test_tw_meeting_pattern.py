@@ -35,6 +35,7 @@ from core.models import (
     AuditLog,
     DeliveryBoard,
     PlannerJob,
+    ProgrammeRequirement,
     Room,
     ScenarioSectionBudget,
     SectionPlacement,
@@ -43,7 +44,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
-from core.services.timetable_autoplace import auto_place_board
+from core.services.timetable_autoplace import DEFAULT_SLOTS, auto_place_board
 from core.services.timetable_workspace import (
     MeetingShapeMismatch,
     check_publish_readiness,
@@ -401,6 +402,60 @@ def test_the_bare_code_fallback_still_costs_one_query():
     assert reads("CS112") == reads(PROG_II) + 1
 
 
+def test_a_named_key_never_takes_the_shape_of_another_named_course():
+    """CS112 PROGRAMMING I is the scenario's only CS112 row, set to 2 x 100. A request
+    for PROGRAMMING II is another course: it still reads that row's credit hours
+    and seats, as it always has, but is offered (and created) with no shape."""
+
+    sc = _scenario()
+    board = _board(sc)
+    only_cs112 = _budget(sc, PROG_I)
+    before = json.dumps(_preview(board, PROG_II))
+
+    only_cs112.meeting_pattern = "2x100"
+    only_cs112.save()
+    after = _preview(board, PROG_II)
+
+    assert json.dumps(after) == before
+    assert after["request"]["required_meetings_per_section"] == 1
+    assert not any("room_type" in c for c in after["candidates"])
+    # The page creates it in one cell, as any course with no shape and nothing placed.
+    one_cell = (("SUN", "09:00", "10:15"),)
+    assert len(_create(board, PROG_II, one_cell)["placements"]) == 1
+    # ... while PROGRAMMING I itself is held to its shape.
+    with pytest.raises(MeetingShapeMismatch):
+        _create(board, PROG_I, TWO_BY_75, label="S2")
+
+
+def test_a_row_stored_under_its_bare_code_lends_its_shape_to_a_named_request():
+    """The other bare side: an older row stored without a key is its code's one course,
+    so a request naming that course takes the row's shape."""
+
+    sc = _scenario()
+    board = _board(sc)
+    # bulk_create skips the model's save(), which would fill the key.
+    ScenarioSectionBudget.objects.bulk_create(
+        [
+            ScenarioSectionBudget(
+                scenario=sc,
+                course_key=None,
+                course_code="STAT103",
+                credit_hours=3,
+                planned_sections=1,
+                max_per_section=40,
+                meeting_pattern="2x100",
+            )
+        ]
+    )
+
+    answer = _preview(board, STAT)
+
+    assert answer["request"]["required_meetings_per_section"] == 2
+    assert {m["room_type"] for c in answer["candidates"] for m in c["meetings"]} == {"lecture"}
+    with pytest.raises(MeetingShapeMismatch):
+        _create(board, STAT, TWO_BY_75)
+
+
 # ── the page's own creates ─────────────────────────────────────────────────
 
 
@@ -634,9 +689,10 @@ def test_a_course_with_no_100_minute_column_to_be_placed_in_is_a_warning():
             },
         }
     ]
+    # Its in-person sections: an online one (the windows on) is placed anyway.
     assert (
         "STAT103 meets 2 × 100 min a week, and this scenario has no in-person 100-minute "
-        "column to place it in"
+        "column for its in-person sections"
     ) in readiness["warnings"]
     # The default grid has five such columns.
     sc.lab_slot_config = []
@@ -1018,3 +1074,92 @@ def test_a_section_the_cpsat_solver_places_again_keeps_no_meeting_rows_of_its_ol
                 "day", "start_time", "end_time"
             )
         ) == [(day, start, end) for day, start, end, _room in placed]
+
+
+# ── online sections and the online evening windows ─────────────────────────
+
+# A 75-minute online-only lecture column, as the owner's 1448 grid has: with the
+# windows on, an online section may be placed there, whatever its course's shape.
+ONLINE_75 = {"label": "Online 4", "start": "18:00", "end": "19:15", "online_only": True}
+IN_ONLINE_75 = (("SUN", "18:00", "19:15"), ("TUE", "18:00", "19:15"))
+# Two of the default 100-minute online windows (Online 1, 15:50-17:30).
+IN_ONLINE_100 = (("SUN", "15:50", "17:30"), ("TUE", "15:50", "17:30"))
+
+
+def _online_for_the_boards(code: str) -> None:
+    """``code`` is online for programme AI, so for every board here."""
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code=code,
+        course_name=code,
+        programme_term=2,
+        credit_hours=3,
+        is_online=True,
+    )
+
+
+@pytest.mark.parametrize("windows_flag", [True, False], ids=["windows-on", "windows-off"])
+def test_check_does_not_hold_an_online_section_in_an_online_window_to_the_shape(
+    settings, windows_flag
+):
+    """An online course's meetings in an online-only window are placed by their number,
+    as long as the window is: judging them by the shape would name a section that
+    re-placing puts straight back. The same online course in ordinary columns is judged,
+    and the answer is the same with the online-windows flag on or off (the readiness
+    check never reads it)."""
+
+    settings.TIMETABLE_ONLINE_EVENING_WINDOWS = windows_flag
+    sc = _scenario(slot_config=[*DEFAULT_SLOTS, ONLINE_75])
+    board = _board(sc)
+    _budget(sc, STAT, pattern="2x100", planned=2)
+    _budget(sc, PROG_I, pattern="2x100")
+    _online_for_the_boards("STAT103")
+    _place(board, _section(sc, STAT, "S1"), IN_ONLINE_75)  # in a window: not judged
+    by_day = _place(board, _section(sc, STAT, "S2"), TWO_BY_75)  # online, in daytime columns
+    on_campus = _place(board, _section(sc, PROG_I, "S1"), TWO_BY_75, room="R1")
+
+    judged = [
+        (item["params"]["course_key"], item["params"]["placement_ids"])
+        for item in _shape_items(check_publish_readiness(sc.id))
+    ]
+    assert judged == [(PROG_I, on_campus), (STAT, by_day)]
+
+
+@pytest.mark.parametrize(
+    ("pattern", "meetings"),
+    [("", IN_ONLINE_100), ("2x100", IN_ONLINE_75)],
+    ids=["back-to-standard", "set-to-2x100"],
+)
+def test_the_endpoint_lists_no_online_section_in_an_online_window(
+    http, settings, pattern, meetings
+):
+    """Both branches of the weekly-meetings answer: a course set back to its credit
+    default (its online sections in the 100-minute windows) and a course set to 2 x 100
+    (an online section in a 75-minute window). Neither is listed, with the flag on or
+    off; the same online course's section in ordinary columns is."""
+
+    sc = _scenario(slot_config=[*DEFAULT_SLOTS, ONLINE_75])
+    board = _board(sc)
+    _budget(sc, STAT, planned=2)
+    _online_for_the_boards("STAT103")
+    _place(board, _section(sc, STAT, "S1"), meetings)
+    daytime = TWO_BY_100 if pattern == "" else TWO_BY_75
+    by_day = _place(board, _section(sc, STAT, "S2"), daytime)
+
+    for flag in (True, False):
+        settings.TIMETABLE_ONLINE_EVENING_WINDOWS = flag
+        listed = _post(
+            http,
+            MEETING_PATTERN_URL.format(sc.id),
+            {"course_key": STAT, "meeting_pattern": pattern},
+        ).json()["mismatched_sections"]
+        assert [(item["section"], item["placement_ids"]) for item in listed] == [("S2", by_day)], (
+            flag
+        )
+    audits = [
+        json.loads(row.details_json)["mismatched"]
+        for row in AuditLog.objects.filter(action="tw.scenario.budget.meeting_pattern").order_by(
+            "id"
+        )
+    ]
+    assert audits == [1, 1]

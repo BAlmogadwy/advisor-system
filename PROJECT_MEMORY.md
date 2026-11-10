@@ -274,6 +274,7 @@ Important implementation detail:
   active. Keep ordinary courses unchanged; do not infer English labs from
   180-minute durations. One locked meeting protects all companions and board
   copies. Saved timetables are not migrated; generate new ones to use this rule.
+  See `docs/TIMETABLE-ENGLISH-PATTERNS-VALIDATION.md` for checks and limitations.
 - A scenario may teach a 3-credit course as **two 100-minute meetings a week**
   (`ScenarioSectionBudget.meeting_pattern = "2x100"`, owner 2026-11-10): two
   different days, the 100-minute (lab-grid) columns, a LECTURE room (room type
@@ -281,8 +282,8 @@ Important implementation detail:
   policy, keyed by the budget row (course_key, never the bare code). Every
   engine reads it through `get_meeting_pattern(..., meeting_pattern=)`, whose
   keyword is required on purpose. Changing it moves no placement: Check warns
-  about sections of another shape; remove them and Optimise (or Full rebuild).
-  See `docs/TIMETABLE-ENGLISH-PATTERNS-VALIDATION.md` for checks and limitations.
+  about sections of another shape (an online course's meetings in online-only
+  windows excepted); remove them and Optimise (or Full rebuild).
 
 - `StudentTermSection` is the persistent student-section assignment table.
 - Generated scenarios may initially have no `StudentTermSection` rows; the

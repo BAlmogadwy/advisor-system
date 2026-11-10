@@ -2056,7 +2056,7 @@ const READINESS_ITEM_TEXT = {
       : `${name} meets ${placed} but the course is set to ${expected}. Move its meetings into 100-minute columns, or remove it and run Optimise.`;
   },
   // A course set to 2 × 100 min in a scenario with no 100-minute column an
-  // in-person class may use: no engine can place its sections.
+  // in-person class may use: no engine can place its in-person sections.
   meeting_pattern_no_window: p => {
     const course = isolatedText(p.course_code || '');
     const expected = meetingLengthsText(p.expected_durations);
@@ -5229,6 +5229,7 @@ const PLACE_WORDS = IS_AR ? {
   rooms: 'تُختار القاعات بعد الوضع (R على البطاقة). ولتغيير لقاء واحد لاحقاً استخدم «نقل…».',
   online: 'عن بُعد في هذه اللوحة: لا تُحجز قاعة.',
   needsPattern: n => `يحتاج هذا المقرر الآن إلى ${pluralAr(n, { one: 'لقاء واحد أسبوعياً', two: 'لقاءين أسبوعياً', few: '{n} لقاءات أسبوعياً', many: '{n} لقاءً أسبوعياً', other: '{n} لقاء أسبوعياً' })}؛ أُعيد ترتيب الأنماط.`,
+  needsShape: lengths => `يجتمع هذا المقرر الآن بواقع ${lengths} أسبوعياً؛ أُعيد ترتيب الأنماط.`,
   duplicate: (was, now) => `وُضعت الشعبة ${was} في هذه الأثناء؛ هذه الآن ${now}.`,
   allPlaced: c => `وُضعت كل شعب ${c}.`,
   boardChanged: 'تغيّرت اللوحة؛ لم يُوضع شيء.', nothingPlaced: 'لم يُوضع شيء.', noBoard: 'أنشئ لوحة أولاً.',
@@ -5253,6 +5254,7 @@ const PLACE_WORDS = IS_AR ? {
   rooms: 'Rooms are chosen afterwards (R on a card). To change one meeting later, use Move….',
   online: 'Online for this board: no room is booked.',
   needsPattern: n => `This course now needs ${n === 1 ? '1 meeting' : `${n} meetings`} a week; the patterns were ranked again.`,
+  needsShape: lengths => `This course now meets ${lengths} a week; the patterns were ranked again.`,
   duplicate: (was, now) => `Section ${was} was placed meanwhile; this is now ${now}.`,
   allPlaced: c => `Every section of ${c} is placed.`,
   boardChanged: 'The board changed; nothing was placed.', nothingPlaced: 'Nothing was placed.', noBoard: 'Create a board first.',
@@ -5706,7 +5708,8 @@ function relabelPlace() {
 /* Place section. Nothing is sent when the open board is not the one the
    dialog opened on (another scenario or board, or the board still loading),
    or the label was taken meanwhile (the next one is offered). A refusal is said in the dialog: the server's "complete pattern"
-   reads the patterns again (the course needs another count), a duplicate
+   reads the patterns again (the course needs another count, or another
+   weekly shape: 2 × 100 min), a duplicate
    takes the next free label, and what asking again cannot change
    (published, the board gone) holds Commit; a failure that does not say
    whether the section was made reads the board, whose budget then stops a
@@ -5767,8 +5770,15 @@ async function placeRefused(result, { dialog, here, session, about, request, lab
   // nothing is read or relabelled for a dialog that is gone.
   const left = !here || !placeDialogOpen();
   if (code === 'FULL_SECTION_PATTERN_REQUIRED') {
-    // The course meets another number of times a week now: the list's rows
-    // and the patterns are read again.
+    // The course meets another way a week now: the list's rows and the
+    // patterns are read again. A course set to a weekly shape of its own
+    // (2 × 100 min) is refused for meetings of another shape, which the
+    // server names (`details.meeting_pattern`, `expected_durations`): said in
+    // the shape's minutes, since the number of meetings may not have changed.
+    // Any other refusal is about the number, said as before.
+    const details = result.error?.details;
+    const shape = details?.meeting_pattern && Array.isArray(details.expected_durations) && details.expected_durations.length
+      ? details.expected_durations : null;
     loadBudget();
     if (left) {
       dialogSay(dialog, PLACE_WORDS.nothingPlaced, 'warning', about);
@@ -5776,7 +5786,7 @@ async function placeRefused(result, { dialog, here, session, about, request, lab
     }
     await readPlaceCandidates({ fresh: true });
     if (session !== PLACE.token) return;
-    if (PLACE.state === 'ready') dialogSay(dialog, PLACE_WORDS.needsPattern(PLACE.meetings), 'warning');
+    if (PLACE.state === 'ready') dialogSay(dialog, shape ? PLACE_WORDS.needsShape(meetingLengthsText(shape)) : PLACE_WORDS.needsPattern(PLACE.meetings), 'warning');
     else if (PLACE.state === 'error') dialogSay(dialog, PLACE_WORDS.nothingPlaced, 'warning');
     return;
   }

@@ -48,10 +48,14 @@ course in when its budget row chose one (``meeting_pattern``: two 100-minute
 meetings), and passed in, which keeps the check and fixes the answer. Only the
 COUNT is refused. A section whose meetings are not the course's shape (two
 75-minute meetings for a course the scenario teaches as 2 x 100 min) imports as
-written, with a plan warning that names it, and Check warns about it until it is
-re-placed: a manual timetable is taken as given, and the run that reports and the
-run that writes agree. A course with no shape of its own imports as written with
-no word, whatever the length of its meetings.
+written, with a plan warning that names it - and, for a section under its budget
+row's own course key, Check warns about it until it is re-placed (Check judges a
+section by its own key, so a section whose sheet names the bare code is told only
+here): a manual timetable is taken as given, and the run that reports and the run
+that writes agree. A sheet key the scenario lacks borrows the shape of the only
+budget row of its code only when one side is the bare code, never from another
+named course. A course with no shape of its own imports as written with no word,
+whatever the length of its meetings.
 
 CREDIT HOURS COME FROM THE SCENARIO, NOT THE FILE
 
@@ -585,12 +589,17 @@ def build_plan(
 
         # The weekly shape the scenario teaches the course in, when it chose one:
         # its own budget row's, or - a sheet naming a key the scenario does not
-        # have - that of the only budget row of its code, never one of two
-        # (CS112 is two courses; the workspace's own rule, _planned_section_budget).
+        # have - that of the only budget row of its code, and only when one side
+        # is the bare code: never one of two rows, and never from one NAMED course
+        # to another (CS112 PROGRAMMING II is not PROGRAMMING I, even when that is
+        # the scenario's only CS112 row; the workspace's own rule,
+        # _planned_section_budget).
         same_code = budgets_by_code.get(code, [])
-        pattern_row = (
-            budget if budget is not None else (same_code[0] if len(same_code) == 1 else None)
-        )
+        pattern_row = budget
+        if pattern_row is None and len(same_code) == 1:
+            only = same_code[0]
+            if code in (key, _text(only.course_key or only.course_code).upper()):
+                pattern_row = only
         meeting_pattern = pattern_row.meeting_pattern if pattern_row else STANDARD
         shape = None if policy else shape_for(meeting_pattern, credits)
         required = (
@@ -673,11 +682,18 @@ def build_plan(
 
         if shape is not None and not meetings_match_shape(minutes, shape):
             # Said, never refused: the sheet is imported as written (apply_plan
-            # states the count, so the create is not held to the shape).
+            # states the count, so the create is not held to the shape). Check
+            # judges a section by its own course key only, so it repeats this
+            # only for a section under its budget row's key, never for one whose
+            # shape was lent through the bare code.
             plan.warnings.append(
                 f"{code} {section} meets {' + '.join(str(m) for m in sorted(minutes))} min a "
                 f"week in the sheet; this scenario teaches {code} as {shape.label}. It is "
-                "imported as written, and Check warns about it until it is re-placed."
+                + (
+                    "imported as written, and Check warns about it until it is re-placed."
+                    if pattern_row is budget
+                    else "imported as written."
+                )
             )
 
         plan.sections.append(

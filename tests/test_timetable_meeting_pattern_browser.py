@@ -6,7 +6,8 @@ columns and a lecture room. These drive the classic Timetable Workspace page
 against the real server: the Place dialog offers such a course whole 2 x 100
 patterns that are lectures (no "Lab" tag), placing one writes two 100-minute
 meetings, and the Add course / section dialog changes a course's weekly
-meetings and says which placed section still meets the old way.
+meetings and says which placed section still meets the old way, and reads in
+the dark theme too.
 
 The fixture (``WorkspaceBrowserMixin``): AI111 has S1 placed SUN/TUE
 09:00-10:15; AI222 has S1 placed MON/WED 13:00-14:15 and S2 still to place.
@@ -27,6 +28,30 @@ AI222 = "AI222::SEARCH"
 ON_S2 = """(() => { const a = document.activeElement;
   return Boolean(a && a.dataset.course === 'AI222' && /^place:.*\\|S2$/.test(a.dataset.focusKey || '')); })()"""
 CHOSEN_PLACE = "document.activeElement?.name === 'twPlaceChoice'"
+#: Every piece of words on show in the open Add course / section dialog (its
+#: title, lines, labels and choices), against the surface behind it, as the
+#: WCAG contrast ratio: [what, ratio].
+DIALOG_CONTRAST = """() => {
+  const dialog = document.querySelector('dialog[open]');
+  const rgb = value => (value.match(/[\\d.]+/g) || []).map(Number);
+  const channel = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const luminance = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  const backdrop = node => {
+    for (let at = node; at; at = at.parentElement) {
+      const c = rgb(getComputedStyle(at).backgroundColor);
+      if (c.length === 3 || c[3] === 1) return c;
+    }
+    return [255, 255, 255];
+  };
+  const shown = node => { const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  return [...dialog.querySelectorAll('h2, p, label, select, small')]
+    .filter(node => shown(node) && node.textContent.trim())
+    .map(node => {
+      const a = luminance(rgb(getComputedStyle(node).color)), b = luminance(backdrop(node));
+      return [`${node.tagName.toLowerCase()} ${node.textContent.trim().slice(0, 40)}`,
+        Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100];
+    });
+}"""
 #: The default grid's 100-minute columns an automatic placer may use.
 DAYTIME_100 = {
     ("09:00", "10:40"),
@@ -144,5 +169,29 @@ class MeetingPatternBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCase
         page.wait_for_function(
             """() => [...document.querySelectorAll('#twSectionList [data-course="AI222"]')]
                   .some(el => el.textContent.includes('2 × 100 min'))"""
+        )
+        self.assertEqual(errors, [])
+
+    def test_the_add_dialog_reads_in_the_dark_theme(self) -> None:
+        # The dialog sits on the theme's --surface, which is dark in the dark
+        # theme: its words must follow the theme too (WCAG AA, 4.5:1), for a
+        # new course and for a course's weekly meetings alike.
+        page, _sent, errors = self._load("en", "dark", 1920, 1080)
+        self.assertEqual(page.evaluate("document.documentElement.dataset.theme"), "dark")
+        page.click("#twAddCourse")
+        dialog = page.locator("dialog[open]")
+        dialog.wait_for()
+        new_course = page.evaluate(DIALOG_CONTRAST)
+        dialog.locator("select").first.select_option(AI222)
+        dialog.get_by_text("Weekly meetings now: 2 × 75 min").wait_for()
+        weekly = page.evaluate(DIALOG_CONTRAST)
+        shown = [what for what, _ratio in new_course + weekly]
+        self.assertIn("h2 Add course / section", shown)
+        self.assertIn("p Weekly meetings now: 2 × 75 min", shown)
+        self.assertTrue(any(what.startswith("select ") for what in shown), shown)
+        self.assertEqual(
+            [(what, ratio) for what, ratio in new_course + weekly if ratio < 4.5],
+            [],
+            "every word in the dialog reads against its dark surface",
         )
         self.assertEqual(errors, [])

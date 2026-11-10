@@ -1030,8 +1030,12 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
     row, which every engine of the scenario reads, and moves no placement: a
     placed section that is now another shape keeps its times (owner rule: shown,
     never moved) and is listed in ``mismatched_sections`` - with whether a lock
-    or another scenario keeps its times - and warned about by Check until it is
-    re-placed. Not undoable, like Add course: set the old value to go back.
+    or another scenario keeps its times - and, while the course is set to a
+    shape, warned about by Check until it is re-placed. A section of a course
+    online for its board is not listed while the online evening windows are
+    on: every engine places it in those windows whatever its shape
+    (``course_meeting_shape_mismatches``). Not undoable, like Add course: set
+    the old value to go back.
 
     400 ``SCENARIO_PUBLISHED`` for a published scenario; 404 ``NOT_FOUND`` for a
     course the scenario's budget does not have; 400
@@ -2253,9 +2257,13 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     ``SECTION_LABEL_IN_USE`` and ``details`` ``{course_code, label, next_free}``.
     Meetings that are not the weekly shape the scenario teaches the course in
     (two 75-minute meetings where it meets 2 x 100 min) are refused with 400
-    ``FULL_SECTION_PATTERN_REQUIRED``, the code on which both pages read the
-    course's patterns again, and ``details`` ``{course_code, meeting_pattern,
-    expected_durations, placed_minutes}``.
+    ``FULL_SECTION_PATTERN_REQUIRED``, a message naming the shape, and
+    ``details`` ``{course_code, meeting_pattern, expected_durations,
+    placed_minutes}``. On that code the classic Place dialog says the shape
+    the details name and reads the course's patterns again; the split page
+    warns with the message (in Arabic, the shape's minutes from the details),
+    reads its section budget again and starts the section being placed again
+    from its course's row, so its targets are the course's shape now.
     """
     deny = _require_general_advisor(request)
     if deny:

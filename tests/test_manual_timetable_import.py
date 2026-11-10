@@ -937,14 +937,48 @@ def test_mt44_a_key_the_scenario_lacks_takes_a_shape_only_from_the_only_row_of_i
         "Term 1,STAT103,F1,TUE,09:00,10:15,,STAT103,3",
         header=f"{HEADER},course_key,credits",
     )
+    # Lent through the bare code: Check judges the section by its own key (STAT103),
+    # not the budget row's (STAT103::STATISTICS), so the note never says Check warns.
     shape_note = (
         "STAT103 F1 meets 75 + 75 min a week in the sheet; this scenario teaches STAT103 as "
-        "2 × 100 min. It is imported as written, and Check warns about it until it is re-placed."
+        "2 × 100 min. It is imported as written."
     )
 
-    assert shape_note in build_plan(path, scenario.id).warnings
+    lent = build_plan(path, scenario.id).warnings
+    assert shape_note in lent
+    assert not any("Check warns" in warning for warning in lent)
 
     _statistics(scenario, key="STAT103::STATISTICS_II", pattern="")
     plan = build_plan(path, scenario.id)
     assert not plan.problems, plan.problems
     assert shape_note not in plan.warnings
+
+
+@pytest.mark.django_db
+def test_mt45_a_named_key_never_takes_the_shape_of_another_named_course(tmp_path, scenario):
+    """CS112 PROGRAMMING I is the scenario's only CS112 row, set to 2 x 100. A sheet
+    naming CS112 PROGRAMMING II names another course: it takes no shape from it."""
+
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_key=planner_course_key("CS112", "PROGRAMMING I"),
+        course_code="CS112",
+        course_name="PROGRAMMING I",
+        credit_hours=3,
+        planned_sections=1,
+        max_per_section=40,
+        total_demand=30,
+        meeting_pattern="2x100",
+    )
+    key = planner_course_key("CS112", "PROGRAMMING II")
+    path = _csv(
+        tmp_path,
+        f"Term 1,CS112,F1,SUN,09:00,10:15,,{key},3\nTerm 1,CS112,F1,TUE,09:00,10:15,,{key},3",
+        header=f"{HEADER},course_key,credits",
+    )
+
+    plan = build_plan(path, scenario.id)
+
+    assert not plan.problems, plan.problems
+    assert not any("2 × 100 min" in warning for warning in plan.warnings), plan.warnings
+    assert [(s.course_key, s.required_meetings) for s in plan.sections] == [(key, 2)]

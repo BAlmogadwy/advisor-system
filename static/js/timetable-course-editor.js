@@ -11,8 +11,8 @@
    on a refusal it calls `onError(message)` with the server's words, so the
    dialog says them inside itself (a toast sits under a modal dialog).
    `onSaved(budget, change)` gets the scenario's new budget; `change` is
-   `{ action: 'meeting_pattern' }` after a weekly-meetings save, which leaves
-   the dialog open on its own status line. */
+   `{ action: 'meeting_pattern', course_key }` after a weekly-meetings save
+   (the course saved), which leaves the dialog open on its own status line. */
 globalThis.TimetableCourseEditor = {
   open({ scenarioId, published, budget, request, onSaved, arabic = false }) {
     const t = (en, ar) => arabic ? ar : en;
@@ -23,13 +23,30 @@ globalThis.TimetableCourseEditor = {
     // '' is the credit hours' standard pattern, the server's default.
     const PATTERN_WORDS = { '': t('Standard (from credit hours)', 'قياسي (حسب الساعات المعتمدة)'), '2x100': t('2 × 100 min', '٢ × ١٠٠ دقيقة') };
     const patternWords = value => PATTERN_WORDS[value] ?? value;
+    // Meeting lengths in words, shortest first, as the workspace says them
+    // (meetingLengthsText, page-timetable-workspace.js): "4 × 180 min" when
+    // they are one length, else "75 + 100 min"; in Arabic in the digits of
+    // the server's shape labels ("٢ × ١٠٠ دقيقة"). '' for none.
+    const lengthsText = minutes => {
+      const lengths = (Array.isArray(minutes) ? minutes : []).map(Number).filter(n => n > 0).sort((a, b) => a - b);
+      if (!lengths.length) return '';
+      const text = lengths.length > 1 && lengths.every(n => n === lengths[0]) ? `${lengths.length} × ${lengths[0]}` : lengths.join(' + ');
+      return arabic ? `${text.replace(/\d/g, digit => '٠١٢٣٤٥٦٧٨٩'[digit])} دقيقة` : `${text} min`;
+    };
     // A budget row's weekly meetings: the server's label for a configured
-    // course, the standard pattern's words for any other.
-    const shapeLabel = row => (arabic ? row.meeting_pattern_label_ar : row.meeting_pattern_label) || patternWords(row.meeting_pattern || '');
+    // course; for any other its minutes (`meeting_durations`), since its
+    // credit hours do not decide them all (an English bundle meets 4 × 180
+    // min whatever they are); the standard pattern's words only for an older
+    // answer with neither.
+    const shapeLabel = row => (arabic ? row.meeting_pattern_label_ar : row.meeting_pattern_label)
+      || lengthsText(row.meeting_durations) || patternWords(row.meeting_pattern || '');
     const rows = new Map(budget.map(row => [row.course_key, row]));
     const dialog = document.createElement('dialog');
     dialog.dir = arabic ? 'rtl' : 'ltr';
-    dialog.style.cssText = 'width:min(480px,92vw);padding:24px;border:1px solid #64748b;border-radius:12px;background:var(--surface,#fff);color:var(--text,#172033)';
+    // --t1 is the design system's text colour in both themes (global.css): in
+    // the dark one the dialog's --surface is dark, and a fallback ink of the
+    // light theme on it would leave the dialog unreadable.
+    dialog.style.cssText = 'width:min(480px,92vw);padding:24px;border:1px solid #64748b;border-radius:12px;background:var(--surface,#fff);color:var(--t1,#172033)';
     const title = document.createElement('h2');
     title.textContent = t('Add course / section', 'إضافة مقرر / شعبة');
     dialog.setAttribute('aria-label', title.textContent);
@@ -167,7 +184,7 @@ globalThis.TimetableCourseEditor = {
         (Array.isArray(result.budget) ? result.budget : []).forEach(fresh => rows.set(fresh.course_key, fresh));
         showWeekly();
         status.textContent = savedWords(rows.get(row.course_key), result);
-        await onSaved(result.budget, { action: 'meeting_pattern' });
+        await onSaved(result.budget, { action: 'meeting_pattern', course_key: row.course_key });
       } catch (error) { alert.textContent = error.message; }
       finally {
         saveShape.disabled = false;
@@ -186,6 +203,18 @@ globalThis.TimetableCourseEditor = {
     form.onsubmit = async event => {
       event.preventDefault();
       if (!scenarioId || published || save.disabled) return;
+      // A course in the plan whose weekly meetings were changed here and not
+      // saved: "Add to scenario" adds sections only, so it would drop the
+      // change without a word. Nothing is sent until it is saved with its own
+      // button or set back. Only where the choice is offered: a course with
+      // one choice (an English bundle, a 4-credit course) is never held.
+      const chosen = rows.get(select.value);
+      if (chosen && !saveShape.hidden && shape.value !== (chosen.meeting_pattern || '')) {
+        alert.textContent = t('The weekly meetings are changed but not saved: use Save weekly meetings first, or set them back, then add sections.',
+          'تغيّرت اللقاءات الأسبوعية ولم تُحفظ: استخدم «حفظ اللقاءات الأسبوعية» أولاً، أو أعدها كما كانت، ثم أضف الشعب.');
+        shape.focus();
+        return;
+      }
       save.disabled = true; alert.textContent = '';
       try {
         const body = { course_key: select.value || code.value.trim().toUpperCase(),

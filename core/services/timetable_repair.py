@@ -8,10 +8,12 @@ It does not apply timetable moves or student registration changes.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 from collections import Counter, defaultdict, deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import combinations, product
 from time import perf_counter
@@ -3083,6 +3085,21 @@ def _repair_state_fingerprint(scenario_id: int, blocked_ids: list[int]) -> str:
         "prerequisites": prerequisites,
         "rooms": rooms,
     }
+    # A course's weekly shape decides which of its meetings "Lectures only"
+    # moves and what each move is called (_placement_meeting_kind), and changing
+    # it moves no placement: so the shapes the scenario chose are part of the
+    # fingerprint, and a change re-analyses rather than serving (or approving) a
+    # run made under the old one. Only when some course has one, so the
+    # fingerprint of every scenario without a shape is what it always was. The
+    # credit hours count too: a shape applies only to the credits it fits.
+    meeting_patterns = list(
+        ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
+        .exclude(meeting_pattern="")
+        .order_by("id")
+        .values_list("course_key", "course_code", "meeting_pattern", "credit_hours")
+    )
+    if meeting_patterns:
+        payload["meeting_patterns"] = meeting_patterns
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -6704,33 +6721,46 @@ def _placement_meeting_shape(placement: SectionPlacement) -> MeetingShape | None
     return shape_for(meeting_pattern, credit_hours)
 
 
-def _placement_meeting_kind(placement: SectionPlacement, meeting_shape: MeetingShape | None) -> str:
+def _meeting_shape_reader(placement: SectionPlacement) -> Callable[[], MeetingShape | None]:
+    """:func:`_placement_meeting_shape` for ``placement``, read when first asked, once.
+
+    Only a meeting over 80 minutes needs the shape (:func:`_placement_meeting_kind`),
+    so a section whose meetings are all shorter - a 2 x 75 or 3 x 50 section -
+    never reads the budget, and a configured 2 x 100 section reads it once for
+    its whole move scope and every candidate's payload.
+    """
+    return functools.cache(lambda: _placement_meeting_shape(placement))
+
+
+def _placement_meeting_kind(
+    placement: SectionPlacement, read_shape: Callable[[], MeetingShape | None]
+) -> str:
     """What one meeting of a section is for the move scope: "lect" or "lab".
 
     A meeting over 80 minutes is a 4-credit course's lab, unless the section's
-    course is taught in a configured weekly shape (``meeting_shape``, from
-    :func:`_placement_meeting_shape`): its 100-minute meetings are lectures, so
+    course is taught in a configured weekly shape (``read_shape``, a
+    :func:`_meeting_shape_reader`): its 100-minute meetings are lectures, so
     "Lectures only" moves all of them and the summary counts lecture sessions.
+    A meeting of 80 minutes or less is a lecture whatever the shape, so the
+    shape is asked for only about a longer one.
     """
-    if section_policy(placement.term_section) or meeting_shape is not None:
+    if section_policy(placement.term_section) or _placement_duration_minutes(placement) <= 80:
         return "lect"
-    return "lab" if _placement_duration_minutes(placement) > 80 else "lect"
-
-
-#: ``_placements_for_move_scope``'s default ``meeting_shape``: read it there.
-_READ_MEETING_SHAPE: Any = object()
+    return "lect" if read_shape() is not None else "lab"
 
 
 def _placements_for_move_scope(
     placement: SectionPlacement,
     move_scope: str,
-    meeting_shape: MeetingShape | None = _READ_MEETING_SHAPE,
+    read_shape: Callable[[], MeetingShape | None] | None = None,
 ) -> tuple[list[SectionPlacement], list[SectionPlacement]]:
     """The placements a move takes along (included) and leaves (excluded).
 
-    ``meeting_shape`` is the section course's weekly shape, which "Lectures only"
-    needs (:func:`_placement_meeting_kind`). A caller that has read it passes it,
-    so a scope costs one budget read; left out, it is read here when needed.
+    ``read_shape`` reads the section course's weekly shape, which "Lectures
+    only" needs for a meeting over 80 minutes (:func:`_placement_meeting_kind`).
+    A caller that builds every candidate's payload too passes its own
+    :func:`_meeting_shape_reader`, so the whole scope costs at most one budget
+    read; left out, one is made here, read only when needed.
     """
     move_scope = _normalise_move_scope(move_scope)
     if section_policy(placement.term_section):
@@ -6756,9 +6786,9 @@ def _placements_for_move_scope(
     if move_scope == MOVE_SCOPE_SINGLE_SESSION:
         included = [row for row in scoped if row.id == placement.id] or [placement]
     elif move_scope == MOVE_SCOPE_LECTURES_ONLY:
-        if meeting_shape is _READ_MEETING_SHAPE:
-            meeting_shape = _placement_meeting_shape(placement)
-        included = [row for row in scoped if _placement_meeting_kind(row, meeting_shape) == "lect"]
+        if read_shape is None:
+            read_shape = _meeting_shape_reader(placement)
+        included = [row for row in scoped if _placement_meeting_kind(row, read_shape) == "lect"]
         if not included:
             included = [row for row in scoped if row.id == placement.id] or [placement]
     else:
@@ -6779,7 +6809,7 @@ def _build_move_scope_payload(
     start: str,
     end: str,
     planning_scope: dict[str, Any] | None,
-    meeting_shape: MeetingShape | None,
+    read_shape: Callable[[], MeetingShape | None],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     day = str(day or "").upper()
     anchor_day_index = REPAIR_DAY_INDEX.get(str(anchor.day or "").upper())
@@ -6875,7 +6905,7 @@ def _build_move_scope_payload(
                 "start": move_start,
                 "end": move_end,
                 "room": room,
-                "kind": _placement_meeting_kind(row, meeting_shape),
+                "kind": _placement_meeting_kind(row, read_shape),
                 "is_anchor": row.id == anchor.id,
                 "before": {
                     "day": row.day,
@@ -7052,10 +7082,11 @@ def _prepare_repair_candidate_rows(
     """Scan beyond the visible candidate count and keep administratively useful rows."""
 
     move_scope = _normalise_move_scope(move_scope)
-    # One budget read for the whole scope: the move set and every candidate's payload.
-    meeting_shape = _placement_meeting_shape(placement)
+    # At most one budget read for the whole scope, the move set and every
+    # candidate's payload, and none for a section with no meeting over 80 minutes.
+    read_shape = _meeting_shape_reader(placement)
     scoped_placements, excluded_placements = _placements_for_move_scope(
-        placement, move_scope, meeting_shape
+        placement, move_scope, read_shape
     )
     quick_preview = preview_placement_slot_candidates(placement.id)
     source_rows = list(quick_preview.get("candidates", []))
@@ -7076,7 +7107,7 @@ def _prepare_repair_candidate_rows(
             start=start,
             end=end,
             planning_scope=planning_scope,
-            meeting_shape=meeting_shape,
+            read_shape=read_shape,
         )
         anchor_move = next(
             (
