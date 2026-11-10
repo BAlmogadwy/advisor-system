@@ -1132,13 +1132,16 @@ def _build_pattern_catalog_for_scenario(scenario_id: int) -> dict[str, list]:
     course_requirements = []
     for b in budgets:
         policy = get_course_meeting_policy(b.course_code, b.course_key)
-        durations = get_meeting_pattern(b.credit_hours, b.course_key or b.course_code)
+        durations = get_meeting_pattern(
+            b.credit_hours, b.course_key or b.course_code, meeting_pattern=b.meeting_pattern
+        )
         course_requirements.append(
             {
                 "durations": durations,
                 "course_code": b.course_code,
                 "course_key": b.course_key,
                 "credit_hours": b.credit_hours,
+                "meeting_pattern": b.meeting_pattern,
                 "has_lab": b.credit_hours == 4 and not policy,
                 "modality": "ONCAMPUS",
                 "allow_permutations": b.credit_hours == 4 and not policy,

@@ -834,7 +834,9 @@ def test_flag_on_guard_gives_a_course_online_on_some_boards_both_option_sets(fla
 
     daytime = {
         tuple(sorted((DAYS.index(m["day"]), _m(m["start"]), _m(m["end"])) for m in option))
-        for option in generate_course_meeting_options("IS482", 3, [], [], [], course_key="IS482")
+        for option in generate_course_meeting_options(
+            "IS482", 3, [], [], [], course_key="IS482", meeting_pattern=""
+        )
     }
     assert daytime < set(options)
     assert len(options) == len(daytime) + 90
@@ -880,7 +882,9 @@ def test_flag_on_guard_asks_every_board_for_a_budget_whose_term_has_none(flag_on
     )
     daytime = {
         tuple(sorted((DAYS.index(m["day"]), _m(m["start"]), _m(m["end"])) for m in option))
-        for option in generate_course_meeting_options("IS482", 3, [], [], [], course_key="IS482")
+        for option in generate_course_meeting_options(
+            "IS482", 3, [], [], [], course_key="IS482", meeting_pattern=""
+        )
     }
 
     mixed = _load_static(scenario.id).options("IS482", budget)

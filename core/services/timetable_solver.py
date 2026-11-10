@@ -485,7 +485,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         display_code = budget.course_code
         cr = budget.credit_hours or 3
         policy = get_course_meeting_policy(display_code, code)
-        pattern = get_meeting_pattern(cr, code)
+        pattern = get_meeting_pattern(cr, code, meeting_pattern=budget.meeting_pattern)
         bundles = (
             meeting_options_for_policy(
                 policy,
@@ -1089,7 +1089,7 @@ def solve_board_with_hints(
         display_code = budget.course_code
         cr = budget.credit_hours or 3
         policy = get_course_meeting_policy(display_code, code)
-        pattern = get_meeting_pattern(cr, code)
+        pattern = get_meeting_pattern(cr, code, meeting_pattern=budget.meeting_pattern)
         bundles = (
             meeting_options_for_policy(
                 policy,

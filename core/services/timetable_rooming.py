@@ -6,7 +6,6 @@ Provides:
   - RoomTracker: in-memory room usage tracker for greedy placement
   - assign_rooms_to_board(): post-placement room filler for solver/SA paths
   - get_programme_rooms(): load rooms filtered by programme codes
-  - check_room_feasibility(): pre-check section sizes vs room capacities
 """
 
 from __future__ import annotations
@@ -555,58 +554,6 @@ def repair_unassigned_after_greedy(
 
     unassigned_records[:] = still_unassigned
     return repaired
-
-
-def check_room_feasibility(
-    board_id: int,
-    rooms: list[dict],
-) -> list[dict]:
-    """Pre-check: can every section find a room with sufficient capacity?
-
-    Returns a list of violations (empty = all feasible):
-        ``[{course_code, max_per_section, room_type_needed, max_room_capacity}, ...]``
-    """
-    from core.models import ScenarioSectionBudget
-    from core.services.timetable_autoplace import get_meeting_pattern
-
-    try:
-        board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
-    except DeliveryBoard.DoesNotExist:
-        return []
-
-    budgets = ScenarioSectionBudget.objects.filter(
-        scenario=board.scenario, programme_term=board.nominal_term
-    )
-
-    lecture_max = max((r["capacity"] for r in rooms if r["room_type"] == "lecture"), default=0)
-    lab_max = max((r["capacity"] for r in rooms if r["room_type"] == "lab"), default=0)
-
-    violations = []
-    for b in budgets:
-        pattern = get_meeting_pattern(b.credit_hours or 3)
-        has_lab = any(d > 75 for d in pattern)
-        cap = b.max_per_section
-
-        if cap > lecture_max:
-            violations.append(
-                {
-                    "course_code": b.course_code,
-                    "max_per_section": cap,
-                    "room_type_needed": "lecture",
-                    "max_room_capacity": lecture_max,
-                }
-            )
-        if has_lab and cap > lab_max:
-            violations.append(
-                {
-                    "course_code": b.course_code,
-                    "max_per_section": cap,
-                    "room_type_needed": "lab",
-                    "max_room_capacity": lab_max,
-                }
-            )
-
-    return violations
 
 
 def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dict:

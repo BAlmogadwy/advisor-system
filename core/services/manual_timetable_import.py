@@ -574,7 +574,15 @@ def build_plan(
                 "sections will seat nobody and will not count towards the plan."
             )
 
-        required = len(policy.durations) if policy else len(get_meeting_pattern(credits, code))
+        required = (
+            len(policy.durations)
+            if policy
+            else len(
+                get_meeting_pattern(
+                    credits, code, meeting_pattern=getattr(budget, "meeting_pattern", "")
+                )
+            )
+        )
         if len(meetings) != required:
             plan.problems.append(
                 Problem(

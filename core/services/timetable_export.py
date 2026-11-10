@@ -988,7 +988,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     budget = compute_scenario_budget(scenario_id)
     for b in budget:
         cr = b.get("credit_hours", 3)
-        meetings = len(get_meeting_pattern(cr))
+        meetings = len(get_meeting_pattern(cr, meeting_pattern=b.get("meeting_pattern", "")))
         ws_sum.cell(row=row, column=1, value=b["course_code"]).border = thin_border
         ws_sum.cell(row=row, column=2, value=b.get("programme_term")).border = thin_border
         ws_sum.cell(row=row, column=3, value=cr).border = thin_border

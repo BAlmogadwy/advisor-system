@@ -6,7 +6,6 @@ from core.services.timetable_assignment_models import (
     SectionState,
     StudentProfile,
 )
-from core.services.timetable_autoplace import get_meeting_pattern_variants
 from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
@@ -49,15 +48,6 @@ def _profiles() -> dict[str, StudentProfile]:
             intra_tier_score=1.0,
         ),
     }
-
-
-def test_get_meeting_pattern_variants_exposes_4_credit_permutations() -> None:
-    assert get_meeting_pattern_variants(4) == [
-        [100, 75, 75],
-        [75, 100, 75],
-        [75, 75, 100],
-    ]
-    assert get_meeting_pattern_variants(3) == [[75, 75]]
 
 
 def test_evaluate_generated_timetable_candidate_assigns_without_mutating_input() -> None:

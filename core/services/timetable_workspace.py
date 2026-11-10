@@ -2605,7 +2605,9 @@ def preview_planned_section_slot_candidates(
 
     def meeting_pattern_for_request() -> list[int]:
         if effective_credit_hours:
-            pattern = list(get_meeting_pattern(effective_credit_hours))
+            pattern = get_meeting_pattern(
+                effective_credit_hours, meeting_pattern=getattr(budget, "meeting_pattern", "")
+            )
         elif required_meetings >= 3:
             pattern = [75, 75, 100]
         else:

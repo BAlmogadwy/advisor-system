@@ -396,7 +396,7 @@ def test_saved_english_display_columns_never_expand_ordinary_course_options(
     )
     scenario = TimetableScenario.objects.create(academic_year="1448", term="1", slot_config=columns)
     scenario.refresh_from_db()
-    options = generate_course_meeting_options("AI123", 3, scenario.slot_config)
+    options = generate_course_meeting_options("AI123", 3, scenario.slot_config, meeting_pattern="")
     assert options
     assert all(
         int(m["end"][:2]) * 60 + int(m["end"][3:]) - int(m["start"][:2]) * 60 - int(m["start"][3:])
@@ -411,7 +411,7 @@ def test_saved_english_display_columns_never_expand_ordinary_course_options(
         lecture_section_ids=frozenset({"eng#S1"}),
     )
     assert rebuilt == columns and added == 0
-    assert len(generate_course_meeting_options("ENG101", 4, rebuilt)) == 2
+    assert len(generate_course_meeting_options("ENG101", 4, rebuilt, meeting_pattern="")) == 2
     board = DeliveryBoard.objects.create(
         scenario=scenario, label="T1", nominal_term=1, program="AI"
     )
