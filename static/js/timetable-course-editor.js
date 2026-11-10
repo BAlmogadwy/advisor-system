@@ -23,8 +23,15 @@
    course whose weekly meetings can be chosen, and only when it says something.
 
    `request(url, options, onError)` resolves to the server's answer, or null;
-   on a refusal it calls `onError(message)` with the server's words, so the
-   dialog says them inside itself (a toast sits under a modal dialog).
+   on a refusal it calls `onError(message, error)` with the server's words
+   and its error object (`{code, details}`, when it sent one), so the dialog
+   says them inside itself (a toast sits under a modal dialog).
+   "Use programme default(s)" never posts a value read earlier: it asks the
+   server to save what the programmes decide NOW (`programmeDefaultBody`),
+   naming the value the page showed; when that is gone or changed the server
+   refuses (409), the page says why in its own words (`refusalWords`) and
+   reads the list again (the dialog through `reread()`, which resolves to the
+   scenario's budget rows as read now, or null).
    `onSaved(budget, change)` gets the scenario's new budget; `change` is
    `{ action: 'meeting_pattern', course_key }` after a weekly-meetings save
    (the course saved), which leaves the dialog open on its own status line;
@@ -90,6 +97,46 @@
   }
   // The value "Use programme default" saves for a course ('' or a shape).
   const programmeValue = row => budgetValue(programmeBlock(row)?.meeting_pattern);
+  // Its body: the server saves what the programmes decide when it is asked,
+  // refusing when that is not the value this row showed.
+  const programmeDefaultBody = row => ({ course_key: row.course_key, use_programme_default: true, expected_meeting_pattern: programmeValue(row) });
+  /* Why the server would not use a programme default, in the page's words:
+     the programmes' default changed, they differ now, none sets it now, or
+     two courses are behind the code. '' for any other refusal (the page then
+     says the server's own words). */
+  function refusalWords(error, arabic = false) {
+    const t = words(arabic);
+    if (error?.code === 'PROGRAMME_DEFAULT_CHANGED') {
+      return t('its programmes’ default changed since the list was drawn.', 'تغيّر افتراضي البرامج له منذ عُرضت القائمة.');
+    }
+    if (error?.code !== 'PROGRAMME_DEFAULT_UNAVAILABLE') return '';
+    const reason = error.details?.reason;
+    if (reason === 'mixed') return t('its programmes differ now.', 'برامجه مختلفة الآن.');
+    if (reason === 'ambiguous') return t('two courses share its code, so its programmes’ default cannot be told.', 'يشترك مقرران في رمزه، فلا يُعرف افتراضي البرامج له.');
+    return t('no programme sets it now.', 'لم يعد أي برنامج يضبطه.');
+  }
+  const programmeDefaultRefused = error => error?.code === 'PROGRAMME_DEFAULT_CHANGED' || error?.code === 'PROGRAMME_DEFAULT_UNAVAILABLE';
+  /* The placed sections a weekly-meetings save left meeting the old way
+     (its `mismatched_sections`), in sentences: how many and which, then the
+     locked ones and those another scenario owns, which need their own step
+     first. `name` names a section; `ending` is where re-placing puts them. */
+  function leftBehindLines(sections, arabic, { name = section => section.section, ending = null } = {}) {
+    const t = words(arabic);
+    const list = Array.isArray(sections) ? sections : [];
+    if (!list.length) return [];
+    const named = items => items.map(section => iso(name(section))).join(t(', ', '، '));
+    const n = list.length;
+    const [where, whereAr] = ending || ['in this pattern', 'بهذا النمط'];
+    const lines = [t(
+      `${n === 1 ? '1 placed section still meets' : `${n} placed sections still meet`} the old way: ${named(list)}. `
+        + `Remove ${n === 1 ? 'it' : 'them'} and run Optimise (or Full rebuild) to place ${n === 1 ? 'it' : 'them'} ${where}.`,
+      `عدد الشعب الموضوعة التي ما زالت تجتمع بالطريقة السابقة: ${n} (${named(list)}). احذفها ثم شغّل «تحسين» (أو «إعادة بناء كاملة») لتوضع ${whereAr}.`)];
+    const external = list.filter(section => section.externally_owned);
+    const locked = list.filter(section => section.locked && !section.externally_owned);
+    if (locked.length) lines.push(t(`Locked (unlock before removing): ${named(locked)}.`, `مقفلة (ألغِ قفلها قبل الحذف): ${named(locked)}.`));
+    if (external.length) lines.push(t(`Owned by another scenario (change there): ${named(external)}.`, `يملكها سيناريو آخر (عدّلها هناك): ${named(external)}.`));
+    return lines;
+  }
   // The chip next to a course: only when it differs from its programmes'
   // default, or its programmes differ; '' otherwise.
   function programmeChip(row, arabic = false) {
@@ -226,20 +273,32 @@
     target?.focus?.();
   }
   /* What a run of "Use programme defaults" did, for the page to say: all of
-     them set, or where it stopped and why (the server's words). */
-  function programmeDefaultsWords({ saved = 0, total = 0, stopped = null, arabic = false } = {}) {
+     them set, or where it stopped and why (the page's words for a programme
+     default that is gone or changed, else the server's), then the placed
+     sections the saved courses left meeting the old way (`left`: their
+     `mismatched_sections`, named with their course), as one course's own
+     save names them. The page warns, never reports success, while any is
+     left or the run stopped. */
+  function programmeDefaultsWords({ saved = 0, total = 0, stopped = null, left = [], arabic = false } = {}) {
     const t = words(arabic);
+    let said;
     if (!stopped) {
-      return t(saved === 1 ? '1 course now meets as its programmes set it.' : `${saved} courses now meet as their programmes set them.`,
+      said = t(saved === 1 ? '1 course now meets as its programmes set it.' : `${saved} courses now meet as their programmes set them.`,
         `عدد المقررات التي صارت تجتمع كما ضبطتها برامجها: ${saved}.`);
+    } else {
+      const code = iso(stopped.row?.course_code || stopped.row?.course_key || '');
+      const why = refusalWords(stopped.error, arabic) || stopped.refusal || t('it could not be saved.', 'تعذر الحفظ.');
+      said = t(`Stopped at ${code}: ${why} ${saved} of ${total} set before it.`,
+        `توقف عند ${code}: ${why} ضُبط قبله ${saved} من ${total}.`);
     }
-    const code = iso(stopped.row?.course_code || stopped.row?.course_key || '');
-    const why = stopped.refusal || t('it could not be saved.', 'تعذر الحفظ.');
-    return t(`Stopped at ${code}: ${why} ${saved} of ${total} set before it.`,
-      `توقف عند ${code}: ${why} ضُبط قبله ${saved} من ${total}.`);
+    const lines = leftBehindLines(left, arabic, {
+      name: section => [section.course_code, section.section].filter(Boolean).join(' '),
+      ending: ['in their new weekly meetings', 'بلقاءاتها الأسبوعية الجديدة'],
+    });
+    return [said, ...lines].join(' ');
   }
 
-  function open({ scenarioId, published, budget, request, onSaved, arabic = false, courseKey = '', returnFocus = null }) {
+  function open({ scenarioId, published, budget, request, onSaved, reread = null, arabic = false, courseKey = '', returnFocus = null }) {
     const t = words(arabic);
     // The weekly patterns there are (core/services/timetable_meeting_shape.py):
     // '' is the credit hours' standard pattern, the server's default.
@@ -403,35 +462,40 @@
       const lines = [result.changed
         ? t(`Saved: ${course} is now set to ${label}.`, `حُفظ: ضُبط ${course} على ${label}.`)
         : t(`Nothing changed: ${course} is already set to ${label}.`, `لم يتغير شيء: ${course} مضبوط مسبقاً على ${label}.`)];
-      const mismatched = Array.isArray(result.mismatched_sections) ? result.mismatched_sections : [];
-      if (!mismatched.length) return lines[0];
-      const named = sections => sections.map(section => iso(section.section)).join(t(', ', '، '));
-      const n = mismatched.length;
-      lines.push(t(
-        `${n === 1 ? '1 placed section still meets' : `${n} placed sections still meet`} the old way: ${named(mismatched)}. `
-          + `Remove ${n === 1 ? 'it' : 'them'} and run Optimise (or Full rebuild) to place ${n === 1 ? 'it' : 'them'} in this pattern.`,
-        `عدد الشعب الموضوعة التي ما زالت تجتمع بالطريقة السابقة: ${n} (${named(mismatched)}). احذفها ثم شغّل «تحسين» (أو «إعادة بناء كاملة») لتوضع بهذا النمط.`));
-      const external = mismatched.filter(section => section.externally_owned);
-      const locked = mismatched.filter(section => section.locked && !section.externally_owned);
-      if (locked.length) lines.push(t(`Locked (unlock before removing): ${named(locked)}.`, `مقفلة (ألغِ قفلها قبل الحذف): ${named(locked)}.`));
-      if (external.length) lines.push(t(`Owned by another scenario (change there): ${named(external)}.`, `يملكها سيناريو آخر (عدّلها هناك): ${named(external)}.`));
+      lines.push(...leftBehindLines(result.mismatched_sections, arabic));
       return lines.join(' ');
     };
     // One weekly-meetings save, from "Save weekly meetings" (the choice) or
-    // "Use programme default" (the programmes' value): the same endpoint, the
-    // same words after it.
-    const saveWeekly = async (value, trigger) => {
+    // "Use programme default" (what the programmes decide now, on the
+    // server): the same endpoint, the same words after it. A programme
+    // default gone or changed since the list was read is said in the page's
+    // words, and the course is read again (`reread`), so the dialog shows
+    // what its programmes decide now.
+    const saveWeekly = async (bodyFor, trigger) => {
       const row = rows.get(select.value);
       if (!row || !scenarioId || published || trigger.disabled) return;
       saveShape.disabled = useDefault.disabled = true; alert.textContent = ''; status.textContent = '';
       let refusal = '';
+      let error = null;
       try {
         const result = await request(`/ops/tw/scenarios/${scenarioId}/budget/meeting-pattern/`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ course_key: row.course_key, meeting_pattern: value }),
-        }, message => { refusal = typeof message === 'string' ? message : ''; });
+          body: JSON.stringify(bodyFor(row)),
+        }, (message, refused) => {
+          refusal = typeof message === 'string' ? message : '';
+          error = refused && typeof refused === 'object' ? refused : null;
+        });
         if (!result?.ok) {
-          alert.textContent = refusal || t('Could not save the weekly meetings. Check the scenario status, then retry.', 'تعذر حفظ اللقاءات الأسبوعية. تحقق من حالة السيناريو ثم أعد المحاولة.');
+          const why = refusalWords(error, arabic);
+          alert.textContent = (why && t(`Not saved: ${why}`, `لم يُحفظ: ${why}`)) || refusal
+            || t('Could not save the weekly meetings. Check the scenario status, then retry.', 'تعذر حفظ اللقاءات الأسبوعية. تحقق من حالة السيناريو ثم أعد المحاولة.');
+          if (programmeDefaultRefused(error) && typeof reread === 'function') {
+            const fresh = await reread();
+            if (Array.isArray(fresh) && dialog.isConnected) {
+              fresh.forEach(item => rows.set(item.course_key, item));
+              if (select.value === row.course_key) showWeekly();
+            }
+          }
           return;
         }
         // The answer's budget is the scenario's own, this course's new row in it.
@@ -451,8 +515,8 @@
         if (dialog.isConnected && lost) back.focus();
       }
     };
-    saveShape.onclick = () => saveWeekly(shape.value, saveShape);
-    useDefault.onclick = () => saveWeekly(programmeValue(rows.get(select.value)), useDefault);
+    saveShape.onclick = () => saveWeekly(row => ({ course_key: row.course_key, meeting_pattern: shape.value }), saveShape);
+    useDefault.onclick = () => saveWeekly(programmeDefaultBody, useDefault);
 
     // The page's "Added", when the answer names what the programmes decided
     // for the new course: the shape they gave it, or that they differ. ''
@@ -527,6 +591,7 @@
   }
 
   globalThis.TimetableCourseEditor = {
-    open, programmeState, programmeChip, programmeValue, renderMeetingSummary, focusSummary, programmeDefaultsWords,
+    open, programmeState, programmeChip, programmeValue, programmeDefaultBody, refusalWords, renderMeetingSummary, focusSummary,
+    programmeDefaultsWords,
   };
 })();

@@ -560,6 +560,167 @@ def test_more_sections_of_a_course_already_there_apply_nothing(http, stat_agreed
     assert "meeting_pattern_applied" not in http.get(BUDGET_URL.format(stat_agreed.id)).json()
 
 
+# ── "Use programme default(s)": the programmes' value as it is NOW ─────────
+
+
+def _use_default(client: Client, sc, key: str, **more):
+    return _post(client, PATTERN_URL.format(sc.id), {"course_key": key, **more})
+
+
+def _pattern_audits() -> list[dict]:
+    return [
+        json.loads(row.details_json)
+        for row in AuditLog.objects.filter(action="tw.scenario.budget.meeting_pattern").order_by(
+            "id"
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "old", "new"),
+    [
+        # Agreed on 2 x 100; the scenario has the credit default.
+        (STAT, "", "2x100"),
+        # Agreed on the standard pattern; the scenario set 2 x 100.
+        (LOGIC, "2x100", ""),
+    ],
+)
+@pytest.mark.parametrize("expected", [True, False])
+def test_use_programme_default_saves_what_the_programmes_decide_now(http, key, old, new, expected):
+    sc = _six_courses()
+    more = {"expected_meeting_pattern": new} if expected else {}
+
+    response = _use_default(http, sc, key, use_programme_default=True, **more)
+
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert (body["meeting_pattern"], body["previous"], body["changed"]) == (new, old, True)
+    assert body["meeting_pattern_source"] == "programmes"
+    assert body["mismatched_sections"] == []
+    assert ScenarioSectionBudget.objects.get(scenario=sc, course_key=key).meeting_pattern == new
+    row = next(r for r in body["budget"] if r["course_key"] == key)
+    assert row["meeting_pattern_drift"] is False
+    # Audited as an explicit save is, and says the value was the programmes'.
+    assert _pattern_audits() == [
+        {
+            "scenario_id": sc.id,
+            "course_key": key,
+            "old": old,
+            "new": new,
+            "mismatched": 0,
+            "meeting_pattern_source": "programmes",
+        }
+    ]
+
+
+def test_an_explicit_save_is_answered_and_audited_exactly_as_before(http):
+    sc = _six_courses()
+
+    response = _post(
+        http, PATTERN_URL.format(sc.id), {"course_key": STAT, "meeting_pattern": "2x100"}
+    )
+
+    assert response.status_code == 200, response.content
+    assert set(response.json()) == {
+        "ok",
+        "course_key",
+        "meeting_pattern",
+        "previous",
+        "changed",
+        "budget",
+        "mismatched_sections",
+    }
+    assert _pattern_audits() == [
+        {"scenario_id": sc.id, "course_key": STAT, "old": "", "new": "2x100", "mismatched": 0}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "reason", "said"),
+    [
+        (LINEAR, "mixed", "MATH243's programmes differ on its weekly meetings"),
+        (DATA, "none", "No programme of this scenario has set AI201's weekly meetings."),
+        ("MGT324", "ambiguous", "MGT324 names two courses in this scenario's programmes"),
+    ],
+)
+def test_a_course_with_no_programme_default_is_refused_and_left_as_it_was(http, key, reason, said):
+    sc = _six_courses()
+    before = ScenarioSectionBudget.objects.get(scenario=sc, course_key=key).meeting_pattern
+
+    response = _use_default(http, sc, key, use_programme_default=True)
+
+    assert response.status_code == 409, response.content
+    error = response.json()["error"]
+    assert (error["code"], error["details"]["reason"]) == ("PROGRAMME_DEFAULT_UNAVAILABLE", reason)
+    assert said in error["message"]
+    assert error["details"]["programme_meeting_pattern"]["status"] == reason
+    assert ScenarioSectionBudget.objects.get(scenario=sc, course_key=key).meeting_pattern == before
+    assert _pattern_audits() == []
+
+
+def test_a_stale_page_never_saves_a_value_the_programmes_no_longer_hold(http):
+    """WS-4: a tab drew STAT103 as differing from 2 x 100; Section Planning changed it since."""
+    sc = _six_courses()
+    stat = ScenarioSectionBudget.objects.get(scenario=sc, course_key=STAT)
+
+    # Both programmes now say standard: the page's 2 x 100 is refused, and why.
+    ProgrammeRequirement.objects.filter(course_code="STAT103").update(meeting_pattern="standard")
+    changed = _use_default(
+        http, sc, STAT, use_programme_default=True, expected_meeting_pattern="2x100"
+    )
+    assert changed.status_code == 409, changed.content
+    error = changed.json()["error"]
+    assert error["code"] == "PROGRAMME_DEFAULT_CHANGED"
+    assert (error["details"]["expected"], error["details"]["meeting_pattern"]) == ("2x100", "")
+
+    # Now they differ: there is nothing to use.
+    ProgrammeRequirement.objects.filter(program="AI2", course_code="STAT103").update(
+        meeting_pattern="2x100"
+    )
+    differ = _use_default(
+        http, sc, STAT, use_programme_default=True, expected_meeting_pattern="2x100"
+    )
+    assert differ.status_code == 409, differ.content
+    assert differ.json()["error"]["code"] == "PROGRAMME_DEFAULT_UNAVAILABLE"
+    stat.refresh_from_db()
+    assert stat.meeting_pattern == ""
+    assert _pattern_audits() == []
+
+
+def test_the_programmes_value_is_checked_as_an_explicit_one(http):
+    sc = _six_courses()
+
+    # AI2 set ENG101 to 2 x 100, but its fixed English bundle wins.
+    response = _use_default(http, sc, ENGLISH, use_programme_default=True)
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"]["code"] == "VALIDATION_MEETING_PATTERN"
+    assert ScenarioSectionBudget.objects.get(scenario=sc, course_key=ENGLISH).meeting_pattern == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"use_programme_default": True, "meeting_pattern": "2x100"},
+        {"use_programme_default": True, "meeting_pattern": ""},
+        {"use_programme_default": "yes"},
+        {"use_programme_default": 1},
+        {"use_programme_default": False},
+        {"meeting_pattern": "2x100", "expected_meeting_pattern": "2x100"},
+        {"use_programme_default": True, "expected_meeting_pattern": "3x50"},
+    ],
+)
+def test_a_body_that_mixes_or_misnames_the_modes_is_refused(http, payload):
+    sc = _six_courses()
+
+    response = _use_default(http, sc, STAT, **payload)
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"]["code"] == "VALIDATION_MEETING_PATTERN"
+    assert ScenarioSectionBudget.objects.get(scenario=sc, course_key=STAT).meeting_pattern == ""
+    assert _pattern_audits() == []
+
+
 # ── Generate hands the scheduler the budget's weekly meetings ──────────────
 
 

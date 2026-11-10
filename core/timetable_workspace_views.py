@@ -1098,13 +1098,23 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
     listed: it is placed by its number of meetings, as long as the windows are,
     whatever its shape (``course_meeting_shape_mismatches``). Not undoable, like
     Add course: set the old value to go back. The answer's rows carry the
-    programmes' decision for each course, as the budget's do, so the dialog's
-    "Use programme default" (which posts that value here) can tell it is done.
+    programmes' decision for each course, as the budget's do.
+
+    ``{"course_key", "use_programme_default": true, "expected_meeting_pattern"}``
+    instead saves what the scenario's programmes decide for the course NOW,
+    read on this request ("Use programme default(s)"), never a value the page
+    read earlier: 409 ``PROGRAMME_DEFAULT_UNAVAILABLE`` when they decide none
+    (they differ, none set it, or two courses are behind the code:
+    ``details.reason``), 409 ``PROGRAMME_DEFAULT_CHANGED`` when it is not the
+    ``expected_meeting_pattern`` the page showed (optional); the value is then
+    checked as an explicit one. Its audit and answer add
+    ``meeting_pattern_source: "programmes"``; an explicit post's are as before.
 
     400 ``SCENARIO_PUBLISHED`` for a published scenario; 404 ``NOT_FOUND`` for a
     course the scenario's budget does not have; 400
     ``VALIDATION_MEETING_PATTERN`` for a value that is not a shape, or a shape
-    the course's credit hours do not fit, with the reason.
+    the course's credit hours do not fit, with the reason, and for a body that
+    sends both modes (or neither).
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -1142,14 +1152,37 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
             code="NOT_FOUND",
             status=404,
         )
-    if "meeting_pattern" not in payload:
+    use_default = payload.get("use_programme_default", False)
+    if not isinstance(use_default, bool):
+        return _err(
+            "use_programme_default must be true or false.", code="VALIDATION_MEETING_PATTERN"
+        )
+    if use_default and "meeting_pattern" in payload:
+        return _err(
+            "Send meeting_pattern or use_programme_default, not both.",
+            code="VALIDATION_MEETING_PATTERN",
+        )
+    if not use_default and "expected_meeting_pattern" in payload:
+        return _err(
+            "expected_meeting_pattern goes with use_programme_default.",
+            code="VALIDATION_MEETING_PATTERN",
+        )
+    if not use_default and "meeting_pattern" not in payload:
         return _err(
             'meeting_pattern is required ("" for the credit default).',
             code="VALIDATION_MEETING_PATTERN",
         )
+    if use_default:
+        wanted, refused = _programme_default_pattern(
+            scenario, budget, payload.get("expected_meeting_pattern")
+        )
+        if refused is not None:
+            return refused
+    else:
+        wanted = payload.get("meeting_pattern")
     try:
         value = validate_budget_meeting_pattern(
-            payload.get("meeting_pattern"),
+            wanted,
             credit_hours=budget.credit_hours,
             course_code=budget.course_code,
             course_key=key,
@@ -1163,28 +1196,95 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
         budget.save(update_fields=["meeting_pattern"])
     rows = compute_scenario_budget(scenario_id, department_for=scenario)
     mismatched = course_meeting_shape_mismatches(scenario_id, key, rows)
+    details: dict[str, object] = {
+        "scenario_id": scenario_id,
+        "course_key": key,
+        "old": previous,
+        "new": value,
+        "mismatched": len(mismatched),
+    }
+    answer: dict[str, object] = {
+        "course_key": key,
+        "meeting_pattern": value,
+        "previous": previous,
+        "changed": value != previous,
+        "budget": rows,
+        "mismatched_sections": mismatched,
+    }
+    # Only the programmes' value is named: an explicit choice is audited and
+    # answered exactly as before.
+    if use_default:
+        details["meeting_pattern_source"] = "programmes"
+        answer["meeting_pattern_source"] = "programmes"
     log_audit_event(
         request,
         action="tw.scenario.budget.meeting_pattern",
         status="success",
-        details={
-            "scenario_id": scenario_id,
-            "course_key": key,
-            "old": previous,
-            "new": value,
-            "mismatched": len(mismatched),
-        },
+        details=details,
     )
-    return _ok(
-        {
-            "course_key": key,
-            "meeting_pattern": value,
-            "previous": previous,
-            "changed": value != previous,
-            "budget": rows,
-            "mismatched_sections": mismatched,
-        }
-    )
+    return _ok(answer)
+
+
+#: Why a course has no programme default to use, by the programmes' decision
+#: (409 ``PROGRAMME_DEFAULT_UNAVAILABLE``; ``details.reason`` is the status).
+_NO_PROGRAMME_DEFAULT = {
+    "mixed": "{code}'s programmes differ on its weekly meetings, so there is no programme default to use.",
+    "none": "No programme of this scenario has set {code}'s weekly meetings.",
+    "ambiguous": (
+        "{code} names two courses in this scenario's programmes, so its programme default "
+        "cannot be told; open the course by its name."
+    ),
+}
+
+
+def _programme_default_pattern(
+    scenario: TimetableScenario, budget: ScenarioSectionBudget, expected: object
+) -> tuple[str, JsonResponse | None]:
+    """The value "Use programme default" saves for a budget row: what the
+    scenario's programmes decide for it NOW, read on this request.
+
+    ``("", refusal)`` when there is none to use - 409
+    ``PROGRAMME_DEFAULT_UNAVAILABLE`` (``details.reason``: ``mixed``, ``none``
+    or ``ambiguous``) - or when the page showed another one (``expected``, the
+    value it would have saved): 409 ``PROGRAMME_DEFAULT_CHANGED``; both carry
+    the decision as the budget rows do (``programme_meeting_pattern``). A
+    value that is not a pattern at all is 400 ``VALIDATION_MEETING_PATTERN``.
+    The value found is then checked as an explicit choice is.
+    """
+    from core.services.programme_meeting_patterns import decision_block
+    from core.services.timetable_meeting_shape import AGREE, PROGRAMME_NOT_SET, budget_form
+
+    row_key = budget.course_key or budget.course_code
+    decision = resolve_for_keys([row_key], scenario_programmes(scenario))[row_key]
+    block = decision_block(decision, budget.credit_hours)
+    code = budget.course_code or row_key
+    if decision.status != AGREE or decision.meeting_pattern == PROGRAMME_NOT_SET:
+        template = _NO_PROGRAMME_DEFAULT.get(decision.status, _NO_PROGRAMME_DEFAULT["none"])
+        return "", _err(
+            template.format(code=code),
+            code="PROGRAMME_DEFAULT_UNAVAILABLE",
+            status=409,
+            details={"reason": decision.status, "programme_meeting_pattern": block},
+        )
+    value = budget_form(decision.meeting_pattern)
+    if expected is not None:
+        try:
+            shown = normalise_meeting_pattern(expected)
+        except ValueError as exc:
+            return "", _err(str(exc), code="VALIDATION_MEETING_PATTERN")
+        if shown != value:
+            return "", _err(
+                f"{code}'s programme default has changed since the page was drawn; "
+                "it was not saved. Read the list again.",
+                code="PROGRAMME_DEFAULT_CHANGED",
+                status=409,
+                details={
+                    "expected": shown,
+                    "meeting_pattern": value,
+                    "programme_meeting_pattern": block,
+                },
+            )
+    return value, None
 
 
 @login_required(login_url="login")

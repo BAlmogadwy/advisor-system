@@ -1764,6 +1764,7 @@ async function createBoardPrompt() {
    "+ Course / section" or, on a course (`courseKey`), from the weekly-meetings
    line over the list. */
 function openCourseEditor(courseKey = '') {
+  const scenarioId = TW.scenarioId;
   TimetableCourseEditor.open({
     scenarioId: TW.scenarioId, published: TW.scenario?.status === 'published',
     budget: TW.sectionBudget || [], arabic: IS_AR, courseKey,
@@ -1771,10 +1772,19 @@ function openCourseEditor(courseKey = '') {
     // goes back to the same course there, else to the list.
     returnFocus: () => TimetableCourseEditor.focusSummary($('twMeetingSummary'), { key: courseKey, fallback: $('twSectionList') }),
     // The editor is a modal dialog, over every toast: a refusal it asks to
-    // hear (its weekly-meetings save) is handed to it in the server's words.
+    // hear (its weekly-meetings save) is handed to it in the server's words,
+    // with the server's error (its code says why a programme default was not
+    // used, in the page's words).
     request: (url, opts, onError) => twFetch(url, onError
-      ? { ...opts, _onError: body => { onError(body?.error?.message || ''); return true; } }
+      ? { ...opts, _onError: body => { onError(body?.error?.message || '', body?.error || null); return true; } }
       : opts),
+    // A programme default gone or changed since the list was read: the list
+    // is read again, and the dialog shows its course as read now (never
+    // another scenario's rows).
+    reread: async () => {
+      await loadBudget();
+      return TW.scenarioId === scenarioId ? TW.sectionBudget || [] : null;
+    },
     onSaved: async (_budget, change) => {
       await loadBudget();
       // A weekly-meetings save is said on the dialog's own status line.
@@ -1806,11 +1816,15 @@ function renderMeetingSummary() {
 }
 
 /* "Use programme defaults (N)": each course that differs from what its
-   programmes agreed on is set to that value with its own weekly-meetings
-   save (POST …/budget/meeting-pattern/), one after another, as one
-   operation of the page, so nothing else writes meanwhile. The first refusal
-   stops it and is said, with the course and the server's words; the courses
-   before it stay saved. The list is read again either way. */
+   programmes agreed on is set, one after another, as one operation of the
+   page so nothing else writes meanwhile, to what its programmes decide NOW:
+   the server reads them for each save (POST …/budget/meeting-pattern/ with
+   use_programme_default) and refuses one that is gone or no longer the
+   value shown. The first refusal stops it and is said, with the course and
+   why (the page's words for a programme default gone or changed, else the
+   server's); the courses before it stay saved. The list is read again
+   either way. Placed sections a saved course left meeting the old way are
+   named, as one course's own save names them, and make it a warning. */
 async function applyProgrammeDefaults(rows) {
   const token = beginWorkspaceOperation('programme-defaults');
   if (!token) return;
@@ -1818,24 +1832,27 @@ async function applyProgrammeDefaults(rows) {
   const editor = globalThis.TimetableCourseEditor;
   let saved = 0;
   let stopped = null;
+  const left = [];
   try {
     for (const row of rows) {
       let refusal = '';
+      let error = null;
       const result = await twFetch(`/ops/tw/scenarios/${scenarioId}/budget/meeting-pattern/`, {
         _workspaceToken: token, method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ course_key: row.course_key, meeting_pattern: editor.programmeValue(row) }),
-        _onError: body => { refusal = body?.error?.message || ''; return true; },
+        body: JSON.stringify(editor.programmeDefaultBody(row)),
+        _onError: body => { refusal = body?.error?.message || ''; error = body?.error || null; return true; },
       });
-      if (!result?.ok) { stopped = { row, refusal }; break; }
+      if (!result?.ok) { stopped = { row, refusal, error }; break; }
       saved++;
+      if (Array.isArray(result.mismatched_sections)) left.push(...result.mismatched_sections);
     }
   } finally {
     finishWorkspaceOperation(token);
   }
   if (TW.scenarioId !== scenarioId) return;
   await loadBudget();
-  const said = editor.programmeDefaultsWords({ saved, total: rows.length, stopped, arabic: IS_AR });
-  if (stopped) notify.warning(said); else notify.success(said);
+  const said = editor.programmeDefaultsWords({ saved, total: rows.length, stopped, left, arabic: IS_AR });
+  if (stopped || left.length) notify.warning(said); else notify.success(said);
   // The button is gone, or was turned off under the keyboard while it ran.
   if (!document.activeElement || document.activeElement === document.body) {
     editor.focusSummary($('twMeetingSummary'), { key: '', fallback: $('twSectionList') });

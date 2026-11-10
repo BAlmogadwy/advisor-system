@@ -6,8 +6,9 @@ classic Timetable Workspace page against the real server: when a course of the
 scenario differs from what its programmes agreed on, the line over the course
 list says so and the course carries a chip; the course in the line opens the
 Add course / section dialog on it, which names the programmes' default; and
-"Use programme defaults" saves it through the weekly-meetings endpoint, after
-which the line says the course meets its programmes' default.
+"Use programme defaults" saves it through the weekly-meetings endpoint (the
+server reads the programmes' value as it is then), after which the line says
+the course meets its programmes' default.
 
 The fixture (``WorkspaceBrowserMixin``): scenario of programme AI; AI222
 (AI's "Search", 3 credits) has S1 placed MON/WED 13:00-14:15 and S2 still to
@@ -74,7 +75,18 @@ class ProgrammeMeetingPatternBrowserTests(WorkspaceBrowserMixin, StaticLiveServe
         saves = [
             json.loads(body) for url, body in posts if url.endswith("/budget/meeting-pattern/")
         ]
-        self.assertEqual(saves, [{"course_key": AI222, "meeting_pattern": "2x100"}])
+        # The server is asked for what the programmes decide now, naming the
+        # value the line showed; it never posts a value read earlier.
+        self.assertEqual(
+            saves,
+            [
+                {
+                    "course_key": AI222,
+                    "use_programme_default": True,
+                    "expected_meeting_pattern": "2x100",
+                }
+            ],
+        )
         self.assertEqual(
             ScenarioSectionBudget.objects.get(
                 scenario=self.scenario, course_key=AI222
