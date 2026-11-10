@@ -32,7 +32,7 @@ def test_exact_identity_selects_the_two_complete_patterns(code, key, number):
 @pytest.mark.parametrize("code", ["ENGL103", "ENG103", "ENG1010", "ENG102A", "AI221"])
 def test_other_courses_keep_the_ordinary_credit_pattern(code):
     assert get_course_meeting_policy(code) is None
-    assert get_meeting_pattern(4, code) == [75, 75, 100]
+    assert get_meeting_pattern(4, code, meeting_pattern="") == [75, 75, 100]
 
 
 def test_validator_rejects_mixed_partial_extra_and_shifted_patterns():
@@ -54,6 +54,7 @@ def test_blocked_overlap_excludes_whole_bundle_even_inside_a_regular_grid_break(
         blocked_slots=[
             {"day": "MON", "start": "10:20", "end": "10:25"},
         ],
+        meeting_pattern="",
     )
     assert len(options) == 1
     assert {m["start"] for m in options[0]} == {"13:00"}
@@ -65,6 +66,7 @@ def test_blocked_overlap_excludes_whole_bundle_even_inside_a_regular_grid_break(
                 {"day": "MON", "start": "10:20", "end": "10:25"},
                 {"day": "THU", "start": "15:55", "end": "16:00"},
             ],
+            meeting_pattern="",
         )
         == []
     )
@@ -77,6 +79,7 @@ def test_blocked_overlap_excludes_whole_bundle_even_inside_a_regular_grid_break(
                     {"day": "TUE", "start": "09:00", "end": "16:00"},
                     {"day": "SUN", "start": "12:00", "end": "13:00"},
                 ],
+                meeting_pattern="",
             )
         )
         == 2

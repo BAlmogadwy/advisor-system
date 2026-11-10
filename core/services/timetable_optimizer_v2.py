@@ -66,6 +66,7 @@ from core.services.timetable_flags import (
     is_section_programme_preference_enabled,
     is_tiered_objective_enabled,
 )
+from core.services.timetable_meeting_shape import shape_for
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_optimisation_policy import (
     DayOffAnchor,
@@ -409,10 +410,20 @@ def build_section_states_for_scenario(
         # Determine room type from majority of meeting durations.
         # 4-credit courses have mixed meetings (2×75min + 1×100min) —
         # majority are lectures so they get a lecture room. Pure lab
-        # courses (all meetings >80min) get lab rooms.
+        # courses (all meetings >80min) get lab rooms. A configured weekly
+        # shape (2 x 100 min) is taught in a lecture room, whatever its lengths.
         has_lab = budget and budget.credit_hours == 4 and not policy
+        configured_shape = (
+            budget is not None
+            and policy is None
+            and shape_for(budget.meeting_pattern, budget.credit_hours) is not None
+        )
         lecture_meetings = sum(1 for m in meetings if (m.end_min - m.start_min) <= 80)
-        room_type = "lecture" if policy or lecture_meetings >= len(meetings) / 2 else "lab"
+        room_type = (
+            "lecture"
+            if policy or configured_shape or lecture_meetings >= len(meetings) / 2
+            else "lab"
+        )
 
         # Compute pattern family and ID for local search
         pattern_family = (
@@ -1132,13 +1143,16 @@ def _build_pattern_catalog_for_scenario(scenario_id: int) -> dict[str, list]:
     course_requirements = []
     for b in budgets:
         policy = get_course_meeting_policy(b.course_code, b.course_key)
-        durations = get_meeting_pattern(b.credit_hours, b.course_key or b.course_code)
+        durations = get_meeting_pattern(
+            b.credit_hours, b.course_key or b.course_code, meeting_pattern=b.meeting_pattern
+        )
         course_requirements.append(
             {
                 "durations": durations,
                 "course_code": b.course_code,
                 "course_key": b.course_key,
                 "credit_hours": b.credit_hours,
+                "meeting_pattern": b.meeting_pattern,
                 "has_lab": b.credit_hours == 4 and not policy,
                 "modality": "ONCAMPUS",
                 "allow_permutations": b.credit_hours == 4 and not policy,

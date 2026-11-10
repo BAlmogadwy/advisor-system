@@ -111,6 +111,7 @@ from core.services.timetable_graph_twin import (
     neo4j_status,
     sync_scenario_graph_to_neo4j,
 )
+from core.services.timetable_meeting_shape import normalise_meeting_pattern
 from core.services.timetable_move_outcome import preview_placement_student_outcome_candidates
 from core.services.timetable_mutation_guard import (
     ScenarioPlannerBusy,
@@ -165,6 +166,7 @@ from core.services.timetable_slot_config import (
 )
 from core.services.timetable_student_blockers import build_scenario_student_blockers
 from core.services.timetable_workspace import (
+    MeetingShapeMismatch,
     SectionLabelInUse,
     apply_bulk_clean_room_assignments,
     apply_bulk_safe_time_moves,
@@ -176,6 +178,7 @@ from core.services.timetable_workspace import (
     compute_board_summary,
     compute_scenario_budget,
     compute_scenario_safety_summary,
+    course_meeting_shape_mismatches,
     create_planned_section_placements,
     detect_board_conflicts,
     detect_cross_board_conflicts,
@@ -187,6 +190,7 @@ from core.services.timetable_workspace import (
     preview_placement_student_evidence,
     preview_planned_section_slot_candidates,
     summarize_cross_board_conflict_impact,
+    validate_budget_meeting_pattern,
     validate_placement,
 )
 from core.settings_views import load_defaults
@@ -915,6 +919,15 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
     """Return the section budget consumption table for a scenario.
 
     Shows planned vs used vs remaining sections and total demand per course.
+
+    POST adds sections to a course (Add course). A NEW course may name its
+    weekly ``meeting_pattern`` (``""`` the credit default, ``"2x100"`` two
+    100-minute meetings; checked against the posted credit hours) and is stored
+    with it. A course already in the budget keeps its own: the same value (or
+    none) is accepted as before, a different one is refused with
+    ``VALIDATION_BUDGET`` - never dropped in silence - because a pattern is
+    changed with the course's weekly-meetings control
+    (``tw_scenario_budget_meeting_pattern_view``).
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -932,6 +945,8 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
             return err
         key = str(payload.get("course_key") or payload.get("course_code") or "").strip().upper()
         existing = ScenarioSectionBudget.objects.filter(scenario=scenario, course_key=key).first()
+        # JSON null reads as left out, as for the other optional fields.
+        posted_pattern = payload.get("meeting_pattern")
         try:
             count = int(str(payload.get("sections", 1)))
             if not 1 <= count <= 100:
@@ -948,6 +963,20 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
                     raise ValueError("Enter a course code, 1–12 credit hours and capacity 1–1000.")
                 if programme_term is not None and not 1 <= programme_term <= 20:
                     raise ValueError("Programme term must be between 1 and 20.")
+                meeting_pattern = (
+                    validate_budget_meeting_pattern(
+                        posted_pattern, credit_hours=hours, course_code=code, course_key=key
+                    )
+                    if posted_pattern is not None
+                    else ""
+                )
+            elif (
+                posted_pattern is not None
+                and normalise_meeting_pattern(posted_pattern) != existing.meeting_pattern
+            ):
+                raise ValueError(
+                    "Change the weekly meetings with the course's weekly-meetings control."
+                )
         except (TypeError, ValueError) as exc:
             return _err(str(exc), code="VALIDATION_BUDGET")
         if existing:
@@ -961,6 +990,7 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
             )
             existing.planned_sections = max(existing.planned_sections, used) + count
             existing.save(update_fields=["planned_sections"])
+            meeting_pattern = existing.meeting_pattern
         else:
             ScenarioSectionBudget.objects.create(
                 scenario=scenario,
@@ -971,15 +1001,126 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
                 max_per_section=capacity,
                 programme_term=programme_term,
                 planned_sections=count,
+                meeting_pattern=meeting_pattern,
             )
         log_audit_event(
             request,
             action="tw.scenario.budget.add",
             status="success",
-            details={"scenario_id": scenario_id, "course_key": key, "sections": count},
+            details={
+                "scenario_id": scenario_id,
+                "course_key": key,
+                "sections": count,
+                "meeting_pattern": meeting_pattern,
+            },
         )
     budget = compute_scenario_budget(scenario_id)
     return _ok({"budget": budget})
+
+
+@login_required(login_url="login")
+@require_POST
+@guard_manual_scenario_write
+def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Set the weekly shape one course of the scenario is taught in.
+
+    ``{"course_key", "meeting_pattern"}``: ``""`` is the credit default and
+    ``"2x100"`` two 100-minute meetings a week in a lecture room, for a 3-credit
+    course only (``timetable_meeting_shape``). It writes the scenario's budget
+    row, which every engine of the scenario reads, and moves no placement: a
+    placed section that is now another shape keeps its times (owner rule: shown,
+    never moved) and is listed in ``mismatched_sections`` - with whether a lock
+    or another scenario keeps its times - and, while the course is set to a
+    shape, warned about by Check until it is re-placed. A section of a course
+    online for its board whose meetings all sit in online-only windows is not
+    listed: it is placed by its number of meetings, as long as the windows are,
+    whatever its shape (``course_meeting_shape_mismatches``). Not undoable, like
+    Add course: set the old value to go back.
+
+    400 ``SCENARIO_PUBLISHED`` for a published scenario; 404 ``NOT_FOUND`` for a
+    course the scenario's budget does not have; 400
+    ``VALIDATION_MEETING_PATTERN`` for a value that is not a shape, or a shape
+    the course's credit hours do not fit, with the reason.
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        scenario = TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    if scenario.status == "published":
+        return _err("Cannot modify published scenario.", code="SCENARIO_PUBLISHED")
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    key = str(payload.get("course_key") or "").strip().upper()
+    budget = (
+        ScenarioSectionBudget.objects.filter(scenario=scenario, course_key=key).first()
+        if key
+        else None
+    )
+    if budget is None and key:
+        # The row compute_scenario_budget names by its code: one stored without
+        # a course_key (bulk-created rows skip the model's save()).
+        from django.db.models import Q
+
+        budget = (
+            ScenarioSectionBudget.objects.filter(scenario=scenario, course_code=key)
+            .filter(Q(course_key__isnull=True) | Q(course_key=""))
+            .order_by("pk")
+            .first()
+        )
+    if budget is None:
+        return _err(
+            f"{key or 'This course'} is not in this scenario's section budget.",
+            code="NOT_FOUND",
+            status=404,
+        )
+    if "meeting_pattern" not in payload:
+        return _err(
+            'meeting_pattern is required ("" for the credit default).',
+            code="VALIDATION_MEETING_PATTERN",
+        )
+    try:
+        value = validate_budget_meeting_pattern(
+            payload.get("meeting_pattern"),
+            credit_hours=budget.credit_hours,
+            course_code=budget.course_code,
+            course_key=key,
+        )
+    except ValueError as exc:
+        return _err(str(exc), code="VALIDATION_MEETING_PATTERN")
+
+    previous = budget.meeting_pattern
+    if value != previous:
+        budget.meeting_pattern = value
+        budget.save(update_fields=["meeting_pattern"])
+    rows = compute_scenario_budget(scenario_id)
+    mismatched = course_meeting_shape_mismatches(scenario_id, key, rows)
+    log_audit_event(
+        request,
+        action="tw.scenario.budget.meeting_pattern",
+        status="success",
+        details={
+            "scenario_id": scenario_id,
+            "course_key": key,
+            "old": previous,
+            "new": value,
+            "mismatched": len(mismatched),
+        },
+    )
+    return _ok(
+        {
+            "course_key": key,
+            "meeting_pattern": value,
+            "previous": previous,
+            "changed": value != previous,
+            "budget": rows,
+            "mismatched_sections": mismatched,
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -2114,6 +2255,15 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
 
     A label already placed in the scenario is refused with 409
     ``SECTION_LABEL_IN_USE`` and ``details`` ``{course_code, label, next_free}``.
+    Meetings that are not the weekly shape the scenario teaches the course in
+    (two 75-minute meetings where it meets 2 x 100 min) are refused with 400
+    ``FULL_SECTION_PATTERN_REQUIRED``, a message naming the shape, and
+    ``details`` ``{course_code, meeting_pattern, expected_durations,
+    placed_minutes}``. On that code the classic Place dialog says the shape
+    the details name and reads the course's patterns again; the split page
+    warns with the message (in Arabic, the shape's minutes from the details),
+    reads its section budget again and starts the section being placed again
+    from its course's row, so its targets are the course's shape now.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -2161,6 +2311,20 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
         return _err("Board not found", code="NOT_FOUND", status=404)
     except SectionLabelInUse as exc:
         return _section_label_in_use(exc)
+    except MeetingShapeMismatch as exc:
+        # By its type, never by its wording (the other refusals below are
+        # still read from theirs).
+        return _err(
+            str(exc),
+            code="FULL_SECTION_PATTERN_REQUIRED",
+            status=400,
+            details={
+                "course_code": exc.course_code,
+                "meeting_pattern": exc.shape.shape_id,
+                "expected_durations": list(exc.shape.durations),
+                "placed_minutes": exc.placed_minutes,
+            },
+        )
     except ValueError as exc:
         message = str(exc)
         code = (

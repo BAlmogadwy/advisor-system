@@ -17,7 +17,7 @@ old SA `timetable_local_search`, and the catalog-driven LS-v2 / chain.
 | Constraint | Type | Source of truth | Enforced in | Flag | Default |
 |---|---|---|---|---|---|
 | One meeting per day per section | hard | meeting-pattern enumeration | greedy option-gen; CP-SAT all-different-days; SA/load-balanced/polisher domains | — | always |
-| Credit-hour meeting patterns (3cr→2×75, 4cr→2×75+100, 2cr→1×100, 1cr→1×75) | hard | `get_meeting_pattern` (`timetable_autoplace.py`) | all stages | — | always |
+| Weekly meeting pattern: credit default (3cr→2×75, 4cr→2×75+100, 2cr→1×100, 1cr→1×75), unless the scenario sets a 3-credit course to **2×100** (two 100-minute meetings on two days, in the 100-minute columns, in a **lecture** room); ENG101/ENG102 keep their fixed bundles | hard | `ScenarioSectionBudget.meeting_pattern` → `get_meeting_pattern(..., meeting_pattern=)` (`timetable_autoplace.py`; shapes in `timetable_meeting_shape.py`) | all stages (greedy, one-teacher guard, CP-SAT both builders, V2 catalog; movers keep placed lengths) | — (`""` = default) | always |
 | Same-course sections never overlap (instructor double-booking) | hard | bitmask overlap | greedy hard-filter; CP-SAT/SA/load-balanced/polisher; **polisher also HARD vs fixed/locked siblings** | — | always |
 | Real instructor clash (same named instructor, overlapping times) | hard | `TermSectionMeeting.instructor` | greedy scoring-loop filter | `TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED` | true |
 | **Blocked slots** (`scenario.blocked_slots` = `[{day,start}]`) — a true slot-domain exclusion | hard | `TimetableScenario.blocked_slots`; set via `blocked_slot_keys()` (`timetable_validation.py`) | **all stages, by construction** (greedy enumerator, CP-SAT slot build, SA/load-balanced `valid_options`, polisher slot build) | — | always (no-op when empty) |
@@ -43,7 +43,8 @@ in different rooms with disjoint students, so locks are enforced as
 ## Room feasibility (rooming pass, PR2 oracle)
 
 Checked in order, most-specific reason wins (`timetable_room_oracle.py`): **type**
-(labs need lab rooms; "is lab" = duration ≥ 80 on a 4-credit course) → **gender**
+(labs need lab rooms; "is lab" = duration ≥ 80 on a 4-credit course, so a 3-credit
+2×100 course's 100-minute meetings are lectures in lecture rooms) → **gender**
 → **capacity** → **capacity buffer** (`demand × TIMETABLE_CAPACITY_BUFFER`, default
 1.1) → **occupancy**. Gated by `TIMETABLE_PR2_ROOM_ORACLE_ENABLED` (true). Soft
 room-stability preference keeps a section in the same room across its meetings.

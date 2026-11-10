@@ -61,6 +61,7 @@ def build_canonical_pattern_catalog(
                 lab_slot_config,
                 blocked_slots,
                 course_key=req.get("course_key", ""),
+                meeting_pattern=req.get("meeting_pattern", ""),
             ):
                 meetings = [
                     SectionMeeting(
@@ -134,11 +135,3 @@ def build_canonical_pattern_catalog(
                 )
         catalog[family_key] = list(seen_signatures.values())
     return catalog
-
-
-def get_meeting_pattern_variants(credit_hours: int) -> list[list[int]]:
-    if credit_hours == 4:
-        return [[100, 75, 75], [75, 100, 75], [75, 75, 100]]
-    from core.services.timetable_autoplace import get_meeting_pattern
-
-    return [list(get_meeting_pattern(credit_hours))]

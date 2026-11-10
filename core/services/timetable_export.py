@@ -44,9 +44,11 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
+from core.services.natural_order import natural_key
 from core.services.timetable_autoplace import DEFAULT_SLOTS, get_meeting_pattern
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_meeting_shape import shape_for, shape_label
 from core.services.timetable_slot_config import effective_lab_slots
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
 
@@ -988,11 +990,14 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     budget = compute_scenario_budget(scenario_id)
     for b in budget:
         cr = b.get("credit_hours", 3)
-        meetings = len(get_meeting_pattern(cr))
+        meetings = len(get_meeting_pattern(cr, meeting_pattern=b.get("meeting_pattern", "")))
+        # A configured weekly shape is named with its lengths ("2 × 100 min"): its
+        # count alone would read as the credit default's 2 x 75. Others keep "2x".
+        shape = b.get("meeting_pattern_label") or shape_label(b.get("meeting_pattern", ""), cr)
         ws_sum.cell(row=row, column=1, value=b["course_code"]).border = thin_border
         ws_sum.cell(row=row, column=2, value=b.get("programme_term")).border = thin_border
         ws_sum.cell(row=row, column=3, value=cr).border = thin_border
-        ws_sum.cell(row=row, column=4, value=f"{meetings}x").border = thin_border
+        ws_sum.cell(row=row, column=4, value=shape or f"{meetings}x").border = thin_border
         ws_sum.cell(row=row, column=5, value=b["planned_sections"]).border = thin_border
         ws_sum.cell(row=row, column=6, value=b["used_sections"]).border = thin_border
         rem_cell = ws_sum.cell(row=row, column=7, value=b["remaining_sections"])
@@ -1001,6 +1006,16 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             rem_cell.fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
         ws_sum.cell(row=row, column=8, value=b["total_demand"]).border = thin_border
         row += 1
+
+    # The courses taught in a weekly shape of their own (two 100-minute
+    # meetings), keyed as a placement's section is (course_key or code): their
+    # lectures sit in lecture rooms at 100-minute column times, which a lecture
+    # room's table may draw no column for (the Rooms sheet below lists them).
+    shaped_course_keys = {
+        b["course_key"]
+        for b in budget
+        if shape_for(b.get("meeting_pattern", ""), b.get("credit_hours")) is not None
+    }
 
     # Outer border for budget table
     budget_hdr_row = row - len(budget) - 1  # header row of budget table
@@ -1117,8 +1132,13 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 )
             current_row = 3
 
-            def _write_room_table(ws, row_start, room_code, grid_data, slots, info):
-                """Write one room table block. Returns next row after the block."""
+            def _write_room_table(ws, row_start, room_code, grid_data, slots, info, off_columns=()):
+                """Write one room table block. Returns next row after the block.
+
+                ``off_columns`` are meetings held in this room that start where
+                no column of ``slots`` starts, as "CODE SECTION Day HH:MM-HH:MM":
+                listed in one note row under the table, never dropped.
+                """
                 r_obj = info.get(room_code)
                 cap = r_obj.capacity if r_obj else "?"
                 rtype = r_obj.room_type if r_obj else "lecture"
@@ -1188,7 +1208,62 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     )
                     row += 1
 
+                if off_columns:
+                    # As the board sheets' off-grid note: the room is in use
+                    # then, so the table alone would read as free.
+                    ws.merge_cells(
+                        start_row=row, start_column=1, end_row=row, end_column=1 + len(slots)
+                    )
+                    note = ws.cell(row=row, column=1)
+                    note.value = "Also in this room, outside these time slots: " + "; ".join(
+                        off_columns
+                    )
+                    note.data_type = "s"  # a section label is data, never a formula
+                    note.font = Font(italic=True, size=8, color="C03030")
+                    note.alignment = Alignment(wrap_text=True, vertical="top")
+                    ws.row_dimensions[row].height = 13 * max(1, -(-len(note.value) // 120))
+                    row += 1
+
                 return row + 1  # gap between room tables
+
+            # A course taught in a weekly shape of its own (two 100-minute
+            # meetings) has its lectures in lecture rooms at 100-minute column
+            # times; a lecture room's table draws the lecture columns only, so
+            # such a meeting that starts at none of them (10:45 or 16:30 on the
+            # default grid) is listed under its room's table. Only those
+            # courses' meetings: every other table is exactly what it was.
+            room_day_names = dict(
+                zip(
+                    DAY_LABELS,
+                    ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"),
+                    strict=True,
+                )
+            )
+            # The cells a lecture room's table reads: (day, column start).
+            lecture_cells = {(day, slot["start"]) for day in DAY_LABELS for slot in lec_slot_list}
+            off_lecture_columns: dict[str, list[str]] = defaultdict(list)
+            for p in sorted(
+                (
+                    p
+                    for p in all_board_placements
+                    if (p.term_section.course_key or p.term_section.course_code)
+                    in shaped_course_keys
+                    and (p.day, p.start_time) not in lecture_cells
+                ),
+                key=lambda p: (
+                    DAY_LABELS.index(p.day) if p.day in DAY_LABELS else len(DAY_LABELS),
+                    str(p.day),
+                    str(p.start_time),
+                    str(p.term_section.course_code),
+                    natural_key(p.term_section.section),
+                ),
+            ):
+                text = (
+                    f"{p.term_section.course_code} {p.term_section.section} "
+                    f"{room_day_names.get(p.day, p.day)} {p.start_time}-{p.end_time}"
+                )
+                if text not in off_lecture_columns[p.room]:
+                    off_lecture_columns[p.room].append(text)
 
             # Write lecture room tables (using lecture slots only)
             for room_code in lecture_rooms:
@@ -1199,6 +1274,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     room_grid.get(room_code, {}),
                     lec_slot_list,
                     room_info,
+                    off_lecture_columns.get(room_code, ()),
                 )
 
             # Lab rooms section

@@ -61,13 +61,45 @@ function serverRefusalWords(error) {
 /* Says such a refusal (a warning: a rule refused the write, nothing failed).
    A label in use reads the budget again, so the list counts it. True when it
    spoke: api() then tells a caller that asked (`_worded`), so the caller does
-   not say its own "failed" over it. */
+   not say its own "failed" over it.
+
+   A create of a section in a weekly shape its course is no longer taught in
+   (FULL_SECTION_PATTERN_REQUIRED: the course's weekly meetings were changed,
+   here or in another tab, after its targets were read) is said here too,
+   never in serverRefusalWords, which stays classic's copy: classic says it
+   in its Place dialog, which reads the patterns again. Here the budget is
+   read again and the section being placed, if any, starts again from its
+   course's row, so its targets are the shape it is taught in now. */
 function sayServerRefusal(body) {
+  if (body?.error?.code === 'FULL_SECTION_PATTERN_REQUIRED') {
+    notify.warning(shapeRefusalWords(body.error));
+    const assist = S.createAssist.active ? S.createAssist.requestToken : null;
+    loadSidebarBudget().then(() => {
+      // Only the placing it refused: not one ended or started meanwhile.
+      if (assist !== null && S.createAssist.active && S.createAssist.requestToken === assist) restartCreateSectionAssist();
+    });
+    return true;
+  }
   const words = serverRefusalWords(body?.error);
   if (!words) return false;
   notify.warning(words);
   if (body.error.code === 'SECTION_LABEL_IN_USE') loadSidebarBudget();
   return true;
+}
+/* FULL_SECTION_PATTERN_REQUIRED in the page's language: in English the
+   server's words, which name the course's shape and the minutes refused
+   ("STAT103 meets 2 × 100 min a week in this scenario; …"); in Arabic the
+   shape's minutes (`details.expected_durations`) in the digits of the
+   server's shape labels, or, for a refused number of meetings, which names
+   no shape, that the section needs its whole weekly pattern. */
+function shapeRefusalWords(error) {
+  if (!IS_AR) return error.message || 'Nothing was placed: this course meets another way a week now.';
+  const { course_code: code = '', expected_durations: minutes } = error.details || {};
+  const course = code ? ltrIsolate(code) : 'هذا المقرر';
+  const lengths = (Array.isArray(minutes) ? minutes : []).map(Number).filter(n => n > 0).sort((a, b) => a - b);
+  if (!lengths.length) return `لم يُوضع شيء: يحتاج ${course} الآن إلى نمطه الأسبوعي كاملاً.`;
+  const text = lengths.length > 1 && lengths.every(n => n === lengths[0]) ? `${lengths.length} × ${lengths[0]}` : lengths.join(' + ');
+  return `لم يُوضع شيء: يجتمع ${course} في هذا السيناريو بواقع ${text.replace(/\d/g, digit => '٠١٢٣٤٥٦٧٨٩'[digit])} دقيقة أسبوعياً.`;
 }
 
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
@@ -1776,7 +1808,11 @@ function createAssistTargetLabel(candidate) {
     const pattern = meetings.map(m => `${m.day} ${m.start}`).join(', ');
     return `${pane}${board ? ` - ${board}` : ''} - Pattern ${pattern}`;
   }
-  const kind = normaliseSlotKind(candidate.kind) === 'lab' ? 'Lab' : 'Slot';
+  // A meeting that names its room type (only a course set to a weekly shape
+  // does: 2 × 100 min meets in a lecture room, in a 100-minute column of the
+  // lab grid) is tagged by it; any other by its column's kind, as before.
+  const lab = candidate.room_type ? candidate.room_type === 'lab' : normaliseSlotKind(candidate.kind) === 'lab';
+  const kind = lab ? 'Lab' : 'Slot';
   return `${pane}${board ? ` · ${board}` : ''} · ${kind} ${candidate.day} ${candidate.start}`;
 }
 
@@ -1856,7 +1892,11 @@ function renderCreateSectionSummary(targetPane, payload, highlighted, candidates
         const candidate = S.createAssist.candidates.get(btn.dataset.createTargetKey || '');
         if (!candidate) return;
         btn.disabled = true;
-        await applyCreateAssistCandidate(candidate);
+        const created = await applyCreateAssistCandidate(candidate);
+        // Nothing placed (refused, or no longer on the grid): the placing
+        // goes on, so the target is offered again, unless the targets were
+        // drawn anew meanwhile (this button is then gone).
+        if (!created && btn.isConnected) btn.disabled = false;
       });
     });
 
@@ -2167,6 +2207,22 @@ function clearCreateSectionAssist({ announce = false } = {}) {
     if (status) status.textContent = IS_AR ? 'تم إلغاء وضع الشعب' : 'Section placement mode cleared';
   }
   return wasActive;
+}
+
+/* The section being placed, started again from its course's budget row as
+   read now (SB.budget), once the course's weekly meetings changed: the row
+   says how many meetings a section needs and whether only a whole weekly
+   pattern places it, and the targets are read again for the shape the
+   course is taught in now (two 100-minute meetings, or its credit hours'
+   pattern). A course no longer in the budget (or a budget that could not be
+   read) ends the placing instead. */
+function restartCreateSectionAssist() {
+  if (!S.createAssist.active) return false;
+  const key = S.createAssist.payload?.course_key;
+  const row = key ? SB.budget.find(b => courseKeyOf(b) === key) : null;
+  if (row) return beginCreateSectionAssist(createPayloadFromBudgetRow(row));
+  clearCreateSectionAssist({ announce: true });
+  return false;
 }
 
 function hasActivePlacementSelection() {
@@ -7461,6 +7517,9 @@ function renderSidebar() {
     const remaining = b.remaining_sections != null ? b.remaining_sections : Math.max(0, planned - used);
     const exhausted = remaining <= 0;
     const key = courseKeyOf(b);
+    // The weekly shape the scenario teaches the course in ("2 × 100 min"),
+    // next to its credit hours; nothing for the credit hours' standard pattern.
+    const shape = (IS_AR ? b.meeting_pattern_label_ar : b.meeting_pattern_label) || '';
     const courseLens = courseLensForItem(b);
     const planBits = courseLens && courseLens.plans
       ? Object.entries(courseLens.plans).filter(([, count]) => Number(count) > 0).map(([plan, count]) => `${plan} ${count}`).join(' ')
@@ -7478,7 +7537,7 @@ function renderSidebar() {
       </div>
       <div class="meta">
         ${b.total_demand ? `<span class="dem">${b.total_demand} ${IS_AR ? 'طالب' : 'stu'}</span>` : ''}
-        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}
+        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}${shape ? `<span class="dem">${esc(shape)}</span>` : ''}
         ${b.max_per_section ? `<span class="dem">${IS_AR ? 'حد' : 'cap'} ${b.max_per_section}</span>` : ''}
       </div>
       ${planBits ? `<div class="meta plan-line">${esc(planBits)}${courseLens.shared_overflow ? ' | shared overflow' : ''}</div>` : ''}
@@ -9462,9 +9521,25 @@ function initDismissibleDetailsMenus() {
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());
   $('twsAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
     scenarioId: S.scenarioId, published: S.scenarioMeta?.status === 'published',
-    budget: SB.budget || [], request: api, arabic: IS_AR,
-    onSaved: async () => {
+    budget: SB.budget || [], arabic: IS_AR,
+    // The editor says a refusal inside its modal dialog (a toast sits under
+    // it), so only words meant for a person reach it, as classic's adapter
+    // does: the server's own refusal, or this page's copy-in-progress words
+    // (said before any request, so with no answer). A page that is not JSON
+    // (a proxy's error, the login page after a session expired), a failed
+    // request or a bare HTTP status give '', and the editor says its own.
+    request: (url, opts, onError) => api(url, opts, onError && ((message, body) =>
+      onError(body?.error?.message || (body === undefined && COPY_ACTIVITY.pending ? message : '')))),
+    onSaved: async (_budget, change) => {
       await loadSidebarBudget();
+      if (change?.action === 'meeting_pattern') {
+        // The section being placed is of the course just saved: its targets
+        // were read for its old weekly meetings, so it starts again from the
+        // course's row as read now.
+        if (S.createAssist.active && S.createAssist.payload?.course_key === change.course_key) restartCreateSectionAssist();
+        // A weekly-meetings save is said on the dialog's own status line.
+        return;
+      }
       notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
     },
   }));

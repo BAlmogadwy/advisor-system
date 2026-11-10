@@ -51,6 +51,16 @@ test('failure stays visible inside the dialog and allows retry', async t => {
   assert.equal(form.querySelector('[type=submit]').disabled, false);
 });
 
+test("a refused add says the server’s own words in the dialog", async t => {
+  const words = "Change the weekly meetings with the course’s weekly-meetings control.";
+  const { form, w } = setup(t, { request: async (url, opts, onError) => { onError(words); return null; } });
+  form.querySelector('input').value = 'AI101';
+  await form.onsubmit({ preventDefault() {} });
+  assert.ok(w.document.querySelector('dialog'));
+  assert.equal(form.querySelector('[role=alert]').textContent, words);
+  assert.equal(form.querySelector('[type=submit]').disabled, false);
+});
+
 test('published scenarios explain the draft-copy route and prevent saving', t => {
   const { form, w } = setup(t, { published: true });
   assert.equal(form.querySelector('[type=submit]').disabled, true);

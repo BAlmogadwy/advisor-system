@@ -439,6 +439,7 @@ class _Static:
                     lab_slot_config or DEFAULT_LAB_SLOTS,
                     blocked or [],
                     course_key=course_key,
+                    meeting_pattern=budget.meeting_pattern,
                 )
             )
             found: set[tuple[tuple[int, int, int], ...]] = set()
@@ -508,7 +509,11 @@ class _Static:
         return (
             all(online),
             online_window_meeting_options(
-                len(get_meeting_pattern(budget.credit_hours or 3)),
+                len(
+                    get_meeting_pattern(
+                        budget.credit_hours or 3, meeting_pattern=budget.meeting_pattern
+                    )
+                ),
                 windows,
                 blocked_slot_keys(blocked),
             ),
@@ -604,7 +609,11 @@ def _nominal_for(budget, course_key: str) -> tuple[int, Any]:
     from core.services.timetable_course_policy import get_course_meeting_policy
 
     policy = get_course_meeting_policy(budget.course_code, course_key)
-    pattern = list(policy.durations) if policy else get_meeting_pattern(budget.credit_hours or 3)
+    pattern = (
+        list(policy.durations)
+        if policy
+        else get_meeting_pattern(budget.credit_hours or 3, meeting_pattern=budget.meeting_pattern)
+    )
     return len(pattern), policy
 
 

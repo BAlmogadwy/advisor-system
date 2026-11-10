@@ -17,9 +17,9 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 
 | # | Constraint | Rule | Where |
 |---|---|---|---|
-| H1 | **Meeting count & duration** | Driven by credit hours: 4cr → 3 meetings (75/75/100 min); 3cr → 2 meetings (75/75); 2cr → 1 meeting (100); 1cr → 1 meeting (75) | `timetable_autoplace.py` header; `infer_required_meeting_count` |
+| H1 | **Meeting count & duration** | By credit hours unless the scenario chose a weekly shape: 4cr → 3 meetings (75/75/100 min); 3cr → 2 meetings (75/75), or **2 × 100** when the course's budget row says `meeting_pattern = "2x100"`; 2cr → 1 meeting (100); 1cr → 1 meeting (75). ENG101/ENG102 keep their fixed weekly bundles. A placed section of a configured course in another shape is a Check warning (`section_meeting_pattern_mismatch`; an online course's meetings in an online-only window are not judged), never a refusal of a manual move | `get_meeting_pattern` (`timetable_autoplace.py`), `timetable_meeting_shape.py`; `infer_required_meeting_count` |
 | H2 | **All-different-days** | No more than **1 meeting per day per section** | `timetable_autoplace.py` |
-| H3 | **Legal slot grid** | Lectures start only at 09:00, 10:30, 10:50, 13:00, 14:30, 14:45, 16:00; labs at 09:00, 10:45, 13:00, 14:45, 16:30. Days SUN–THU | `scenario.slot_config` / `lab_slot_config`, `DEFAULT_SLOTS` |
+| H3 | **Legal slot grid** | Lectures start only at 09:00, 10:30, 10:50, 13:00, 14:30, 14:45, 16:00; labs (the 100-minute columns, which also hold a 2 × 100 course's lectures) at 09:00, 10:45, 13:00, 14:45, 16:30. Days SUN–THU | `scenario.slot_config` / `lab_slot_config`, `DEFAULT_SLOTS` |
 | H4 | **Blocked slots** | Scenario `blocked_slots` cells are never used | `blocked_slot_keys()` in `timetable_validation.py` |
 | H5 | **Prayer compliance** | No lecture starts in **11:30–12:59**, no lab in **11:10–12:59**. NOT enforced in code — holds only by curated grid construction (the earlier grid validator was unused and removed) | `DEFAULT_SLOTS` / `DEFAULT_LAB_SLOTS` (curated start times) |
 | H6 | **Locked placements** | `is_locked` placements' days/times are never moved and the rows are never deleted; their rooms may be reassigned | gated by `TIMETABLE_ENFORCE_LOCKS` (default **true**) |
@@ -37,7 +37,7 @@ assignment are frozen upstream. See `docs/` cohort briefing for input shape.
 
 | # | Constraint | Rule | Where |
 |---|---|---|---|
-| H11 | **Room type** | A lab meeting requires a `room_type = "lab"` room; lectures use lecture rooms | `timetable_rooming.py` pools |
+| H11 | **Room type** | A lab meeting requires a `room_type = "lab"` room; lectures use lecture rooms. A lab meeting is a 4-credit course's 100-minute meeting: a 3-credit 2 × 100 course's meetings are lectures | `timetable_rooming.py` pools (`_room_type_for_credit_duration`) |
 | H12 | **Room capacity** | `room.capacity >= section demand`, where demand is the **budgeted section capacity × capacity buffer** (`TIMETABLE_CAPACITY_BUFFER`, default **1.1**) — *not* actual enrolment | `assign_best_fit`, `get_capacity_buffer()` |
 | H13 | **Room gender** | Room `section` (M/F) must match the board/section gender | `_section_gender`, `get_board_gender`, `check_gender_feasibility` |
 | H14 | **Room department policy** | Room's comma-separated `department` must contain the section's programme | `timetable_rooming.py` (`room_progs` match) |

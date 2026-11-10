@@ -51,6 +51,7 @@ from core.services.timetable_flags import (
     get_section_day_spread_weight,
     is_section_day_spread_enabled,
 )
+from core.services.timetable_meeting_shape import shape_for
 from core.services.timetable_online import (
     OnlineCourseLookup,
     normalise_course_code,
@@ -95,6 +96,22 @@ def _consecutive_day_weight(sec: dict, spread_weight: int) -> int:
 # a board whose options force a run (blocked slots, locked siblings) still solves
 # and places the section instead of coming back infeasible.
 DAY_RUN_PENALTY = 10**6
+
+
+def _consistent_meetings(sec: dict) -> list[int]:
+    """The meetings whose slot indices objective 3b keeps equal.
+
+    By default the meetings of 75 minutes or less: a 4-credit section's 100-minute
+    lab sits on the lab grid, whose indices are other times. A configured weekly
+    shape (2 x 100 min, ``consistent_meetings``) holds lectures that all sit on the
+    100-minute grid, so all of them are compared. Never read from durations or
+    option lengths: ENG bundles (4 x 180) and online sections (a 75-minute pattern
+    placed in 100-minute windows) keep today's terms.
+    """
+    configured = sec.get("consistent_meetings")
+    if configured is not None:
+        return list(configured)
+    return [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
 
 
 def _add_day_run_penalties(model, sections, sec_options, assign, penalties) -> None:
@@ -485,7 +502,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         display_code = budget.course_code
         cr = budget.credit_hours or 3
         policy = get_course_meeting_policy(display_code, code)
-        pattern = get_meeting_pattern(cr, code)
+        pattern = get_meeting_pattern(cr, code, meeting_pattern=budget.meeting_pattern)
+        # A meeting policy wins over a configured weekly shape, as in the pattern.
+        shape = None if policy is not None else shape_for(budget.meeting_pattern, cr)
         bundles = (
             meeting_options_for_policy(
                 policy,
@@ -522,6 +541,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                         else None
                     ),
                     "capacity": budget.max_per_section,
+                    # Objective 3b's meetings for a configured shape: all of them
+                    # (None keeps the default rule, see _consistent_meetings).
+                    "consistent_meetings": tuple(range(len(pattern))) if shape else None,
                 }
             )
 
@@ -760,9 +782,10 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
 
     # 3b: heavy penalty for meetings at DIFFERENT slot indices
-    # (only compare lecture meetings — lab uses different slot grid)
+    # (only compare lecture meetings — lab uses different slot grid; a configured
+    # 2 x 100 shape's lectures share the 100-minute grid: _consistent_meetings)
     for i, sec in enumerate(sections):
-        lecture_meetings = [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
+        lecture_meetings = _consistent_meetings(sec)
         if len(lecture_meetings) <= 1:
             continue
         w = 10  # uniform (no S1 priority)
@@ -895,6 +918,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         _persist_guard_rejections,
     )
     from core.services.timetable_section_policy import SectionPolicyError, assert_pattern_available
+    from core.services.timetable_workspace import _drop_stale_workspace_meetings
 
     guard_before = _capture_persist_guard(board)
     for placement in result["placements"]:
@@ -943,7 +967,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         budget = budget_map.get(code)
         cap = budget.max_per_section if budget else 40
 
-        ts, _ = TermSection.objects.get_or_create(
+        ts, created = TermSection.objects.get_or_create(
             scenario=scenario,
             course_key=code,
             section=p["section"],
@@ -956,6 +980,10 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
                 "source_tag": AUTO_SECTION_SOURCE_TAG,
             },
         )
+        if not created:
+            # A reused label keeps no meeting rows of its earlier pattern (the
+            # greedy's rule: timetable_autoplace, the same helper).
+            _drop_stale_workspace_meetings(ts, scenario.id)
         if (
             is_lock_enforcement_enabled()
             and SectionPlacement.objects.filter(term_section=ts, is_locked=True).exists()
@@ -1089,7 +1117,9 @@ def solve_board_with_hints(
         display_code = budget.course_code
         cr = budget.credit_hours or 3
         policy = get_course_meeting_policy(display_code, code)
-        pattern = get_meeting_pattern(cr, code)
+        pattern = get_meeting_pattern(cr, code, meeting_pattern=budget.meeting_pattern)
+        # A meeting policy wins over a configured weekly shape, as in the pattern.
+        shape = None if policy is not None else shape_for(budget.meeting_pattern, cr)
         bundles = (
             meeting_options_for_policy(
                 policy,
@@ -1126,6 +1156,9 @@ def solve_board_with_hints(
                         else None
                     ),
                     "capacity": budget.max_per_section,
+                    # Objective 3b's meetings for a configured shape: all of them
+                    # (None keeps the default rule, see _consistent_meetings).
+                    "consistent_meetings": tuple(range(len(pattern))) if shape else None,
                 }
             )
 
@@ -1312,9 +1345,9 @@ def solve_board_with_hints(
             for o_idx, opt in enumerate(sec_options[i][m_idx]):
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
 
-    # 3b: heavy penalty for meetings at DIFFERENT slot indices
+    # 3b: heavy penalty for meetings at DIFFERENT slot indices (_consistent_meetings)
     for i, sec in enumerate(sections):
-        lecture_meetings = [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
+        lecture_meetings = _consistent_meetings(sec)
         if len(lecture_meetings) <= 1:
             continue
         w = 10  # uniform (no S1 priority)

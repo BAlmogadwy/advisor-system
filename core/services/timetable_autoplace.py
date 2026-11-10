@@ -18,14 +18,18 @@ Key concepts
 * **Overlap matrix** -- maps course pairs to their shared student count,
   built from canonical scenario course requests. Drives all conflict scoring.
 * **Meeting pattern** -- how many weekly meetings a course needs, and the
-  duration of each, determined by credit hours.
+  duration of each: by credit hours, unless the scenario's budget row chooses
+  another shape for the course (``timetable_meeting_shape``).
 
-Meeting patterns based on credit hours
----------------------------------------
+Meeting patterns based on credit hours (the default)
+-----------------------------------------------------
   4 credits --> 3 meetings/week (75 min, 75 min, 100 min) on 3 different days
   3 credits --> 2 meetings/week (75 min, 75 min) on 2 different days
   2 credits --> 1 meeting/week (100 min)
   1 credit  --> 1 meeting/week (75 min)  [fallback]
+  A 3-credit course set to "2x100" meets 2 x 100 min on 2 different days, in
+  the 100-minute columns and a lecture room. ENG101/ENG102 keep their fixed
+  weekly bundles (``timetable_course_policy``).
 
 Hard constraints (violations are never accepted)
 -------------------------------------------------
@@ -105,6 +109,7 @@ from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
 )
+from core.services.timetable_meeting_shape import configured_durations, shape_for
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_online_windows import (
     active_online_windows,
@@ -161,7 +166,11 @@ from core.services.timetable_warm_start import (
     compute_perturbation_metric,
     is_warm_start_enabled,
 )
-from core.services.timetable_workspace import _time_mask, first_free_section_labels
+from core.services.timetable_workspace import (
+    _drop_stale_workspace_meetings,
+    _time_mask,
+    first_free_section_labels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,51 +187,30 @@ MEETING_PATTERNS: dict[int, list[int]] = {
     1: [75],  # 1 meeting: 75 min (fallback for rare 1-credit courses)
 }
 
-# Optional order variants for structurally identical families.
-# For 4-credit mixed lecture/lab courses, permitting the 100-minute block to
-# occur in any weekly position gives the planner and local-search layers more
-# flexibility for lab utilisation without changing total contact hours.
-MEETING_PATTERN_VARIANTS: dict[int, list[list[int]]] = {
-    4: [[100, 75, 75], [75, 100, 75], [75, 75, 100]],
-    3: [[75, 75]],
-    2: [[100]],
-    1: [[75]],
-}
 
+def get_meeting_pattern(
+    credit_hours: int, course_code: str = "", *, meeting_pattern: str
+) -> list[int]:
+    """Return the per-meeting durations of one course, as a fresh list.
 
-def get_meeting_pattern_variants(credit_hours: int) -> list[list[int]]:
-    """Return all valid duration-order variants for a course.
+    Precedence: a course meeting policy (ENG101/ENG102's fixed bundles, found
+    from ``course_code``), then the shape the scenario chose for the course
+    (``meeting_pattern``, its ``ScenarioSectionBudget.meeting_pattern``), then
+    the credit default (``MEETING_PATTERNS``; unknown credit hours fall back to
+    the 3-credit pattern).
 
-    The primary use case is 4-credit mixed lecture/lab courses, where the
-    100-minute block may appear in any weekly position: ``[100,75,75]``,
-    ``[75,100,75]``, or ``[75,75,100]``.
-    """
-    return [
-        list(v)
-        for v in MEETING_PATTERN_VARIANTS.get(credit_hours, [get_meeting_pattern(credit_hours)])
-    ]
-
-
-def get_meeting_pattern(credit_hours: int, course_code: str = "") -> list[int]:
-    """Return the list of per-meeting durations for a given credit-hour count.
-
-    Parameters
-    ----------
-    credit_hours : int
-        The number of credit hours for the course (1-4).
-
-    Returns
-    -------
-    list[int]
-        Durations in minutes for each weekly meeting.
-        Falls back to the 3-credit pattern if *credit_hours* is not in the map.
+    ``meeting_pattern`` is keyword-only and has NO default on purpose: pass the
+    budget row's value, or ``""`` where a course is known to have none. A door
+    that forgot it would quietly plan 2 x 75 for a course its scenario teaches
+    as 2 x 100, and the engines of one run would disagree.
     """
     policy = get_course_meeting_policy(course_code)
-    return (
-        list(policy.durations)
-        if policy
-        else MEETING_PATTERNS.get(credit_hours, MEETING_PATTERNS[3])
-    )
+    if policy:
+        return list(policy.durations)
+    configured = configured_durations(meeting_pattern, credit_hours)
+    if configured is not None:
+        return configured
+    return list(MEETING_PATTERNS.get(credit_hours, MEETING_PATTERNS[3]))
 
 
 def generate_course_meeting_options(
@@ -233,8 +221,15 @@ def generate_course_meeting_options(
     blocked_slots: list[dict] | None = None,
     *,
     course_key: str = "",
+    meeting_pattern: str,
 ) -> list[list[dict]]:
-    """Complete course-scoped patterns; ordinary slot domains stay unchanged."""
+    """Complete course-scoped patterns; ordinary slot domains stay unchanged.
+
+    ``meeting_pattern`` is the course's budget value (see
+    :func:`get_meeting_pattern`); it is required for the same reason. It is
+    the one door every greedy campus option and the one-teacher guard's copy
+    of those options go through, so both follow the scenario's shape together.
+    """
     policy = get_course_meeting_policy(course_code, course_key)
     if policy:
         return meeting_options_for_policy(
@@ -244,7 +239,10 @@ def generate_course_meeting_options(
             + placeable_slots(lab_slot_config or DEFAULT_LAB_SLOTS),
         )
     return _generate_meeting_options(
-        get_meeting_pattern(credit_hours), slot_config or [], lab_slot_config, blocked_slots
+        get_meeting_pattern(credit_hours, meeting_pattern=meeting_pattern),
+        slot_config or [],
+        lab_slot_config,
+        blocked_slots,
     )
 
 
@@ -1673,7 +1671,11 @@ def auto_place_board(
         course_name = budget.course_name or display_code
         credit_hours = budget.credit_hours or 3
         policy = get_course_meeting_policy(display_code, code)
-        pattern = list(policy.durations) if policy else get_meeting_pattern(credit_hours)
+        pattern = (
+            list(policy.durations)
+            if policy
+            else get_meeting_pattern(credit_hours, meeting_pattern=budget.meeting_pattern)
+        )
         already = (
             SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
@@ -1692,7 +1694,13 @@ def auto_place_board(
             online_window_meeting_options(len(pattern), online_windows, blocked_slot_keys(blocked))
             if in_windows
             else generate_course_meeting_options(
-                display_code, credit_hours, slot_config, lab_slot_config, blocked, course_key=code
+                display_code,
+                credit_hours,
+                slot_config,
+                lab_slot_config,
+                blocked,
+                course_key=code,
+                meeting_pattern=budget.meeting_pattern,
             )
         )
         if not all_options:
@@ -1838,6 +1846,15 @@ def auto_place_board(
             # courses have 100-min meetings that are long lectures, not labs.
             meeting_policy = cd.get("meeting_policy")
             is_lab_course = budget.credit_hours == 4 and meeting_policy is None
+            # A configured weekly shape's 100-minute lectures share the lecture
+            # rooms but overlap bookings that start at other times (09:00-10:40
+            # runs into the 10:30 lecture; no lecture starts at 10:45 or 16:30),
+            # which the exact-start room check below never sees: score them
+            # against every booking they overlap. Every other section keeps the
+            # exact-start check.
+            room_check_interval = meeting_policy is None and (
+                shape_for(budget.meeting_pattern, cd["credit_hours"]) is not None
+            )
             for option in all_options:
                 # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
                 # Reject any option that would double-book the current
@@ -1978,7 +1995,12 @@ def auto_place_board(
                             rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                         room_cap = 0 if rtype == "lab" else section_cap
                         if not room_tracker.is_feasible(
-                            m["day"], m["start"], room_cap, rtype, board_gender
+                            m["day"],
+                            m["start"],
+                            room_cap,
+                            rtype,
+                            board_gender,
+                            end=m["end"] if room_check_interval else None,
                         ):
                             room_penalty += 100  # heavy penalty but not a hard reject
 
@@ -2211,7 +2233,7 @@ def auto_place_board(
 
             # ── Persist the chosen placement ──────────────────────────
             # TermSection: the logical section record (e.g. "MATH101 S1").
-            ts, _ = TermSection.objects.get_or_create(
+            ts, created = TermSection.objects.get_or_create(
                 scenario=scenario,
                 course_key=code,
                 section=sec_label,
@@ -2223,6 +2245,13 @@ def auto_place_board(
                     "source_tag": AUTO_SECTION_SOURCE_TAG,
                 },
             )
+            if not created:
+                # A label Remove freed is reused: drop the meeting rows its
+                # earlier pattern left behind (a workspace section of this
+                # scenario on no board only), or they stand beside the new
+                # ones - two 75-minute rows beside two 100-minute ones when a
+                # course was re-shaped and placed again.
+                _drop_stale_workspace_meetings(ts, scenario.id)
 
             # TermSectionMeeting + SectionPlacement: one row per meeting
             # day.  Also update the in-memory tracking structures so

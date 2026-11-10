@@ -243,6 +243,7 @@ from .timetable_workspace_views import (
     tw_repair_run_report_view,
     tw_repair_run_rollback_view,
     tw_repair_simulate_view,
+    tw_scenario_budget_meeting_pattern_view,
     tw_scenario_budget_view,
     tw_scenario_builder_actions_view,
     tw_scenario_clean_room_assignments_apply_view,
@@ -868,6 +869,11 @@ urlpatterns = [
         "ops/tw/scenarios/<int:scenario_id>/budget/",
         tw_scenario_budget_view,
         name="tw_scenario_budget",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/budget/meeting-pattern/",
+        tw_scenario_budget_meeting_pattern_view,
+        name="tw_scenario_budget_meeting_pattern",
     ),
     path(
         "ops/tw/scenarios/<int:scenario_id>/plan-lens/",

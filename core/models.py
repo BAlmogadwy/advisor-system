@@ -1207,6 +1207,11 @@ class ScenarioSectionBudget(models.Model):
     max_per_section = models.IntegerField(default=40)
     total_demand = models.IntegerField(default=0)
     programme_term = models.IntegerField(null=True, blank=True)
+    #: The weekly shape this scenario teaches the course in
+    #: (``core.services.timetable_meeting_shape``). "" is the credit default;
+    #: "2x100" is two 100-minute meetings a week in a lecture room (3 credits
+    #: only). Every engine of the scenario reads it from here.
+    meeting_pattern = models.CharField(max_length=16, blank=True, default="", db_default="")
 
     class Meta:
         db_table = "scenario_section_budgets"
@@ -1215,6 +1220,10 @@ class ScenarioSectionBudget(models.Model):
                 fields=["scenario", "course_key"],
                 condition=models.Q(course_key__isnull=False) & ~models.Q(course_key=""),
                 name="ux_ssb_scenario_course_key",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(meeting_pattern__in=["", "2x100"]),
+                name="ck_ssb_meeting_pattern_known",
             ),
         ]
         indexes = [

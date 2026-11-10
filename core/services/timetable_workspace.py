@@ -80,6 +80,14 @@ from core.services.timetable_demand import (
     load_scenario_course_demands,
 )
 from core.services.timetable_flags import is_one_teacher_active
+from core.services.timetable_meeting_shape import (
+    STANDARD,
+    MeetingShape,
+    meetings_match_shape,
+    pattern_choices,
+    shape_for,
+    validate_meeting_pattern,
+)
 from core.services.timetable_online import (
     OnlineCourseLookup,
     exclude_online_courses_for_board,
@@ -2112,6 +2120,65 @@ def preview_placement_slot_candidates(
     return result
 
 
+def _planned_section_budget(
+    scenario_id: int, key: str, code: str
+) -> tuple[ScenarioSectionBudget | None, str]:
+    """The budget row a planned section reads, and the weekly pattern it takes from it.
+
+    The row is the course's own (by ``course_key``) or, when the key matches no
+    row, the first row of its bare code: the fallback the credit hours and the
+    seat size have always read, kept exactly as it was. The weekly pattern is a
+    fact about one course identity (CODE::NAME), so that fallback row lends it
+    only when it is the ONLY budget row of the code in the scenario AND one side
+    of the match is bare: the request names the code alone (``STAT103``), or the
+    row was stored under its code alone. Two names are two courses, so a request
+    for CS112 PROGRAMMING II never takes PROGRAMMING I's two 100-minute meetings,
+    even when PROGRAMMING I is the scenario's only CS112 row (the rooming rule,
+    and the repair panel's ``_placement_meeting_shape``: a display code is not
+    guessed between two identities). ``key`` and ``code`` come trimmed and in
+    upper case. One query when the key matches, as before; the fallback reads
+    up to two rows in its one query.
+    """
+    budget = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id, course_key=key).first()
+    if budget is not None:
+        return budget, budget.meeting_pattern
+    # ``first()``'s own order (by primary key), so the row the credit hours come
+    # from is the one they always came from.
+    same_code = list(
+        ScenarioSectionBudget.objects.filter(scenario_id=scenario_id, course_code=code).order_by(
+            "pk"
+        )[:2]
+    )
+    if not same_code:
+        return None, STANDARD
+    row = same_code[0]
+    row_identity = str(row.course_key or row.course_code or "").strip().upper()
+    lends = len(same_code) == 1 and code in (key, row_identity)
+    return row, row.meeting_pattern if lends else STANDARD
+
+
+def validate_budget_meeting_pattern(
+    value: object, *, credit_hours: object, course_code: str, course_key: str
+) -> str:
+    """Check a weekly pattern before a scenario's budget row stores it; the value to store.
+
+    ``timetable_meeting_shape.validate_meeting_pattern`` decides it (a known
+    shape, for exactly the credit hours it was defined for; going back to the
+    credit default is always allowed). An English bundle (ENG101/ENG102's
+    course meeting policy) wins over any shape in every engine, so a shape
+    stored for it would be saved and never used: refused, as its budget row
+    offers no choice (``compute_scenario_budget``'s ``meeting_pattern_choices``).
+    Raises ``ValueError`` with the reason.
+    """
+    pattern = validate_meeting_pattern(value, credit_hours, course_code=course_code)
+    if pattern != STANDARD and get_course_meeting_policy(course_code, course_key):
+        raise ValueError(
+            f"{course_code} meets in its fixed English weekly pattern; "
+            "its weekly meetings cannot be changed."
+        )
+    return pattern
+
+
 def preview_planned_section_slot_candidates(
     board_id: int,
     *,
@@ -2138,6 +2205,15 @@ def preview_planned_section_slot_candidates(
     new section has no room yet and adds a clash-free option rather than
     removing one, so there are no room items and no effects. Without it the
     answer and its order are exactly what they were.
+
+    A course the scenario teaches in a weekly shape of its own (its budget
+    row's ``meeting_pattern``, e.g. two 100-minute meetings) is offered whole
+    patterns of that shape, and each meeting of a pattern says the room it
+    needs (``room_type``, rooming's own rule: a lecture room for a 3-credit
+    course): ``kind`` keeps naming the column grid a meeting sits in, and a
+    100-minute lecture sits in the 100-minute (lab-grid) columns. For every
+    other course the answer is exactly what it was, key for key, and so is the
+    number of queries it reads.
     """
     from core.services.timetable_autoplace import (
         DEFAULT_LAB_SLOTS,
@@ -2150,6 +2226,7 @@ def preview_planned_section_slot_candidates(
         HARD_OVERLAP_THRESHOLD,
         build_course_students_map,
     )
+    from core.services.timetable_rooming import _room_type_for_credit_duration
 
     board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     scenario = board.scenario
@@ -2159,10 +2236,7 @@ def preview_planned_section_slot_candidates(
     if not code:
         raise ValueError("course_code is required")
 
-    budget = (
-        ScenarioSectionBudget.objects.filter(scenario=scenario, course_key=key).first()
-        or ScenarioSectionBudget.objects.filter(scenario=scenario, course_code=code).first()
-    )
+    budget, budget_pattern = _planned_section_budget(scenario.id, key, code)
     effective_credit_hours = int(
         credit_hours if credit_hours is not None else getattr(budget, "credit_hours", 0) or 0
     )
@@ -2170,8 +2244,12 @@ def preview_planned_section_slot_candidates(
         scenario.id,
         key,
         fallback_credit_hours=effective_credit_hours,
+        meeting_pattern=budget_pattern,
     )
     policy = get_course_meeting_policy(code, key)
+    # The shape the scenario teaches this course in, when it chose one (an
+    # English bundle's policy wins over any shape, as in every engine).
+    shape = None if policy else shape_for(budget_pattern, effective_credit_hours)
     requested_kind = normalise_course_code(kind or "")
     include_lab = requested_kind in {"LAB", "LABS"}
     include_lecture = requested_kind not in {"LAB", "LABS"}
@@ -2604,8 +2682,13 @@ def preview_planned_section_slot_candidates(
         return "lab" if (_to_minutes(end) - _to_minutes(start)) > 75 else "lect"
 
     def meeting_pattern_for_request() -> list[int]:
-        if effective_credit_hours:
-            pattern = list(get_meeting_pattern(effective_credit_hours))
+        if shape is not None:
+            # Whatever credit hours the budget row holds (0 reads as 3, as the
+            # engines read it): the configured shape is the course's pattern.
+            pattern = list(shape.durations)
+        elif effective_credit_hours:
+            # No shape applies here, so the credit default.
+            pattern = get_meeting_pattern(effective_credit_hours, meeting_pattern=STANDARD)
         elif required_meetings >= 3:
             pattern = [75, 75, 100]
         else:
@@ -2632,15 +2715,19 @@ def preview_planned_section_slot_candidates(
             kind_ = meeting_kind(start, end)
             slot_score, _cell = score_slot(kind_, day, start, end)
             slot_scores.append(slot_score)
-            meetings.append(
-                {
-                    "kind": kind_,
-                    "day": day,
-                    "start": start,
-                    "end": end,
-                    "slot_idx": int(row.get("slot_idx") or 0),
-                }
-            )
+            meeting = {
+                "kind": kind_,
+                "day": day,
+                "start": start,
+                "end": end,
+                "slot_idx": int(row.get("slot_idx") or 0),
+            }
+            if shape is not None:
+                # ``kind`` is the column; the room is rooming's decision.
+                meeting["room_type"] = _room_type_for_credit_duration(
+                    shape.credit_hours, _to_minutes(end) - _to_minutes(start)
+                )
+            meetings.append(meeting)
 
         critical = sum(int(row.get("critical_count") or 0) for row in slot_scores)
         warning = sum(int(row.get("warning_count") or 0) for row in slot_scores)
@@ -2927,6 +3014,39 @@ class SectionLabelInUse(ValueError):
         self.next_free = next_free
 
 
+class MeetingShapeMismatch(ValueError):
+    """A new section's meetings are not the weekly shape its course is taught in.
+
+    A scenario may teach a course in a shape of its own (its budget row's
+    ``meeting_pattern``; ``timetable_meeting_shape``), e.g. two 100-minute
+    meetings a week. The page makes a new section of that course in that shape
+    or not at all: a Place dialog still listing the old patterns (the shape was
+    changed in another tab) is refused, never saved as a section Check would
+    then have to flag. It is a ``ValueError``, so a caller that handles a
+    refused create keeps handling it; the create view answers it as
+    ``FULL_SECTION_PATTERN_REQUIRED`` with this message, which names the shape,
+    and ``details`` that name it too (``meeting_pattern``,
+    ``expected_durations``). Each page acts on that code: the classic Place
+    dialog says the shape the details name and reads the course's patterns
+    again; the split page warns with this message (in Arabic, the shape's
+    minutes from the details), reads its section budget again and starts the
+    section being placed again from its course's row, so its targets are the
+    shape the course is taught in now. Only the page's own creates are held to
+    the shape: a manual timetable import states its own count and imports as
+    written.
+    """
+
+    def __init__(self, *, course_code: str, shape: MeetingShape, placed_minutes: list[int]) -> None:
+        super().__init__(
+            f"{course_code} meets {shape.label} a week in this scenario; these meetings are "
+            f"{' + '.join(str(m) for m in placed_minutes)} min. "
+            f"Choose one of its {shape.label} patterns."
+        )
+        self.course_code = course_code
+        self.shape = shape
+        self.placed_minutes = placed_minutes
+
+
 def normalise_section_label(value: object) -> str:
     """A section label (or a course key) as the page compares it: trimmed, upper case."""
 
@@ -3064,6 +3184,16 @@ def create_planned_section_placements(
     read, so it passes the pattern in rather than being held to the one-cell
     fallback.
 
+    A course the scenario teaches in a weekly shape of its own (its budget
+    row's ``meeting_pattern``) is held to that shape on the page's own creates:
+    the shape's number of meetings, in its column families (two 100-minute
+    meetings, never two 75-minute ones), else ``MeetingShapeMismatch``. The
+    shape is the course's own budget row's, or that of the only row of its
+    code when one side is the bare code (``_planned_section_budget``: CS112
+    PROGRAMMING II never takes PROGRAMMING I's). A caller that states
+    ``required_meetings`` is never refused for a shape: the importer takes a
+    timetable as written and warns about the shape in its plan instead.
+
     A label already placed anywhere in the scenario is refused
     (``SectionLabelInUse``), whichever section holds it; a label whose section
     has no placement left (an undone create, read back by Redo) is free, and
@@ -3084,28 +3214,35 @@ def create_planned_section_placements(
     if not code or not key or not section:
         raise ValueError("course_code, course_key, and section_label are required.")
 
-    budget = (
-        ScenarioSectionBudget.objects.filter(scenario=board.scenario, course_key=key).first()
-        or ScenarioSectionBudget.objects.filter(scenario=board.scenario, course_code=code).first()
-    )
+    budget, budget_pattern = _planned_section_budget(board.scenario_id, key, code)
+    policy = get_course_meeting_policy(code, key)
+    shape: MeetingShape | None = None
     if required_meetings is None:
+        credit_hours = getattr(budget, "credit_hours", 0) if budget else None
         required_meetings = infer_required_meeting_count(
             board.scenario_id,
             key,
-            fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
+            fallback_credit_hours=credit_hours,
+            meeting_pattern=budget_pattern,
         )
+        shape = None if policy else shape_for(budget_pattern, credit_hours)
     elif int(required_meetings) < 1:
         raise ValueError("required_meetings must be at least 1.")
     else:
         required_meetings = int(required_meetings)
     meeting_rows = _normalise_planned_meeting_rows(meetings)
-    policy = get_course_meeting_policy(code, key)
     if policy:
         assert_policy_rows(policy, meeting_rows)
     if required_meetings > 1 and len(meeting_rows) != required_meetings:
         raise ValueError(f"{code} needs a complete {required_meetings}-meeting section pattern.")
     if required_meetings <= 1 and len(meeting_rows) != 1:
         raise ValueError(f"{code} only needs one planned meeting target.")
+    if shape is not None:
+        placed_minutes = sorted(
+            _to_minutes(row["end_time"]) - _to_minutes(row["start_time"]) for row in meeting_rows
+        )
+        if not meetings_match_shape(placed_minutes, shape):
+            raise MeetingShapeMismatch(course_code=code, shape=shape, placed_minutes=placed_minutes)
 
     # Same shape as the drag-drop path: validate_placement below is board-scoped
     # and free-text-instructor keyed, so it cannot see a cross-board instructor
@@ -4879,13 +5016,25 @@ def infer_required_meeting_count(
     *,
     fallback_credit_hours: int | None = None,
     section_counts_by_course: dict[str, dict[str, int]] | None = None,
+    meeting_pattern: str = "",
 ) -> int:
-    """Infer how many placement rows make a complete section for a course."""
+    """Infer how many placement rows make a complete section for a course.
+
+    An English bundle needs its policy's meetings. A course the scenario
+    teaches in a weekly shape of its own (``meeting_pattern``, its budget row's,
+    read with ``fallback_credit_hours``) needs that shape's meetings, whatever
+    is placed: its first section is a whole pattern, never one cell. Any other
+    course is read from its sections already placed, and with none from the
+    page's one-cell fallback: 3 meetings for a 4-credit course, 1 for the rest.
+    """
 
     key = str(course_key or "").strip()
     policy = get_course_meeting_policy(key, key)
     if policy:
         return len(policy.durations)
+    shape = shape_for(meeting_pattern, fallback_credit_hours)
+    if shape is not None:
+        return len(shape.durations)
     if key:
         section_counts_by_course = section_counts_by_course or _section_meeting_counts(scenario_id)
         counts = [count for count in section_counts_by_course.get(key, {}).values() if count]
@@ -4914,6 +5063,7 @@ def compute_incomplete_section_patterns(scenario_id: int) -> list[dict]:
             course_key,
             fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
             section_counts_by_course=counts_by_course,
+            meeting_pattern=budget.meeting_pattern if budget else STANDARD,
         )
         if expected <= 1:
             continue
@@ -4953,7 +5103,21 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
         ``used_section_labels`` lists the labels in use for the course on any
         board of the scenario, in natural order (S1, S3, S10), so a page can
         name the next section without colliding with one already taken.
+
+        The course's weekly shape, read from the same row (no other query):
+        ``meeting_pattern`` is the shape that applies (``"2x100"``), or ``""``
+        for the credit default - a stored shape its credit hours do not fit,
+        or an English bundle, which wins over any shape, reads ``""``;
+        ``meeting_pattern_label`` / ``meeting_pattern_label_ar`` name it (``""``
+        for the default); ``meeting_pattern_choices`` are the values the
+        course may be set to (``["", "2x100"]`` for a 3-credit course,
+        ``[""]`` otherwise); ``meeting_durations`` are the minutes of each
+        weekly meeting every engine plans it with (policy, then shape, then
+        credit hours), e.g. ``[100, 100]``. A configured course needs its
+        shape's meetings in every section (``required_meetings_per_section``).
     """
+    from core.services.timetable_autoplace import get_meeting_pattern
+
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
     section_counts_by_course = _section_meeting_counts(scenario_id)
 
@@ -4981,7 +5145,10 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
             key,
             fallback_credit_hours=b.credit_hours,
             section_counts_by_course=section_counts_by_course,
+            meeting_pattern=b.meeting_pattern,
         )
+        policy = get_course_meeting_policy(b.course_code, key)
+        shape = None if policy else shape_for(b.meeting_pattern, b.credit_hours)
         result.append(
             {
                 "course_key": key,
@@ -4999,11 +5166,259 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
                 "boards_using": sorted(board_usage.get(key, set())),
                 "required_meetings_per_section": required_meetings,
                 "requires_full_section_pattern": required_meetings > 1,
+                "meeting_pattern": shape.shape_id if shape else STANDARD,
+                "meeting_pattern_label": shape.label if shape else "",
+                "meeting_pattern_label_ar": shape.label_ar if shape else "",
+                "meeting_pattern_choices": (
+                    [STANDARD] if policy else pattern_choices(b.credit_hours)
+                ),
+                "meeting_durations": (
+                    list(policy.durations)
+                    if policy
+                    else get_meeting_pattern(b.credit_hours, meeting_pattern=b.meeting_pattern)
+                ),
             }
         )
 
     result.sort(key=lambda x: (x.get("programme_term") or 0, x["course_code"]))
     return result
+
+
+def _configured_shapes(budget_rows: Iterable[Mapping]) -> dict[str, tuple[MeetingShape, str]]:
+    """Each course of ``compute_scenario_budget``'s rows taught in a shape of its own.
+
+    Keyed as the rows key a course (``course_key or course_code``), with the
+    shape and the row's ``course_code``. Read from the rows already built, so
+    it costs no query.
+    """
+    shapes: dict[str, tuple[MeetingShape, str]] = {}
+    for row in budget_rows:
+        shape = shape_for(row["meeting_pattern"], row["credit_hours"])
+        if shape is not None:
+            shapes[row["course_key"]] = (shape, row["course_code"])
+    return shapes
+
+
+@dataclass(frozen=True)
+class _ShapeMismatch:
+    """One placed section whose meetings are not its course's configured shape."""
+
+    term_section: TermSection
+    course_key: str
+    course_code: str
+    shape: MeetingShape
+    board_ids: tuple[int, ...]
+    placement_ids: tuple[int, ...]
+    placed_minutes: tuple[int, ...]
+    locked: bool
+
+
+def _online_window_placements(
+    scenario: TimetableScenario | None,
+    online_lookup: OnlineCourseLookup,
+    board_of: Callable[[SectionPlacement], DeliveryBoard],
+) -> Callable[[SectionPlacement], bool] | None:
+    """Which placements are an online course's meetings in an online-only window; or None.
+
+    Such a meeting is placed by its section's number of meetings, never by
+    their lengths: the online windows are as long as the grid makes them (a
+    default window is 100 minutes; a grid may hold 75-minute ones), whichever
+    engine or advisor put it there. Judging it by the course's weekly shape
+    would name a section that re-placing puts straight back, so the shape
+    checks leave it out. An online course's meeting in an ordinary column, and
+    any other course's meeting in a window (``online_window_room_class``'s
+    warning), are judged as usual.
+
+    Read from the grid (``online_window``: the column the meeting is drawn
+    in) and the course's programmes (``is_online_course_for_board``), never
+    from ``TIMETABLE_ONLINE_EVENING_WINDOWS``: like every other part of the
+    readiness check, the answer is the same with the flag on or off.
+    ``board_of`` gives a placement's board (from a map the caller holds, or
+    ``placement.board`` when it was selected with it). None without a scenario.
+    """
+    if scenario is None:
+        return None
+    from core.services.timetable_slot_config import (
+        effective_lab_slots,
+        effective_lecture_slots,
+        online_window,
+    )
+
+    lecture_slots = effective_lecture_slots(scenario)
+    lab_slots = effective_lab_slots(scenario)
+
+    def in_an_online_window(placement: SectionPlacement) -> bool:
+        if (
+            online_window(
+                placement.day, placement.start_time, placement.end_time, lecture_slots, lab_slots
+            )
+            is None
+        ):
+            return False
+        return online_lookup.is_online_course_for_board(
+            board_of(placement), placement.term_section.course_code
+        )
+
+    return in_an_online_window
+
+
+def _meeting_shape_mismatches(
+    placements: Iterable[SectionPlacement],
+    shapes: Mapping[str, tuple[MeetingShape, str]],
+    *,
+    skip: Callable[[SectionPlacement], bool] | None = None,
+) -> list[_ShapeMismatch]:
+    """The placed sections of configured courses whose meetings are another shape.
+
+    ``placements`` carry their ``term_section`` and come in board display order
+    (then board and placement id), so a section's first board is the one it is
+    shown on. ``shapes`` is :func:`_configured_shapes`. A section placed on
+    several boards is one class: each of its meetings counts once, by (section,
+    day, start, end), and the section is judged once. One with fewer meetings
+    than its shape is not here, as ``incomplete_section_pattern`` already says
+    what is wrong with it. Meetings are compared by column family
+    (``meetings_match_shape``): two 75-minute meetings are not two 100-minute
+    ones, wherever they sit. ``skip`` names a placement of a configured
+    course that is not held to the shape (:func:`_online_window_placements`:
+    an online course's meeting in an online-only window, whatever its shape);
+    it is asked only about those placements. A section is left out only when
+    EVERY one of its meetings is such a placement: a section with one meeting
+    in a window and one moved into an ordinary column is judged whole, window
+    meeting included, so its item names every placement re-placing must take.
+    In board order, then course, then section label in natural order.
+    """
+    board_order: dict[int, int] = {}
+    by_section: dict[int, dict] = {}
+    for placement in placements:
+        board_order.setdefault(placement.board_id, len(board_order))
+        ts = placement.term_section
+        key = ts.course_key or ts.course_code
+        if key not in shapes:
+            continue
+        entry = by_section.setdefault(
+            ts.id,
+            {
+                "term_section": ts,
+                "key": key,
+                "boards": [],
+                "ids": [],
+                "meetings": {},
+                "lock": False,
+                "all_skipped": True,
+            },
+        )
+        if skip is None or not skip(placement):
+            entry["all_skipped"] = False
+        if placement.board_id not in entry["boards"]:
+            entry["boards"].append(placement.board_id)
+        entry["ids"].append(placement.id)
+        start, end = _to_minutes(placement.start_time), _to_minutes(placement.end_time)
+        entry["meetings"][(str(placement.day).strip().upper(), start, end)] = end - start
+        entry["lock"] = entry["lock"] or bool(placement.is_locked)
+
+    mismatches: list[_ShapeMismatch] = []
+    for entry in by_section.values():
+        if skip is not None and entry["all_skipped"]:
+            continue
+        shape, code = shapes[entry["key"]]
+        minutes = sorted(entry["meetings"].values())
+        if len(minutes) < len(shape.durations) or meetings_match_shape(minutes, shape):
+            continue
+        mismatches.append(
+            _ShapeMismatch(
+                term_section=entry["term_section"],
+                course_key=entry["key"],
+                course_code=code,
+                shape=shape,
+                board_ids=tuple(entry["boards"]),
+                placement_ids=tuple(entry["ids"]),
+                placed_minutes=tuple(minutes),
+                locked=entry["lock"],
+            )
+        )
+    mismatches.sort(
+        key=lambda item: (
+            board_order[item.board_ids[0]],
+            item.course_code,
+            natural_key(item.term_section.section),
+            item.term_section.id,
+        )
+    )
+    return mismatches
+
+
+def course_meeting_shape_mismatches(
+    scenario_id: int, course_key: str, budget_rows: list[dict] | None = None
+) -> list[dict]:
+    """The placed sections of one course that are not the shape the scenario teaches it in.
+
+    What a change of a course's weekly pattern leaves behind: the change moves
+    no placement (owner rule: a section is shown, never moved behind the
+    advisor's back), so each section that is now another shape is listed once,
+    its copies on several boards together, with its boards and placements in
+    board display order, the minutes of its meetings, and what keeps its times
+    - ``locked`` (a lock keeps a section's days and times) and
+    ``externally_owned`` (another scenario also places it and owns its times)
+    - so a page can say which can be re-placed. A course set back to its
+    credit default that could take a shape (a 3-credit course) lists the
+    sections still placed in another one - the 2 x 100 sections left when it
+    goes back to 2 x 75 - judged against the credit default's minutes. Check
+    never warns about those (a course on its default is never held to a shape:
+    a hand-made timetable is taken as given), so this answer is the one place
+    they are named. Either way, an online course's meeting in an online-only
+    window is not judged: it is placed by its section's number of meetings,
+    whatever its shape, so re-placing could not change it
+    (:func:`_online_window_placements`). ``[]`` for any other
+    course. ``budget_rows`` are ``compute_scenario_budget``'s, when the caller
+    has them already.
+    """
+    from django.db.models import Q
+
+    rows = budget_rows if budget_rows is not None else compute_scenario_budget(scenario_id)
+    shapes = {key: value for key, value in _configured_shapes(rows).items() if key == course_key}
+    if not shapes:
+        row = next((r for r in rows if r["course_key"] == course_key), None)
+        if row is None or len(row["meeting_pattern_choices"]) < 2:
+            return []
+        default = MeetingShape(
+            shape_id=STANDARD,
+            durations=tuple(row["meeting_durations"]),
+            credit_hours=int(row["credit_hours"] or 3),
+            label="",
+            label_ar="",
+        )
+        shapes = {course_key: (default, row["course_code"])}
+    # Each placement brings its board and the scenario, which the online-window
+    # rule reads: no other query for them.
+    placements = list(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .filter(Q(term_section__course_key=course_key) | Q(term_section__course_code=course_key))
+        .select_related("term_section", "board__scenario")
+        .order_by("board__display_order", "board_id", "id")
+    )
+    if not placements:
+        return []
+    skip = _online_window_placements(
+        placements[0].board.scenario, OnlineCourseLookup(), lambda placement: placement.board
+    )
+    mismatches = _meeting_shape_mismatches(placements, shapes, skip=skip)
+    if not mismatches:
+        return []
+    owned_elsewhere = external_shared_section_ids(scenario_id)
+    return [
+        {
+            "term_section_id": item.term_section.id,
+            "course_key": item.course_key,
+            "course_code": item.course_code,
+            "section": item.term_section.section,
+            "board_ids": list(item.board_ids),
+            "placement_ids": list(item.placement_ids),
+            "placed_minutes": list(item.placed_minutes),
+            "locked": item.locked,
+            "externally_owned": item.term_section.id in owned_elsewhere,
+        }
+        for item in mismatches
+    ]
 
 
 def summarize_cross_board_conflict_impact(cross_conflicts: list[dict]) -> dict:
@@ -5375,6 +5790,14 @@ def check_publish_readiness(scenario_id: int) -> dict:
           online-only window (the owner's rule: only online courses meet
           there; nothing in the estate is open in the evening). Never a
           blocker, and no write is refused for it.
+        - A course the scenario teaches in a weekly shape of its own (two
+          100-minute meetings) has a placed section of another shape, or has
+          no in-person 100-minute column for its in-person sections. Never a
+          blocker, and no write is refused for it (owner rule: save it and
+          show it). A section of a course online for its board whose
+          meetings all sit in online-only windows is not judged by the shape:
+          it is placed by its number of meetings, as long as the windows are
+          (the flag is never read here).
 
     Parameters:
         scenario_id: PK of the ``Scenario``.
@@ -5429,6 +5852,39 @@ def check_publish_readiness(scenario_id: int) -> dict:
         ``cross_board_conflicts``
             no board / cross-board pairs at or over the threshold /
             ``threshold``: ``HARD_OVERLAP_THRESHOLD`` (shared students).
+        ``meeting_pattern_no_window``
+            no board / none / ``course_code``, ``course_key``,
+            ``meeting_pattern`` (the shape, e.g. ``"2x100"``),
+            ``expected_label`` (its English label) and ``expected_durations``
+            (its minutes per meeting). One item per course the scenario
+            teaches in a weekly shape of its own (its budget row's
+            ``meeting_pattern``, as ``compute_scenario_budget`` reads it) while
+            the scenario's 100-minute columns hold no column an automatic
+            placer may use for an in-person class (``placeable_slots``:
+            online-only windows are not one), so every engine would leave its
+            in-person sections unplaced. (A section online for its board may
+            still be placed in the online windows, by its number of meetings,
+            whatever its shape.) In course order.
+        ``section_meeting_pattern_mismatch``
+            board of the section's first placement / none / ``course_code``,
+            ``course_key``, ``section``, ``placement_ids`` (every placement of
+            the section, on every board, in board order), ``meeting_pattern``,
+            ``expected_label``, ``expected_durations`` and ``placed_minutes``
+            (the minutes of its meetings, sorted). One item per placed section
+            of such a course whose meetings are not the shape's column
+            families (``timetable_meeting_shape.meetings_match_shape``): two
+            75-minute meetings where the course meets 2 x 100 min. A section's
+            copies on several boards count each meeting once, by (section, day,
+            start, end); a section with fewer meetings than the shape is
+            ``incomplete_section_pattern``'s alone. A meeting the grid draws in
+            an online-only window whose course is online for its board is not
+            judged: it is placed by its section's number of meetings, as long
+            as the window is, so re-placing could not clear the item; an online
+            course's meeting in an ordinary column is judged like any other
+            (the flag is never read here). In board order, then course and
+            section. Both codes come
+            after the English pattern check and before
+            ``online_window_room_class``.
         ``online_window_room_class``
             board of the meeting / none / ``placement_id``, ``course_code``,
             ``section``, ``day`` (``SUN``...``THU``), ``slot_label`` (the
@@ -5567,9 +6023,8 @@ def check_publish_readiness(scenario_id: int) -> dict:
             ),
         )
 
-    missing_sections = [
-        item for item in compute_scenario_budget(scenario_id) if item["remaining_sections"] > 0
-    ]
+    budget_rows = compute_scenario_budget(scenario_id)
+    missing_sections = [item for item in budget_rows if item["remaining_sections"] > 0]
     for item in missing_sections:
         block(
             "Missing required section: "
@@ -5660,6 +6115,63 @@ def check_publish_readiness(scenario_id: int) -> dict:
                     detail=str(exc),
                 ),
             )
+
+    # A course the scenario teaches in a weekly shape of its own (two 100-minute
+    # meetings). Warnings, never blockers, and no write refuses either: a manual
+    # move is saved and SHOWN (owner rule). From the budget rows, the scenario
+    # row and the placements already read: no new query.
+    shapes = _configured_shapes(budget_rows)
+    # An online course's meeting in an online-only window is placed by its
+    # section's number of meetings, whatever its shape, so it is not judged by
+    # the shape: the online lookup the room checks above filled, and the boards
+    # already read.
+    skip_online = (
+        _online_window_placements(
+            _scenario, online_lookup, lambda placement: board_by_id[placement.board_id]
+        )
+        if shapes
+        else None
+    )
+    if shapes and _scenario is not None:
+        from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, placeable_slots
+
+        # Every automatic placer takes an in-person 100-minute meeting from the
+        # placeable 100-minute columns only; with none, it skips the course's
+        # in-person sections without a word.
+        if not placeable_slots(_scenario.lab_slot_config or DEFAULT_LAB_SLOTS):
+            for key, (shape, code) in sorted(shapes.items(), key=lambda kv: (kv[1][1], kv[0])):
+                warn(
+                    f"{code} meets {shape.label} a week, and this scenario has no in-person "
+                    "100-minute column for its in-person sections",
+                    _readiness_item(
+                        "meeting_pattern_no_window",
+                        course_code=code,
+                        course_key=key,
+                        meeting_pattern=shape.shape_id,
+                        expected_label=shape.label,
+                        expected_durations=list(shape.durations),
+                    ),
+                )
+    for mismatch in _meeting_shape_mismatches(scenario_placements, shapes, skip=skip_online):
+        board = board_by_id[mismatch.board_ids[0]]
+        lengths = " + ".join(str(m) for m in mismatch.placed_minutes)
+        warn(
+            f"Board '{board.label}': {mismatch.course_code} {mismatch.term_section.section} "
+            f"meets {lengths} min a week; this scenario teaches {mismatch.course_code} as "
+            f"{mismatch.shape.label}",
+            _readiness_item(
+                "section_meeting_pattern_mismatch",
+                board,
+                course_code=mismatch.course_code,
+                course_key=mismatch.course_key,
+                section=mismatch.term_section.section,
+                placement_ids=list(mismatch.placement_ids),
+                meeting_pattern=mismatch.shape.shape_id,
+                expected_label=mismatch.shape.label,
+                expected_durations=list(mismatch.shape.durations),
+                placed_minutes=list(mismatch.placed_minutes),
+            ),
+        )
 
     # The online-only windows (D-7): a meeting of a course that is not online
     # for its board, drawn in one, is a warning. It never blocks publishing and

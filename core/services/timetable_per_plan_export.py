@@ -55,8 +55,11 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.course_identity import display_course_label
+from core.services.natural_order import natural_key
 from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_meeting_shape import shape_for
 from core.services.timetable_plan_lens import build_scenario_plan_lens
 
 # The programme roles, their plan terms and the course-key helpers moved to
@@ -799,6 +802,7 @@ def _build_program_workbook(
         lecture_slots=slot_config,
         lab_slots=scenario.lab_slot_config or DEFAULT_LAB_SLOTS,
         course_fill=_course_fill,
+        shaped_course_keys=_shaped_course_keys(budget_by_key),
     )
 
     # Instructor timetables (each assigned instructor's full weekly grid),
@@ -818,6 +822,21 @@ def _build_program_workbook(
 # ── per-term sheet renderer ──────────────────────────────────────────────────
 
 
+def _shaped_course_keys(budget_by_key: dict[str, ScenarioSectionBudget]) -> frozenset[str]:
+    """The courses the scenario teaches in a weekly shape of their own (2 x 100 min).
+
+    Keyed by course identity, as ``budget_by_key`` is; read from the budget rows
+    already loaded. An English bundle's meeting policy wins over any stored
+    shape, as in every engine (``compute_scenario_budget``).
+    """
+    return frozenset(
+        key
+        for key, budget in budget_by_key.items()
+        if not get_course_meeting_policy(budget.course_code, key)
+        and shape_for(budget.meeting_pattern, budget.credit_hours) is not None
+    )
+
+
 def _render_plan_rooms_sheet(
     *,
     wb,
@@ -825,8 +844,17 @@ def _render_plan_rooms_sheet(
     lecture_slots: list[dict],
     lab_slots: list[dict],
     course_fill,
+    shaped_course_keys: frozenset[str] = frozenset(),
 ) -> None:
-    """Add a room-centric schedule sheet to a per-plan workbook."""
+    """Add a room-centric schedule sheet to a per-plan workbook.
+
+    A lecture room's table draws the lecture columns only. A course taught in
+    a weekly shape of its own (``shaped_course_keys``: two 100-minute meetings)
+    has its lectures in lecture rooms at 100-minute column times, so a meeting
+    of such a course that starts at no lecture column (10:45 or 16:30 on the
+    default grid) is listed in a note under its room's table, never dropped.
+    Every other course's meetings are drawn exactly as before.
+    """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
@@ -893,7 +921,11 @@ def _render_plan_rooms_sheet(
             ws.cell(row=row, column=col).fill = section_fill
         return row + 2
 
-    def _write_room_table(row_start: int, room_code: str, slots: list[dict]) -> int:
+    def _write_room_table(
+        row_start: int, room_code: str, slots: list[dict], off_columns: list[str] | tuple = ()
+    ) -> int:
+        """One room's table; ``off_columns`` ("CODE SECTION Day HH:MM-HH:MM") are
+        its meetings that start at no column of ``slots``, listed under it."""
         room = room_info.get(room_code)
         capacity = getattr(room, "capacity", "?") if room else "?"
         is_lab = _room_type(room_code).lower() == "lab"
@@ -938,11 +970,55 @@ def _render_plan_rooms_sheet(
                             start_color="FADBD8", end_color="FADBD8", fill_type="solid"
                         )
             row += 1
+        if off_columns:
+            # As the term sheets' off-grid note: the room is in use then, so the
+            # table alone would read as free.
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=end_col)
+            note = ws.cell(row=row, column=1)
+            note.value = "Also in this room, outside these time slots: " + "; ".join(off_columns)
+            note.data_type = "s"  # a section label is data, never a formula
+            note.font = Font(italic=True, size=8, color="C03030")
+            note.alignment = Alignment(wrap_text=True, vertical="top")
+            ws.row_dimensions[row].height = 13 * max(1, -(-len(note.value) // 120))
+            row += 1
         return row + 1
+
+    # The cells a lecture room's table reads, and the meetings of a course in a
+    # weekly shape of its own that none of them shows (see the docstring).
+    lecture_cells = {(day, slot["start"]) for day in DAY_LABELS for slot in lecture_slot_list}
+    off_lecture_columns: dict[str, list[str]] = defaultdict(list)
+    shaped_meetings = [
+        p
+        for p in roomed_placements
+        if shaped_course_keys
+        and _term_section_course_key(p.term_section) in shaped_course_keys
+        and (_upper(p.day)[:3], _norm(p.start_time)) not in lecture_cells
+    ]
+    for p in sorted(
+        shaped_meetings,
+        key=lambda p: (
+            DAY_LABELS.index(_upper(p.day)[:3])
+            if _upper(p.day)[:3] in DAY_LABELS
+            else len(DAY_LABELS),
+            _upper(p.day),
+            _norm(p.start_time),
+            _upper(p.term_section.course_code),
+            natural_key(p.term_section.section),
+        ),
+    ):
+        day = _upper(p.day)[:3]
+        text = (
+            f"{_section_cell_label(p.term_section, set())} {DAY_NAME_BY_CODE.get(day, day)} "
+            f"{_norm(p.start_time)}-{_norm(p.end_time)}"
+        )
+        if text not in off_lecture_columns[_norm(p.room)]:
+            off_lecture_columns[_norm(p.room)].append(text)
 
     current_row = _section_header(1, "Lectures", len(lecture_slot_list))
     for room_code in lecture_room_codes:
-        current_row = _write_room_table(current_row, room_code, lecture_slot_list)
+        current_row = _write_room_table(
+            current_row, room_code, lecture_slot_list, off_lecture_columns.get(room_code, ())
+        )
 
     if lab_room_codes:
         current_row += 1
