@@ -338,6 +338,62 @@ def test_one_identity_at_two_credit_hours_keeps_the_default_in_both_engines(monk
         assert shape_for(budget.meeting_pattern, budget.credit_hours) is None
 
 
+@pytest.mark.parametrize("first", ["AI2", "DS2"])
+def test_a_nameless_row_pooled_through_the_catalogue_at_other_credit_hours_keeps_the_default(
+    monkeypatch, first
+):
+    """AI2's IS232 row has no name and 4 credits; DS2's names SYSTEMS ANALYSIS
+    at 3 credits and voted 2 x 100. Generate names AI2's row after the
+    catalogue, so both programmes' students share one budget, sized from
+    whichever student comes first. AI2's row never matches that identity (its
+    own is the bare code), so the rows of the identity alone agree on 2 x 100:
+    the credit hours of the students pooled into the budget differ, so it is
+    mixed and keeps the default in either order, and the scheduler is handed
+    the default for it."""
+    analysis = ("IS232", "SYSTEMS ANALYSIS")
+    make_curriculum([("AI2", ("IS232", ""), 4, ""), ("DS2", analysis, 3, TWO_BY_100)])
+    Course.objects.create(course_code="IS232", description="SYSTEMS ANALYSIS", credit_hours=3)
+    make_students()
+    second = "DS2" if first == "AI2" else "AI2"
+    recommend_every_plan_course(monkeypatch, [*STUDENTS[first], *STUDENTS[second]])
+
+    result = generate()
+
+    budget = ScenarioSectionBudget.objects.get(scenario_id=result["scenario"]["id"])
+    assert (budget.course_key, budget.total_demand, budget.meeting_pattern) == (
+        key(analysis),
+        4,
+        "",
+    )
+    # The budget's credit hours still follow the first student (that predates
+    # the weekly meetings); its meetings no longer do.
+    assert budget.credit_hours == (4 if first == "AI2" else 3)
+    assert result["department_meeting_patterns"] == [
+        {
+            "course_key": key(analysis),
+            "course_code": "IS232",
+            "course_name": "SYSTEMS ANALYSIS",
+            "status": MIXED,
+            "programme_pattern": "",
+            "meeting_pattern": "",
+            "programmes": [{"program": "DS2", "meeting_pattern": TWO_BY_100}],
+            "no_window": False,
+        }
+    ]
+    handed = dict(
+        ScenarioSectionBudget.objects.filter(scenario_id=result["scenario"]["id"]).values_list(
+            "course_key", "meeting_pattern"
+        )
+    )
+    assert handed == {key(analysis): ""}
+    offerings = offerings_by_key(snapshot(meeting_patterns=handed))
+    named, bare = offerings[key(analysis)], offerings["IS232"]
+    assert (named.programs, named.credit_hours, named.meeting_pattern) == ({"DS2"}, 3, "")
+    assert named.requirements == lectures(75, 2)
+    assert (bare.programs, bare.credit_hours, bare.meeting_pattern) == ({"AI2"}, 4, "")
+    assert bare.requirements == compile_requirements(4, is_online=False)
+
+
 def test_a_programme_with_no_students_in_the_course_still_has_its_say(monkeypatch):
     """Plan ownership decides, not this term's demand (the engines' demand
     differs; ownership is what they share). No AI student takes DS301 this term,
@@ -601,6 +657,8 @@ def test_without_generates_values_intake_decides_each_course_as_generate_does(de
       scheduler builds them a bare-code offering of their own at the default:
       the nameless programme's students meet 2 x 75 there and 2 x 100 in
       classic. That offering's key has no budget, so Check says nothing.
+      (At other credit hours the pooled budget is mixed and keeps the default:
+      ``test_a_nameless_row_pooled_through_the_catalogue_at_other_credit_hours_keeps_the_default``.)
     * A 101 course with a stray vote: classic never budgets a 101 course; the
       scheduler schedules it, and applies the vote.
 

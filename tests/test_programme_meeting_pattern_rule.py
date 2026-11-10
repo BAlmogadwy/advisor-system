@@ -128,8 +128,10 @@ def test_credit_hours_are_compared_as_the_engines_read_them():
 def test_a_nameless_row_at_other_credit_hours_counts_too():
     """An Arabic plan name keys as the bare code, and so does a nameless row:
     the scheduler groups both into one offering sized at the larger credit
-    hours. Ignoring the nameless row would let classic Generate give a 3-credit
-    budget 2 x 100 that the scheduler builds at 4 credits."""
+    hours. Ignoring the nameless row would let a 3-credit budget take 2 x 100
+    that the scheduler builds at 4 credits. (A nameless row the catalogue
+    names is another key in classic Generate; Generate checks the credit hours
+    of the students it pools there itself.)"""
     rows = [row("AI2", "AR201", TWO_BY_100), row("DS2", "AR201", credits=4, named=False)]
     assert programme_shape_for("AR201", rows).status == MIXED
 

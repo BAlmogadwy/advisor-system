@@ -70,6 +70,7 @@ from core.services.timetable_meeting_shape import (
     PROGRAMME_PATTERN_CHOICES,
     STANDARD,
     ProgrammeRow,
+    _engine_credits,
     contributing_rows,
     pattern_choices,
     shape_for,
@@ -268,8 +269,11 @@ def _vote_status(values: Iterable[str]) -> tuple[str, str]:
     """How stored votes come out: (status, the agreed value or "").
 
     The editor shows what the rows HOLD. For a row that may vote that is its
-    vote, so this is ``merge_programme_patterns``'s outcome; for a clear-only
-    row (no name, say, which never votes) it is the value still to clear.
+    vote, so over rows of one credit-hours value this is
+    ``merge_programme_patterns``'s outcome; for a clear-only row (no name, say,
+    which never votes) it is the value still to clear. The rule's other MIXED,
+    rows of the course taught at different credit hours, is the listing's to
+    apply (``credit_hours_differ``): it reads rows that hold nothing too.
     """
     votes = {value for value in values if value != PROGRAMME_NOT_SET}
     if not votes:
@@ -341,9 +345,17 @@ def meeting_pattern_rows(programs: Iterable[str]) -> dict[str, Any]:
         {course_key, course_code, course_name, credit_hours,
          programmes: [{program, meeting_pattern}],   # the rows on screen
          status, meeting_pattern,                    # how they come out
+         credit_hours_differ,
          co_owners: [{program, meeting_pattern}],    # other programmes' rows
          same_code_elsewhere: [{course_key, course_name, programmes}],
          clear_only, reason}
+
+    ``credit_hours_differ`` is True when the programmes on screen teach the
+    course at different credit hours (every row of theirs, whether it may vote
+    or not, read as the engines read them: missing means 3). A timetable of
+    those programmes then keeps the standard meetings whatever they voted
+    (``merge_programme_patterns``), so when anyone voted the status is
+    ``mixed`` and nothing is agreed.
 
     ``choices`` are the three votes with their words; the standard minutes are
     the engine's (``MEETING_PATTERNS``), never the page's. No programme: nothing
@@ -372,6 +384,12 @@ def meeting_pattern_rows(programs: Iterable[str]) -> dict[str, Any]:
             continue
         voters = [row for row in mine if catalogue.eligible(row)]
         status, agreed = _vote_status(_stored(row) for row in mine)
+        credits = {
+            _engine_credits(row.get("credit_hours")) for row in group if _program(row) in shown
+        }
+        credit_hours_differ = len(credits) > 1
+        if credit_hours_differ and status != NO_VOTE:
+            status, agreed = MIXED, PROGRAMME_NOT_SET
         first = (voters or mine)[0]
         courses.append(
             {
@@ -384,6 +402,7 @@ def meeting_pattern_rows(programs: Iterable[str]) -> dict[str, Any]:
                 ],
                 "status": status,
                 "meeting_pattern": agreed,
+                "credit_hours_differ": credit_hours_differ,
                 "co_owners": catalogue.co_owners(key, shown),
                 "same_code_elsewhere": catalogue.same_code_elsewhere(key),
                 "clear_only": not voters,
@@ -639,6 +658,18 @@ class _DraftScenarios:
         self.after = [
             {**row, "meeting_pattern": new_values.get(int(row["id"]), _stored(row))} for row in rows
         ]
+        # The rule's input per programme set, built once: many scenarios share
+        # their programmes, and one beyond the cap is still checked.
+        self._keyed: dict[tuple[str, ...], list[ProgrammeRow]] = {}
+
+    def rows_of(self, programmes: Iterable[str]) -> list[ProgrammeRow]:
+        """The study plan of these programmes as it will read, keyed for the rule."""
+        wanted = tuple(sorted(set(programmes)))
+        if wanted not in self._keyed:
+            self._keyed[wanted] = pre_key(
+                row for row in self.after if _programme_label(row["program"]) in wanted
+            )
+        return self._keyed[wanted]
 
     def reached_by(self, key: str, programs: set[str]) -> tuple[list[dict[str, Any]], int]:
         """The draft scenarios a change to ``key`` reaches, as they would read it,
@@ -661,9 +692,7 @@ class _DraftScenarios:
             theirs = self.programmes.get(sid, [])
             if scenario is None or sid in out or not programs & set(theirs):
                 continue
-            their_rows = pre_key(
-                row for row in self.after if _programme_label(row["program"]) in theirs
-            )
+            their_rows = self.rows_of(theirs)
             budget_key = str(budget["course_key"] or budget["course_code"])
             if _budget_course(budget_key, their_rows) != key:
                 continue

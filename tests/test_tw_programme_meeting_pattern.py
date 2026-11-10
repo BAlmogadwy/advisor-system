@@ -687,6 +687,29 @@ def test_a_stale_page_never_saves_a_value_the_programmes_no_longer_hold(http):
     assert _pattern_audits() == []
 
 
+def test_a_stale_page_that_showed_standard_never_saves_2x100(http):
+    """The other direction: a tab drew COE226 (2 x 100 in the scenario) as
+    differing from the standard meetings its programme chose, so it posts the
+    standard value (``""``, as the budget stores it). The programme has since
+    chosen 2 x 100: that is not what the page showed, so it is refused, not
+    answered as if the standard meetings had been used."""
+    sc = _six_courses()
+    ProgrammeRequirement.objects.filter(program="CS2", course_code="COE226").update(
+        meeting_pattern="2x100"
+    )
+    logic = ScenarioSectionBudget.objects.get(scenario=sc, course_key=LOGIC)
+
+    changed = _use_default(http, sc, LOGIC, use_programme_default=True, expected_meeting_pattern="")
+
+    assert changed.status_code == 409, changed.content
+    error = changed.json()["error"]
+    assert error["code"] == "PROGRAMME_DEFAULT_CHANGED"
+    assert (error["details"]["expected"], error["details"]["meeting_pattern"]) == ("", "2x100")
+    logic.refresh_from_db()
+    assert logic.meeting_pattern == "2x100"
+    assert _pattern_audits() == []
+
+
 def test_the_programmes_value_is_checked_as_an_explicit_one(http):
     sc = _six_courses()
 

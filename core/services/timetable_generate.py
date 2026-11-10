@@ -65,7 +65,15 @@ from core.services.timetable_course_exclusion import (
     is_generate_excluded_course as _is_excluded_course,
 )
 from core.services.timetable_demand import sync_scenario_student_course_requests
-from core.services.timetable_meeting_shape import AGREE, MIXED, ProgrammeRow, programme_shape_for
+from core.services.timetable_meeting_shape import (
+    AGREE,
+    MIXED,
+    PROGRAMME_NOT_SET,
+    ProgrammeRow,
+    ProgrammeShape,
+    _engine_credits,
+    programme_shape_for,
+)
 
 # Course exclusion rules live in core/services/timetable_course_exclusion.py,
 # shared with Section Planning's weekly-meetings editor and the curriculum
@@ -73,7 +81,11 @@ from core.services.timetable_meeting_shape import AGREE, MIXED, ProgrammeRow, pr
 
 
 def _department_meeting_patterns(
-    plan: list[dict], votes: list[ProgrammeRow], lab_columns: list
+    plan: list[dict],
+    votes: list[ProgrammeRow],
+    lab_columns: list,
+    *,
+    pooled_credits: Mapping[str, set[int]],
 ) -> tuple[dict[str, str], list[dict]]:
     """Each budget's weekly meetings, from its programmes' votes, and the report.
 
@@ -85,11 +97,20 @@ def _department_meeting_patterns(
     disagreement keeps the credit default, as does an identity those rows teach
     at different credit hours: a budget takes the credit hours of the first
     student's plan row (``course_metadata``), so a shape there would depend on
-    student order (``timetable_meeting_shape.programme_shape_for``). The budget
-    then takes a shape only if it is a choice for the budget itself: its credit
-    hours, and no English bundle (``programme_meeting_patterns.budget_value``).
-    The new scheduler is handed these values, so both engines teach a course
-    one way.
+    student order (``timetable_meeting_shape.programme_shape_for``).
+
+    Those rows are not every row a budget pools. A nameless plan row is named
+    after the catalogue here, so its students join the budget of the named
+    course, while its identity (the bare code) never matches that course's
+    rows. ``pooled_credits`` is, per budget key, the credit hours (read as the
+    engines read them) of every student plan row pooled into it; when they
+    differ, a decision the rows agreed on is ``MIXED`` too, and the default
+    stands whichever student came first.
+
+    The budget then takes a shape only if it is a choice for the budget itself:
+    its credit hours, and no English bundle
+    (``programme_meeting_patterns.budget_value``). The new scheduler is handed
+    these values, so both engines teach a course one way.
 
     Pure: no query, so it runs before anything is written.
 
@@ -110,6 +131,8 @@ def _department_meeting_patterns(
     for entry in plan:
         course_key = str(entry.get("course_key") or entry["course_code"])
         decision = programme_shape_for(normalise_key(course_key), votes)
+        if decision.status == AGREE and len(pooled_credits.get(course_key, ())) > 1:
+            decision = ProgrammeShape(MIXED, PROGRAMME_NOT_SET, decision.programmes)
         value = budget_value(
             decision,
             course_key=course_key,
@@ -592,6 +615,10 @@ def generate_workspace_scenario(
     student_recs: dict[int, list[str]] = {}
     student_course_keys: dict[int, list[str]] = {}
     course_metadata: dict[str, dict[str, object]] = {}
+    # Every credit-hours value pooled into each key, read as the engines read
+    # them: a budget takes only the first student's, so the weekly-meetings
+    # rule must know when its students' plan rows differ.
+    pooled_credits: dict[str, set[int]] = defaultdict(set)
 
     for sid, recs in all_recs.items():
         # Exclusion is decided per course identity: the student's own plan
@@ -605,6 +632,7 @@ def generate_workspace_scenario(
                 continue
             key = str(meta["course_key"])
             course_metadata.setdefault(key, meta)
+            pooled_credits[key].add(_engine_credits(meta.get("credit_hours")))
             filtered.append(code)
             keys.append(key)
         if filtered:
@@ -769,7 +797,7 @@ def generate_workspace_scenario(
     # transaction, so a failure once the scenario exists would leave half of it
     # behind. Step 5b only copies the strings.
     budget_patterns, department_meeting_patterns = _department_meeting_patterns(
-        plan, programme_votes, lab_columns
+        plan, programme_votes, lab_columns, pooled_credits=pooled_credits
     )
 
     scenario = TimetableScenario.objects.create(

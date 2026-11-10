@@ -151,6 +151,7 @@ def test_the_listing_is_one_entry_per_identity_for_the_programmes_on_screen(plan
         # DS2 has not chosen: it abstains, so AI2's choice is the agreement.
         "status": "agree",
         "meeting_pattern": "2x100",
+        "credit_hours_differ": False,
         # The other programmes that teach this very course, with their votes.
         "co_owners": [
             {"program": "CS2", "meeting_pattern": "standard"},
@@ -195,7 +196,8 @@ def test_programmes_that_differ_are_mixed_and_choose_nothing(plan) -> None:
 
 def test_the_listing_status_of_rows_that_may_vote_is_the_rules_merge(plan) -> None:
     rows = list(ProgrammeRequirement.objects.values(*editor.EDITOR_FIELDS))
-    for programs in (["AI2", "DS2"], ["AI2", "CS2"], ["DS2", "IS2"], ["CS2"]):
+    # AI2 and CYP2: CYP2's STAT103 is 4 credits, a row that holds nothing.
+    for programs in (["AI2", "DS2"], ["AI2", "CS2"], ["DS2", "IS2"], ["CS2"], ["AI2", "CYP2"]):
         for course in editor.meeting_pattern_rows(programs)["courses"]:
             mine = [
                 r
@@ -209,6 +211,56 @@ def test_the_listing_status_of_rows_that_may_vote_is_the_rules_merge(plan) -> No
                 rule.status,
                 rule.meeting_pattern,
             ), (programs, course["course_key"])
+
+
+def test_a_course_taught_at_different_credit_hours_on_screen_is_mixed() -> None:
+    """AI2 teaches MACHINE LEARNING at 3 credits and chose 2 x 100; DS2 teaches
+    the same course at 4, where no vote is possible, and its row is not listed.
+    A timetable of AI2 and DS2 keeps the standard meetings (the rule's credit
+    hours MIXED), so the listing must not say they agree."""
+    _req("AI2", "AI201", "MACHINE LEARNING", pattern="2x100")
+    _req("DS2", "AI201", "MACHINE LEARNING", credits=4)
+    _req("AI2", "AI202", "DATA MINING")
+    _req("DS2", "AI202", "DATA MINING", credits=None)  # read as 3, as the engines do
+    _req("AI2", "AI203", "DEEP LEARNING")
+    _req("DS2", "AI203", "DEEP LEARNING", credits=4)
+
+    by_key = {c["course_key"]: c for c in editor.meeting_pattern_rows(["AI2", "DS2"])["courses"]}
+
+    learning = by_key["AI201::MACHINE_LEARNING"]
+    assert learning["programmes"] == [{"program": "AI2", "meeting_pattern": "2x100"}]
+    assert (
+        learning["status"],
+        learning["meeting_pattern"],
+        learning["credit_hours_differ"],
+    ) == ("mixed", "", True)
+    rule = merge_programme_patterns(
+        row
+        for row in pre_key(ProgrammeRequirement.objects.values(*editor.EDITOR_FIELDS))
+        if row.identity == "AI201::MACHINE_LEARNING"
+    )
+    assert (rule.status, rule.meeting_pattern) == ("mixed", "")
+    # A missing value is 3 credits, like the engines read it: no difference.
+    mining = by_key["AI202::DATA_MINING"]
+    assert (mining["status"], mining["credit_hours_differ"]) == ("none", False)
+    # Nobody voted: nothing to call mixed, but the difference is still said.
+    deep = by_key["AI203::DEEP_LEARNING"]
+    assert (deep["status"], deep["meeting_pattern"], deep["credit_hours_differ"]) == (
+        "none",
+        "",
+        True,
+    )
+    # AI2 on its own teaches it at one number of credit hours: it agrees.
+    [alone] = [
+        c
+        for c in editor.meeting_pattern_rows(["AI2"])["courses"]
+        if c["course_key"] == "AI201::MACHINE_LEARNING"
+    ]
+    assert (alone["status"], alone["meeting_pattern"], alone["credit_hours_differ"]) == (
+        "agree",
+        "2x100",
+        False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -952,6 +1004,9 @@ def test_the_preview_names_the_newest_draft_scenarios_and_counts_the_rest(
     client: Client, plan, monkeypatch
 ) -> None:
     monkeypatch.setattr(editor, "MAX_SCENARIOS", 2)
+    # Beyond the cap, a DS2 draft that budgets ANOTHER STAT103 course: the
+    # change does not reach it, so it is not counted either.
+    _scenario("another course", ["DS2"], budget_key="STAT103::STATISTICS_FOR_EVERYONE")
     made = [_scenario(f"run {n}", ["DS2"]) for n in range(4)]
     # The oldest budgets the course twice (exact and bare): it is counted once.
     ScenarioSectionBudget.objects.create(
@@ -1117,6 +1172,44 @@ def test_a_preview_reads_a_fixed_number_of_queries_however_many_courses_change(
     # four, not one per course or per older scenario.
     with django_assert_max_num_queries(4):
         editor.save_meeting_patterns(body, actor=_actor(), source="test")
+
+
+def test_a_preview_keys_the_study_plan_once_per_set_of_programmes(
+    client: Client, plan, monkeypatch
+) -> None:
+    """Many drafts share their programmes, and the ones beyond the cap are
+    still checked: the plan is keyed for the rule once per programme set,
+    across every changed course, never once per scenario."""
+    monkeypatch.setattr(editor, "MAX_SCENARIOS", 1)
+    for n in range(4):
+        _scenario(f"DS2 run {n}", ["DS2"])
+        _scenario(f"pair run {n}", ["AI2", "DS2"], budget_key=MATH)
+    keyed: list[set[str]] = []
+
+    def counting(rows):
+        out = pre_key(rows)
+        keyed.append({row.programme for row in out})
+        return out
+
+    monkeypatch.setattr(editor, "pre_key", counting)
+    _login(client)
+
+    preview = _post(
+        client,
+        {
+            "programs": ["AI2", "DS2"],
+            "changes": [
+                {"course_key": STAT, "meeting_pattern": "standard"},
+                {"course_key": MATH, "meeting_pattern": "standard"},
+            ],
+            "dry_run": True,
+        },
+    ).json()
+
+    by_key = {c["course_key"]: c for c in preview["courses"]}
+    assert (len(by_key[STAT]["scenarios"]), by_key[STAT]["scenarios_more"]) == (1, 3)
+    assert (len(by_key[MATH]["scenarios"]), by_key[MATH]["scenarios_more"]) == (1, 3)
+    assert sorted(sorted(programmes) for programmes in keyed) == [["AI2", "DS2"], ["DS2"]]
 
 
 def test_many_scenarios_programmes_are_read_with_one_board_query(
