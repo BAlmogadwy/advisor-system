@@ -7489,6 +7489,103 @@ function toggleSidebar(force) {
   if (btn) btn.classList.toggle('primary', SB.open);
   if (SB.open) loadSidebarBudget();
 }
+/* The Add course / section dialog (timetable-course-editor.js), from
+   "+ Course / section" or, on a course (`courseKey`), from the weekly-meetings
+   line over the sidebar. */
+function openSplitCourseEditor(courseKey = '') {
+  TimetableCourseEditor.open({
+    scenarioId: S.scenarioId, published: S.scenarioMeta?.status === 'published',
+    budget: SB.budget || [], arabic: IS_AR, courseKey,
+    // The line is drawn again when a save changes what it says: the keyboard
+    // goes back to the same course there, else to the sidebar's filter.
+    returnFocus: () => TimetableCourseEditor.focusSummary($('twsMeetingSummary'), { key: courseKey, fallback: $('twsSectionSearch') }),
+    // The editor says a refusal inside its modal dialog (a toast sits under
+    // it), so only words meant for a person reach it, as classic's adapter
+    // does: the server's own refusal, or this page's copy-in-progress words
+    // (said before any request, so with no answer). A page that is not JSON
+    // (a proxy's error, the login page after a session expired), a failed
+    // request or a bare HTTP status give '', and the editor says its own.
+    request: (url, opts, onError) => api(url, opts, onError && ((message, body) =>
+      onError(body?.error?.message || (body === undefined && COPY_ACTIVITY.pending ? message : '')))),
+    onSaved: async (_budget, change) => {
+      await loadSidebarBudget();
+      if (change?.action === 'meeting_pattern') {
+        // The section being placed is of the course just saved: its targets
+        // were read for its old weekly meetings, so it starts again from the
+        // course's row as read now.
+        if (S.createAssist.active && S.createAssist.payload?.course_key === change.course_key) restartCreateSectionAssist();
+        // A weekly-meetings save is said on the dialog's own status line.
+        return;
+      }
+      // An add names the weekly meetings its programmes gave it, when they did.
+      notify.success(change?.message || (IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.'));
+    },
+  });
+}
+
+/* The weekly-meetings line over the sidebar's courses: those whose programmes
+   decided something for them, each opening the dialog on it, and "Use
+   programme defaults (N)" (the course editor's renderMeetingSummary, from the
+   budget rows). Hidden when no course has anything to say. */
+const PROGRAMME_DEFAULTS = { running: false };
+function renderSplitMeetingSummary() {
+  const box = $('twsMeetingSummary');
+  const editor = globalThis.TimetableCourseEditor;
+  if (!box || typeof editor?.renderMeetingSummary !== 'function') return;
+  editor.renderMeetingSummary(box, S.scenarioId ? SB.budget || [] : [], {
+    arabic: IS_AR, applyClass: 'tws-btn',
+    disabled: PROGRAMME_DEFAULTS.running || S.scenarioMeta?.status === 'published',
+    onOpen: courseKey => openSplitCourseEditor(courseKey),
+    onApply: rows => applySplitProgrammeDefaults(rows),
+    fallback: $('twsSectionSearch'),
+  });
+}
+
+/* "Use programme defaults (N)": each course that differs from what its
+   programmes agreed on is set to that value with its own weekly-meetings
+   save (POST …/budget/meeting-pattern/), one after another. The first
+   refusal stops it and is said, with the course and the server's words; the
+   courses before it stay saved. The sidebar is read again either way, and
+   a section being placed of a course that changed starts again from its row
+   as read now, as after the dialog's own save. */
+async function applySplitProgrammeDefaults(rows) {
+  if (PROGRAMME_DEFAULTS.running || !S.scenarioId) return;
+  const editor = globalThis.TimetableCourseEditor;
+  const scenarioId = S.scenarioId;
+  PROGRAMME_DEFAULTS.running = true;
+  renderSplitMeetingSummary();
+  let saved = 0;
+  let stopped = null;
+  const changed = new Set();
+  try {
+    for (const row of rows) {
+      let refusal = '';
+      const result = await api(`/ops/tw/scenarios/${scenarioId}/budget/meeting-pattern/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course_key: row.course_key, meeting_pattern: editor.programmeValue(row) }),
+      }, (message, body) => {
+        refusal = body?.error?.message || (body === undefined && COPY_ACTIVITY.pending ? message : '');
+      });
+      if (!result?.ok) { stopped = { row, refusal }; break; }
+      saved++;
+      changed.add(row.course_key);
+    }
+  } finally {
+    PROGRAMME_DEFAULTS.running = false;
+    // On again, whatever scenario the sidebar shows now.
+    renderSplitMeetingSummary();
+  }
+  if (S.scenarioId !== scenarioId) return;
+  await loadSidebarBudget();
+  if (S.createAssist.active && changed.has(S.createAssist.payload?.course_key)) restartCreateSectionAssist();
+  const said = editor.programmeDefaultsWords({ saved, total: rows.length, stopped, arabic: IS_AR });
+  if (stopped) notify.warning(said); else notify.success(said);
+  // The button is gone, or was turned off under the keyboard while it ran.
+  if (!document.activeElement || document.activeElement === document.body) {
+    editor.focusSummary($('twsMeetingSummary'), { key: '', fallback: $('twsSectionSearch') });
+  }
+}
+
 async function loadSidebarBudget() {
   if (!S.scenarioId) { renderSidebar(); return; }
   const data = await api(`/ops/tw/scenarios/${S.scenarioId}/budget/`);
@@ -7496,6 +7593,7 @@ async function loadSidebarBudget() {
   renderSidebar();
 }
 function renderSidebar() {
+  renderSplitMeetingSummary();
   const body = $('twsSidebarBody');
   if (!body) return;
   if (!S.scenarioId) {
@@ -7520,6 +7618,9 @@ function renderSidebar() {
     // The weekly shape the scenario teaches the course in ("2 × 100 min"),
     // next to its credit hours; nothing for the credit hours' standard pattern.
     const shape = (IS_AR ? b.meeting_pattern_label_ar : b.meeting_pattern_label) || '';
+    // And what its programmes decided, when it is news (it differs from
+    // their default, or they differ), placed in full or not.
+    const chip = globalThis.TimetableCourseEditor?.programmeChip?.(b, IS_AR) || '';
     const courseLens = courseLensForItem(b);
     const planBits = courseLens && courseLens.plans
       ? Object.entries(courseLens.plans).filter(([, count]) => Number(count) > 0).map(([plan, count]) => `${plan} ${count}`).join(' ')
@@ -7537,7 +7638,7 @@ function renderSidebar() {
       </div>
       <div class="meta">
         ${b.total_demand ? `<span class="dem">${b.total_demand} ${IS_AR ? 'طالب' : 'stu'}</span>` : ''}
-        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}${shape ? `<span class="dem">${esc(shape)}</span>` : ''}
+        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}${shape ? `<span class="dem">${esc(shape)}</span>` : ''}${chip ? `<span class="dem">${esc(chip)}</span>` : ''}
         ${b.max_per_section ? `<span class="dem">${IS_AR ? 'حد' : 'cap'} ${b.max_per_section}</span>` : ''}
       </div>
       ${planBits ? `<div class="meta plan-line">${esc(planBits)}${courseLens.shared_overflow ? ' | shared overflow' : ''}</div>` : ''}
@@ -9519,30 +9620,7 @@ function initDismissibleDetailsMenus() {
 
   // Sidebar toggle + search
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());
-  $('twsAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
-    scenarioId: S.scenarioId, published: S.scenarioMeta?.status === 'published',
-    budget: SB.budget || [], arabic: IS_AR,
-    // The editor says a refusal inside its modal dialog (a toast sits under
-    // it), so only words meant for a person reach it, as classic's adapter
-    // does: the server's own refusal, or this page's copy-in-progress words
-    // (said before any request, so with no answer). A page that is not JSON
-    // (a proxy's error, the login page after a session expired), a failed
-    // request or a bare HTTP status give '', and the editor says its own.
-    request: (url, opts, onError) => api(url, opts, onError && ((message, body) =>
-      onError(body?.error?.message || (body === undefined && COPY_ACTIVITY.pending ? message : '')))),
-    onSaved: async (_budget, change) => {
-      await loadSidebarBudget();
-      if (change?.action === 'meeting_pattern') {
-        // The section being placed is of the course just saved: its targets
-        // were read for its old weekly meetings, so it starts again from the
-        // course's row as read now.
-        if (S.createAssist.active && S.createAssist.payload?.course_key === change.course_key) restartCreateSectionAssist();
-        // A weekly-meetings save is said on the dialog's own status line.
-        return;
-      }
-      notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
-    },
-  }));
+  $('twsAddCourse')?.addEventListener('click', () => openSplitCourseEditor());
   $('twsSearch')?.addEventListener('input', (e) => {
     S.search = e.target.value || '';
     for (let i = 0; i < paneCount(); i++) renderPane(i);

@@ -25,6 +25,7 @@ def test_timetable_outcome_frontend_regressions() -> None:
             "tests/frontend/timetable-copy.test.cjs",
             "tests/frontend/timetable-course-editor.test.cjs",
             "tests/frontend/timetable-meeting-pattern.test.cjs",
+            "tests/frontend/timetable-programme-meeting-pattern.test.cjs",
             "tests/frontend/timetable-one-teacher.test.cjs",
             "tests/frontend/timetable-preview-lane.test.cjs",
             "tests/frontend/timetable-manual-clash-ruling.test.cjs",
@@ -37,7 +38,7 @@ def test_timetable_outcome_frontend_regressions() -> None:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        # Sixteen jsdom files with the workspace's dialogs; a shared CI runner
+        # Seventeen jsdom files with the workspace's dialogs; a shared CI runner
         # takes several times a laptop's ~20 s. The suite's own failures fail
         # the test; this only stops a hung run.
         timeout=240,

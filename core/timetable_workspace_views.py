@@ -90,6 +90,11 @@ from core.services.job_runtime import (
     SolverBusy,
     solver_slot,
 )
+from core.services.programme_meeting_patterns import (
+    budget_value,
+    resolve_for_keys,
+    scenario_programmes,
+)
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.request_lanes import preview_lane, server_busy_response
 from core.services.section_move_optimisation import section_move_optimisation_engine
@@ -679,6 +684,21 @@ def _generate_slot_lists(payload: dict) -> tuple[dict[str, list[dict]], list, li
     return lists, errors, dropped
 
 
+def _budget_meeting_patterns(result: dict) -> dict[str, str]:
+    """Each course of a new scaffold with the weekly meetings its budget row holds.
+
+    Read from Generate's answer (its ``section_budget``), every course, the
+    credit default ("") included, for the scheduler's build job: it plans each
+    course in that shape instead of deciding it again from the programmes
+    when the job runs. A scaffold without budget rows gives ``{}``.
+    """
+    return {
+        str(row["course_key"]): str(row.get("meeting_pattern") or "")
+        for row in result.get("section_budget") or []
+        if row.get("course_key")
+    }
+
+
 @login_required(login_url="login")
 @require_POST
 def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
@@ -841,7 +861,15 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     result["seed"] = seed
     if engine == "scheduler":
         assert scheduler_params is not None
-        build_params = {**scheduler_params, "seed": seed}
+        build_params = {
+            **scheduler_params,
+            "seed": seed,
+            # The weekly meetings Generate just stored for every course (from
+            # its programmes' defaults), "" included: the scheduler builds each
+            # course in its budget's shape, so a programme default saved while
+            # the job waits cannot make the two engines disagree.
+            "meeting_patterns": _budget_meeting_patterns(result),
+        }
     else:
         build_params = {"cpsat_time_limit": 60, "seed": seed}
 
@@ -892,7 +920,10 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
                 )
             result["engine"] = engine
             result["build_summary"] = build_summary
-            result["section_budget"] = compute_scenario_budget(result["scenario"]["id"])
+            built = TimetableScenario.objects.filter(id=result["scenario"]["id"]).first()
+            result["section_budget"] = compute_scenario_budget(
+                result["scenario"]["id"], department_for=built
+            )
         except Exception as exc:
             logger.exception("Synchronous build failed for scenario %s", result["scenario"]["id"])
             return _err(str(exc), code="GENERATE_FAILED", details={"seed": seed}, status=500)
@@ -921,13 +952,22 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
     Shows planned vs used vs remaining sections and total demand per course.
 
     POST adds sections to a course (Add course). A NEW course may name its
-    weekly ``meeting_pattern`` (``""`` the credit default, ``"2x100"`` two
-    100-minute meetings; checked against the posted credit hours) and is stored
-    with it. A course already in the budget keeps its own: the same value (or
-    none) is accepted as before, a different one is refused with
+    weekly ``meeting_pattern`` (``""`` or ``"standard"`` the credit default,
+    ``"2x100"`` two 100-minute meetings; checked against the posted credit
+    hours) and is stored with it. Left out (or null), it takes what the
+    scenario's programmes agreed on for the course, fitted to the posted credit
+    hours (``programme_meeting_patterns.budget_value``; never refused, since
+    nothing was sent), and the audit names that source. The answer says what
+    was applied: ``meeting_pattern_applied`` = ``{value, source ("request",
+    "programmes" or "standard"), status (the programmes' decision)}``, null
+    for a course already in the budget. That course keeps its own: the same
+    value (or none) is accepted as before, a different one is refused with
     ``VALIDATION_BUDGET`` - never dropped in silence - because a pattern is
     changed with the course's weekly-meetings control
     (``tw_scenario_budget_meeting_pattern_view``).
+
+    Every answer's rows carry the programmes' decision for each course
+    (``compute_scenario_budget`` with ``department_for``).
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -937,6 +977,7 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
     except TimetableScenario.DoesNotExist:
         return _err("Scenario not found", code="NOT_FOUND", status=404)
 
+    answer: dict[str, object] = {}
     if request.method == "POST":
         if scenario.status == "published":
             return _err("Cannot modify published scenario.", code="SCENARIO_PUBLISHED")
@@ -979,6 +1020,7 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
                 )
         except (TypeError, ValueError) as exc:
             return _err(str(exc), code="VALIDATION_BUDGET")
+        applied: dict[str, str] | None = None
         if existing:
             used = next(
                 (
@@ -992,6 +1034,20 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
             existing.save(update_fields=["planned_sections"])
             meeting_pattern = existing.meeting_pattern
         else:
+            # What the scenario's programmes decided, for the key the course is
+            # stored under: its exact CODE::NAME, or a typed code read as its
+            # one course (two courses behind one code are never guessed between).
+            decision = resolve_for_keys([key], scenario_programmes(scenario))[key]
+            if posted_pattern is None:
+                # Left on "Programme default": nothing was sent, so nothing is
+                # refused; a value that does not fit is the credit default.
+                meeting_pattern = budget_value(
+                    decision, course_key=key, course_code=code, credit_hours=hours
+                )
+                source = "programmes" if meeting_pattern else "standard"
+            else:
+                source = "request"
+            applied = {"value": meeting_pattern, "source": source, "status": decision.status}
             ScenarioSectionBudget.objects.create(
                 scenario=scenario,
                 course_key=key,
@@ -1003,19 +1059,25 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
                 planned_sections=count,
                 meeting_pattern=meeting_pattern,
             )
+        details: dict[str, object] = {
+            "scenario_id": scenario_id,
+            "course_key": key,
+            "sections": count,
+            "meeting_pattern": meeting_pattern,
+        }
+        # Only a value the programmes chose is named: any other add is audited
+        # exactly as before.
+        if applied is not None and applied["source"] == "programmes":
+            details["meeting_pattern_source"] = "programmes"
         log_audit_event(
             request,
             action="tw.scenario.budget.add",
             status="success",
-            details={
-                "scenario_id": scenario_id,
-                "course_key": key,
-                "sections": count,
-                "meeting_pattern": meeting_pattern,
-            },
+            details=details,
         )
-    budget = compute_scenario_budget(scenario_id)
-    return _ok({"budget": budget})
+        answer["meeting_pattern_applied"] = applied
+    budget = compute_scenario_budget(scenario_id, department_for=scenario)
+    return _ok({"budget": budget, **answer})
 
 
 @login_required(login_url="login")
@@ -1035,7 +1097,9 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
     online for its board whose meetings all sit in online-only windows is not
     listed: it is placed by its number of meetings, as long as the windows are,
     whatever its shape (``course_meeting_shape_mismatches``). Not undoable, like
-    Add course: set the old value to go back.
+    Add course: set the old value to go back. The answer's rows carry the
+    programmes' decision for each course, as the budget's do, so the dialog's
+    "Use programme default" (which posts that value here) can tell it is done.
 
     400 ``SCENARIO_PUBLISHED`` for a published scenario; 404 ``NOT_FOUND`` for a
     course the scenario's budget does not have; 400
@@ -1097,7 +1161,7 @@ def tw_scenario_budget_meeting_pattern_view(request: HttpRequest, scenario_id: i
     if value != previous:
         budget.meeting_pattern = value
         budget.save(update_fields=["meeting_pattern"])
-    rows = compute_scenario_budget(scenario_id)
+    rows = compute_scenario_budget(scenario_id, department_for=scenario)
     mismatched = course_meeting_shape_mismatches(scenario_id, key, rows)
     log_audit_event(
         request,
