@@ -487,14 +487,19 @@ $('spAdvReset').onclick = () => {
   $('spAdvSearch').focus();
 };
 
-async function postLimits(body) {
-  const res = await fetch(LIMITS_URL, {
+/* A JSON POST to one of the panels' save endpoints: the answer and its body. */
+async function postJson(url, body) {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   return { res, data };
+}
+
+function postLimits(body) {
+  return postJson(LIMITS_URL, body);
 }
 
 function limitTableHtml(changes) {
@@ -637,6 +642,469 @@ window.addEventListener('beforeunload', e => {
 /* Reload when program input changes (courses are program-specific; drafts are kept) */
 $('spProgram').addEventListener('change', () => {
   if (_advState !== 'idle') loadAdvancedCourses();
+});
+
+/* ── A programme's weekly meetings (its 3-credit courses) ──
+ * How each 3-credit course of a programme meets each week: not set (the
+ * programme leaves it to the others), Standard (2 × 75 min) or 2 × 100 min.
+ * It is saved on the programme's study plan, and a timetable GENERATED from
+ * then on copies what its programmes agree on; saved scenarios keep their own.
+ * As with the seat limits, a choice is a DRAFT until Save, a review (course ·
+ * programme · now → new) and a confirm; nothing is sent on change.
+ *
+ * It is no what-if: this page sizes sections and never reads weekly meetings,
+ * so these drafts never reach getPayload(). A row is a course IDENTITY
+ * (CODE::NAME, `data-key`), never a bare code: MATH243 is two courses. Drafts
+ * belong to the programmes on screen (`_meetProgram`, which changes only once
+ * the new programmes' rows are rendered): when the programmes change they are
+ * dropped, and the panel says so, so a choice is never saved for programmes it
+ * was not made for. The panel asks the server only once it is opened, and
+ * never with no programme on screen. The words of the three choices, and the
+ * minutes in them, are the server's. */
+const MEET_URL = '/ops/section-planning/meeting-patterns/';
+const MEET_SAVE_URL = '/ops/section-planning/meeting-patterns/save/';
+/* A mixed row's own option: its programmes keep their different values. Never sent. */
+const MEET_KEEP = 'keep';
+let _meetChoices = [];        // the three votes in the server's words
+let _meetProgram = '';        // the programmes whose rows are on screen ('' none)
+let _meetSeq = 0;             // the newest list request; older answers are dropped
+let _meetState = 'idle';      // 'idle' | 'loading' | 'ready' | 'failed' | 'none'
+let _meetBusy = false;        // a review or save in flight: one at a time
+const _meetDrafts = new Map(); // course key -> { value, all, typed, saved }
+let _meetDropNote = '';       // drafts a programme change dropped, said until the next edit
+let _meetReloadNotes = [];    // what the last reload did to drafts, said until the next edit
+
+const TM = {
+  chooseProgram: IS_AR ? 'اختر برنامجاً أولاً: اللقاءات الأسبوعية تُحدَّد لكل برنامج.' : 'Choose a programme first: weekly meetings are set per programme.',
+  noCourses:     IS_AR ? 'لا مقرر من 3 ساعات في هذه البرامج تُختار له اللقاءات الأسبوعية.' : 'These programmes have no 3-credit course whose weekly meetings can be chosen.',
+  listLoading:   IS_AR ? 'جارٍ تحميل اللقاءات الأسبوعية…' : 'The weekly meetings are loading…',
+  listFailed:    IS_AR ? 'لم تُحمَّل اللقاءات الأسبوعية، فلا يمكن الحفظ. غيّر البرنامج أو حاول مرة أخرى.' : "The weekly meetings didn't load, so nothing can be saved. Change the programme or try again.",
+  mixed:         IS_AR ? 'البرامج مختلفة' : 'Programmes differ',
+  selectAria:    label => IS_AR ? `اللقاءات الأسبوعية لـ ${label}` : `Weekly meetings for ${label}`,
+  allAria:       (label, others) => IS_AR ? `تطبيق اختيار ${label} على كل البرامج التي تدرّسه، ومنها: ${others}` : `Apply the ${label} choice to every programme that teaches it, also: ${others}`,
+  alsoTaught:    IS_AR ? 'يدرّسه أيضاً:' : 'Also taught by:',
+  clearOnly:     reason => IS_AR ? `لم يعد يُختار له (${reason})، ويمكن مسحه فقط.` : `No longer offered (${reason}); it can only be cleared.`,
+  /* Why a row may not take a value (programme_meeting_patterns.ineligibility). */
+  reasons: {
+    not_three_credits: IS_AR ? 'ليس من 3 ساعات' : 'not 3 credits',
+    not_named:         IS_AR ? 'بلا اسم مقرر في خطة الدراسة' : 'no course name in the study plan',
+    placeholder:       IS_AR ? 'خانة اختيارية' : 'an elective slot',
+    excluded:          IS_AR ? 'لا يدخل الجدول' : 'not on the timetable',
+    policy:            IS_AR ? 'مقرر إنجليزي بلقاءات ثابتة' : 'an English course with fixed meetings',
+  },
+  dropped:       (n, progs) => IS_AR
+    ? `أُسقط ${n} تعديل غير محفوظ لـ ${ltrIsland(progs)}: تغيّرت البرامج المعروضة`
+    : `${n} unsaved change${n === 1 ? '' : 's'} for ${progs} ${n === 1 ? 'was' : 'were'} dropped: the programmes on screen changed`,
+  gone:          n => IS_AR
+    ? `أُسقط ${n} تعديل غير محفوظ: لم يعد المقرر يقبل هذا الاختيار لهذه البرامج`
+    : `${n} unsaved change${n === 1 ? '' : 's'} dropped: the course no longer takes that choice for these programmes`,
+  scopeCleared:  codes => IS_AR
+    ? `${codes.map(ltrIsland).join('، ')}: تغيّرت القيمة المحفوظة فأُلغي تحديد «كل البرامج»؛ حدّده مرة أخرى لتطبيق القيمة المعروضة الآن`
+    : `${codes.join(', ')}: the saved value changed, so All programmes was cleared; tick it again to apply the value shown now`,
+  saveBtn:       IS_AR ? 'حفظ اللقاءات الأسبوعية…' : 'Save weekly meetings…',
+  saveTitle:     n => IS_AR ? `حفظ ${n} من اختيارات اللقاءات الأسبوعية؟` : `Save ${n} weekly-meetings choice${n === 1 ? '' : 's'}?`,
+  saveIntro:     IS_AR
+    ? 'تتغيّر الصفوف أدناه فقط، للبرامج المذكورة، ويُسجَّل كل تغيير في سجل التدقيق. تُطبَّق على الجداول التي تُنشأ من الآن، للطلاب والطالبات؛ وتحتفظ السيناريوهات المحفوظة بلقاءاتها.'
+    : 'Only the rows below change, for the programmes named, and each change is recorded in the audit log. It applies to timetables generated from now on, Male and Female alike; saved scenarios keep their own.',
+  saved:         n => IS_AR ? `حُفظ ${n} من اختيارات اللقاءات الأسبوعية وسُجّل في سجل التدقيق.` : `Saved ${n} weekly-meetings choice${n === 1 ? '' : 's'}; each change is in the audit log.`,
+  nothing:       IS_AR ? 'لا شيء يتغيّر: القيم المحفوظة مطابقة.' : 'Nothing to change: the saved values already match.',
+  skippedCount:  n => IS_AR ? `${n} صف لا يقبل هذا الاختيار.` : `${n} row${n === 1 ? '' : 's'} cannot take that choice.`,
+  skippedHead:   IS_AR ? 'لا يُطبَّق على:' : 'Not set on:',
+  coOwners:      IS_AR ? 'يدرّسه أيضاً (يحتفظ كل برنامج بقيمته):' : 'Also taught by (each keeps its own value):',
+  otherName:     IS_AR ? 'مخطط باسم آخر — حدّد صفه الخاص.' : 'is planned under another name — set its own row.',
+  scenariosHead: IS_AR ? 'جداول مسودة محفوظة تدرّسه (تحتفظ بلقاءاتها الأسبوعية):' : 'Saved draft timetables that teach it (they keep their own weekly meetings):',
+  scenarioDiffers: (now, wanted) => IS_AR
+    ? `الآن ${now}، وافتراضي البرامج ${wanted}: افتحه واضغط «استخدام افتراضي البرامج»`
+    : `now ${now}; the programme default is ${wanted}: open it and press “Use programme defaults”`,
+  scenarioMatches: IS_AR ? 'مطابق لافتراضي البرامج' : 'already matches the programme default',
+  scenarioMixed:   IS_AR ? 'برامجه مختلفة: يبقى كما هو' : 'its programmes differ: it stays as it is',
+  scenarioNone:    IS_AR ? 'لا قيمة لبرامجه: يبقى كما هو' : 'no programme default there: it stays as it is',
+  notAllowed:    IS_AR ? 'لا تملك صلاحية حفظ اللقاءات الأسبوعية.' : 'You are not allowed to save weekly meetings.',
+  leave:         IS_AR ? 'لديك اختيارات لقاءات أسبوعية غير محفوظة.' : 'You have unsaved weekly-meetings choices.',
+};
+
+/* A course in a status line: its code, an LTR island in Arabic. */
+const courseOf = d => {
+  const code = d.course_code || String(d.course_key || '').split('::')[0];
+  return IS_AR ? ltrIsland(code) : code;
+};
+const MEET_ERRORS = {
+  invalid_json:             () => LIMIT_ERRORS.invalid_json(),
+  programs_required:        () => TM.chooseProgram,
+  unknown_program:          d => IS_AR ? `برنامج غير معروف: ${d.program || ''}` : `Unknown programme: ${d.program || ''}`,
+  changes_required:         () => TM.nothing,
+  too_many_changes:         d => IS_AR ? `احفظ ${d.max || ''} مقرراً كحد أقصى في المرة الواحدة.` : `Save at most ${d.max || ''} courses at a time.`,
+  invalid_course:           () => IS_AR ? 'تغيير بلا مقرر.' : 'A change is missing its course.',
+  duplicate_course:         d => IS_AR ? `${courseOf(d)} مكرر في الحفظ نفسه.` : `${courseOf(d)} appears twice in one save.`,
+  invalid_pattern:          d => IS_AR ? `اختيار اللقاءات الأسبوعية لـ ${courseOf(d)} غير صالح.` : `The weekly meetings chosen for ${courseOf(d)} are not a valid choice.`,
+  invalid_scope:            d => IS_AR ? `نطاق ${courseOf(d)} غير صالح.` : `The scope for ${courseOf(d)} is not valid.`,
+  course_not_in_programmes: d => IS_AR ? `${courseOf(d)} لا يُدرَّس في البرامج المعروضة.` : `${courseOf(d)} is not taught by the programmes on screen.`,
+  preview_stale:            () => IS_AR ? 'تغيّرت اللقاءات الأسبوعية المحفوظة منذ المراجعة. اضغط حفظ مرة أخرى لمراجعة القائمة الجديدة.' : 'The saved weekly meetings changed since you reviewed them. Press Save again to review the new list.',
+  row_changed:              () => IS_AR ? 'تغيّر مقرر أثناء الحفظ فلم يُحفظ شيء. اضغط حفظ مرة أخرى.' : 'A course changed while saving, so nothing was saved. Press Save again.',
+  audit_unavailable:        () => LIMIT_ERRORS.audit_unavailable(),
+};
+/* The saved values moved under the page: reload them before the next review. */
+const STALE_MEET_CODES = new Set(['preview_stale', 'row_changed']);
+function meetError(data, status) {
+  const make = data && MEET_ERRORS[data.code];
+  if (make) return make(data);
+  if (status === 429) return TOO_MANY();
+  if (status === 401 || status === 403) return TM.notAllowed;
+  return T.reqFailed;
+}
+
+/* The programmes typed, as one key: upper-case, each once, sorted ("AI2,DS2"),
+ * so "AI2, DS2" and "DS2,AI2" are the same programmes on screen. */
+function typedProgrammes() {
+  const codes = $('spProgram').value.split(',').map(p => p.trim().toUpperCase()).filter(Boolean);
+  return [...new Set(codes)].sort().join(',');
+}
+function meetPrograms() {
+  return _meetProgram ? _meetProgram.split(',') : [];
+}
+
+/* One of the three votes in the page's language, in the server's words. */
+function choiceLabel(value) {
+  const choice = _meetChoices.find(c => c.value === (value || ''));
+  if (!choice) return String(value || '');
+  return IS_AR ? (choice.label_ar || choice.label) : choice.label;
+}
+/* "AI2 2 × 100 min · DS2 Not set": each programme with its vote. */
+function programmeValues(list) {
+  return list.map((p, i) => safeHtml`${i ? ' · ' : ''}<bdi>${p.program}</bdi> ${choiceLabel(p.meeting_pattern)}`);
+}
+const programmeValuesText = list => list.map(p => `${p.program} ${choiceLabel(p.meeting_pattern)}`).join(IS_AR ? '، ' : ', ');
+
+$('spToggleMeet').onclick = () => {
+  const panel = $('spMeetPanel');
+  const opening = panel.classList.contains('d-none');
+  panel.classList.toggle('d-none');
+  $('spToggleMeet').setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if (opening && (_meetState === 'idle' || _meetState === 'failed' || typedProgrammes() !== _meetProgram)) {
+    loadMeetingPatterns();
+  }
+};
+
+/* The rows on screen become `prog`'s. Drafts made for other programmes are
+ * dropped, and the panel says so: a choice is saved only for the programmes it
+ * was made for. */
+function adoptMeetProgramme(prog) {
+  if (prog === _meetProgram) return;
+  const dropped = _meetDrafts.size;
+  _meetDropNote = dropped ? TM.dropped(dropped, meetPrograms().join(', ')) : '';
+  _meetReloadNotes = [];
+  _meetDrafts.clear();
+  _meetProgram = prog;
+}
+
+function meetEmptyRow(words) {
+  return safeHtml`<tr><td colspan="4" class="empty-note text-center">${words}</td></tr>`;
+}
+
+async function loadMeetingPatterns() {
+  const seq = ++_meetSeq;
+  const prog = typedProgrammes();
+  if (!prog) {
+    adoptMeetProgramme('');
+    _meetState = 'none';
+    $('spMeetBody').innerHTML = meetEmptyRow(TM.chooseProgram);
+    $('spMeetCount').textContent = '';
+    updateMeetState();
+    return;
+  }
+  _meetState = 'loading';
+  updateMeetState();
+  const failed = data => {
+    _meetState = 'failed';
+    const words = data && MEET_ERRORS[data.code] ? meetError(data) : TM.listFailed;
+    if (!meetRows().length) $('spMeetBody').innerHTML = meetEmptyRow(words);
+    showStatus(words, 'err');
+    updateMeetState();
+  };
+  try {
+    const res = await fetch(`${MEET_URL}?program=${encodeURIComponent(prog)}`, { headers: { 'X-CSRFToken': CSRF } });
+    const data = await res.json().catch(() => ({}));
+    if (seq !== _meetSeq) return;   // a newer request owns the panel
+    if (!res.ok || !data.ok) { failed(data); return; }
+    const rows = Array.isArray(data.courses) ? data.courses : [];
+    _meetChoices = Array.isArray(data.choices) ? data.choices : [];
+    adoptMeetProgramme(prog);
+    _meetState = 'ready';
+    renderMeetTable(rows);
+    $('spMeetCount').textContent = countText(rows.length, 'course');
+  } catch (err) {
+    if (seq === _meetSeq) failed(null);
+  }
+}
+
+function meetRowHtml(row) {
+  const mixed = row.status === 'mixed';
+  const label = [row.course_code, row.course_name].filter(Boolean).join(' ');
+  const owners = row.co_owners || [];
+  const taught = row.programmes || [];
+  /* A row that may no longer vote offers only clearing, beside what it holds. */
+  const choices = row.clear_only
+    ? _meetChoices.filter(c => c.value === '' || taught.some(p => p.meeting_pattern === c.value))
+    : _meetChoices;
+  return safeHtml`<tr data-key="${row.course_key}" data-course="${row.course_code}" data-saved="${mixed ? '' : (row.meeting_pattern || '')}" data-mixed="${mixed ? '1' : ''}">
+    <td><bdi class="cr-id">${row.course_code}</bdi>${row.course_name ? safeHtml`<div class="sp-cell-sub"><bdi>${row.course_name}</bdi></div>` : ''}</td>
+    <td>${taught.map(p => safeHtml`<div class="sp-meet-prog"><bdi class="fw-semibold">${p.program}</bdi> ${choiceLabel(p.meeting_pattern)}</div>`)}</td>
+    <td><select class="form-select form-select-sm meet-select" aria-label="${TM.selectAria(label)}">${mixed ? safeHtml`<option value="${MEET_KEEP}">${TM.mixed}</option>` : ''}${choices.map(c => safeHtml`<option value="${c.value}">${IS_AR ? (c.label_ar || c.label) : c.label}</option>`)}</select>${row.clear_only ? safeHtml`<div class="fs-sm text-t3 sp-meet-clear-only">${TM.clearOnly(TM.reasons[row.reason] || row.reason || '')}</div>` : ''}<span class="sp-adv-state text-t3" aria-live="polite"></span></td>
+    <td>${owners.length ? safeHtml`<label class="sp-adv-all"><input type="checkbox" class="meet-all" aria-label="${TM.allAria(label, programmeValuesText(owners))}"><span aria-hidden="true">${TL.allProgs}</span></label><div class="fs-sm text-t3 sp-meet-owners">${TM.alsoTaught} ${programmeValues(owners)}</div>` : ''}</td>
+  </tr>`;
+}
+
+/* The rows shown, each starting from its saved value. A reload for the same
+ * programmes (after a save, or one refused) gives a draft back its value if
+ * the user chose it; a row changed only in scope ("All programmes" ticked on
+ * the value it showed) keeps it only while the row still shows that value, so
+ * a value someone else saved meanwhile is never applied everywhere unasked.
+ * A draft the rows can no longer take is dropped. Each is said. */
+function renderMeetTable(rows) {
+  const tbody = $('spMeetBody');
+  tbody.innerHTML = rows.length ? safeHtml`${rows.map(meetRowHtml)}` : meetEmptyRow(TM.noCourses);
+  const shown = new Set();
+  const cleared = [];
+  let gone = 0;
+  meetRows().forEach(tr => {
+    const key = tr.dataset.key;
+    const select = tr.querySelector('.meet-select');
+    const all = tr.querySelector('.meet-all');
+    shown.add(key);
+    select.value = tr.dataset.mixed === '1' ? MEET_KEEP : tr.dataset.saved;
+    const prior = _meetDrafts.get(key);
+    if (prior?.typed && [...select.options].some(o => o.value === prior.value)) {
+      select.value = prior.value;
+      if (all) all.checked = prior.all;
+    } else if (prior?.all && all && tr.dataset.mixed !== '1' && tr.dataset.saved === prior.saved) {
+      all.checked = true;
+    } else if (prior) {
+      if (prior.typed) gone++;
+      else cleared.push(tr.dataset.course);
+    }
+    const edited = () => {
+      _meetDropNote = '';
+      _meetReloadNotes = [];
+      syncMeetAll(tr); refreshMeetRow(tr); rememberMeetDraft(tr); updateMeetState();
+    };
+    select.addEventListener('change', edited);
+    all?.addEventListener('change', edited);
+    syncMeetAll(tr);
+    refreshMeetRow(tr);
+    rememberMeetDraft(tr);
+  });
+  for (const key of [..._meetDrafts.keys()]) {
+    if (!shown.has(key)) { _meetDrafts.delete(key); gone++; }
+  }
+  _meetReloadNotes = [];
+  if (gone) _meetReloadNotes.push(TM.gone(gone));
+  if (cleared.length) _meetReloadNotes.push(TM.scopeCleared(cleared));
+  updateMeetState();
+}
+
+/* "All programmes" widens a VALUE: on a mixed row it waits until one is chosen. */
+function syncMeetAll(tr) {
+  const all = tr.querySelector('.meet-all');
+  if (!all) return;
+  const waiting = tr.querySelector('.meet-select').value === MEET_KEEP;
+  if (waiting) all.checked = false;
+  all.disabled = waiting;
+}
+
+/* What one row asks for. A mixed row asks nothing until a value is chosen. */
+function meetDraftOf(tr) {
+  const select = tr.querySelector('.meet-select');
+  const value = select.value === MEET_KEEP ? null : select.value;
+  const all = value !== null && Boolean(tr.querySelector('.meet-all')?.checked);
+  const changed = value !== null && (tr.dataset.mixed === '1' || value !== tr.dataset.saved);
+  return { key: tr.dataset.key, code: tr.dataset.course, value, all, changed, draft: changed || all };
+}
+
+/* Keep a row's draft, or forget it once it asks for nothing. `typed`: the user
+ * chose the value; `saved`: the value the row showed (what a scope-only draft
+ * applies everywhere). */
+function rememberMeetDraft(tr) {
+  const d = meetDraftOf(tr);
+  if (d.draft) _meetDrafts.set(d.key, { value: d.value, all: d.all, typed: d.changed, saved: tr.dataset.saved });
+  else _meetDrafts.delete(d.key);
+}
+
+function meetRows() { return [...$('spMeetBody').querySelectorAll('tr[data-key]')]; }
+function currentMeetDrafts() { return meetRows().map(meetDraftOf).filter(d => d.draft); }
+
+function refreshMeetRow(tr) {
+  const d = meetDraftOf(tr);
+  tr.classList.toggle('sp-adv-draft', d.draft);
+  tr.querySelector('.sp-adv-state').textContent = d.draft ? TL.modified : '';
+}
+
+/* Why Save cannot run now ('' when it can, given drafts). */
+function meetBlockReason() {
+  if (_meetState === 'loading') return TM.listLoading;
+  if (_meetState === 'failed') return TM.listFailed;
+  if (!_meetProgram) return TM.chooseProgram;
+  return '';
+}
+
+/* The panel's status line says what is pending, what a reload or a programme
+ * change did to drafts, and, when Save is off, why: Save stays focusable
+ * (aria-disabled) and describes itself with this line. */
+function updateMeetState() {
+  const drafts = currentMeetDrafts();
+  const badge = $('spMeetBadge');
+  badge.textContent = String(drafts.length);
+  badge.classList.toggle('d-none', !drafts.length);
+  const reason = meetBlockReason();
+  const parts = [];
+  if (drafts.length) parts.push(TL.drafts(drafts.length));
+  if (_meetDropNote) parts.push(_meetDropNote);
+  parts.push(..._meetReloadNotes);
+  if (drafts.length && (reason === TM.listLoading || reason === TM.listFailed)) parts.push(reason);
+  $('spMeetDrafts').textContent = parts.length ? parts.join(' · ') : TL.noDrafts;
+  const btn = $('spMeetSaveDb');
+  btn.setAttribute('aria-disabled', _meetBusy || reason || !drafts.length ? 'true' : 'false');
+  btn.title = reason;
+  $('spMeetReset').disabled = _meetBusy || !drafts.length;
+}
+
+/* Discard drafts: back to the saved values. Never a request. */
+function discardMeetDrafts() {
+  _meetDrafts.clear();
+  _meetDropNote = '';
+  _meetReloadNotes = [];
+  meetRows().forEach(tr => {
+    tr.querySelector('.meet-select').value = tr.dataset.mixed === '1' ? MEET_KEEP : tr.dataset.saved;
+    const all = tr.querySelector('.meet-all');
+    if (all) all.checked = false;
+    syncMeetAll(tr);
+    refreshMeetRow(tr);
+  });
+  updateMeetState();
+}
+$('spMeetReset').onclick = () => {
+  discardMeetDrafts();
+  /* The button is now off: keep the keyboard in the panel. */
+  (meetRows()[0]?.querySelector('.meet-select') || $('spMeetSaveDb')).focus();
+};
+
+const scenarioUrl = id => `/timetable-workspace/?scenario=${encodeURIComponent(id)}`;
+/* A saved draft timetable the change reaches: it keeps its own weekly meetings,
+ * so the review says whether it now differs from its programmes' default. */
+function scenarioWords(s) {
+  const now = choiceLabel(s.budget_pattern || 'standard');
+  if (s.differs) return TM.scenarioDiffers(now, choiceLabel(s.programme_pattern));
+  if (s.status === 'agree') return TM.scenarioMatches;
+  if (s.status === 'mixed') return TM.scenarioMixed;
+  return TM.scenarioNone;
+}
+
+/* What a changed course means elsewhere: the programmes that keep their own
+ * value, the course's other names, and the draft timetables it reaches. */
+function meetAfterHtml(course) {
+  const owners = course.co_owners || [];
+  const others = course.same_code_elsewhere || [];
+  const scenarios = course.scenarios || [];
+  if (!owners.length && !others.length && !scenarios.length) return '';
+  return safeHtml`<div class="sp-meet-after" data-key="${course.course_key}">
+    <p class="fs-sm mb-0"><bdi class="cr-id">${course.course_code}</bdi> <bdi>${course.course_name}</bdi></p>
+    ${owners.length ? safeHtml`<p class="fs-sm text-t3 mb-0 sp-meet-owners">${TM.coOwners} ${programmeValues(owners)}</p>` : ''}
+    ${others.map(o => safeHtml`<p class="fs-sm text-t3 mb-0 sp-meet-other"><bdi class="cr-id">${course.course_code}</bdi> <bdi>${o.course_name}</bdi> (<bdi>${(o.programmes || []).join(', ')}</bdi>) ${TM.otherName}</p>`)}
+    ${scenarios.length ? safeHtml`<p class="fs-sm text-t3 mb-0">${TM.scenariosHead}</p>
+    <ul class="fs-sm sp-meet-scenarios">${scenarios.map(s => safeHtml`<li data-scenario="${s.id}"><a href="${scenarioUrl(s.id)}"><bdi>${s.name}</bdi></a> <bdi>(#${s.id})</bdi> — ${scenarioWords(s)}</li>`)}</ul>` : ''}
+  </div>`;
+}
+
+function meetReviewHtml(data) {
+  const changes = data.changes || [];
+  const skipped = data.skipped || [];
+  return safeHtml`<p>${TM.saveIntro}</p>
+    <table class="sp-adv-table sp-limit-review sp-meet-review">
+      <thead><tr><th>${TL.thCourse}</th><th>${TL.thProgram}</th><th>${TL.thOld}</th><th>${TL.thNew}</th><th>${TL.thScope}</th></tr></thead>
+      <tbody>${changes.map(c => safeHtml`<tr>
+        <td><bdi class="cr-id">${c.course_code}</bdi>${c.course_name ? safeHtml`<div class="sp-cell-sub"><bdi>${c.course_name}</bdi></div>` : ''}</td>
+        <td><bdi>${c.program}</bdi></td>
+        <td>${choiceLabel(c.old)}</td>
+        <td><strong>${choiceLabel(c.new)}</strong></td>
+        <td>${c.scope === 'all_programmes' ? TL.scopeAll : TL.scopeProgs}</td>
+      </tr>`)}</tbody></table>
+    ${skipped.length ? safeHtml`<p class="fs-sm text-t3 sp-meet-skipped">${TM.skippedHead} ${skipped.map((s, i) => safeHtml`${i ? ' · ' : ''}<bdi class="cr-id">${s.course_code}</bdi> (<bdi>${s.program}</bdi>): ${TM.reasons[s.reason] || s.reason}`)}</p>` : ''}
+    ${data.unchanged ? safeHtml`<p class="fs-sm text-t3">${TL.unchanged(data.unchanged)}</p>` : ''}
+    ${(data.courses || []).map(meetAfterHtml)}`;
+}
+
+/* Preview, confirm, commit (as the seat limits' review). Says what happened:
+ * saved, noop (the preview changed nothing), reload (the rows may be stale). */
+async function reviewMeetings(programs, changes, onCommit) {
+  const preview = await postJson(MEET_SAVE_URL, { programs, changes, dry_run: true });
+  if (!preview.res.ok || !preview.data.ok) {
+    showStatus(meetError(preview.data, preview.res.status), 'err');
+    return { reload: STALE_MEET_CODES.has(preview.data.code) };
+  }
+  const planned = preview.data.changes || [];
+  if (!planned.length) {
+    const skipped = (preview.data.skipped || []).length;
+    showStatus(skipped ? `${TM.nothing} ${TM.skippedCount(skipped)}` : TM.nothing, 'warn');
+    return { noop: true, reload: true };
+  }
+  const ok = await dlg.confirm({
+    title: TM.saveTitle(planned.length),
+    body: String(meetReviewHtml(preview.data)),
+    kind: 'warning',
+    confirmText: TL.confirmSave(planned.length),
+    cancelText: TL.keepEditing,
+    /* A review: the keyboard starts on "Keep editing", never on the write. */
+    initialFocus: 'cancel',
+    waitForClose: true,
+  });
+  if (!ok) return {};
+  onCommit();
+  const commit = await postJson(MEET_SAVE_URL, { programs, changes, dry_run: false, preview_token: preview.data.preview_token });
+  if (!commit.res.ok || !commit.data.ok) {
+    showStatus(meetError(commit.data, commit.res.status), 'err');
+    return { reload: STALE_MEET_CODES.has(commit.data.code) };
+  }
+  return { saved: commit.data, reload: true };
+}
+
+/* Save drafts (the confirmed, audited write), for the programmes on screen. */
+$('spMeetSaveDb').onclick = async () => {
+  if (_meetBusy) return;
+  const reason = meetBlockReason();
+  if (reason) { showStatus(reason, 'warn'); return; }
+  const drafts = currentMeetDrafts();
+  if (!drafts.length) { showStatus(TM.nothing, 'warn'); return; }
+  const btn = $('spMeetSaveDb');
+  /* Not `disabled`: the focused button would drop the keyboard to the page. */
+  _meetBusy = true;
+  btn.setAttribute('aria-busy', 'true');
+  btn.textContent = TL.checking;
+  updateMeetState();
+  const changes = drafts.map(d => ({ course_key: d.key, meeting_pattern: d.value, all_programmes: d.all }));
+  try {
+    const outcome = await reviewMeetings(meetPrograms(), changes, () => { btn.textContent = TL.saving; });
+    if (outcome.saved) showStatus(TM.saved(outcome.saved.changed_count), 'ok');
+    /* Saved, or nothing to save: those drafts are done with. */
+    if (outcome.saved || outcome.noop) changes.forEach(c => _meetDrafts.delete(c.course_key));
+    if (outcome.reload) await loadMeetingPatterns();
+  } catch (e) {
+    showStatus(T.reqFailed + ': ' + e.message, 'err');
+  } finally {
+    _meetBusy = false;
+    btn.removeAttribute('aria-busy');
+    btn.textContent = TM.saveBtn;
+    updateMeetState();
+  }
+};
+
+window.addEventListener('beforeunload', e => {
+  if (!currentMeetDrafts().length) return;
+  e.preventDefault();
+  e.returnValue = TM.leave;
+});
+
+/* The programmes on screen changed: their rows, and drafts only for them. */
+$('spProgram').addEventListener('change', () => {
+  if (_meetState !== 'idle') loadMeetingPatterns();
 });
 
 /* ── Section: one per plan, M or F ──
@@ -1218,6 +1686,9 @@ $('spReset').onclick = () => {
   /* Drop drafts (never saved limits), and show the panel for the cleared scope. */
   discardDrafts();
   if (_advState !== 'idle') loadAdvancedCourses();
+  /* The same for the weekly meetings: with no programme it asks nothing. */
+  discardMeetDrafts();
+  if (_meetState !== 'idle') loadMeetingPatterns();
 };
 
 /* ── Department filter on results table ── */

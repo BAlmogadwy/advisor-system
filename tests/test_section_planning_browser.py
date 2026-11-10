@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 # Playwright's synchronous API runs through a greenlet; fixture creation is
 # synchronous ORM work while Django serves the page on its own thread.
@@ -38,6 +39,9 @@ sync_playwright = playwright_api.sync_playwright
 
 WIDTHS = (390, 1024, 1440)
 GENERATE = "**/ops/section-planning/generate/"
+#: The weekly-meetings list (with its ?program= query) and its save.
+MEET_LIST = re.compile(r".*/ops/section-planning/meeting-patterns/\?.*")
+MEET_SAVE = "**/ops/section-planning/meeting-patterns/save/"
 
 
 def _row(
@@ -620,12 +624,29 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
     def test_keyboard_focus_is_visible_on_toggles_and_sortable_headers(self) -> None:
         for language in ("en", "ar"):
             page = self._page(language, plan=MULTI)
+            # Each ring measured at rest (a button's transition is `html body .btn`).
+            page.add_style_tag(
+                content="*, *::before, *::after, html body .btn { transition: none !important; }"
+            )
             page.locator("#spProgram").fill("AI,DS")
             page.locator("#spGenerate").click()
             expect(page.locator("#spMultiPrograms .sp-prog-toggle")).to_have_count(2)
+            # The weekly-meetings panel open (an empty list), so its Save is in the Tab order.
+            page.route(
+                MEET_LIST,
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({"ok": True, "programs": ["AI", "DS"], "courses": []}),
+                ),
+            )
+            page.locator("#spToggleMeet").click()
+            expect(page.locator("#spMeetCount")).to_have_text(re.compile(r"^0 "))
             for selector in (
                 "#spToggleCaps",
                 "#spToggleAdv",
+                "#spToggleMeet",
+                "#spMeetSaveDb",
                 "#spMultiPrograms .sp-prog-toggle >> nth=0",
                 "#spTable thead th >> nth=5",
             ):
@@ -914,3 +935,222 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             page.evaluate("document.getElementById('spExportRosters').textContent")
         )
         self.assertEqual([r for r in page.requests if "/export/" in r], [])
+
+    # ── 7. The weekly-meetings panel: legible in both themes, right to left ──
+
+    # Every text the panel (and its review) draws, against every colour that can
+    # sit behind it: each ancestor's background laid over the one below, each
+    # stop of a gradient it paints (its best and worst case), and the opacity of
+    # the text's own ancestors. A select counts as text: it draws its choice.
+    PANEL_TEXT = r"""(roots) => {
+      const rgba = value => {
+        const n = (value.match(/-?[\d.]+/g) || []).map(Number);
+        const scale = value.trim().startsWith('color(') ? 255 : 1;
+        return [n[0] * scale, n[1] * scale, n[2] * scale, n.length > 3 ? n[3] : 1];
+      };
+      const over = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3]));
+      const lum = c => { const [r, g, b] = c.slice(0, 3).map(v => { v /= 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+      const backdrops = el => {
+        const chain = [];
+        for (let node = el; node; node = node.parentElement) chain.unshift(node);
+        let under = [[255, 255, 255]];
+        for (const node of chain) {
+          const s = getComputedStyle(node);
+          const colour = rgba(s.backgroundColor);
+          if (colour[3] > 0) under = under.map(u => over(colour, u));
+          const stops = (s.backgroundImage.match(/(?:rgba?|color)\([^)]*\)/g) || []).map(rgba);
+          if (stops.length) under = under.flatMap(u => stops.map(stop => over(stop, u)));
+        }
+        return under;
+      };
+      const opacity = el => { let o = 1; for (let n = el; n; n = n.parentElement) o *= Number(getComputedStyle(n).opacity); return o; };
+      const out = [];
+      for (const root of roots.map(sel => document.querySelector(sel)).filter(Boolean)) {
+        for (const el of [root, ...root.querySelectorAll('*')]) {
+          if (el.closest('option, svg, script, style')) continue;
+          const s = getComputedStyle(el), box = el.getBoundingClientRect();
+          if (s.display === 'none' || s.visibility === 'hidden' || !box.width || !box.height) continue;
+          const own = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+          if (!own && el.tagName !== 'SELECT') continue;
+          const fg = rgba(s.color);
+          fg[3] *= opacity(el);
+          const worst = Math.min(...backdrops(el).map(bg => ratio(over(fg, bg), bg)));
+          const text = el.tagName === 'SELECT' ? el.selectedOptions[0].textContent : el.textContent;
+          out.push({ text: text.replace(/\s+/g, ' ').trim().slice(0, 50), tag: el.tagName,
+                     cls: String(el.className), ratio: Math.round(worst * 100) / 100 });
+        }
+      }
+      return out;
+    }"""
+    # How the panel lays out right to left, and the words of a choice.
+    MEET_RTL = r"""(key) => {
+      const table = document.querySelector('.sp-meet-table');
+      const heads = [...table.querySelectorAll('thead th')];
+      const row = document.querySelector(`#spMeetBody tr[data-key="${key}"]`);
+      const code = row.querySelector('bdi.cr-id');
+      const th = getComputedStyle(heads[0]);
+      return {
+        dir: document.documentElement.dir,
+        table: getComputedStyle(table).direction,
+        courseColumnOnTheRight: heads[0].getBoundingClientRect().left > heads[1].getBoundingClientRect().left,
+        code: [code.textContent, getComputedStyle(code).direction, getComputedStyle(code).unicodeBidi],
+        th: [th.letterSpacing, th.textTransform, th.fontFamily],
+        chosen: row.querySelector('.meet-select').selectedOptions[0].textContent,
+        page: document.documentElement.scrollWidth - innerWidth,
+      };
+    }"""
+    # The focused control's ring: an outline, or the design system's box-shadow ring.
+    MEET_RING = r"""() => {
+      const rgba = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return [n[0], n[1], n[2], n.length > 3 ? n[3] : 1]; };
+      const probe = document.createElement('i');
+      probe.style.color = 'var(--teal)';
+      document.body.append(probe);
+      const teal = getComputedStyle(probe).color;
+      probe.remove();
+      const s = getComputedStyle(document.activeElement);
+      return { id: document.activeElement.id || document.activeElement.className, teal, tealRgb: rgba(teal),
+               outline: [s.outlineStyle, parseFloat(s.outlineWidth), s.outlineColor], shadow: s.boxShadow,
+               page: rgba(getComputedStyle(document.body).backgroundColor) };
+    }"""
+
+    def _plan_rows(self) -> dict[tuple[str, str], str]:
+        """Study-plan rows the panel reads for AI2 and DS2 (through the real endpoint)."""
+        from core.models import ProgrammeRequirement
+
+        rows = [
+            ("AI2", "STAT103", "PRINCIPLES OF PROBABILITY AND STATISTICS", "2x100"),
+            ("DS2", "STAT103", "PRINCIPLES OF PROBABILITY AND STATISTICS", ""),
+            ("CS2", "STAT103", "PRINCIPLES OF PROBABILITY AND STATISTICS", "standard"),
+            ("AI2", "MATH243", ")\t243\t LINEAR ALGEBRA I", "2x100"),
+            ("DS2", "MATH243", ")\t243\t LINEAR ALGEBRA I", "2x100"),
+            ("CYP2", "MATH243", "LINEAR ALGEBRA", ""),
+            ("AI2", "COE226", "DIGITAL LOGIC DESIGN", "standard"),
+            ("DS2", "COE226", "DIGITAL LOGIC DESIGN", "2x100"),
+            ("AI2", "CS250", "", "2x100"),
+            ("DS2", "IS250", "DATABASE MANAGEMENT SYSTEMS FOR LARGE ORGANISATIONS", ""),
+        ]
+        for program, code, name, vote in rows:
+            ProgrammeRequirement.objects.get_or_create(
+                program=program,
+                course_code=code,
+                defaults={"course_name": name, "credit_hours": 3, "meeting_pattern": vote},
+            )
+        return {(p, c): v for p, c, _, v in rows}
+
+    def test_the_weekly_meetings_panel_reads_in_both_themes_and_right_to_left(self) -> None:
+        """The real list and the real preview, English and Arabic, light and dark:
+        every text of the panel and its review is at least 4.5:1 against what is
+        behind it; Arabic lays the table right to left with codes as LTR islands
+        and the server's Arabic-Indic minutes; Save and a choice show a full
+        ring; the page never scrolls sideways; cancelling the review saves
+        nothing."""
+        from core.models import ProgrammeRequirement
+
+        saved = self._plan_rows()
+        stat = "STAT103::PRINCIPLES_OF_PROBABILITY_AND_STATISTICS"
+        math = "MATH243::243_LINEAR_ALGEBRA_I"
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                where = f"{language} {theme}"
+                page = self._page(language, theme=theme)
+                # Rings and fills measured at rest: the buttons' own transition
+                # is `html body .btn` !important, so it is named to be stopped.
+                page.add_style_tag(
+                    content="*, *::before, *::after, html body .btn "
+                    "{ transition: none !important; }"
+                )
+                page.locator("#spProgram").fill("AI2,DS2")
+                page.locator("#spToggleMeet").click()
+                expect(page.locator("#spMeetBody tr[data-key]")).to_have_count(5)
+                lists = [r for r in page.requests if "/meeting-patterns/?" in r]
+                self.assertEqual(len(lists), 1, f"{where}: one read, when opened: {lists}")
+                # A draft: the row's tint, its state, the badge and an enabled Save.
+                page.locator(f'#spMeetBody tr[data-key="{stat}"] .meet-select').select_option(
+                    "standard"
+                )
+                expect(page.locator("#spMeetBadge")).to_have_text("1")
+
+                texts = page.evaluate(self.PANEL_TEXT, ["#spToggleMeet", "#spMeetPanel"])
+                self.assertGreater(len(texts), 20, f"{where}: {texts}")
+                low = [t for t in texts if t["ratio"] < 4.5]
+                self.assertEqual(low, [], f"{where}: text under 4.5:1")
+
+                rtl = page.evaluate(self.MEET_RTL, math)
+                self.assertEqual(rtl["code"][0], "MATH243", where)
+                self.assertEqual(rtl["code"][1:], ["ltr", "isolate"], f"{where}: {rtl}")
+                self.assertLessEqual(rtl["page"], 0, f"{where}: the page scrolls sideways")
+                if language == "ar":
+                    self.assertEqual((rtl["dir"], rtl["table"]), ("rtl", "rtl"), where)
+                    self.assertTrue(rtl["courseColumnOnTheRight"], f"{where}: {rtl}")
+                    self.assertIn(rtl["th"][0], ("normal", "0px"), f"{where}: {rtl}")
+                    self.assertEqual(rtl["th"][1], "none", f"{where}: {rtl}")
+                    self.assertNotIn("mono", rtl["th"][2].lower(), f"{where}: {rtl}")
+                    self.assertEqual(rtl["chosen"], "٢ × ١٠٠ دقيقة", where)
+                else:
+                    self.assertEqual(rtl["chosen"], "2 × 100 min", where)
+
+                for selector in (
+                    "#spMeetSaveDb",
+                    f'#spMeetBody tr[data-key="{math}"] .meet-select',
+                ):
+                    self.assertTrue(self._tab_to(page, selector)["reached"], f"{where} {selector}")
+                    ring = page.evaluate(self.MEET_RING)
+                    outlined = ring["outline"][0] == "solid" and ring["outline"][1] >= 2
+                    by_outline = outlined and ring["outline"][2] == ring["teal"]
+                    by_shadow = ring["teal"] in ring["shadow"]
+                    self.assertTrue(by_outline or by_shadow, f"{where} {selector}: {ring}")
+                    ratio = self._contrast(ring["tealRgb"], ring["page"])
+                    self.assertGreaterEqual(ratio, 3, f"{where} {selector}: ring {ratio:.2f}")
+
+                for width in (390, 1024):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    facts = page.evaluate(self.MEET_RTL, math)
+                    self.assertLessEqual(facts["page"], 0, f"{where} {width}px: sideways")
+                page.set_viewport_size({"width": 1440, "height": 900})
+
+                # The real preview, then "Keep editing": nothing is written.
+                with page.expect_response(lambda r: "/meeting-patterns/save/" in r.url) as sent:
+                    page.locator("#spMeetSaveDb").click()
+                self.assertTrue(json.loads(sent.value.request.post_data)["dry_run"], where)
+                review = page.locator(".dlg-backdrop .sp-meet-review")
+                expect(review).to_be_visible()
+                # Measured once it has faded in (the dialog opens on the next frame).
+                page.wait_for_function(
+                    """() => { const shown = [...document.querySelectorAll('.dlg-backdrop.open, .dlg-backdrop.open *')];
+                      return shown.length > 0 && shown.every(el => getComputedStyle(el).opacity === '1'); }"""
+                )
+                # STAT103 for both programmes on screen: AI2 2 x 100 and DS2 not set.
+                expect(review.locator("tbody tr")).to_have_count(2)
+                # The review's own content. (The shared dialog's warning-kind
+                # Confirm is the dialog's own style, the seat limits' too.)
+                texts = page.evaluate(self.PANEL_TEXT, [".dlg-backdrop .dlg-body"])
+                self.assertGreater(len(texts), 10, f"{where}: {texts}")
+                self.assertEqual([t for t in texts if t["ratio"] < 4.5], [], f"{where}: review")
+                box = page.evaluate(
+                    """() => {
+                      const th = getComputedStyle(document.querySelector('.dlg-backdrop .sp-meet-review th'));
+                      const dialog = document.querySelector('.dlg-backdrop .dlg-box');
+                      return [getComputedStyle(dialog).direction, th.letterSpacing, th.textTransform];
+                    }"""
+                )
+                if language == "ar":
+                    self.assertEqual(box[0], "rtl", where)
+                    self.assertIn(box[1], ("normal", "0px"), f"{where}: {box}")
+                    self.assertEqual(box[2], "none", f"{where}: {box}")
+                page.locator(".dlg-backdrop .btn-cancel").click()
+                expect(page.locator(".dlg-backdrop")).to_have_count(0)
+                posts = [
+                    r
+                    for r in page.requests
+                    if r.startswith("POST") and "/meeting-patterns/save/" in r
+                ]
+                self.assertEqual(len(posts), 1, f"{where}: only the preview: {posts}")
+                stored = {
+                    (r.program, r.course_code): r.meeting_pattern
+                    for r in ProgrammeRequirement.objects.all()
+                }
+                self.assertEqual(stored, saved, f"{where}: nothing was written")
+                page.context.close()

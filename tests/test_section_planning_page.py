@@ -54,6 +54,8 @@ def test_scope_fields_are_a_form_whose_only_submit_is_generate(
     # the seat limits and their Save are never inside it.
     assert form.find(id="spAdvSaveDb") is None
     assert form.find(id="spAdvPanel") is None
+    assert form.find(id="spMeetSaveDb") is None
+    assert form.find(id="spMeetPanel") is None
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])
@@ -114,7 +116,11 @@ def test_toggles_fields_and_status_carry_their_names_states_and_roles(
     client: Client, language: str
 ) -> None:
     soup = _page(client, language)
-    for toggle_id, panel_id in (("spToggleCaps", "spCapsWrap"), ("spToggleAdv", "spAdvPanel")):
+    for toggle_id, panel_id in (
+        ("spToggleCaps", "spCapsWrap"),
+        ("spToggleAdv", "spAdvPanel"),
+        ("spToggleMeet", "spMeetPanel"),
+    ):
         toggle = soup.find(id=toggle_id)
         assert toggle.name == "button" and toggle.get("type") == "button", toggle_id
         assert toggle.get("aria-expanded") == "false", toggle_id
@@ -152,7 +158,7 @@ def test_arrows_and_chevrons_follow_the_reading_direction(client: Client, langua
     flow = soup.find(class_="ph-chip-gray").get_text(strip=True)
     forward, backward = ("←", "→") if language == "ar" else ("→", "←")
     assert flow.count(forward) == 2 and backward not in flow, flow
-    for toggle_id in ("spToggleCaps", "spToggleAdv"):
+    for toggle_id in ("spToggleCaps", "spToggleAdv", "spToggleMeet"):
         chevron = soup.find(id=toggle_id).find("svg", recursive=False)
         assert chevron is not None and "sp-chev" in chevron["class"], toggle_id
         assert chevron.get("aria-hidden") == "true", toggle_id

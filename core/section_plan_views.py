@@ -7,6 +7,8 @@ Endpoints:
     POST section_plan_generate_view – compute section demand from recommendations
     POST section_plan_export_view   – download section plan as styled .xlsx
     POST section_plan_export_rosters_view – download the students behind the plan
+    GET  section_plan_meeting_patterns_view – a programme's weekly meetings, per course
+    POST section_plan_save_meeting_patterns_view – preview, then save, those votes
 """
 
 from __future__ import annotations
@@ -24,6 +26,13 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
 from core.services.audit import audit_actor
+from core.services.programme_meeting_pattern_editor import (
+    EditorActor,
+    PatternRequestError,
+    meeting_pattern_rows,
+    save_meeting_patterns,
+)
+from core.services.programme_meeting_patterns import programme_pattern_label
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
 from core.services.section_limits import SOURCE_SECTION_PLANNING, LimitSaveContext, save_limits
 from core.services.section_plan_pipeline import (
@@ -206,6 +215,10 @@ def section_plan_page(request: HttpRequest) -> HttpResponse:
         "default_year": defaults["academic_year"],
         "default_term": defaults["term"],
         "local_departments": sorted(LOCAL_DEPARTMENTS),
+        # The weekly-meetings panel's note names the credit hours' own pattern
+        # in the engine's minutes, never the page's.
+        "standard_meetings_label": programme_pattern_label("standard"),
+        "standard_meetings_label_ar": programme_pattern_label("standard", arabic=True),
     }
     return render(request, "core/section_planning.html", ctx)
 
@@ -350,6 +363,58 @@ def section_plan_save_limits_view(request: HttpRequest) -> JsonResponse:
             method=str(request.method),
             source=SOURCE_SECTION_PLANNING,
         ),
+    )
+    return JsonResponse(result.body, status=result.status)
+
+
+# ── A programme's weekly meetings (its 3-credit courses) ──────
+
+
+@role_required(ROLE_GENERAL_ADVISOR)
+@require_GET
+def section_plan_meeting_patterns_view(request: HttpRequest) -> JsonResponse:
+    """The weekly-meetings votes of the programmes on screen, one entry per course.
+
+    ``?program=AI2,DS2``. Not throttled: the panel reads it when it opens, when
+    the programmes change and after each save, and those reads must never use
+    up the saves' allowance. The rows are
+    ``programme_meeting_pattern_editor.meeting_pattern_rows``'s.
+    """
+    raw = request.GET.get("program", "")
+    programs = [p.strip() for p in raw.split(",") if p.strip()]
+    try:
+        listing = meeting_pattern_rows(programs)
+    except PatternRequestError as exc:
+        return JsonResponse(exc.as_dict(), status=exc.status)
+    return JsonResponse({"ok": True, **listing})
+
+
+@role_required(ROLE_GENERAL_ADVISOR)
+@require_POST
+@throttle(max_calls=20, window_seconds=120)
+def section_plan_save_meeting_patterns_view(request: HttpRequest) -> JsonResponse:
+    """Preview, then save, the weekly-meetings votes of the programmes on screen.
+
+    The request, its answers and its audit rows are
+    ``programme_meeting_pattern_editor.save_meeting_patterns``'s; this view
+    only reads the body and names the caller.
+    """
+    try:
+        body = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"ok": False, "code": "invalid_json", "error": "Invalid JSON"}, status=400
+        )
+    actor, actor_role = audit_actor(request)
+    result = save_meeting_patterns(
+        body,
+        actor=EditorActor(
+            username=actor,
+            role=actor_role,
+            endpoint=request.path,
+            method=str(request.method),
+        ),
+        source=SOURCE_SECTION_PLANNING,
     )
     return JsonResponse(result.body, status=result.status)
 

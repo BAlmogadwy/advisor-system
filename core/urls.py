@@ -175,8 +175,10 @@ from .section_plan_views import (
     section_plan_export_rosters_view,
     section_plan_export_view,
     section_plan_generate_view,
+    section_plan_meeting_patterns_view,
     section_plan_page,
     section_plan_save_limits_view,
+    section_plan_save_meeting_patterns_view,
 )
 from .sections_import_views import (
     sections_import_insert_view,
@@ -642,6 +644,16 @@ urlpatterns = [
         "ops/section-planning/limits/",
         section_plan_save_limits_view,
         name="section_plan_save_limits",
+    ),
+    path(
+        "ops/section-planning/meeting-patterns/",
+        section_plan_meeting_patterns_view,
+        name="section_plan_meeting_patterns",
+    ),
+    path(
+        "ops/section-planning/meeting-patterns/save/",
+        section_plan_save_meeting_patterns_view,
+        name="section_plan_save_meeting_patterns",
     ),
     path("audit-explorer/", audit_explorer_page, name="audit_explorer_page"),
     path("ops/audit/explorer/", audit_explorer_api, name="audit_explorer_api"),
