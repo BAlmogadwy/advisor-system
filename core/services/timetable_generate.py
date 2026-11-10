@@ -60,89 +60,14 @@ from core.services.section_planning import (
     slot_declared_limits,
 )
 from core.services.student_helpers import normalize_code
+from core.services.timetable_course_exclusion import (
+    is_generate_excluded_course as _is_excluded_course,
+)
 from core.services.timetable_demand import sync_scenario_student_course_requests
 
-# ---------------------------------------------------------------------------
-# Course exclusion rules
-# ---------------------------------------------------------------------------
-# Certain courses must never appear on a timetable board because they are
-# not delivered in a regular classroom setting.  Three exclusion layers:
-#
-# 1. EXCLUDED_COURSE_CODES — explicit course codes (currently empty; can be
-#    populated with codes like "FE1", "FE2" for free-elective placeholders).
-# 2. EXCLUDED_SUFFIXES — course numbers ending with these digits are
-#    capstone / graduation-project sequences (e.g. CS490, CS491, CS492).
-# 3. EXCLUDED_NAME_KEYWORDS / EXCLUDED_NAME_PATTERNS_PROJECT — fuzzy match
-#    against the course name (English and Arabic) to catch training,
-#    cooperative, internship, and graduation-project courses. The name is the
-#    student's own programme plan's name for that code (the catalogue
-#    description only when the plan has none): one display code can name two
-#    courses, e.g. CYB386 is CYP's internship but CYP2's machine-learning class.
-#
-# The helper ``_is_excluded_course()`` applies all three layers.
-# ---------------------------------------------------------------------------
-EXCLUDED_COURSE_CODES: frozenset[str] = frozenset()  # None currently hardcoded
-EXCLUDED_SUFFIXES = ("101", "490", "491", "492")
-EXCLUDED_NAME_KEYWORDS = frozenset(
-    {
-        "graduation",
-        "practical training",
-        "training",
-        "cooperative",
-        "co-operative",
-        "coop",
-        "internship",
-        "تخرج",
-        "مشروع تخرج",
-        "تدريب",
-    }
-)
-# Patterns that indicate a capstone/project course.
-# Note: plain "project" is intentionally omitted to avoid false-positives
-# like "Project Management" — only multi-word capstone patterns are listed.
-EXCLUDED_NAME_PATTERNS_PROJECT = ("project i", "project ii", "graduation project")
-
-
-def _is_excluded_course(code: str, course_name: object) -> bool:
-    """Determine whether a course should be excluded from timetable scheduling.
-
-    A course is excluded if **any** of the following are true:
-
-    1. Its normalised code is in the ``EXCLUDED_COURSE_CODES`` set.
-    2. The numeric portion of the code ends with one of the
-       ``EXCLUDED_SUFFIXES`` (490, 491, 492 — capstone sequences).
-    3. ``course_name`` contains any of the ``EXCLUDED_NAME_KEYWORDS`` or
-       ``EXCLUDED_NAME_PATTERNS_PROJECT``.
-
-    Args:
-        code: Raw course code string (e.g. "CS 490", "ARAB101").
-        course_name: The name of THIS course identity -- the student's
-            programme plan name for ``code`` (catalogue description only
-            when the plan has none). Never looked up by the bare code: a
-            display code is not a course identity.
-
-    Returns:
-        True if the course should be kept off the timetable, False otherwise.
-    """
-    c = normalize_code(code)
-
-    # Layer 1: explicit code blacklist
-    if c in EXCLUDED_COURSE_CODES:
-        return True
-
-    # Layer 2: numeric suffix check (e.g. "490" in "CS490")
-    digits = "".join(ch for ch in c if ch.isdigit())
-    if digits.endswith(EXCLUDED_SUFFIXES):
-        return True
-
-    # Layer 3: keyword / pattern match against this identity's name
-    name = str(course_name or "").lower()
-    if name:
-        if any(kw in name for kw in EXCLUDED_NAME_KEYWORDS):
-            return True
-        if any(pat in name for pat in EXCLUDED_NAME_PATTERNS_PROJECT):
-            return True
-    return False
+# Course exclusion rules live in core/services/timetable_course_exclusion.py,
+# shared with Section Planning's weekly-meetings editor and the curriculum
+# importers (``_is_excluded_course`` is that module's rule).
 
 
 def _resolve_elective_slots(

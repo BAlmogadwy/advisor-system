@@ -24,6 +24,17 @@ Where a choice is stored: ``ScenarioSectionBudget.meeting_pattern``, the
 scenario's own copy, which every engine of that scenario reads. ``""`` is the
 credit default. A course that is not configured behaves exactly as before.
 
+Where it comes from: each programme sets its own courses (owner, 2026-11-10:
+"per programme"; both campuses share a programme's value) on its study-plan row,
+``ProgrammeRequirement.meeting_pattern``, which holds the programme's VOTE:
+``""`` not set (it abstains), ``"standard"`` (the credit hours' pattern, chosen
+on purpose) or a shape. A new scenario pools a course over its programmes, and
+:func:`merge_programme_patterns` decides it: the programmes that voted must
+agree, a programme that did not vote does not count, and a disagreement keeps
+the credit default and is reported, never guessed. Classic Generate copies the
+outcome into the scenario's budget (:func:`department_budget_value`); the new
+scheduler is handed that copy, or runs the same merge when it plans on its own.
+
 The module is pure - no Django, no database - so the classic engines, the
 workspace, the manual importer and the new scheduler can all read one rule.
 Read paths never raise: an unknown or unusable stored value means the credit
@@ -169,3 +180,166 @@ def meetings_match_shape(minutes: Iterable[int], shape: MeetingShape) -> bool:
     """
     placed = sorted(meeting_family(m) for m in minutes)
     return placed == sorted(meeting_family(d) for d in shape.durations)
+
+
+# ---------------------------------------------------------------------------
+# A programme's vote, and the scenario's course decided from the votes
+# ---------------------------------------------------------------------------
+
+#: ``ProgrammeRequirement.meeting_pattern``: the programme has not chosen.
+PROGRAMME_NOT_SET = ""
+#: ``ProgrammeRequirement.meeting_pattern``: the credit hours' pattern, chosen.
+PROGRAMME_STANDARD = "standard"
+#: Every value a programme's row may hold, in display order.
+PROGRAMME_PATTERN_CHOICES: tuple[str, ...] = (PROGRAMME_NOT_SET, PROGRAMME_STANDARD, *SHAPES)
+
+#: How the votes for one course in one scenario came out.
+AGREE = "agree"
+MIXED = "mixed"
+NO_VOTE = "none"
+AMBIGUOUS = "ambiguous"
+
+
+def validate_programme_meeting_pattern(
+    meeting_pattern: object, credit_hours: object, *, course_code: str = ""
+) -> str:
+    """Check a programme's vote before it is written; returns the value to store.
+
+    Clearing it (``""``) is always allowed. ``"standard"`` and a shape are votes
+    on a choice that exists only at the credit hours a shape was defined for
+    (3), so both are refused at any other credit hours.
+    """
+    text = str(meeting_pattern if meeting_pattern is not None else "").strip().lower()
+    text = text.replace(" ", "")
+    if text == PROGRAMME_NOT_SET:
+        return text
+    if text != PROGRAMME_STANDARD and text not in SHAPES:
+        raise ValueError(f"Unknown weekly meeting pattern: {meeting_pattern!r}.")
+    if text == PROGRAMME_STANDARD:
+        allowed = {s.credit_hours for s in SHAPES.values()}
+    else:
+        allowed = {SHAPES[text].credit_hours}
+    credits = _exact_credits(credit_hours)
+    if credits not in allowed:
+        name = course_code or "This course"
+        shown = credits if credits is not None else "unknown"
+        wanted = " or ".join(str(c) for c in sorted(allowed))
+        raise ValueError(
+            f"{name} has {shown} credit hours; its weekly meetings can be chosen only "
+            f"for {wanted}-credit courses."
+        )
+    return text
+
+
+@dataclass(frozen=True)
+class ProgrammeRow:
+    """One programme's study-plan row for a course, ready for the merge.
+
+    ``identity`` is ``planner_course_key(code, course_name)`` (CODE::NAME), which
+    the Django side computes: this module must not import it. ``named`` is
+    False when the row has no course name; such a row cannot say which course
+    it means, so it never votes.
+    """
+
+    programme: str
+    identity: str
+    meeting_pattern: str
+    credit_hours: object
+    named: bool
+
+    @property
+    def code(self) -> str:
+        return self.identity.split("::", 1)[0]
+
+    @property
+    def vote(self) -> str:
+        """``""`` (abstains), ``"standard"`` or a shape id this row's credits fit."""
+        value = str(self.meeting_pattern or "").strip().lower()
+        if not self.named or (value != PROGRAMME_STANDARD and value not in SHAPES):
+            return PROGRAMME_NOT_SET
+        if value in SHAPES and shape_for(value, self.credit_hours) is None:
+            return PROGRAMME_STANDARD
+        return value
+
+
+@dataclass(frozen=True)
+class ProgrammeShape:
+    """The programmes' decision for one course in one scenario.
+
+    ``meeting_pattern`` is what they agreed on (``"standard"`` or a shape id),
+    ``""`` when nobody voted or the votes differ. ``programmes`` is every
+    contributing programme with its vote (``""`` = not set), sorted.
+    """
+
+    status: str
+    meeting_pattern: str
+    programmes: tuple[tuple[str, str], ...]
+
+
+def contributing_rows(
+    key: str, rows: Iterable[ProgrammeRow]
+) -> tuple[str, tuple[ProgrammeRow, ...]]:
+    """The rows that decide ``key``, and ``AGREE`` or ``AMBIGUOUS``.
+
+    Rows of that exact identity decide it. A bare key (no ``::``) that no row
+    has as its identity - a code typed into Add course, say - is read as the
+    code: its rows decide it only when they are all one course; two courses
+    behind one code (CS112 PROGRAMMING I and II) are never guessed between.
+    """
+    rows = tuple(rows)
+    exact = tuple(r for r in rows if r.identity == key)
+    if exact or "::" in key:
+        return AGREE, exact
+    same_code = tuple(r for r in rows if r.code == key)
+    if len({r.identity for r in same_code}) > 1:
+        return AMBIGUOUS, ()
+    return AGREE, same_code
+
+
+def merge_programme_patterns(rows: Iterable[ProgrammeRow]) -> ProgrammeShape:
+    """Decide a course from its programmes' votes.
+
+    A programme that has not voted abstains. The votes must agree; if they
+    differ the status is ``MIXED`` and nothing is chosen (the credit default
+    stands, and the caller says why). Row order never matters.
+    """
+    rows = tuple(rows)
+    programmes = tuple(sorted({(str(r.programme).strip().upper(), r.vote) for r in rows}))
+    votes = {r.vote for r in rows} - {PROGRAMME_NOT_SET}
+    if not votes:
+        return ProgrammeShape(NO_VOTE, PROGRAMME_NOT_SET, programmes)
+    if len(votes) > 1:
+        return ProgrammeShape(MIXED, PROGRAMME_NOT_SET, programmes)
+    return ProgrammeShape(AGREE, votes.pop(), programmes)
+
+
+def programme_shape_for(key: str, rows: Iterable[ProgrammeRow]) -> ProgrammeShape:
+    """The programmes' decision for one scenario course (``key``) from ``rows``."""
+    status, contributors = contributing_rows(key, rows)
+    if status == AMBIGUOUS:
+        return ProgrammeShape(AMBIGUOUS, PROGRAMME_NOT_SET, ())
+    return merge_programme_patterns(contributors)
+
+
+def budget_form(programme_pattern: object) -> str:
+    """A programme value as a scenario budget stores it: a shape id, else ``""``."""
+    value = str(programme_pattern or "").strip().lower()
+    return value if value in SHAPES else STANDARD
+
+
+def department_budget_value(
+    decision: ProgrammeShape, credit_hours: object, *, has_policy: bool = False
+) -> str:
+    """The ``meeting_pattern`` a scenario budget takes from its programmes.
+
+    A shape only when the programmes agreed on it, it is a choice for the
+    budget's own credit hours, and no fixed course policy (ENG101/ENG102)
+    decides the course; otherwise the credit default. One function for
+    Generate, Add course and the workspace, so they cannot drift apart.
+    """
+    if has_policy or decision.status != AGREE:
+        return STANDARD
+    value = budget_form(decision.meeting_pattern)
+    if value == STANDARD or value not in pattern_choices(credit_hours):
+        return STANDARD
+    return value
