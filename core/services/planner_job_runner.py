@@ -406,6 +406,9 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
                 confirmation_seconds=float(p.get("confirmation_seconds", 20)),
                 seed=p.get("seed"),
                 progress=_stage,
+                # Generate's weekly meetings per course, copied when the job was
+                # submitted (absent on older jobs: the engine then decides).
+                meeting_patterns=p.get("meeting_patterns"),
             )
         elif job.mode == PlannerJob.MODE_FULL_REBUILD:
             _clear_scenario_placements(job.scenario_id)

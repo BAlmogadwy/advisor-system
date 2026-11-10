@@ -73,10 +73,18 @@ def test_domain_is_pure_python_no_django():
 #: exemption is cheaper than a fourth divergent copy. `timetable_course_policy`
 #: is a pure, frozen description of the authoritative ENG weekly alternatives;
 #: consuming it keeps generators and independent checkers on the same rule.
+#: `timetable_meeting_shape` is the department's choice of a course's weekly
+#: shape (two 100-minute meetings) and the merge of each programme's vote on
+#: it: stdlib only (pinned by a test of its own), and imported so classic
+#: Generate and intake decide a shared course by one rule, not two copies.
 #:
 #: Everything else under that prefix stays forbidden. Add to this set only for
 #: something that is policy rather than engine, and say why.
-POLICY_MODULES = {"core.services.timetable_course_tier", "core.services.timetable_course_policy"}
+POLICY_MODULES = {
+    "core.services.timetable_course_tier",
+    "core.services.timetable_course_policy",
+    "core.services.timetable_meeting_shape",
+}
 
 
 def test_scheduler_never_imports_the_old_timetable_engine():

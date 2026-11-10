@@ -975,6 +975,10 @@ the old **builder** out; `timetable_course_tier` is a pure classifier over
 `ProgrammeRequirement`. Every expensive mistake in this subsystem has come from
 restating policy instead of consuming it — section sizing, elective resolution,
 the cross-term split. One exemption is cheaper than a fourth divergent copy.
+`timetable_meeting_shape` is exempt on the same terms: it is the stdlib-only rule
+that turns each programme's vote on a course's weekly meetings into one shape
+(two 100-minute meetings or the credit default), which intake applies exactly as
+classic Generate does.
 
 ---
 
