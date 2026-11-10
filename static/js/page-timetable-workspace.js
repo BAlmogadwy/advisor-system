@@ -843,9 +843,16 @@ async function showSchedulerOutcome(jobId) {
   $('twNewBoard').addEventListener('click', createBoardPrompt);
   $('twAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
     scenarioId: TW.scenarioId, published: TW.scenario?.status === 'published',
-    budget: TW.sectionBudget || [], request: twFetch, arabic: IS_AR,
-    onSaved: async () => {
+    budget: TW.sectionBudget || [], arabic: IS_AR,
+    // The editor is a modal dialog, over every toast: a refusal it asks to
+    // hear (its weekly-meetings save) is handed to it in the server's words.
+    request: (url, opts, onError) => twFetch(url, onError
+      ? { ...opts, _onError: body => { onError(body?.error?.message || ''); return true; } }
+      : opts),
+    onSaved: async (_budget, change) => {
       await loadBudget();
+      // A weekly-meetings save is said on the dialog's own status line.
+      if (change?.action === 'meeting_pattern') return;
       notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
     },
   }));
@@ -1868,7 +1875,7 @@ function renderBudgetSidebar() {
         // opens Place… (an English row: its pattern chooser), a dialog
         // either way. A click anywhere else on it is still a drag.
         div.setAttribute('aria-haspopup', 'dialog');
-        const facts = [c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`,
+        const facts = [c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, meetingShapeLabel(c), `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`,
           meetings > 1 ? PLACE_WORDS.meetingsWeek(meetings) : ''];
         div.innerHTML = `
           <span class="tw-section-head"><span class="code">${esc(c.course_code)} <bdi>${esc(secLabel)}</bdi></span><span class="tw-place-hint" aria-hidden="true">${esc(PLACE_WORDS.hint)}</span></span>
@@ -1926,6 +1933,12 @@ function freeSectionLabels(c) {
     if (!used.has(`S${n}`)) free.push(`S${n}`);
   }
   return free;
+}
+/* The weekly shape a course is set to in this scenario ("2 × 100 min"), in
+   the page's language, from its budget row; '' for a course on its credit
+   hours' standard pattern, which says nothing new. */
+function meetingShapeLabel(c) {
+  return (IS_AR ? c?.meeting_pattern_label_ar : c?.meeting_pattern_label) || '';
 }
 
 /* What Place… is asked to place (5f), from a budget row or a list row's
@@ -2029,7 +2042,39 @@ const READINESS_ITEM_TEXT = {
       ? `تجتمع ${name} في «${onlineWindowName(p.slot_label)}» (${when})، وهي فترة مخصصة للمقررات عن بُعد.`
       : `${name} meets in ${onlineWindowName(p.slot_label)} (${when}), a window kept for online courses.`;
   },
+  // A placed section of a course set to a weekly shape (2 × 100 min) whose
+  // meetings sit in other columns: a warning, never a blocker. A manual move
+  // is never refused for it (owner rule): it is saved, and said here. Both
+  // shapes are worded from their minutes (`expected_durations`,
+  // `placed_minutes`), the one form the item has in every language.
+  section_meeting_pattern_mismatch: p => {
+    const name = isolatedText([p.course_code, p.section].filter(Boolean).join(' '));
+    const placed = meetingLengthsText(p.placed_minutes);
+    const expected = meetingLengthsText(p.expected_durations);
+    return IS_AR
+      ? `تجتمع ${name} بواقع ${placed}، لكن المقرر مضبوط على ${expected}. انقل لقاءاتها إلى أعمدة مدتها ١٠٠ دقيقة، أو احذفها ثم شغّل «تحسين».`
+      : `${name} meets ${placed} but the course is set to ${expected}. Move its meetings into 100-minute columns, or remove it and run Optimise.`;
+  },
+  // A course set to 2 × 100 min in a scenario with no 100-minute column an
+  // in-person class may use: no engine can place its sections.
+  meeting_pattern_no_window: p => {
+    const course = isolatedText(p.course_code || '');
+    const expected = meetingLengthsText(p.expected_durations);
+    return IS_AR
+      ? `${course} مضبوط على ${expected}، لكن هذا السيناريو بلا عمود مدته ١٠٠ دقيقة للمحاضرات الحضورية. استخدم «تعديل الفترات الزمنية…» لإضافة عمود.`
+      : `${course} is set to ${expected}, but this scenario has no 100-minute column for in-person classes. Use Edit time slots… to add one.`;
+  },
 };
+/* Meeting lengths in words, shortest first: "2 × 75 min" when they are one
+   length, else "75 + 100 min"; in Arabic in the digits the server's shape
+   labels use ("٢ × ١٠٠ دقيقة", core/services/timetable_meeting_shape.py), so
+   a shape reads as its label does on the course list. */
+function meetingLengthsText(minutes) {
+  const lengths = (Array.isArray(minutes) ? minutes : []).map(Number).filter(n => n > 0).sort((a, b) => a - b);
+  if (!lengths.length) return '—';
+  const text = lengths.length > 1 && lengths.every(n => n === lengths[0]) ? `${lengths.length} × ${lengths[0]}` : lengths.join(' + ');
+  return IS_AR ? `${text.replace(/\d/g, digit => '٠١٢٣٤٥٦٧٨٩'[digit])} دقيقة` : `${text} min`;
+}
 /* An online window's label as the page says it: a default window
    (timetable_autoplace.DEFAULT_LAB_SLOTS, "Online N") in the page's language,
    any other label as it was typed, isolated. */
@@ -5271,7 +5316,13 @@ function placeRows(answer) {
     .sort((a, b) => (rank(a.candidate) - rank(b.candidate)) || (a.index - b.index))
     .forEach(({ candidate }) => {
       const listed = Array.isArray(candidate.meetings) && candidate.meetings.length ? candidate.meetings : [candidate];
-      const meetings = listed.map(m => ({ kind: String(m.kind || candidate.kind || ''), day: String(m.day || '').toUpperCase(), start: String(m.start || ''), end: String(m.end || '') }));
+      const meetings = listed.map(m => {
+        const meeting = { kind: String(m.kind || candidate.kind || ''), day: String(m.day || '').toUpperCase(), start: String(m.start || ''), end: String(m.end || '') };
+        // Only a course set to a weekly shape names its room type (placeMeetingIsLab).
+        const roomType = m.room_type || candidate.room_type;
+        if (roomType) meeting.room_type = String(roomType);
+        return meeting;
+      });
       const sorted = [...meetings].sort((a, b) => (placeDayIndex(a.day) - placeDayIndex(b.day)) || (placeMinutes(a.start) - placeMinutes(b.start)));
       const sig = sorted.map(m => `${m.day}@${m.start}-${m.end}`).join('|');
       if (!meetings.every(m => m.day && m.start && m.end) || seen.has(sig)) return;
@@ -5280,6 +5331,11 @@ function placeRows(answer) {
     });
   return rows;
 }
+/* A meeting is a lab by its room type when the server names one: a course
+   set to 2 × 100 min meets in a lecture room, in a 100-minute column of the
+   lab grid. Any other meeting names only its column (`kind`), which then
+   decides, as before. */
+const placeMeetingIsLab = m => (m.room_type ? m.room_type === 'lab' : m.kind === 'lab');
 /* The filter's choices, from the rows' meetings: the days in week order,
    and each time (start–end) by its start, marked a lab when every meeting
    at it is one. */
@@ -5289,7 +5345,7 @@ function placeOptions(rows) {
   rows.forEach(row => row.meetings.forEach(m => {
     days.add(m.day);
     const key = `${m.start}-${m.end}`;
-    times.set(key, { key, start: m.start, end: m.end, lab: (times.get(key)?.lab ?? true) && m.kind === 'lab' });
+    times.set(key, { key, start: m.start, end: m.end, lab: (times.get(key)?.lab ?? true) && placeMeetingIsLab(m) });
   }));
   return {
     days: [...days].sort((a, b) => placeDayIndex(a) - placeDayIndex(b)),
@@ -5354,7 +5410,7 @@ function placeViewWords(view) {
    line's lead is short, "Mon 13:00–14:15", as the line's own times are. */
 function placeMeetingHtml(m, { lead = false } = {}) {
   const day = lead ? dayName(m.day) : moveDayWord(m.day);
-  return `${esc(day)} <bdi dir="ltr">${esc(m.start)}–${esc(m.end)}</bdi>${!lead && m.kind === 'lab' ? ` · ${esc(PLACE_WORDS.lab)}` : ''}`;
+  return `${esc(day)} <bdi dir="ltr">${esc(m.start)}–${esc(m.end)}</bdi>${!lead && placeMeetingIsLab(m) ? ` · ${esc(PLACE_WORDS.lab)}` : ''}`;
 }
 /* The course's term when it is not the board's: context, never a refusal. */
 function placeTermNoteHtml() {
@@ -5378,9 +5434,13 @@ function placeFilterHtml() {
     + `<div class="fb-search fb-sm"><label class="fb-lbl" for="twPlaceTime">${esc(W.time)}</label><select id="twPlaceTime" data-focus-key="place-time" aria-controls="twPlaceChoices">${times}</select></div>`
     + '</div></fieldset>';
 }
+/* "Term 7 · 2 meetings a week · the whole weekly pattern"; a course set to a
+   weekly shape names it after the board ("Term 7 · 2 × 100 min · …"), from
+   the budget, which is read again after every write. */
 function placeSubHtml() {
   const board = TW.boards.find(b => b.id === PLACE.boardId) || PLACE.answer?.board || {};
-  const name = `<bdi>${esc(board.label || '')}</bdi>`;
+  const shape = meetingShapeLabel(placeBudgetRow());
+  const name = `<bdi>${esc(board.label || '')}</bdi>${shape ? ` · ${esc(shape)}` : ''}`;
   return PLACE.meetings > 1 ? `${name} · ${esc(PLACE_WORDS.meetingsWeek(PLACE.meetings))} · ${esc(PLACE_WORDS.whole)}` : `${name} · ${esc(PLACE_WORDS.once)}`;
 }
 /* The body: the term note, the filter (kept drawn while the patterns are

@@ -1776,7 +1776,11 @@ function createAssistTargetLabel(candidate) {
     const pattern = meetings.map(m => `${m.day} ${m.start}`).join(', ');
     return `${pane}${board ? ` - ${board}` : ''} - Pattern ${pattern}`;
   }
-  const kind = normaliseSlotKind(candidate.kind) === 'lab' ? 'Lab' : 'Slot';
+  // A meeting that names its room type (only a course set to a weekly shape
+  // does: 2 × 100 min meets in a lecture room, in a 100-minute column of the
+  // lab grid) is tagged by it; any other by its column's kind, as before.
+  const lab = candidate.room_type ? candidate.room_type === 'lab' : normaliseSlotKind(candidate.kind) === 'lab';
+  const kind = lab ? 'Lab' : 'Slot';
   return `${pane}${board ? ` · ${board}` : ''} · ${kind} ${candidate.day} ${candidate.start}`;
 }
 
@@ -7461,6 +7465,9 @@ function renderSidebar() {
     const remaining = b.remaining_sections != null ? b.remaining_sections : Math.max(0, planned - used);
     const exhausted = remaining <= 0;
     const key = courseKeyOf(b);
+    // The weekly shape the scenario teaches the course in ("2 × 100 min"),
+    // next to its credit hours; nothing for the credit hours' standard pattern.
+    const shape = (IS_AR ? b.meeting_pattern_label_ar : b.meeting_pattern_label) || '';
     const courseLens = courseLensForItem(b);
     const planBits = courseLens && courseLens.plans
       ? Object.entries(courseLens.plans).filter(([, count]) => Number(count) > 0).map(([plan, count]) => `${plan} ${count}`).join(' ')
@@ -7478,7 +7485,7 @@ function renderSidebar() {
       </div>
       <div class="meta">
         ${b.total_demand ? `<span class="dem">${b.total_demand} ${IS_AR ? 'طالب' : 'stu'}</span>` : ''}
-        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}
+        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}${shape ? `<span class="dem">${esc(shape)}</span>` : ''}
         ${b.max_per_section ? `<span class="dem">${IS_AR ? 'حد' : 'cap'} ${b.max_per_section}</span>` : ''}
       </div>
       ${planBits ? `<div class="meta plan-line">${esc(planBits)}${courseLens.shared_overflow ? ' | shared overflow' : ''}</div>` : ''}
@@ -9460,11 +9467,15 @@ function initDismissibleDetailsMenus() {
 
   // Sidebar toggle + search
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());
+  // `api(url, options, onError)` already hands a refusal to the caller that
+  // asks: the editor says it inside its modal dialog.
   $('twsAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
     scenarioId: S.scenarioId, published: S.scenarioMeta?.status === 'published',
     budget: SB.budget || [], request: api, arabic: IS_AR,
-    onSaved: async () => {
+    onSaved: async (_budget, change) => {
       await loadSidebarBudget();
+      // A weekly-meetings save is said on the dialog's own status line.
+      if (change?.action === 'meeting_pattern') return;
       notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
     },
   }));

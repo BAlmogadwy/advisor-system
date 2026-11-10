@@ -47,6 +47,7 @@ from core.models import (
 from core.services.timetable_autoplace import DEFAULT_SLOTS, get_meeting_pattern
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_meeting_shape import shape_label
 from core.services.timetable_slot_config import effective_lab_slots
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
 
@@ -989,10 +990,13 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     for b in budget:
         cr = b.get("credit_hours", 3)
         meetings = len(get_meeting_pattern(cr, meeting_pattern=b.get("meeting_pattern", "")))
+        # A configured weekly shape is named with its lengths ("2 × 100 min"): its
+        # count alone would read as the credit default's 2 x 75. Others keep "2x".
+        shape = b.get("meeting_pattern_label") or shape_label(b.get("meeting_pattern", ""), cr)
         ws_sum.cell(row=row, column=1, value=b["course_code"]).border = thin_border
         ws_sum.cell(row=row, column=2, value=b.get("programme_term")).border = thin_border
         ws_sum.cell(row=row, column=3, value=cr).border = thin_border
-        ws_sum.cell(row=row, column=4, value=f"{meetings}x").border = thin_border
+        ws_sum.cell(row=row, column=4, value=shape or f"{meetings}x").border = thin_border
         ws_sum.cell(row=row, column=5, value=b["planned_sections"]).border = thin_border
         ws_sum.cell(row=row, column=6, value=b["used_sections"]).border = thin_border
         rem_cell = ws_sum.cell(row=row, column=7, value=b["remaining_sections"])

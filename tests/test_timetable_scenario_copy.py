@@ -557,3 +557,17 @@ def test_http_busy_source_is_not_copied(populated, http):
     response = post(http, populated.pk)
     assert response.status_code == 409 and response.json()["error"]["code"] == "SCENARIO_BUSY"
     assert table_snapshot() == before
+
+
+def test_copy_carries_each_courses_weekly_meetings(populated):
+    """The weekly shape a scenario teaches a course in (two 100-minute meetings) is the copy's too."""
+
+    ScenarioSectionBudget.objects.filter(scenario=populated, course_key="CS101").update(
+        meeting_pattern="2x100"
+    )
+
+    target = copy_timetable_scenario(populated.pk, name="Shaped").scenario
+
+    assert list(target.section_budgets.values_list("course_key", "meeting_pattern")) == [
+        ("CS101", "2x100")
+    ]

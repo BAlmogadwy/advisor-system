@@ -37,6 +37,7 @@ from core.models import (
     DeliveryBoard,
     Prerequisite,
     Room,
+    ScenarioSectionBudget,
     SectionPlacement,
     Student,
     StudentTermSection,
@@ -66,6 +67,7 @@ from core.services.section_move_optimisation_components import (
 )
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_flags import is_section_programme_preference_enabled
+from core.services.timetable_meeting_shape import MeetingShape, shape_for
 from core.services.timetable_move_outcome import preview_placement_student_outcome_candidates
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_repair_domain import (
@@ -6664,16 +6666,72 @@ def _placement_duration_minutes(placement: SectionPlacement) -> int:
     )
 
 
-def _placement_meeting_kind(placement: SectionPlacement) -> str:
-    if section_policy(placement.term_section):
+def _placement_meeting_shape(placement: SectionPlacement) -> MeetingShape | None:
+    """The weekly shape the scenario chose for this placement's course, or None.
+
+    One query. The budget row is matched by course identity (``course_key``,
+    CODE::NAME), so CS112 PROGRAMMING II never borrows PROGRAMMING I's shape. A
+    bare identity (a code without a name, on either side) is resolved through its
+    code, and only when exactly one budget row of the scenario has that code. A
+    meeting policy (ENG intensive) wins over any shape: None, with no query.
+    """
+    section = placement.term_section
+    if section_policy(section):
+        return None
+    key = str(section.course_key or section.course_code or "").strip()
+    code = str(section.course_code or "").strip()
+    if not key:
+        return None
+    lookup = (Q(course_key=key) | Q(course_code=code)) if code else Q(course_key=key)
+    rows = list(
+        ScenarioSectionBudget.objects.filter(
+            lookup, scenario_id=placement.board.scenario_id
+        ).values_list("course_key", "course_code", "meeting_pattern", "credit_hours")
+    )
+
+    def identity(row: tuple) -> str:
+        return str(row[0] or row[1] or "").strip()
+
+    matched = [row for row in rows if identity(row) == key]
+    if not matched and code:
+        same_code = [row for row in rows if str(row[1] or "").strip() == code]
+        # Two different names are two courses; only a bare side may be guessed.
+        if len(same_code) == 1 and code in (key, identity(same_code[0])):
+            matched = same_code
+    if len(matched) != 1:
+        return None
+    _key, _code, meeting_pattern, credit_hours = matched[0]
+    return shape_for(meeting_pattern, credit_hours)
+
+
+def _placement_meeting_kind(placement: SectionPlacement, meeting_shape: MeetingShape | None) -> str:
+    """What one meeting of a section is for the move scope: "lect" or "lab".
+
+    A meeting over 80 minutes is a 4-credit course's lab, unless the section's
+    course is taught in a configured weekly shape (``meeting_shape``, from
+    :func:`_placement_meeting_shape`): its 100-minute meetings are lectures, so
+    "Lectures only" moves all of them and the summary counts lecture sessions.
+    """
+    if section_policy(placement.term_section) or meeting_shape is not None:
         return "lect"
     return "lab" if _placement_duration_minutes(placement) > 80 else "lect"
+
+
+#: ``_placements_for_move_scope``'s default ``meeting_shape``: read it there.
+_READ_MEETING_SHAPE: Any = object()
 
 
 def _placements_for_move_scope(
     placement: SectionPlacement,
     move_scope: str,
+    meeting_shape: MeetingShape | None = _READ_MEETING_SHAPE,
 ) -> tuple[list[SectionPlacement], list[SectionPlacement]]:
+    """The placements a move takes along (included) and leaves (excluded).
+
+    ``meeting_shape`` is the section course's weekly shape, which "Lectures only"
+    needs (:func:`_placement_meeting_kind`). A caller that has read it passes it,
+    so a scope costs one budget read; left out, it is read here when needed.
+    """
     move_scope = _normalise_move_scope(move_scope)
     if section_policy(placement.term_section):
         return list(
@@ -6698,7 +6756,9 @@ def _placements_for_move_scope(
     if move_scope == MOVE_SCOPE_SINGLE_SESSION:
         included = [row for row in scoped if row.id == placement.id] or [placement]
     elif move_scope == MOVE_SCOPE_LECTURES_ONLY:
-        included = [row for row in scoped if _placement_meeting_kind(row) == "lect"]
+        if meeting_shape is _READ_MEETING_SHAPE:
+            meeting_shape = _placement_meeting_shape(placement)
+        included = [row for row in scoped if _placement_meeting_kind(row, meeting_shape) == "lect"]
         if not included:
             included = [row for row in scoped if row.id == placement.id] or [placement]
     else:
@@ -6719,6 +6779,7 @@ def _build_move_scope_payload(
     start: str,
     end: str,
     planning_scope: dict[str, Any] | None,
+    meeting_shape: MeetingShape | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     day = str(day or "").upper()
     anchor_day_index = REPAIR_DAY_INDEX.get(str(anchor.day or "").upper())
@@ -6814,7 +6875,7 @@ def _build_move_scope_payload(
                 "start": move_start,
                 "end": move_end,
                 "room": room,
-                "kind": _placement_meeting_kind(row),
+                "kind": _placement_meeting_kind(row, meeting_shape),
                 "is_anchor": row.id == anchor.id,
                 "before": {
                     "day": row.day,
@@ -6991,7 +7052,11 @@ def _prepare_repair_candidate_rows(
     """Scan beyond the visible candidate count and keep administratively useful rows."""
 
     move_scope = _normalise_move_scope(move_scope)
-    scoped_placements, excluded_placements = _placements_for_move_scope(placement, move_scope)
+    # One budget read for the whole scope: the move set and every candidate's payload.
+    meeting_shape = _placement_meeting_shape(placement)
+    scoped_placements, excluded_placements = _placements_for_move_scope(
+        placement, move_scope, meeting_shape
+    )
     quick_preview = preview_placement_slot_candidates(placement.id)
     source_rows = list(quick_preview.get("candidates", []))
     max_candidates = int(limits.get("max_candidates", DEFAULT_LIMITS["max_candidates"]))
@@ -7011,6 +7076,7 @@ def _prepare_repair_candidate_rows(
             start=start,
             end=end,
             planning_scope=planning_scope,
+            meeting_shape=meeting_shape,
         )
         anchor_move = next(
             (

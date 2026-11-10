@@ -847,3 +847,104 @@ def test_mt21_the_command_names_the_problems_and_writes_nothing(tmp_path, scenar
         )
     assert "a 3-credit course needs 2" in out.getvalue()
     assert not SectionPlacement.objects.filter(board__scenario=scenario).exists()
+
+
+def _statistics(scenario: TimetableScenario, *, key: str = "STAT103", pattern: str = "2x100"):
+    """STAT103 as the owner's sheets teach it: 3 credits, set to two 100-minute meetings."""
+
+    return ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_key=key,
+        course_code="STAT103",
+        course_name="Statistics",
+        credit_hours=3,
+        planned_sections=2,
+        max_per_section=50,
+        total_demand=60,
+        meeting_pattern=pattern,
+    )
+
+
+@pytest.mark.django_db
+def test_mt42_a_section_of_another_shape_imports_as_written_with_a_warning(tmp_path, scenario):
+    """The scenario teaches STAT103 as 2 x 100; a sheet meeting it 75 + 75 is said, not refused."""
+
+    _statistics(scenario)
+    path = _csv(
+        tmp_path,
+        "Term 1,STAT103,F1,SUN,09:00,10:15,\n"
+        "Term 1,STAT103,F1,TUE,09:00,10:15,\n"
+        "Term 1,STAT103,F2,MON,13:00,14:40,\n"
+        "Term 1,STAT103,F2,WED,13:00,14:40,",
+    )
+
+    plan = build_plan(path, scenario.id)
+
+    assert not plan.problems, plan.problems
+    # F2 is the course's own shape: nothing to say about it.
+    assert plan.warnings == [
+        "STAT103 F1 meets 75 + 75 min a week in the sheet; this scenario teaches STAT103 as "
+        "2 × 100 min. It is imported as written, and Check warns about it until it is re-placed."
+    ]
+    assert [s.required_meetings for s in plan.sections] == [2, 2]
+    assert apply_plan(plan)["placements"] == 4
+    assert sorted(
+        (p.term_section.section, p.day, p.start_time, p.end_time)
+        for p in SectionPlacement.objects.filter(board__scenario=scenario).select_related(
+            "term_section"
+        )
+    ) == [
+        ("F1", "SUN", "09:00", "10:15"),
+        ("F1", "TUE", "09:00", "10:15"),
+        ("F2", "MON", "13:00", "14:40"),
+        ("F2", "WED", "13:00", "14:40"),
+    ]
+
+
+@pytest.mark.django_db
+def test_mt43_the_dry_run_and_the_write_agree_on_a_section_of_another_shape(tmp_path, scenario):
+    _statistics(scenario)
+    path = _csv(
+        tmp_path,
+        "Term 1,STAT103,F1,SUN,09:00,10:15,\nTerm 1,STAT103,F1,TUE,09:00,10:15,",
+    )
+    note = "note: STAT103 F1 meets 75 + 75 min a week in the sheet"
+
+    out = StringIO()
+    call_command("import_manual_timetable", path, "--scenario-id", str(scenario.id), stdout=out)
+    assert note in out.getvalue()
+    assert "Dry run: nothing written" in out.getvalue()
+
+    out = StringIO()
+    call_command(
+        "import_manual_timetable", path, "--scenario-id", str(scenario.id), "--apply", stdout=out
+    )
+    assert note in out.getvalue()
+    assert "Written: 1 section(s), 2 placement(s)." in out.getvalue()
+    assert SectionPlacement.objects.filter(board__scenario=scenario).count() == 2
+
+
+@pytest.mark.django_db
+def test_mt44_a_key_the_scenario_lacks_takes_a_shape_only_from_the_only_row_of_its_code(
+    tmp_path, scenario
+):
+    """A course is CODE::NAME: a code with two budget rows lends neither its shape."""
+
+    _statistics(scenario, key="STAT103::STATISTICS")
+    path = _csv(
+        tmp_path,
+        "Term 1,STAT103,F1,SUN,09:00,10:15,,STAT103,3\n"
+        "Term 1,STAT103,F1,TUE,09:00,10:15,,STAT103,3",
+        header=f"{HEADER},course_key,credits",
+    )
+    shape_note = (
+        "STAT103 F1 meets 75 + 75 min a week in the sheet; this scenario teaches STAT103 as "
+        "2 × 100 min. It is imported as written, and Check warns about it until it is re-placed."
+    )
+
+    assert shape_note in build_plan(path, scenario.id).warnings
+
+    _statistics(scenario, key="STAT103::STATISTICS_II", pattern="")
+    plan = build_plan(path, scenario.id)
+    assert not plan.problems, plan.problems
+    assert shape_note not in plan.warnings

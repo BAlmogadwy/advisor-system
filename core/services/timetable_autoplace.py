@@ -109,7 +109,7 @@ from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
 )
-from core.services.timetable_meeting_shape import configured_durations
+from core.services.timetable_meeting_shape import configured_durations, shape_for
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_online_windows import (
     active_online_windows,
@@ -166,7 +166,11 @@ from core.services.timetable_warm_start import (
     compute_perturbation_metric,
     is_warm_start_enabled,
 )
-from core.services.timetable_workspace import _time_mask, first_free_section_labels
+from core.services.timetable_workspace import (
+    _drop_stale_workspace_meetings,
+    _time_mask,
+    first_free_section_labels,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1842,6 +1846,15 @@ def auto_place_board(
             # courses have 100-min meetings that are long lectures, not labs.
             meeting_policy = cd.get("meeting_policy")
             is_lab_course = budget.credit_hours == 4 and meeting_policy is None
+            # A configured weekly shape's 100-minute lectures share the lecture
+            # rooms but overlap bookings that start at other times (09:00-10:40
+            # runs into the 10:30 lecture; no lecture starts at 10:45 or 16:30),
+            # which the exact-start room check below never sees: score them
+            # against every booking they overlap. Every other section keeps the
+            # exact-start check.
+            room_check_interval = meeting_policy is None and (
+                shape_for(budget.meeting_pattern, cd["credit_hours"]) is not None
+            )
             for option in all_options:
                 # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
                 # Reject any option that would double-book the current
@@ -1982,7 +1995,12 @@ def auto_place_board(
                             rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                         room_cap = 0 if rtype == "lab" else section_cap
                         if not room_tracker.is_feasible(
-                            m["day"], m["start"], room_cap, rtype, board_gender
+                            m["day"],
+                            m["start"],
+                            room_cap,
+                            rtype,
+                            board_gender,
+                            end=m["end"] if room_check_interval else None,
                         ):
                             room_penalty += 100  # heavy penalty but not a hard reject
 
@@ -2215,7 +2233,7 @@ def auto_place_board(
 
             # ── Persist the chosen placement ──────────────────────────
             # TermSection: the logical section record (e.g. "MATH101 S1").
-            ts, _ = TermSection.objects.get_or_create(
+            ts, created = TermSection.objects.get_or_create(
                 scenario=scenario,
                 course_key=code,
                 section=sec_label,
@@ -2227,6 +2245,13 @@ def auto_place_board(
                     "source_tag": AUTO_SECTION_SOURCE_TAG,
                 },
             )
+            if not created:
+                # A label Remove freed is reused: drop the meeting rows its
+                # earlier pattern left behind (a workspace section of this
+                # scenario on no board only), or they stand beside the new
+                # ones - two 75-minute rows beside two 100-minute ones when a
+                # course was re-shaped and placed again.
+                _drop_stale_workspace_meetings(ts, scenario.id)
 
             # TermSectionMeeting + SectionPlacement: one row per meeting
             # day.  Also update the in-memory tracking structures so
