@@ -109,6 +109,14 @@ class Offering:
     #: A section chooses exactly one bundle; ordinary courses use the grid.
     meeting_policy: CourseMeetingPolicy | None = None
 
+    #: The weekly shape the department chose for this course and that
+    #: ``requirements`` were compiled from (``"2x100"``: two 100-minute
+    #: lectures), or ``""`` for the credit default. A record of where the
+    #: requirements came from, so it is deliberately NOT in the snapshot
+    #: fingerprint: the requirements it produced already are, and leaving it
+    #: out keeps every unconfigured fingerprint exactly what it was.
+    meeting_pattern: str = ""
+
     @property
     def meetings_per_week(self) -> int:
         return sum(r.count_per_week for r in self.requirements)

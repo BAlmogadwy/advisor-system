@@ -6,8 +6,9 @@ Boundaries (blueprint §0):
   instructor eligibility — and the upstream *advising* recommender;
 * never reads a `TimetableScenario`, `DeliveryBoard`, `SectionPlacement` or
   `TermSectionMeeting`. No saved scenario is ever a baseline or a warm start;
-* imports no planner implementation. Shared pure institutional course-policy
-  and course-tier modules are the explicit exceptions to that boundary.
+* imports no planner implementation. Shared pure institutional course-policy,
+  course-tier and weekly-meeting-shape modules are the explicit exceptions to
+  that boundary.
 
 Demand comes from `recommender_batch.batch_recommend`, which already encodes
 academic policy (real-term computation, parity, prerequisites, unlock ranking,
@@ -23,6 +24,7 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -36,6 +38,12 @@ from core.models import (
 from core.models import Instructor as InstructorRow
 from core.models import Room as RoomRow
 from core.services.timetable_course_policy import get_course_meeting_policy
+from core.services.timetable_meeting_shape import (
+    ProgrammeRow,
+    department_budget_value,
+    programme_shape_for,
+    shape_for,
+)
 from scheduler.domain import (
     CapacityPolicy,
     DeliveryMode,
@@ -301,7 +309,9 @@ def _one_elective_per_slot(
     return out
 
 
-def compile_requirements(credit_hours: int, *, is_online: bool) -> tuple[MeetingRequirement, ...]:
+def compile_requirements(
+    credit_hours: int, *, is_online: bool, meeting_pattern: str = ""
+) -> tuple[MeetingRequirement, ...]:
     """Compile an offering's exact weekly meeting multiset (N5).
 
     Credit hours are the *default input* to this compilation, not a runtime
@@ -311,10 +321,23 @@ def compile_requirements(credit_hours: int, *, is_online: bool) -> tuple[Meeting
     The shape follows the institution's documented rule:
     4cr -> 2x75 lecture + 1x100 lab; 3cr -> 2x75; 2cr -> 1x100; 1cr -> 1x75.
 
+    A weekly shape the department chose instead (``meeting_pattern``, e.g.
+    ``"2x100"``: two 100-minute meetings; owner, 2026-11-10) replaces that
+    default when it fits the credit hours (``timetable_meeting_shape.shape_for``,
+    the rule every engine reads). Its meetings are LECTURES: a 100-minute
+    meeting takes the 100-minute windows because timing follows duration, and
+    a lecture room because the room follows kind, never the shape.
+
     Online offerings need no room, so their meetings carry ``DeliveryMode.ONLINE``
     and are exempt from room supply entirely.
     """
     delivery = DeliveryMode.ONLINE if is_online else DeliveryMode.IN_PERSON
+    shape = shape_for(meeting_pattern, credit_hours)
+    if shape is not None:
+        return tuple(
+            MeetingRequirement(MeetingKind.LECTURE, delivery, duration, count)
+            for duration, count in sorted(Counter(shape.durations).items())
+        )
     credits = int(credit_hours or 0)
     if credits >= 4:
         return (
@@ -349,6 +372,37 @@ def _offering_id(course_key: str, programs: frozenset[str]) -> str:
     return f"off_{hashlib.sha256(seed.encode()).hexdigest()[:12]}"
 
 
+def programme_votes(plan_rows: Iterable[Mapping]) -> list[ProgrammeRow]:
+    """Each plan row as the weekly-meetings rule reads it, one per row, in order.
+
+    ``identity`` is the course identity the row's offering is grouped under
+    (N1), so a row votes on exactly the offering it belongs to. A programme's
+    vote is its row's ``meeting_pattern`` (not set, ``"standard"`` or a shape);
+    a row with no course name cannot say which course it means and never votes.
+
+    Classic Generate builds the same tuples with
+    ``core.services.programme_meeting_patterns.pre_key``. That module is not
+    imported here: it carries the old engine's exclusion rule. A test pins the
+    two equal, row for row.
+    """
+    from core.services.course_identity import planner_course_key
+
+    return [
+        ProgrammeRow(
+            programme=str(row["program"]).strip().upper(),
+            identity=planner_course_key(
+                str(row["course_code"]).strip().upper(), str(row.get("course_name") or "")
+            ),
+            # Read with [], not .get(): a query that forgot the column must fail
+            # loudly rather than read every course as "not set".
+            meeting_pattern=str(row["meeting_pattern"] or ""),
+            credit_hours=row["credit_hours"],
+            named=bool(str(row.get("course_name") or "").strip()),
+        )
+        for row in plan_rows
+    ]
+
+
 def build_snapshot(
     *,
     academic_year: str,
@@ -360,8 +414,17 @@ def build_snapshot(
     min_demand: int = 1,
     phase_terms: bool = False,
     grid: Grid | None = None,
+    meeting_patterns: Mapping[str, str] | None = None,
 ) -> Snapshot:
-    """Assemble an immutable, fingerprinted snapshot for one gender cohort."""
+    """Assemble an immutable, fingerprinted snapshot for one gender cohort.
+
+    ``meeting_patterns`` is classic Generate's decision on each course's weekly
+    meetings, ``{course_key: meeting_pattern}`` for every budget of the scenario
+    this build fills (``""`` = the credit default), handed over by the planner
+    job. A plan offering whose key it holds is taught that way; any other
+    offering, or every offering when no map is given (``sch_plan``, the
+    benchmarks), is decided here by the same rule over the same plan rows.
+    """
     gender = gender.strip().upper()
     if gender not in ("M", "F"):
         raise IntakeError("gender must be M or F — a snapshot is single-gender (D1)")
@@ -467,6 +530,7 @@ def build_snapshot(
             "is_online",
             "max_capacity",
             "programme_term",
+            "meeting_pattern",
         )
     )
     # Group by the project's own course identity, NOT by the display code (N1).
@@ -475,12 +539,13 @@ def build_snapshot(
     # project plans CS111::FUNDAMENTALS_OF_PROGRAMMING and CS111::PROGRAMMING_I
     # as two courses with two section budgets, so grouping by code here made
     # this subsystem disagree with the institution's own sectioning.
+    #
+    # The identity comes from each row's weekly-meetings vote, so the rows
+    # grouped under an offering are exactly the rows that vote on it.
+    votes = programme_votes(plan_rows)
     grouped: dict[str, list[dict]] = defaultdict(list)
-    for row in plan_rows:
-        key = planner_course_key(
-            str(row["course_code"]).strip().upper(), str(row.get("course_name") or "")
-        )
-        grouped[key].append(row)
+    for row, vote in zip(plan_rows, votes, strict=True):
+        grouped[vote.identity].append(row)
 
     # Resolution priority per course, from the project's own classifier. This is
     # institutional policy — which courses the registrar must resolve and which
@@ -517,6 +582,10 @@ def build_snapshot(
         meeting_policy = (
             None if unscheduled else get_course_meeting_policy(code, course_key=course_key)
         )
+        #: The department's weekly shape, when one applies (else ""). An English
+        #: bundle and an unscheduled course keep precedence, as in the classic
+        #: engines (policy, then shape, then credit hours).
+        meeting_pattern = ""
         if meeting_policy is not None:
             requirements = (
                 MeetingRequirement(
@@ -530,7 +599,23 @@ def build_snapshot(
         elif unscheduled:
             requirements = ()
         else:
-            requirements = compile_requirements(credits, is_online=online)
+            if meeting_patterns is not None and course_key in meeting_patterns:
+                # Generate's decision, copied into the scenario's budget when it
+                # was scaffolded. Taken as given rather than decided again: a
+                # programme's vote saved while this job waited in the queue
+                # would otherwise make the board disagree with its own budget.
+                pattern = str(meeting_patterns[course_key] or "")
+            else:
+                # The same rule Generate applies, over the same plan rows of the
+                # same programmes: the programmes that voted must agree, an
+                # unset one does not count, rows of one identity at different
+                # credit hours decide nothing (`credits` is their max; Generate
+                # sizes from its first student), and the shape must be a choice
+                # for these credit hours (no English bundle reaches this branch).
+                pattern = department_budget_value(programme_shape_for(course_key, votes), credits)
+            requirements = compile_requirements(credits, is_online=online, meeting_pattern=pattern)
+            applied = shape_for(pattern, credits)
+            meeting_pattern = applied.shape_id if applied else ""
 
         offering = Offering(
             id=_offering_id(course_key, progs),
@@ -545,6 +630,7 @@ def build_snapshot(
             is_scheduled=not unscheduled,
             tier=classify_course_tier(code, plan_counts.get(code.upper(), 0)),
             meeting_policy=meeting_policy,
+            meeting_pattern=meeting_pattern,
         )
         offerings.append(offering)
         offerings_by_code[code].append(offering)
@@ -639,6 +725,9 @@ def build_snapshot(
         terms = frozenset().union(*(h.terms for h in hosts))
         credits = int(elective.credit_hours or 0) or max(h.credit_hours for h in hosts)
         name = str(elective.course_name or code)
+        # The credit default, always: a programme votes on its own plan rows,
+        # and a catalogue elective is not one (electives are set per scenario
+        # for now; classic Generate copies "" for them too).
         offering = Offering(
             id=_offering_id(planner_course_key(code, name), progs),
             course_code=code,

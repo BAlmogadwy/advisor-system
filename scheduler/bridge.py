@@ -301,6 +301,12 @@ def build_into_scenario(
     min_demand: int = 5,
     progress=None,
     seed: int | None = None,
+    #: Classic Generate's decision on each course's weekly meetings,
+    #: ``{course_key: meeting_pattern}`` for every budget of this scenario, as
+    #: the planner job was given it when the scaffold was made. Handed on to
+    #: intake as data, so the board follows its own budget even when a
+    #: programme's vote changed while the job waited. None: intake decides.
+    meeting_patterns: dict[str, str] | None = None,
 ) -> dict:
     """Plan this scenario with the new engine and persist the result.
 
@@ -373,6 +379,7 @@ def build_into_scenario(
             programs=list(programs),
             default_capacity=int(default_capacity),
             min_demand=int(min_demand),
+            meeting_patterns=meeting_patterns,
         )
     )
 

@@ -66,6 +66,12 @@ from core.models import (
 )
 from core.services.board_ownership import external_shared_section_ids
 from core.services.natural_order import natural_key
+from core.services.programme_meeting_patterns import (
+    decision_block,
+    is_drift,
+    resolve_for_keys,
+    scenario_programmes,
+)
 from core.services.section_source_tags import (
     PLANNED_SECTION_SOURCE_TAG,
     WORKSPACE_SECTION_SOURCE_TAGS,
@@ -5083,7 +5089,9 @@ def compute_incomplete_section_patterns(scenario_id: int) -> list[dict]:
     return issues
 
 
-def compute_scenario_budget(scenario_id: int) -> list[dict]:
+def compute_scenario_budget(
+    scenario_id: int, *, department_for: TimetableScenario | None = None
+) -> list[dict]:
     """Compare planned section budgets against actual board usage.
 
     For every ``ScenarioSectionBudget`` row (one per course), counts how
@@ -5115,6 +5123,18 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
         weekly meeting every engine plans it with (policy, then shape, then
         credit hours), e.g. ``[100, 100]``. A configured course needs its
         shape's meetings in every section (``required_meetings_per_section``).
+
+        ``department_for`` (the scenario of ``scenario_id``, already loaded):
+        each row also says what the scenario's programmes decided for the
+        course, in two more keys and no other change -
+        ``programme_meeting_pattern`` (``programme_meeting_patterns.
+        decision_block``: status, value, words, each programme's vote) and
+        ``meeting_pattern_drift`` (``programme_meeting_patterns.is_drift``:
+        the row differs from a value its programmes agreed on). Only the pages
+        that show it ask (the budget and weekly-meetings answers, a
+        synchronous Generate's); it costs the same few reads whatever the
+        number of courses. Without it the rows are exactly as before, for
+        every engine, export and check.
     """
     from core.services.timetable_autoplace import get_meeting_pattern
 
@@ -5181,7 +5201,26 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
         )
 
     result.sort(key=lambda x: (x.get("programme_term") or 0, x["course_code"]))
+    if department_for is not None:
+        _add_programme_decisions(result, department_for)
     return result
+
+
+def _add_programme_decisions(rows: list[dict], scenario: TimetableScenario) -> None:
+    """Give each budget row its programmes' weekly-meetings decision, in two new keys.
+
+    One read of the study-plan rows of the scenario's programmes for all the
+    courses (and one of its boards for an older scenario with no programmes
+    stored), whatever their number. The existing keys are never touched: the
+    row's ``department`` stays the course's academic department.
+    """
+    if not rows:
+        return
+    decisions = resolve_for_keys([row["course_key"] for row in rows], scenario_programmes(scenario))
+    for row in rows:
+        decision = decisions[row["course_key"]]
+        row["programme_meeting_pattern"] = decision_block(decision, row["credit_hours"])
+        row["meeting_pattern_drift"] = is_drift(decision, row)
 
 
 def _configured_shapes(budget_rows: Iterable[Mapping]) -> dict[str, tuple[MeetingShape, str]]:

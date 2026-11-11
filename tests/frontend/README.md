@@ -183,6 +183,28 @@ one/two/few/many/other), and the real dialog's Enter on Keep editing. The
 endpoint, its audit rows and its roles are covered by
 `tests/test_db_admin_programme_limits.py`.
 
+Three suites cover a programme's default weekly meetings for its 3-credit
+courses (the programmes' votes on `ProgrammeRequirement.meeting_pattern`).
+`section-planning-meeting-patterns.test.cjs`, run through
+`tests/test_section_planning_frontend.py` in English and Arabic, covers Section
+Planning's Weekly meetings panel: closed and silent until opened, one row per
+course identity with each programme's vote, mixed and clear-only rows, choices
+as drafts that never reach Generate, All programmes, the review (course ·
+programme · now → new · scope, co-owners, other names, the draft timetables it
+reaches) and the commit with the preview's token, refusals in the page's words,
+and drafts dropped and said when the programmes on screen change.
+`timetable-programme-meeting-pattern.test.cjs`, run through
+`tests/test_timetable_outcomes_frontend.py`, covers the workspace: the course
+editor's Programme default choice for a new course (which sends nothing), the
+programmes' default under a planned course and "Use programme default", the
+line over the classic list and the split sidebar with "Use programme defaults
+(N)" (one course after another, stopping at the first refusal, off on a
+published scenario), and the chips where a course differs or its programmes
+differ. `db-admin-meeting-patterns.test.cjs`, run through
+`tests/test_programme_meeting_pattern_imports.py`, covers DB Admin's catalogue
+delete and Oracle import confirmations naming the weekly-meetings choices they
+remove or may drop, and confirming exactly as before when there are none.
+
 The `exam-add-courses.test.cjs` suite covers adding courses to the saved
 timetable on the board, in English and in Arabic. Add courses asks for the
 run's own scope list by itself - never Load Courses, never on opening the run -

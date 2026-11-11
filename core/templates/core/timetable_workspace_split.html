@@ -148,6 +148,8 @@
           <input id="twsSectionSearch" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية المقررات…{% else %}Filter courses…{% endif %}">
           <button type="button" class="tws-btn" id="twsAddCourse">+ {% if LANGUAGE_CODE == 'ar' %}مقرر / شعبة{% else %}Course / section{% endif %}</button>
         </div>
+        {# The programmes' weekly meetings for this scenario's courses, drawn by the page only when a course has something to say. #}
+        <div id="twsMeetingSummary" style="flex-shrink:0;max-height:30vh;overflow-y:auto;padding:8px 12px;border-bottom:1px solid var(--line);color:var(--t2);font-size:var(--text-xs)" hidden></div>
         <div class="tws-sidebar-body" id="twsSidebarBody">
           <div class="tws-empty-state"><span class="ic">ⓘ</span>{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو أولاً{% else %}Select a scenario first{% endif %}</div>
         </div>
@@ -393,6 +395,6 @@
 <script src="{% static 'js/timetable-section-teacher.js' %}?v=2"></script>
 <script src="{% static 'js/timetable-programme-mark.js' %}?v=1"></script>
 <script src="{% static 'js/timetable-hotspots.js' %}?v=1"></script>
-<script src="{% static 'js/timetable-course-editor.js' %}?v=2"></script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=143"></script>
+<script src="{% static 'js/timetable-course-editor.js' %}?v=3"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=144"></script>
 {% endblock %}

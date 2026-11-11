@@ -841,21 +841,7 @@ async function showSchedulerOutcome(jobId) {
   // keeps the focused, else the chosen, board in view through every render
   // and resize.
   $('twNewBoard').addEventListener('click', createBoardPrompt);
-  $('twAddCourse')?.addEventListener('click', () => TimetableCourseEditor.open({
-    scenarioId: TW.scenarioId, published: TW.scenario?.status === 'published',
-    budget: TW.sectionBudget || [], arabic: IS_AR,
-    // The editor is a modal dialog, over every toast: a refusal it asks to
-    // hear (its weekly-meetings save) is handed to it in the server's words.
-    request: (url, opts, onError) => twFetch(url, onError
-      ? { ...opts, _onError: body => { onError(body?.error?.message || ''); return true; } }
-      : opts),
-    onSaved: async (_budget, change) => {
-      await loadBudget();
-      // A weekly-meetings save is said on the dialog's own status line.
-      if (change?.action === 'meeting_pattern') return;
-      notify.success(IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.');
-    },
-  }));
+  $('twAddCourse')?.addEventListener('click', () => openCourseEditor());
   // The filter is a view over the board (§7.2 item 6, 6c): it folds and dims in
   // place (applyGridView, which also writes the count), never redraws it, so
   // a drag or a focused card survives typing. A programme or SHARED typed
@@ -1774,6 +1760,105 @@ async function createBoardPrompt() {
 }
 
 /* ── Budget Sidebar ── */
+/* The Add course / section dialog (timetable-course-editor.js), from
+   "+ Course / section" or, on a course (`courseKey`), from the weekly-meetings
+   line over the list. */
+function openCourseEditor(courseKey = '') {
+  const scenarioId = TW.scenarioId;
+  TimetableCourseEditor.open({
+    scenarioId: TW.scenarioId, published: TW.scenario?.status === 'published',
+    budget: TW.sectionBudget || [], arabic: IS_AR, courseKey,
+    // The line is drawn again when a save changes what it says: the keyboard
+    // goes back to the same course there, else to the list.
+    returnFocus: () => TimetableCourseEditor.focusSummary($('twMeetingSummary'), { key: courseKey, fallback: $('twSectionList') }),
+    // The editor is a modal dialog, over every toast: a refusal it asks to
+    // hear (its weekly-meetings save) is handed to it in the server's words,
+    // with the server's error (its code says why a programme default was not
+    // used, in the page's words).
+    request: (url, opts, onError) => twFetch(url, onError
+      ? { ...opts, _onError: body => { onError(body?.error?.message || '', body?.error || null); return true; } }
+      : opts),
+    // A programme default gone or changed since the list was read: the list
+    // is read again, and the dialog shows its course as read now (never
+    // another scenario's rows).
+    reread: async () => {
+      await loadBudget();
+      return TW.scenarioId === scenarioId ? TW.sectionBudget || [] : null;
+    },
+    onSaved: async (_budget, change) => {
+      await loadBudget();
+      // A weekly-meetings save is said on the dialog's own status line.
+      if (change?.action === 'meeting_pattern') return;
+      // An add names the weekly meetings its programmes gave it, when they did.
+      notify.success(change?.message || (IS_AR ? 'تمت الإضافة. اختر الشعبة من قائمة الشعب المطلوبة لوضعها.' : 'Added. Choose the section from Required sections to place it.'));
+    },
+  });
+}
+
+/* The weekly-meetings line over the list: the courses whose programmes
+   decided something for them (in their shape, programmes that differ, or
+   different from the programmes' default), each opening the dialog on it,
+   and "Use programme defaults (N)". Drawn by the course editor's own
+   renderMeetingSummary from the budget rows, so it follows every read of
+   them; hidden when no course has anything to say (no programme set one). */
+function renderMeetingSummary() {
+  const box = $('twMeetingSummary');
+  const editor = globalThis.TimetableCourseEditor;
+  if (!box || typeof editor?.renderMeetingSummary !== 'function') return;
+  const apply = editor.renderMeetingSummary(box, TW.scenarioId ? TW.sectionBudget || [] : [], {
+    arabic: IS_AR, disabled: !workspaceCanEdit(), applyClass: 'btn btn-sm btn-neutral',
+    onOpen: courseKey => openCourseEditor(courseKey),
+    onApply: rows => applyProgrammeDefaults(rows),
+    fallback: $('twSectionList'),
+  });
+  // A write: off while the workspace is busy or the scenario published.
+  if (apply) apply.dataset.twMutation = '';
+}
+
+/* "Use programme defaults (N)": each course that differs from what its
+   programmes agreed on is set, one after another, as one operation of the
+   page so nothing else writes meanwhile, to what its programmes decide NOW:
+   the server reads them for each save (POST …/budget/meeting-pattern/ with
+   use_programme_default) and refuses one that is gone or no longer the
+   value shown. The first refusal stops it and is said, with the course and
+   why (the page's words for a programme default gone or changed, else the
+   server's); the courses before it stay saved. The list is read again
+   either way. Placed sections a saved course left meeting the old way are
+   named, as one course's own save names them, and make it a warning. */
+async function applyProgrammeDefaults(rows) {
+  const token = beginWorkspaceOperation('programme-defaults');
+  if (!token) return;
+  const scenarioId = TW.scenarioId;
+  const editor = globalThis.TimetableCourseEditor;
+  let saved = 0;
+  let stopped = null;
+  const left = [];
+  try {
+    for (const row of rows) {
+      let refusal = '';
+      let error = null;
+      const result = await twFetch(`/ops/tw/scenarios/${scenarioId}/budget/meeting-pattern/`, {
+        _workspaceToken: token, method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editor.programmeDefaultBody(row)),
+        _onError: body => { refusal = body?.error?.message || ''; error = body?.error || null; return true; },
+      });
+      if (!result?.ok) { stopped = { row, refusal, error }; break; }
+      saved++;
+      if (Array.isArray(result.mismatched_sections)) left.push(...result.mismatched_sections);
+    }
+  } finally {
+    finishWorkspaceOperation(token);
+  }
+  if (TW.scenarioId !== scenarioId) return;
+  await loadBudget();
+  const said = editor.programmeDefaultsWords({ saved, total: rows.length, stopped, left, arabic: IS_AR });
+  if (stopped || left.length) notify.warning(said); else notify.success(said);
+  // The button is gone, or was turned off under the keyboard while it ran.
+  if (!document.activeElement || document.activeElement === document.body) {
+    editor.focusSummary($('twMeetingSummary'), { key: '', fallback: $('twSectionList') });
+  }
+}
+
 async function loadBudget() {
   if (!TW.scenarioId) return;
   const scenarioId = TW.scenarioId;
@@ -1793,6 +1878,7 @@ async function loadBudget() {
 }
 
 function renderBudgetSidebar() {
+  renderMeetingSummary();
   if (TW.boardId && !TW.sectionBudget?.length) { renderUnplacedList(); return; }
   const list = $('twSectionList');
   const budget = TW.sectionBudget || [];
@@ -1857,9 +1943,12 @@ function renderBudgetSidebar() {
         div.className = 'tw-section-item is-complete';
         div.setAttribute('aria-disabled', 'true');
         div.dataset.course = c.course_code;
+        // Placed in full, it still says when it differs from its programmes'
+        // default or they differ (nothing for any other course).
+        const chip = programmeChip(c);
         div.innerHTML = `
           <span class="code"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span>${esc(c.course_code)}</span>
-          <span class="meta ux-meta"><span>${IS_AR ? `${used}/${planned} موضوعة` : `${used}/${planned} placed`}</span><span>${IS_AR ? `${c.total_demand} طالب` : `demand ${c.total_demand}`}</span></span>
+          <span class="meta ux-meta"><span>${IS_AR ? `${used}/${planned} موضوعة` : `${used}/${planned} placed`}</span><span>${IS_AR ? `${c.total_demand} طالب` : `demand ${c.total_demand}`}</span>${chip ? `<span>${esc(chip)}</span>` : ''}</span>
         `;
         return;
       }
@@ -1875,8 +1964,8 @@ function renderBudgetSidebar() {
         // opens Place… (an English row: its pattern chooser), a dialog
         // either way. A click anywhere else on it is still a drag.
         div.setAttribute('aria-haspopup', 'dialog');
-        const facts = [c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, meetingShapeLabel(c), `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`,
-          meetings > 1 ? PLACE_WORDS.meetingsWeek(meetings) : ''];
+        const facts = [c.department || '', `${c.credit_hours || '?'} ${IS_AR ? 'س' : 'cr'}`, meetingShapeLabel(c), programmeChip(c),
+          `${IS_AR ? 'سعة' : 'cap'} ${c.max_per_section || '?'}`, meetings > 1 ? PLACE_WORDS.meetingsWeek(meetings) : ''];
         div.innerHTML = `
           <span class="tw-section-head"><span class="code">${esc(c.course_code)} <bdi>${esc(secLabel)}</bdi></span><span class="tw-place-hint" aria-hidden="true">${esc(PLACE_WORDS.hint)}</span></span>
           <span class="meta ux-meta">${facts.filter(Boolean).map(part => `<span>${esc(part)}</span>`).join('')}</span>
@@ -1939,6 +2028,12 @@ function freeSectionLabels(c) {
    hours' standard pattern, which says nothing new. */
 function meetingShapeLabel(c) {
   return (IS_AR ? c?.meeting_pattern_label_ar : c?.meeting_pattern_label) || '';
+}
+/* What a course's programmes decided, when it is news: "programme default
+   2 × 100 min" for a course that differs from it, "programmes differ" when
+   they do; '' for any other course, and on a page without the course editor. */
+function programmeChip(c) {
+  return globalThis.TimetableCourseEditor?.programmeChip?.(c, IS_AR) || '';
 }
 
 /* What Place… is asked to place (5f), from a budget row or a list row's
@@ -2314,6 +2409,7 @@ function resetWorkspace() {
   TW.readiness = null; TW.readinessVersion = -1; TW.qualityVersion = -1;
   TW.sectionBudget = null; TW.unplacedSections = [];
   resetPlanLens();
+  renderMeetingSummary();
   $('twBoardTabs').innerHTML = '';
   $('twSectionList').innerHTML = `<p class="tw-pane-empty">${IS_AR ? 'افتح سيناريو لعرض الشعب المطلوبة.' : 'Open a scenario to see its required sections.'}</p>`;
   $('twGrid').classList.add('d-none');

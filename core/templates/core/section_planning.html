@@ -115,6 +115,39 @@
       </table>
     </div>
   </div>
+
+  {# A programme's weekly meetings for its 3-credit courses: saved on the study plan, read by Generate. Loaded only when opened. #}
+  <div class="mt-2">
+    <button id="spToggleMeet" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spMeetPanel">
+      <svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}🗓 إعدادات متقدمة: اللقاءات الأسبوعية{% else %}🗓 Advanced: Weekly meetings{% endif %}
+      <span id="spMeetBadge" class="sp-adv-badge d-none">0</span>
+    </button>
+  </div>
+
+  <div id="spMeetPanel" class="d-none mt-2">
+    <div class="sp-adv-header">
+      <span id="spMeetDrafts" class="sp-adv-drafts" role="status">{% if LANGUAGE_CODE == 'ar' %}لا توجد تعديلات غير محفوظة{% else %}No unsaved changes{% endif %}</span>
+      <button id="spMeetReset" type="button" class="sp-adv-reset" disabled>{% if LANGUAGE_CODE == 'ar' %}تجاهل التعديلات{% else %}Discard changes{% endif %}</button>
+      <button id="spMeetSaveDb" type="button" class="btn btn-primary btn-sm" aria-disabled="true" aria-describedby="spMeetDrafts">{% if LANGUAGE_CODE == 'ar' %}حفظ اللقاءات الأسبوعية…{% else %}Save weekly meetings…{% endif %}</button>
+      <span id="spMeetCount" class="sp-adv-count"></span>
+    </div>
+    <p id="spMeetNote" class="sp-adv-note fs-sm text-t3">{% if LANGUAGE_CODE == 'ar' %}تُطبَّق على الجداول التي تُنشأ من الآن فصاعداً، للطلاب والطالبات على السواء. تحتفظ السيناريوهات المحفوظة بلقاءاتها الأسبوعية. إذا اختلفت البرامج في جدول واحد يبقى المقرر على «<bdi>{{ standard_meetings_label_ar }}</bdi>»، ولا يُحتسب برنامج لم يحدّد قيمة. تُضبط المقررات الاختيارية وخاناتها لكل جدول حالياً (<bdi>+ مقرر / شعبة</bdi> ← اللقاءات الأسبوعية).{% else %}Applies to timetables generated from now on, Male and Female alike. Saved scenarios keep their own weekly meetings. When programmes in one timetable disagree, the course keeps <bdi>{{ standard_meetings_label }}</bdi>; a programme that has not set it does not count. Electives and elective slots are set per timetable for now (+ Course / section → Weekly meetings).{% endif %}</p>
+    <div class="sp-adv-wrap">
+      <table class="sp-adv-table sp-meet-table">
+        <thead>
+          <tr>
+            <th>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}البرامج المعروضة{% else %}Programmes on screen{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}اللقاءات الأسبوعية{% else %}Weekly meetings{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}كل البرامج{% else %}All programmes{% endif %}</th>
+          </tr>
+        </thead>
+        <tbody id="spMeetBody">
+          <tr><td colspan="4" class="empty-note text-center">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading courses...{% endif %}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <!-- ─── Progress ─── -->
@@ -212,5 +245,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=14"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=15"></script>
 {% endblock %}

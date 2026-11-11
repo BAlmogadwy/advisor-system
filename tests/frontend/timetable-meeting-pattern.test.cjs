@@ -117,12 +117,12 @@ function editor(t, { answer = body => savedAnswer(body), arabic = false, publish
   return { w, d, form, calls, saved, choose, status, alert };
 }
 
-test('a new course: Weekly meetings is open at 3 credit hours only, and any other credit hours set it back to Standard', async t => {
+test('a new course: Weekly meetings is open at 3 credit hours only, and any other credit hours set it back to Programme default', async t => {
   const h = editor(t);
   const hours = control(h.form, 'Credit hours');
   const weekly = control(h.form, 'Weekly meetings');
   const hint = h.d.getElementById(weekly.getAttribute('aria-describedby'));
-  assert.deepEqual(options(weekly), [['', 'Standard (from credit hours)'], ['2x100', '2 × 100 min']]);
+  assert.deepEqual(options(weekly), [['', 'Programme default'], ['standard', 'Standard (2 × 75 min)'], ['2x100', '2 × 100 min']]);
   assert.deepEqual([hours.value, weekly.disabled, weekly.value, shown(hint)], ['3', false, '', false]);
   for (const credits of ['4', '2', '']) {
     weekly.value = '2x100';
@@ -130,7 +130,7 @@ test('a new course: Weekly meetings is open at 3 credit hours only, and any othe
     hours.dispatchEvent(new h.w.Event('input'));
     assert.deepEqual([weekly.disabled, weekly.value, shown(hint)], [true, '', true], `${credits || 'no'} credit hours`);
     assert.equal(hint.textContent, '2 × 100 min is only for 3-credit courses.');
-    // Back at 3: open again, on the standard pattern it was set back to.
+    // Back at 3: open again, on Programme default, which it was set back to.
     hours.value = '3';
     hours.dispatchEvent(new h.w.Event('change'));
     assert.deepEqual([weekly.disabled, weekly.value, shown(hint)], [false, '', false]);
@@ -332,7 +332,7 @@ test('Arabic: the dialog is right to left, the weekly meetings in Arabic words',
   const h = editor(t, { arabic: true });
   assert.equal(h.d.querySelector('dialog').dir, 'rtl');
   const weekly = control(h.form, 'اللقاءات الأسبوعية');
-  assert.deepEqual(options(weekly), [['', 'قياسي (حسب الساعات المعتمدة)'], ['2x100', '٢ × ١٠٠ دقيقة']]);
+  assert.deepEqual(options(weekly), [['', 'افتراضي البرامج'], ['standard', 'قياسي (٢ × ٧٥ دقيقة)'], ['2x100', '٢ × ١٠٠ دقيقة']]);
   const hours = control(h.form, 'الساعات المعتمدة');
   hours.value = '4'; hours.dispatchEvent(new h.w.Event('input'));
   assert.equal(h.d.getElementById(weekly.getAttribute('aria-describedby')).textContent, '٢ × ١٠٠ دقيقة للمقررات ذات ٣ ساعات معتمدة فقط.');

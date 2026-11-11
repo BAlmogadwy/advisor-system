@@ -48,6 +48,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.course_identity import planner_course_key
+from core.services.programme_meeting_patterns import budget_value, normalise_key, pre_key
 from core.services.reporting import get_student_ids
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
@@ -60,89 +61,104 @@ from core.services.section_planning import (
     slot_declared_limits,
 )
 from core.services.student_helpers import normalize_code
-from core.services.timetable_demand import sync_scenario_student_course_requests
-
-# ---------------------------------------------------------------------------
-# Course exclusion rules
-# ---------------------------------------------------------------------------
-# Certain courses must never appear on a timetable board because they are
-# not delivered in a regular classroom setting.  Three exclusion layers:
-#
-# 1. EXCLUDED_COURSE_CODES — explicit course codes (currently empty; can be
-#    populated with codes like "FE1", "FE2" for free-elective placeholders).
-# 2. EXCLUDED_SUFFIXES — course numbers ending with these digits are
-#    capstone / graduation-project sequences (e.g. CS490, CS491, CS492).
-# 3. EXCLUDED_NAME_KEYWORDS / EXCLUDED_NAME_PATTERNS_PROJECT — fuzzy match
-#    against the course name (English and Arabic) to catch training,
-#    cooperative, internship, and graduation-project courses. The name is the
-#    student's own programme plan's name for that code (the catalogue
-#    description only when the plan has none): one display code can name two
-#    courses, e.g. CYB386 is CYP's internship but CYP2's machine-learning class.
-#
-# The helper ``_is_excluded_course()`` applies all three layers.
-# ---------------------------------------------------------------------------
-EXCLUDED_COURSE_CODES: frozenset[str] = frozenset()  # None currently hardcoded
-EXCLUDED_SUFFIXES = ("101", "490", "491", "492")
-EXCLUDED_NAME_KEYWORDS = frozenset(
-    {
-        "graduation",
-        "practical training",
-        "training",
-        "cooperative",
-        "co-operative",
-        "coop",
-        "internship",
-        "تخرج",
-        "مشروع تخرج",
-        "تدريب",
-    }
+from core.services.timetable_course_exclusion import (
+    is_generate_excluded_course as _is_excluded_course,
 )
-# Patterns that indicate a capstone/project course.
-# Note: plain "project" is intentionally omitted to avoid false-positives
-# like "Project Management" — only multi-word capstone patterns are listed.
-EXCLUDED_NAME_PATTERNS_PROJECT = ("project i", "project ii", "graduation project")
+from core.services.timetable_demand import sync_scenario_student_course_requests
+from core.services.timetable_meeting_shape import (
+    AGREE,
+    MIXED,
+    PROGRAMME_NOT_SET,
+    ProgrammeRow,
+    ProgrammeShape,
+    _engine_credits,
+    programme_shape_for,
+)
+
+# Course exclusion rules live in core/services/timetable_course_exclusion.py,
+# shared with Section Planning's weekly-meetings editor and the curriculum
+# importers (``_is_excluded_course`` is that module's rule).
 
 
-def _is_excluded_course(code: str, course_name: object) -> bool:
-    """Determine whether a course should be excluded from timetable scheduling.
+def _department_meeting_patterns(
+    plan: list[dict],
+    votes: list[ProgrammeRow],
+    lab_columns: list,
+    *,
+    pooled_credits: Mapping[str, set[int]],
+) -> tuple[dict[str, str], list[dict]]:
+    """Each budget's weekly meetings, from its programmes' votes, and the report.
 
-    A course is excluded if **any** of the following are true:
+    Each programme votes on the 3-credit courses of its own plan
+    (``ProgrammeRequirement.meeting_pattern``: not set, ``"standard"`` or
+    ``"2x100"``; owner, 2026-11-10). A course of this scenario is decided by
+    the rows of the scenario's programmes that name that course identity: the
+    programmes that voted must agree, an unset programme does not count, and a
+    disagreement keeps the credit default, as does an identity those rows teach
+    at different credit hours: a budget takes the credit hours of the first
+    student's plan row (``course_metadata``), so a shape there would depend on
+    student order (``timetable_meeting_shape.programme_shape_for``).
 
-    1. Its normalised code is in the ``EXCLUDED_COURSE_CODES`` set.
-    2. The numeric portion of the code ends with one of the
-       ``EXCLUDED_SUFFIXES`` (490, 491, 492 — capstone sequences).
-    3. ``course_name`` contains any of the ``EXCLUDED_NAME_KEYWORDS`` or
-       ``EXCLUDED_NAME_PATTERNS_PROJECT``.
+    Those rows are not every row a budget pools. A nameless plan row is named
+    after the catalogue here, so its students join the budget of the named
+    course, while its identity (the bare code) never matches that course's
+    rows. ``pooled_credits`` is, per budget key, the credit hours (read as the
+    engines read them) of every student plan row pooled into it; when they
+    differ, a decision the rows agreed on is ``MIXED`` too, and the default
+    stands whichever student came first.
 
-    Args:
-        code: Raw course code string (e.g. "CS 490", "ARAB101").
-        course_name: The name of THIS course identity -- the student's
-            programme plan name for ``code`` (catalogue description only
-            when the plan has none). Never looked up by the bare code: a
-            display code is not a course identity.
+    The budget then takes a shape only if it is a choice for the budget itself:
+    its credit hours, and no English bundle
+    (``programme_meeting_patterns.budget_value``). The new scheduler is handed
+    these values, so both engines teach a course one way.
 
-    Returns:
-        True if the course should be kept off the timetable, False otherwise.
+    Pure: no query, so it runs before anything is written.
+
+    Returns ``(patterns, report)``. ``patterns`` maps every plan key to the
+    value its budget stores (``""`` is the credit default). ``report`` has one
+    entry per key at least one programme voted on, in course order: what they
+    decided (``status`` agree or mixed, ``programme_pattern``), what the
+    budget got (``meeting_pattern``), each programme's vote, and ``no_window``
+    - the budget got a shape while the lab columns hold no window an automatic
+    placer may use for an in-person class, so every classic placer would leave
+    its in-person sections unplaced (the readiness check
+    ``meeting_pattern_no_window`` asks the same question, after the fact).
     """
-    c = normalize_code(code)
+    from core.services.timetable_autoplace import placeable_slots
 
-    # Layer 1: explicit code blacklist
-    if c in EXCLUDED_COURSE_CODES:
-        return True
-
-    # Layer 2: numeric suffix check (e.g. "490" in "CS490")
-    digits = "".join(ch for ch in c if ch.isdigit())
-    if digits.endswith(EXCLUDED_SUFFIXES):
-        return True
-
-    # Layer 3: keyword / pattern match against this identity's name
-    name = str(course_name or "").lower()
-    if name:
-        if any(kw in name for kw in EXCLUDED_NAME_KEYWORDS):
-            return True
-        if any(pat in name for pat in EXCLUDED_NAME_PATTERNS_PROJECT):
-            return True
-    return False
+    patterns: dict[str, str] = {}
+    report: list[dict] = []
+    for entry in plan:
+        course_key = str(entry.get("course_key") or entry["course_code"])
+        decision = programme_shape_for(normalise_key(course_key), votes)
+        if decision.status == AGREE and len(pooled_credits.get(course_key, ())) > 1:
+            decision = ProgrammeShape(MIXED, PROGRAMME_NOT_SET, decision.programmes)
+        value = budget_value(
+            decision,
+            course_key=course_key,
+            course_code=entry["course_code"],
+            credit_hours=entry.get("credit_hours", 0),
+        )
+        patterns[course_key] = value
+        if decision.status not in (AGREE, MIXED):
+            continue  # nobody voted: nothing was decided, so nothing to report
+        report.append(
+            {
+                "course_key": course_key,
+                "course_code": entry["course_code"],
+                "course_name": str(entry.get("course_name") or ""),
+                "status": decision.status,
+                "programme_pattern": decision.meeting_pattern,
+                "meeting_pattern": value,
+                "programmes": [
+                    {"program": program, "meeting_pattern": vote}
+                    for program, vote in decision.programmes
+                ],
+                "no_window": bool(value) and not placeable_slots(lab_columns),
+            }
+        )
+    report.sort(key=lambda row: (row["course_code"], row["course_key"]))
+    return patterns, report
 
 
 def _resolve_elective_slots(
@@ -415,6 +431,9 @@ def generate_workspace_scenario(
           - ``plan_summary``: aggregate section-plan statistics.
           - ``student_summary``: counts of total, classified, on-plan,
             and cross-term students broken down by term level.
+          - ``department_meeting_patterns``: the courses the scenario's
+            programmes voted on for their weekly meetings, and what each
+            budget took (``_department_meeting_patterns``).
 
     Business rules:
       - Non-schedulable courses (capstone, training, co-op) are filtered out
@@ -463,9 +482,18 @@ def generate_workspace_scenario(
 
     course_name_by_program: dict[str, dict[str, str]] = defaultdict(dict)
     course_meta_by_program: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
-    for row in ProgrammeRequirement.objects.filter(program__in=programs).values(
-        "program", "course_code", "course_name", "credit_hours", "type"
-    ):
+    plan_rows = list(
+        ProgrammeRequirement.objects.filter(program__in=programs).values(
+            "program", "course_code", "course_name", "credit_hours", "type", "meeting_pattern"
+        )
+    )
+    # Each programme's vote on the weekly meetings of its courses, keyed by the
+    # course identity its OWN row names. Taken from these raw rows, never from
+    # the per-student meta below: that meta names a nameless row after the
+    # catalogue description, and the new scheduler keys the same row by its
+    # bare code, so the two engines would read different votes.
+    programme_votes = pre_key(plan_rows)
+    for row in plan_rows:
         prog = str(row["program"])
         code = normalize_code(row["course_code"])
         if not code:
@@ -587,6 +615,10 @@ def generate_workspace_scenario(
     student_recs: dict[int, list[str]] = {}
     student_course_keys: dict[int, list[str]] = {}
     course_metadata: dict[str, dict[str, object]] = {}
+    # Every credit-hours value pooled into each key, read as the engines read
+    # them: a budget takes only the first student's, so the weekly-meetings
+    # rule must know when its students' plan rows differ.
+    pooled_credits: dict[str, set[int]] = defaultdict(set)
 
     for sid, recs in all_recs.items():
         # Exclusion is decided per course identity: the student's own plan
@@ -600,6 +632,7 @@ def generate_workspace_scenario(
                 continue
             key = str(meta["course_key"])
             course_metadata.setdefault(key, meta)
+            pooled_credits[key].add(_engine_credits(meta.get("credit_hours")))
             filtered.append(code)
             keys.append(key)
         if filtered:
@@ -759,6 +792,14 @@ def generate_workspace_scenario(
     lecture_columns: list[object] = list(slot_config or default_lectures)
     lab_columns: list[object] = list(lab_slot_config or default_labs)
 
+    # Each course's weekly meetings, from the votes of the scenario's
+    # programmes. Decided here, before anything is written: Generate is not one
+    # transaction, so a failure once the scenario exists would leave half of it
+    # behind. Step 5b only copies the strings.
+    budget_patterns, department_meeting_patterns = _department_meeting_patterns(
+        plan, programme_votes, lab_columns, pooled_credits=pooled_credits
+    )
+
     scenario = TimetableScenario.objects.create(
         academic_year=str(year),
         term=str(semester),
@@ -852,6 +893,8 @@ def generate_workspace_scenario(
                 max_per_section=entry["max_per_section"],
                 total_demand=entry["total_students"],
                 programme_term=pt,
+                # The programmes' decision, made before Step 4 ("" when none).
+                meeting_pattern=budget_patterns[course_key],
             )
         )
     ScenarioSectionBudget.objects.bulk_create(budget_objs, ignore_conflicts=True)
@@ -1018,4 +1061,9 @@ def generate_workspace_scenario(
         "unserved_elective_slots": _summarise_unserved_slots(
             unserved_slots, _student_program, placeholder_terms
         ),
+        # The courses the scenario's programmes voted on, what they decided and
+        # what each budget got (empty when no programme has set anything). The
+        # pages show the same from the budget rows; this is the record of what
+        # Generate copied.
+        "department_meeting_patterns": department_meeting_patterns,
     }

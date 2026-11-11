@@ -408,9 +408,14 @@ q('sDelete').onclick = () => {
 };
 
 /* ── Section: Delete catalog ── */
+/* How many of the previewed programme's courses have weekly meetings set in
+   Section Planning (the server sends the count only when there are any). */
+let catalogHeldPatterns = 0;
+
 q('pPreview').onclick = async () => {
   const u = `/ops/db/preview-delete-program-catalog/?program=${encodeURIComponent(q('pProgram').value)}`;
   const data = await callJson(u, {}, 'pOut', q('pPreview'));
+  catalogHeldPatterns = data && !data.error ? (Number(data.meeting_patterns_count) || 0) : 0;
   /* Enable delete only when preview returns matching results */
   if (data && !data.error && (data.requirements_count > 0 || data.prerequisites_count > 0)) {
     enableDeleteBtn(q('pDelete'));
@@ -422,14 +427,28 @@ q('pPreview').onclick = async () => {
 /* Re-disable delete when filter input changes after a preview */
 q('pProgram').addEventListener('input', () => disableDeleteBtn(q('pDelete')));
 
+/* The weekly meetings a delete or an import may lose, said before it runs. */
+function heldPatternsNote(count, { replace = false, deleting = false } = {}) {
+  if (!(count > 0)) return '';
+  if (deleting) {
+    return IS_AR
+      ? `<p>لدى <strong>${esc(String(count))}</strong> من مقرراته لقاءات أسبوعية محددة في تخطيط الشعب، وتُحذف معه؛ وتُدرج النتيجة كل واحد منها لإعادة تحديده.</p>`
+      : `<p><strong>${esc(String(count))}</strong> of its courses have weekly meetings set in Section Planning. They are deleted with it; the result lists each one so it can be set again.</p>`;
+  }
+  return IS_AR
+    ? `<p>لدى <strong>${esc(String(count))}</strong> من مقرراته لقاءات أسبوعية محددة في تخطيط الشعب. يحتفظ المقرر بها فقط إذا بقي اسمه وساعاته المعتمدة الثلاث${replace ? ' وبقي في هذا الملف' : ''}؛ وتُدرج النتيجة كل ما يُسقطه الاستيراد.</p>`
+    : `<p><strong>${esc(String(count))}</strong> of its courses have weekly meetings set in Section Planning. A course keeps them only if it keeps its name and 3 credit hours${replace ? ' and is still in this file' : ''}; the result lists every one the import drops.</p>`;
+}
+
 q('pDelete').onclick = () => {
   handleDeleteWithConfirm(q('pDelete'), async () => {
     const prog = (q('pProgram').value || '').trim().toUpperCase();
     const okP = await dlg.confirm({
       title: IS_AR ? `حذف كتالوج ${prog}؟` : `Delete program catalog?`,
-      body: IS_AR
+      body: (IS_AR
         ? `<p>سيحذف هذا كتالوج البرنامج بالكامل لـ <strong>${esc(prog)}</strong>. لا يمكن التراجع عن هذا.</p>`
-        : `<p>This will permanently delete all requirements and prerequisites for <strong>${esc(prog)}</strong>.</p><p>This cannot be undone.</p>`,
+        : `<p>This will permanently delete all requirements and prerequisites for <strong>${esc(prog)}</strong>.</p><p>This cannot be undone.</p>`)
+        + heldPatternsNote(catalogHeldPatterns, { deleting: true }),
       typed: `DELETE ${prog}`,
       confirmText: IS_AR ? 'حذف الكتالوج' : 'Delete catalog',
       kind: 'danger',
@@ -748,6 +767,18 @@ q('tImport').onclick = async () => {
 
 /* ── Section: Oracle plan import ── */
 let oraclePreviewReady = false;
+/* The programme the last preview read, as the server stores it (trimmed): the
+   count below and the existing rows on screen are that programme's. */
+let oraclePreviewProgram = '';
+/* The programme's courses with weekly meetings set, from the last preview. */
+let oracleHeldPatterns = 0;
+
+/* An import may run only for the programme the preview read, so its
+   confirmation never shows another programme's weekly meetings. Another
+   programme needs a new preview, as the catalogue delete does. */
+function oraclePreviewIsFor(program) {
+  return oraclePreviewReady && String(program || '').trim() === oraclePreviewProgram;
+}
 
 const ORACLE_TYPE_OPTIONS = [
   'Mandatory', 'Free Elective', 'Program Elective', 'University Elective', 'Elective'
@@ -832,14 +863,16 @@ q('oPreview').onclick = async () => {
   const fileInput = q('oFile');
   if (!fileInput.files.length) { notify.warning(IS_AR ? 'يرجى اختيار ملف.' : 'Please select a file.'); return; }
   setOracleStep(2);
+  const program = q('oProgram').value;
   const fd = new FormData();
   fd.append('file', fileInput.files[0]);
-  fd.append('program', q('oProgram').value);
+  fd.append('program', program);
   fd.append('encoding', q('oEncoding').value);
   const data = await callJson('/ops/db/preview-oracle-plan/', {
     method:'POST',
     body: fd,
   }, 'oOut', q('oPreview'));
+  oracleHeldPatterns = data && !data.error ? (Number(data.existing_db?.meeting_patterns) || 0) : 0;
 
   const body = q('oTableBody');
   body.innerHTML = '';
@@ -851,7 +884,8 @@ q('oPreview').onclick = async () => {
     });
     q('oTableWrap').classList.remove('d-none');
     oraclePreviewReady = true;
-    q('oImport').disabled = false;
+    oraclePreviewProgram = String(program || '').trim();
+    q('oImport').disabled = !oraclePreviewIsFor(q('oProgram').value);
     setOracleStep(3);
   } else {
     q('oTableWrap').classList.add('d-none');
@@ -861,6 +895,12 @@ q('oPreview').onclick = async () => {
     setOracleStep(1);
   }
 };
+
+/* A change of programme after a preview disables the import until the
+   programme is back to the one previewed, or a new preview reads it. */
+q('oProgram').addEventListener('input', () => {
+  q('oImport').disabled = !oraclePreviewIsFor(q('oProgram').value);
+});
 
 /* Delegate delete row clicks */
 q('oTableBody').addEventListener('click', (e) => {
@@ -881,14 +921,15 @@ q('oAddRow').onclick = () => {
 };
 
 q('oImport').onclick = async () => {
-  if (!oraclePreviewReady) { notify.warning(T.runPreviewFirst); return; }
+  if (!oraclePreviewIsFor(q('oProgram').value)) { notify.warning(T.runPreviewFirst); return; }
   const rows = collectOracleRows();
   if (rows.length === 0) { notify.warning(IS_AR ? 'لا توجد صفوف للإدراج.' : 'No rows to import.'); return; }
   const ok = await dlg.confirm({
     title: IS_AR ? 'إدراج خطة Oracle؟' : 'Import Oracle plan?',
-    body: IS_AR
+    body: (IS_AR
       ? `<p>سيُدرج هذا <strong>${rows.length}</strong> مقرر في قاعدة البيانات للبرنامج <strong>${esc(q('oProgram').value)}</strong>.</p>`
-      : `<p>This will insert <strong>${rows.length}</strong> courses into the database for program <strong>${esc(q('oProgram').value)}</strong>.</p>`,
+      : `<p>This will insert <strong>${rows.length}</strong> courses into the database for program <strong>${esc(q('oProgram').value)}</strong>.</p>`)
+      + heldPatternsNote(oracleHeldPatterns, { replace: q('oReplace').checked }),
     confirmText: IS_AR ? 'إدراج الكل' : 'Import all',
     kind: 'info',
   });

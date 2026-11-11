@@ -97,6 +97,13 @@ class ProgrammeRequirement(models.Model):
     credit_hours = models.IntegerField(null=True, blank=True)
     is_online = models.BooleanField(default=False)
     max_capacity = models.IntegerField(null=True, blank=True)
+    # The programme's vote on how this course meets each week (owner,
+    # 2026-11-10: set per programme, both campuses alike): "" not set (the
+    # programme abstains), "standard" (the credit hours' pattern, chosen) or
+    # "2x100". A new scenario copies the programmes' agreed value into its
+    # budget (core/services/timetable_meeting_shape.py). Written only through
+    # Section Planning's audited editor; the importers keep it (db_admin_ops).
+    meeting_pattern = models.CharField(max_length=16, blank=True, default="", db_default="")
 
     class Meta:
         db_table = "programme_requirements"
@@ -104,6 +111,22 @@ class ProgrammeRequirement(models.Model):
             models.UniqueConstraint(
                 fields=["program", "course_code"],
                 name="uq_programme_requirements_program_code",
+            ),
+            # A vote exists only where the choice does: a 3-credit course. NULL
+            # credit hours would make `credit_hours = 3` UNKNOWN, which a CHECK
+            # accepts, hence the explicit IS NOT NULL.
+            models.CheckConstraint(
+                condition=models.Q(meeting_pattern="")
+                | models.Q(
+                    meeting_pattern__in=["standard", "2x100"],
+                    credit_hours__isnull=False,
+                    credit_hours=3,
+                ),
+                name="ck_pr_meeting_pattern_fits_credits",
+                violation_error_message=(
+                    "Weekly meetings can be set only for a 3-credit course; clear them "
+                    "in Section Planning before changing this row's credit hours."
+                ),
             ),
         ]
         indexes = [
