@@ -112,7 +112,7 @@ POINT_WITHDRAWAL_STATUSES = frozenset({S.SUBMITTED, S.IN_REVIEW, S.NEEDS_INFORMA
 _BLANK_LOOKING = frozenset({0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800})
 #: Categories that show nothing on their own: format marks, and combining marks
 #: with no letter to sit on.
-_INVISIBLE_CATEGORIES = frozenset({"Cf", "Mn", "Me"})
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Mn", "Me"})
 
 
 class WorkflowRefused(Exception):
@@ -194,8 +194,10 @@ def answer_window_passed(case: TimetableFeedback, now: datetime) -> bool:
 def close_settled_answer(case: TimetableFeedback, *, now: datetime) -> None:
     """Close an answered case whose window has passed, as the system would.
 
-    The scheduled lifecycle command will close these too; doing it here, the
-    moment the student acts, keeps the rule from depending on when that runs."""
+    A new point calls this the moment it arrives; the scheduled lifecycle command
+    will close the rest. Doing it as the point comes in keeps the rule from
+    depending on when that command runs. (Accepting the answer closes as
+    ANSWER_ACCEPTED, and withdrawing withdraws, whatever the answer's age.)"""
     cas_transition(
         TimetableFeedback.objects.filter(student_id=case.student_id),
         case,
@@ -248,11 +250,12 @@ def visible(text: str) -> bool:
 def storable(text: str) -> bool:
     """Whether ``text`` can be stored as it is.
 
-    Of the control characters only tabs and line breaks are allowed; PostgreSQL
-    refuses a NUL outright. A lone surrogate is refused as well, because neither
-    database driver can encode it. Either would otherwise be a server error at the
+    Of the control characters (C0, DEL and C1) only tabs and line breaks are
+    allowed; PostgreSQL refuses a NUL outright, and the rest would be stored as
+    nothing anyone can read. A lone surrogate is refused as well, because neither
+    database driver can encode it: that would otherwise be a server error at the
     insert."""
-    if any(ord(ch) < 32 and ch not in _TEXT_WHITESPACE for ch in text):
+    if any(unicodedata.category(ch) == "Cc" and ch not in _TEXT_WHITESPACE for ch in text):
         return False
     try:
         text.encode("utf-8")

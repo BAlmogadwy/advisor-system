@@ -300,10 +300,28 @@ def test_a_claim_through_a_scope_that_joins_another_table_keeps_to_that_scope():
         (chr(0x2800) * 3, "BODY_REQUIRED"),
         (chr(0xFE0F), "BODY_REQUIRED"),
         (chr(0x034F) + chr(0x064E), "BODY_REQUIRED"),
+        (chr(0x20DD), "BODY_REQUIRED"),
+        # DEL and the C1 controls: nothing on their own, and never storable.
+        (chr(0x7F), "BODY_REQUIRED"),
+        (chr(0x80) + chr(0x81), "BODY_REQUIRED"),
+        ("a" + chr(0x7F) + "b", "BODY_INVALID"),
+        ("a" + chr(0x85) + "b", "BODY_INVALID"),
+        ("a" + chr(0x9F) + "b", "BODY_INVALID"),
     ],
 )
 def test_student_text_is_refused_unless_visible_bounded_and_storable(text, code):
     _refused(code, workflow.clean_student_text, text=text)
+
+
+@pytest.mark.parametrize(
+    "code_point",
+    # Listed here, not read from the module: a test that takes its cases from the
+    # set under test shrinks with it.
+    [0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800],
+)
+def test_every_blank_looking_character_shows_nothing(code_point):
+    assert not workflow.visible(chr(code_point) * 2)
+    assert workflow.visible(chr(code_point) + "x")
 
 
 def test_student_text_keeps_its_line_breaks_its_marks_and_its_full_length():

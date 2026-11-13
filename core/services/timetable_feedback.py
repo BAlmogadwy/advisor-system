@@ -798,7 +798,8 @@ def submit_point(
     language = _language(language)
     note = str(note or "").strip()
     if not visible(note):
-        # Only zero-width or direction marks: no note at all.
+        # Nothing anyone could read (spaces, invisible marks, blank-looking
+        # characters): no note at all.
         note = ""
     profile = (
         Student.objects.filter(student_id=student_id)
