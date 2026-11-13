@@ -62,6 +62,7 @@ from core.services.exam_min_change import (
     place_added_exams,
     repair_minimum_change,
 )
+from core.services.exam_move_options import ExamNotMovable, Seats, rank_move_options
 from core.services.exam_multistart import (
     is_multistart_enabled,
     report_to_dict,
@@ -1192,39 +1193,24 @@ def _staff_peak(
     }
 
 
-def _solver_optimised_schedule(
+def _loaded_board(
     *,
-    label: str,
     base_entries: list[dict],
     inputs: _LoadedSolverInputs,
     valid_pins: list[dict[str, str]],
     links: LinkedExams,
     locks: ExamLocks,
     lock_source: dict | None,
-    seed: int | None,
-    save: RunSaver,
-    days: list[str],
+    assign_rooms: bool,
     periods: list[str],
     max_per_day: int,
-    programs: list[str] | None,
-    sections: list[str] | None,
-    selected_courses: list[str] | None,
-    assign_rooms: bool,
-    thin_conflict_threshold: int,
-    pinned: list[dict[str, str]] | None,
-) -> dict:
-    """Optimise by solving the whole board at once (``exam_optimise``).
+) -> tuple[Board, dict[str, int]]:
+    """A loaded board as ``exam_optimise`` judges it, and its exams as submitted.
 
-    Pinned exams and the exams of locked cells never move, no exam enters a
-    locked cell, and a link moves as one exam. The search holds each day's
-    invigilators to the most the submitted board uses on any day, by its
-    estimate of what each exam needs, so the search - not a pass after it -
-    keeps the staff level while it spares the students.
-
-    A board the search cannot better is not saved again, provided the request
-    asks for nothing else: pressing Optimise on an already optimised timetable
-    used to add a copy to the history each time. A request that also changes
-    a pin, a link, a lock or a setting is saved, as it always was.
+    Optimize and the move suggestions both judge the board through this, so
+    "better" means one thing on the page. A link is one exam. ``board.current``
+    is the submitted board with every pin and lock in its place; the second
+    value is the board exactly as submitted (seated exams only).
     """
     exams = list(links.units(inputs.course_list))
     slot_of = {(slot["day"], slot["period"]): slot["index"] for slot in inputs.slots}
@@ -1271,6 +1257,58 @@ def _solver_optimised_schedule(
         staff=staff,
         staff_limits=staff_limits,
     )
+    return board, submitted
+
+
+def _solver_optimised_schedule(
+    *,
+    label: str,
+    base_entries: list[dict],
+    inputs: _LoadedSolverInputs,
+    valid_pins: list[dict[str, str]],
+    links: LinkedExams,
+    locks: ExamLocks,
+    lock_source: dict | None,
+    seed: int | None,
+    save: RunSaver,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    programs: list[str] | None,
+    sections: list[str] | None,
+    selected_courses: list[str] | None,
+    assign_rooms: bool,
+    thin_conflict_threshold: int,
+    pinned: list[dict[str, str]] | None,
+) -> dict:
+    """Optimise by solving the whole board at once (``exam_optimise``).
+
+    Pinned exams and the exams of locked cells never move, no exam enters a
+    locked cell, and a link moves as one exam. The search holds each day's
+    invigilators to the most the submitted board uses on any day, by its
+    estimate of what each exam needs, so the search - not a pass after it -
+    keeps the staff level while it spares the students.
+
+    A board the search cannot better is not saved again, provided the request
+    asks for nothing else: pressing Optimise on an already optimised timetable
+    used to add a copy to the history each time. A request that also changes
+    a pin, a link, a lock or a setting is saved, as it always was.
+    """
+    board, submitted = _loaded_board(
+        base_entries=base_entries,
+        inputs=inputs,
+        valid_pins=valid_pins,
+        links=links,
+        locks=locks,
+        lock_source=lock_source,
+        assign_rooms=assign_rooms,
+        periods=periods,
+        max_per_day=max_per_day,
+    )
+    exams = list(board.exams)
+    current = board.current
+    fixed = board.fixed
+    staff_limits = board.staff_limits
     progress = current_progress()
     # A background job may take its minutes; an action answering inside its
     # request has the web server's timeout to beat, so it searches far less.
@@ -2122,6 +2160,140 @@ def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
     except Exception:
         status, body = _server_error("check", "draft_impact")
         return JsonResponse(body, status=status)
+
+
+def _move_options(payload: dict) -> dict:
+    """The other open periods one exam of the submitted board could move to, best first.
+
+    The board is read exactly as Optimize reads it (``_loaded_board``) and each
+    place is judged by ``exam_move_options``. Nothing is moved or saved.
+    """
+    code = payload.get("course_code")
+    if not isinstance(code, str) or not code.strip():
+        raise ValueError("Choose the exam to find other times for.")
+    code = code.strip()
+    context = _loaded_request_context(payload, payload.get("base_schedule"))
+    days, periods = context["days"], context["periods"]
+    base_entries = _normalise_loaded_schedule_entries(
+        context["schedule_raw"], days, periods, context["selected_courses"]
+    )
+    inputs = _loaded_solver_inputs(
+        base_entries,
+        days,
+        periods,
+        context["programs"],
+        context["sections"],
+        context["thin_conflict_threshold"],
+    )
+    entry = inputs.meta_by_course.get(code)
+    identity = payload.get("course_identity")
+    if entry is None or (identity is not None and identity != entry["course_identity"]):
+        raise ValueError("That exam is not on this timetable. Reload it, then try again.")
+    valid_pins = validate_exam_pins(context["pinned"], inputs.course_list, inputs.slots)
+    links, locks = _loaded_links_and_locks(
+        context["linked_exams"],
+        context["exam_locks"],
+        context["lock_source"],
+        inputs,
+        valid_pins,
+        base_entries,
+        context["assign_rooms"],
+    )
+    board, submitted = _loaded_board(
+        base_entries=base_entries,
+        inputs=inputs,
+        valid_pins=valid_pins,
+        links=links,
+        locks=locks,
+        lock_source=context["lock_source"],
+        assign_rooms=context["assign_rooms"],
+        periods=periods,
+        max_per_day=context["max_per_day"],
+    )
+    unit = links.unit(code)
+    # A pinned or locked exam is refused by the ranking itself (ExamNotMovable).
+    seats = None
+    if context["assign_rooms"]:
+        need: dict[str, dict[str, int]] = {}
+        for course, cohorts in adding.seat_demand(_seat_rows(inputs)).items():
+            into = need.setdefault(links.unit(course), {})
+            for cohort, students in cohorts.items():
+                into[cohort] = into.get(cohort, 0) + students
+        seats = Seats(
+            capacity=adding.seat_capacity(
+                normalized_rooms(exam_room_inventory(order_by=("room_code",)))
+            ),
+            need=need,
+        )
+    ranked = rank_move_options(board, unit, submitted, is_heavy_credit_day, seats=seats)
+    slot_by_index = {slot["index"]: slot for slot in inputs.slots}
+
+    def courses(units) -> list[str]:
+        return [member for other in units for member in links.members_of(other)]
+
+    here = submitted.get(unit)
+    return {
+        "course_code": code,
+        "course_identity": entry["course_identity"],
+        # Every course that moves with it: a link moves as one exam.
+        "members": list(links.members_of(unit)),
+        "current": {
+            "day": slot_by_index[here]["day"] if here is not None else "OVERFLOW",
+            "period": slot_by_index[here]["period"] if here is not None else None,
+            "levels": ranked.current,
+        },
+        "options": [
+            {
+                "day": slot_by_index[option.slot]["day"],
+                "period": slot_by_index[option.slot]["period"],
+                "slot_index": option.slot,
+                "verdict": option.verdict,
+                "levels": option.levels,
+                "changes": option.changes,
+                "clashes_with": [
+                    {"courses": courses([other]), "students": students}
+                    for other, students in option.clashes_with
+                ],
+                "same_day_with": courses(option.same_day_with),
+            }
+            for option in ranked.options
+        ],
+        # What the levels could and could not count on this board.
+        "seats_counted": seats is not None,
+        "invigilators_estimated": bool(board.staff_limits),
+    }
+
+
+@require_POST
+def exam_timetable_move_options_view(request: HttpRequest) -> JsonResponse:
+    """Rank the other open periods for one exam of the board on screen; never move or save.
+
+    Pure counting - no rooming and no CP-SAT - so it takes no solver slot and
+    answers while a background job holds the solver.
+    """
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"ok": False, "error": "Expected a JSON object."}, status=400)
+    try:
+        result = _move_options(payload)
+    except ExamNotMovable as exc:
+        return JsonResponse(
+            {"ok": False, "error_code": "exam_not_movable", "error": str(exc)}, status=409
+        )
+    except ValueError as exc:
+        return _exam_validation_error(exc)
+    except Exception:
+        status, body = _server_error("move options", "move_options")
+        return JsonResponse(body, status=status)
+    return JsonResponse(
+        {"ok": True, "editor_revision": payload.get("editor_revision", 0), **result}
+    )
 
 
 def _job_response(status: int, body: dict) -> JsonResponse:
