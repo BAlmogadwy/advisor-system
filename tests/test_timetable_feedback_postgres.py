@@ -52,9 +52,10 @@ def _postgresql_only():
 def _race(first_write, second_write):
     """Run ``first_write`` in a held transaction and ``second_write`` against it.
 
-    Returns each writer's outcome: its return value, or "refused" when the
-    database rejected it with an IntegrityError. Asserts that the second writer
-    was blocked behind the first, which is what makes this a race at all.
+    Returns each writer's outcome: its return value, or ("refused", message) when
+    the database rejected it with an IntegrityError, so a test can check WHICH
+    rule refused it. Asserts that the second writer was blocked behind the first,
+    which is what makes this a race at all.
     """
     first_written, release, second_done = (threading.Event() for _ in range(3))
 
@@ -74,8 +75,8 @@ def _race(first_write, second_write):
             try:
                 with transaction.atomic():
                     return second_write()
-            except IntegrityError:
-                return "refused"
+            except IntegrityError as exc:
+                return ("refused", str(exc))
         finally:
             second_done.set()
             connections.close_all()
@@ -102,7 +103,7 @@ def test_two_open_cases_racing_for_one_term_leave_exactly_one():
     first, second = _race(_open_case, _open_case)
 
     assert isinstance(first, TimetableFeedback)
-    assert second == "refused"
+    assert second[0] == "refused" and "uq_ttf_one_open_case_per_term" in second[1], second
     assert TimetableFeedback.objects.filter(student_id=SID).count() == 1
 
 
@@ -139,5 +140,5 @@ def test_the_same_point_racing_into_one_case_is_written_once():
     first, second = _race(add_point, add_point)
 
     assert isinstance(first, TimetableFeedbackPoint)
-    assert second == "refused"
+    assert second[0] == "refused" and "uq_ttfp_point" in second[1], second
     assert case.points.count() == 1

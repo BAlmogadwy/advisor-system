@@ -45,9 +45,29 @@ def _case(**overrides):
     return TimetableFeedback.objects.create(**fields)
 
 
-def _refused(make):
-    """The database refuses the row ``make`` writes."""
-    with pytest.raises(IntegrityError), transaction.atomic():
+# What each refusal must name. A check constraint is named by both backends; a
+# unique one is named by PostgreSQL and described by its columns on SQLite.
+OPEN_CASE_RULE = (
+    r"uq_ttf_one_open_case_per_term"
+    r"|timetable_feedback\.student_id, timetable_feedback\.academic_year, timetable_feedback\.term"
+)
+POINT_RULE = (
+    r"uq_ttfp_point"
+    r"|timetable_feedback_points\.case_id, timetable_feedback_points\.anchor_key, "
+    r"timetable_feedback_points\.reason_code, timetable_feedback_points\.seen_fingerprint"
+)
+REFERENCE_RULE = r"reference"
+#: Word-bounded: "ck_ttfp_anchor" is also the start of "ck_ttfp_anchor_key".
+ANCHOR_RULE = r"ck_ttfp_anchor\b"
+
+
+def _refused(make, by):
+    """The database refuses the row ``make`` writes, and the rule ``by`` is why.
+
+    Naming the rule matters: a row can break two constraints at once, and a test
+    that accepted any refusal would stay green with its own constraint deleted.
+    """
+    with pytest.raises(IntegrityError, match=by), transaction.atomic():
         make()
 
 
@@ -100,7 +120,7 @@ def test_feedback_and_adviser_cases_count_separately():
 
 def test_a_case_number_is_never_issued_twice():
     first = _case()
-    _refused(lambda: _case(student_id=SID + 1, reference=first.reference))
+    _refused(lambda: _case(student_id=SID + 1, reference=first.reference), REFERENCE_RULE)
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +131,7 @@ def test_a_case_number_is_never_issued_twice():
 @pytest.mark.parametrize("status", OPEN)
 def test_a_second_open_case_for_the_same_term_is_refused(status):
     _case(status=status)
-    _refused(lambda: _case())
+    _refused(lambda: _case(), OPEN_CASE_RULE)
 
 
 @pytest.mark.parametrize(
@@ -144,7 +164,7 @@ def test_any_number_of_finished_cases_may_share_a_term():
 
 
 def test_an_unknown_status_is_refused():
-    _refused(lambda: _case(status="OPEN"))
+    _refused(lambda: _case(status="OPEN"), "ck_ttf_status_valid")
 
 
 @pytest.mark.parametrize("reason", CLOSE_REASONS)
@@ -153,16 +173,16 @@ def test_a_closed_case_carries_a_known_reason(reason):
 
 
 def test_a_closed_case_without_a_reason_is_refused():
-    _refused(lambda: _case(status="CLOSED"))
+    _refused(lambda: _case(status="CLOSED"), "ck_ttf_close_reason")
 
 
 def test_a_closed_case_with_an_unknown_reason_is_refused():
-    _refused(lambda: _case(status="CLOSED", close_reason="BECAUSE"))
+    _refused(lambda: _case(status="CLOSED", close_reason="BECAUSE"), "ck_ttf_close_reason")
 
 
 @pytest.mark.parametrize("status", [*OPEN, "WITHDRAWN"])
 def test_only_a_closed_case_carries_a_close_reason(status):
-    _refused(lambda: _case(status=status, close_reason="DUPLICATE"))
+    _refused(lambda: _case(status=status, close_reason="DUPLICATE"), "ck_ttf_close_reason")
 
 
 # ---------------------------------------------------------------------------
@@ -184,19 +204,20 @@ def test_each_kind_of_point_is_accepted_in_its_own_shape(base):
 )
 def test_a_section_point_must_name_its_section(overrides):
     case = _case()
-    _refused(lambda: _point(case, SECTION_POINT, **overrides))
+    _refused(lambda: _point(case, SECTION_POINT, **overrides), ANCHOR_RULE)
 
 
 @pytest.mark.parametrize("base", [TIMETABLE_POINT, NO_FORECAST_POINT])
 @pytest.mark.parametrize("overrides", [{"term_section_id": 11}, {"section_label": "M1"}])
 def test_a_point_about_no_section_names_none(base, overrides):
     case = _case()
-    _refused(lambda: _point(case, base, **overrides))
+    _refused(lambda: _point(case, base, **overrides), ANCHOR_RULE)
 
 
 def test_an_unknown_anchor_kind_is_refused():
+    """An unknown kind breaks both anchor rules; either may be the one reported."""
     case = _case()
-    _refused(lambda: _point(case, SECTION_POINT, anchor_kind="COURSE"))
+    _refused(lambda: _point(case, SECTION_POINT, anchor_kind="COURSE"), r"ck_ttfp_anchor(_key)?\b")
 
 
 @pytest.mark.parametrize(
@@ -211,19 +232,19 @@ def test_an_unknown_anchor_kind_is_refused():
 )
 def test_the_anchor_key_must_agree_with_the_anchor_kind(base, anchor_key):
     case = _case()
-    _refused(lambda: _point(case, base, anchor_key=anchor_key))
+    _refused(lambda: _point(case, base, anchor_key=anchor_key), "ck_ttfp_anchor_key")
 
 
 @pytest.mark.parametrize("reason", ["TIME_CLASH", "OTHER", "LOAD_TOO_HIGH"])
 def test_no_timetable_carries_no_other_reason(reason):
     case = _case()
-    _refused(lambda: _point(case, NO_FORECAST_POINT, reason_code=reason))
+    _refused(lambda: _point(case, NO_FORECAST_POINT, reason_code=reason), "ck_ttfp_no_forecast")
 
 
 @pytest.mark.parametrize("base", [SECTION_POINT, TIMETABLE_POINT])
 def test_the_no_timetable_reason_belongs_to_no_other_anchor(base):
     case = _case()
-    _refused(lambda: _point(case, base, reason_code="NO_FORECAST"))
+    _refused(lambda: _point(case, base, reason_code="NO_FORECAST"), "ck_ttfp_no_forecast")
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +257,7 @@ def test_the_same_live_point_about_the_same_timetable_is_refused(base):
     """Including the points with no section, which is what the anchor key is for."""
     case = _case()
     _point(case, base)
-    _refused(lambda: _point(case, base))
+    _refused(lambda: _point(case, base), POINT_RULE)
 
 
 def test_the_same_point_about_a_changed_timetable_is_new_evidence():
@@ -278,14 +299,18 @@ def test_a_student_writes_visibly_and_as_nobody_but_themself():
 
 def test_a_student_message_is_never_staff_only():
     case = _case()
-    _refused(lambda: _message(case, audience="INTERNAL", author_kind="STUDENT"))
+    _refused(
+        lambda: _message(case, audience="INTERNAL", author_kind="STUDENT"),
+        "ck_ttfm_student_visible",
+    )
 
 
 def test_a_student_message_never_carries_a_staff_account():
     case = _case()
     staff = User.objects.create_user("advisor-1")
     _refused(
-        lambda: _message(case, audience="STUDENT_VISIBLE", author_kind="STUDENT", author=staff)
+        lambda: _message(case, audience="STUDENT_VISIBLE", author_kind="STUDENT", author=staff),
+        "ck_ttfm_student_visible",
     )
 
 
