@@ -802,6 +802,12 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
                         prefer_arabic_names=_request_prefers_arabic(request),
                     )
                 except Exception:  # noqa: BLE001
+                    # Broader than the configured term's `except TimetableUnavailable`
+                    # on purpose: this panel is a best-effort stand-in for another
+                    # term, and nothing on the page depends on it, so ANY failure here
+                    # (a broken name swap included) leaves it out instead of taking
+                    # the page down. The configured term feeds every card, so a defect
+                    # there must surface rather than pass as "no timetable".
                     logger.exception("student fallback timetable failed for %s", student_id)
                 else:
                     panel_registered_rows = fallback.registered_rows
@@ -937,8 +943,8 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "has_expected_timetable": timetable.has_forecast,
             # What the plan said and the registrar did not record, and the reverse.
             # Both empty unless BOTH snapshots exist.
-            "expected_not_registered": timetable.expected_not_registered,
-            "registered_not_expected": timetable.registered_not_expected,
+            "expected_not_registered": timetable.forecast_not_registered,
+            "registered_not_expected": timetable.registered_not_forecast,
             "recommendations": recommendations,
             "recommendations_already_current": recommendations_already_current,
             "recommendations_already_expected": recommendations_already_expected,

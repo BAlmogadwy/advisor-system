@@ -2,9 +2,10 @@
 
 The home screen's behaviour through this service is pinned by
 ``test_student_home_timetable_characterization.py``. These tests pin the
-service's own contract: a failed read is an error and never an empty timetable,
-the cohort rule as a pure function, the split by provenance class, and the two
-difference lists.
+service's own contract: the split by provenance class, the cohort rule as the
+reader applies it, the two difference lists, a failed read being an error and
+never an empty timetable, and which errors the home screen hides and which it
+must not.
 """
 
 from __future__ import annotations
@@ -16,13 +17,12 @@ from django.test import Client
 from django.urls import reverse
 
 from core.models import Student, StudentTermSection, TermSection, TermSectionMeeting
-from core.services import student_otp, student_term_timetable
+from core.services import student_otp, student_sections, student_term_timetable
 from core.services.rbac import ensure_role_groups
 from core.services.student_term_timetable import (
     StudentTermTimetable,
     TimetableUnavailable,
     read_student_term_timetable,
-    visible_to_cohort,
 )
 
 SID = 4980201
@@ -31,41 +31,7 @@ YEAR = "1448"
 TERM = "1"
 PLAN = "registration_plan_1448_t1"
 REGISTRAR = "scraper_timetable"
-
-
-# ---------------------------------------------------------------------------
-# The cohort rule. Pure: no database.
-# ---------------------------------------------------------------------------
-
-
-def _labels(rows):
-    return [row["section"] for row in rows]
-
-
-ROWS = [{"section": label} for label in ("M1", "F1", "", "YM1", "YF2", " m2 ")]
-
-
-def test_a_cohort_keeps_its_own_and_shared_sections_only():
-    assert _labels(visible_to_cohort(ROWS, "M")) == ["M1", "", " m2 "]
-    assert _labels(visible_to_cohort(ROWS, "F")) == ["F1", ""]
-
-
-def test_the_other_branch_is_dropped_for_either_cohort():
-    for cohort in ("M", "F"):
-        assert not {"YM1", "YF2"} & set(_labels(visible_to_cohort(ROWS, cohort)))
-
-
-def test_a_blank_cohort_keeps_every_row():
-    """None is recorded, so nothing can be ruled out here; the reader has already
-    removed the other branch before this rule runs."""
-    assert _labels(visible_to_cohort(ROWS, "")) == _labels(ROWS)
-
-
-def test_the_rule_returns_copies():
-    rows = [{"section": "M1"}]
-    kept = visible_to_cohort(rows, "M")
-    kept[0]["section"] = "changed"
-    assert rows == [{"section": "M1"}]
+AR_SA101 = "مقدمة في البرمجة"
 
 
 # ---------------------------------------------------------------------------
@@ -92,12 +58,14 @@ def _timetable(registered=(), forecast=()):
     )
 
 
-def test_codes_are_counted_once_per_course_and_normalised():
+def test_codes_are_distinct_normalised_and_never_blank():
     timetable = _timetable(
         registered=[
             _meeting("SA101", day="SUN"),
             _meeting("SA101", day="TUE"),
             _meeting(" sb 201 ", section="M2"),
+            _meeting("   "),
+            {"section": "M3"},
         ],
         forecast=[_meeting("SC201")],
     )
@@ -110,8 +78,8 @@ def test_the_differences_are_sorted_and_go_both_ways():
         registered=[_meeting("SB201"), _meeting("SZ999"), _meeting("SC201")],
         forecast=[_meeting("SD301"), _meeting("SB201"), _meeting("SA101")],
     )
-    assert timetable.expected_not_registered == ["SA101", "SD301"]
-    assert timetable.registered_not_expected == ["SC201", "SZ999"]
+    assert timetable.forecast_not_registered == ["SA101", "SD301"]
+    assert timetable.registered_not_forecast == ["SC201", "SZ999"]
 
 
 @pytest.mark.parametrize(
@@ -120,8 +88,8 @@ def test_the_differences_are_sorted_and_go_both_ways():
 )
 def test_no_difference_is_stated_unless_both_snapshots_exist(registered, forecast):
     timetable = _timetable(registered=registered, forecast=forecast)
-    assert timetable.expected_not_registered == []
-    assert timetable.registered_not_expected == []
+    assert timetable.forecast_not_registered == []
+    assert timetable.registered_not_forecast == []
 
 
 def test_presence_is_reported_per_snapshot():
@@ -157,6 +125,7 @@ def sections(db):
         ("SB201", "M1", "DATA STRUCTURES"),
         ("SC201", "M1", "DISCRETE MATHEMATICS"),
         ("SA101", "F1", "INTRO TO PROGRAMMING"),
+        ("SB201", "YM1", "DATA STRUCTURES"),
     ):
         section = TermSection.objects.create(
             source_tag="other",
@@ -178,7 +147,7 @@ def sections(db):
     # The authoritative Arabic name for SA101, on a section nobody is linked to.
     TermSection.objects.create(
         source_tag="other",
-        course_name="مقدمة في البرمجة",
+        course_name=AR_SA101,
         course_code="SA",
         course_number="101",
         course_key="SA101",
@@ -199,6 +168,10 @@ def _link(sections, key, source, student_id=SID, year=YEAR, term=TERM):
 
 def _codes(rows):
     return sorted({row["course_code"] for row in rows})
+
+
+def _labels(rows):
+    return sorted(row["section"] for row in rows)
 
 
 def test_the_read_splits_by_provenance_class(sections):
@@ -241,13 +214,27 @@ def test_registrar_rows_alone_leave_no_forecast(sections):
     assert timetable.has_registration is True
 
 
-def test_another_cohorts_section_is_not_read(sections):
+def test_another_cohorts_and_the_other_branchs_sections_are_not_read(sections):
     _link(sections, "SA101-F1", PLAN)
+    _link(sections, "SB201-YM1", PLAN)
+    _link(sections, "SA101-M1", PLAN)
+    _link(sections, "SA101-F1", REGISTRAR)
+
+    timetable = read_student_term_timetable(SID, YEAR, TERM)
+
+    assert _labels(timetable.forecast_rows) == ["M1"]
+    assert timetable.registered_rows == [], "another cohort's row is not this student's record"
+
+
+def test_with_no_recorded_cohort_both_cohorts_are_read_but_never_the_other_branch(sections):
+    Student.objects.filter(student_id=SID).update(section="")
+    _link(sections, "SA101-F1", PLAN)
+    _link(sections, "SB201-YM1", PLAN)
     _link(sections, "SA101-M1", PLAN)
 
     timetable = read_student_term_timetable(SID, YEAR, TERM)
 
-    assert [row["section"] for row in timetable.forecast_rows] == ["M1"]
+    assert _labels(timetable.forecast_rows) == ["F1", "M1"]
 
 
 def test_only_the_named_students_rows_are_read(sections):
@@ -268,7 +255,7 @@ def test_only_the_named_term_is_read(sections):
 
 
 @pytest.mark.parametrize(
-    ("prefer_arabic", "expected"), [(False, "INTRO TO PROGRAMMING"), (True, "مقدمة في البرمجة")]
+    ("prefer_arabic", "expected"), [(False, "INTRO TO PROGRAMMING"), (True, AR_SA101)]
 )
 def test_arabic_names_are_used_only_when_asked_for_in_both_snapshots(
     sections, prefer_arabic, expected
@@ -287,23 +274,28 @@ def test_arabic_names_are_used_only_when_asked_for_in_both_snapshots(
 # ---------------------------------------------------------------------------
 
 
-def test_a_failed_read_raises_and_keeps_its_cause(sections, monkeypatch):
+@pytest.mark.parametrize(
+    "cause",
+    [RuntimeError("timetable store unavailable"), KeyError("a defect inside the reader")],
+)
+def test_any_failure_of_the_reader_raises_and_keeps_its_cause(sections, monkeypatch, cause):
     _link(sections, "SA101-M1", PLAN)
-    cause = RuntimeError("timetable store unavailable")
 
     def failing(*_args, **_kwargs):
         raise cause
 
-    monkeypatch.setattr(student_term_timetable, "get_student_term_baseline", failing)
+    # Patched on the reader's own module: the service imports it at the read
+    # boundary, so this also proves the service looks it up there.
+    monkeypatch.setattr(student_sections, "get_student_term_baseline", failing)
 
     with pytest.raises(TimetableUnavailable) as raised:
         read_student_term_timetable(SID, YEAR, TERM)
     assert raised.value.__cause__ is cause
 
 
-def test_only_the_read_is_converted(sections, monkeypatch):
-    """An error after the read propagates as itself, as it did from the inline
-    code: converting it would report a defect as a temporary outage."""
+def test_an_error_after_the_read_is_not_converted(sections, monkeypatch):
+    """The name swap is not the reader. Its error propagates as itself, as it did
+    from the inline code, so the home screen does not report it as "no timetable"."""
     _link(sections, "SA101-M1", PLAN)
 
     def broken_swap(_rows):
@@ -315,24 +307,78 @@ def test_only_the_read_is_converted(sections, monkeypatch):
         read_student_term_timetable(SID, YEAR, TERM, prefer_arabic_names=True)
 
 
-def test_the_home_screen_degrades_when_the_service_refuses(sections, monkeypatch, caplog):
-    _link(sections, "SA101-M1", PLAN)
+# ---------------------------------------------------------------------------
+# The home screen: which failures it hides, and which it must not.
+# ---------------------------------------------------------------------------
+
+
+def _get_home(monkeypatch, language="en"):
     monkeypatch.setattr(
         "core.student_auth_views.load_defaults",
         lambda: {"academic_year": int(YEAR), "term": int(TERM)},
     )
+    client = Client()
+    client.force_login(student_otp.provision_student_user(SID))
+    return client.get(
+        reverse("student_home"), headers={"accept-language": language}, SERVER_NAME="testserver"
+    )
+
+
+def _messages(caplog):
+    return [record.getMessage() for record in caplog.records]
+
+
+def test_the_home_screen_degrades_when_the_service_refuses(sections, monkeypatch, caplog):
+    _link(sections, "SA101-M1", PLAN)
 
     def refusing(*_args, **_kwargs):
         raise TimetableUnavailable("timetable store unavailable")
 
     monkeypatch.setattr("core.student_auth_views.read_student_term_timetable", refusing)
-    client = Client()
-    client.force_login(student_otp.provision_student_user(SID))
 
     with caplog.at_level(logging.ERROR, logger="core.student_auth_views"):
-        response = client.get(reverse("student_home"), SERVER_NAME="testserver")
+        response = _get_home(monkeypatch)
 
     assert response.status_code == 200
     assert response.context["timetable_panels"] == []
     assert response.context["has_expected_timetable"] is False
-    assert f"student timetable load failed for {SID}" in [r.getMessage() for r in caplog.records]
+    assert f"student timetable load failed for {SID}" in _messages(caplog)
+
+
+def test_a_defect_in_the_configured_terms_read_path_is_not_hidden(sections, monkeypatch):
+    """The configured term feeds every card. Only a failed READ may pass as "no
+    timetable"; a broken name swap must surface, as it did before the service."""
+    _link(sections, "SA101-M1", PLAN)
+
+    def broken_swap(_rows):
+        raise ValueError("bad name data")
+
+    monkeypatch.setattr(student_term_timetable, "prefer_arabic_timetable_course_names", broken_swap)
+
+    with pytest.raises(ValueError, match="bad name data"):
+        _get_home(monkeypatch, language="ar")
+
+
+def test_any_failure_in_the_fallback_term_only_drops_its_panel(sections, monkeypatch, caplog):
+    """The fallback is a best-effort stand-in for another term: whatever breaks in
+    it, the page still renders, labelled with that term, and the failure is logged."""
+    _link(sections, "SA101-M1", PLAN, year="1447", term="2")
+
+    def broken_swap(rows):
+        if rows:  # the configured term is empty; only the fallback has rows
+            raise ValueError("bad name data")
+        return rows
+
+    monkeypatch.setattr(student_term_timetable, "prefer_arabic_timetable_course_names", broken_swap)
+
+    with caplog.at_level(logging.ERROR, logger="core.student_auth_views"):
+        response = _get_home(monkeypatch, language="ar")
+
+    assert response.status_code == 200
+    assert (str(response.context["timetable_year"]), str(response.context["timetable_term"])) == (
+        "1447",
+        "2",
+    )
+    assert response.context["timetable_is_fallback"] is True
+    assert response.context["timetable_panels"] == []
+    assert f"student fallback timetable failed for {SID}" in _messages(caplog)

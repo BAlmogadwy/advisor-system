@@ -1,17 +1,17 @@
 """What the student home screen derives from a student's term timetable, recorded.
 
 Characterization tests: they were written against the view BEFORE the timetable
-read moved into its own service, and they must pass unchanged after it. Each one
-records the whole observable result of one data shape: the panels (which snapshot,
-which term, every meeting, the unscheduled sections), the two difference lists,
-the recommendation split, and the rows the academic-summary cards are given. That
-is in English and in Arabic, because the Arabic course-name swap happens in the
-middle of this path.
+read moved into its own service, and they must pass unchanged after it.
 
-The shapes are the ones the read path branches on: expected only, registered only,
-both, a staff WORKING mapping over the imported plan, an opposite-cohort and an
-other-branch (YM/YF) section, a student with no recorded cohort, a section with no
-meetings, the single-other-term fallback, and a failed read in each term.
+The four main shapes -- expected only, registered only, both, and the
+single-other-term fallback -- record the whole observable result: the panels
+(which snapshot, which term, every meeting, the unscheduled sections), the two
+difference lists, the recommendation split, and the rows the academic-summary
+cards are given, in English and in Arabic, because the Arabic course-name swap
+happens in the middle of this path. The other shapes assert only the facts that
+shape changes: a staff WORKING mapping over the imported plan, an opposite-cohort
+and an other-branch (YM/YF) section, a student with no recorded cohort, two loaded
+terms, and a failed read of the configured term, of the fallback term, or of both.
 """
 
 from __future__ import annotations
@@ -644,4 +644,30 @@ def test_a_failed_read_of_the_fallback_term_keeps_its_label_and_draws_nothing(
     assert observed["panels"] == []
     messages = [record.getMessage() for record in caplog.records]
     assert f"student timetable load failed for {SID}" in messages
+    assert f"student fallback timetable failed for {SID}" in messages
+
+
+def test_an_empty_configured_term_with_a_failed_fallback_read_draws_nothing(
+    world, monkeypatch, caplog
+):
+    """The configured read succeeds and is empty; only the fallback's read fails."""
+    _link(world, "SA101-M1", REGISTRAR, year="1447", term="2")
+    real = student_sections.select_snapshot_rows
+
+    def failing_when_rows_exist(rows, snapshot):
+        if snapshot is Snapshot.ANY and rows:
+            raise RuntimeError("timetable store unavailable")
+        return real(rows, snapshot)
+
+    monkeypatch.setattr(student_sections, "select_snapshot_rows", failing_when_rows_exist)
+
+    with caplog.at_level(logging.ERROR, logger="core.student_auth_views"):
+        observed = _observe(*_home(monkeypatch, "en"))
+
+    assert observed["timetable_term"] == ("1447", "2", True)
+    assert observed["panels"] == []
+    assert observed["has_registered"] is False
+    assert observed["cards_rows"] == []
+    messages = [record.getMessage() for record in caplog.records]
+    assert f"student timetable load failed for {SID}" not in messages
     assert f"student fallback timetable failed for {SID}" in messages
