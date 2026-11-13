@@ -27,9 +27,11 @@ python-http-client==3.3.7
 # explicit so a clean production install does not rely on dev tooling pulling
 # it in transitively.
 PyYAML==6.0.3
-# soupsieve 2.9.2 includes the selector parsing fixes for
-# GHSA-j934-xhv5-fg8f and GHSA-gjv8-xp57-g29c (fixed in 2.9.0).
-soupsieve==2.9.2
+# soupsieve 4.1 includes the selector parsing fixes for
+# GHSA-j934-xhv5-fg8f and GHSA-gjv8-xp57-g29c (fixed in 2.9.0), and the
+# quadratic/polynomial matching fixes for GHSA-4j63-6c4x-wfg4 (2.10.0) and
+# GHSA-mmhr-3c5m-f64f (4.0.0), both published 2026-11-13.
+soupsieve==4.1
 openpyxl==3.1.5
 et-xmlfile==2.0.0
 # Pillow — renders the prerequisite dependency-graph PNG embedded in the
