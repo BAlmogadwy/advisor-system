@@ -768,16 +768,26 @@ def _limiter_retry_after():
     return LIMITS[HISTORY][1]
 
 
-def test_the_page_throttle_reports_the_limiters_own_wait(client_as_student):
+def test_the_page_throttle_reports_the_limiters_own_wait(client_as_student, monkeypatch):
     """Not a number this layer invented.
 
     It hard-coded `Retry-After: 60` while the `HISTORY` window is 600 seconds — so
     a student was told to come back in a minute while the limiter went on refusing
     them for ten.
     """
+    from types import SimpleNamespace
+
+    from django.utils import timezone
+
     from core.advisor_http import over_budget
+    from core.services import rate_limit
     from core.services.rate_limit import HISTORY, LIMITS
 
+    # One instant for the page and the limiter asked after it. The wait is whole
+    # seconds counted down to the window's end, so two clocks read a moment apart
+    # can straddle a second and differ by one (CI saw 597 against 596).
+    instant = timezone.now()
+    monkeypatch.setattr(rate_limit, "timezone", SimpleNamespace(now=lambda: instant))
     limit = LIMITS[HISTORY][0]
     response = None
     for _ in range(limit + 1):

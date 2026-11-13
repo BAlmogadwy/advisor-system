@@ -19,7 +19,9 @@ repos:
     rev: 1.8.6
     hooks:
       - id: bandit
-        args: ["-c", ".bandit", "-r", "."]
+        # --ini names one settings file, so bandit does not go looking for
+        # .bandit files in every nested checkout (see .bandit.ini).
+        args: ["-c", ".bandit", "--ini", ".bandit.ini", "-r", "."]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
