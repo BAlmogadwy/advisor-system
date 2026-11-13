@@ -405,8 +405,9 @@ TIMETABLE_FEEDBACK_PROGRAMMES = tuple(
     for code in os.getenv("TIMETABLE_FEEDBACK_PROGRAMMES", "").split(",")
     if code.strip()
 )
-# How long after an answer the student may say it did not help and reopen the
-# case; after it, a new case is the way back.
+# How long after an answer the student may come back to the same case, by saying
+# the answer did not help or by raising a new point. After it the answer stands:
+# the case is closed, and a new point opens a new case.
 TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = int(
     os.getenv("TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS", "14")
 )

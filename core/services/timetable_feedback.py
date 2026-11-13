@@ -92,14 +92,18 @@ from core.services.student_term_timetable import (
     TimetableUnavailable,
     read_student_term_timetable,
 )
-from core.services.timetable_feedback_workflow import reopen_target
+from core.services.timetable_feedback_workflow import (
+    answer_window_passed,
+    close_settled_answer,
+    reopen_target,
+    storable,
+    visible,
+)
 
 SNAPSHOT_SCHEMA = 1
 FINGERPRINT_SCHEMA = 1
 #: A note is for context, not an essay; a longer one belongs in a meeting.
 NOTE_MAX_CHARS = 1000
-#: The only control characters a note may hold: tab, line feed, carriage return.
-_NOTE_WHITESPACE = frozenset({chr(9), chr(10), chr(13)})
 #: Points a student may have live in one case at once.
 MAX_LIVE_POINTS = 8
 #: Cases a student may open in one term, counting every status.
@@ -705,9 +709,16 @@ def _open_case(
 ) -> tuple[TimetableFeedback, bool]:
     """The student's one open case for the term, under its row lock, opened if there
     is none. The caps are checked again here, under the lock, because the check
-    before the budgets were spent could have been overtaken."""
+    before the budgets were spent could have been overtaken.
+
+    An answered case whose window has passed is settled, not open to this point:
+    it is closed here, and the point opens a new case under the same caps. A
+    refusal undoes the closing with everything else."""
     open_cases = _open_cases(student_id, academic_year, term).select_for_update()
     case = open_cases.first()
+    if case is not None and case.status == S.ANSWERED and answer_window_passed(case, now):
+        close_settled_answer(case, now=now)
+        case = None
     if case is not None:
         return case, False
 
@@ -762,8 +773,9 @@ def submit_point(
        forecast while they wrote reads as "your timetable changed".
     c. The anchor is a labelled section of that forecast, the timetable as a whole
        (only when there is one), or "no timetable".
-    d. The reason fits the anchor; a note is given for OTHER, is not too long,
-       and holds no control character beyond a tab or a line break.
+    d. The reason fits the anchor; a note is given for OTHER (one of only
+       invisible marks counts as none), is not too long, and can be stored: no
+       control character beyond a tab or a line break, and no lone surrogate.
     e. A requested section or course is one the form offered.
     f. "No timetable" only when there is neither a forecast nor a registration.
     g. Opening a case keeps to the per-term cap and the cool-down after a
@@ -771,14 +783,18 @@ def submit_point(
        under the case lock.
     h. The success budgets are spent, duplicates included.
 
-    Then, under the case's row lock: the exact point already there returns its
-    reference; the same point with a different note is ALREADY_RAISED; a ninth
+    Then, under the case's row lock: an answered case past its reopening window is
+    closed and a new case opened instead; the exact point already there returns
+    its reference; the same point with a different note is ALREADY_RAISED; a ninth
     live point is refused. The case's version (and, if it had been ANSWERED, its
     reopening) is claimed and the point written together, in one savepoint.
     """
     now = now or timezone.now()
     language = _language(language)
     note = str(note or "").strip()
+    if not visible(note):
+        # Only zero-width or direction marks: no note at all.
+        note = ""
     profile = (
         Student.objects.filter(student_id=student_id)
         .values(
@@ -835,9 +851,9 @@ def submit_point(
         raise FeedbackRefused("NOTE_REQUIRED")
     if len(note) > NOTE_MAX_CHARS:
         raise FeedbackRefused("NOTE_TOO_LONG")
-    # Line breaks and tabs are writing; any other control character is not, and
-    # PostgreSQL refuses a NUL outright, which would otherwise be a server error.
-    if any(ord(ch) < 32 and ch not in _NOTE_WHITESPACE for ch in note):
+    # Line breaks and tabs are writing; any other control character, or a lone
+    # surrogate, is not, and would otherwise be a server error at the insert.
+    if not storable(note):
         raise FeedbackRefused("NOTE_INVALID")
 
     # e.
@@ -965,8 +981,9 @@ def submit_point(
         if case.points.filter(withdrawn_at__isnull=True).count() >= MAX_LIVE_POINTS:
             raise FeedbackRefused("TOO_MANY_POINTS", status=409)
 
-        # An answered case is the student's to reopen: a new point puts it back
-        # in front of whoever handles it, or back in the queue if nobody does.
+        # An answered case still open here is inside its window, so it is the
+        # student's to reopen: a new point puts it back in front of whoever
+        # handles it, or back in the queue if nobody does.
         reopened_to = reopen_target(case) if case.status == S.ANSWERED else ""
         changes: dict[str, Any] = {
             "version": F("version") + 1,

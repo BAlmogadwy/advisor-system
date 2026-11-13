@@ -212,6 +212,48 @@ def test_a_move_the_actor_may_not_make_is_refused_before_anything_is_written():
     assert _state(case) == ("SUBMITTED", 0)
 
 
+def test_a_status_passed_among_the_changes_is_refused_outright():
+    """Otherwise it would reach the UPDATE without the actor's table being asked."""
+    case = _case()
+    with pytest.raises(TypeError):
+        workflow.cas_transition(
+            _scope(), case, actor="STUDENT", now=timezone.now(), status="ANSWERED"
+        )
+    assert _state(case) == ("SUBMITTED", 0)
+
+
+def test_closing_without_a_reason_is_refused_before_the_database_is_asked():
+    case = _case("ANSWERED")
+    with pytest.raises(ValueError, match="close_reason"):
+        workflow.cas_transition(
+            _scope(), case, actor="STAFF", now=timezone.now(), to_status="CLOSED"
+        )
+    assert _state(case) == ("ANSWERED", 0)
+
+
+def test_a_claim_through_a_scope_that_joins_another_table_keeps_to_that_scope():
+    """Staff will claim through scopes like "cases handled by active staff". The
+    PostgreSQL race file proves such a claim still refuses a stale version."""
+    active, retired = User.objects.create_user("advisor-on"), User.objects.create_user("gone")
+    User.objects.filter(pk=retired.pk).update(is_active=False)
+    mine = _case("SUBMITTED", handled_by=active)
+    theirs = _case("SUBMITTED", student_id=OTHER_SID, handled_by=retired)
+    joined = TimetableFeedback.objects.filter(handled_by__is_active=True)
+
+    workflow.cas_transition(joined, mine, actor="STAFF", now=timezone.now(), to_status="IN_REVIEW")
+    _refused(
+        "CASE_CHANGED",
+        workflow.cas_transition,
+        scoped=joined,
+        case=theirs,
+        actor="STAFF",
+        now=timezone.now(),
+        to_status="IN_REVIEW",
+    )
+
+    assert (_state(mine), _state(theirs)) == (("IN_REVIEW", 1), ("SUBMITTED", 0))
+
+
 # ---------------------------------------------------------------------------
 # What a student may write
 # ---------------------------------------------------------------------------
@@ -225,17 +267,44 @@ def test_a_move_the_actor_may_not_make_is_refused_before_anything_is_written():
         ("x" * (workflow.STUDENT_TEXT_MAX_CHARS + 1), "BODY_TOO_LONG"),
         ("a" + chr(0) + "b", "BODY_INVALID"),
         ("a" + chr(27) + "b", "BODY_INVALID"),
+        # Shows nothing: zero-width spaces, a direction mark, a byte-order mark.
+        (chr(0x200B) + chr(0x200B), "BODY_REQUIRED"),
+        (chr(0xFEFF) + " " + chr(0x200F), "BODY_REQUIRED"),
+        # A lone surrogate, as a JSON body can carry: no driver can encode it.
+        ("ok " + chr(0xD800), "BODY_INVALID"),
     ],
 )
-def test_student_text_is_refused_when_empty_too_long_or_holding_control_characters(text, code):
+def test_student_text_is_refused_unless_visible_bounded_and_storable(text, code):
     _refused(code, workflow.clean_student_text, text=text)
 
 
-def test_student_text_keeps_its_line_breaks_and_its_full_length():
+def test_student_text_keeps_its_line_breaks_its_marks_and_its_full_length():
     text = "line one" + chr(10) + "line" + chr(9) + "two"
     assert workflow.clean_student_text(text) == text
     longest = "x" * workflow.STUDENT_TEXT_MAX_CHARS
     assert workflow.clean_student_text(longest) == longest
+    marked = chr(0x200F) + "مرحبا" + chr(0x200E)
+    assert workflow.clean_student_text(marked) == marked
+
+
+def test_student_text_is_trimmed_before_it_is_measured_and_kept():
+    padding = "  " + chr(10) + chr(9)
+    assert workflow.clean_student_text(padding + "Thanks." + padding) == "Thanks."
+    longest = "x" * workflow.STUDENT_TEXT_MAX_CHARS
+    assert workflow.clean_student_text(" " + longest + chr(10)) == longest
+
+
+def test_text_no_driver_can_encode_is_refused_before_anything_is_written():
+    case = _case("SUBMITTED")
+    _refused(
+        "BODY_INVALID",
+        workflow.follow_up,
+        student_id=SID,
+        reference=case.reference,
+        body="clash " + chr(0xDC00),
+    )
+    assert _state(case) == ("SUBMITTED", 0)
+    assert not TimetableFeedbackMessage.objects.exists()
 
 
 @pytest.mark.parametrize(
@@ -493,6 +562,60 @@ def test_an_answer_reopens_inside_the_window_even_on_its_last_day(settings):
     assert _state(case)[0] == "SUBMITTED"
 
 
+@pytest.mark.parametrize("status", [s for s in STATUSES if s != "ANSWERED"])
+def test_only_an_answer_can_be_reopened(status):
+    """NEEDS_INFORMATION above all: the student's table lets it go back to the
+    queue, so only this check stops a verdict on an answer never given."""
+    case = _case(status, answered_at=timezone.now())
+    _refused(
+        "NOT_ALLOWED",
+        workflow.reopen_answer,
+        student_id=SID,
+        reference=case.reference,
+        body="Not helpful.",
+    )
+    assert _state(case) == (status, 0)
+    assert not TimetableFeedbackMessage.objects.exists()
+    assert not case.events.exists()
+
+
+@pytest.mark.parametrize(
+    ("age", "passed"),
+    [
+        (timedelta(0), False),
+        (timedelta(days=14), False),
+        (timedelta(days=14, seconds=1), True),
+    ],
+)
+def test_the_window_includes_its_last_moment(settings, age, passed):
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    now = timezone.now()
+    case = _case("ANSWERED", answered_at=now - age)
+    assert workflow.answer_window_passed(case, now) is passed
+
+
+def test_a_settled_answer_is_closed_by_the_system_with_its_reason():
+    now = timezone.now()
+    case = _case("ANSWERED", answered_at=now - timedelta(days=30))
+
+    workflow.close_settled_answer(case, now=now)
+
+    case.refresh_from_db()
+    assert (case.status, case.close_reason, case.closed_at, case.version) == (
+        "CLOSED",
+        "NO_REPLY_AFTER_ANSWER",
+        now,
+        1,
+    )
+    event = case.events.get()
+    assert (event.kind, event.from_value, event.to_value, event.actor_id) == (
+        "STATUS_CHANGED",
+        "ANSWERED",
+        "CLOSED",
+        None,
+    )
+
+
 def test_reopening_needs_a_reason():
     case = _case("ANSWERED", answered_at=timezone.now())
     _refused(
@@ -562,9 +685,56 @@ def test_a_students_actions_share_one_budget(monkeypatch):
     workflow.withdraw_case(student_id=OTHER_SID, reference=second.reference)
 
 
-def test_refused_text_spends_nothing():
-    case = _case("NEEDS_INFORMATION")
-    _refused("BODY_REQUIRED", workflow.reply, student_id=SID, reference=case.reference, body="")
+STUDENT_ACTIONS = [
+    "reply",
+    "follow_up",
+    "withdraw_point",
+    "withdraw_case",
+    "confirm_answer",
+    "reopen_answer",
+]
+
+
+def _ready(action):
+    """A case ``action`` succeeds on, and the arguments that make it succeed."""
+    status = {
+        "reply": "NEEDS_INFORMATION",
+        "confirm_answer": "ANSWERED",
+        "reopen_answer": "ANSWERED",
+    }.get(action, "SUBMITTED")
+    case = _case(status, answered_at=timezone.now())
+    extra = {"body": "hi"} if action in ("reply", "follow_up", "reopen_answer") else {}
+    if action == "withdraw_point":
+        extra = {"point_id": str(_point(case, 11).pk)}
+        _point(case, 12)
+    return case, extra
+
+
+@pytest.mark.parametrize("action", STUDENT_ACTIONS)
+def test_every_student_action_spends_the_budget(action, monkeypatch):
+    monkeypatch.setitem(rate_limit.LIMITS, rate_limit.TIMETABLE_FEEDBACK_REPLY, (1, 3600))
+    case, extra = _ready(action)
+
+    getattr(workflow, action)(student_id=SID, reference=case.reference, **extra)
+
+    refused = _refused(
+        "RATE_LIMITED", getattr(workflow, action), student_id=SID, reference=case.reference, **extra
+    )
+    assert refused.status == 429
+
+
+@pytest.mark.parametrize(
+    ("action", "status", "extra", "code"),
+    [
+        ("reply", "NEEDS_INFORMATION", {"body": ""}, "BODY_REQUIRED"),
+        ("follow_up", "SUBMITTED", {"body": ""}, "BODY_REQUIRED"),
+        ("reopen_answer", "ANSWERED", {"body": ""}, "BODY_REQUIRED"),
+        ("withdraw_point", "SUBMITTED", {"point_id": "not-a-point"}, "POINT_NOT_FOUND"),
+    ],
+)
+def test_input_refused_before_the_case_is_read_spends_nothing(action, status, extra, code):
+    case = _case(status, answered_at=timezone.now())
+    _refused(code, getattr(workflow, action), student_id=SID, reference=case.reference, **extra)
     assert not rate_limit.RateLimitBucket.objects.exists()
 
 

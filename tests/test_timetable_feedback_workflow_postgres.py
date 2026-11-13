@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from django.contrib.auth.models import User
 from django.db import connection
 from django.utils import timezone
 
@@ -161,3 +162,30 @@ def test_two_points_withdrawn_at_once_never_empty_the_case():
     case.refresh_from_db()
     assert case.version == 1
     assert list(case.events.values_list("kind", "point_id")) == [("POINT_WITHDRAWN", kept_first.pk)]
+
+
+def test_two_claims_through_a_joined_scope_cannot_both_win():
+    """Staff claims will run through scopes that join other tables, without the
+    student's row lock taken first. Both writers here read version 0. The second
+    queues on the row the first is updating, and once the first commits it must
+    find the version moved on, rather than move the case a second time."""
+    staff = User.objects.create_user("advisor-race")
+    case = _case("SUBMITTED", handled_by=staff)
+    joined = TimetableFeedback.objects.filter(handled_by__is_active=True)
+    stale = TimetableFeedback.objects.get(pk=case.pk)
+
+    def claim(to_status):
+        def run():
+            workflow.cas_transition(
+                joined, stale, actor="STAFF", now=timezone.now(), to_status=to_status
+            )
+            return to_status
+
+        return _racer(run)
+
+    first, second = _race(claim("IN_REVIEW"), claim("FORWARDED"))
+
+    assert first == "IN_REVIEW"
+    assert second == ("refused", "CASE_CHANGED")
+    case.refresh_from_db()
+    assert (case.status, case.version) == ("IN_REVIEW", 1)

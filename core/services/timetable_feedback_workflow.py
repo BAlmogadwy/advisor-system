@@ -21,6 +21,8 @@ THE STUDENT'S SIDE
 A reply when the advisor asked for information; a follow-up while the case is
 being handled; withdrawing one point or the whole case; and, once answered,
 confirming the answer or saying it did not help (within a window) to reopen it.
+A new point reopens an answered case within the same window. After it the
+answer stands: the case is closed, and the new point opens a new case.
 The student is always identified by the session and the case by its reference,
 together, in the query: another student's reference is simply not found.
 
@@ -139,16 +141,65 @@ def cas_transition(
     ``scoped`` is the caller's own view of cases; a case outside it matches no row.
     The UPDATE names the id, the version and the status read, so a case that
     moved, or was touched, since it was read is refused rather than overwritten.
+
+    The scope goes in as a subquery on the id, and the claim stays on the case's
+    own columns. A scope that joins another table would otherwise make Django
+    rewrite the whole UPDATE as ``id IN (subquery)``. PostgreSQL re-checks a row
+    that changed while the statement waited on its lock only against that outer
+    condition, so the version inside the subquery would be read as it was before
+    the wait, and two claims could both win.
     """
+    if "status" in changes:
+        raise TypeError("cas_transition takes a new status only as to_status")
+    if to_status == S.CLOSED and not changes.get("close_reason"):
+        raise ValueError("a move to CLOSED needs a close_reason")
     if to_status is not None:
         if not may_move(actor, case.status, to_status):
             raise WorkflowRefused("NOT_ALLOWED")
         changes["status"] = to_status
-    claimed = scoped.filter(pk=case.pk, version=case.version, status=case.status).update(
-        version=F("version") + 1, updated_at=now, **changes
-    )
+    claimed = TimetableFeedback.objects.filter(
+        pk=case.pk,
+        version=case.version,
+        status=case.status,
+        pk__in=scoped.values("pk"),
+    ).update(version=F("version") + 1, updated_at=now, **changes)
     if claimed != 1:
         raise WorkflowRefused("CASE_CHANGED")
+
+
+def answer_window_passed(case: TimetableFeedback, now: datetime) -> bool:
+    """Whether the student's time to come back to an answer has run out.
+
+    Inside the window the answered case is still the student's to reopen, by
+    saying the answer did not help or by raising a new point. After it the answer
+    stands: the case is closed the next time the student acts on it, and a new
+    point opens a new case. A case marked answered without ``answered_at`` (set by
+    hand, say) is timed from its last change: neither refused outright nor open
+    for ever."""
+    answered_at = case.answered_at or case.updated_at
+    return now - answered_at > timedelta(days=settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS)
+
+
+def close_settled_answer(case: TimetableFeedback, *, now: datetime) -> None:
+    """Close an answered case whose window has passed, as the system would.
+
+    The scheduled lifecycle command will close these too; doing it here, the
+    moment the student acts, keeps the rule from depending on when that runs."""
+    cas_transition(
+        TimetableFeedback.objects.filter(student_id=case.student_id),
+        case,
+        actor=SYSTEM,
+        now=now,
+        to_status=S.CLOSED,
+        close_reason=TimetableFeedback.CloseReason.NO_REPLY_AFTER_ANSWER,
+        closed_at=now,
+    )
+    _event(
+        case,
+        TimetableFeedbackEvent.Kind.STATUS_CHANGED,
+        from_value=S.ANSWERED,
+        to_value=S.CLOSED,
+    )
 
 
 def body_script(text: str) -> str:
@@ -171,15 +222,37 @@ def body_script(text: str) -> str:
     return "ar" if arabic else "en" if latin else ""
 
 
+def visible(text: str) -> bool:
+    """Whether ``text`` shows anything: more than spaces and invisible format marks
+    (zero-width spaces, direction marks, a byte-order mark)."""
+    return any(not ch.isspace() and unicodedata.category(ch) != "Cf" for ch in text)
+
+
+def storable(text: str) -> bool:
+    """Whether ``text`` can be stored as it is.
+
+    Of the control characters only tabs and line breaks are allowed; PostgreSQL
+    refuses a NUL outright. A lone surrogate is refused as well, because neither
+    database driver can encode it. Either would otherwise be a server error at the
+    insert."""
+    if any(ord(ch) < 32 and ch not in _TEXT_WHITESPACE for ch in text):
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def clean_student_text(text: object) -> str:
-    """The student's words, trimmed, or a refusal: required, bounded, and without
-    control characters other than tabs and line breaks."""
+    """The student's words, trimmed, or a refusal: something visible, bounded, and
+    storable."""
     cleaned = str(text or "").strip()
-    if not cleaned:
+    if not visible(cleaned):
         raise WorkflowRefused("BODY_REQUIRED", status=400)
     if len(cleaned) > STUDENT_TEXT_MAX_CHARS:
         raise WorkflowRefused("BODY_TOO_LONG", status=400)
-    if any(ord(ch) < 32 and ch not in _TEXT_WHITESPACE for ch in cleaned):
+    if not storable(cleaned):
         raise WorkflowRefused("BODY_INVALID", status=400)
     return cleaned
 
@@ -376,13 +449,11 @@ def reopen_answer(
     now = now or timezone.now()
     text = clean_student_text(body)
     _spend(student_id, now)
-    window = timedelta(days=settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS)
     with transaction.atomic():
         case = _own_case(student_id, reference)
         if case.status != S.ANSWERED:
             raise WorkflowRefused("NOT_ALLOWED")
-        answered_at = case.answered_at or case.updated_at
-        if now - answered_at > window:
+        if answer_window_passed(case, now):
             raise WorkflowRefused("REOPEN_WINDOW_PASSED")
         target = reopen_target(case)
         cas_transition(
