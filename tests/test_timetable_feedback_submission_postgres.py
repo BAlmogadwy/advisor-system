@@ -62,6 +62,13 @@ def _accepting(settings, monkeypatch):
 @pytest.fixture
 def anchor():
     """One student whose expected timetable holds one section."""
+    return seed_one_section_student()
+
+
+def seed_one_section_student() -> str:
+    """One student whose expected timetable holds one section; returns its anchor.
+
+    A plain function so the workflow's race tests can seed the same student."""
     Student.objects.create(student_id=SID, name="Racer", program=PROG, section="M")
     ProgrammeRequirement.objects.create(
         program=PROG, course_code="SA101", course_name="INTRO", type="Mandatory", credit_hours=3

@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -1282,6 +1283,7 @@ def test_the_way_in_imports_only_what_it_reads_with():
         "core.services.student_helpers",
         "core.services.student_sections",
         "core.services.student_term_timetable",
+        "core.services.timetable_feedback_workflow",
     }
     assert from_student_sections <= {
         "UnknownStudentGender",
@@ -1400,7 +1402,7 @@ def test_a_section_without_a_stored_key_is_read_as_the_reader_reads_it(world):
     assert {"SJ210", "SK310"} <= set(codes)
 
 
-@pytest.mark.parametrize("bad", [chr(0), chr(7), chr(27)])
+@pytest.mark.parametrize("bad", [chr(0), chr(7), chr(27), chr(0x7F), chr(0x85), chr(0x9F)])
 def test_a_note_with_a_control_character_is_refused(world, bad):
     _refused("NOTE_INVALID", **_base(world, note=f"a{bad}b"))
 
@@ -1416,3 +1418,152 @@ def test_the_alternatives_are_the_same_course_in_the_catalogue_and_not_the_ancho
     anchor = _seen(world)[world["SA101-M1"].pk]
     labels = sorted(s.section for s in feedback.alternative_sections_for(SID, PROG, anchor))
     assert labels == ["M2", "M5"]
+
+
+# ---------------------------------------------------------------------------
+# Review of the workflow (2c): the reopening window bounds a new point too, and
+# a note must be something the database can hold
+# ---------------------------------------------------------------------------
+
+
+def _answered(reference, *, days_ago):
+    TimetableFeedback.objects.filter(reference=reference).update(
+        status="ANSWERED", answered_at=timezone.now() - timedelta(days=days_ago)
+    )
+
+
+def test_a_new_point_after_the_window_closes_the_answer_and_opens_a_new_case(world, settings):
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    first = feedback.submit_point(**_base(world))
+    _answered(first.reference, days_ago=15)
+
+    result = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+
+    old = TimetableFeedback.objects.get(reference=first.reference)
+    assert (old.status, old.close_reason) == ("CLOSED", "NO_REPLY_AFTER_ANSWER")
+    assert old.closed_at is not None
+    assert list(old.events.filter(kind="AUTO_CLOSED").values_list("from_value", "to_value")) == [
+        ("ANSWERED", "CLOSED")
+    ]
+    assert not old.events.filter(kind="REOPENED").exists()
+    assert (result.created_case, result.reopened) == (True, False)
+    new = TimetableFeedback.objects.get(reference=result.reference)
+    assert new.pk != old.pk and new.status == "SUBMITTED"
+    assert list(new.points.values_list("reason_code", flat=True)) == ["TIME_UNSUITABLE"]
+
+
+def test_a_new_point_inside_the_window_still_reopens_the_answer(world, settings):
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    first = feedback.submit_point(**_base(world))
+    _answered(first.reference, days_ago=13)
+
+    result = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+
+    assert (result.reference, result.reopened, result.created_case) == (
+        first.reference,
+        True,
+        False,
+    )
+    assert TimetableFeedback.objects.count() == 1
+
+
+def test_an_answer_inside_its_window_at_the_term_cap_is_still_reopened(world, settings):
+    """At the cap, only a settled answer gives way to a new case and so meets the
+    cap. One inside its window takes the point itself, and nothing is refused."""
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    first = feedback.submit_point(**_base(world))
+    for _ in range(feedback.MAX_CASES_PER_TERM - 1):
+        TimetableFeedback.objects.create(
+            student_id=SID, academic_year=YEAR, term=TERM, status="CLOSED", close_reason="OTHER"
+        )
+    _answered(first.reference, days_ago=13)
+
+    result = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+
+    assert (result.reference, result.reopened, result.created_case) == (
+        first.reference,
+        True,
+        False,
+    )
+    assert TimetableFeedback.objects.count() == feedback.MAX_CASES_PER_TERM
+
+
+def test_a_settled_answer_closed_under_the_lock_is_restored_by_a_refusal_there(world, settings):
+    """The cap is checked again under the lock, after the settled answer has been
+    closed. Should it refuse there (a case opened since the first check), the
+    refusal must undo the closing too. Called directly, because the check before
+    the lock now catches every case a single request can make."""
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    first = feedback.submit_point(**_base(world))
+    for _ in range(feedback.MAX_CASES_PER_TERM - 1):
+        TimetableFeedback.objects.create(
+            student_id=SID, academic_year=YEAR, term=TERM, status="CLOSED", close_reason="OTHER"
+        )
+    _answered(first.reference, days_ago=30)
+
+    with pytest.raises(feedback.FeedbackRefused) as raised:
+        with transaction.atomic():
+            feedback._open_case(
+                student_id=SID,
+                academic_year=YEAR,
+                term=TERM,
+                profile={},
+                cohort="",
+                timetable=_timetable(),
+                language="en",
+                now=timezone.now(),
+            )
+
+    assert raised.value.code == "TOO_MANY_CASES"
+    old = TimetableFeedback.objects.get(reference=first.reference)
+    assert (old.status, old.close_reason) == ("ANSWERED", "")
+    assert not old.events.filter(kind="AUTO_CLOSED").exists()
+    assert TimetableFeedback.objects.count() == feedback.MAX_CASES_PER_TERM
+
+
+def test_a_settled_answer_at_the_term_cap_refuses_the_point_and_is_left_as_it_was(world, settings):
+    """Closing the settled case and opening the new one go together. When the new
+    case would break the per-term cap, the point is refused and the answered case
+    is not closed either."""
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    first = feedback.submit_point(**_base(world))
+    for _ in range(feedback.MAX_CASES_PER_TERM - 1):
+        TimetableFeedback.objects.create(
+            student_id=SID, academic_year=YEAR, term=TERM, status="CLOSED", close_reason="OTHER"
+        )
+    _answered(first.reference, days_ago=30)
+    version = TimetableFeedback.objects.get(reference=first.reference).version
+
+    def spent():
+        return dict(
+            rate_limit.RateLimitBucket.objects.filter(key__endswith=f":{SID}").values_list(
+                "key", "count"
+            )
+        )
+
+    before = spent()
+    _refused("TOO_MANY_CASES", **_base(world, reason="TIME_UNSUITABLE"))
+    after = spent()
+
+    old = TimetableFeedback.objects.get(reference=first.reference)
+    assert (old.status, old.version, old.close_reason) == ("ANSWERED", version, "")
+    assert not old.events.filter(kind="AUTO_CLOSED").exists()
+    # Refused before the success budgets, as a refused new case always is: only
+    # the attempt was counted.
+    attempt = f"{rate_limit.TIMETABLE_FEEDBACK_ATTEMPT}:{SID}"
+    assert after[attempt] == before[attempt] + 1
+    assert {k: v for k, v in after.items() if k != attempt} == {
+        k: v for k, v in before.items() if k != attempt
+    }
+
+
+def test_a_note_of_only_invisible_marks_counts_as_no_note(world):
+    invisible = chr(0x200B) + chr(0x200F) + chr(0xFEFF)
+    _refused("NOTE_REQUIRED", **_base(world, reason="OTHER", note=invisible))
+    result = feedback.submit_point(**_base(world, note=invisible))
+    assert TimetableFeedbackPoint.objects.get(pk=result.point_id).note == ""
+
+
+def test_a_note_holding_a_lone_surrogate_is_refused_rather_than_failing_to_save(world):
+    _refused("NOTE_INVALID", **_base(world, note="clash " + chr(0xD800)))
+    assert not TimetableFeedbackPoint.objects.exists()

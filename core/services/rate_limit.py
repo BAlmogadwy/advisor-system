@@ -52,6 +52,7 @@ SENDGRID_SUBMISSION = "sendgrid_submission"
 TIMETABLE_FEEDBACK_ATTEMPT = "timetable_feedback_attempt"
 TIMETABLE_FEEDBACK = "timetable_feedback"
 TIMETABLE_FEEDBACK_DAILY = "timetable_feedback_daily"
+TIMETABLE_FEEDBACK_REPLY = "timetable_feedback_reply"
 
 #: (max_calls, window_seconds), justified where they are used.
 LIMITS: dict[str, tuple[int, int]] = {
@@ -133,6 +134,10 @@ LIMITS: dict[str, tuple[int, int]] = {
     # one advisor's queue.
     TIMETABLE_FEEDBACK: (5, 3600),
     TIMETABLE_FEEDBACK_DAILY: (10, 86_400),
+    # Everything a student does to a case that already exists: a reply, a
+    # follow-up, withdrawing, confirming or reopening an answer. Generous,
+    # because answering an advisor's question is the point of the exercise.
+    TIMETABLE_FEEDBACK_REPLY: (10, 3600),
 }
 
 
