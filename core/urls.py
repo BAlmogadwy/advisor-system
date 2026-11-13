@@ -81,6 +81,7 @@ from .exam_views import (
     exam_timetable_job_seen_view,
     exam_timetable_job_view,
     exam_timetable_list_view,
+    exam_timetable_move_options_view,
     exam_timetable_page,
     exam_timetable_preview_courses_view,
     exam_timetable_scope_courses_view,
@@ -766,6 +767,11 @@ urlpatterns = [
         "ops/exam-timetable/draft-impact/",
         login_required(exam_timetable_draft_impact_view),
         name="exam_timetable_draft_impact",
+    ),
+    path(
+        "ops/exam-timetable/move-options/",
+        login_required(exam_timetable_move_options_view),
+        name="exam_timetable_move_options",
     ),
     path(
         "ops/exam-timetable/jobs/active/",

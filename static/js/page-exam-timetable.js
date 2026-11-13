@@ -3589,6 +3589,59 @@ const OPTIMISE_TEXT = {
   },
 };
 
+// The other times one exam could move to (the Move dialog), judged level by
+// level as Optimize judges a timetable: the server's LEVELS, in its order.
+const MOVE_TEXT = {
+  levels: ['rule_breaks', 'unseated', 'seats_short', 'staff_excess', 'over_limit', 'heavy_day', 'multi_exam_day', 'spacing'],
+  verdict: {
+    better: IS_AR ? 'أفضل' : 'Better',
+    same: IS_AR ? 'دون تغيير' : 'No change',
+    worse: IS_AR ? 'أسوأ' : 'Worse',
+  },
+  level: {
+    rule_breaks: () => OPTIMISE_TEXT.ruleBreaks(),
+    unseated: () => OPTIMISE_TEXT.unseated(),
+    seats_short: () => IS_AR ? 'طلاب بلا مقعد اختبار' : 'Students without an exam seat',
+    staff_excess: () => IS_AR ? 'مراقبون فوق أكثر الأيام انشغالاً (تقدير)' : 'Invigilators above the busiest day (estimate)',
+    over_limit: () => OPTIMISE_TEXT.overLimit(),
+    heavy_day: () => OPTIMISE_TEXT.heavyDay(),
+    multi_exam_day: () => OPTIMISE_TEXT.multiExamDay(),
+  },
+  // The spacing penalty is no count anyone reads: it says which way it went.
+  spacing: better => better
+    ? (IS_AR ? 'اختبارات البرنامج والفصل الدراسي نفسه أكثر تباعداً' : 'Exams of one programme and term further apart')
+    : (IS_AR ? 'اختبارات البرنامج والفصل الدراسي نفسه أكثر تقارباً' : 'Exams of one programme and term closer together'),
+  noChange: () => IS_AR ? 'لا يتغير أي عدد' : 'No count changes',
+  clashes: items => IS_AR
+    ? `يتعارض في هذا الوقت مع ${items.map(item => `${lockCodes(item.courses)} (${arabicCount(item.students, AR_STUDENT_COUNT)})`).join('، ')}`
+    : `Clashes at this time with ${items.map(item => `${item.courses.join(' + ')} (${item.students} student${item.students === 1 ? '' : 's'})`).join(', ')}`,
+  sameDay: codes => IS_AR
+    ? `في اليوم نفسه مع ${lockCodes(codes)} من البرنامج والفصل الدراسي نفسيهما`
+    : `Same programme and term on this day as ${codes.join(', ')}`,
+  loading: () => IS_AR ? 'جارٍ ترتيب الأوقات الأخرى لهذا الاختبار…' : 'Ranking the other times for this exam…',
+  summary: (better, same, worse) => IS_AR
+    ? `أفضل: ${better} · دون تغيير: ${same} · أسوأ: ${worse}`
+    : `Better: ${better} · No change: ${same} · Worse: ${worse}`,
+  noneAsGood: () => IS_AR
+    ? 'لا يوجد وقت آخر يُبقي الجدول بالجودة نفسها. الأوقات أدناه مرتبة من الأقل ضرراً.'
+    : 'No other time keeps the timetable as good as it is now. The times below are ranked from the least harm.',
+  noOther: () => IS_AR ? 'لا يوجد وقت آخر مفتوح لهذا الاختبار.' : 'There is no other open time for this exam.',
+  worse: count => IS_AR ? `أوقات تجعل الجدول أسوأ (${count})` : `Times that make the timetable worse (${count})`,
+  failed: message => IS_AR ? `تعذّر ترتيب الأوقات الأخرى: ${message}` : `Other times could not be ranked: ${message}`,
+  sourceReview: () => IS_AR
+    ? 'راجِع مصدر المقررات أولاً، ثم تُرتَّب الأوقات الأخرى.'
+    : 'Review the course source first; then the other times can be ranked.',
+  notMovable: () => IS_AR
+    ? 'هذا الاختبار مثبت أو في خلية مقفلة، لذا يبقى في مكانه.'
+    : 'This exam is pinned or in a locked cell, so it stays where it is.',
+  // Only Arabic needs it: in English the server's own sentence is shown.
+  refused: () => 'لم يقبل الخادم الجدول المعروض كما هو. أعد تحميل الجدول ثم حاول مرة أخرى.',
+  serverFault: () => 'حدث خطأ في الخادم، ولم يُنقل أو يُحفظ أي شيء. أعد المحاولة.',
+  pinned: () => IS_AR
+    ? 'هذا الاختبار مثبت. ألغِ تثبيته لعرض أوقات أخرى له ونقله.'
+    : 'This exam is pinned. Unpin it to see other times for it and move it.',
+};
+
 const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function describeOptimisation(report, { saved = true, panelShown = false } = {}) {
@@ -6132,6 +6185,8 @@ function updatePinBar() {
 }
 
 $('schedGrid').addEventListener('dragstart', event => {
+  // A press that became a drag is no click on the card.
+  cancelCardClick();
   const chip = event.target.closest('.et-course');
   if (!chip || event.target.closest('button') || _builderBusy || groupPin(chip.dataset.course) || chip.dataset.locked === 'true') {
     event.preventDefault();
@@ -6185,12 +6240,35 @@ $('schedGrid').addEventListener('drop', event => {
   if (!cell) return;
   moveExamCourse(event.dataTransfer.getData('text/plain'), cell.dataset.day, cell.dataset.period);
 });
+// A click on a card itself opens its Move dialog with the other times ranked,
+// once it is clear the click was not the first half of a double-click (which
+// pins): a second click within this wait cancels it. Windows' own double-click
+// time is 500 ms by default, so a slower wait would turn a double-click into a
+// Move; any other use of the board in the meantime cancels it too.
+const CARD_CLICK_DELAY = Number.isFinite(window.__examCardClickDelay) ? window.__examCardClickDelay : 500;
+let _cardClickTimer = null;
+function cancelCardClick() {
+  clearTimeout(_cardClickTimer);
+  _cardClickTimer = null;
+}
+function openCourseSuggestions(code) {
+  const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
+  if (!entry || _builderBusy || $('examMoveDialog')?.open || !currentExamIsSelected(entry)) return;
+  // A card that cannot move says why on the board, as its Move button does.
+  const place = lockedPlaceOf(code);
+  if (place) { refuseLockedEdit(LOCK_TEXT.lockedOut(code, place.day, place.period)); return; }
+  if (groupPin(code)) { refuseLockedEdit(MOVE_TEXT.pinned()); return; }
+  openExamMoveDialog(code);
+}
 $('schedGrid').addEventListener('dblclick', event => {
+  cancelCardClick();
   if (event.target.closest('button')) return;
   const chip = event.target.closest('.et-course');
   if (chip) toggleExamPin(chip.dataset.course);
 });
 $('schedGrid').addEventListener('click', event => {
+  // Whatever this click is, a card click still waiting is over.
+  cancelCardClick();
   const column = event.target.closest('[data-lock-column]');
   if (column) { toggleColumnLock(column.dataset.lockColumn); return; }
   const lock = event.target.closest('[data-lock-day]');
@@ -6198,17 +6276,170 @@ $('schedGrid').addEventListener('click', event => {
   const pin = event.target.closest('[data-exam-pin]');
   if (pin) { toggleExamPin(pin.dataset.examPin); return; }
   const move = event.target.closest('[data-exam-move]');
-  if (!move || _builderBusy) return;
-  // Locked: the button stays reachable, and a press says why it does nothing.
-  if (move.dataset.lockedHint) { refuseLockedEdit(move.dataset.lockedHint); return; }
-  if (groupPin(move.dataset.examMove)) return;
-  openExamMoveDialog(move.dataset.examMove);
+  if (move) {
+    if (_builderBusy) return;
+    // Locked: the button stays reachable, and a press says why it does nothing.
+    if (move.dataset.lockedHint) { refuseLockedEdit(move.dataset.lockedHint); return; }
+    if (groupPin(move.dataset.examMove)) return;
+    openExamMoveDialog(move.dataset.examMove);
+    return;
+  }
+  const chip = event.target.closest('.et-course');
+  if (!chip || event.target.closest('button, a, input, select, summary') || _builderBusy) return;
+  if (event.detail > 1) return;
+  const code = chip.dataset.course;
+  _cardClickTimer = setTimeout(() => {
+    _cardClickTimer = null;
+    openCourseSuggestions(code);
+  }, CARD_CLICK_DELAY);
 });
+
+// The other times for the exam in the Move dialog. A request belongs to one
+// opening of the dialog for one board: anything else answers too late.
+let _moveSuggestSeq = 0;
+// The options the dialog lists, by the index each radio carries.
+let _moveSuggestOptions = [];
+function moveSuggestEntry(code) {
+  return _currentResultData?.schedule?.find(item => item.course_code === code) || null;
+}
+// Built with safeHtml, which escapes every value it is given.
+function moveChangeMarkup(option) {
+  const changes = option.changes || {};
+  const chips = MOVE_TEXT.levels.filter(level => Number(changes[level])).map(level => {
+    const change = Number(changes[level]);
+    const tone = change < 0 ? 'is-better' : 'is-worse';
+    if (level === 'spacing') return safeHtml`<span class="et-move-change ${tone}">${MOVE_TEXT.spacing(change < 0)}</span>`;
+    const signed = `${change > 0 ? '+' : '−'}${Math.abs(change)}`;
+    return safeHtml`<span class="et-move-change ${tone}"><bdi dir="ltr">${signed}</bdi> ${MOVE_TEXT.level[level]()}</span>`;
+  });
+  const clashes = Array.isArray(option.clashes_with) ? option.clashes_with.filter(item => Array.isArray(item?.courses)) : [];
+  const sameDay = Array.isArray(option.same_day_with) ? option.same_day_with.map(String) : [];
+  const details = [
+    clashes.length ? MOVE_TEXT.clashes(clashes) : '',
+    sameDay.length ? MOVE_TEXT.sameDay(sameDay) : '',
+  ].filter(Boolean).map(text => safeHtml`<span class="et-move-detail">${text}</span>`);
+  const shown = chips.length ? chips : safeHtml`<span class="et-move-change">${MOVE_TEXT.noChange()}</span>`;
+  return safeHtml`<span class="et-move-changes">${shown}</span>${details}`;
+}
+function moveOptionMarkup(option, index) {
+  const verdict = ['better', 'same', 'worse'].includes(option.verdict) ? option.verdict : 'worse';
+  const when = `${option.day} · ${option.period}`;
+  return safeHtml`<label class="et-move-option is-${verdict}" data-suggest-day="${option.day}" data-suggest-period="${option.period}"><input type="radio" name="examMoveSuggestion" value="${index}"><span class="et-move-option-body"><span class="et-move-option-head"><bdi dir="ltr" class="et-move-option-when">${when}</bdi><span class="et-move-verdict">${MOVE_TEXT.verdict[verdict]}</span></span>${moveChangeMarkup(option)}</span></label>`;
+}
+function resetMoveSuggestions() {
+  _moveSuggestSeq++;
+  $('examMoveSuggestStatus').textContent = '';
+  $('examMoveSuggestStatus').classList.remove('is-error');
+  $('examMoveSuggestList').hidden = true;
+  $('examMoveSuggestList').innerHTML = '';
+  $('examMoveWorse').hidden = true;
+  $('examMoveWorse').open = false;
+  $('examMoveWorseList').innerHTML = '';
+  $('examMoveDialog').classList.remove('et-move-has-options');
+}
+function showMoveSuggestError(message) {
+  $('examMoveSuggestStatus').textContent = MOVE_TEXT.failed(message);
+  $('examMoveSuggestStatus').classList.add('is-error');
+}
+// The options as the server ranked them, kept only where the board on screen
+// has that cell open: a move there is the same move a drag would make.
+function renderMoveSuggestions(code, data) {
+  const cellKey = (day, period) => JSON.stringify([day, period]);
+  const open = new Set((_currentResultData?.slots || []).map(slot => cellKey(slot.day, slot.period)));
+  const options = (Array.isArray(data.options) ? data.options : []).filter(option =>
+    option && open.has(cellKey(option.day, option.period)) && !lockMoveProblem(code, option.day, option.period));
+  const keep = options.filter(option => option.verdict === 'better' || option.verdict === 'same');
+  const worse = options.filter(option => !keep.includes(option));
+  const better = keep.filter(option => option.verdict === 'better').length;
+  $('examMoveSuggestStatus').textContent = !options.length ? MOVE_TEXT.noOther()
+    : keep.length ? MOVE_TEXT.summary(better, keep.length - better, worse.length) : MOVE_TEXT.noneAsGood();
+  _moveSuggestOptions = options;
+  $('examMoveSuggestList').innerHTML = keep.map(option => moveOptionMarkup(option, options.indexOf(option))).join('');
+  $('examMoveSuggestList').hidden = !keep.length;
+  $('examMoveWorseList').innerHTML = worse.map(option => moveOptionMarkup(option, options.indexOf(option))).join('');
+  $('examMoveWorseSummary').textContent = MOVE_TEXT.worse(worse.length);
+  $('examMoveWorse').hidden = !worse.length;
+  // Nothing as good: the least harmful times are what there is to choose from.
+  $('examMoveWorse').open = Boolean(worse.length) && !keep.length;
+  $('examMoveDialog').classList.toggle('et-move-has-options', options.length > 0);
+  syncMoveSuggestion();
+}
+// The day and period chosen below, shown as the option they are, if any.
+function syncMoveSuggestion() {
+  const day = $('examMoveDay').value;
+  const period = $('examMovePeriod').value;
+  for (const input of $('examMoveDialog').querySelectorAll('input[name="examMoveSuggestion"]')) {
+    const option = _moveSuggestOptions[Number(input.value)];
+    input.checked = Boolean(option) && option.day === day && option.period === period;
+  }
+}
+async function loadMoveSuggestions(code, payload) {
+  resetMoveSuggestions();
+  const seq = _moveSuggestSeq;
+  // The board asked about: an answer for any other board is not this one's.
+  const signature = editorSignature();
+  const current = () => seq === _moveSuggestSeq && _moveCourseCode === code && $('examMoveDialog').open
+    && signature === editorSignature();
+  if (!payload) {
+    showMoveSuggestError(needsExamSourceRebuild() ? MOVE_TEXT.sourceReview() : ($('etStatus').textContent.trim() || T.reqFailed));
+    return;
+  }
+  $('examMoveSuggestStatus').textContent = MOVE_TEXT.loading();
+  try {
+    const res = await fetch('/ops/exam-timetable/move-options/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() || CSRF },
+      body: JSON.stringify(payload),
+    });
+    const data = await readExamResponse(res);
+    if (!current()) return;
+    if (!res.ok || !data.ok) {
+      const refusal = data.error_code || data.code;
+      if (refusal === 'exam_not_movable') throw new Error(MOVE_TEXT.notMovable());
+      // A refusal with a code is one the page words itself (links, locks,
+      // courses); one without is the server's own English sentence: a
+      // refusal of the board (4xx), or a fault of the server's (5xx).
+      if (!refusal && IS_AR) throw new Error(res.status >= 500 ? MOVE_TEXT.serverFault() : MOVE_TEXT.refused());
+      throw examResponseError(data);
+    }
+    if (data.course_code !== code) throw new Error(T.reqFailed);
+    renderMoveSuggestions(code, data);
+  } catch (err) {
+    if (!current()) return;
+    showMoveSuggestError(err instanceof TypeError
+      ? (IS_AR ? 'تعذّر الوصول إلى الخادم. تحقّق من الاتصال وأعد المحاولة.' : 'Could not reach the server. Check your connection and retry.')
+      : (err?.message || T.reqFailed));
+  }
+}
+function moveSuggestPayload(entry) {
+  const payload = collectLoadedRunPayload('check_draft');
+  if (!payload) return null;
+  return {
+    ...payload,
+    mode: 'move_options',
+    course_code: entry.course_code,
+    course_identity: entry.course_identity || entry.course_code,
+    editor_revision: _editorRevision,
+  };
+}
+$('examMoveDialog')?.addEventListener('change', event => {
+  const input = event.target.closest?.('input[name="examMoveSuggestion"]');
+  if (!input) return;
+  const option = _moveSuggestOptions[Number(input.value)];
+  if (!option) return;
+  $('examMoveDay').value = option.day;
+  $('examMovePeriod').value = option.period;
+  showMoveError('');
+});
+
 function openExamMoveDialog(code) {
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
   if (!entry || _builderBusy || groupPin(code) || !currentExamIsSelected(entry)) return;
   const place = lockedPlaceOf(code);
   if (place) { refuseLockedEdit(LOCK_TEXT.lockedOut(code, place.day, place.period)); return; }
+  // Read before the dialog opens: a refusal it writes to the page must not
+  // take focus from inside the dialog.
+  const suggestPayload = moveSuggestPayload(entry);
   _moveCourseCode = entry.course_code;
   showMoveError('');
   const members = linkedCodes(code);
@@ -6226,12 +6457,16 @@ function openExamMoveDialog(code) {
   $('examMoveDay').value = entry.day === 'OVERFLOW' ? '' : entry.day;
   $('examMovePeriod').value = entry.day === 'OVERFLOW' ? '' : entry.period;
   const dialog = $('examMoveDialog');
+  resetMoveSuggestions();
   if (dialog.showModal) dialog.showModal();
   else dialog.setAttribute('open', '');
   $('examMoveDay').focus();
+  loadMoveSuggestions(entry.course_code, suggestPayload);
 }
 function closeExamMoveDialog({ reveal = false } = {}) {
   const dialog = $('examMoveDialog');
+  // An answer still on its way finds the dialog closed, and is dropped.
+  _moveSuggestOptions = [];
   if (dialog?.close) dialog.close();
   else dialog?.removeAttribute('open');
   const chip = [...$('schedGrid').querySelectorAll('.et-course')].find(item => item.dataset.course === _moveCourseCode);
@@ -6246,7 +6481,10 @@ function showMoveError(message) {
   error.textContent = message;
   error.hidden = !message;
 }
-['examMoveDay', 'examMovePeriod'].forEach(id => $(id)?.addEventListener('change', () => showMoveError('')));
+['examMoveDay', 'examMovePeriod'].forEach(id => $(id)?.addEventListener('change', () => {
+  showMoveError('');
+  syncMoveSuggestion();
+}));
 $('confirmExamMove')?.addEventListener('click', () => {
   const day = $('examMoveDay').value;
   const period = $('examMovePeriod').value;

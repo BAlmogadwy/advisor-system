@@ -22,6 +22,8 @@ const courses = [
   { course_code: 'CS111 (1)', source_course_code: 'CS111', course_name: 'Fundamentals of Programming', course_identity: 'cs111-fundamentals', enrolled_count: 31, credit_hours: 3, programs: ['AI'] },
   { course_code: 'CS111 (2)', source_course_code: 'CS111', course_name: 'Programming I', course_identity: 'cs111-programming', enrolled_count: 14, credit_hours: 3, programs: ['CS'], is_online: true },
 ];
+// The move-options answer for a board with no other open time.
+const noMoveOptions = body => ({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false });
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function savedRun(periods = ['08:00-10:00', '10:30-12:30', '13:00-15:00']) {
@@ -57,7 +59,7 @@ function disposer(dom, errors) {
   };
 }
 
-async function page(t, { history = [], initialCourses = courses, run = null, loadCourses = true, onRequest = null, liveUpdate = true, realDialogs = false, committee = false, activeJob = { ok: true, job: null }, poll = {}, browserFocus = false } = {}) {
+async function page(t, { history = [], initialCourses = courses, run = null, loadCourses = true, onRequest = null, liveUpdate = true, realDialogs = false, committee = false, activeJob = { ok: true, job: null }, poll = {}, browserFocus = false, cardClickDelay = 0 } = {}) {
   const errors = [];
   const console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error));
@@ -126,6 +128,8 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
       const payload = JSON.parse(options.body);
       data = evaluatedRun(payload, run || savedRun());
     }
+    // Opening the Move dialog asks for the other times, ranked: none, unless a test says.
+    else if (url === '/ops/exam-timetable/move-options/') data = noMoveOptions(JSON.parse(options.body));
     else if (url === '/ops/exam-timetable/build/') data = { ok: false, error: 'Fixture ends at request validation' };
     else if (isActive(url)) data = activeJob;
     else {
@@ -143,6 +147,8 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
   vm.runInContext(reviewSource, dom.getInternalVMContext(), { filename: 'exam-review.js' });
   // A job's polls wait nothing here; the page's own waits are for a real server.
   window.__examJobPoll = { first: 0, quick: 0, steady: 0, slow: 0, slowAfter: 0, announce: 0, reveal: 0, stall: 0, minShown: 0, backoff: [0, 0, 0, 0], timeout: 2000, checkRetry: 30, ...poll };
+  // A card click waits this long for a second click (a double-click pins).
+  window.__examCardClickDelay = cardClickDelay;
   vm.runInContext(`const LANGUAGE_CODE = ${JSON.stringify(language)};\n${source}`, dom.getInternalVMContext(), { filename: 'page-exam-timetable.js' });
   const $ = id => window.document.getElementById(id);
   const emit = (element, type) => element.dispatchEvent(new window.Event(type, { bubbles: true }));
@@ -1717,6 +1723,230 @@ test('Move dialog supplies keyboard/touch placement controls using the same undo
   assert.deepEqual(placement(ui), ['Wed', '13:00-15:00']);
 });
 
+// ── Other times for an exam: the ranked list in the Move dialog ─────────────
+const LEVEL_NAMES = ['rule_breaks', 'unseated', 'seats_short', 'staff_excess', 'over_limit', 'heavy_day', 'multi_exam_day', 'spacing'];
+const moveOption = (day, period, verdict, changes = {}, extra = {}) => ({
+  day, period, slot_index: 0, verdict, levels: {},
+  changes: { ...Object.fromEntries(LEVEL_NAMES.map(level => [level, 0])), ...changes },
+  clashes_with: [], same_day_with: [], ...extra,
+});
+const rankedAnswer = (body, options) => ({ ...noMoveOptions(body), current: { day: 'Sun', period: '10:30-12:30', levels: {} }, options });
+const moveOptionRequests = ui => ui.requests.filter(request => request.url === '/ops/exam-timetable/move-options/');
+const suggestRows = (ui, id = 'examMoveSuggestList') => Array.from(ui.$(id).querySelectorAll('.et-move-option'));
+const rowWhen = row => row.querySelector('.et-move-option-when').textContent;
+// A click on the card body, as the board receives one (the delay is 0 here).
+async function clickCard(ui, code = courses[1].course_code) {
+  examChip(ui, code).querySelector('.et-course-code').dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  await pause(5);
+  await settle();
+}
+const RANKED = [
+  moveOption('Mon', '08:00-10:00', 'better', { multi_exam_day: -4, spacing: 100 }),
+  moveOption('Tue', '13:00-15:00', 'same'),
+  moveOption('Wed', '10:30-12:30', 'worse', { rule_breaks: 1, multi_exam_day: 2 }, { clashes_with: [{ courses: [courses[0].course_code], students: 12 }] }),
+];
+const answering = options => async (url, request) => url === '/ops/exam-timetable/move-options/' ? response(rankedAnswer(JSON.parse(request.body), options)) : undefined;
+
+test('clicking a course card opens Move with its other times ranked, better and unchanged first', async t => {
+  const ui = await loadedEditor(t, { onRequest: answering(RANKED) });
+  await clickCard(ui);
+  assert.equal(ui.$('examMoveDialog').open, true);
+  assert.match(ui.$('examMoveTitle').textContent, /Programming I/);
+  assert.equal(ui.window.document.activeElement, ui.$('examMoveDay'), 'Focus starts where it always did');
+  const [request] = moveOptionRequests(ui);
+  const body = JSON.parse(request.body);
+  assert.equal(body.course_code, courses[1].course_code);
+  assert.equal(body.course_identity, courses[1].course_identity);
+  assert.equal(body.previous_run_id, 17);
+  assert.deepEqual(body.base_schedule.map(entry => [entry.course_code, entry.day, entry.period]),
+    [[courses[0].course_code, 'Sun', '08:00-10:00'], [courses[1].course_code, 'Sun', '10:30-12:30']]);
+  assert.equal(typeof body.editor_revision, 'number');
+  assert.equal(ui.$('examMoveSuggestStatus').textContent,
+    language === 'ar' ? 'أفضل: 1 · دون تغيير: 1 · أسوأ: 1' : 'Better: 1 · No change: 1 · Worse: 1');
+  const rows = suggestRows(ui);
+  assert.deepEqual(rows.map(rowWhen), ['Mon · 08:00-10:00', 'Tue · 13:00-15:00']);
+  assert.deepEqual(rows.map(row => row.className), ['et-move-option is-better', 'et-move-option is-same']);
+  assert.deepEqual(rows.map(row => row.querySelector('.et-move-verdict').textContent), language === 'ar' ? ['أفضل', 'دون تغيير'] : ['Better', 'No change']);
+  // Each change says which way it went, in the words of Optimize's report.
+  const changes = Array.from(rows[0].querySelectorAll('.et-move-change'));
+  assert.deepEqual(changes.map(change => change.className), ['et-move-change is-better', 'et-move-change is-worse']);
+  assert.equal(changes[0].textContent, language === 'ar' ? '−4 طلاب لديهم اختباران أو أكثر في يوم واحد' : '−4 Students with 2+ exams in a day');
+  assert.match(changes[1].textContent, language === 'ar' ? /أكثر تقارباً/ : /closer together/);
+  assert.equal(rows[1].querySelector('.et-move-changes').textContent, language === 'ar' ? 'لا يتغير أي عدد' : 'No count changes');
+  // Worse times wait, closed, below - each with what it would break.
+  assert.equal(ui.$('examMoveWorse').hidden, false);
+  assert.equal(ui.$('examMoveWorse').open, false);
+  assert.match(ui.$('examMoveWorseSummary').textContent, /\(1\)$/);
+  const [worse] = suggestRows(ui, 'examMoveWorseList');
+  assert.equal(rowWhen(worse), 'Wed · 10:30-12:30');
+  assert.match(worse.querySelector('.et-move-detail').textContent, language === 'ar' ? /CS111 \(1\).*12 طالباً/ : /Clashes at this time with CS111 \(1\) \(12 students\)/);
+  assert.equal(ui.$('examEditorRequestError')?.hidden ?? true, true);
+});
+
+test('choosing a ranked time fills in the day and period, and Move exam moves it there in one Undo step', async t => {
+  const ui = await loadedEditor(t, { onRequest: answering(RANKED) });
+  examChip(ui).querySelector('[data-exam-move]').click();
+  await settle();
+  const [better, same] = suggestRows(ui);
+  better.querySelector('input').click();
+  assert.equal(ui.$('examMoveDay').value, 'Mon');
+  assert.equal(ui.$('examMovePeriod').value, '08:00-10:00');
+  // The day and period chosen below show as the listed time they are, if any.
+  ui.select('examMoveDay', 'Tue');
+  ui.select('examMovePeriod', '13:00-15:00');
+  assert.equal(same.querySelector('input').checked, true);
+  assert.equal(better.querySelector('input').checked, false);
+  ui.select('examMoveDay', 'Thu');
+  assert.equal(ui.$('examMoveDialog').querySelectorAll('input[name="examMoveSuggestion"]:checked').length, 0);
+  better.querySelector('input').click();
+  ui.$('confirmExamMove').click();
+  assert.equal(ui.$('examMoveDialog').open, false);
+  assert.deepEqual(placement(ui), ['Mon', '08:00-10:00']);
+  ui.$('undoExamBtn').click();
+  assert.deepEqual(placement(ui), ['Sun', '10:30-12:30']);
+});
+
+test('with no time as good, the least harmful times are open to choose from', async t => {
+  const ui = await loadedEditor(t, { onRequest: answering([RANKED[2]]) });
+  await clickCard(ui);
+  assert.match(ui.$('examMoveSuggestStatus').textContent, language === 'ar' ? /لا يوجد وقت آخر يُبقي الجدول بالجودة نفسها/ : /No other time keeps the timetable as good/);
+  assert.equal(ui.$('examMoveSuggestList').hidden, true);
+  assert.equal(ui.$('examMoveWorse').open, true);
+  assert.equal(suggestRows(ui, 'examMoveWorseList').length, 1);
+});
+
+test('times the board on screen has no cell for are never offered', async t => {
+  const ui = await loadedEditor(t, { onRequest: answering([moveOption('Fri', '08:00-10:00', 'better'), RANKED[1]]) });
+  await clickCard(ui);
+  assert.deepEqual(suggestRows(ui).map(rowWhen), ['Tue · 13:00-15:00']);
+  assert.equal(ui.$('examMoveSuggestStatus').textContent, language === 'ar' ? 'أفضل: 0 · دون تغيير: 1 · أسوأ: 0' : 'Better: 0 · No change: 1 · Worse: 0');
+});
+
+test('an answer for an earlier opening of the dialog, or for an edited board, is dropped', async t => {
+  const pending = [];
+  const ui = await loadedEditor(t, { onRequest: (url, request) => url === '/ops/exam-timetable/move-options/'
+    ? new Promise(resolve => pending.push(options => resolve(response(rankedAnswer(JSON.parse(request.body), options)))))
+    : undefined });
+  examChip(ui).querySelector('[data-exam-move]').click();
+  ui.$('cancelExamMove').click();
+  examChip(ui).querySelector('[data-exam-move]').click();
+  assert.equal(pending.length, 2);
+  pending[1]([RANKED[1]]);
+  await settle(); await settle();
+  pending[0]([RANKED[0]]);
+  await settle(); await settle();
+  assert.deepEqual(suggestRows(ui).map(rowWhen), ['Tue · 13:00-15:00'], 'The first opening answered last and was dropped');
+  // An answer that arrives after the board changed is for another board.
+  ui.$('cancelExamMove').click();
+  examChip(ui).querySelector('[data-exam-move]').click();
+  dropExam(ui, 'Thu', '08:00-10:00', courses[0].course_code);
+  pending[2]([RANKED[0]]);
+  await settle(); await settle();
+  assert.deepEqual(suggestRows(ui).map(rowWhen), []);
+  assert.match(ui.$('examMoveSuggestStatus').textContent, language === 'ar' ? /جارٍ ترتيب/ : /Ranking the other times/);
+});
+
+test('a ranking that fails says so inside the dialog, and the exam can still be moved', async t => {
+  let answer = response({ ok: false, error: 'The ranking fixture failed.' });
+  const ui = await loadedEditor(t, { onRequest: async url => url === '/ops/exam-timetable/move-options/' ? (typeof answer === 'function' ? answer() : answer) : undefined });
+  await clickCard(ui);
+  assert.equal(ui.$('examMoveSuggestStatus').classList.contains('is-error'), true);
+  // The server's own sentence is English: Arabic says it in the page's words.
+  assert.equal(ui.$('examMoveSuggestStatus').textContent, language === 'ar'
+    ? 'تعذّر ترتيب الأوقات الأخرى: لم يقبل الخادم الجدول المعروض كما هو. أعد تحميل الجدول ثم حاول مرة أخرى.'
+    : 'Other times could not be ranked: The ranking fixture failed.');
+  // A fault of the server's is no reason to reload: it is said as what it is.
+  ui.$('cancelExamMove').click();
+  answer = { ok: false, status: 500, json: async () => ({ ok: false, error: 'The timetable could not be produced because of a server error.' }) };
+  await clickCard(ui);
+  assert.equal(ui.$('examMoveSuggestStatus').textContent, language === 'ar'
+    ? 'تعذّر ترتيب الأوقات الأخرى: حدث خطأ في الخادم، ولم يُنقل أو يُحفظ أي شيء. أعد المحاولة.'
+    : 'Other times could not be ranked: The timetable could not be produced because of a server error.');
+  ui.$('cancelExamMove').click();
+  answer = response({ ok: false, error: 'The ranking fixture failed.' });
+  await clickCard(ui);
+  assert.equal(suggestRows(ui).length, 0);
+  ui.select('examMoveDay', 'Wed');
+  ui.$('confirmExamMove').click();
+  assert.deepEqual(placement(ui), ['Wed', '10:30-12:30']);
+  // A pinned or locked exam is said in the page's own words, not the server's.
+  answer = response({ ok: false, error_code: 'exam_not_movable', error: 'Server words.' });
+  await clickCard(ui);
+  assert.equal(ui.$('examMoveSuggestStatus').textContent.includes('Server words.'), false);
+  assert.match(ui.$('examMoveSuggestStatus').textContent, language === 'ar' ? /مثبت أو في خلية مقفلة/ : /pinned or in a locked cell/);
+  ui.$('cancelExamMove').click();
+  // An answer about another exam is no answer for this one.
+  answer = async () => response({ ...rankedAnswer({ course_code: courses[0].course_code }, RANKED) });
+  await clickCard(ui);
+  assert.equal(ui.$('examMoveSuggestStatus').textContent, language === 'ar' ? 'تعذّر ترتيب الأوقات الأخرى: فشل الطلب' : 'Other times could not be ranked: Request failed');
+  assert.equal(suggestRows(ui).length, 0);
+  ui.$('cancelExamMove').click();
+  // Unreachable: said as such, and the status is no longer the old answer.
+  answer = () => { throw new ui.window.TypeError('Failed to fetch'); };
+  await clickCard(ui);
+  assert.match(ui.$('examMoveSuggestStatus').textContent, language === 'ar' ? /تعذّر الوصول إلى الخادم/ : /Could not reach the server/);
+});
+
+test('a double-click on a card pins it and opens nothing; its own buttons open nothing either', async t => {
+  const ui = await loadedEditor(t, { cardClickDelay: 40 });
+  // Asked for each time: a pin re-draws the board and replaces the card.
+  const fire = (type, detail) => examChip(ui).querySelector('.et-course-code').dispatchEvent(new ui.window.MouseEvent(type, { bubbles: true, detail }));
+  fire('click', 1);
+  fire('click', 2);
+  fire('dblclick', 2);
+  assert.equal(examChip(ui).querySelector('[data-exam-pin]').getAttribute('aria-pressed'), 'true');
+  await pause(80);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  examChip(ui).querySelector('[data-exam-pin]').click();
+  await pause(80);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  assert.equal(moveOptionRequests(ui).length, 0);
+  // The second click of a double-click whose dblclick went elsewhere opens nothing.
+  fire('click', 1);
+  fire('click', 2);
+  await pause(80);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  // A card's other buttons are their own (shared students, the student list):
+  // a click on one reaches the board too, and still opens no Move.
+  examChip(ui).querySelector('[data-exam-related]').dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  await pause(80);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  assert.equal(moveOptionRequests(ui).length, 0);
+  // Anything else done on the board while a click waits ends the wait:
+  // its Pin button, or a press that became a drag.
+  fire('click', 1);
+  examChip(ui).querySelector('[data-exam-pin]').click();
+  examChip(ui).querySelector('[data-exam-pin]').click();
+  await pause(80);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  fire('click', 1);
+  const start = new ui.window.Event('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(start, 'dataTransfer', { value: { setData() {}, effectAllowed: '' } });
+  examChip(ui).dispatchEvent(start);
+  await pause(80);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  examChip(ui).dispatchEvent(new ui.window.Event('dragend', { bubbles: true }));
+  assert.equal(moveOptionRequests(ui).length, 0);
+  // One click alone opens it, once the wait is over.
+  fire('click', 1);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  await pause(80);
+  await settle();
+  assert.equal(ui.$('examMoveDialog').open, true);
+  assert.equal(moveOptionRequests(ui).length, 1);
+});
+
+test('a pinned card says on the board that it stays where it is, instead of opening Move', async t => {
+  const ui = await loadedEditor(t, { run: savedRun() });
+  await clickCard(ui, courses[0].course_code);
+  assert.equal(ui.$('examMoveDialog').open, false);
+  // Said where the registrar is: the setup section, and its status line, are closed.
+  assert.equal(ui.$('examLockRefusal').hidden, false);
+  assert.equal(ui.$('examLockRefusal').getAttribute('role'), 'alert');
+  assert.match(ui.$('examLockRefusalText').textContent, language === 'ar' ? /هذا الاختبار مثبت. ألغِ تثبيته/ : /This exam is pinned. Unpin it to see other times/);
+  assert.equal(moveOptionRequests(ui).length, 0);
+});
+
 test('the fixed-time editor changes pin and placement in one Undo/Redo operation', async t => {
   const ui = await loadedEditor(t, { run: savedRun() });
   ui.select('examPinCourse', courses[0].course_code);
@@ -2584,7 +2814,8 @@ for (const type of ['overload', 'heavy', 'room-unassigned', 'room-double']) {
     assert.deepEqual(placement(ui), ['Thu', '10:30-12:30']);
     assert.deepEqual(placement(ui, courses[0].course_code), ['Sun', '08:00-10:00']);
     assert.equal(ui.$('examPinRows').querySelectorAll('tr').length, 0);
-    assert.equal(ui.requests.length, requests);
+    // The dialog asked for the other times, ranked; the move itself sends nothing.
+    assert.deepEqual(ui.requests.slice(requests).map(request => request.url), ['/ops/exam-timetable/move-options/']);
     assert.equal(ui.$('undoExamBtn').disabled, false);
     assert.equal(drillAction(ui, 'move').disabled, true, 'Details become stale immediately after the move');
     assert.equal(ui.$('examDrillNotice').hidden, false);
@@ -3503,7 +3734,10 @@ test('both Move dialog cancel paths preserve placement, focus and saved state', 
     assert.equal(ui.$('saveLoadedBtn').disabled, true);
     assert.equal(ui.$('examMoveDialog').open, false);
   }
-  assert.equal(ui.requests.length, requests);
+  // Opening the dialog only asks for the other times, ranked (it changes
+  // nothing); a cancel sends nothing else - no Check, no Save.
+  const sent = ui.requests.slice(requests).map(request => request.url);
+  assert.deepEqual(sent, ['/ops/exam-timetable/move-options/', '/ops/exam-timetable/move-options/']);
 });
 
 test('both Unpin all controls and individual fixed-row removal share undoable pin commands', async t => {
