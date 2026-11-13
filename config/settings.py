@@ -405,6 +405,11 @@ TIMETABLE_FEEDBACK_PROGRAMMES = tuple(
     for code in os.getenv("TIMETABLE_FEEDBACK_PROGRAMMES", "").split(",")
     if code.strip()
 )
+# How long after an answer the student may say it did not help and reopen the
+# case; after it, a new case is the way back.
+TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = int(
+    os.getenv("TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS", "14")
+)
 
 # Django's email settings remain for harmless local/dev compatibility with
 # management commands and tests. Production OTP delivery does not use them.

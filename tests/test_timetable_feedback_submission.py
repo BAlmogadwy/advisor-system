@@ -1282,6 +1282,7 @@ def test_the_way_in_imports_only_what_it_reads_with():
         "core.services.student_helpers",
         "core.services.student_sections",
         "core.services.student_term_timetable",
+        "core.services.timetable_feedback_workflow",
     }
     assert from_student_sections <= {
         "UnknownStudentGender",

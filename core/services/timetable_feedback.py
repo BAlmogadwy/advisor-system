@@ -92,6 +92,7 @@ from core.services.student_term_timetable import (
     TimetableUnavailable,
     read_student_term_timetable,
 )
+from core.services.timetable_feedback_workflow import reopen_target
 
 SNAPSHOT_SCHEMA = 1
 FINGERPRINT_SCHEMA = 1
@@ -966,9 +967,7 @@ def submit_point(
 
         # An answered case is the student's to reopen: a new point puts it back
         # in front of whoever handles it, or back in the queue if nobody does.
-        reopened_to = ""
-        if case.status == S.ANSWERED:
-            reopened_to = S.IN_REVIEW if case.handled_by_id else S.SUBMITTED
+        reopened_to = reopen_target(case) if case.status == S.ANSWERED else ""
         changes: dict[str, Any] = {
             "version": F("version") + 1,
             "last_student_activity_at": now,
