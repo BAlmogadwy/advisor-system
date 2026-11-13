@@ -3060,8 +3060,10 @@ class TimetableFeedbackEvent(models.Model):
 
     An event names the point or message it is about (``point_id``, ``message_id``)
     rather than copying its text: the text lives on that row, and a copy that
-    drifts is worse than a pointer. Bare UUIDs rather than foreign keys, so a
-    history row never blocks, or disappears with, a redaction or a correction.
+    drifts is worse than a pointer. Plain UUIDs, like the message's own pointers:
+    points and messages are never deleted on their own (a redaction rewrites the
+    text, a correction adds a message, and a case takes all three with it), so a
+    foreign key would protect nothing.
     """
 
     Kind = TimetableFeedbackEventKind

@@ -7,9 +7,9 @@ The narrow ``planner (PostgreSQL 16)`` CI job runs them with
 
 The interleaving is forced and then PROVEN. Both writers open their connections
 before either writes. The first writes inside a transaction and holds it open
-until PostgreSQL itself shows the second writer waiting for a lock
-(``pg_locks ... AND NOT granted``, read live), and only then commits. A run in
-which the second writer never waited on the first fails, so a test cannot pass
+until PostgreSQL itself shows the second writer blocked BY THE FIRST
+(``pg_blocking_pids``, read live), and only then commits. A run in which the
+second writer was never blocked by the first fails, so a test cannot pass
 without the race it is named for having happened.
 """
 
@@ -64,11 +64,16 @@ def _race(first_write, second_write):
     warmed = threading.Barrier(2, timeout=TIMEOUT)
     first_written = threading.Event()
     second_done = threading.Event()
-    seen = {"second_pid": None, "second_waited": False}
+    seen = {"first_pid": None, "second_pid": None, "second_waited": False}
+
+    def backend_pid():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_backend_pid()")
+            return cursor.fetchone()[0]
 
     def first():
         try:
-            connection.ensure_connection()
+            seen["first_pid"] = backend_pid()
             warmed.wait()
             with transaction.atomic():
                 outcomes["first"] = first_write()
@@ -76,9 +81,10 @@ def _race(first_write, second_write):
                 deadline = time.monotonic() + HOLD_SECONDS
                 with connection.cursor() as cursor:
                     while time.monotonic() < deadline and not second_done.is_set():
+                        # Blocked by THIS writer, not merely waiting on some lock.
                         cursor.execute(
-                            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = %s AND NOT granted)",
-                            [seen["second_pid"]],
+                            "SELECT %s = ANY(pg_blocking_pids(%s))",
+                            [seen["first_pid"], seen["second_pid"]],
                         )
                         if cursor.fetchone()[0]:
                             seen["second_waited"] = True
@@ -86,16 +92,14 @@ def _race(first_write, second_write):
                         time.sleep(POLL_SECONDS)
         except BaseException as exc:  # noqa: BLE001 - re-raised by the caller below
             outcomes["first"] = exc
+            warmed.abort()  # never leave the other writer waiting at the barrier
         finally:
             first_written.set()  # never leave the second writer waiting on a failure
             connections.close_all()
 
     def second():
         try:
-            connection.ensure_connection()
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_backend_pid()")
-                seen["second_pid"] = cursor.fetchone()[0]
+            seen["second_pid"] = backend_pid()
             warmed.wait()
             assert first_written.wait(TIMEOUT), "the first writer never wrote"
             if isinstance(outcomes.get("first"), BaseException):
@@ -107,6 +111,7 @@ def _race(first_write, second_write):
                 outcomes["second"] = ("refused", str(exc))
         except BaseException as exc:  # noqa: BLE001 - re-raised by the caller below
             outcomes["second"] = exc
+            warmed.abort()  # never leave the other writer waiting at the barrier
         finally:
             second_done.set()
             connections.close_all()
@@ -120,10 +125,17 @@ def _race(first_write, second_write):
     for thread in threads:
         thread.join(timeout=TIMEOUT * 2)
         assert not thread.is_alive(), f"the {thread.name} writer did not finish"
-    for name in ("first", "second"):
-        if isinstance(outcomes.get(name), BaseException):
-            raise outcomes[name]
-    assert seen["second_waited"], "the second writer never waited on the first, so nothing raced"
+    errors = [
+        outcomes[n] for n in ("first", "second") if isinstance(outcomes.get(n), BaseException)
+    ]
+    # A writer that failed breaks the barrier for the other; report the cause, not
+    # the BrokenBarrierError it left behind.
+    causes = [e for e in errors if not isinstance(e, threading.BrokenBarrierError)]
+    if causes or errors:
+        raise (causes or errors)[0]
+    assert seen["second_waited"], (
+        "the second writer was never blocked by the first, so nothing raced"
+    )
     return outcomes["first"], outcomes["second"]
 
 
