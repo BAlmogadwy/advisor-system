@@ -49,6 +49,9 @@ TELEGRAM_REFUSAL_NOTICE = "telegram_refusal_notice"
 STUDENT_OTP_SEND = "student_otp_send"
 STUDENT_OTP_VERIFY = "student_otp_verify"
 SENDGRID_SUBMISSION = "sendgrid_submission"
+TIMETABLE_FEEDBACK_ATTEMPT = "timetable_feedback_attempt"
+TIMETABLE_FEEDBACK = "timetable_feedback"
+TIMETABLE_FEEDBACK_DAILY = "timetable_feedback_daily"
 
 #: (max_calls, window_seconds), justified where they are used.
 LIMITS: dict[str, tuple[int, int]] = {
@@ -118,6 +121,15 @@ LIMITS: dict[str, tuple[int, int]] = {
     # values at runtime; this default also makes retention aware of the longest
     # normal counter window.
     SENDGRID_SUBMISSION: (4700, 86_400),
+    # Timetable feedback. Every submission rebuilds the student's forecast before
+    # anything is checked, so attempts are counted first and generously: a
+    # student correcting a refused form a few times is normal, a script is not.
+    TIMETABLE_FEEDBACK_ATTEMPT: (30, 3600),
+    # Accepted points, duplicates included, cost an advisor's attention. Five an
+    # hour covers a careful student going through their timetable section by
+    # section; ten a day caps what one student can put in one advisor's queue.
+    TIMETABLE_FEEDBACK: (5, 3600),
+    TIMETABLE_FEEDBACK_DAILY: (10, 86_400),
 }
 
 

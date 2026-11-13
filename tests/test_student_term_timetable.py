@@ -99,6 +99,18 @@ def test_presence_is_reported_per_snapshot():
     assert _timetable(forecast=[_meeting("SA101")]).has_registration is False
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"), [("registration_plan_1448_t1", "expected"), ("planner", "working")]
+)
+def test_the_forecast_says_where_it_came_from(source, expected):
+    assert _timetable(forecast=[{**_meeting("SA101"), "source": source}]).forecast_class == expected
+
+
+def test_a_term_with_no_forecast_says_so():
+    registered = [{**_meeting("SA101"), "source": "scraper_timetable"}]
+    assert _timetable(registered=registered).forecast_class == "none"
+
+
 def test_an_empty_term_names_its_term_as_text():
     empty = StudentTermTimetable.empty(1448, 1)
     assert (empty.academic_year, empty.term) == ("1448", "1")
