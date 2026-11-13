@@ -632,7 +632,7 @@ def test_a_failed_read_of_the_configured_term_degrades_to_no_timetable(
     assert not any("fallback" in message for message in messages)
 
 
-def test_a_failed_read_of_the_fallback_term_keeps_its_label_and_draws_nothing(
+def test_failed_reads_of_both_terms_keep_the_fallback_label_and_draw_nothing(
     world, monkeypatch, failing_term_read, caplog
 ):
     _link(world, "SA101-M1", REGISTRAR, year="1447", term="2")
