@@ -1441,7 +1441,7 @@ def test_a_new_point_after_the_window_closes_the_answer_and_opens_a_new_case(wor
     old = TimetableFeedback.objects.get(reference=first.reference)
     assert (old.status, old.close_reason) == ("CLOSED", "NO_REPLY_AFTER_ANSWER")
     assert old.closed_at is not None
-    assert list(old.events.filter(kind="STATUS_CHANGED").values_list("from_value", "to_value")) == [
+    assert list(old.events.filter(kind="AUTO_CLOSED").values_list("from_value", "to_value")) == [
         ("ANSWERED", "CLOSED")
     ]
     assert not old.events.filter(kind="REOPENED").exists()
@@ -1479,11 +1479,27 @@ def test_a_settled_answer_at_the_term_cap_refuses_the_point_and_is_left_as_it_wa
     _answered(first.reference, days_ago=30)
     version = TimetableFeedback.objects.get(reference=first.reference).version
 
+    def spent():
+        return dict(
+            rate_limit.RateLimitBucket.objects.filter(key__endswith=f":{SID}").values_list(
+                "key", "count"
+            )
+        )
+
+    before = spent()
     _refused("TOO_MANY_CASES", **_base(world, reason="TIME_UNSUITABLE"))
+    after = spent()
 
     old = TimetableFeedback.objects.get(reference=first.reference)
     assert (old.status, old.version, old.close_reason) == ("ANSWERED", version, "")
-    assert not old.events.filter(kind="STATUS_CHANGED").exists()
+    assert not old.events.filter(kind="AUTO_CLOSED").exists()
+    # Refused before the success budgets, as a refused new case always is: only
+    # the attempt was counted.
+    attempt = f"{rate_limit.TIMETABLE_FEEDBACK_ATTEMPT}:{SID}"
+    assert after[attempt] == before[attempt] + 1
+    assert {k: v for k, v in after.items() if k != attempt} == {
+        k: v for k, v in before.items() if k != attempt
+    }
 
 
 def test_a_note_of_only_invisible_marks_counts_as_no_note(world):

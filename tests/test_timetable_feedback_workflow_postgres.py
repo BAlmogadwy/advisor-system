@@ -12,6 +12,7 @@ there and are required in the ``planner (PostgreSQL 16)`` job.
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth.models import User
@@ -162,6 +163,39 @@ def test_two_points_withdrawn_at_once_never_empty_the_case():
     case.refresh_from_db()
     assert case.version == 1
     assert list(case.events.values_list("kind", "point_id")) == [("POINT_WITHDRAWN", kept_first.pk)]
+
+
+def test_two_points_racing_past_a_settled_answer_share_the_new_case():
+    """The student is one case short of the term's cap, and their open case is an
+    answer past its window. The first point closes it and opens a new case. The
+    second waited on the answered case's lock, so its locked read finds nothing:
+    the new case is newer than that read. Reading again, it joins the new case
+    rather than counting it towards the cap and being refused."""
+    anchor = seed_one_section_student()
+    TimetableFeedback.objects.create(
+        student_id=SID, academic_year=YEAR, term=TERM, status="CLOSED", close_reason="OTHER"
+    )
+    settled = _case("ANSWERED", answered_at=timezone.now() - timedelta(days=30))
+
+    first, second = _race(
+        _racer(feedback.submit_point, **_fields_for(anchor, "TIME_CLASH")),
+        _racer(feedback.submit_point, **_fields_for(anchor, "TIME_UNSUITABLE")),
+    )
+
+    assert first.created_case is True
+    assert (second.reference, second.created_case, second.duplicate) == (
+        first.reference,
+        False,
+        False,
+    )
+    settled.refresh_from_db()
+    assert (settled.status, settled.close_reason) == ("CLOSED", "NO_REPLY_AFTER_ANSWER")
+    new = TimetableFeedback.objects.get(reference=first.reference)
+    assert sorted(new.points.values_list("reason_code", flat=True)) == [
+        "TIME_CLASH",
+        "TIME_UNSUITABLE",
+    ]
+    assert TimetableFeedback.objects.count() == 3
 
 
 def test_two_claims_through_a_joined_scope_cannot_both_win():

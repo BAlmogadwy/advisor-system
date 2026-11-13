@@ -44,7 +44,6 @@ from django.db.models import F, QuerySet
 from django.utils import timezone
 
 from core.models import (
-    TIMETABLE_FEEDBACK_TERMINAL_STATUSES,
     TimetableFeedback,
     TimetableFeedbackEvent,
     TimetableFeedbackMessage,
@@ -104,6 +103,16 @@ _TEXT_WHITESPACE = frozenset({chr(9), chr(10), chr(13)})
 #: The statuses a follow-up may be added in. Waiting on the student, the case
 #: wants a REPLY; answered, it wants a confirmation or a reopening.
 FOLLOW_UP_STATUSES = frozenset({S.SUBMITTED, S.IN_REVIEW, S.FORWARDED})
+#: The statuses a single point may be withdrawn in: before an answer. An answer
+#: covers the case as it stood, so afterwards it is accepted, reopened or
+#: withdrawn whole.
+POINT_WITHDRAWAL_STATUSES = frozenset({S.SUBMITTED, S.IN_REVIEW, S.NEEDS_INFORMATION, S.FORWARDED})
+#: Characters that render as nothing although Unicode files them as letters or
+#: symbols: the Hangul fillers and the blank Braille pattern.
+_BLANK_LOOKING = frozenset({0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800})
+#: Categories that show nothing on their own: format marks, and combining marks
+#: with no letter to sit on.
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Mn", "Me"})
 
 
 class WorkflowRefused(Exception):
@@ -153,6 +162,8 @@ def cas_transition(
         raise TypeError("cas_transition takes a new status only as to_status")
     if to_status == S.CLOSED and not changes.get("close_reason"):
         raise ValueError("a move to CLOSED needs a close_reason")
+    if to_status != S.CLOSED and changes.get("close_reason"):
+        raise ValueError("only a move to CLOSED takes a close_reason")
     if to_status is not None:
         if not may_move(actor, case.status, to_status):
             raise WorkflowRefused("NOT_ALLOWED")
@@ -172,10 +183,10 @@ def answer_window_passed(case: TimetableFeedback, now: datetime) -> bool:
 
     Inside the window the answered case is still the student's to reopen, by
     saying the answer did not help or by raising a new point. After it the answer
-    stands: the case is closed the next time the student acts on it, and a new
-    point opens a new case. A case marked answered without ``answered_at`` (set by
-    hand, say) is timed from its last change: neither refused outright nor open
-    for ever."""
+    stands: a new point closes the case and opens a new one, and the scheduled
+    lifecycle command will close the rest. Staff must set ``answered_at`` with
+    every answer. A case marked answered without it (set by hand, say) is timed
+    from its last change: neither refused outright nor open for ever."""
     answered_at = case.answered_at or case.updated_at
     return now - answered_at > timedelta(days=settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS)
 
@@ -196,7 +207,7 @@ def close_settled_answer(case: TimetableFeedback, *, now: datetime) -> None:
     )
     _event(
         case,
-        TimetableFeedbackEvent.Kind.STATUS_CHANGED,
+        TimetableFeedbackEvent.Kind.AUTO_CLOSED,
         from_value=S.ANSWERED,
         to_value=S.CLOSED,
     )
@@ -223,9 +234,15 @@ def body_script(text: str) -> str:
 
 
 def visible(text: str) -> bool:
-    """Whether ``text`` shows anything: more than spaces and invisible format marks
-    (zero-width spaces, direction marks, a byte-order mark)."""
-    return any(not ch.isspace() and unicodedata.category(ch) != "Cf" for ch in text)
+    """Whether ``text`` shows anything: more than spaces, invisible format marks
+    (zero-width spaces, direction marks, a byte-order mark), combining marks on
+    their own, and the few letters and symbols that render blank."""
+    return any(
+        not ch.isspace()
+        and unicodedata.category(ch) not in _INVISIBLE_CATEGORIES
+        and ord(ch) not in _BLANK_LOOKING
+        for ch in text
+    )
 
 
 def storable(text: str) -> bool:
@@ -272,13 +289,26 @@ def _spend(student_id: int, now: datetime) -> None:
         raise WorkflowRefused("RATE_LIMITED", status=429, retry_after=decision.retry_after)
 
 
+def case_reference(value: object) -> str:
+    """A case reference as typed, normalised (TTF-2026-00012), or '' when the text
+    cannot be one. Anything else, a lone surrogate included, never reaches a
+    query, where it could only fail to encode."""
+    reference = str(value or "").strip().upper()
+    prefix, _, rest = reference.partition("-")
+    year, _, number = rest.partition("-")
+    digits = year + number
+    if prefix == "TTF" and len(year) == 4 and number and digits.isascii() and digits.isdigit():
+        return reference
+    return ""
+
+
 def _own_case(student_id: int, reference: object) -> TimetableFeedback:
     """The student's case by reference, under its row lock, or CASE_NOT_FOUND."""
+    wanted = case_reference(reference)
     case = (
-        _student_scope(student_id)
-        .select_for_update()
-        .filter(reference=str(reference or "").strip().upper())
-        .first()
+        _student_scope(student_id).select_for_update().filter(reference=wanted).first()
+        if wanted
+        else None
     )
     if case is None:
         raise WorkflowRefused("CASE_NOT_FOUND", status=404)
@@ -361,8 +391,9 @@ def follow_up(
 def withdraw_point(
     *, student_id: int, reference: object, point_id: object, now: datetime | None = None
 ) -> None:
-    """Take one point back. The last live point is never withdrawn alone: an empty
-    case in an advisor's queue helps nobody, so the case is withdrawn instead."""
+    """Take one point back, before the case is answered. The last live point is
+    never withdrawn alone: an empty case in an advisor's queue helps nobody, so the
+    case is withdrawn instead."""
     now = now or timezone.now()
     try:
         wanted = uuid.UUID(str(point_id))
@@ -371,7 +402,7 @@ def withdraw_point(
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
-        if case.status in TIMETABLE_FEEDBACK_TERMINAL_STATUSES:
+        if case.status not in POINT_WITHDRAWAL_STATUSES:
             raise WorkflowRefused("NOT_ALLOWED")
         live = case.points.filter(withdrawn_at__isnull=True)
         point = live.filter(pk=wanted).first()

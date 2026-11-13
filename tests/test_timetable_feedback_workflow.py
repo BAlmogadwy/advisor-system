@@ -231,6 +231,29 @@ def test_closing_without_a_reason_is_refused_before_the_database_is_asked():
     assert _state(case) == ("ANSWERED", 0)
 
 
+@pytest.mark.parametrize("to_status", ["IN_REVIEW", None])
+def test_a_close_reason_without_closing_is_refused_before_the_database_is_asked(to_status):
+    case = _case("SUBMITTED")
+    with pytest.raises(ValueError, match="close_reason"):
+        workflow.cas_transition(
+            _scope(),
+            case,
+            actor="STAFF",
+            now=timezone.now(),
+            to_status=to_status,
+            close_reason="DUPLICATE",
+        )
+    assert _state(case) == ("SUBMITTED", 0)
+
+
+def test_an_empty_close_reason_is_no_reason_at_all():
+    case = _case("SUBMITTED")
+    workflow.cas_transition(
+        _scope(), case, actor="STAFF", now=timezone.now(), to_status="IN_REVIEW", close_reason=""
+    )
+    assert _state(case) == ("IN_REVIEW", 1)
+
+
 def test_a_claim_through_a_scope_that_joins_another_table_keeps_to_that_scope():
     """Staff will claim through scopes like "cases handled by active staff". The
     PostgreSQL race file proves such a claim still refuses a stale version."""
@@ -272,6 +295,11 @@ def test_a_claim_through_a_scope_that_joins_another_table_keeps_to_that_scope():
         (chr(0xFEFF) + " " + chr(0x200F), "BODY_REQUIRED"),
         # A lone surrogate, as a JSON body can carry: no driver can encode it.
         ("ok " + chr(0xD800), "BODY_INVALID"),
+        # Blank-looking letters and symbols, and combining marks with no letter.
+        (chr(0x3164) + chr(0x115F), "BODY_REQUIRED"),
+        (chr(0x2800) * 3, "BODY_REQUIRED"),
+        (chr(0xFE0F), "BODY_REQUIRED"),
+        (chr(0x034F) + chr(0x064E), "BODY_REQUIRED"),
     ],
 )
 def test_student_text_is_refused_unless_visible_bounded_and_storable(text, code):
@@ -285,6 +313,28 @@ def test_student_text_keeps_its_line_breaks_its_marks_and_its_full_length():
     assert workflow.clean_student_text(longest) == longest
     marked = chr(0x200F) + "مرحبا" + chr(0x200E)
     assert workflow.clean_student_text(marked) == marked
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Arabic with tashkeel and tatweel, and Arabic-Indic digits.
+        chr(0x0645) + chr(0x064E) + chr(0x0640) + chr(0x0631) + chr(0x062D) + chr(0x0628),
+        chr(0x0661) + chr(0x0662) + chr(0x0663),
+        # A zero-width non-joiner inside a word.
+        "mi" + chr(0x200C) + "crowave",
+        # An emoji with its variation selector, a ZWJ family, a flag, a keycap.
+        "ok " + chr(0x2764) + chr(0xFE0F),
+        chr(0x1F468) + chr(0x200D) + chr(0x1F469) + chr(0x200D) + chr(0x1F467),
+        chr(0x1F1F8) + chr(0x1F1E6),
+        "1" + chr(0xFE0F) + chr(0x20E3),
+        # Direction isolates around a course code, and an accented letter.
+        chr(0x2068) + "CS112" + chr(0x2069),
+        "cafe" + chr(0x0301),
+    ],
+)
+def test_legitimate_text_in_either_language_is_kept(text):
+    assert workflow.clean_student_text(text) == text
 
 
 def test_student_text_is_trimmed_before_it_is_measured_and_kept():
@@ -459,9 +509,12 @@ def test_a_point_that_is_not_this_cases_live_point_is_not_found(which):
     )
 
 
-@pytest.mark.parametrize("status", ["CLOSED", "WITHDRAWN"])
-def test_no_point_is_withdrawn_from_a_finished_case(status):
-    case = _case(status)
+@pytest.mark.parametrize("status", ["ANSWERED", "CLOSED", "WITHDRAWN"])
+def test_no_point_is_withdrawn_once_the_case_is_answered_or_finished(status):
+    """An answer covers the case as it stood; afterwards the case is accepted,
+    reopened or withdrawn whole. Withdrawing a point would also move the time an
+    answer without ``answered_at`` is measured from."""
+    case = _case(status, answered_at=timezone.now())
     first = _point(case, 11)
     _point(case, 12)
     _refused(
@@ -471,6 +524,19 @@ def test_no_point_is_withdrawn_from_a_finished_case(status):
         reference=case.reference,
         point_id=str(first.pk),
     )
+    first.refresh_from_db()
+    assert first.withdrawn_at is None
+    assert _state(case) == (status, 0)
+
+
+@pytest.mark.parametrize("status", ["SUBMITTED", "IN_REVIEW", "NEEDS_INFORMATION", "FORWARDED"])
+def test_a_point_may_be_withdrawn_in_any_status_before_the_answer(status):
+    case = _case(status)
+    first = _point(case, 11)
+    _point(case, 12)
+    workflow.withdraw_point(student_id=SID, reference=case.reference, point_id=str(first.pk))
+    first.refresh_from_db()
+    assert first.withdrawn_at is not None
 
 
 @pytest.mark.parametrize("status", OPEN)
@@ -609,7 +675,7 @@ def test_a_settled_answer_is_closed_by_the_system_with_its_reason():
     )
     event = case.events.get()
     assert (event.kind, event.from_value, event.to_value, event.actor_id) == (
-        "STATUS_CHANGED",
+        "AUTO_CLOSED",
         "ANSWERED",
         "CLOSED",
         None,
@@ -671,6 +737,37 @@ def test_a_reference_is_found_however_it_is_typed():
     case = _case()
     workflow.withdraw_case(student_id=SID, reference="  " + case.reference.lower() + " ")
     assert _state(case)[0] == "WITHDRAWN"
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("TTF-2026-00012", "TTF-2026-00012"),
+        (" ttf-2026-00012 ", "TTF-2026-00012"),
+        ("TTF-2026-123456", "TTF-2026-123456"),
+        ("TTF-2026", ""),
+        ("TTF-26-00012", ""),
+        ("XYZ-2026-00012", ""),
+        ("TTF-2026-", ""),
+        # Arabic-Indic digits are digits to Python, but no reference holds them.
+        ("TTF-" + chr(0x0662) + "026-00012", ""),
+        # A lone surrogate never reaches the query, where it could not be encoded.
+        ("TTF-2026-0001" + chr(0xD800), ""),
+        (None, ""),
+    ],
+)
+def test_only_text_shaped_like_a_reference_is_looked_up(typed, expected):
+    assert workflow.case_reference(typed) == expected
+
+
+def test_a_reference_no_driver_can_encode_is_simply_not_found():
+    _case()
+    _refused(
+        "CASE_NOT_FOUND",
+        workflow.withdraw_case,
+        student_id=SID,
+        reference="TTF-2026-0001" + chr(0xDC00),
+    )
 
 
 def test_a_students_actions_share_one_budget(monkeypatch):

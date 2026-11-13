@@ -715,7 +715,12 @@ def _open_case(
     it is closed here, and the point opens a new case under the same caps. A
     refusal undoes the closing with everything else."""
     open_cases = _open_cases(student_id, academic_year, term).select_for_update()
-    case = open_cases.first()
+    # Read twice when the first read finds nothing. If it waited on a case that
+    # was closed meanwhile (a settled answer giving way to a new case), the case
+    # opened in its place is newer than that read's snapshot, and only a fresh
+    # statement sees it. Without the second read this point would count that new
+    # case towards the cap instead of joining it.
+    case = open_cases.first() or open_cases.first()
     if case is not None and case.status == S.ANSWERED and answer_window_passed(case, now):
         close_settled_answer(case, now=now)
         case = None
@@ -943,8 +948,10 @@ def submit_point(
     else:
         request_key = ""
 
-    # g. Before anything is spent; checked again under the lock.
-    if not _open_cases(student_id, academic_year, term).exists():
+    # g. Before anything is spent; checked again under the lock. A settled answer
+    # is about to give way to a new case, so it counts as no open case here.
+    open_now = _open_cases(student_id, academic_year, term).first()
+    if open_now is None or (open_now.status == S.ANSWERED and answer_window_passed(open_now, now)):
         _refuse_a_new_case_if_capped(student_id, academic_year, term, now)
 
     # h.
