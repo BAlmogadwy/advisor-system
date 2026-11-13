@@ -20,6 +20,10 @@ from core.services.student_graduation import REGISTERED_TIMETABLE
 
 playwright = pytest.importorskip("playwright.sync_api")
 sync_playwright = playwright.sync_playwright
+# Focus is checked with the retrying assertion, never with one read of
+# document.activeElement: `autofocus` and the page's own focus calls both land a
+# rendering step or an animation frame after the element is drawn.
+expect = playwright.expect
 
 
 STUDENT_ID = 4_881_765
@@ -173,7 +177,7 @@ class AdminGraduationPlanningBrowserTests(StaticLiveServerTestCase):
         with self._graduation_services():
             self.page.goto(f"{self.live_server_url}{landing_path}")
             student_input = self.page.locator("#adminGraduationStudentId")
-            assert student_input.evaluate("element => element === document.activeElement")
+            expect(student_input).to_be_focused()
             student_input.fill(str(STUDENT_ID))
             student_input.press("Enter")
             self.page.wait_for_url(f"**{result_path}")
@@ -203,7 +207,9 @@ class AdminGraduationPlanningBrowserTests(StaticLiveServerTestCase):
         assert pending.value.status == 400
         assert self.page.locator("#adminGraduationSearchError").get_attribute("role") == "alert"
         assert student_input.get_attribute("aria-invalid") == "true"
-        assert student_input.evaluate("element => element === document.activeElement")
+        # The outcome, whichever puts it there: the re-rendered input's `autofocus`
+        # or the page script's focus on an invalid ID. It fails only with neither.
+        expect(student_input).to_be_focused()
         assert self.page.locator("#advisorGraduationResults").count() == 0
 
     def test_admin_can_build_a_shareable_must_have_scenario_with_keyboard_controls(self):
@@ -264,8 +270,6 @@ class AdminGraduationPlanningBrowserTests(StaticLiveServerTestCase):
         assert pending.value.status == 400
         assert self.page.locator(".ap-grad-term-table").count() == 1
         assert self.page.locator(".advisor-grad-export").count() == 0
-        assert self.page.locator("#adminGradScenarioErrors").evaluate(
-            "element => element === document.activeElement"
-        )
+        expect(self.page.locator("#adminGradScenarioErrors")).to_be_focused()
         assert self.page.locator("#adminGradMustHave").get_attribute("aria-invalid") == "true"
         assert self.page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
