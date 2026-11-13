@@ -9,6 +9,9 @@ The command is dry-run by default.  ``--confirm`` performs one atomic database
 cutover which:
 
 * deletes every adviser conversation and its transcript-owned cascade;
+* deletes every student timetable-feedback case with its points, messages and
+  events (written by test students against a test timetable), while keeping the
+  case-number counter, as the adviser case numbers are kept;
 * preserves Telegram links and update-id receipts, while cancelling active
   QUESTION jobs and removing question/delivery bodies from every QUESTION receipt;
 * deletes WhatsApp channel history while preserving its verified user links;
@@ -43,6 +46,10 @@ from core.models import (
     PlannerDraft,
     Student,
     StudentLoginOTP,
+    TimetableFeedback,
+    TimetableFeedbackEvent,
+    TimetableFeedbackMessage,
+    TimetableFeedbackPoint,
     UserScope,
 )
 from core.services.rbac import (
@@ -126,6 +133,11 @@ def _counts(database: str) -> dict[str, int]:
         "advisor_feedback": AdvisorFeedback.objects.using(database).count(),
         "advisor_escalations": AdvisorEscalation.objects.using(database).count(),
         "advisor_escalation_events": AdvisorEscalationEvent.objects.using(database).count(),
+        # Timetable-feedback rows which must reach zero.
+        "timetable_feedback": TimetableFeedback.objects.using(database).count(),
+        "timetable_feedback_points": TimetableFeedbackPoint.objects.using(database).count(),
+        "timetable_feedback_messages": TimetableFeedbackMessage.objects.using(database).count(),
+        "timetable_feedback_events": TimetableFeedbackEvent.objects.using(database).count(),
         # Preserved anti-replay rows, with active/body-bearing subsets reported.
         "telegram_update_receipts": TelegramUpdateReceipt.objects.using(database).count(),
         "telegram_active_questions": question_receipts.filter(
@@ -162,6 +174,7 @@ def _lock_cutover_rows(database: str, student_session_keys: Iterable[str]) -> No
     list(
         AdvisorConversation.objects.using(database).select_for_update().values_list("pk", flat=True)
     )
+    list(TimetableFeedback.objects.using(database).select_for_update().values_list("pk", flat=True))
     list(StudentLoginOTP.objects.using(database).select_for_update().values_list("pk", flat=True))
     list(
         WhatsAppOtpChallenge.objects.using(database)
@@ -221,6 +234,8 @@ def _apply_cutover(database: str) -> None:
         # feedback, escalations and escalation events.  SET_NULL references on
         # Telegram receipts/links and PlannerDraft preserve those rows safely.
         AdvisorConversation.objects.using(database).all().delete()
+        # Cascades to every point, message and event. The counter is kept.
+        TimetableFeedback.objects.using(database).all().delete()
         StudentLoginOTP.objects.using(database).all().delete()
         WhatsAppOtpChallenge.objects.using(database).all().delete()
         WhatsAppConversation.objects.using(database).all().delete()

@@ -22,6 +22,11 @@ from core.models import (
     PlannerDraft,
     Student,
     StudentLoginOTP,
+    TimetableFeedback,
+    TimetableFeedbackCounter,
+    TimetableFeedbackEvent,
+    TimetableFeedbackMessage,
+    TimetableFeedbackPoint,
     UserScope,
 )
 from core.services.rbac import ROLE_STUDENT
@@ -37,6 +42,31 @@ pytestmark = pytest.mark.django_db
 
 QUESTION_SECRET = "student question that must disappear"
 ANSWER_SECRET = "assistant answer that must disappear"
+FEEDBACK_SECRET = "timetable feedback that must disappear"
+FEEDBACK_TABLES = (
+    "timetable_feedback",
+    "timetable_feedback_points",
+    "timetable_feedback_messages",
+    "timetable_feedback_events",
+)
+
+
+def _build_feedback() -> TimetableFeedback:
+    """One test student's timetable-feedback case with a point, a message and an event."""
+    case = TimetableFeedback.objects.create(student_id=880003, academic_year="1448", term="1")
+    TimetableFeedbackPoint.objects.create(
+        case=case,
+        anchor_kind="TIMETABLE",
+        anchor_key="TIMETABLE",
+        reason_code="LOAD_TOO_HIGH",
+        note=FEEDBACK_SECRET,
+        seen_fingerprint="a" * 64,
+    )
+    TimetableFeedbackMessage.objects.create(
+        case=case, audience="STUDENT_VISIBLE", author_kind="STUDENT", body=FEEDBACK_SECRET
+    )
+    TimetableFeedbackEvent.objects.create(case=case, kind="SUBMITTED")
+    return case
 
 
 def _session_for(user: User) -> str:
@@ -332,10 +362,38 @@ def test_confirmed_cutover_removes_transcripts_and_student_auth_only(monkeypatch
     assert ANSWER_SECRET not in output
 
 
+def test_cutover_reports_and_removes_timetable_feedback_but_keeps_its_counter() -> None:
+    case = _build_feedback()
+    numbers_issued = TimetableFeedbackCounter.objects.get().last_number
+
+    dry = StringIO()
+    call_command("deployment_cutover", stdout=dry)
+
+    for table in FEEDBACK_TABLES:
+        assert f"  {table}=1" in dry.getvalue(), table
+    assert TimetableFeedback.objects.filter(pk=case.pk).exists(), "a dry run changes nothing"
+
+    out = StringIO()
+    call_command("deployment_cutover", "--confirm", stdout=out)
+
+    assert not TimetableFeedback.objects.exists()
+    assert not TimetableFeedbackPoint.objects.exists()
+    assert not TimetableFeedbackMessage.objects.exists()
+    assert not TimetableFeedbackEvent.objects.exists()
+    after = out.getvalue().split("AFTER:", 1)[1]
+    for table in FEEDBACK_TABLES:
+        assert f"  {table}=0" in after, table
+    # Case numbers keep counting, as the adviser case numbers do: a number once
+    # quoted to a student is never issued to another.
+    assert TimetableFeedbackCounter.objects.get().last_number == numbers_issued
+    assert FEEDBACK_SECRET not in dry.getvalue() + out.getvalue()
+
+
 def test_cutover_mutations_roll_back_together(monkeypatch) -> None:
     from core.management.commands import deployment_cutover
 
     _build_cutover_world()
+    _build_feedback()
 
     def fail_session_delete(database, session_keys):  # noqa: ARG001
         raise RuntimeError("simulated late failure")
@@ -352,6 +410,10 @@ def test_cutover_mutations_roll_back_together(monkeypatch) -> None:
     assert WhatsAppConversation.objects.count() == 1
     assert WhatsAppMessageLog.objects.count() == 1
     assert WhatsAppUserLink.objects.count() == 1
+    assert TimetableFeedback.objects.count() == 1
+    assert TimetableFeedbackPoint.objects.count() == 1
+    assert TimetableFeedbackMessage.objects.count() == 1
+    assert TimetableFeedbackEvent.objects.count() == 1
     queued = TelegramUpdateReceipt.objects.get(update_id=101)
     assert queued.status == TelegramUpdateReceipt.STATUS_QUEUED
     assert queued.payload_text == QUESTION_SECRET
