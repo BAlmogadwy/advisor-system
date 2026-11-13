@@ -347,7 +347,12 @@ def student_gender_strict(student_id: int | str) -> str:
     return g
 
 
-def _section_course_key(term_section: TermSection) -> str:
+def section_course_key(term_section: TermSection) -> str:
+    """A section's course code, as the timetable reader derives it.
+
+    The stored key when there is one; otherwise code plus number, unless an
+    import wrote the whole code into both fields.
+    """
     key = normalize_code(getattr(term_section, "course_key", "") or "")
     if key:
         return key
@@ -356,6 +361,10 @@ def _section_course_key(term_section: TermSection) -> str:
     if code and number and number != code:
         return normalize_code(f"{code}{number}")
     return code or number
+
+
+#: The name the exam modules import.
+_section_course_key = section_course_key
 
 
 def ensure_student_section_schema() -> None:

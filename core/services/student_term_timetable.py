@@ -46,7 +46,7 @@ from typing import Any
 
 from core.services.student_helpers import normalize_code
 from core.services.student_sections import prefer_arabic_timetable_course_names
-from core.services.timetable_snapshots import Snapshot
+from core.services.timetable_snapshots import Snapshot, classify_source
 from core.services.timetable_snapshots import forecast_rows as latest_forecast
 from core.services.timetable_snapshots import select as select_snapshot
 
@@ -95,6 +95,18 @@ class StudentTermTimetable:
     @property
     def has_registration(self) -> bool:
         return bool(self.registered_rows)
+
+    @property
+    def forecast_class(self) -> str:
+        """Where the forecast came from: 'expected', 'working', or 'none' without one.
+
+        A forecast is one class by construction, so its first row speaks for all.
+        Frozen into feedback, because a staff mapping appearing replaces the whole
+        imported plan, and a point raised about one is not about the other.
+        """
+        if not self.forecast_rows:
+            return "none"
+        return str(classify_source(self.forecast_rows[0].get("source")))
 
     @property
     def has_forecast(self) -> bool:

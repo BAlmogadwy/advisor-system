@@ -51,10 +51,11 @@ OPEN_CASE_RULE = (
     r"uq_ttf_one_open_case_per_term"
     r"|timetable_feedback\.student_id, timetable_feedback\.academic_year, timetable_feedback\.term"
 )
-POINT_RULE = (
-    r"uq_ttfp_point"
-    r"|timetable_feedback_points\.case_id, timetable_feedback_points\.anchor_key, "
-    r"timetable_feedback_points\.reason_code, timetable_feedback_points\.seen_fingerprint"
+POINT_RULE = "uq_ttfp_point|" + re.escape(
+    ", ".join(
+        f"timetable_feedback_points.{column}"
+        for column in ("case_id", "anchor_key", "reason_code", "request_key", "seen_fingerprint")
+    )
 )
 REFERENCE_RULE = r"reference"
 #: Word-bounded: "ck_ttfp_anchor" is also the start of "ck_ttfp_anchor_key".
@@ -417,6 +418,7 @@ def test_a_section_id_beyond_32_bits_is_stored_and_anchored_exactly():
         term_section_id=big,
         anchor_key=f"SECTION|{big}",
         requested_term_section_id=big + 1,
+        request_key=f"SECTION|{big + 1}",
     )
     point.refresh_from_db()
     assert (point.term_section_id, point.requested_term_section_id) == (big, big + 1)
@@ -536,6 +538,7 @@ def test_text_copied_from_unbounded_sources_is_stored_whole():
         requested_section_label=LONG,
         requested_course_key=LONG,
         requested_plan_course_identity=LONG,
+        request_key=f"COURSE|{LONG}",
     )
     message = _message(case, audience="INTERNAL", author_kind="ADVISOR", author_label=LONG)
     event = TimetableFeedbackEvent.objects.create(
@@ -564,3 +567,76 @@ def test_text_copied_from_unbounded_sources_is_stored_whole():
     } == {LONG}
     assert message.author_label == LONG
     assert {event.actor_label, event.actor_advisor_id, event.from_value, event.to_value} == {LONG}
+
+
+# ---------------------------------------------------------------------------
+# What was asked for instead is part of the point
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "request_fields",
+    [
+        {},
+        {"requested_term_section_id": 12, "request_key": "SECTION|12"},
+        {"requested_course_key": "SD301", "request_key": "COURSE|SD301"},
+    ],
+)
+def test_a_request_key_that_is_its_request_is_accepted(request_fields):
+    _point(_case(), SECTION_POINT, **request_fields)
+
+
+@pytest.mark.parametrize(
+    "request_fields",
+    [
+        {"requested_term_section_id": 12},
+        {"requested_course_key": "SD301"},
+        {"request_key": "SECTION|12"},
+        {"requested_term_section_id": 12, "request_key": "SECTION|13"},
+        {"requested_term_section_id": 12, "request_key": "SECTION|012"},
+        {"requested_course_key": "SD301", "request_key": "COURSE|SD302"},
+        {"requested_course_key": "SD301", "request_key": "course|SD301"},
+        {"requested_course_key": "SD301", "request_key": "SECTION|SD301"},
+        {
+            "requested_term_section_id": 12,
+            "requested_course_key": "SD301",
+            "request_key": "SECTION|12",
+        },
+    ],
+)
+def test_a_request_key_that_disagrees_with_its_request_is_refused(request_fields):
+    case = _case()
+    _refused(lambda: _point(case, SECTION_POINT, **request_fields), "ck_ttfp_request_key")
+
+
+def test_two_requests_on_the_same_anchor_and_reason_are_two_points():
+    """Two missing courses, or two preferred sections, are two things asked for."""
+    case = _case()
+    _point(
+        case,
+        TIMETABLE_POINT,
+        reason_code="MISSING_COURSE",
+        requested_course_key="SC201",
+        request_key="COURSE|SC201",
+    )
+    _point(
+        case,
+        TIMETABLE_POINT,
+        reason_code="MISSING_COURSE",
+        requested_course_key="SD301",
+        request_key="COURSE|SD301",
+    )
+    _point(case, SECTION_POINT)
+    _point(case, SECTION_POINT, requested_term_section_id=12, request_key="SECTION|12")
+    assert case.points.count() == 4
+
+
+def test_the_same_request_on_the_same_anchor_and_reason_is_still_one_point():
+    case = _case()
+    fields = {
+        "reason_code": "MISSING_COURSE",
+        "requested_course_key": "SD301",
+        "request_key": "COURSE|SD301",
+    }
+    _point(case, TIMETABLE_POINT, **fields)
+    _refused(lambda: _point(case, TIMETABLE_POINT, **fields), POINT_RULE)

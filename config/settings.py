@@ -393,6 +393,19 @@ STUDENT_OTP_RESPONSE_FLOOR_SECONDS = max(
 # explicit local compatibility, but the production guard below rejects it.
 STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "false").lower() == "true"
 
+# Student feedback on the expected timetable. Off by default and rolled out in
+# stages: ENABLED shows the pages; ACCEPTING lets students open cases and add
+# points (replies and staff work continue without it, so it is also the
+# read-only stop); PROGRAMMES, when set, limits ACCEPTING to a comma-separated
+# pilot list of programme codes.
+TIMETABLE_FEEDBACK_ENABLED = os.getenv("TIMETABLE_FEEDBACK_ENABLED", "false").lower() == "true"
+TIMETABLE_FEEDBACK_ACCEPTING = os.getenv("TIMETABLE_FEEDBACK_ACCEPTING", "false").lower() == "true"
+TIMETABLE_FEEDBACK_PROGRAMMES = tuple(
+    code.strip().upper()
+    for code in os.getenv("TIMETABLE_FEEDBACK_PROGRAMMES", "").split(",")
+    if code.strip()
+)
+
 # Django's email settings remain for harmless local/dev compatibility with
 # management commands and tests. Production OTP delivery does not use them.
 # The non-debug default remains SMTP (pointing at localhost) instead of console,
