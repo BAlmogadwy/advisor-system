@@ -43,16 +43,14 @@ from core.services.student_otp import (
 )
 from core.services.student_sections import (
     arabic_term_section_course_names,
-    get_student_term_baseline,
     prefer_arabic_course_names_in_payload,
-    prefer_arabic_timetable_course_names,
-    section_gender,
-    student_gender,
+)
+from core.services.student_term_timetable import (
+    StudentTermTimetable,
+    TimetableUnavailable,
+    read_student_term_timetable,
 )
 from core.services.student_unlock import build_unlock_report
-from core.services.timetable_provenance import baseline_sections
-from core.services.timetable_snapshots import Snapshot, forecast_rows
-from core.services.timetable_snapshots import select as select_snapshot
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
@@ -742,53 +740,25 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     # term would be drawn with another term's times; in that case show nothing
     # rather than something plausible and wrong. The label always names the term.
     #
-    # ``Snapshot.ANY`` because this screen is the one surface that deliberately
-    # presents both snapshots at once. Every other reader picks a single class; here
-    # the rows are partitioned below and each class gets its OWN card with its own
-    # heading, so nothing is ever merged into one grid that could not say which
-    # meeting was registered and which was only planned.
+    # This screen is the one surface that deliberately presents both snapshots at
+    # once, each in its OWN card with its own heading, so nothing is ever merged
+    # into one grid that could not say which meeting was registered and which was
+    # only planned. `read_student_term_timetable` returns them already separated by
+    # PROVENANCE CLASS (a staff planner mapping is a forecast, never a
+    # registration), with the department's LATEST forecast (WORKING over the
+    # imported EXPECTED plan) and one cohort rule applied to both.
     try:
-        configured_rows = get_student_term_baseline(
-            student_id, str(year), str(term), snapshot=Snapshot.ANY
+        timetable = read_student_term_timetable(
+            student_id, year, term, prefer_arabic_names=_request_prefers_arabic(request)
         )
-    except Exception:  # noqa: BLE001
+    except TimetableUnavailable:
+        # The page degrades to "no timetable", as it always has. The read itself
+        # no longer pretends it succeeded, so a caller that must tell "could not
+        # be read" from "nothing prepared" apart can.
         logger.exception("student timetable load failed for %s", student_id)
-        configured_rows = []
-
-    # One cohort rule, applied before these rows feed ANY home-screen fact. The
-    # timetable, hours card, plan state and recommendation exclusion must all see
-    # the same configured-term evidence.
-    gender = student_gender(student_id)
-
-    def visible_to_student(candidate_rows: list[dict]) -> list[dict]:
-        if not gender:
-            return candidate_rows
-        return [
-            row
-            for row in candidate_rows
-            if section_gender(str(row.get("section") or "")) in ("", gender)
-        ]
-
-    configured_rows = visible_to_student(configured_rows)
-    if _request_prefers_arabic(request):
-        configured_rows = prefer_arabic_timetable_course_names(configured_rows)
-
-    # Split by PROVENANCE CLASS, not by "is it the expected prefix or not". The
-    # old two-way split promoted the staff planner's own mappings — sources
-    # `planner` and `auto_from_studying`, written by two staff-only endpoints in
-    # core/planner_views.py — into the registered half, and this screen then titled
-    # them «جدولي الأسبوعي» with no disclaimer.
-    #
-    # The forecast card shows the department's LATEST forecast, not always the
-    # imported one. A planner save writes WORKING rows and, since each writer now
-    # replaces only its own class, the imported plan survives underneath it — so
-    # picking EXPECTED unconditionally would show a student the seating their
-    # department has already moved them out of, for ever, with no writer that ever
-    # removes it. `forecast_rows` applies the same precedence the advisor's
-    # EFFECTIVE resolution uses, which is also what keeps chat and this screen
-    # naming the same plan.
-    registered_configured_rows = select_snapshot(configured_rows, Snapshot.REGISTERED)
-    expected_rows = forecast_rows(configured_rows)
+        timetable = StudentTermTimetable.empty(year, term)
+    registered_configured_rows = timetable.registered_rows
+    expected_rows = timetable.forecast_rows
 
     tt_year, tt_term, tt_fallback = year, term, False
     # These two are the CONFIGURED term's evidence and must stay bound to it. The
@@ -825,21 +795,23 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             if mine and is_other_term:
                 tt_year, tt_term, tt_fallback = published_year, published_term, True
                 try:
-                    fallback_rows = visible_to_student(
-                        get_student_term_baseline(
-                            student_id,
-                            str(tt_year),
-                            str(tt_term),
-                            snapshot=Snapshot.ANY,
-                        )
+                    fallback = read_student_term_timetable(
+                        student_id,
+                        tt_year,
+                        tt_term,
+                        prefer_arabic_names=_request_prefers_arabic(request),
                     )
-                    if _request_prefers_arabic(request):
-                        fallback_rows = prefer_arabic_timetable_course_names(fallback_rows)
                 except Exception:  # noqa: BLE001
+                    # Broader than the configured term's `except TimetableUnavailable`
+                    # on purpose: this panel is a best-effort stand-in for another
+                    # term, and nothing on the page depends on it, so ANY failure here
+                    # (a broken name swap included) leaves it out instead of taking
+                    # the page down. The configured term feeds every card, so a defect
+                    # there must surface rather than pass as "no timetable".
                     logger.exception("student fallback timetable failed for %s", student_id)
                 else:
-                    panel_registered_rows = select_snapshot(fallback_rows, Snapshot.REGISTERED)
-                    panel_expected_rows = forecast_rows(fallback_rows)
+                    panel_registered_rows = fallback.registered_rows
+                    panel_expected_rows = fallback.forecast_rows
 
     def _panel(kind: str, panel_rows: list[dict]) -> dict:
         """One card: its own grid, its own agenda table, its own provenance.
@@ -886,34 +858,11 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     if panel_expected_rows:
         timetable_panels.append(_panel("expected", panel_expected_rows))
 
-    registered_codes = list(
-        dict.fromkeys(
-            normalize_code(row.get("course_code") or "")
-            for row in baseline_sections(registered_configured_rows)
-            if normalize_code(row.get("course_code") or "")
-        )
-    )
-    registered_code_set = set(registered_codes)
-    expected_code_set = {
-        normalize_code(row.get("course_code") or "")
-        for row in baseline_sections(expected_rows)
-        if normalize_code(row.get("course_code") or "")
-    }
+    # The CONFIGURED term's courses, never the fallback's: these feed the
+    # recommendation filter, which is labelled with the configured term.
+    registered_code_set = timetable.registered_codes
+    expected_code_set = timetable.forecast_codes
     timetable_code_set = registered_code_set | expected_code_set
-
-    # What the plan said and the registrar did not record. Only meaningful when BOTH
-    # snapshots exist: with no registration on file, every planned course would list
-    # here and read as an accusation rather than a difference.
-    expected_not_registered = (
-        sorted(expected_code_set - registered_code_set)
-        if registered_code_set and expected_code_set
-        else []
-    )
-    registered_not_expected = (
-        sorted(registered_code_set - expected_code_set)
-        if registered_code_set and expected_code_set
-        else []
-    )
 
     try:
         all_rec_codes = list(
@@ -990,10 +939,12 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             # any more: a single list could only be rendered under a single heading,
             # and that heading would have to lie about one of the two snapshots.
             "timetable_panels": timetable_panels,
-            "has_registered_timetable": bool(registered_configured_rows),
-            "has_expected_timetable": bool(expected_rows),
-            "expected_not_registered": expected_not_registered,
-            "registered_not_expected": registered_not_expected,
+            "has_registered_timetable": timetable.has_registration,
+            "has_expected_timetable": timetable.has_forecast,
+            # What the plan said and the registrar did not record, and the reverse.
+            # Both empty unless BOTH snapshots exist.
+            "expected_not_registered": timetable.forecast_not_registered,
+            "registered_not_expected": timetable.registered_not_forecast,
             "recommendations": recommendations,
             "recommendations_already_current": recommendations_already_current,
             "recommendations_already_expected": recommendations_already_expected,
