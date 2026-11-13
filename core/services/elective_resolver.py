@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 from core.models import (
     ElectiveTermMapping,
@@ -29,6 +31,7 @@ from core.models import (
     StudentTermSection,
 )
 from core.services.reporting import get_student_ids
+from core.services.student_helpers import normalize_code
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +162,17 @@ def _get_timetable_courses(
     )
 
 
+def _mapping_programmes(program: str) -> set[str]:
+    """The programme codes whose mappings a plan reads: its own, and its base's."""
+    normalized_program = str(program or "").strip().upper()
+    mapping_programs = {normalized_program}
+    if normalized_program.endswith("2"):
+        # Curriculum-version programme codes (CS2/DS2/AI2) share the
+        # department catalogue when mappings use the base programme code.
+        mapping_programs.add(normalized_program[:-1])
+    return mapping_programs
+
+
 def _get_elective_mapped_courses(
     program: str,
     *,
@@ -166,12 +180,7 @@ def _get_elective_mapped_courses(
     term: str,
 ) -> dict[str, set[str]]:
     """Return authoritative placeholder mappings for one verified term."""
-    normalized_program = str(program or "").strip().upper()
-    mapping_programs = {normalized_program}
-    if normalized_program.endswith("2"):
-        # Curriculum-version programme codes (CS2/DS2/AI2) share the
-        # department catalogue when mappings use the base programme code.
-        mapping_programs.add(normalized_program[:-1])
+    mapping_programs = _mapping_programmes(program)
     try:
         term_number = int(term)
     except (TypeError, ValueError):
@@ -201,6 +210,92 @@ def elective_courses_by_placeholder(
     filed under its base programme code.
     """
     return _get_elective_mapped_courses(program, academic_year=academic_year, term=str(term))
+
+
+@dataclass(frozen=True)
+class PlanElectiveSlot:
+    """One elective slot of a plan and the courses mapped onto it for a term."""
+
+    program: str
+    #: The slot's own plan code and name, e.g. ``AI1`` "PROGRAM ELECTIVE I".
+    code: str
+    name: str
+    #: The plan term the slot sits at, and so the term of every course filling it.
+    programme_term: int
+    #: ``{course code: catalogue name}`` of the courses mapped onto the slot for
+    #: the term, leaving out any the plan lists as a row of its own.
+    courses: Mapping[str, str]
+
+
+def plan_elective_slots(
+    programs: Iterable[str],
+    *,
+    academic_year: str,
+    term: str | int,
+) -> list[PlanElectiveSlot]:
+    """Every elective slot of these plans with the courses mapped onto it for a term.
+
+    This is where a real elective's study term comes from. A plan lists its
+    elective *slots* (AI1, AI2, ...), never the courses; each term the department
+    maps real courses onto those slots (``ElectiveTermMapping``, read as
+    :func:`elective_courses_by_placeholder` reads it, so AI2 also uses the AI
+    mappings). A mapped course belongs to its slot's plan term, and to each of
+    them when it fills slots at two terms (DS482 for DS1 at term 8 and DS3 at
+    term 10). A course the plan lists as a row of its own keeps that row and is
+    left out. A course with no mapping for the term fills no slot and so has no
+    term here: nothing is guessed for it.
+
+    A slot is a row of the plan whose code is a mapped placeholder of that plan,
+    whatever its type (the per-plan export has always read slots so). A term of
+    0 is not a term, as Generate decides it.
+    """
+    try:
+        term_number = int(term)
+    except (TypeError, ValueError):
+        return []
+    plans = sorted({str(program or "").strip() for program in programs} - {""})
+    if not plans:
+        return []
+    reads = {plan: _mapping_programmes(plan) for plan in plans}
+
+    mapped: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
+    for row in ElectiveTermMapping.objects.filter(
+        programme__in=set().union(*reads.values()),
+        academic_year=str(academic_year),
+        term=term_number,
+    ).select_related("elective"):
+        code = normalize_code(row.elective.course_code)
+        if code:
+            mapped[(str(row.programme), normalize_code(row.placeholder_code))].setdefault(
+                code, str(row.elective.course_name or "").strip()
+            )
+    if not mapped:
+        return []
+
+    own_codes: dict[str, set[str]] = defaultdict(set)
+    slot_rows: dict[tuple[str, str], tuple[str, int]] = {}
+    for program, code, name, programme_term in (
+        ProgrammeRequirement.objects.filter(program__in=plans, programme_term__isnull=False)
+        .order_by("program", "course_code")
+        .values_list("program", "course_code", "course_name", "programme_term")
+    ):
+        slot = normalize_code(code)
+        own_codes[program].add(slot)
+        if programme_term >= 1 and any((source, slot) in mapped for source in reads[program]):
+            slot_rows[(program, slot)] = (str(name or "").strip(), int(programme_term))
+
+    slots: list[PlanElectiveSlot] = []
+    for (program, slot), (name, programme_term) in slot_rows.items():
+        courses: dict[str, str] = {}
+        # The plan's own mapping names a course before its base programme's does.
+        for source in sorted(reads[program], key=lambda p: (p != program.upper(), p)):
+            for code, course_name in sorted(mapped.get((source, slot), {}).items()):
+                if code not in own_codes[program]:
+                    courses.setdefault(code, course_name)
+        if courses:
+            slots.append(PlanElectiveSlot(program, slot, name, programme_term, courses))
+    slots.sort(key=lambda s: (s.program, s.programme_term, s.code))
+    return slots
 
 
 def _reconcile_unmapped_studying_placeholders(

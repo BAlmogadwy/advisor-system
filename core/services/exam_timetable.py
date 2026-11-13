@@ -46,6 +46,7 @@ from core.models import (
     Student,
 )
 from core.services.course_identity import display_course_label, planner_course_key
+from core.services.elective_resolver import plan_elective_slots
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
 from core.services.exam_locks import (
     NO_LOCKS,
@@ -89,6 +90,7 @@ from core.services.linked_exams import (
     linked_exams_qa,
     resolve_linked_exams,
 )
+from core.services.student_helpers import normalize_code
 from core.services.student_sections import (
     OTHER_BRANCH_SECTION_COHORT,
     _section_course_key,
@@ -557,6 +559,13 @@ def build_plan_term_buckets(
 ) -> tuple[dict[tuple[str, int], set[str]], dict[str, list[tuple[str, int]]]]:
     """Map running courses to (program, programme_term) buckets.
 
+    A course's term in a plan is its own row's term. A real elective (AI481) has
+    no row: the plan lists only the slots it fills (AI1, AI2, AI3). It counts at
+    the term of each slot the department mapped it to for the academic term the
+    enrolments come from (``course_meta``'s ``academic_year``/``term``), read by
+    :func:`plan_elective_slots` exactly as the per-plan export reads them. An
+    elective with no mapping for that term has no term, and is in no bucket.
+
     Returns:
         buckets       – {(program, programme_term): {course_codes}}
         course_buckets – {course_code: [(program, term), …]} reverse index
@@ -604,7 +613,66 @@ def build_plan_term_buckets(
             buckets[key].add(display)
             course_buckets[display].append(key)
 
+    academic_term = _enrolment_academic_term(meta, running_courses)
+    if academic_term is not None:
+        plans = (
+            programs
+            if programs
+            else ProgrammeRequirement.objects.values_list("program", flat=True).distinct()
+        )
+        displays_by_code: dict[str, list[str]] = defaultdict(list)
+        for source, displays in source_to_display.items():
+            displays_by_code[normalize_code(source)].extend(displays)
+        for slot in plan_elective_slots(
+            plans, academic_year=academic_term[0], term=academic_term[1]
+        ):
+            key = (slot.program, slot.programme_term)
+            for code, name in slot.courses.items():
+                # The mapping names a course by its code, as the export reads
+                # it. One running course with the code is that course, whatever
+                # name the registrar gave it. Only when two different courses
+                # share the code (CS112 is two) must the name decide: the one
+                # named as the catalogue names it, else the one known only by
+                # its code - never another course that merely shares the code.
+                candidates = displays_by_code.get(code, [])
+                named = planner_course_key(code, name)
+                displays = (
+                    candidates
+                    if len(candidates) == 1
+                    else [d for d in candidates if identity_by_display[d] == named]
+                    or [d for d in candidates if identity_by_display[d] == code]
+                )
+                for display in displays:
+                    # Two slots at one term (AI2 and AI3 are both term 10) are
+                    # one bucket, not two entries of it.
+                    if key not in course_buckets[display]:
+                        buckets[key].add(display)
+                        course_buckets[display].append(key)
+
     return dict(buckets), dict(course_buckets)
+
+
+def _enrolment_academic_term(
+    course_meta: dict[str, dict], running_courses: set[str]
+) -> tuple[str, str] | None:
+    """The one academic term the running courses' enrolments come from, if known.
+
+    Elective mappings are per academic term, so without it no elective has a
+    term. Every live path reads one term (``exam_timetable_links``); metadata
+    that names none, or more than one, decides nothing.
+    """
+    terms = {
+        (
+            str(course_meta[code].get("academic_year") or "").strip(),
+            str(course_meta[code].get("term") or "").strip(),
+        )
+        for code in running_courses
+        if code in course_meta
+    }
+    if len(terms) != 1:
+        return None
+    year, term = terms.pop()
+    return (year, term) if year and term else None
 
 
 def check_bucket_feasibility(

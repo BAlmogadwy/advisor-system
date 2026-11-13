@@ -289,7 +289,6 @@ def get_plan_elective_terms(
     program: str,
     scenario: TimetableScenario,
     course_keys: set[str],
-    plan_map: dict[str, int],
 ) -> tuple[dict[str, set[int]], dict[str, list[str]]]:
     """Place this term's real electives on the plan term of the slot they fill.
 
@@ -297,41 +296,34 @@ def get_plan_elective_terms(
     department's ElectiveTermMapping says which real courses fill each slot this
     term (e.g. 1448 T2: AI2 -> AI441, AI3 -> AI462). Without this the export
     filed those sections as "not in this plan" and no term sheet showed them.
-    Build applies the same principle (a real elective inherits its slot's term);
-    the mappings are read exactly as the elective resolver reads them.
+    Build applies the same principle (a real elective inherits its slot's term),
+    and so does the exam timetable: the slots, their terms and the courses
+    mapped onto them all come from :func:`plan_elective_slots`.
 
     Returns ``(elective_terms, fills)``: ``{course key: {slot plan terms}}`` for
     every mapped elective the scenario actually has - a section on any of those
     terms is in place, so DS482 filling DS1 (T8) and DS3 (T10) is right on
     either board - and ``{slot key: [course keys filling it]}``. A course whose
-    code is already in the plan keeps its own row and term.
+    code is already in the plan keeps its own row and term: the slots never
+    offer it.
     """
-    from core.services.elective_resolver import elective_courses_by_placeholder
+    from core.services.elective_resolver import plan_elective_slots
 
-    mapped = elective_courses_by_placeholder(
-        program, academic_year=scenario.academic_year, term=scenario.term
-    )
-    if not mapped:
+    slots = plan_elective_slots([program], academic_year=scenario.academic_year, term=scenario.term)
+    if not slots:
         return {}, {}
-    codes_by_slot = {_upper(slot): {_upper(c) for c in codes} for slot, codes in mapped.items()}
 
-    slot_rows: dict[str, tuple[str, int]] = {}
-    for r in ProgrammeRequirement.objects.filter(program=program):
-        slot = _upper(r.course_code)
-        if slot in codes_by_slot and r.programme_term is not None:
-            slot_rows[slot] = (_requirement_course_key(r), r.programme_term)
-
-    plan_codes = {_course_code_from_key(key) for key in plan_map}
     keys_by_code: dict[str, set[str]] = defaultdict(set)
     for key in course_keys:
         keys_by_code[_course_code_from_key(key)].add(key)
 
     elective_terms: dict[str, set[int]] = defaultdict(set)
     fills: dict[str, list[str]] = defaultdict(list)
-    for slot, (slot_key, slot_term) in sorted(slot_rows.items(), key=lambda kv: kv[1][1]):
-        for code in sorted(codes_by_slot[slot] - plan_codes):
+    for slot in slots:
+        slot_key = _course_key_from_values(slot.code, slot.name)
+        for code in sorted(slot.courses):
             for key in sorted(keys_by_code.get(code, ())):
-                elective_terms[key].add(slot_term)
+                elective_terms[key].add(slot.programme_term)
                 fills[slot_key].append(key)
     return dict(elective_terms), dict(fills)
 
@@ -390,9 +382,7 @@ def programme_context(
     :func:`get_plan_term_map` and :func:`get_plan_elective_terms`.
     """
     plan_map = get_plan_term_map(program)
-    elective_terms, elective_fills = get_plan_elective_terms(
-        program, scenario, course_keys, plan_map
-    )
+    elective_terms, elective_fills = get_plan_elective_terms(program, scenario, course_keys)
     plan_map = {**{key: min(terms) for key, terms in elective_terms.items()}, **plan_map}
     return plan_map, elective_terms, elective_fills
 
