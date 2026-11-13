@@ -6302,26 +6302,29 @@ let _moveSuggestOptions = [];
 function moveSuggestEntry(code) {
   return _currentResultData?.schedule?.find(item => item.course_code === code) || null;
 }
+// Built with safeHtml, which escapes every value it is given.
 function moveChangeMarkup(option) {
   const changes = option.changes || {};
   const chips = MOVE_TEXT.levels.filter(level => Number(changes[level])).map(level => {
     const change = Number(changes[level]);
     const tone = change < 0 ? 'is-better' : 'is-worse';
-    if (level === 'spacing') return `<span class="et-move-change ${tone}">${escapeAttr(MOVE_TEXT.spacing(change < 0))}</span>`;
+    if (level === 'spacing') return safeHtml`<span class="et-move-change ${tone}">${MOVE_TEXT.spacing(change < 0)}</span>`;
     const signed = `${change > 0 ? '+' : '−'}${Math.abs(change)}`;
-    return `<span class="et-move-change ${tone}"><bdi dir="ltr">${signed}</bdi> ${escapeAttr(MOVE_TEXT.level[level]())}</span>`;
+    return safeHtml`<span class="et-move-change ${tone}"><bdi dir="ltr">${signed}</bdi> ${MOVE_TEXT.level[level]()}</span>`;
   });
   const clashes = Array.isArray(option.clashes_with) ? option.clashes_with.filter(item => Array.isArray(item?.courses)) : [];
   const sameDay = Array.isArray(option.same_day_with) ? option.same_day_with.map(String) : [];
   const details = [
     clashes.length ? MOVE_TEXT.clashes(clashes) : '',
     sameDay.length ? MOVE_TEXT.sameDay(sameDay) : '',
-  ].filter(Boolean).map(text => `<span class="et-move-detail">${escapeAttr(text)}</span>`).join('');
-  return `<span class="et-move-changes">${chips.join('') || `<span class="et-move-change">${escapeAttr(MOVE_TEXT.noChange())}</span>`}</span>${details}`;
+  ].filter(Boolean).map(text => safeHtml`<span class="et-move-detail">${text}</span>`);
+  const shown = chips.length ? chips : safeHtml`<span class="et-move-change">${MOVE_TEXT.noChange()}</span>`;
+  return safeHtml`<span class="et-move-changes">${shown}</span>${details}`;
 }
 function moveOptionMarkup(option, index) {
   const verdict = ['better', 'same', 'worse'].includes(option.verdict) ? option.verdict : 'worse';
-  return `<label class="et-move-option is-${verdict}" data-suggest-day="${escapeAttr(option.day)}" data-suggest-period="${escapeAttr(option.period)}"><input type="radio" name="examMoveSuggestion" value="${index}"><span class="et-move-option-body"><span class="et-move-option-head"><bdi dir="ltr" class="et-move-option-when">${escapeAttr(`${option.day} · ${option.period}`)}</bdi><span class="et-move-verdict">${escapeAttr(MOVE_TEXT.verdict[verdict])}</span></span>${moveChangeMarkup(option)}</span></label>`;
+  const when = `${option.day} · ${option.period}`;
+  return safeHtml`<label class="et-move-option is-${verdict}" data-suggest-day="${option.day}" data-suggest-period="${option.period}"><input type="radio" name="examMoveSuggestion" value="${index}"><span class="et-move-option-body"><span class="et-move-option-head"><bdi dir="ltr" class="et-move-option-when">${when}</bdi><span class="et-move-verdict">${MOVE_TEXT.verdict[verdict]}</span></span>${moveChangeMarkup(option)}</span></label>`;
 }
 function resetMoveSuggestions() {
   _moveSuggestSeq++;
