@@ -207,6 +207,8 @@ class AdminGraduationPlanningBrowserTests(StaticLiveServerTestCase):
         assert pending.value.status == 400
         assert self.page.locator("#adminGraduationSearchError").get_attribute("role") == "alert"
         assert student_input.get_attribute("aria-invalid") == "true"
+        # The outcome, whichever puts it there: the re-rendered input's `autofocus`
+        # or the page script's focus on an invalid ID. It fails only with neither.
         expect(student_input).to_be_focused()
         assert self.page.locator("#advisorGraduationResults").count() == 0
 
