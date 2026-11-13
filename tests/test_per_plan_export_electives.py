@@ -208,9 +208,8 @@ def test_an_elective_filling_two_slots_may_sit_on_either_term() -> None:
     _map("DS1", "DS482", programme="DS")
     _map("DS3", "DS482", programme="DS")
     scenario, _board = _scenario(program="DS", board_term=8)
-    plan_map = get_plan_term_map("DS")
 
-    terms, fills = get_plan_elective_terms("DS", scenario, {"DS482"}, plan_map)
+    terms, fills = get_plan_elective_terms("DS", scenario, {"DS482"})
 
     assert terms == {"DS482": {8, 10}}
     assert fills == {"DS1": ["DS482"], "DS3": ["DS482"]}
@@ -255,9 +254,8 @@ def test_a_course_already_in_the_plan_keeps_its_own_term() -> None:
     _plan("AI", [("AI2", 10), ("AI441", 7)])
     _map("AI2", "AI441")
     scenario, _board = _scenario()
-    plan_map = get_plan_term_map("AI")
 
-    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"}, plan_map)
+    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"})
 
     assert terms == {}
     assert fills == {}
@@ -270,7 +268,7 @@ def test_a_plan_course_is_recognised_by_code_whatever_its_name() -> None:
     plan_map = get_plan_term_map("AI")
     assert "AI441::COMPUTER_VISION" in plan_map
 
-    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"}, plan_map)
+    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"})
 
     assert terms == {}
     assert fills == {}
@@ -282,7 +280,7 @@ def test_only_courses_the_scenario_has_are_added() -> None:
     _map("AI2", "AI499")
     scenario, _board = _scenario()
 
-    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"}, get_plan_term_map("AI"))
+    terms, fills = get_plan_elective_terms("AI", scenario, {"AI441"})
 
     assert terms == {"AI441": {10}}
     assert fills == {"AI2": ["AI441"]}
