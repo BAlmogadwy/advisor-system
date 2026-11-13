@@ -6,7 +6,7 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}" data-can-edit-exam-timetable="{{ can_edit_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=33" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=3" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=34" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=3" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -278,10 +278,18 @@
     </div>
   </div>
 
-  <dialog id="examMoveDialog" class="et-move-dialog" aria-labelledby="examMoveTitle" aria-describedby="examMoveHelp">
+  <dialog id="examMoveDialog" class="et-move-dialog et-move-suggesting" aria-labelledby="examMoveTitle" aria-describedby="examMoveHelp">
     <h2 id="examMoveTitle">{% if LANGUAGE_CODE == 'ar' %}نقل اختبار{% else %}Move exam{% endif %}</h2>
     <p id="examMoveHelp" class="et-dialog-help">{% if LANGUAGE_CODE == 'ar' %}اختر اليوم والفترة لهذا الاختبار.{% else %}Choose the destination day and period for this exam.{% endif %}</p>
     <p id="examMoveError" class="et-move-error" role="alert" hidden></p>
+    {# The other open times for this exam, ranked as Optimize ranks a timetable. Choosing one fills in the day and period below. #}
+    <section id="examMoveSuggest" class="et-move-suggest" aria-labelledby="examMoveSuggestTitle">
+      <h3 id="examMoveSuggestTitle" class="et-move-suggest-title">{% if LANGUAGE_CODE == 'ar' %}أوقات أخرى لهذا الاختبار{% else %}Other times for this exam{% endif %}</h3>
+      <p id="examMoveSuggestStatus" class="et-move-suggest-status" role="status" aria-live="polite"></p>
+      <div id="examMoveSuggestList" class="et-move-suggest-list" role="radiogroup" aria-labelledby="examMoveSuggestTitle" hidden></div>
+      <details id="examMoveWorse" class="et-move-worse" hidden><summary id="examMoveWorseSummary"></summary><div id="examMoveWorseList" class="et-move-suggest-list" role="radiogroup" aria-labelledby="examMoveWorseSummary"></div></details>
+      <p class="et-move-suggest-note">{% if LANGUAGE_CODE == 'ar' %}مرتبة كما يرتب «تحسين الجدول الحالي» الجدول. اختيار وقت يملأ اليوم والفترة أدناه، و«فحص التغييرات» بعد النقل يؤكد القاعات والمراقبين.{% else %}Ranked the way Optimize current timetable ranks a timetable. Choosing a time fills in the day and period below; Check changes after the move confirms the rooms and invigilators.{% endif %}</p>
+    </section>
     <div class="et-move-fields"><div><label for="examMoveDay" class="form-label">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</label><select id="examMoveDay" class="form-select"></select></div><div><label for="examMovePeriod" class="form-label">{% if LANGUAGE_CODE == 'ar' %}الفترة{% else %}Period{% endif %}</label><select id="examMovePeriod" class="form-select"></select></div></div>
     <div class="et-move-actions"><button id="cancelExamMove" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button><button id="confirmExamMove" type="button" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}نقل الاختبار{% else %}Move exam{% endif %}</button></div>
   </dialog>
@@ -341,7 +349,7 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/exam-review.js' %}?v=8"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=37"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=38"></script>
 <script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/exam-roster-drawer.js' %}?v=2"></script>

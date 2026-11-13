@@ -75,6 +75,8 @@ async function page(t, { run = savedRun(), onRequest = null } = {}) {
     if (url.startsWith('/ops/exam-timetable/list/')) return reply({ ok: true, runs: [{ id: sourceRun.run_id, label: sourceRun.label, courses_count: courses.length, students_count: 35 }] });
     if (url === `/ops/exam-timetable/${sourceRun.run_id}/`) return reply(sourceRun);
     if (url === '/ops/exam-timetable/preview-courses/') return reply({ ok: true, courses });
+    // Opening the Move dialog asks for the other times, ranked: none here.
+    if (url === '/ops/exam-timetable/move-options/') { const body = JSON.parse(options.body); return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false })); }
     if (url === '/ops/exam-timetable/draft-impact/' || url === '/ops/exam-timetable/build/') {
       const payload = JSON.parse(options.body);
       const data = { ...clone(sourceRun), editor_revision: payload.editor_revision, run_id: undefined,
@@ -207,18 +209,29 @@ test('related-course activation has its own native accessible button and does no
   ui.chip('CYB215').querySelector('[data-exam-move]').click();
   assert.equal(focusedCode(ui), 'CS111 (2)');
   assert.ok(ui.$('examMoveDialog').hasAttribute('open'));
+  // The dialog asked for the other times, ranked: let the answer land before the page closes.
+  await settle();
 });
 
-test('ordinary course-body click remains inert and double-click pins once in review mode', async t => {
+test('a course-body click waits for a double-click, which pins once and opens nothing, in review mode', async t => {
   const ui = await page(t);
   ui.select('examReviewMode', 'students');
   const chip = ui.chip('CS111 (1)');
   chip.click();
   assert.equal(ui.chip('CS111 (1)'), chip, 'A first click must not replace the dblclick target');
   assert.equal(focusedCode(ui), undefined);
+  // It waits as long as Windows' own double-click time (500 ms by default):
+  // a second click 400 ms later is still a double-click.
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(ui.$('examMoveDialog').open, false, 'A single click waits to see whether a second one follows');
   chip.dispatchEvent(new ui.window.MouseEvent('dblclick', { bubbles: true }));
   assert.equal(ui.$('examPinRows').querySelectorAll('tr').length, 1);
   assert.equal(focusedCode(ui), undefined);
+  // The double-click cancelled the wait: nothing answers the first click
+  // after it - not the Move dialog, nor the word that a pinned exam stays.
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(ui.$('examMoveDialog').open, false);
+  assert.doesNotMatch(ui.$('etStatus').textContent, /Unpin it to see other times|ألغِ تثبيته لعرض أوقات/);
 });
 
 test('review emphasis composes with course search and clearing focus preserves the search', async t => {
@@ -299,7 +312,8 @@ test('manual movement marks overlap snapshot stale and updates draft-time relati
   assert.ok(ui.chip('CS111 (2)').classList.contains('et-related-conflict'));
   assert.equal(Number(reviewedCount(ui, 'CS111 (2)').match(/\d+/)[0]), originalCount);
   assert.match(ui.$('examReviewStatus').textContent, language === 'ar' ? /آخر|سابق|فحص/ : /last|previous|check/i);
-  assert.equal(posts(ui).length, 0);
+  // Only the Move dialog's ranked times were asked for: no Check, no recalculation.
+  assert.deepEqual(posts(ui).map(request => request.url), ['/ops/exam-timetable/move-options/']);
   ui.$('undoExamBtn').click();
   assert.equal(focusedCode(ui), 'CS111 (1)');
   assert.ok(!ui.chip('CS111 (2)').classList.contains('et-related-conflict'));

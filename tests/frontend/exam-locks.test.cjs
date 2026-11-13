@@ -109,7 +109,7 @@ function evaluated(payload, original) {
 
 const reply = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
 
-async function page(t, { run = null, onRequest = null, loadCourses = true, liveUpdate = false, html = template, confirm = true } = {}) {
+async function page(t, { run = null, onRequest = null, loadCourses = true, liveUpdate = false, html = template, confirm = true, cardClickDelay = 0 } = {}) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
@@ -140,6 +140,8 @@ async function page(t, { run = null, onRequest = null, loadCourses = true, liveU
     if (run && url === `/ops/exam-timetable/${run.run_id}/`) return reply(run);
     if (url === '/ops/exam-timetable/preview-courses/') return reply({ ok: true, courses });
     if (url === '/ops/exam-timetable/draft-impact/') return reply(evaluated(body, run || savedRun()));
+    // Opening the Move dialog asks for the other times, ranked: none here.
+    if (url === '/ops/exam-timetable/move-options/') return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false }));
     if (url === '/ops/exam-timetable/build/' && body?.mode === 'save_loaded_changes') {
       return reply({ ...evaluated(body, run || savedRun()), run_id: 18, label: body.label });
     }
@@ -152,6 +154,8 @@ async function page(t, { run = null, onRequest = null, loadCourses = true, liveU
   vm.runInContext(sharedSource, dom.getInternalVMContext(), { filename: 'shared-utils.js' });
   vm.runInContext(reviewSource, dom.getInternalVMContext(), { filename: 'exam-review.js' });
   window.__examJobPoll = { first: 0, quick: 0, steady: 0, slow: 0, slowAfter: 0, announce: 0, reveal: 0, stall: 0, minShown: 0, backoff: [0, 0, 0, 0], timeout: 2000, checkRetry: 30 };
+  // A card click waits this long for a second click (a double-click pins).
+  window.__examCardClickDelay = cardClickDelay;
   vm.runInContext(`const LANGUAGE_CODE = ${JSON.stringify(language)};\n${source}`, dom.getInternalVMContext(), { filename: 'page-exam-timetable.js' });
   const $ = id => window.document.getElementById(id);
   const emit = (element, type) => element.dispatchEvent(new window.Event(type, { bubbles: true }));
@@ -385,7 +389,44 @@ test('drops and moves into or out of a locked cell are refused before any reques
   ui.$('examLockRefusalClose').click();
   assert.equal(refusal(ui), '');
   assert.equal(ui.window.document.activeElement, lockedMove);
-  assert.equal(ui.requests.length, before, 'Nothing was sent');
+  // The one request: the Move dialog asking for the other times, ranked.
+  assert.deepEqual(ui.requests.slice(before).map(request => request.url), ['/ops/exam-timetable/move-options/'], 'Nothing else was sent');
+});
+
+test('a locked card says why it stays, and a ranked time in a locked cell is never offered', async t => {
+  const option = (day, period, verdict) => ({ day, period, slot_index: 0, verdict, levels: {}, changes: {}, clashes_with: [], same_day_with: [] });
+  const ui = await loaded(t, { onRequest: (url, options) => {
+    if (url !== '/ops/exam-timetable/move-options/') return undefined;
+    const body = JSON.parse(options.body);
+    // Tue P2 and the whole of Sunday are locked: the page offers neither.
+    return reply({ ok: true, course_code: body.course_code, editor_revision: body.editor_revision, options: [option('Tue', P2, 'better'), option('Sun', P3, 'better'), option('Mon', P3, 'same')] });
+  } });
+  const click = code => card(ui, code).querySelector('.et-course-code').dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  const before = ui.requests.length;
+  click('AI212');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(ui.$('examMoveDialog').open, false);
+  assert.equal(refusal(ui), TEXT.lockedOut('AI212', 'Sun', P1));
+  assert.equal(ui.requests.length, before, 'A locked card asks for nothing');
+  ui.$('examLockRefusalClose').click();
+  click('CS111 (2)');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  await settled();
+  assert.equal(ui.$('examMoveDialog').open, true);
+  const offered = Array.from(ui.$('examMoveDialog').querySelectorAll('.et-move-option-when'), when => when.textContent);
+  assert.deepEqual(offered, [`Mon · ${P3}`]);
+});
+
+test('a pinned exam in a locked cell is refused as locked, the reason that outlasts the pin', async t => {
+  const run = savedRun();
+  run.pinned = [{ course_code: 'AI212', course_identity: courses.find(course => course.course_code === 'AI212').course_identity, day: 'Sun', period: P1 }];
+  const ui = await loaded(t, { run });
+  const before = ui.requests.length;
+  card(ui, 'AI212').querySelector('.et-course-code').dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(ui.$('examMoveDialog').open, false);
+  assert.equal(refusal(ui), TEXT.lockedOut('AI212', 'Sun', P1));
+  assert.equal(ui.requests.length, before);
 });
 
 test('pins into or out of a locked cell are refused, from the card and from the pin editor', async t => {
