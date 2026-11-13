@@ -5,18 +5,19 @@ SQLite runs one writer at a time (BEGIN IMMEDIATE) and ignores
 The narrow ``planner (PostgreSQL 16)`` CI job runs them with
 ``REQUIRE_POSTGRES_TESTS=1``, where a skip is a failure.
 
-The interleaving is forced, not hoped for. The first writer does its write inside
-a transaction and holds that transaction open; only once the second writer is
-shown to be BLOCKED behind it (still unfinished after a pause) does the first
-commit. A test whose second writer was never blocked fails, so a run that did not
-actually race cannot pass.
+The interleaving is forced and then PROVEN. Both writers open their connections
+before either writes. The first writes inside a transaction and holds it open
+until PostgreSQL itself shows the second writer waiting for a lock
+(``pg_locks ... AND NOT granted``, read live), and only then commits. A run in
+which the second writer never waited on the first fails, so a test cannot pass
+without the race it is named for having happened.
 """
 
 from __future__ import annotations
 
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 
 import pytest
 from django.db import IntegrityError, connection, connections, transaction
@@ -31,10 +32,12 @@ from core.models import (
 pytestmark = pytest.mark.django_db(transaction=True)
 
 SID = 4990201
-#: How long the second writer must stay blocked before the first may commit.
-BLOCKED_FOR = 0.5
-#: The longest anything here waits for anything.
-TIMEOUT = 10
+#: The longest the first writer holds its transaction for the second to queue.
+HOLD_SECONDS = 10
+#: How often the first writer looks for the second one waiting.
+POLL_SECONDS = 0.02
+#: The longest anything else here waits.
+TIMEOUT = 30
 
 
 @pytest.fixture(autouse=True)
@@ -50,56 +53,101 @@ def _postgresql_only():
 
 
 def _race(first_write, second_write):
-    """Run ``first_write`` in a held transaction and ``second_write`` against it.
+    """Run ``second_write`` while ``first_write``'s transaction is still open.
 
-    Returns each writer's outcome: its return value, or ("refused", message) when
-    the database rejected it with an IntegrityError, so a test can check WHICH
-    rule refused it. Asserts that the second writer was blocked behind the first,
-    which is what makes this a race at all.
+    Returns ``(first, second)``: each writer's return value, or
+    ``("refused", message)`` when the database rejected the second writer with an
+    IntegrityError, so a test can check WHICH rule refused it. Any other error in
+    either writer is re-raised as itself.
     """
-    first_written, release, second_done = (threading.Event() for _ in range(3))
+    outcomes: dict[str, object] = {}
+    warmed = threading.Barrier(2, timeout=TIMEOUT)
+    first_written = threading.Event()
+    second_done = threading.Event()
+    seen = {"second_pid": None, "second_waited": False}
 
     def first():
         try:
+            connection.ensure_connection()
+            warmed.wait()
             with transaction.atomic():
-                result = first_write()
+                outcomes["first"] = first_write()
                 first_written.set()
-                assert release.wait(TIMEOUT), "the test never released the first writer"
-            return result
+                deadline = time.monotonic() + HOLD_SECONDS
+                with connection.cursor() as cursor:
+                    while time.monotonic() < deadline and not second_done.is_set():
+                        cursor.execute(
+                            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = %s AND NOT granted)",
+                            [seen["second_pid"]],
+                        )
+                        if cursor.fetchone()[0]:
+                            seen["second_waited"] = True
+                            break
+                        time.sleep(POLL_SECONDS)
+        except BaseException as exc:  # noqa: BLE001 - re-raised by the caller below
+            outcomes["first"] = exc
         finally:
+            first_written.set()  # never leave the second writer waiting on a failure
             connections.close_all()
 
     def second():
         try:
+            connection.ensure_connection()
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                seen["second_pid"] = cursor.fetchone()[0]
+            warmed.wait()
             assert first_written.wait(TIMEOUT), "the first writer never wrote"
+            if isinstance(outcomes.get("first"), BaseException):
+                return
             try:
                 with transaction.atomic():
-                    return second_write()
+                    outcomes["second"] = second_write()
             except IntegrityError as exc:
-                return ("refused", str(exc))
+                outcomes["second"] = ("refused", str(exc))
+        except BaseException as exc:  # noqa: BLE001 - re-raised by the caller below
+            outcomes["second"] = exc
         finally:
             second_done.set()
             connections.close_all()
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first_future = pool.submit(first)
-        second_future = pool.submit(second)
-        try:
-            assert first_written.wait(TIMEOUT), "the first writer never wrote"
-            blocked = not second_done.wait(BLOCKED_FOR)
-        finally:
-            release.set()
-        first_result = first_future.result(timeout=TIMEOUT)
-        second_result = second_future.result(timeout=TIMEOUT)
-    assert blocked, "the second writer was never blocked, so nothing raced"
-    return first_result, second_result
+    threads = [
+        threading.Thread(target=first, name="first", daemon=True),
+        threading.Thread(target=second, name="second", daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=TIMEOUT * 2)
+        assert not thread.is_alive(), f"the {thread.name} writer did not finish"
+    for name in ("first", "second"):
+        if isinstance(outcomes.get(name), BaseException):
+            raise outcomes[name]
+    assert seen["second_waited"], "the second writer never waited on the first, so nothing raced"
+    return outcomes["first"], outcomes["second"]
 
 
-def _open_case():
-    return TimetableFeedback.objects.create(student_id=SID, academic_year="1448", term="1")
+def _open_case(reference=""):
+    return TimetableFeedback.objects.create(
+        student_id=SID, academic_year="1448", term="1", reference=reference
+    )
 
 
-def test_two_open_cases_racing_for_one_term_leave_exactly_one():
+def test_two_open_cases_racing_on_the_one_open_case_rule_leave_exactly_one():
+    """Distinct case numbers given up front, so the two writers meet only at the
+    one-open-case-per-term index: the second waits on it, then is refused by it."""
+    first, second = _race(
+        lambda: _open_case("TTF-2099-90001"), lambda: _open_case("TTF-2099-90002")
+    )
+
+    assert isinstance(first, TimetableFeedback)
+    assert second[0] == "refused" and "uq_ttf_one_open_case_per_term" in second[1], second
+    assert TimetableFeedback.objects.filter(student_id=SID).count() == 1
+
+
+def test_two_open_cases_racing_through_case_numbering_leave_exactly_one():
+    """The path the service takes: each writer numbers its case first, so the
+    second waits on the counter, then meets the first's committed open case."""
     first, second = _race(_open_case, _open_case)
 
     assert isinstance(first, TimetableFeedback)

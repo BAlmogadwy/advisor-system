@@ -383,8 +383,9 @@ def test_cutover_reports_and_removes_timetable_feedback_but_keeps_its_counter() 
     after = out.getvalue().split("AFTER:", 1)[1]
     for table in FEEDBACK_TABLES:
         assert f"  {table}=0" in after, table
-    # Case numbers keep counting, as the adviser case numbers do: a number once
-    # quoted to a student is never issued to another.
+    # The cutover keeps the counter, as it keeps the adviser one, so case numbers
+    # quoted to test students are not issued again after it. (A production
+    # release-seed rebuild empties every runtime table, this counter included.)
     assert TimetableFeedbackCounter.objects.get().last_number == numbers_issued
     assert FEEDBACK_SECRET not in dry.getvalue() + out.getvalue()
 

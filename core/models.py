@@ -4,7 +4,7 @@ from typing import Any
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F
-from django.db.models.functions import Trim, Upper
+from django.db.models.functions import Cast, Concat, Trim, Upper
 
 
 class Student(models.Model):
@@ -2653,6 +2653,103 @@ class PlannerDraft(models.Model):
 # never saw, so a point stores the section's id as a plain integer beside a frozen
 # copy of what the student was shown. `student_id` is a bare integer for the
 # reason AdvisorEscalation's is: Student rows are re-imported wholesale.
+#
+# TEXT COPIED FROM ELSEWHERE IS STORED AS TEXT. Advisor ids, programmes, standing,
+# course names and staff labels are copied from unbounded columns (some advisor
+# ids hold whole Arabic names), and a bounded copy fails only on PostgreSQL.
+#
+# THE CHOICES LIVE AT MODULE LEVEL so the database checks below are built from the
+# same values as the model fields. A choice added to one and not the other then
+# shows up as a migration, not as a row the database silently refuses or allows.
+
+
+class TimetableFeedbackStatus(models.TextChoices):
+    SUBMITTED = "SUBMITTED", "Submitted"
+    IN_REVIEW = "IN_REVIEW", "In review"
+    NEEDS_INFORMATION = "NEEDS_INFORMATION", "Needs information from the student"
+    FORWARDED = "FORWARDED", "Forwarded to the department"
+    ANSWERED = "ANSWERED", "Answered"
+    CLOSED = "CLOSED", "Closed"
+    WITHDRAWN = "WITHDRAWN", "Withdrawn by the student"
+
+
+#: A case stops counting as open once it reaches one of these. ANSWERED is
+#: deliberately NOT here: the student still confirms the answer or reopens it.
+TIMETABLE_FEEDBACK_TERMINAL_STATUSES = (
+    TimetableFeedbackStatus.CLOSED.value,
+    TimetableFeedbackStatus.WITHDRAWN.value,
+)
+
+
+class TimetableFeedbackCloseReason(models.TextChoices):
+    DUPLICATE = "DUPLICATE", "Duplicate of another case"
+    NOT_APPLICABLE = "NOT_APPLICABLE", "Not something the timetable can change"
+    TERM_ENDED = "TERM_ENDED", "The term has ended"
+    ANSWER_ACCEPTED = "ANSWER_ACCEPTED", "The student accepted the answer"
+    NO_REPLY_AFTER_ANSWER = "NO_REPLY_AFTER_ANSWER", "No reply after the answer"
+    OTHER = "OTHER", "Other"
+
+
+class TimetableFeedbackAnchorKind(models.TextChoices):
+    SECTION = "SECTION", "One section"
+    TIMETABLE = "TIMETABLE", "The whole timetable"
+    NO_FORECAST = "NO_FORECAST", "No timetable prepared"
+
+
+class TimetableFeedbackReason(models.TextChoices):
+    # About one section.
+    TIME_CLASH = "TIME_CLASH", "Clashes with another course"
+    TIME_UNSUITABLE = "TIME_UNSUITABLE", "The time does not suit me"
+    PREFER_OTHER_SECTION = "PREFER_OTHER_SECTION", "I need another section"
+    ALREADY_PASSED = "ALREADY_PASSED", "I have already passed this course"
+    PREREQUISITE_NOT_MET = "PREREQUISITE_NOT_MET", "I have not met the prerequisite"
+    NOT_IN_MY_PLAN = "NOT_IN_MY_PLAN", "Not in my study plan"
+    SECTION_HAS_NO_TIMES = "SECTION_HAS_NO_TIMES", "The section has no times"
+    # About the whole timetable.
+    LOAD_TOO_HIGH = "LOAD_TOO_HIGH", "Too many credit hours"
+    LOAD_TOO_LOW = "LOAD_TOO_LOW", "Too few credit hours"
+    MISSING_COURSE = "MISSING_COURSE", "A course I need is missing"
+    TOO_MANY_CAMPUS_DAYS = "TOO_MANY_CAMPUS_DAYS", "Too many days on campus"
+    GRADUATION_CONCERN = "GRADUATION_CONCERN", "It puts my graduation at risk"
+    # Either.
+    OTHER = "OTHER", "Something else"
+    # Only with no timetable at all.
+    NO_FORECAST = "NO_FORECAST", "No timetable has been prepared for me"
+
+
+class TimetableFeedbackAudience(models.TextChoices):
+    STUDENT_VISIBLE = "STUDENT_VISIBLE", "Visible to the student"
+    INTERNAL = "INTERNAL", "Staff only"
+
+
+class TimetableFeedbackAuthorKind(models.TextChoices):
+    STUDENT = "STUDENT", "The student"
+    ADVISOR = "ADVISOR", "The student's advisor"
+    DEPARTMENT = "DEPARTMENT", "The department"
+
+
+class TimetableFeedbackEventKind(models.TextChoices):
+    SUBMITTED = "SUBMITTED", "Submitted by the student"
+    POINT_ADDED = "POINT_ADDED", "Point added"
+    POINT_WITHDRAWN = "POINT_WITHDRAWN", "Point withdrawn"
+    VIEWED = "VIEWED", "Opened by staff"
+    TAKEN = "TAKEN", "Taken by an advisor"
+    ASSIGNED = "ASSIGNED", "Assigned"
+    STATUS_CHANGED = "STATUS_CHANGED", "Status changed"
+    NOTE_ADDED = "NOTE_ADDED", "Internal note added"
+    #: The student answering a request for information.
+    STUDENT_REPLY = "STUDENT_REPLY", "Reply from the student"
+    #: The student adding something unprompted; capped separately from replies.
+    STUDENT_FOLLOWUP = "STUDENT_FOLLOWUP", "Follow-up from the student"
+    STAFF_MESSAGE = "STAFF_MESSAGE", "Message to the student"
+    FORWARDED = "FORWARDED", "Forwarded to the department"
+    DEPARTMENT_DECISION = "DEPARTMENT_DECISION", "Department decision"
+    ASSESSED = "ASSESSED", "Re-checked against the current timetable"
+    REDACTED = "REDACTED", "Text redacted"
+    ANSWER_CONFIRMED = "ANSWER_CONFIRMED", "Answer confirmed by the student"
+    REOPENED = "REOPENED", "Reopened by the student"
+    WITHDRAWN = "WITHDRAWN", "Withdrawn by the student"
+    AUTO_CLOSED = "AUTO_CLOSED", "Closed automatically"
 
 
 class TimetableFeedback(models.Model):
@@ -2664,26 +2761,9 @@ class TimetableFeedback(models.Model):
     database constraint) and adds points to it rather than opening another.
     """
 
-    class Status(models.TextChoices):
-        SUBMITTED = "SUBMITTED", "Submitted"
-        IN_REVIEW = "IN_REVIEW", "In review"
-        NEEDS_INFORMATION = "NEEDS_INFORMATION", "Needs information from the student"
-        FORWARDED = "FORWARDED", "Forwarded to the department"
-        ANSWERED = "ANSWERED", "Answered"
-        CLOSED = "CLOSED", "Closed"
-        WITHDRAWN = "WITHDRAWN", "Withdrawn by the student"
-
-    #: A case stops counting as open once it reaches one of these. ANSWERED is
-    #: deliberately NOT here: the student still confirms the answer or reopens it.
-    TERMINAL_STATUSES = (Status.CLOSED, Status.WITHDRAWN)
-
-    class CloseReason(models.TextChoices):
-        DUPLICATE = "DUPLICATE", "Duplicate of another case"
-        NOT_APPLICABLE = "NOT_APPLICABLE", "Not something the timetable can change"
-        TERM_ENDED = "TERM_ENDED", "The term has ended"
-        ANSWER_ACCEPTED = "ANSWER_ACCEPTED", "The student accepted the answer"
-        NO_REPLY_AFTER_ANSWER = "NO_REPLY_AFTER_ANSWER", "No reply after the answer"
-        OTHER = "OTHER", "Other"
+    Status = TimetableFeedbackStatus
+    CloseReason = TimetableFeedbackCloseReason
+    TERMINAL_STATUSES = TIMETABLE_FEEDBACK_TERMINAL_STATUSES
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     #: What the student and the advisor quote to each other: TTF-2026-00012.
@@ -2695,10 +2775,12 @@ class TimetableFeedback(models.Model):
     academic_year = models.CharField(max_length=8)
     term = models.CharField(max_length=4)
 
-    status = models.CharField(max_length=24, choices=Status.choices, default=Status.SUBMITTED)
+    status = models.CharField(
+        max_length=24, choices=TimetableFeedbackStatus.choices, default="SUBMITTED"
+    )
     #: Set exactly when the case is CLOSED (a database constraint).
     close_reason = models.CharField(
-        max_length=24, choices=CloseReason.choices, blank=True, default=""
+        max_length=24, choices=TimetableFeedbackCloseReason.choices, blank=True, default=""
     )
     #: Bumped by every change of state; a write names the version it read, so two
     #: people acting on the same case cannot both succeed.
@@ -2713,20 +2795,20 @@ class TimetableFeedback(models.Model):
         related_name="timetable_feedback_handled",
     )
     handled_by_username = models.CharField(max_length=150, blank=True, default="")
-    handled_advisor_id = models.CharField(max_length=64, blank=True, default="")
+    handled_advisor_id = models.TextField(blank=True, default="")
     #: Set only by the department, to route the case to a named advisor.
-    assigned_advisor_id = models.CharField(max_length=64, blank=True, default="")
+    assigned_advisor_id = models.TextField(blank=True, default="")
     #: The student's advisor when they wrote. History only: routing follows the
     #: student's CURRENT advisor.
-    routed_advisor_id = models.CharField(max_length=64, blank=True, default="")
+    routed_advisor_id = models.TextField(blank=True, default="")
 
     # Who the student was when they wrote, for the record and the department's
     # breakdowns. Copies, because each of these can change afterwards.
-    program_at_submission = models.CharField(max_length=32, blank=True, default="")
+    program_at_submission = models.TextField(blank=True, default="")
     cohort_at_submission = models.CharField(max_length=1, blank=True, default="")
-    standing_at_submission = models.CharField(max_length=120, blank=True, default="")
+    standing_at_submission = models.TextField(blank=True, default="")
     has_registration_at_submission = models.BooleanField(default=False)
-    submitted_language = models.CharField(max_length=2, blank=True, default="")
+    submitted_language = models.CharField(max_length=8, blank=True, default="")
 
     #: The student's own verdict on the answer, when they gave one.
     answer_helpful = models.BooleanField(null=True, blank=True)
@@ -2759,39 +2841,23 @@ class TimetableFeedback(models.Model):
             # added later is open by default and cannot slip past the rule.
             models.UniqueConstraint(
                 fields=["student_id", "academic_year", "term"],
-                condition=~models.Q(status__in=("CLOSED", "WITHDRAWN")),
+                condition=~models.Q(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES),
                 name="uq_ttf_one_open_case_per_term",
             ),
             models.CheckConstraint(
-                condition=models.Q(
-                    status__in=(
-                        "SUBMITTED",
-                        "IN_REVIEW",
-                        "NEEDS_INFORMATION",
-                        "FORWARDED",
-                        "ANSWERED",
-                        "CLOSED",
-                        "WITHDRAWN",
-                    )
-                ),
+                condition=models.Q(status__in=TimetableFeedbackStatus.values),
                 name="ck_ttf_status_valid",
             ),
             # A closed case says why; nothing else carries a close reason.
             models.CheckConstraint(
                 condition=(
-                    models.Q(status="CLOSED")
-                    & models.Q(
-                        close_reason__in=(
-                            "DUPLICATE",
-                            "NOT_APPLICABLE",
-                            "TERM_ENDED",
-                            "ANSWER_ACCEPTED",
-                            "NO_REPLY_AFTER_ANSWER",
-                            "OTHER",
-                        )
-                    )
+                    models.Q(status=TimetableFeedbackStatus.CLOSED.value)
+                    & models.Q(close_reason__in=TimetableFeedbackCloseReason.values)
                 )
-                | (~models.Q(status="CLOSED") & models.Q(close_reason="")),
+                | (
+                    ~models.Q(status=TimetableFeedbackStatus.CLOSED.value)
+                    & models.Q(close_reason="")
+                ),
                 name="ck_ttf_close_reason",
             ),
         ]
@@ -2814,55 +2880,34 @@ class TimetableFeedbackPoint(models.Model):
     department groups by, and the course as the student's own plan names it.
     """
 
-    class AnchorKind(models.TextChoices):
-        SECTION = "SECTION", "One section"
-        TIMETABLE = "TIMETABLE", "The whole timetable"
-        NO_FORECAST = "NO_FORECAST", "No timetable prepared"
-
-    class Reason(models.TextChoices):
-        # About one section.
-        TIME_CLASH = "TIME_CLASH", "Clashes with another course"
-        TIME_UNSUITABLE = "TIME_UNSUITABLE", "The time does not suit me"
-        PREFER_OTHER_SECTION = "PREFER_OTHER_SECTION", "I need another section"
-        ALREADY_PASSED = "ALREADY_PASSED", "I have already passed this course"
-        PREREQUISITE_NOT_MET = "PREREQUISITE_NOT_MET", "I have not met the prerequisite"
-        NOT_IN_MY_PLAN = "NOT_IN_MY_PLAN", "Not in my study plan"
-        SECTION_HAS_NO_TIMES = "SECTION_HAS_NO_TIMES", "The section has no times"
-        # About the whole timetable.
-        LOAD_TOO_HIGH = "LOAD_TOO_HIGH", "Too many credit hours"
-        LOAD_TOO_LOW = "LOAD_TOO_LOW", "Too few credit hours"
-        MISSING_COURSE = "MISSING_COURSE", "A course I need is missing"
-        TOO_MANY_CAMPUS_DAYS = "TOO_MANY_CAMPUS_DAYS", "Too many days on campus"
-        GRADUATION_CONCERN = "GRADUATION_CONCERN", "It puts my graduation at risk"
-        # Either.
-        OTHER = "OTHER", "Something else"
-        # Only with no timetable at all.
-        NO_FORECAST = "NO_FORECAST", "No timetable has been prepared for me"
+    AnchorKind = TimetableFeedbackAnchorKind
+    Reason = TimetableFeedbackReason
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     case = models.ForeignKey(TimetableFeedback, on_delete=models.CASCADE, related_name="points")
-    anchor_kind = models.CharField(max_length=16, choices=AnchorKind.choices)
+    anchor_kind = models.CharField(max_length=16, choices=TimetableFeedbackAnchorKind.choices)
     #: The section's id when the student wrote: a plain integer, NOT a foreign key.
-    #: Re-imports delete sections, and the next term reuses the ids.
-    term_section_id = models.IntegerField(null=True, blank=True)
-    course_key = models.CharField(max_length=32, blank=True, default="")
-    section_label = models.CharField(max_length=32, blank=True, default="")
+    #: Re-imports delete sections, and the next term reuses the ids. Big, because
+    #: TermSection's own key is.
+    term_section_id = models.BigIntegerField(null=True, blank=True)
+    course_key = models.TextField(blank=True, default="")
+    section_label = models.TextField(blank=True, default="")
     #: The PHYSICAL section's course, CODE::NAME, which the department groups by.
-    section_course_identity = models.CharField(max_length=200, blank=True, default="")
+    section_course_identity = models.TextField(blank=True, default="")
     #: The course as the student's own programme names it, CODE::NAME.
-    plan_course_identity = models.CharField(max_length=160, blank=True, default="")
+    plan_course_identity = models.TextField(blank=True, default="")
     #: False when the bare code names more than one course, or the course is off-plan.
     identity_certain = models.BooleanField(default=False)
     #: What the point is about, as one non-null value, so the uniqueness rule
-    #: below also holds for points with no section: 'SECTION|<id>', 'TIMETABLE'
-    #: or 'NO_FORECAST'.
+    #: below also holds for points with no section: 'SECTION|<term_section_id>'
+    #: (exactly, a database check), 'TIMETABLE' or 'NO_FORECAST'.
     anchor_key = models.CharField(max_length=64)
-    reason_code = models.CharField(max_length=32, choices=Reason.choices)
+    reason_code = models.CharField(max_length=32, choices=TimetableFeedbackReason.choices)
     # What the student asked for instead, for the reasons that name one.
-    requested_term_section_id = models.IntegerField(null=True, blank=True)
-    requested_section_label = models.CharField(max_length=32, blank=True, default="")
-    requested_course_key = models.CharField(max_length=32, blank=True, default="")
-    requested_plan_course_identity = models.CharField(max_length=160, blank=True, default="")
+    requested_term_section_id = models.BigIntegerField(null=True, blank=True)
+    requested_section_label = models.TextField(blank=True, default="")
+    requested_course_key = models.TextField(blank=True, default="")
+    requested_plan_course_identity = models.TextField(blank=True, default="")
     note = models.TextField(blank=True, default="")
     note_redacted_at = models.DateTimeField(null=True, blank=True)
     withdrawn_at = models.DateTimeField(null=True, blank=True)
@@ -2890,24 +2935,41 @@ class TimetableFeedbackPoint(models.Model):
                 condition=models.Q(withdrawn_at__isnull=True),
                 name="uq_ttfp_point",
             ),
+            models.CheckConstraint(
+                condition=models.Q(reason_code__in=TimetableFeedbackReason.values),
+                name="ck_ttfp_reason_valid",
+            ),
             # A section point names a section; the others name none.
             models.CheckConstraint(
                 condition=(
-                    models.Q(anchor_kind="SECTION")
+                    models.Q(anchor_kind=TimetableFeedbackAnchorKind.SECTION.value)
                     & models.Q(term_section_id__isnull=False)
                     & ~models.Q(section_label="")
                 )
                 | (
-                    models.Q(anchor_kind__in=("TIMETABLE", "NO_FORECAST"))
+                    models.Q(
+                        anchor_kind__in=(
+                            TimetableFeedbackAnchorKind.TIMETABLE.value,
+                            TimetableFeedbackAnchorKind.NO_FORECAST.value,
+                        )
+                    )
                     & models.Q(term_section_id__isnull=True)
                     & models.Q(section_label="")
                 ),
                 name="ck_ttfp_anchor",
             ),
-            # The anchor key agrees with the anchor kind.
+            # The anchor key IS its anchor: exactly 'SECTION|<term_section_id>' for
+            # a section, so two keys for one section cannot both pass the
+            # uniqueness rule above.
             models.CheckConstraint(
                 condition=(
-                    models.Q(anchor_kind="SECTION") & models.Q(anchor_key__startswith="SECTION|")
+                    models.Q(anchor_kind=TimetableFeedbackAnchorKind.SECTION.value)
+                    & models.Q(
+                        anchor_key=Concat(
+                            models.Value("SECTION|"),
+                            Cast("term_section_id", output_field=models.CharField()),
+                        )
+                    )
                 )
                 | (models.Q(anchor_kind="TIMETABLE") & models.Q(anchor_key="TIMETABLE"))
                 | (models.Q(anchor_kind="NO_FORECAST") & models.Q(anchor_key="NO_FORECAST")),
@@ -2935,20 +2997,14 @@ class TimetableFeedbackMessage(models.Model):
     never reach the student by a template forgetting a condition.
     """
 
-    class Audience(models.TextChoices):
-        STUDENT_VISIBLE = "STUDENT_VISIBLE", "Visible to the student"
-        INTERNAL = "INTERNAL", "Staff only"
-
-    class AuthorKind(models.TextChoices):
-        STUDENT = "STUDENT", "The student"
-        ADVISOR = "ADVISOR", "The student's advisor"
-        DEPARTMENT = "DEPARTMENT", "The department"
+    Audience = TimetableFeedbackAudience
+    AuthorKind = TimetableFeedbackAuthorKind
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     case = models.ForeignKey(TimetableFeedback, on_delete=models.CASCADE, related_name="messages")
-    audience = models.CharField(max_length=16, choices=Audience.choices)
+    audience = models.CharField(max_length=16, choices=TimetableFeedbackAudience.choices)
     #: Decided on the server, never taken from the request.
-    author_kind = models.CharField(max_length=16, choices=AuthorKind.choices)
+    author_kind = models.CharField(max_length=16, choices=TimetableFeedbackAuthorKind.choices)
     #: Null for the student, who is identified by the case.
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -2959,7 +3015,7 @@ class TimetableFeedbackMessage(models.Model):
     )
     author_username = models.CharField(max_length=150, blank=True, default="")
     #: Staff-side only; never sent to the student.
-    author_label = models.CharField(max_length=120, blank=True, default="")
+    author_label = models.TextField(blank=True, default="")
     body = models.TextField()
     #: 'ar', 'en' or 'mixed', so staff can be warned before answering in the
     #: other language.
@@ -2976,6 +3032,16 @@ class TimetableFeedbackMessage(models.Model):
         ordering = ["created_at"]
         indexes = [models.Index(fields=["case", "created_at"], name="idx_ttfm_case")]
         constraints = [
+            # Known values only: the visibility rule below compares against them,
+            # and a misspelt audience or author would slip past it.
+            models.CheckConstraint(
+                condition=models.Q(audience__in=TimetableFeedbackAudience.values),
+                name="ck_ttfm_audience_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(author_kind__in=TimetableFeedbackAuthorKind.values),
+                name="ck_ttfm_author_kind_valid",
+            ),
             # A student writes to their advisor, never into the staff-only notes,
             # and never as a staff account.
             models.CheckConstraint(
@@ -2992,29 +3058,13 @@ class TimetableFeedbackMessage(models.Model):
 class TimetableFeedbackEvent(models.Model):
     """Who did what to a case, and when. Append-only.
 
-    Message bodies are NOT copied in: they live on the messages, and a copy that
-    drifts is worse than a pointer.
+    An event names the point or message it is about (``point_id``, ``message_id``)
+    rather than copying its text: the text lives on that row, and a copy that
+    drifts is worse than a pointer. Bare UUIDs rather than foreign keys, so a
+    history row never blocks, or disappears with, a redaction or a correction.
     """
 
-    class Kind(models.TextChoices):
-        SUBMITTED = "SUBMITTED", "Submitted by the student"
-        POINT_ADDED = "POINT_ADDED", "Point added"
-        POINT_WITHDRAWN = "POINT_WITHDRAWN", "Point withdrawn"
-        VIEWED = "VIEWED", "Opened by staff"
-        TAKEN = "TAKEN", "Taken by an advisor"
-        ASSIGNED = "ASSIGNED", "Assigned"
-        STATUS_CHANGED = "STATUS_CHANGED", "Status changed"
-        NOTE_ADDED = "NOTE_ADDED", "Internal note added"
-        STUDENT_MESSAGE = "STUDENT_MESSAGE", "Message from the student"
-        STAFF_MESSAGE = "STAFF_MESSAGE", "Message to the student"
-        FORWARDED = "FORWARDED", "Forwarded to the department"
-        DEPARTMENT_DECISION = "DEPARTMENT_DECISION", "Department decision"
-        ASSESSED = "ASSESSED", "Re-checked against the current timetable"
-        REDACTED = "REDACTED", "Text redacted"
-        ANSWER_CONFIRMED = "ANSWER_CONFIRMED", "Answer confirmed by the student"
-        REOPENED = "REOPENED", "Reopened by the student"
-        WITHDRAWN = "WITHDRAWN", "Withdrawn by the student"
-        AUTO_CLOSED = "AUTO_CLOSED", "Closed automatically"
+    Kind = TimetableFeedbackEventKind
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     case = models.ForeignKey(TimetableFeedback, on_delete=models.CASCADE, related_name="events")
@@ -3027,17 +3077,27 @@ class TimetableFeedbackEvent(models.Model):
         related_name="timetable_feedback_events",
     )
     actor_username = models.CharField(max_length=150, blank=True, default="")
-    actor_label = models.CharField(max_length=120, blank=True, default="")
-    actor_advisor_id = models.CharField(max_length=64, blank=True, default="")
-    kind = models.CharField(max_length=24, choices=Kind.choices)
-    from_value = models.CharField(max_length=32, blank=True, default="")
-    to_value = models.CharField(max_length=32, blank=True, default="")
+    actor_label = models.TextField(blank=True, default="")
+    actor_advisor_id = models.TextField(blank=True, default="")
+    kind = models.CharField(max_length=24, choices=TimetableFeedbackEventKind.choices)
+    #: The point or message this event is about, when it is about one.
+    point_id = models.UUIDField(null=True, blank=True)
+    message_id = models.UUIDField(null=True, blank=True)
+    #: Before and after, for a change: a status, an assignee's advisor id.
+    from_value = models.TextField(blank=True, default="")
+    to_value = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "timetable_feedback_events"
         ordering = ["created_at"]
         indexes = [models.Index(fields=["case", "created_at"], name="idx_ttfe_case")]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(kind__in=TimetableFeedbackEventKind.values),
+                name="ck_ttfe_kind_valid",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.kind}@{self.case_id}"

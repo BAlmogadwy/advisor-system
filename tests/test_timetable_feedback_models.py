@@ -391,3 +391,176 @@ def test_deleting_a_case_takes_its_points_thread_and_history_with_it():
     assert not TimetableFeedbackPoint.objects.exists()
     assert not TimetableFeedbackMessage.objects.exists()
     assert not TimetableFeedbackEvent.objects.exists()
+
+
+# ---------------------------------------------------------------------------
+# The anchor key is exactly its anchor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "anchor_key", ["SECTION|12", "SECTION|", "SECTION|011", "SECTION|11 ", "section|11"]
+)
+def test_a_section_anchor_key_is_exactly_its_own_section(anchor_key):
+    """Anything else would let two keys for one section both pass the point rule."""
+    case = _case()
+    _refused(lambda: _point(case, SECTION_POINT, anchor_key=anchor_key), "ck_ttfp_anchor_key")
+
+
+def test_a_section_id_beyond_32_bits_is_stored_and_anchored_exactly():
+    """TermSection's key is a big integer, so the copies of it are too."""
+    big = 2**31 + 7
+    case = _case()
+    point = _point(
+        case,
+        SECTION_POINT,
+        term_section_id=big,
+        anchor_key=f"SECTION|{big}",
+        requested_term_section_id=big + 1,
+    )
+    point.refresh_from_db()
+    assert (point.term_section_id, point.requested_term_section_id) == (big, big + 1)
+    _refused(
+        lambda: _point(
+            case,
+            SECTION_POINT,
+            term_section_id=big,
+            anchor_key=f"SECTION|{big + 1}",
+            reason_code="OTHER",
+        ),
+        "ck_ttfp_anchor_key",
+    )
+
+
+def test_two_sections_may_carry_the_same_reason_about_the_same_timetable():
+    """Both sides of one clash, for instance: two points, not a duplicate."""
+    case = _case()
+    _point(case, SECTION_POINT)
+    _point(case, SECTION_POINT, term_section_id=12, anchor_key="SECTION|12")
+    assert case.points.count() == 2
+
+
+def test_a_section_and_the_whole_timetable_may_both_say_other():
+    case = _case()
+    _point(case, SECTION_POINT, reason_code="OTHER")
+    _point(case, TIMETABLE_POINT, reason_code="OTHER")
+    assert case.points.count() == 2
+
+
+# ---------------------------------------------------------------------------
+# Known values only
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reason", TimetableFeedbackPoint.Reason.values)
+def test_every_known_reason_is_accepted(reason):
+    base = NO_FORECAST_POINT if reason == "NO_FORECAST" else TIMETABLE_POINT
+    _point(_case(), base, reason_code=reason)
+
+
+def test_an_unknown_reason_is_refused():
+    case = _case()
+    _refused(lambda: _point(case, TIMETABLE_POINT, reason_code="BOGUS"), "ck_ttfp_reason_valid")
+
+
+def test_an_unknown_audience_is_refused():
+    case = _case()
+    _refused(
+        lambda: _message(case, audience="student_visible", author_kind="ADVISOR"),
+        "ck_ttfm_audience_valid",
+    )
+
+
+@pytest.mark.parametrize("author_kind", ["student", ""])
+def test_an_unknown_author_kind_cannot_slip_a_student_note_into_staff_only(author_kind):
+    """A misspelt STUDENT would otherwise pass the visibility rule, which compares
+    against the exact value."""
+    case = _case()
+    _refused(
+        lambda: _message(case, audience="INTERNAL", author_kind=author_kind),
+        "ck_ttfm_author_kind_valid",
+    )
+
+
+@pytest.mark.parametrize("kind", TimetableFeedbackEvent.Kind.values)
+def test_every_known_event_kind_is_accepted(kind):
+    TimetableFeedbackEvent.objects.create(case=_case(), kind=kind)
+
+
+def test_an_unknown_event_kind_is_refused():
+    case = _case()
+    _refused(
+        lambda: TimetableFeedbackEvent.objects.create(case=case, kind="BOGUS"),
+        "ck_ttfe_kind_valid",
+    )
+
+
+def test_an_event_names_the_point_and_the_message_it_is_about():
+    case = _case()
+    point = _point(case, TIMETABLE_POINT)
+    message = _message(case, audience="STUDENT_VISIBLE", author_kind="STUDENT")
+    TimetableFeedbackEvent.objects.create(
+        case=case, kind="POINT_ADDED", point_id=point.pk, message_id=message.pk
+    )
+    event = case.events.get()
+    assert (event.point_id, event.message_id) == (point.pk, message.pk)
+
+
+# ---------------------------------------------------------------------------
+# Text copied from unbounded columns is stored whole
+# ---------------------------------------------------------------------------
+
+#: Longer than any bounded column here. Some advisor ids are whole Arabic names.
+LONG = "مرشد أكاديمي باسم طويل جدا " * 40
+
+
+def test_text_copied_from_unbounded_sources_is_stored_whole():
+    """SQLite never enforces a length; PostgreSQL would refuse a bounded copy.
+
+    So this test only bites in the PostgreSQL job, which runs this file.
+    """
+    case = _case(
+        handled_advisor_id=LONG,
+        assigned_advisor_id=LONG,
+        routed_advisor_id=LONG,
+        program_at_submission=LONG,
+        standing_at_submission=LONG,
+    )
+    point = _point(
+        case,
+        SECTION_POINT,
+        course_key=LONG,
+        section_label=LONG,
+        section_course_identity=LONG,
+        plan_course_identity=LONG,
+        requested_section_label=LONG,
+        requested_course_key=LONG,
+        requested_plan_course_identity=LONG,
+    )
+    message = _message(case, audience="INTERNAL", author_kind="ADVISOR", author_label=LONG)
+    event = TimetableFeedbackEvent.objects.create(
+        case=case,
+        kind="ASSIGNED",
+        actor_label=LONG,
+        actor_advisor_id=LONG,
+        from_value=LONG,
+        to_value=LONG,
+    )
+
+    case.refresh_from_db()
+    point.refresh_from_db()
+    message.refresh_from_db()
+    event.refresh_from_db()
+    assert {case.handled_advisor_id, case.assigned_advisor_id, case.routed_advisor_id} == {LONG}
+    assert {case.program_at_submission, case.standing_at_submission} == {LONG}
+    assert {
+        point.course_key,
+        point.section_label,
+        point.section_course_identity,
+        point.plan_course_identity,
+        point.requested_section_label,
+        point.requested_course_key,
+        point.requested_plan_course_identity,
+    } == {LONG}
+    assert message.author_label == LONG
+    assert {event.actor_label, event.actor_advisor_id, event.from_value, event.to_value} == {LONG}

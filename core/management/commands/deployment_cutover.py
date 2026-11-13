@@ -280,7 +280,8 @@ def _compact_sqlite_after_commit(db_connection: Any) -> None:
 
 class Command(BaseCommand):
     help = (
-        "Purge adviser transcripts and student login state for deployment. "
+        "Purge adviser transcripts, timetable feedback and student login state for "
+        "deployment. "
         "Dry-run unless --confirm; stop all web/worker writers before applying."
     )
 
