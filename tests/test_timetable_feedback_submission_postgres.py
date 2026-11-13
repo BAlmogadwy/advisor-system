@@ -14,6 +14,7 @@ import os
 
 import pytest
 from django.db import connection
+from django.utils import timezone
 
 from core.models import (
     ProgrammeRequirement,
@@ -150,3 +151,29 @@ def test_two_new_points_racing_into_an_open_case_both_land(anchor):
         "TIME_UNSUITABLE",
     ]
     assert case.version == 3
+
+
+def test_a_withdrawal_racing_a_new_point_still_starts_the_cool_down(anchor):
+    """The submission saw an open case before the lock, so it skipped the early
+    cap check. The withdrawal commits while it waits on the case's row lock; the
+    check under the lock is what refuses a fresh case inside the cool-down."""
+    opened = feedback.submit_point(**_fields_for(anchor, "OTHER", note="opened the case"))
+    case_pk = TimetableFeedback.objects.get(reference=opened.reference).pk
+    fields = _fields_for(anchor, "TIME_CLASH")
+
+    def withdraw():
+        return TimetableFeedback.objects.filter(pk=case_pk).update(
+            status="WITHDRAWN", closed_at=timezone.now()
+        )
+
+    def submit():
+        try:
+            return feedback.submit_point(**fields)
+        except feedback.FeedbackRefused as refused:
+            return ("refused", refused.code)
+
+    first, second = _race(withdraw, submit)
+
+    assert first == 1
+    assert second == ("refused", "COOLING_DOWN")
+    assert list(TimetableFeedback.objects.values_list("status", flat=True)) == ["WITHDRAWN"]

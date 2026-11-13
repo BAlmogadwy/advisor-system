@@ -1234,30 +1234,58 @@ def test_a_section_of_another_course_with_the_same_code_is_not_offered(world):
     )
 
 
-def test_the_way_in_imports_no_timetable_writer():
-    """This module reads timetables and writes only feedback and rate-limit rows."""
+def test_the_way_in_imports_only_what_it_reads_with():
+    """An allowlist, not a denylist: any new import here is a decision a reviewer
+    must see, and nothing that writes a timetable may be among them. It writes
+    feedback rows, and rate-limit rows through ``rate_limit``, and nothing else."""
     import ast
     import inspect
 
     tree = ast.parse(inspect.getsource(feedback))
-    imported = set()
+    modules = set()
+    from_student_sections = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            imported.add(node.module or "")
-            imported.update(alias.name for alias in node.names)
+            modules.add(node.module or "")
+            if node.module == "core.services.student_sections":
+                from_student_sections.update(alias.name for alias in node.names)
         elif isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-    writers = {
-        "core.services.registration_plan_import",
-        "core.services.f_section_import",
-        "core.services.manual_timetable_import",
-        "core.services.timetable_delta_import",
-        "core.services.student_timetable_ingest",
-        "replace_student_term_sections",
-        "clear_student_section_snapshot",
-        "apply_plan",
+            modules.update(alias.name for alias in node.names)
+
+    assert modules == {
+        "__future__",
+        "hashlib",
+        "json",
+        "unicodedata",
+        "collections",
+        "collections.abc",
+        "dataclasses",
+        "datetime",
+        "typing",
+        "django.conf",
+        "django.db",
+        "django.db.models",
+        "django.utils",
+        "core.models",
+        "core.services",
+        "core.services.course_identity",
+        "core.services.eligibility",
+        "core.services.planner_drafts",
+        "core.services.section_programmes",
+        "core.services.student_helpers",
+        "core.services.student_sections",
+        "core.services.student_term_timetable",
     }
-    assert not imported & writers, imported & writers
+    assert from_student_sections <= {
+        "UnknownStudentGender",
+        "arabic_term_section_course_names",
+        "cohort_of_student_section",
+        "gender_section_filter",
+        "normalize_section_label",
+        "section_course_key",
+        "section_is_available_to_student",
+        "student_gender_strict",
+    }
 
 
 def test_a_status_change_that_skipped_the_version_still_stops_the_claim(world, monkeypatch):
@@ -1287,3 +1315,97 @@ def test_a_finished_case_is_never_written_into_even_if_handed_in(world, monkeypa
     _refused("CASE_CHANGED", **_base(world, reason="TIME_UNSUITABLE"))
 
     assert TimetableFeedbackPoint.objects.count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Review round 2
+# ---------------------------------------------------------------------------
+
+
+def test_a_students_third_case_still_takes_more_points(world):
+    """The per-term cap stops a FOURTH case being opened, never a point joining
+    the open third one."""
+    for _ in range(2):
+        TimetableFeedback.objects.create(
+            student_id=SID,
+            academic_year=YEAR,
+            term=TERM,
+            status="CLOSED",
+            close_reason="DUPLICATE",
+        )
+    third = feedback.submit_point(**_base(world))
+    more = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+    assert third.created_case is True
+    assert more.created_case is False and more.reference == third.reference
+
+
+@pytest.mark.parametrize("status", ["IN_REVIEW", "NEEDS_INFORMATION", "FORWARDED"])
+def test_only_an_answered_case_is_reopened_by_a_new_point(world, status):
+    first = feedback.submit_point(**_base(world))
+    TimetableFeedback.objects.filter(reference=first.reference).update(status=status)
+
+    result = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+
+    case = TimetableFeedback.objects.get(reference=first.reference)
+    assert result.reopened is False and case.status == status
+    assert not case.events.filter(kind="REOPENED").exists()
+
+
+def test_a_section_without_a_stored_key_is_read_as_the_reader_reads_it(world):
+    """A course offered only by sections whose key was never stored is still offered."""
+    for code, name in (("SJ210", "JAVA"), ("SK310", "KERNELS")):
+        ProgrammeRequirement.objects.create(
+            program=PROG,
+            course_code=code,
+            course_name=name,
+            type="Mandatory",
+            programme_term=2,
+            credit_hours=3,
+        )
+    split = TermSection.objects.create(
+        source_tag="other",
+        course_name="JAVA",
+        course_code="SJ",
+        course_number="210",
+        course_key="",
+        section="M1",
+    )
+    whole = TermSection.objects.create(
+        source_tag="other",
+        course_name="KERNELS",
+        course_code="SK310",
+        course_number="SK310",
+        course_key="",
+        section="M2",  # the global (key, section) pair is unique, blank key included
+    )
+    for section in (split, whole):
+        TermSectionMeeting.objects.create(
+            term_section=section, day="THU", start_time="13:00", end_time="14:15", room="K1"
+        )
+        TermSectionProgram.objects.create(term_section=section, program=PROG)
+
+    codes = [
+        c["course_key"]
+        for c in feedback.missing_course_candidates(
+            SID, PROG, _timetable(), feedback.catalogue_sections_for(SID, PROG)
+        )
+    ]
+    assert {"SJ210", "SK310"} <= set(codes)
+
+
+@pytest.mark.parametrize("bad", [chr(0), chr(7), chr(27)])
+def test_a_note_with_a_control_character_is_refused(world, bad):
+    _refused("NOTE_INVALID", **_base(world, note=f"a{bad}b"))
+
+
+def test_a_note_keeps_its_line_breaks_and_tabs(world):
+    note = "first line" + chr(10) + "second" + chr(9) + "line" + chr(13) + chr(10)
+    result = feedback.submit_point(**_base(world, note=note))
+    assert TimetableFeedbackPoint.objects.get(pk=result.point_id).note == note.strip()
+
+
+def test_the_alternatives_are_the_same_course_in_the_catalogue_and_not_the_anchor(world):
+    _section("SA101", "M11", [("THU", "15:00", "16:15", "Z2")], name="أساسيات البرمجة")
+    anchor = _seen(world)[world["SA101-M1"].pk]
+    labels = sorted(s.section for s in feedback.alternative_sections_for(SID, PROG, anchor))
+    assert labels == ["M2", "M5"]

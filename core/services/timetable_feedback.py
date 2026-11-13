@@ -83,6 +83,7 @@ from core.services.student_sections import (
     cohort_of_student_section,
     gender_section_filter,
     normalize_section_label,
+    section_course_key,
     section_is_available_to_student,
     student_gender_strict,
 )
@@ -96,6 +97,8 @@ SNAPSHOT_SCHEMA = 1
 FINGERPRINT_SCHEMA = 1
 #: A note is for context, not an essay; a longer one belongs in a meeting.
 NOTE_MAX_CHARS = 1000
+#: The only control characters a note may hold: tab, line feed, carriage return.
+_NOTE_WHITESPACE = frozenset({chr(9), chr(10), chr(13)})
 #: Points a student may have live in one case at once.
 MAX_LIVE_POINTS = 8
 #: Cases a student may open in one term, counting every status.
@@ -486,15 +489,23 @@ def catalogue_sections_for(student_id: int, programme: str) -> list[TermSection]
     ]
 
 
-def _section_code(section: TermSection) -> str:
-    """A section's course code, derived as the timetable reader derives it."""
-    key = normalize_code(section.course_key)
-    if key:
-        return key
-    code, number = normalize_code(section.course_code), normalize_code(section.course_number)
-    if code and number and number != code:
-        return normalize_code(f"{code}{number}")
-    return code or number
+def alternative_sections_for(
+    student_id: int, programme: str, anchor: SeenSection
+) -> list[TermSection]:
+    """The other sections of the anchor's course the student could take instead.
+
+    From the same catalogue as everything else the form offers. The same course
+    is the same CODE::NAME, never just the code: two courses can share a code,
+    and a section of the other one is not an alternative. The form offers exactly
+    these, and the submission accepts exactly these.
+    """
+    return [
+        section
+        for section in catalogue_sections_for(student_id, programme)
+        if section.pk != anchor.term_section_id
+        and section_course_identity(section_course_key(section), section.course_name)
+        == anchor.section_course_identity
+    ]
 
 
 def missing_course_candidates(
@@ -509,7 +520,7 @@ def missing_course_candidates(
     nobody is teaching, is never offered."""
     passed, _studying = get_student_passed_and_studying(student_id)
     in_forecast = timetable.forecast_codes
-    offered = {_section_code(section) for section in catalogue}
+    offered = {section_course_key(section) for section in catalogue}
     out = []
     for code, requirement in sorted(_requirements(programme).items()):
         if (
@@ -610,24 +621,14 @@ def _requested_section(
     anchor: SeenSection,
     requested_id: object,
 ) -> TermSection:
-    """Another section of the anchor's course, from the catalogue the form showed.
-
-    The same course means the same CODE::NAME, never the bare code: two courses
-    can share a code, and a section of the other one is not an alternative.
-    """
+    """One of the alternatives the form offered for this anchor, or NOT_OFFERED."""
     text = str(requested_id).strip()
     if not text.isdecimal():
         raise FeedbackRefused("NOT_OFFERED")
     wanted = int(text)
-    for section in catalogue_sections_for(student_id, programme):
+    for section in alternative_sections_for(student_id, programme, anchor):
         if section.pk != wanted:
             continue
-        same_course = (
-            section_course_identity(_section_code(section), section.course_name)
-            == anchor.section_course_identity
-        )
-        if wanted == anchor.term_section_id or not same_course:
-            break
         try:
             # Catalogue membership already implies this; the canonical check is
             # asked anyway, so a later change to either cannot widen the other.
@@ -832,6 +833,10 @@ def submit_point(
         raise FeedbackRefused("NOTE_REQUIRED")
     if len(note) > NOTE_MAX_CHARS:
         raise FeedbackRefused("NOTE_TOO_LONG")
+    # Line breaks and tabs are writing; any other control character is not, and
+    # PostgreSQL refuses a NUL outright, which would otherwise be a server error.
+    if any(ord(ch) < 32 and ch not in _NOTE_WHITESPACE for ch in note):
+        raise FeedbackRefused("NOTE_INVALID")
 
     # e.
     requested_section = None
