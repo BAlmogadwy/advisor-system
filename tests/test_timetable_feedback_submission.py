@@ -846,3 +846,444 @@ def test_the_same_point_landing_between_check_and_write_is_answered_as_the_dupli
     assert again.duplicate is True and again.point_id == first.point_id
     assert TimetableFeedbackPoint.objects.count() == 1
     assert len(calls) == 2, "the write was refused by the database and the point re-read"
+    assert TimetableFeedback.objects.get().version == 1, "the claim was undone with the write"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: what was asked for instead is part of the point
+# ---------------------------------------------------------------------------
+
+
+def test_two_missing_courses_are_two_points(world):
+    first = feedback.submit_point(
+        **_base(world, anchor="TIMETABLE", reason="MISSING_COURSE", requested_course_key="SC201")
+    )
+    second = feedback.submit_point(
+        **_base(world, anchor="TIMETABLE", reason="MISSING_COURSE", requested_course_key="SD301")
+    )
+    assert second.duplicate is False and second.point_id != first.point_id
+    assert sorted(TimetableFeedbackPoint.objects.values_list("request_key", flat=True)) == [
+        "COURSE|SC201",
+        "COURSE|SD301",
+    ]
+
+
+def test_two_preferred_sections_are_two_points(world):
+    for key in ("SA101-M2", "SA101-M5"):
+        result = feedback.submit_point(
+            **_base(world, reason="PREFER_OTHER_SECTION", requested_term_section_id=world[key].pk)
+        )
+        assert result.duplicate is False
+    assert TimetableFeedbackPoint.objects.count() == 2
+
+
+def test_asking_for_a_section_after_raising_a_clash_is_a_new_point(world):
+    feedback.submit_point(**_base(world))
+    later = feedback.submit_point(**_base(world, requested_term_section_id=world["SA101-M2"].pk))
+    assert later.duplicate is False
+    point = TimetableFeedbackPoint.objects.get(pk=later.point_id)
+    assert point.requested_term_section_id == world["SA101-M2"].pk
+    assert point.request_key == f"SECTION|{world['SA101-M2'].pk}"
+
+
+def test_the_same_request_with_another_note_is_already_raised(world):
+    fields = {"anchor": "TIMETABLE", "reason": "MISSING_COURSE", "requested_course_key": "SD301"}
+    feedback.submit_point(**_base(world, note="first", **fields))
+    _refused("ALREADY_RAISED", **_base(world, note="second", **fields))
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: an answered case is reopened by a new point
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("handled", "expected"), [(False, "SUBMITTED"), (True, "IN_REVIEW")])
+def test_a_new_point_reopens_an_answered_case(world, handled, expected):
+    from django.contrib.auth.models import User
+
+    first = feedback.submit_point(**_base(world))
+    staff = User.objects.create_user("advisor-reopen") if handled else None
+    TimetableFeedback.objects.filter(reference=first.reference).update(
+        status="ANSWERED", handled_by=staff
+    )
+
+    result = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+
+    case = TimetableFeedback.objects.get(reference=first.reference)
+    assert result.reopened is True and case.status == expected
+    reopened = case.events.get(kind="REOPENED")
+    assert (reopened.from_value, reopened.to_value, reopened.point_id) == (
+        "ANSWERED",
+        expected,
+        result.point_id,
+    )
+
+
+def test_a_point_into_a_case_still_open_reopens_nothing(world):
+    feedback.submit_point(**_base(world))
+    result = feedback.submit_point(**_base(world, reason="TIME_UNSUITABLE"))
+    assert result.reopened is False
+    assert not TimetableFeedbackEvent.objects.filter(kind="REOPENED").exists()
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: whose case, which term
+# ---------------------------------------------------------------------------
+
+
+def test_each_student_has_their_own_case(world):
+    StudentTermSection.objects.create(
+        student_id=EMPTY_SID,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["SB201-M1"],
+        source=PLAN,
+    )
+    mine = feedback.submit_point(**_base(world))
+    theirs = feedback.submit_point(
+        student_id=EMPTY_SID,
+        anchor=f"SECTION|{world['SB201-M1'].pk}",
+        reason="TIME_UNSUITABLE",
+        seen_fingerprint=_fingerprint(EMPTY_SID),
+    )
+    assert theirs.created_case is True and theirs.reference != mine.reference
+    assert TimetableFeedback.objects.get(reference=theirs.reference).student_id == EMPTY_SID
+
+
+def test_each_term_has_its_own_case(world, monkeypatch):
+    autumn = feedback.submit_point(**_base(world))
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year=YEAR,
+        term="2",
+        term_section=world["SA101-M1"],
+        source="registration_plan_1448_t2",
+    )
+    monkeypatch.setattr(feedback, "planning_term", lambda: (YEAR, "2"))
+    timetable = read_student_term_timetable(SID, YEAR, "2")
+    fingerprint = feedback.forecast_fingerprint(
+        academic_year=YEAR,
+        term="2",
+        forecast_class=timetable.forecast_class,
+        sections=feedback.seen_sections(timetable, programme=PROG),
+    )
+
+    spring = feedback.submit_point(**_base(world, seen_fingerprint=fingerprint))
+
+    assert spring.created_case is True and spring.reference != autumn.reference
+    assert TimetableFeedback.objects.get(reference=spring.reference).term == "2"
+
+
+def test_only_this_students_cases_in_this_term_count_toward_the_cap(world):
+    for student_id, term in ((EMPTY_SID, TERM), (SID, "2")):
+        for _ in range(3):
+            TimetableFeedback.objects.create(
+                student_id=student_id,
+                academic_year=YEAR,
+                term=term,
+                status="CLOSED",
+                close_reason="DUPLICATE",
+            )
+    assert feedback.submit_point(**_base(world)).created_case is True
+
+
+def test_a_recent_withdrawal_counts_even_without_a_closing_time(world):
+    # closed_at is empty, so the cool-down is measured from updated_at: now.
+    TimetableFeedback.objects.create(
+        student_id=SID, academic_year=YEAR, term=TERM, status="WITHDRAWN"
+    )
+    _refused("COOLING_DOWN", **_base(world))
+
+
+def test_only_a_withdrawal_starts_the_cool_down(world):
+    TimetableFeedback.objects.create(
+        student_id=SID,
+        academic_year=YEAR,
+        term=TERM,
+        status="CLOSED",
+        close_reason="ANSWER_ACCEPTED",
+        closed_at=timezone.now(),
+    )
+    assert feedback.submit_point(**_base(world)).created_case is True
+
+
+@pytest.mark.parametrize("refusal", ["COOLING_DOWN", "TOO_MANY_CASES"])
+def test_a_refused_new_case_spends_no_success_budget(world, refusal):
+    if refusal == "COOLING_DOWN":
+        TimetableFeedback.objects.create(
+            student_id=SID, academic_year=YEAR, term=TERM, status="WITHDRAWN"
+        )
+    else:
+        for _ in range(3):
+            TimetableFeedback.objects.create(
+                student_id=SID,
+                academic_year=YEAR,
+                term=TERM,
+                status="CLOSED",
+                close_reason="DUPLICATE",
+            )
+    _refused(refusal, **_base(world))
+    spent = set(
+        rate_limit.RateLimitBucket.objects.filter(key__endswith=f":{SID}").values_list(
+            "key", flat=True
+        )
+    )
+    assert spent == {f"{rate_limit.TIMETABLE_FEEDBACK_ATTEMPT}:{SID}"}
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: the fingerprint and the snapshot, more closely
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("change", ["day", "end", "add_untimed", "remove_untimed"])
+def test_the_fingerprint_follows_days_end_times_and_untimed_sections(world, change):
+    before = _fingerprint()
+    sa = world["SA101-M1"]
+    if change == "day":
+        TermSectionMeeting.objects.filter(term_section=sa, day="TUE").update(day="WED")
+    elif change == "end":
+        TermSectionMeeting.objects.filter(term_section=sa, day="TUE").update(end_time="10:30")
+    elif change == "add_untimed":
+        StudentTermSection.objects.create(
+            student_id=SID,
+            academic_year=YEAR,
+            term=TERM,
+            term_section=world["SA101-M6"],
+            source=PLAN,
+        )
+    else:
+        StudentTermSection.objects.filter(student_id=SID, term_section=world["SN000-M1"]).delete()
+    assert _fingerprint() != before
+
+
+def test_the_fingerprint_names_its_term():
+    common = {"forecast_class": "expected", "sections": []}
+    first = feedback.forecast_fingerprint(academic_year=YEAR, term="1", **common)
+    second = feedback.forecast_fingerprint(academic_year=YEAR, term="2", **common)
+    assert first != second
+
+
+def test_a_scenarios_own_spelling_does_not_make_an_identity_uncertain(world):
+    scenario = TimetableScenario.objects.create(academic_year=YEAR, term=TERM, name="other")
+    _section("SA101", "M12", [], name="SOMETHING ELSE", scenario=scenario)
+    assert _seen(world)[world["SA101-M1"].pk].identity_certain is True
+
+
+def test_the_snapshot_freezes_standing_registration_and_the_differences(world):
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["SC201-M1"],
+        source="scraper_timetable",
+    )
+    result = feedback.submit_point(**_base(world))
+    snapshot = TimetableFeedbackPoint.objects.get(pk=result.point_id).seen_snapshot
+    assert snapshot["standing"] == "منتظم"
+    assert snapshot["has_registration"] is True
+    assert snapshot["forecast_not_registered"] == ["SA101", "SB201", "SG777", "SN000"]
+    assert snapshot["registered_not_forecast"] == ["SC201"]
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda s: s["facts"]["clashes"].append(
+            {"a_term_section_id": 1, "b_term_section_id": 2, "day": "SUN", "instructor": "x"}
+        ),
+        lambda s: s["sections"][0]["meetings"].append(["SUN", "09:00", "10:00", "A1", "Staff"]),
+        lambda s: s["facts"]["requested_clashes"].append("SA101"),
+        lambda s: s["facts"]["requested_prerequisites_missing"].append(5),
+    ],
+)
+def test_the_snapshot_refuses_odd_shapes_below_the_top_level(world, corrupt):
+    snapshot = _snapshot_of(world)
+    corrupt(snapshot)
+    with pytest.raises(ValueError):
+        feedback.validate_point_snapshot(snapshot)
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: refusals that must be 400s, and in the right order
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("anchor", "reason", "student"),
+    [("TIMETABLE", "TIME_CLASH", SID), ("NO_FORECAST", "OTHER", EMPTY_SID)],
+)
+def test_a_reason_for_another_anchor_is_refused(world, anchor, reason, student):
+    _refused(
+        "REASON_DOES_NOT_FIT",
+        student_id=student,
+        anchor=anchor,
+        reason=reason,
+        note="context",
+        seen_fingerprint=_fingerprint(student),
+    )
+
+
+def test_a_section_without_a_label_is_no_anchor(world):
+    blank = _section("SZ900", "", [("THU", "15:00", "16:15", "Z1")], name="UNLABELLED")
+    StudentTermSection.objects.create(
+        student_id=SID, academic_year=YEAR, term=TERM, term_section=blank, source=PLAN
+    )
+    _refused("UNKNOWN_ANCHOR", **_base(world, anchor=f"SECTION|{blank.pk}"))
+
+
+def test_a_crafted_numeral_is_no_anchor_rather_than_a_server_error(world):
+    _refused("UNKNOWN_ANCHOR", **_base(world, anchor="SECTION|²"))
+
+
+def test_a_section_that_left_the_forecast_while_the_student_wrote_is_a_changed_timetable(world):
+    stale = _fingerprint()
+    StudentTermSection.objects.filter(student_id=SID, term_section=world["SA101-M1"]).delete()
+    refused = _refused("TIMETABLE_CHANGED", **_base(world, seen_fingerprint=stale))
+    assert refused.fingerprint == _fingerprint()
+
+
+def test_a_note_of_exactly_the_limit_is_taken(world):
+    result = feedback.submit_point(**_base(world, note="x" * feedback.NOTE_MAX_CHARS))
+    assert len(TimetableFeedbackPoint.objects.get(pk=result.point_id).note) == 1000
+
+
+def test_the_daily_budget_is_its_own_limit(world, monkeypatch):
+    monkeypatch.setitem(rate_limit.LIMITS, rate_limit.TIMETABLE_FEEDBACK_DAILY, (1, 86_400))
+    feedback.submit_point(**_base(world))
+    _refused("RATE_LIMITED", **_base(world, reason="TIME_UNSUITABLE"))
+
+
+def test_a_withdrawn_point_may_be_raised_again_and_frees_its_place(world, monkeypatch):
+    monkeypatch.setitem(rate_limit.LIMITS, rate_limit.TIMETABLE_FEEDBACK, (100, 3600))
+    monkeypatch.setitem(rate_limit.LIMITS, rate_limit.TIMETABLE_FEEDBACK_DAILY, (100, 86_400))
+    first = feedback.submit_point(**_base(world))
+    TimetableFeedbackPoint.objects.filter(pk=first.point_id).update(withdrawn_at=timezone.now())
+
+    again = feedback.submit_point(**_base(world))
+    assert again.duplicate is False and again.point_id != first.point_id
+
+    for reason in ("TIME_UNSUITABLE", "ALREADY_PASSED", "PREREQUISITE_NOT_MET", "NOT_IN_MY_PLAN"):
+        feedback.submit_point(**_base(world, reason=reason))
+    for reason in ("LOAD_TOO_HIGH", "LOAD_TOO_LOW"):
+        feedback.submit_point(**_base(world, anchor="TIMETABLE", reason=reason))
+    # Seven live points and one withdrawn: the eighth live point still fits.
+    assert feedback.submit_point(**_base(world, anchor="TIMETABLE", reason="TOO_MANY_CAMPUS_DAYS"))
+
+
+def test_an_in_lock_refusal_leaves_the_case_untouched(world):
+    feedback.submit_point(**_base(world, note="first"))
+    case = TimetableFeedback.objects.get()
+    version, events = case.version, case.events.count()
+    _refused("ALREADY_RAISED", **_base(world, note="second"))
+    case.refresh_from_db()
+    assert (case.version, case.events.count()) == (version, events)
+
+
+def test_the_point_recovery_answers_a_different_note_as_already_raised(world, monkeypatch):
+    feedback.submit_point(**_base(world, note="first"))
+    case = TimetableFeedback.objects.get()
+    real = feedback._live_point
+    calls = []
+
+    def missed_once(case, **kwargs):
+        calls.append(1)
+        return None if len(calls) == 1 else real(case, **kwargs)
+
+    monkeypatch.setattr(feedback, "_live_point", missed_once)
+    _refused("ALREADY_RAISED", **_base(world, note="second"))
+    case.refresh_from_db()
+    assert case.version == 1, "the claim was undone with the write"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: the lists, more closely
+# ---------------------------------------------------------------------------
+
+
+def test_a_placeholder_spelt_in_capitals_is_still_a_placeholder(world):
+    ProgrammeRequirement.objects.filter(program=PROG, course_code="SE401").update(
+        type="PROGRAM ELECTIVE"
+    )
+    codes = [
+        c["course_key"]
+        for c in feedback.missing_course_candidates(
+            SID, PROG, _timetable(), feedback.catalogue_sections_for(SID, PROG)
+        )
+    ]
+    assert "SE401" not in codes
+
+
+def test_missing_prerequisites_are_read_normalised(world):
+    Prerequisite.objects.filter(program=PROG, course_code="SD301").update(
+        prerequisite_course_code="SB201, SH100"
+    )
+    result = feedback.submit_point(
+        **_base(world, anchor="TIMETABLE", reason="MISSING_COURSE", requested_course_key="SD301")
+    )
+    facts = TimetableFeedbackPoint.objects.get(pk=result.point_id).seen_snapshot["facts"]
+    assert facts["requested_prerequisites_missing"] == ["SB201"]
+
+
+def test_a_section_of_another_course_with_the_same_code_is_not_offered(world):
+    """The same course is the same CODE::NAME, never the bare code."""
+    other = _section("SA101", "M11", [("THU", "15:00", "16:15", "Z2")], name="أساسيات البرمجة")
+    _refused(
+        "NOT_OFFERED",
+        **_base(world, reason="PREFER_OTHER_SECTION", requested_term_section_id=other.pk),
+    )
+
+
+def test_the_way_in_imports_no_timetable_writer():
+    """This module reads timetables and writes only feedback and rate-limit rows."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(feedback))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            imported.add(node.module or "")
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    writers = {
+        "core.services.registration_plan_import",
+        "core.services.f_section_import",
+        "core.services.manual_timetable_import",
+        "core.services.timetable_delta_import",
+        "core.services.student_timetable_ingest",
+        "replace_student_term_sections",
+        "clear_student_section_snapshot",
+        "apply_plan",
+    }
+    assert not imported & writers, imported & writers
+
+
+def test_a_status_change_that_skipped_the_version_still_stops_the_claim(world, monkeypatch):
+    """The claim names the status it read as well as the version, so a writer that
+    changed the status without bumping the version cannot slip a point into an
+    answered case without reopening it."""
+    first = feedback.submit_point(**_base(world))
+    stale = TimetableFeedback.objects.get(reference=first.reference)  # read as SUBMITTED
+    TimetableFeedback.objects.filter(pk=stale.pk).update(status="ANSWERED")  # version kept
+    monkeypatch.setattr(feedback, "_open_case", lambda **_kwargs: (stale, False))
+
+    _refused("CASE_CHANGED", **_base(world, reason="TIME_UNSUITABLE"))
+
+    assert TimetableFeedbackPoint.objects.count() == 1
+
+
+def test_a_finished_case_is_never_written_into_even_if_handed_in(world, monkeypatch):
+    """Even a case object that agrees with the database, version and status, is
+    refused once its status is a finished one."""
+    first = feedback.submit_point(**_base(world))
+    TimetableFeedback.objects.filter(reference=first.reference).update(
+        status="CLOSED", close_reason="DUPLICATE"
+    )
+    finished = TimetableFeedback.objects.get(reference=first.reference)
+    monkeypatch.setattr(feedback, "_open_case", lambda **_kwargs: (finished, False))
+
+    _refused("CASE_CHANGED", **_base(world, reason="TIME_UNSUITABLE"))
+
+    assert TimetableFeedbackPoint.objects.count() == 1

@@ -97,13 +97,18 @@ def _fingerprint():
     )
 
 
-def _submitting(anchor, reason):
-    fields = {
+def _fields_for(anchor, reason, note=""):
+    return {
         "student_id": SID,
         "anchor": anchor,
         "reason": reason,
+        "note": note,
         "seen_fingerprint": _fingerprint(),
     }
+
+
+def _submitting(anchor, reason):
+    fields = _fields_for(anchor, reason)
     return lambda: feedback.submit_point(**fields)
 
 
@@ -128,3 +133,20 @@ def test_the_same_first_point_racing_with_itself_is_written_once(anchor):
     assert (second.reference, second.point_id) == (first.reference, first.point_id)
     assert TimetableFeedbackPoint.objects.count() == 1
     assert TimetableFeedback.objects.count() == 1
+
+
+def test_two_new_points_racing_into_an_open_case_both_land(anchor):
+    """The case is already open. The second submission waits on the case's row
+    lock, then claims the version the first left, so neither is refused."""
+    feedback.submit_point(**_fields_for(anchor, "OTHER", note="opened the case"))
+
+    first, second = _race(_submitting(anchor, "TIME_CLASH"), _submitting(anchor, "TIME_UNSUITABLE"))
+
+    assert first.created_case is False and second.created_case is False
+    case = TimetableFeedback.objects.get(student_id=SID)
+    assert sorted(case.points.values_list("reason_code", flat=True)) == [
+        "OTHER",
+        "TIME_CLASH",
+        "TIME_UNSUITABLE",
+    ]
+    assert case.version == 3

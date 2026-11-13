@@ -31,6 +31,13 @@ recorded under. Two sections of CS111 recorded as 'أساسيات البرمجة
 The project's planner key cannot be used for it: it keeps only ASCII, so every
 Arabic name collapses to the bare code. The student's PLAN names the course its
 own way, through the programme requirement, and that is kept beside it.
+
+WHAT A POINT IS
+
+An anchor (a section, the whole timetable, or no timetable), a reason, what was
+asked for instead (nothing, another section, or a missing course), and the
+timetable it was raised about. The same four again is the same point; any one
+of them different is another point.
 """
 
 from __future__ import annotations
@@ -39,19 +46,18 @@ import hashlib
 import json
 import unicodedata
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import F, Q
+from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 
 from core.models import (
     TIMETABLE_FEEDBACK_TERMINAL_STATUSES,
-    Prerequisite,
     ProgrammeRequirement,
     Student,
     TermSection,
@@ -65,14 +71,19 @@ from core.services.course_identity import planner_course_key
 from core.services.eligibility import evaluate_prerequisites
 from core.services.planner_drafts import planning_term
 from core.services.section_programmes import filter_sections_for_program
-from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+from core.services.student_helpers import (
+    get_prerequisites,
+    get_student_passed_and_studying,
+    is_elective_slot,
+    normalize_code,
+)
 from core.services.student_sections import (
     UnknownStudentGender,
     arabic_term_section_course_names,
+    cohort_of_student_section,
     gender_section_filter,
     normalize_section_label,
     section_is_available_to_student,
-    student_gender,
     student_gender_strict,
 )
 from core.services.student_term_timetable import (
@@ -93,6 +104,7 @@ MAX_CASES_PER_TERM = 3
 COOL_DOWN_AFTER_WITHDRAWAL = timedelta(hours=24)
 
 R = TimetableFeedbackReason
+S = TimetableFeedback.Status
 
 #: Which reasons each anchor can carry. A reason that fits no anchor is refused
 #: before anything is written.
@@ -165,7 +177,7 @@ def normalise_time(value: object) -> str:
     text = str(value or "").strip()
     hours, _, rest = text.partition(":")
     minutes = rest[:2]
-    if hours.isdigit() and len(minutes) == 2 and minutes.isdigit():
+    if hours.isdecimal() and len(minutes) == 2 and minutes.isdecimal():
         return f"{int(hours):02d}:{minutes}"
     return text
 
@@ -225,7 +237,7 @@ class SeenSection:
         }
 
 
-def _meetings_of(rows: Iterable[dict[str, Any]]) -> tuple[Meeting, ...]:
+def _meetings_of(rows: Iterable[Mapping[str, Any]]) -> tuple[Meeting, ...]:
     meetings = {
         (
             normalise_day(row.get("day")),
@@ -252,7 +264,7 @@ def _requirements(programme: str) -> dict[str, ProgrammeRequirement]:
 
 
 def _recorded_names(codes: Iterable[str]) -> dict[str, set[str]]:
-    """Every distinct name each bare code is recorded under, across global sections."""
+    """Every distinct name each bare code is recorded under, across GLOBAL sections."""
     wanted = {normalize_code(code) for code in codes if normalize_code(code)}
     if not wanted:
         return {}
@@ -338,7 +350,7 @@ def forecast_fingerprint(
 
 def _minutes(value: str) -> int:
     hours, _, minutes = value.partition(":")
-    if hours.isdigit() and minutes.isdigit():
+    if hours.isdecimal() and minutes.isdecimal():
         return int(hours) * 60 + int(minutes)
     return -1
 
@@ -409,14 +421,17 @@ SNAPSHOT_FACT_KEYS = frozenset(
         "requested_prerequisites_missing",
     }
 )
+SNAPSHOT_CLASH_KEYS = frozenset({"a_term_section_id", "b_term_section_id", "day"})
 
 
 def validate_point_snapshot(snapshot: dict[str, Any]) -> None:
-    """Refuse any key outside the allowlist, at every level.
+    """Refuse any key outside the allowlist, at every level, and any odd shape.
 
     The snapshot is what the advisor and the department will read for years. A
     key that slipped in (an instructor's name, a seat count, another student)
-    would be frozen there with it, so the shape is checked, not trusted.
+    would be frozen there with it, so the shape is checked, not trusted: the
+    top level, each section, each meeting (exactly day, start, end, room), the
+    facts, each clash, and the two requested lists.
     """
     if not isinstance(snapshot, dict) or set(snapshot) != SNAPSHOT_KEYS:
         raise ValueError(f"snapshot keys must be exactly {sorted(SNAPSHOT_KEYS)}")
@@ -427,9 +442,19 @@ def validate_point_snapshot(snapshot: dict[str, Any]) -> None:
             raise ValueError(
                 f"snapshot section keys must be exactly {sorted(SNAPSHOT_SECTION_KEYS)}"
             )
+        for meeting in section["meetings"]:
+            if not isinstance(meeting, list) or len(meeting) != 4:
+                raise ValueError("a meeting is exactly [day, start, end, room]")
     facts = snapshot["facts"]
     if not isinstance(facts, dict) or set(facts) != SNAPSHOT_FACT_KEYS:
         raise ValueError(f"snapshot fact keys must be exactly {sorted(SNAPSHOT_FACT_KEYS)}")
+    for clash in facts["clashes"]:
+        if not isinstance(clash, dict) or set(clash) != SNAPSHOT_CLASH_KEYS:
+            raise ValueError(f"a clash is exactly {sorted(SNAPSHOT_CLASH_KEYS)}")
+    if not all(isinstance(value, int) for value in facts["requested_clashes"]):
+        raise ValueError("requested clashes are section ids")
+    if not all(isinstance(value, str) for value in facts["requested_prerequisites_missing"]):
+        raise ValueError("missing prerequisites are course codes")
 
 
 # ---------------------------------------------------------------------------
@@ -462,9 +487,14 @@ def catalogue_sections_for(student_id: int, programme: str) -> list[TermSection]
 
 
 def _section_code(section: TermSection) -> str:
-    return normalize_code(
-        section.course_key or f"{section.course_code or ''}{section.course_number or ''}"
-    )
+    """A section's course code, derived as the timetable reader derives it."""
+    key = normalize_code(section.course_key)
+    if key:
+        return key
+    code, number = normalize_code(section.course_code), normalize_code(section.course_number)
+    if code and number and number != code:
+        return normalize_code(f"{code}{number}")
+    return code or number
 
 
 def missing_course_candidates(
@@ -474,9 +504,9 @@ def missing_course_candidates(
     catalogue: Iterable[TermSection],
 ) -> list[dict[str, str]]:
     """The courses a student may say are missing: in their own plan, not passed,
-    not already in the forecast, not the 'Program Elective' placeholder, and with
-    at least one section in the catalogue this term. A project with no section,
-    or a course nobody is teaching, is never offered."""
+    not already in the forecast, not an elective placeholder, and with at least
+    one section in the catalogue this term. A project with no section, or a course
+    nobody is teaching, is never offered."""
     passed, _studying = get_student_passed_and_studying(student_id)
     in_forecast = timetable.forecast_codes
     offered = {_section_code(section) for section in catalogue}
@@ -486,7 +516,7 @@ def missing_course_candidates(
             code in passed
             or code in in_forecast
             or code not in offered
-            or str(requirement.type or "").strip() == "Program Elective"
+            or is_elective_slot(requirement.type)
         ):
             continue
         out.append(
@@ -537,6 +567,8 @@ class Submitted:
     created_case: bool
     #: The exact point was already there; nothing new was written.
     duplicate: bool = False
+    #: The case had been answered; this point reopened it.
+    reopened: bool = False
 
 
 def accepting_for(programme: object) -> bool:
@@ -547,7 +579,7 @@ def accepting_for(programme: object) -> bool:
     return not pilot or str(programme or "").strip().upper() in pilot
 
 
-def _spend(budget: str, student_id: int, now) -> None:
+def _spend(budget: str, student_id: int, now: datetime) -> None:
     decision = rate_limit.consume(budget, student_id, now=now)
     if not decision.allowed:
         raise FeedbackRefused("RATE_LIMITED", status=429, retry_after=decision.retry_after)
@@ -562,8 +594,12 @@ def _parse_anchor(anchor: object, sections: dict[int, SeenSection]) -> tuple[str
     if text in ("TIMETABLE", "NO_FORECAST"):
         return text, None
     kind, _, raw_id = text.partition("|")
-    if kind == "SECTION" and raw_id.isdigit() and int(raw_id) in sections:
-        return "SECTION", int(raw_id)
+    if kind == "SECTION" and raw_id.isdecimal():
+        section = sections.get(int(raw_id))
+        # A section with no label cannot be named in a point (a database check),
+        # so it is no anchor; refusing here keeps that a 400, never a 500.
+        if section is not None and section.section:
+            return "SECTION", section.term_section_id
     raise FeedbackRefused("UNKNOWN_ANCHOR")
 
 
@@ -574,17 +610,27 @@ def _requested_section(
     anchor: SeenSection,
     requested_id: object,
 ) -> TermSection:
-    """Another section of the anchor's course, from the catalogue the form showed."""
-    try:
-        wanted = int(str(requested_id))
-    except (TypeError, ValueError):
-        raise FeedbackRefused("NOT_OFFERED") from None
+    """Another section of the anchor's course, from the catalogue the form showed.
+
+    The same course means the same CODE::NAME, never the bare code: two courses
+    can share a code, and a section of the other one is not an alternative.
+    """
+    text = str(requested_id).strip()
+    if not text.isdecimal():
+        raise FeedbackRefused("NOT_OFFERED")
+    wanted = int(text)
     for section in catalogue_sections_for(student_id, programme):
         if section.pk != wanted:
             continue
-        if wanted == anchor.term_section_id or _section_code(section) != anchor.course_key:
+        same_course = (
+            section_course_identity(_section_code(section), section.course_name)
+            == anchor.section_course_identity
+        )
+        if wanted == anchor.term_section_id or not same_course:
             break
         try:
+            # Catalogue membership already implies this; the canonical check is
+            # asked anyway, so a later change to either cannot widen the other.
             available = section_is_available_to_student(section, student_id=student_id)
         except UnknownStudentGender:
             available = False
@@ -594,15 +640,12 @@ def _requested_section(
     raise FeedbackRefused("NOT_OFFERED")
 
 
-def _missing_prerequisites(student_id: int, programme: str, code: str, profile: dict) -> list[str]:
-    raw: list[str] = []
-    for row in Prerequisite.objects.filter(program__iexact=programme, course_code__iexact=code):
-        raw.extend(
-            part for part in str(row.prerequisite_course_code or "").split(",") if part.strip()
-        )
+def _missing_prerequisites(
+    student_id: int, programme: str, code: str, profile: Mapping[str, Any]
+) -> list[str]:
     passed, studying = get_student_passed_and_studying(student_id)
     outcome = evaluate_prerequisites(
-        raw,
+        get_prerequisites(code, programme),
         passed,
         studying,
         earned_credits=int(profile.get("total_earned_credits") or 0),
@@ -611,13 +654,37 @@ def _missing_prerequisites(student_id: int, programme: str, code: str, profile: 
     return sorted(outcome.missing)
 
 
+def _refuse_a_new_case_if_capped(
+    student_id: int, academic_year: str, term: str, now: datetime
+) -> None:
+    """Three cases a term, counting every status, and a day after a withdrawal."""
+    this_term = TimetableFeedback.objects.filter(
+        student_id=student_id, academic_year=academic_year, term=term
+    )
+    if this_term.count() >= MAX_CASES_PER_TERM:
+        raise FeedbackRefused("TOO_MANY_CASES", status=409)
+    cutoff = now - COOL_DOWN_AFTER_WITHDRAWAL
+    if this_term.filter(
+        Q(closed_at__gt=cutoff) | Q(closed_at__isnull=True, updated_at__gt=cutoff),
+        status=S.WITHDRAWN,
+    ).exists():
+        raise FeedbackRefused("COOLING_DOWN", status=409)
+
+
+def _open_cases(student_id: int, academic_year: str, term: str) -> QuerySet[TimetableFeedback]:
+    return TimetableFeedback.objects.filter(
+        student_id=student_id, academic_year=academic_year, term=term
+    ).exclude(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES)
+
+
 def _live_point(
-    case: TimetableFeedback, *, anchor_key: str, reason: str, fingerprint: str
+    case: TimetableFeedback, *, anchor_key: str, reason: str, request_key: str, fingerprint: str
 ) -> TimetableFeedbackPoint | None:
-    """The live point a new one would repeat: same anchor, reason and timetable."""
+    """The live point a new one would repeat: same anchor, reason, request and timetable."""
     return case.points.filter(
         anchor_key=anchor_key,
         reason_code=reason,
+        request_key=request_key,
         seen_fingerprint=fingerprint,
         withdrawn_at__isnull=True,
     ).first()
@@ -628,33 +695,21 @@ def _open_case(
     student_id: int,
     academic_year: str,
     term: str,
-    profile: dict,
+    profile: Mapping[str, Any],
+    cohort: str,
     timetable: StudentTermTimetable,
     language: str,
-    now,
+    now: datetime,
 ) -> tuple[TimetableFeedback, bool]:
-    """The student's one open case for the term, opened if there is none."""
-    open_cases = (
-        TimetableFeedback.objects.select_for_update()
-        .filter(student_id=student_id, academic_year=academic_year, term=term)
-        .exclude(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES)
-    )
+    """The student's one open case for the term, under its row lock, opened if there
+    is none. The caps are checked again here, under the lock, because the check
+    before the budgets were spent could have been overtaken."""
+    open_cases = _open_cases(student_id, academic_year, term).select_for_update()
     case = open_cases.first()
     if case is not None:
         return case, False
 
-    this_term = TimetableFeedback.objects.filter(
-        student_id=student_id, academic_year=academic_year, term=term
-    )
-    if this_term.count() >= MAX_CASES_PER_TERM:
-        raise FeedbackRefused("TOO_MANY_CASES", status=409)
-    cutoff = now - COOL_DOWN_AFTER_WITHDRAWAL
-    if this_term.filter(
-        Q(closed_at__gt=cutoff) | Q(closed_at__isnull=True, updated_at__gt=cutoff),
-        status=TimetableFeedback.Status.WITHDRAWN,
-    ).exists():
-        raise FeedbackRefused("COOLING_DOWN", status=409)
-
+    _refuse_a_new_case_if_capped(student_id, academic_year, term, now)
     try:
         with transaction.atomic():
             case = TimetableFeedback.objects.create(
@@ -663,7 +718,7 @@ def _open_case(
                 term=term,
                 routed_advisor_id=str(profile.get("advisor_id") or ""),
                 program_at_submission=str(profile.get("program") or ""),
-                cohort_at_submission=student_gender(student_id),
+                cohort_at_submission=cohort,
                 standing_at_submission=str(profile.get("status") or ""),
                 has_registration_at_submission=timetable.has_registration,
                 submitted_language=language,
@@ -690,7 +745,7 @@ def submit_point(
     requested_term_section_id: object = None,
     requested_course_key: str = "",
     language: str = "en",
-    now=None,
+    now: datetime | None = None,
 ) -> Submitted:
     """Take one point into the student's open case for the planning term.
 
@@ -700,21 +755,23 @@ def submit_point(
        is spent before the forecast is rebuilt.
     a. The forecast is rebuilt; a failed read is TIMETABLE_UNAVAILABLE, never an
        empty timetable.
-    b. The anchor is a section of that forecast, the timetable as a whole (only
-       when there is one), or "no timetable".
-    c. The form's fingerprint is the rebuilt one, so the frozen copy really is
-       what the student was looking at.
+    b. The form's fingerprint is the rebuilt one, so the frozen copy really is
+       what the student was looking at. First, so that a section which left the
+       forecast while they wrote reads as "your timetable changed".
+    c. The anchor is a labelled section of that forecast, the timetable as a whole
+       (only when there is one), or "no timetable".
     d. The reason fits the anchor; a note is given for OTHER and is not too long.
     e. A requested section or course is one the form offered.
     f. "No timetable" only when there is neither a forecast nor a registration.
     g. Opening a case keeps to the per-term cap and the cool-down after a
-       withdrawal.
+       withdrawal: checked here, before any success budget is spent, and again
+       under the case lock.
     h. The success budgets are spent, duplicates included.
 
     Then, under the case's row lock: the exact point already there returns its
     reference; the same point with a different note is ALREADY_RAISED; a ninth
-    live point is refused; the case's version is claimed, and the point is
-    written in its own savepoint.
+    live point is refused. The case's version (and, if it had been ANSWERED, its
+    reopening) is claimed and the point written together, in one savepoint.
     """
     now = now or timezone.now()
     language = _language(language)
@@ -734,6 +791,7 @@ def submit_point(
     if profile is None:
         raise FeedbackRefused("UNKNOWN_STUDENT", status=404)
     programme = str(profile.get("program") or "")
+    cohort = cohort_of_student_section(profile.get("section"))
 
     # 0.
     if not accepting_for(programme):
@@ -756,13 +814,13 @@ def submit_point(
     )
 
     # b.
+    if str(seen_fingerprint or "") != fingerprint:
+        raise FeedbackRefused("TIMETABLE_CHANGED", status=409, fingerprint=fingerprint)
+
+    # c.
     anchor_kind, anchor_id = _parse_anchor(anchor, by_id)
     if anchor_kind == "TIMETABLE" and not sections:
         raise FeedbackRefused("UNKNOWN_ANCHOR")
-
-    # c.
-    if str(seen_fingerprint or "") != fingerprint:
-        raise FeedbackRefused("TIMETABLE_CHANGED", status=409, fingerprint=fingerprint)
 
     # d.
     anchor_section = by_id.get(anchor_id) if anchor_id is not None else None
@@ -839,7 +897,7 @@ def submit_point(
         "forecast_not_registered": timetable.forecast_not_registered,
         "registered_not_forecast": timetable.registered_not_forecast,
         "programme": programme,
-        "cohort": student_gender(student_id),
+        "cohort": cohort,
         "standing": str(profile.get("status") or ""),
         "facts": {
             "clashes": clashes_between(sections),
@@ -855,24 +913,39 @@ def submit_point(
     }
     validate_point_snapshot(snapshot)
     anchor_key = f"SECTION|{anchor_id}" if anchor_kind == "SECTION" else anchor_kind
+    if requested_section is not None:
+        request_key = f"SECTION|{requested_section.pk}"
+    elif requested_code:
+        request_key = f"COURSE|{requested_code}"
+    else:
+        request_key = ""
 
-    # h. (g is checked under the lock, only when a case has to be opened.)
+    # g. Before anything is spent; checked again under the lock.
+    if not _open_cases(student_id, academic_year, term).exists():
+        _refuse_a_new_case_if_capped(student_id, academic_year, term, now)
+
+    # h.
     _spend(rate_limit.TIMETABLE_FEEDBACK, student_id, now)
     _spend(rate_limit.TIMETABLE_FEEDBACK_DAILY, student_id, now)
 
+    point_key = {
+        "anchor_key": anchor_key,
+        "reason": reason,
+        "request_key": request_key,
+        "fingerprint": fingerprint,
+    }
     with transaction.atomic():
         case, created = _open_case(
             student_id=student_id,
             academic_year=academic_year,
             term=term,
             profile=profile,
+            cohort=cohort,
             timetable=timetable,
             language=language,
             now=now,
         )
-        same_point = _live_point(
-            case, anchor_key=anchor_key, reason=reason, fingerprint=fingerprint
-        )
+        same_point = _live_point(case, **point_key)
         if same_point is not None:
             if same_point.note == note:
                 return Submitted(
@@ -885,15 +958,30 @@ def submit_point(
         if case.points.filter(withdrawn_at__isnull=True).count() >= MAX_LIVE_POINTS:
             raise FeedbackRefused("TOO_MANY_POINTS", status=409)
 
-        claimed = (
-            TimetableFeedback.objects.filter(pk=case.pk, version=case.version)
-            .exclude(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES)
-            .update(version=F("version") + 1, last_student_activity_at=now, updated_at=now)
-        )
-        if claimed != 1:
-            raise FeedbackRefused("CASE_CHANGED", status=409)
+        # An answered case is the student's to reopen: a new point puts it back
+        # in front of whoever handles it, or back in the queue if nobody does.
+        reopened_to = ""
+        if case.status == S.ANSWERED:
+            reopened_to = S.IN_REVIEW if case.handled_by_id else S.SUBMITTED
+        changes: dict[str, Any] = {
+            "version": F("version") + 1,
+            "last_student_activity_at": now,
+            "updated_at": now,
+        }
+        if reopened_to:
+            changes["status"] = reopened_to
         try:
+            # The claim and the write succeed or fail together.
             with transaction.atomic():
+                claimed = (
+                    TimetableFeedback.objects.filter(
+                        pk=case.pk, version=case.version, status=case.status
+                    )
+                    .exclude(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES)
+                    .update(**changes)
+                )
+                if claimed != 1:
+                    raise FeedbackRefused("CASE_CHANGED", status=409)
                 point = TimetableFeedbackPoint.objects.create(
                     case=case,
                     anchor_kind=anchor_kind,
@@ -903,9 +991,9 @@ def submit_point(
                     section_course_identity=(
                         anchor_section.section_course_identity if anchor_section else ""
                     ),
-                    plan_course_identity=anchor_section.plan_course_identity
-                    if anchor_section
-                    else "",
+                    plan_course_identity=(
+                        anchor_section.plan_course_identity if anchor_section else ""
+                    ),
                     identity_certain=bool(anchor_section and anchor_section.identity_certain),
                     anchor_key=anchor_key,
                     reason_code=reason,
@@ -917,22 +1005,38 @@ def submit_point(
                     ),
                     requested_course_key=requested_code,
                     requested_plan_course_identity=requested_plan_identity,
+                    request_key=request_key,
                     note=note,
                     seen_snapshot=snapshot,
                     seen_fingerprint=fingerprint,
                 )
         except IntegrityError:
-            # The same point landed between the check above and this write: it is
-            # the student's own, so it is answered as the duplicate it is.
-            existing = _live_point(
-                case, anchor_key=anchor_key, reason=reason, fingerprint=fingerprint
-            )
+            # The same point landed between the check above and this write. The
+            # claim was undone with the write; the earlier point answers for it.
+            existing = _live_point(case, **point_key)
             if existing is None:
                 raise
+            if existing.note != note:
+                raise FeedbackRefused(
+                    "ALREADY_RAISED", status=409, reference=case.reference
+                ) from None
             return Submitted(
                 reference=case.reference, point_id=existing.pk, created_case=created, duplicate=True
+            )
+        if reopened_to:
+            TimetableFeedbackEvent.objects.create(
+                case=case,
+                kind=TimetableFeedbackEvent.Kind.REOPENED,
+                from_value=S.ANSWERED,
+                to_value=reopened_to,
+                point_id=point.pk,
             )
         TimetableFeedbackEvent.objects.create(
             case=case, kind=TimetableFeedbackEvent.Kind.POINT_ADDED, point_id=point.pk
         )
-    return Submitted(reference=case.reference, point_id=point.pk, created_case=created)
+    return Submitted(
+        reference=case.reference,
+        point_id=point.pk,
+        created_case=created,
+        reopened=bool(reopened_to),
+    )

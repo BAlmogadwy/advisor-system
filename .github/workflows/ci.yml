@@ -113,8 +113,9 @@ jobs:
     # section_instructors unique constraints (one primary per section, one row
     # per teacher) and on a snapshot restore that must not raise IntegrityError.
     # So do the timetable-feedback tables: their partial unique indexes and check
-    # constraints are compiled per backend, and seven forced races (open case,
-    # case numbers, duplicate point, two submissions opening one case) only
+    # constraints are compiled per backend, and eight forced races (open case,
+    # case numbers, duplicate point, two submissions opening one case or joining
+    # an open one) only
     # exist on PostgreSQL.
     name: planner (PostgreSQL 16)
     runs-on: ubuntu-latest
@@ -181,7 +182,7 @@ jobs:
             tests/test_timetable_feedback_submission_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all twenty-six
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all twenty-seven
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
@@ -196,7 +197,7 @@ jobs:
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 26 || { echo "expected 26 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 27 || { echo "expected 27 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

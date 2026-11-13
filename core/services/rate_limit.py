@@ -125,9 +125,12 @@ LIMITS: dict[str, tuple[int, int]] = {
     # anything is checked, so attempts are counted first and generously: a
     # student correcting a refused form a few times is normal, a script is not.
     TIMETABLE_FEEDBACK_ATTEMPT: (30, 3600),
-    # Accepted points, duplicates included, cost an advisor's attention. Five an
-    # hour covers a careful student going through their timetable section by
-    # section; ten a day caps what one student can put in one advisor's queue.
+    # Spent by every submission that passed all the checks before the write,
+    # duplicates included: what reaches the case costs an advisor's attention.
+    # A refused new case (the per-term cap, the cool-down) is refused before
+    # this is spent. Five an hour covers a careful student going through their
+    # timetable section by section; ten a day caps what one student can put in
+    # one advisor's queue.
     TIMETABLE_FEEDBACK: (5, 3600),
     TIMETABLE_FEEDBACK_DAILY: (10, 86_400),
 }

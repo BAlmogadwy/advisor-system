@@ -2908,6 +2908,11 @@ class TimetableFeedbackPoint(models.Model):
     requested_section_label = models.TextField(blank=True, default="")
     requested_course_key = models.TextField(blank=True, default="")
     requested_plan_course_identity = models.TextField(blank=True, default="")
+    #: What was asked for instead, as one value: '' for nothing,
+    #: 'SECTION|<requested_term_section_id>' or 'COURSE|<requested_course_key>'
+    #: (exactly, a database check). Part of the point's identity: two missing
+    #: courses are two points, not one point raised twice.
+    request_key = models.TextField(blank=True, default="")
     note = models.TextField(blank=True, default="")
     note_redacted_at = models.DateTimeField(null=True, blank=True)
     withdrawn_at = models.DateTimeField(null=True, blank=True)
@@ -2927,13 +2932,41 @@ class TimetableFeedbackPoint(models.Model):
             ),
         ]
         constraints = [
-            # The same point about the same timetable is one point. A changed
-            # timetable (a new fingerprint) or a withdrawn point lets it be raised
-            # again: the first is new evidence, the second a fresh request.
+            # The same point about the same timetable is one point: same anchor,
+            # same reason, same request. A changed timetable (a new fingerprint)
+            # or a withdrawn point lets it be raised again: the first is new
+            # evidence, the second a fresh request.
             models.UniqueConstraint(
-                fields=["case", "anchor_key", "reason_code", "seen_fingerprint"],
+                fields=["case", "anchor_key", "reason_code", "request_key", "seen_fingerprint"],
                 condition=models.Q(withdrawn_at__isnull=True),
                 name="uq_ttfp_point",
+            ),
+            # The request key IS the request: nothing, exactly one section, or
+            # exactly one course, never a key that disagrees with the fields.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(request_key="")
+                    & models.Q(requested_term_section_id__isnull=True)
+                    & models.Q(requested_course_key="")
+                )
+                | (
+                    models.Q(requested_term_section_id__isnull=False)
+                    & models.Q(requested_course_key="")
+                    & models.Q(
+                        request_key=Concat(
+                            models.Value("SECTION|"),
+                            Cast("requested_term_section_id", output_field=models.CharField()),
+                        )
+                    )
+                )
+                | (
+                    models.Q(requested_term_section_id__isnull=True)
+                    & ~models.Q(requested_course_key="")
+                    & models.Q(
+                        request_key=Concat(models.Value("COURSE|"), F("requested_course_key"))
+                    )
+                ),
+                name="ck_ttfp_request_key",
             ),
             models.CheckConstraint(
                 condition=models.Q(reason_code__in=TimetableFeedbackReason.values),
