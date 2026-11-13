@@ -74,6 +74,12 @@ def test_points_that_already_name_a_request_get_their_key():
         )
         assert sorted(keys) == ["", "COURSE|SD301", "SECTION|12"]
     finally:
+        # Empty the tables at 0079 first: if 0080 had failed on these rows, going
+        # straight to the latest schema would fail on them again and leave every
+        # later test at 0079.
+        apps = _migrate(BEFORE)
+        apps.get_model("core", "TimetableFeedbackPoint").objects.all().delete()
+        apps.get_model("core", "TimetableFeedback").objects.all().delete()
         _latest()
 
 

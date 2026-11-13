@@ -1244,13 +1244,20 @@ def test_the_way_in_imports_only_what_it_reads_with():
     tree = ast.parse(inspect.getsource(feedback))
     modules = set()
     from_student_sections = set()
+    from_services = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             modules.add(node.module or "")
             if node.module == "core.services.student_sections":
                 from_student_sections.update(alias.name for alias in node.names)
+            if node.module == "core.services":
+                from_services.update(alias.name for alias in node.names)
         elif isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
+
+    # `from core.services import ...` names whole service modules; only the rate
+    # limiter, which writes nothing but its own counters, may come in that way.
+    assert from_services == {"rate_limit"}
 
     assert modules == {
         "__future__",

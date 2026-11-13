@@ -761,7 +761,8 @@ def submit_point(
        forecast while they wrote reads as "your timetable changed".
     c. The anchor is a labelled section of that forecast, the timetable as a whole
        (only when there is one), or "no timetable".
-    d. The reason fits the anchor; a note is given for OTHER and is not too long.
+    d. The reason fits the anchor; a note is given for OTHER, is not too long,
+       and holds no control character beyond a tab or a line break.
     e. A requested section or course is one the form offered.
     f. "No timetable" only when there is neither a forecast nor a registration.
     g. Opening a case keeps to the per-term cap and the cool-down after a
