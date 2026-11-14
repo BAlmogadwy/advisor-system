@@ -181,9 +181,11 @@ jobs:
             tests/test_timetable_feedback_submission_postgres.py \
             tests/test_timetable_feedback_workflow.py \
             tests/test_timetable_feedback_workflow_postgres.py \
+            tests/test_timetable_feedback_staff.py \
+            tests/test_timetable_feedback_staff_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all thirty-three
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all thirty-eight
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
@@ -196,10 +198,11 @@ jobs:
             tests/test_timetable_feedback_postgres.py \
             tests/test_timetable_feedback_submission_postgres.py \
             tests/test_timetable_feedback_workflow_postgres.py \
+            tests/test_timetable_feedback_staff_postgres.py \
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 33 || { echo "expected 33 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 38 || { echo "expected 38 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

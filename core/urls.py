@@ -1,6 +1,7 @@
 from django.contrib.auth.decorators import login_required
-from django.urls import path
+from django.urls import path, re_path
 
+from . import staff_timetable_feedback_views as staff_feedback
 from .advisor_conversation_views import (
     conversation_create_view,
     conversation_list_view,
@@ -513,6 +514,41 @@ urlpatterns = [
         "ops/advisor-cases/<str:reference>/action/",
         login_required(role_required(ROLE_ADVISOR)(inbox_case_action_view), login_url="login"),
         name="advisor_inbox_case_action",
+    ),
+    # Timetable feedback, the staff side. Registered whatever the flags say, like the
+    # student side; each view answers 404 itself while TIMETABLE_FEEDBACK_ENABLED is
+    # off. `role_required` keeps students and the exam committee out, and
+    # `timetable_feedback_staff.visible_to` decides WHICH cases, in the query. A
+    # reference route matches only a reference, so guide/ and bulk/ never read as one.
+    path(
+        "ops/timetable-feedback/",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.queue_view), login_url="login"),
+        name="staff_timetable_feedback_queue",
+    ),
+    path(
+        "ops/timetable-feedback/guide/",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.guide_view), login_url="login"),
+        name="staff_timetable_feedback_guide",
+    ),
+    path(
+        "ops/timetable-feedback/bulk/",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.bulk_view), login_url="login"),
+        name="staff_timetable_feedback_bulk",
+    ),
+    re_path(
+        r"^ops/timetable-feedback/(?P<reference>TTF-[0-9]{4}-[0-9]{5,})/$",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.case_view), login_url="login"),
+        name="staff_timetable_feedback_case",
+    ),
+    re_path(
+        r"^ops/timetable-feedback/(?P<reference>TTF-[0-9]{4}-[0-9]{5,})/action/$",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.action_view), login_url="login"),
+        name="staff_timetable_feedback_action",
+    ),
+    re_path(
+        r"^ops/timetable-feedback/(?P<reference>TTF-[0-9]{4}-[0-9]{5,})/redact/$",
+        login_required(role_required(ROLE_ADVISOR)(staff_feedback.redact_view), login_url="login"),
+        name="staff_timetable_feedback_redact",
     ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),

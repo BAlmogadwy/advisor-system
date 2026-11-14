@@ -595,6 +595,33 @@ REFUSAL: Mapping[str, tuple[str, str]] = {
     ),
 }
 
+#: Answers staff may send as they are, one case or many at once, each in the
+#: language the student wrote in. They promise nothing the department has not
+#: decided: they say what was done with the feedback and where registration is
+#: changed. Stored as the message text, so they are plain text, not markup.
+REPLY_TEMPLATES: Mapping[str, tuple[str, str]] = {
+    "REGISTERED_IN_PORTAL": (
+        "Thank you for your feedback. Your registration for this term is already recorded,"
+        " so any change to it is made in the university portal. Your feedback has been"
+        " noted and can be taken into account when the next timetables are prepared.",
+        "شكرًا على ملاحظتك. سبق تسجيلك في هذا الفصل الدراسي، وتُجرى أي تعديلات على التسجيل"
+        " عبر بوابة الجامعة. وقد سُجّلت ملاحظتك، ويمكن أخذها في الحسبان عند إعداد الجداول"
+        " القادمة.",
+    ),
+    "NOTED_FOR_PLANNING": (
+        "Thank you for your feedback. It has been passed to those who prepare the timetables"
+        " and can be taken into account. Sending it does not change your registration.",
+        "شكرًا على ملاحظتك. أُحيلت إلى المعنيين بإعداد الجداول، ويمكن أخذها في الحسبان،"
+        " ولا يغيّر إرسالها تسجيلك.",
+    ),
+    "NO_CHANGE_THIS_TERM": (
+        "Thank you for your feedback. This cannot be changed in this term's timetable."
+        " Registration questions are handled in the university portal.",
+        "شكرًا على ملاحظتك. لا يمكن تغيير ذلك في جدول هذا الفصل الدراسي، وتُعالج مسائل"
+        " التسجيل عبر بوابة الجامعة.",
+    ),
+}
+
 #: For a code no entry covers yet: a plain apology, with the code shown so it
 #: can be reported.
 UNKNOWN_REFUSAL = (
@@ -709,6 +736,12 @@ def author_label(kind: str, language: str) -> str:
     """Who wrote a message. Anything that is not the student reads as the department
     unless it is plainly the advisor, so no staff name or role code reaches a student."""
     return _pick(AUTHOR.get(kind, AUTHOR["DEPARTMENT"]), language)
+
+
+def reply_template(key: str, language: str) -> str:
+    """A ready-made answer as plain text, in ``language``. KeyError for an unknown
+    key: the caller checks it against `REPLY_TEMPLATES` first."""
+    return _pick(REPLY_TEMPLATES[key], language)
 
 
 def day_label(code: str, language: str) -> str:

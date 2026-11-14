@@ -44,8 +44,10 @@ a look already marked, and never show as new. The student's own actions never se
 it. Opening the case moves ``student_seen_at`` up to the value the page read,
 never to the clock, and never back.
 
-Staff moves and the system's closing commands use the same tables and the same
-claim; they land with the advisor queue and the lifecycle commands.
+Staff moves use the same tables and the same claim, through a scope of the
+cases that member of staff may see (`timetable_feedback_staff`); `student_visible_at`
+is the value such a write gives ``last_student_visible_at``. The system's closing
+commands land with the lifecycle commands.
 """
 
 from __future__ import annotations
@@ -58,7 +60,8 @@ from typing import Any
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F, Q, QuerySet
+from django.db.models import DateTimeField, F, Q, QuerySet, Value
+from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 
 from core.models import (
@@ -194,6 +197,20 @@ def cas_transition(
     ).update(version=F("version") + 1, updated_at=now, **changes)
     if claimed != 1:
         raise WorkflowRefused("CASE_CHANGED")
+
+
+def student_visible_at(now: datetime) -> Greatest:
+    """What a write the student can see stores in ``last_student_visible_at``.
+
+    The later of the stored value and ``now``, worked out in the UPDATE itself, so
+    the mark never moves back: a write that took its ``now`` early and committed
+    late cannot land behind a look the student has already marked. A NULL stored
+    value counts as ``now``, because SQLite's MAX(NULL, x) is NULL where
+    PostgreSQL's GREATEST skips it."""
+    moment = Value(now, output_field=DateTimeField())
+    return Greatest(
+        Coalesce(F("last_student_visible_at"), moment), moment, output_field=DateTimeField()
+    )
 
 
 def answer_window_passed(case: TimetableFeedback, now: datetime) -> bool:

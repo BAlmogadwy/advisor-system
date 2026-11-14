@@ -36,6 +36,16 @@
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/></svg></span>
       {% if LANGUAGE_CODE == 'ar' %}المرشد الأكاديمي الافتراضي{% else %}Virtual Advisor{% endif %}
     </a>
+    {% if can_timetable_feedback_staff %}
+    {% comment %}Students' feedback on their expected timetable. Never drawn on the MRI
+    page (the flag is off there), so that page stays exactly as it is. Its sub-pages
+    are lit here, server-side, like the student link.{% endcomment %}
+    <a class="nav-a nav-link{% if '/ops/timetable-feedback/' in request.path %} active{% endif %}" href="{% url 'staff_timetable_feedback_queue' %}" tabindex="0"{% if '/ops/timetable-feedback/' in request.path %} aria-current="page"{% endif %}>
+      <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3h6v3H9z"/><path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8 12h8M8 16h5"/></svg></span>
+      {% if LANGUAGE_CODE == 'ar' %}ملاحظات الطلاب على الجداول{% else %}Timetable feedback{% endif %}
+      {% if timetable_feedback_staff_count %}{% comment %}How many cases wait on this person: drawn for the eye, and said in words for a screen reader.{% endcomment %}<span class="nav-badge" aria-hidden="true">{{ timetable_feedback_staff_count }}</span><span class="visually-hidden"> ({% if LANGUAGE_CODE == 'ar' %}بانتظار إجرائك: {{ timetable_feedback_staff_count }}{% else %}Waiting on you: {{ timetable_feedback_staff_count }}{% endif %})</span>{% endif %}
+    </a>
+    {% endif %}
     {% if can_db_admin %}
     <a class="nav-a nav-link" data-target="batch" href="/#batch" tabindex="0">
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>
