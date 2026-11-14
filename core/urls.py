@@ -198,6 +198,14 @@ from .student_auth_views import (
     student_otp_verify_view,
     student_plan_map_view,
 )
+from .student_timetable_feedback_actions import (
+    feedback_confirm_view,
+    feedback_follow_up_view,
+    feedback_reopen_view,
+    feedback_reply_view,
+    feedback_withdraw_point_view,
+    feedback_withdraw_view,
+)
 from .student_timetable_feedback_views import (
     feedback_detail_view,
     feedback_list_view,
@@ -365,6 +373,38 @@ urlpatterns = [
         "student/timetable-feedback/<str:reference>/",
         login_required(feedback_detail_view, login_url="student_login"),
         name="student_timetable_feedback_detail",
+    ),
+    # The student's actions on one case: POSTs that redirect back to it. The two
+    # withdrawals answer GET with a confirmation page first.
+    path(
+        "student/timetable-feedback/<str:reference>/reply/",
+        login_required(feedback_reply_view, login_url="student_login"),
+        name="student_timetable_feedback_reply",
+    ),
+    path(
+        "student/timetable-feedback/<str:reference>/follow-up/",
+        login_required(feedback_follow_up_view, login_url="student_login"),
+        name="student_timetable_feedback_follow_up",
+    ),
+    path(
+        "student/timetable-feedback/<str:reference>/confirm/",
+        login_required(feedback_confirm_view, login_url="student_login"),
+        name="student_timetable_feedback_confirm",
+    ),
+    path(
+        "student/timetable-feedback/<str:reference>/reopen/",
+        login_required(feedback_reopen_view, login_url="student_login"),
+        name="student_timetable_feedback_reopen",
+    ),
+    path(
+        "student/timetable-feedback/<str:reference>/withdraw/",
+        login_required(feedback_withdraw_view, login_url="student_login"),
+        name="student_timetable_feedback_withdraw",
+    ),
+    path(
+        "student/timetable-feedback/<str:reference>/points/<str:point_id>/withdraw/",
+        login_required(feedback_withdraw_point_view, login_url="student_login"),
+        name="student_timetable_feedback_withdraw_point",
     ),
     # Durable conversations. Every one of these resolves the student from the
     # session and filters on it in the same query, so a conversation belonging to

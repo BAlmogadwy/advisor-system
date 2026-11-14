@@ -1,0 +1,33 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=2">{% endblock %}
+
+{% block page_heading %}{{ heading }}{% endblock %}
+
+{% block content %}
+{% comment %}
+  The question before a withdrawal: a page of its own, so it works without
+  JavaScript and nothing is withdrawn by a stray tap. "Keep it" goes back to the
+  case and changes nothing.
+{% endcomment %}
+<section class="card p-3 mb-3">
+  {% if point %}
+  <div class="ttf-point mb-3">
+    <p class="ttf-point-about" dir="auto">{{ point.about }}</p>
+    <dl class="ttf-meta">
+      <div><dt>{{ t.detail_reason }}</dt><dd dir="auto">{{ point.reason }}</dd></div>
+      <div><dt>{{ t.detail_sent }}</dt><dd><bdi dir="ltr">{{ point.sent }}</bdi></dd></div>
+    </dl>
+  </div>
+  {% endif %}
+  <p id="ttfConfirmBody" dir="auto">{{ body }}</p>
+  <form method="post" action="{{ action_url }}" class="student-page-actions ttf-actions">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">{{ yes }}</button>
+    <a class="btn btn-outline-secondary" href="{{ case_url }}">{{ t.confirm_keep }}</a>
+  </form>
+</section>
+{% endblock %}

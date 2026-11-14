@@ -1,0 +1,12 @@
+{% comment %}
+  One text field of a timetable-feedback case page: a reply, a message, a reason
+  for reopening. Its error, when there is one, is said here as well as in the
+  summary at the top, and the field names it through aria-describedby.
+  Takes: field_id, label, hint, value, error, text_max, rows.
+{% endcomment %}
+<div class="ttf-field">
+  <label class="ttf-label" for="{{ field_id }}">{{ label }}</label>
+  <p class="ttf-hint" id="{{ field_id }}Hint" dir="auto">{{ hint }}</p>
+  {% if error %}<p class="ttf-field-error" id="{{ error.id }}-field" dir="auto">{{ error.html }}</p>{% endif %}
+  <textarea class="form-control ttf-note" id="{{ field_id }}" name="body" rows="{{ rows }}" maxlength="{{ text_max }}" dir="auto" aria-required="true" aria-describedby="{{ field_id }}Hint{% if error %} {{ error.id }}-field{% endif %}"{% if error %} aria-invalid="true"{% endif %}>{{ value|default:"" }}</textarea>
+</div>

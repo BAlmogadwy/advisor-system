@@ -56,6 +56,17 @@ def _section(*args, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _flags(settings, monkeypatch):
+    set_flags(settings, monkeypatch)
+
+
+@pytest.fixture
+def world(db):
+    return make_world()
+
+
+def set_flags(settings, monkeypatch):
+    """Feedback on, for every programme, with the term both readers agree on. Other
+    modules' fixtures call this too, so every feedback page test starts alike."""
     settings.TIMETABLE_FEEDBACK_ENABLED = True
     settings.TIMETABLE_FEEDBACK_ACCEPTING = True
     settings.TIMETABLE_FEEDBACK_PROGRAMMES = ()
@@ -74,8 +85,9 @@ def _flags(settings, monkeypatch):
         monkeypatch.setitem(rate_limit.LIMITS, budget, (100, 3600))
 
 
-@pytest.fixture
-def world(db):
+def make_world():
+    """Four students of one programme, with a forecast for SID and OTHER_SID, a
+    registration for REG_SID and nothing for EMPTY_SID; the sections by key."""
     for sid in (SID, EMPTY_SID, REG_SID, OTHER_SID):
         Student.objects.create(
             student_id=sid,

@@ -3,19 +3,33 @@
 
 {% block title %}{{ case.page_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=2">{% endblock %}
 
 {% block page_heading %}{{ case.title }}{% endblock %}
 
 {% block content %}
 {% comment %}
-  One case, as the student sent it. Points are drawn from their own frozen
-  snapshot; messages are only the student-visible ones, already filtered and
-  reduced to safe fields by the view. Every word comes from the copy deck.
+  One case, as the student sent it, and what they can do on it now. Points are
+  drawn from their own frozen snapshot; messages are only the student-visible ones,
+  already filtered and reduced to safe fields by the view. Every action is offered
+  only where the service's own check says it would be taken, and a refused one
+  comes back here with its sentence at the top and at its field. Every word comes
+  from the copy deck.
 {% endcomment %}
 
 {% if notice %}
 <div class="ttf-notice" id="ttfNotice" role="status" tabindex="-1"><span dir="auto">{{ notice }}</span></div>
+{% endif %}
+
+{% if errors %}
+<div class="ttf-error-summary" id="ttfErrors" role="alert" tabindex="-1" aria-labelledby="ttfErrorsTitle">
+  <h2 class="ttf-error-title" id="ttfErrorsTitle">{{ t.detail_errors_title }}</h2>
+  <ul>
+    {% for error in errors %}
+    <li id="{{ error.id }}"><span dir="auto">{{ error.html }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
 {% endif %}
 
 <section class="card p-3 mb-3" aria-labelledby="ttfCaseTitle">
@@ -39,7 +53,7 @@
   <ol class="ttf-points">
     {% for point in points %}
     <li class="ttf-point{% if point.withdrawn %} is-withdrawn{% endif %}">
-      <p class="ttf-point-about" dir="auto">{{ point.about }}{% if point.withdrawn %} <span class="ttf-tag">{{ t.detail_withdrawn }}</span>{% endif %}</p>
+      <p class="ttf-point-about" id="ttfPoint-{{ point.id }}" dir="auto">{{ point.about }}{% if point.withdrawn %} <span class="ttf-tag">{{ t.detail_withdrawn }}</span>{% endif %}</p>
       {% if point.name or point.meetings %}
       <p class="ttf-small" dir="auto">{{ t.detail_seen }} {% if point.name %}<span dir="auto">{{ point.name }}</span>{% if point.meetings %} — {% endif %}{% endif %}{% for m in point.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</p>
       {% endif %}
@@ -51,6 +65,10 @@
       </dl>
       {% if point.note %}<div class="ttf-text mt-2" dir="auto">{{ point.note|linebreaksbr }}</div>{% endif %}
       {% if point.note_removed %}<p class="ttf-small mt-1 mb-0">{{ t.detail_note_removed }}</p>{% endif %}
+      {% if can_withdraw_point and not point.withdrawn %}
+      {% comment %}Each link is named by its point, so a list of links still says which.{% endcomment %}
+      <p class="mt-2 mb-0"><a class="ttf-point-action" href="{% url 'student_timetable_feedback_withdraw_point' case.reference point.id %}" aria-describedby="ttfPoint-{{ point.id }}">{{ t.detail_withdraw_point }}</a></p>
+      {% endif %}
     </li>
     {% endfor %}
   </ol>
@@ -83,7 +101,80 @@
   {% else %}
   <p class="mb-0" dir="auto">{{ t.detail_thread_empty }}</p>
   {% endif %}
+
+  {% if can_reply %}
+  <form method="post" action="{% url 'student_timetable_feedback_reply' case.reference %}" class="ttf-form mt-3" id="ttfReplyForm" novalidate>
+    {% csrf_token %}
+    {% include "core/partials/ttf_text_field.html" with field_id="ttfReply" label=t.detail_reply_label hint=reply_hint value=values.reply_body error=error_for.reply_body text_max=text_max rows=4 %}
+    <div class="student-page-actions ttf-actions mt-2">
+      <button type="submit" class="btn btn-primary">{{ t.detail_reply_send }}</button>
+    </div>
+  </form>
+  {% elif can_follow_up %}
+  <form method="post" action="{% url 'student_timetable_feedback_follow_up' case.reference %}" class="ttf-form mt-3" id="ttfFollowUpForm" novalidate>
+    {% csrf_token %}
+    {% include "core/partials/ttf_text_field.html" with field_id="ttfFollowUp" label=t.detail_follow_up_label hint=follow_up_hint value=values.follow_up_body error=error_for.follow_up_body text_max=text_max rows=3 %}
+    <div class="student-page-actions ttf-actions mt-2">
+      <button type="submit" class="btn btn-outline-secondary">{{ t.detail_follow_up_send }}</button>
+    </div>
+  </form>
+  {% elif follow_up_withheld %}
+  <p class="student-guidance-note mt-3 mb-0" id="ttfFollowUpWithheld" dir="auto">{{ follow_up_withheld }}</p>
+  {% endif %}
 </section>
+
+{% if answer %}
+<section class="card p-3 mb-3" aria-labelledby="ttfAnswerTitle" id="ttfAnswer">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfAnswerTitle">{{ t.detail_answer_title }}</h2>
+  </div>
+  {% if answer.open %}<p dir="auto">{{ answer.open }}</p>{% endif %}
+  {% if can_confirm %}
+  <form method="post" action="{% url 'student_timetable_feedback_confirm' case.reference %}" class="ttf-form" id="ttfConfirmForm" novalidate>
+    {% csrf_token %}
+    <fieldset class="ttf-fieldset" role="radiogroup" aria-labelledby="ttfHelpfulLegend">
+      <legend class="ttf-legend" id="ttfHelpfulLegend">{{ t.detail_helpful_legend }}</legend>
+      <div class="ttf-choice-list ttf-choice-pair">
+        <label class="ttf-choice">
+          <input type="radio" name="helpful" value="yes"{% if values.helpful == "yes" %} checked{% endif %}>
+          <span class="ttf-choice-body"><span class="ttf-choice-title">{{ t.detail_helpful_yes }}</span></span>
+        </label>
+        <label class="ttf-choice">
+          <input type="radio" name="helpful" value="no"{% if values.helpful == "no" %} checked{% endif %}>
+          <span class="ttf-choice-body"><span class="ttf-choice-title">{{ t.detail_helpful_no }}</span></span>
+        </label>
+      </div>
+    </fieldset>
+    <div class="student-page-actions ttf-actions">
+      <button type="submit" class="btn btn-primary">{{ t.detail_confirm_send }}</button>
+    </div>
+  </form>
+  {% endif %}
+  {% if can_reopen %}
+  <form method="post" action="{% url 'student_timetable_feedback_reopen' case.reference %}" class="ttf-form mt-3" id="ttfReopenForm" novalidate>
+    {% csrf_token %}
+    {% include "core/partials/ttf_text_field.html" with field_id="ttfReopen" label=t.detail_reopen_label hint=reopen_hint value=values.reopen_body error=error_for.reopen_body text_max=text_max rows=3 %}
+    <div class="student-page-actions ttf-actions mt-2">
+      <button type="submit" class="btn btn-outline-secondary">{{ t.detail_reopen_send }}</button>
+    </div>
+  </form>
+  {% elif answer.reopen_withheld %}
+  <p class="student-guidance-note mt-3 mb-0" id="ttfReopenWithheld" dir="auto">{{ answer.reopen_withheld }}</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if can_withdraw_case %}
+<section class="card p-3 mb-3" aria-labelledby="ttfWithdrawTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfWithdrawTitle">{{ t.detail_withdraw_title }}</h2>
+  </div>
+  <p dir="auto">{{ t.detail_withdraw_body }}</p>
+  <div class="student-page-actions ttf-actions">
+    <a class="btn btn-outline-danger" href="{% url 'student_timetable_feedback_withdraw' case.reference %}">{{ t.detail_withdraw_case }}</a>
+  </div>
+</section>
+{% endif %}
 
 <p><a href="{% url 'student_timetable_feedback_list' %}">{{ t.detail_back }}</a></p>
 {% endblock %}

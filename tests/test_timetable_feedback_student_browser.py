@@ -15,6 +15,7 @@ import os
 # an async context and refuse ORM calls in.
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "1")
 
+from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -22,6 +23,7 @@ import pytest
 from django.conf import settings
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import Client, override_settings
+from django.utils import timezone
 
 from core.models import (
     ProgrammeRequirement,
@@ -31,6 +33,8 @@ from core.models import (
     TermSectionMeeting,
     TermSectionProgram,
     TimetableFeedback,
+    TimetableFeedbackMessage,
+    TimetableFeedbackPoint,
 )
 from core.services import student_otp
 from core.services.rbac import ensure_role_groups
@@ -253,3 +257,94 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
             "Please choose what your feedback is about."
         )
         self._check(page, "8-nothing-chosen-en")
+
+    # -- PR 3b: what the student does on a case ---------------------------
+
+    def _case(self, status: str, *, points: int = 1, **fields) -> TimetableFeedback:
+        """A case as staff left it (PR 4 will put it there), with ``points`` live
+        points about the student's own section."""
+        case = TimetableFeedback.objects.create(
+            student_id=SID, academic_year="1448", term="1", status=status, **fields
+        )
+        for n in range(points):
+            TimetableFeedbackPoint.objects.create(
+                case=case,
+                anchor_kind="SECTION",
+                term_section_id=self.mine.pk,
+                course_key="SA101",
+                section_label="M1",
+                anchor_key=f"SECTION|{self.mine.pk}",
+                reason_code=("TIME_CLASH", "TIME_UNSUITABLE")[n % 2],
+                seen_fingerprint=f"{n:064d}",
+            )
+        return case
+
+    def test_a_student_answers_a_request_for_information_from_the_home_banner(self):
+        case = self._case("NEEDS_INFORMATION", last_student_visible_at=timezone.now())
+        TimetableFeedbackMessage.objects.create(
+            case=case,
+            audience="STUDENT_VISIBLE",
+            author_kind="ADVISOR",
+            body="Which section would suit you?",
+        )
+        page = self._page("en")
+        page.goto(f"{self.live_server_url}/student/")
+        banner = page.locator("#student-home-feedback-banner")
+        expect(banner).to_contain_text("Your reply is needed")
+        self._check(page, "9-banner-en", "#student-home-feedback-banner")
+
+        banner.get_by_role("link").click()
+        page.wait_for_url(f"**/student/timetable-feedback/{case.reference}/")
+        page.get_by_label("Your reply").fill("Section M2 would suit me.")
+        self._check(page, "10-reply-en")
+        page.get_by_role("button", name="Send reply").click()
+
+        page.wait_for_url(f"**/student/timetable-feedback/{case.reference}/")
+        notice = page.locator("#ttfNotice")
+        expect(notice).to_be_focused()
+        expect(notice).to_contain_text("Your reply was sent.")
+        case.refresh_from_db()
+        self.assertEqual(case.status, "SUBMITTED")
+        self.assertIsNotNone(case.student_seen_at)
+
+    def test_withdrawing_a_point_asks_first_on_its_own_page(self):
+        case = self._case("SUBMITTED", points=2)
+        page = self._page("en")
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+        # A text link, still a 44px target on a phone.
+        box = page.locator(".ttf-point-action").first.bounding_box()
+        self.assertGreaterEqual(box["height"], 44)
+        page.locator(".ttf-point-action").first.click()
+        page.wait_for_url("**/points/*/withdraw/")
+        self._check(page, "11-confirm-point-en")
+        page.get_by_role("button", name="Withdraw the point").click()
+
+        page.wait_for_url(f"**/student/timetable-feedback/{case.reference}/")
+        notice = page.locator("#ttfNotice")
+        expect(notice).to_be_focused()
+        expect(notice).to_contain_text("The point was withdrawn")
+        self.assertEqual(case.points.filter(withdrawn_at__isnull=True).count(), 1)
+
+    def test_an_empty_reply_in_arabic_is_said_where_it_was_typed(self):
+        case = self._case("NEEDS_INFORMATION")
+        page = self._page("ar")
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+        self.assertEqual(page.evaluate("document.documentElement.dir"), "rtl")
+        page.get_by_role("button", name="إرسال الرد").click()
+
+        summary = page.locator("#ttfErrors")
+        expect(summary).to_be_focused()
+        expect(summary).to_contain_text("يُرجى كتابة رسالتك.")
+        reply = page.locator("#ttfReply")
+        expect(reply).to_have_attribute("aria-invalid", "true")
+        self.assertFalse(TimetableFeedbackMessage.objects.exists())
+        self._check(page, "12-reply-error-ar")
+
+    def test_an_answered_case_in_arabic_fits_the_phone(self):
+        case = self._case("ANSWERED", answered_at=timezone.now() - timedelta(days=2))
+        page = self._page("ar")
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
+        expect(page.get_by_role("radiogroup", name="هل كان الرد مفيدًا؟ (اختياري)")).to_be_visible()
+        expect(page.get_by_role("button", name="إغلاق هذه الملاحظة")).to_be_visible()
+        expect(page.get_by_role("button", name="إعادة فتح هذه الملاحظة")).to_be_visible()
+        self._check(page, "13-answered-ar")

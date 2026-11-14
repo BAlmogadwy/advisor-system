@@ -262,6 +262,92 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "تحتوي الملاحظة {reference} على الحد الأقصى لعدد النقاط: {max}.",
     ),
     "detail_back": ("All my timetable feedback", "جميع ملاحظاتي على الجدول"),
+    # What the student can do on a case. Each action is offered only where the
+    # service would take it; where it would not, its refusal takes its place.
+    "detail_errors_title": ("Nothing was changed", "لم يُغيَّر شيء"),
+    "detail_reply_label": ("Your reply", "ردك"),
+    "detail_reply_hint": (
+        "Please answer the question in the messages above. At most {max} characters.",
+        "يُرجى الإجابة عن السؤال الوارد في الرسائل أعلاه. الحد الأقصى لعدد الأحرف: {max}.",
+    ),
+    "detail_reply_send": ("Send reply", "إرسال الرد"),
+    "detail_follow_up_label": ("Add a message", "إضافة رسالة"),
+    "detail_follow_up_hint": (
+        "It is added to this feedback. Messages that can still be added: {left}. At most"
+        " {max} characters each.",
+        "تُضاف الرسالة إلى هذه الملاحظة. عدد الرسائل التي يمكن إضافتها: {left}. الحد الأقصى"
+        " لعدد الأحرف في كل رسالة: {max}.",
+    ),
+    "detail_follow_up_send": ("Add message", "إضافة الرسالة"),
+    "detail_answer_title": ("Is the answer enough?", "هل الرد كافٍ؟"),
+    "detail_answer_open": (
+        "If it is, this feedback can be closed. If something is still not resolved, it can"
+        " be reopened until {date}.",
+        "إذا كان كافيًا فيمكن إغلاق هذه الملاحظة، وإذا بقي شيء دون حل فيمكن إعادة فتحها حتى {date}.",
+    ),
+    "detail_helpful_legend": (
+        "Was the answer helpful? (optional)",
+        "هل كان الرد مفيدًا؟ (اختياري)",
+    ),
+    "detail_helpful_yes": ("Yes", "نعم"),
+    "detail_helpful_no": ("No", "لا"),
+    "detail_confirm_send": ("Close this feedback", "إغلاق هذه الملاحظة"),
+    "detail_reopen_label": ("What is still not resolved?", "ما الذي لم يُحل بعد؟"),
+    "detail_reopen_hint": ("At most {max} characters.", "الحد الأقصى لعدد الأحرف: {max}."),
+    "detail_reopen_send": ("Reopen this feedback", "إعادة فتح هذه الملاحظة"),
+    "detail_withdraw_title": ("No longer needed?", "لم تعد لازمة؟"),
+    "detail_withdraw_body": (
+        "This feedback can be withdrawn. A withdrawal cannot be undone.",
+        "يمكن سحب هذه الملاحظة، ولا يمكن التراجع عن السحب.",
+    ),
+    "detail_withdraw_case": ("Withdraw this feedback", "سحب هذه الملاحظة"),
+    "detail_withdraw_point": ("Withdraw this point", "سحب هذه النقطة"),
+    # The confirmation before a withdrawal, which works without JavaScript.
+    "confirm_case_title": ("Withdraw feedback {reference}?", "سحب الملاحظة {reference}؟"),
+    "confirm_case_body": (
+        "The whole feedback is withdrawn, with every point in it, and this cannot be"
+        " undone. After a withdrawal, new feedback can be sent once {hours} have passed.",
+        "تُسحب الملاحظة كاملة بجميع نقاطها، ولا يمكن التراجع عن ذلك. وبعد السحب يمكن"
+        " إرسال ملاحظة جديدة بعد مرور {hours}.",
+    ),
+    "confirm_case_yes": ("Withdraw the feedback", "سحب الملاحظة"),
+    "confirm_point_title": ("Withdraw this point?", "سحب هذه النقطة؟"),
+    "confirm_point_body": (
+        "Only this point is withdrawn; the rest of feedback {reference} stays open. This"
+        " cannot be undone.",
+        "تُسحب هذه النقطة وحدها، وتبقى بقية الملاحظة {reference} مفتوحة. ولا يمكن التراجع عن ذلك.",
+    ),
+    "confirm_point_yes": ("Withdraw the point", "سحب النقطة"),
+    "confirm_keep": ("Keep it", "الإبقاء عليها"),
+    # Something the student may read that they have not seen yet.
+    "unread": ("New", "جديد"),
+    # The sidebar link's count, read by screen readers; the badge itself is hidden
+    # from them.
+    "nav_unread": ("New: {count}", "جديد: {count}"),
+    # The banner on the home page, for this term's feedback.
+    "banner_reply_title": ("Your reply is needed", "يلزم ردك"),
+    "banner_reply_body": (
+        "Feedback {reference} is waiting for your reply.",
+        "الملاحظة {reference} بانتظار ردك.",
+    ),
+    "banner_answer_title": (
+        "Your timetable feedback has an answer",
+        "وصل رد على ملاحظتك على الجدول",
+    ),
+    "banner_answer_body": (
+        "Feedback {reference} was answered. It can be closed if the answer is enough, or"
+        " reopened until {date}.",
+        "صدر رد على الملاحظة {reference}. ويمكن إغلاقها إذا كان الرد كافيًا، أو إعادة"
+        " فتحها حتى {date}.",
+    ),
+    "banner_news_title": (
+        "Something new on your timetable feedback",
+        "جديد في ملاحظتك على الجدول",
+    ),
+    "banner_news_body": (
+        "Feedback {reference} has something new.",
+        "يوجد جديد في الملاحظة {reference}.",
+    ),
     # Pages that are not there, or not open
     "unavailable_title": (
         "Timetable feedback is not available",
@@ -385,6 +471,23 @@ NOTICE: Mapping[str, tuple[str, str]] = {
         " it again.",
         "أُرسلت النقطة، وأعادت فتح هذه الملاحظة ليطّلع عليها مرشدك الأكاديمي مجددًا.",
     ),
+    # After the student's own actions on a case. None says who holds the case now.
+    "REPLY_SENT": ("Your reply was sent.", "أُرسل ردك."),
+    "FOLLOW_UP_SENT": ("Your message was added.", "أُضيفت رسالتك."),
+    "POINT_WITHDRAWN": (
+        "The point was withdrawn; the rest of this feedback stays open.",
+        "سُحبت النقطة، وتبقى بقية هذه الملاحظة مفتوحة.",
+    ),
+    # Not the withdrawn status's own explanation, which the page already shows.
+    "CASE_WITHDRAWN": (
+        "Done: the feedback was withdrawn and is no longer open.",
+        "تم سحب الملاحظة، ولم تعد مفتوحة.",
+    ),
+    "ANSWER_CONFIRMED": (
+        "The answer was accepted, and this feedback is closed.",
+        "قُبل الرد وأُغلقت هذه الملاحظة.",
+    ),
+    "ANSWER_REOPENED": ("This feedback was reopened.", "أُعيد فتح هذه الملاحظة."),
 }
 
 #: Every refusal the feedback services can give, by code. Messages name no section
