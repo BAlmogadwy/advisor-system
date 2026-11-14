@@ -1,0 +1,24 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ t.unavailable_title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endblock %}
+
+{% block page_heading %}{{ t.unavailable_title }}{% endblock %}
+
+{% block content %}
+{% comment %}
+  Anything that is not there, or not open: the feature switched off, feedback not
+  being accepted, a timetable that could not be read, or a case that is not this
+  student's. All in the student's own shell and language, never Django's bare
+  English error pages, and one sentence per cause that names no other student.
+{% endcomment %}
+<section class="card p-3 mb-3" aria-labelledby="ttfUnavailableTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfUnavailableTitle">{{ t.unavailable_title }}</h2>
+  </div>
+  <p dir="auto">{{ message }}</p>
+  <a class="btn btn-outline-secondary" href="{% url 'student_home' %}">{{ t.back_home }}</a>
+</section>
+{% endblock %}

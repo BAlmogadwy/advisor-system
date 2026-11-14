@@ -53,6 +53,7 @@ from core.services.student_term_timetable import (
 from core.services.student_unlock import build_unlock_report
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
+from core.student_timetable_feedback_views import home_feedback_entry
 
 logger = logging.getLogger(__name__)
 _MODEL_BACKEND = "django.contrib.auth.backends.ModelBackend"
@@ -747,6 +748,7 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     # PROVENANCE CLASS (a staff planner mapping is a forecast, never a
     # registration), with the department's LATEST forecast (WORKING over the
     # imported EXPECTED plan) and one cohort rule applied to both.
+    timetable_read_failed = False
     try:
         timetable = read_student_term_timetable(
             student_id, year, term, prefer_arabic_names=_request_prefers_arabic(request)
@@ -754,9 +756,10 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     except TimetableUnavailable:
         # The page degrades to "no timetable", as it always has. The read itself
         # no longer pretends it succeeded, so a caller that must tell "could not
-        # be read" from "nothing prepared" apart can.
+        # be read" from "nothing prepared" apart can — the feedback entry does.
         logger.exception("student timetable load failed for %s", student_id)
         timetable = StudentTermTimetable.empty(year, term)
+        timetable_read_failed = True
     registered_configured_rows = timetable.registered_rows
     expected_rows = timetable.forecast_rows
 
@@ -920,6 +923,23 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         for code in rec_codes
     ]
 
+    # Feedback on the CONFIGURED term's expected timetable: the button sits on that
+    # card only, never on a fallback panel of another term (the template checks), and
+    # nothing is offered on a failed read.
+    try:
+        feedback_entry = home_feedback_entry(
+            student=student,
+            student_id=student_id,
+            academic_year=year,
+            term=term,
+            timetable=timetable,
+            read_failed=timetable_read_failed,
+            language=getattr(request, "LANGUAGE_CODE", ""),
+        )
+    except Exception:  # noqa: BLE001 — one card block degrades, the page does not
+        logger.exception("student timetable feedback entry failed for %s", student_id)
+        feedback_entry = None
+
     # base.html includes the shared sidebar partial, which hides its staff navigation
     # for a STUDENT role (see partials/sidebar.html) — the student gets the app shell.
     return render(
@@ -949,5 +969,6 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "recommendations_already_current": recommendations_already_current,
             "recommendations_already_expected": recommendations_already_expected,
             "home_cards": home_cards,
+            "feedback_entry": feedback_entry,
         },
     )

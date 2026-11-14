@@ -1,0 +1,190 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ t.new_title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endblock %}
+
+{% block page_heading %}{{ t.new_title }}{% endblock %}
+
+{% block page_intro %}<p class="student-home-intro mb-0" dir="auto">{{ t.new_intro }}</p>{% endblock %}
+
+{% block content %}
+{% comment %}
+  One template, four states, chosen by the view: "choose" (what is the feedback
+  about), "describe" (what is the issue), "no_forecast" and "registered_only".
+  Every word comes from the copy deck (core/services/timetable_feedback_copy.py).
+{% endcomment %}
+
+{% if errors %}
+<div class="ttf-error-summary" id="ttfErrors" role="alert" tabindex="-1" aria-labelledby="ttfErrorsTitle">
+  <h2 class="ttf-error-title" id="ttfErrorsTitle">{{ t.new_errors_title }}</h2>
+  <ul>
+    {% for error in errors %}
+    <li id="{{ error.id }}"><span dir="auto">{{ error.html }}</span>{% if error.link %} <a href="{{ error.link.url }}">{{ error.link.html }}</a>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if registered_notice %}<p class="student-guidance-note" dir="auto">{{ registered_notice }}</p>{% endif %}
+
+{% if mode == 'choose' %}
+<section class="card p-3 mb-3">
+  <form method="get" action="{% url 'student_timetable_feedback_new' %}" class="ttf-form" novalidate>
+    <fieldset class="ttf-fieldset"{% if error_for.about %} aria-describedby="{{ error_for.about }}" aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend">{{ t.new_what_legend }}</legend>
+      <div class="ttf-choice-list">
+        {% for choice in choices %}
+        <label class="ttf-choice">
+          <input type="radio" name="about" value="{{ choice.anchor }}">
+          <span class="ttf-choice-body">
+            <span class="ttf-choice-title"><bdi dir="ltr">{{ choice.course_key }}</bdi>{% if choice.name %} <span dir="auto">{{ choice.name }}</span>{% endif %}</span>
+            <span class="ttf-choice-meta">{{ t.section_word }} <bdi dir="ltr">{{ choice.section }}</bdi>{% for m in choice.meetings %}{% if forloop.first %} — {% endif %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %} — {{ t.new_no_times }}{% endfor %}</span>
+            {% if choice.clashes %}<span class="ttf-choice-flag">{{ t.new_clash_hint }}</span>{% endif %}
+          </span>
+        </label>
+        {% endfor %}
+        <label class="ttf-choice">
+          <input type="radio" name="about" value="TIMETABLE">
+          <span class="ttf-choice-body">
+            <span class="ttf-choice-title">{{ t.new_whole_timetable }}</span>
+            <span class="ttf-choice-meta">{{ t.new_whole_timetable_hint }}</span>
+          </span>
+        </label>
+      </div>
+    </fieldset>
+    <div class="student-page-actions ttf-actions">
+      <button type="submit" class="btn btn-primary">{{ t.new_continue }}</button>
+    </div>
+  </form>
+  <details class="student-disclosure mt-3">
+    <summary>{{ t.new_what_changes_title }}</summary>
+    <p class="mt-2" dir="auto">{{ t.new_what_changes_body }}</p>
+    <p class="mb-0" dir="auto">{{ t.new_only_timetabled }}</p>
+  </details>
+</section>
+
+{% elif mode == 'describe' %}
+<section class="card p-3 mb-3" aria-labelledby="ttfDescribeTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfDescribeTitle" dir="auto">{{ heading }}</h2>
+  </div>
+  {% if about %}
+  <p class="ttf-small mb-3" dir="auto">{% if about.name %}<span dir="auto">{{ about.name }}</span> — {% endif %}{% for m in about.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %}{{ t.new_no_times }}{% endfor %}</p>
+  {% endif %}
+  <form method="post" action="{% url 'student_timetable_feedback_new' %}" class="ttf-form" data-ttf-describe novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="anchor" value="{{ anchor_value }}">
+    <input type="hidden" name="seen_fingerprint" value="{{ fingerprint }}">
+
+    <fieldset class="ttf-fieldset"{% if error_for.reason %} aria-describedby="{{ error_for.reason }}" aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend">{{ t.new_reason_legend }}</legend>
+      <div class="ttf-choice-list">
+        {% for reason in reasons %}
+        <label class="ttf-choice">
+          <input type="radio" name="reason" value="{{ reason.code }}"{% if values.reason == reason.code %} checked{% endif %}>
+          <span class="ttf-choice-title" dir="auto">{{ reason.label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    {% if anchor_kind == 'SECTION' %}
+    <fieldset class="ttf-fieldset" data-ttf-for="TIME_CLASH TIME_UNSUITABLE PREFER_OTHER_SECTION" aria-describedby="ttfRequestedHint{% if error_for.requested_section %} {{ error_for.requested_section }}{% endif %}"{% if error_for.requested_section %} aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend">{{ t.new_requested_legend }}</legend>
+      <p class="ttf-hint" id="ttfRequestedHint" dir="auto">{{ t.new_requested_hint }}</p>
+      {% if alternatives %}
+      <div class="ttf-choice-list">
+        <label class="ttf-choice">
+          <input type="radio" name="requested_section" value=""{% if not values.requested_section %} checked{% endif %}>
+          <span class="ttf-choice-title">{{ t.new_requested_none }}</span>
+        </label>
+        {% for alt in alternatives %}
+        <label class="ttf-choice">
+          <input type="radio" name="requested_section" value="{{ alt.id }}"{% if values.requested_section == alt.id|stringformat:"s" %} checked{% endif %}>
+          <span class="ttf-choice-body">
+            <span class="ttf-choice-title">{{ t.section_word }} <bdi dir="ltr">{{ alt.section }}</bdi></span>
+            <span class="ttf-choice-meta">{% for m in alt.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% empty %}{{ t.new_no_times }}{% endfor %}</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="ttf-small mb-0" dir="auto">{{ t.new_requested_empty }}</p>
+      {% endif %}
+    </fieldset>
+    {% else %}
+    <fieldset class="ttf-fieldset" data-ttf-for="MISSING_COURSE" aria-describedby="ttfMissingHint{% if error_for.requested_course %} {{ error_for.requested_course }}{% endif %}"{% if error_for.requested_course %} aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend">{{ t.new_missing_legend }}</legend>
+      <p class="ttf-hint" id="ttfMissingHint" dir="auto">{{ t.new_missing_hint }}</p>
+      {% if candidates %}
+      <div class="ttf-choice-list">
+        <label class="ttf-choice">
+          <input type="radio" name="requested_course" value=""{% if not values.requested_course %} checked{% endif %}>
+          <span class="ttf-choice-title">{{ t.new_missing_none }}</span>
+        </label>
+        {% for course in candidates %}
+        <label class="ttf-choice">
+          <input type="radio" name="requested_course" value="{{ course.course_key }}"{% if values.requested_course == course.course_key %} checked{% endif %}>
+          <span class="ttf-choice-body">
+            <span class="ttf-choice-title"><bdi dir="ltr">{{ course.course_key }}</bdi></span>
+            {% if course.course_name %}<span class="ttf-choice-meta" dir="auto">{{ course.course_name }}</span>{% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="ttf-small mb-0" dir="auto">{{ t.new_missing_empty }}</p>
+      {% endif %}
+    </fieldset>
+    {% endif %}
+
+    <div class="ttf-field">
+      <label class="ttf-label" for="ttfNote">{{ t.new_note_label }}</label>
+      <p class="ttf-hint" id="ttfNoteHint" dir="auto">{{ note_hint }}</p>
+      <textarea class="form-control ttf-note" id="ttfNote" name="note" rows="5" maxlength="{{ note_max }}" dir="auto" aria-describedby="ttfNoteHint ttfPrivacy{% if error_for.note %} {{ error_for.note }}{% endif %}"{% if error_for.note %} aria-invalid="true"{% endif %}>{{ values.note }}</textarea>
+      <p class="ttf-hint mt-2" id="ttfPrivacy" dir="auto">{{ t.new_privacy }}</p>
+    </div>
+
+    <div class="student-page-actions ttf-actions mt-3">
+      <button type="submit" class="btn btn-primary">{{ t.new_submit }}</button>
+      <a class="btn btn-outline-secondary" href="{% url 'student_timetable_feedback_new' %}">{{ t.new_change_choice }}</a>
+    </div>
+  </form>
+</section>
+
+{% elif mode == 'no_forecast' %}
+<section class="card p-3 mb-3" aria-labelledby="ttfNoForecastTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfNoForecastTitle">{{ t.new_no_forecast_title }}</h2>
+  </div>
+  <p dir="auto">{{ no_forecast_body }}</p>
+  <form method="post" action="{% url 'student_timetable_feedback_new' %}" class="ttf-form" novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="anchor" value="NO_FORECAST">
+    <input type="hidden" name="seen_fingerprint" value="{{ fingerprint }}">
+    <div class="ttf-field">
+      <label class="ttf-label" for="ttfNote">{{ t.new_note_label }}</label>
+      <p class="ttf-hint" id="ttfNoteHint" dir="auto">{{ note_hint }}</p>
+      <textarea class="form-control ttf-note" id="ttfNote" name="note" rows="4" maxlength="{{ note_max }}" dir="auto" aria-describedby="ttfNoteHint ttfPrivacy{% if error_for.note %} {{ error_for.note }}{% endif %}"{% if error_for.note %} aria-invalid="true"{% endif %}>{{ values.note }}</textarea>
+      <p class="ttf-hint mt-2" id="ttfPrivacy" dir="auto">{{ t.new_privacy }}</p>
+    </div>
+    <div class="student-page-actions ttf-actions mt-3">
+      <button type="submit" class="btn btn-primary">{{ t.new_no_forecast_submit }}</button>
+    </div>
+  </form>
+</section>
+
+{% else %}
+<section class="card p-3 mb-3" aria-labelledby="ttfRegisteredOnlyTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfRegisteredOnlyTitle">{{ t.new_no_forecast_title }}</h2>
+  </div>
+  <p dir="auto">{{ registered_only }}</p>
+  <a class="btn btn-outline-secondary" href="{% url 'student_home' %}">{{ t.back_home }}</a>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/page-student-feedback.js' %}?v=1" defer></script>{% endblock %}

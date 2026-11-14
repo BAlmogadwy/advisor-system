@@ -1,0 +1,87 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ case.title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endblock %}
+
+{% block page_heading %}{{ case.title }}{% endblock %}
+
+{% block content %}
+{% comment %}
+  One case, as the student sent it. Points are drawn from their own frozen
+  snapshot; messages are only the student-visible ones, already filtered and
+  reduced to safe fields by the view. Every word comes from the copy deck.
+{% endcomment %}
+
+{% if notice %}
+<div class="ttf-notice" id="ttfNotice" role="status" tabindex="-1"><span dir="auto">{{ notice }}</span></div>
+{% endif %}
+
+<section class="card p-3 mb-3" aria-labelledby="ttfCaseTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfCaseTitle"><bdi dir="ltr" class="ttf-ref">{{ case.reference }}</bdi></h2>
+    <span class="ttf-status" data-status="{{ case.status_code }}">{{ case.status }}</span>
+  </div>
+  {% if case.explained %}<p dir="auto">{{ case.explained }}</p>{% endif %}
+  {% if case.close_reason %}<p class="ttf-small" dir="auto">{{ case.close_reason }}</p>{% endif %}
+  {% if other_term %}<p class="student-guidance-note" dir="auto">{{ other_term }}</p>{% endif %}
+  <dl class="ttf-meta">
+    <div><dt>{{ t.detail_term }}</dt><dd>{{ case.term }}</dd></div>
+    <div><dt>{{ t.detail_sent }}</dt><dd><bdi dir="ltr">{{ case.sent }}</bdi></dd></div>
+  </dl>
+</section>
+
+<section class="card p-3 mb-3" aria-labelledby="ttfPointsTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfPointsTitle">{{ t.detail_points_title }}</h2>
+  </div>
+  <ol class="ttf-points">
+    {% for point in points %}
+    <li class="ttf-point{% if point.withdrawn %} is-withdrawn{% endif %}">
+      <p class="ttf-point-about" dir="auto">{{ point.about }}{% if point.withdrawn %} <span class="ttf-tag">{{ t.detail_withdrawn }}</span>{% endif %}</p>
+      {% if point.name or point.meetings %}
+      <p class="ttf-small" dir="auto">{{ t.detail_seen }} {% if point.name %}<span dir="auto">{{ point.name }}</span>{% if point.meetings %} — {% endif %}{% endif %}{% for m in point.meetings %}{{ m.day }} <bdi dir="ltr">{{ m.start }}–{{ m.end }}</bdi>{% if not forloop.last %}{{ t.list_separator }}{% endif %}{% endfor %}</p>
+      {% endif %}
+      <dl class="ttf-meta">
+        <div><dt>{{ t.detail_reason }}</dt><dd dir="auto">{{ point.reason }}</dd></div>
+        {% if point.requested_section %}<div><dt>{{ t.detail_requested_section }}</dt><dd><bdi dir="ltr">{{ point.requested_section }}</bdi></dd></div>{% endif %}
+        {% if point.requested_course %}<div><dt>{{ t.detail_requested_course }}</dt><dd><bdi dir="ltr">{{ point.requested_course }}</bdi></dd></div>{% endif %}
+        <div><dt>{{ t.detail_sent }}</dt><dd><bdi dir="ltr">{{ point.sent }}</bdi></dd></div>
+      </dl>
+      {% if point.note %}<div class="ttf-text mt-2" dir="auto">{{ point.note|linebreaksbr }}</div>{% endif %}
+      {% if point.note_removed %}<p class="ttf-small mt-1 mb-0">{{ t.detail_note_removed }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% if can_add %}
+  <div class="student-page-actions ttf-actions mt-3">
+    <a class="btn btn-outline-secondary" href="{% url 'student_timetable_feedback_new' %}">{{ t.detail_add_point }}</a>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card p-3 mb-3" aria-labelledby="ttfThreadTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfThreadTitle">{{ t.detail_thread_title }}</h2>
+  </div>
+  {% if thread %}
+  <ol class="ttf-thread">
+    {% for message in thread %}
+    <li class="ttf-message{% if message.mine %} is-mine{% endif %}">
+      <p class="ttf-message-meta"><span>{{ message.author }}</span> — <bdi dir="ltr">{{ message.sent }}</bdi></p>
+      <div class="ttf-text" dir="auto">{{ message.body|linebreaksbr }}</div>
+      {% if message.corrected %}<p class="ttf-small mt-1 mb-0">{{ t.detail_message_corrected }}</p>{% endif %}
+      {% if message.removed %}<p class="ttf-small mt-1 mb-0">{{ t.detail_message_removed }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="mb-0" dir="auto">{{ t.detail_thread_empty }}</p>
+  {% endif %}
+</section>
+
+<p><a href="{% url 'student_timetable_feedback_list' %}">{{ t.detail_back }}</a></p>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/page-student-feedback.js' %}?v=1" defer></script>{% endblock %}
