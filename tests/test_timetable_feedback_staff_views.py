@@ -724,6 +724,49 @@ def test_a_case_changed_since_the_page_was_drawn_says_who_changed_it(world, staf
     assert (case.status, case.handled_by) == ("IN_REVIEW", staff["twin"])
 
 
+def test_a_refusal_is_not_drawn_for_someone_who_has_just_lost_the_case(world, staff, monkeypatch):
+    """The page is drawn again after a refusal; if the case left the person's scope
+    in the meantime (the student moved to another advisor), they get the
+    not-found page, not the case with its comments."""
+    _student, case = _sent_case(world)
+    staff_service.add_note(
+        staff_service.staff_of(staff["twin"]),
+        case.reference,
+        version=case.version,
+        body=SENTINEL_NOTE,
+    )
+    case.refresh_from_db()
+
+    def moved_then_refused(*_args, **_kwargs):
+        Student.objects.filter(student_id=SID).update(advisor_id="ADV-9")
+        raise staff_service.WorkflowRefused("BODY_REQUIRED", status=400)
+
+    monkeypatch.setattr(staff_service, "ask", moved_then_refused)
+    response = _act(_as(staff["advisor"]), case, "ask", body=" ")
+    assert response.status_code == 404
+    html = _html(response)
+    assert str(scopy.refusal("CASE_NOT_FOUND", "en")) in html and SENTINEL_NOTE not in html
+
+
+def test_a_bulk_answer_leaves_a_colleagues_case_and_says_so(world, staff):
+    mine = _case(SID)
+    colleagues = _case(SID, "NEEDS_INFORMATION", handled_by=staff["twin"])
+    response = _as(staff["advisor"]).post(
+        BULK,
+        {
+            "bulk": "answer",
+            "template": "NOTED_FOR_PLANNING",
+            "pick": [f"{mine.reference}@0", f"{colleagues.reference}@0"],
+        },
+    )
+    html = _html(response)
+    skipped = html[html.index('id="ttfsSkipped"') :]
+    assert colleagues.reference in skipped
+    assert str(scopy.refusal("HANDLED_BY_OTHER", "en")) in skipped
+    colleagues.refresh_from_db()
+    assert colleagues.status == "NEEDS_INFORMATION"
+
+
 def test_an_unknown_action_is_refused(world, staff):
     _student, case = _sent_case(world)
     start = case.version
@@ -998,6 +1041,34 @@ def test_the_sidebar_link_is_absent_for_students_and_while_the_feature_is_off(
     assert not _sidebar_link(_html(_get(_client(), "/student/")))
     settings.TIMETABLE_FEEDBACK_ENABLED = False
     assert not _sidebar_link(_html(_as(staff["advisor"]).get("/advisor-portfolio/")))
+
+
+@pytest.mark.parametrize(
+    ("who", "offered"),
+    [
+        ("advisor", True),
+        ("department", True),
+        ("admin", True),
+        ("committee", False),
+        ("student", False),
+    ],
+)
+def test_the_staff_link_is_offered_to_staff_roles_only(world, staff, who, offered):
+    """The flag itself, not only what the sidebar draws: a student's or the
+    committee's sidebar has no staff group, so the drawing alone would not show a
+    wrong flag."""
+    from django.test import RequestFactory
+
+    from core.services import student_otp
+    from core.sidebar_context import get_sidebar_context
+
+    user = student_otp.provision_student_user(SID) if who == "student" else staff[who]
+    request = RequestFactory().get(GUIDE)
+    request.user = user
+    context = get_sidebar_context(request)
+    assert context["can_timetable_feedback_staff"] is offered
+    if not offered:
+        assert context["timetable_feedback_staff_count"] == 0
 
 
 def test_a_failing_count_never_takes_the_page_down(world, staff, monkeypatch):

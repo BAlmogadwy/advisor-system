@@ -375,27 +375,29 @@ STATUS: Mapping[str, tuple[str, str]] = {
     "WITHDRAWN": ("Withdrawn", "مسحوبة"),
 }
 
-#: What a status means for the student, shown under it.
+#: What a status means for the student, shown under it. Once a case is being
+#: handled, the department may be the one acting on it, so these name nobody: the
+#: messages below say who wrote.
 STATUS_EXPLAINED: Mapping[str, tuple[str, str]] = {
     "SUBMITTED": (
         "Your academic advisor will read it and reply here.",
         "سيطّلع عليها مرشدك الأكاديمي ويرد عليك هنا.",
     ),
     "IN_REVIEW": (
-        "Your academic advisor is looking at it.",
-        "يراجعها مرشدك الأكاديمي حاليًا.",
+        "It is being looked at.",
+        "يجري الاطلاع عليها حاليًا.",
     ),
     "NEEDS_INFORMATION": (
-        "Your academic advisor has asked for more information; see the messages below.",
-        "طلب مرشدك الأكاديمي مزيدًا من المعلومات؛ يُرجى الاطلاع على الرسائل أدناه.",
+        "More information is needed from you; see the messages below.",
+        "يلزم مزيد من المعلومات منك؛ يُرجى الاطلاع على الرسائل أدناه.",
     ),
     "FORWARDED": (
-        "Your academic advisor has passed it to the department.",
-        "أحال مرشدك الأكاديمي الملاحظة إلى القسم.",
+        "It has been passed to the department.",
+        "أُحيلت الملاحظة إلى القسم.",
     ),
     "ANSWERED": (
-        "Your academic advisor has answered; see the messages below.",
-        "رد مرشدك الأكاديمي؛ يُرجى الاطلاع على الرسائل أدناه.",
+        "There is an answer; see the messages below.",
+        "صدر رد على ملاحظتك؛ يُرجى الاطلاع على الرسائل أدناه.",
     ),
     "CLOSED": ("This feedback is closed.", "أُغلقت هذه الملاحظة."),
     "WITHDRAWN": ("This feedback was withdrawn.", "سُحبت هذه الملاحظة."),

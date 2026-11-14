@@ -535,6 +535,10 @@ REFUSAL: Mapping[str, tuple[str, str]] = {
         "لا يمكن تنفيذ هذا الإجراء على الحالة في وضعها الحالي.",
     ),
     "ALREADY_YOURS": ("You already handle this case.", "هذه الحالة في عهدتك بالفعل."),
+    "HANDLED_BY_OTHER": (
+        "Someone else handles this case, so it was left to them. Open it to act on it.",
+        "يتابع هذه الحالة شخص آخر، فتُركت له. ويُرجى فتحها لاتخاذ أي إجراء عليها.",
+    ),
     "BODY_REQUIRED": ("Please write the text.", "يُرجى كتابة النص."),
     "BODY_TOO_LONG": (
         "The text is too long. The most it can hold is {max} characters.",

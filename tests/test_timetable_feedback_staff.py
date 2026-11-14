@@ -26,6 +26,7 @@ from core.models import (
     TimetableFeedback,
     TimetableFeedbackMessage,
     TimetableFeedbackPoint,
+    UserScope,
 )
 from core.services import timetable_feedback_copy as copy
 from core.services import timetable_feedback_staff as staff_service
@@ -54,7 +55,9 @@ S_OTHER_PROG = 4996003
 S_RAW_NAME = 4996004
 S_BLANK = 4996005
 S_MESSY = 4996006
+S_TABBED = 4996009
 S_GONE = 4996099
+TAB, NBSP = chr(9), chr(0xA0)
 STUDENTS = {
     S_MINE: (PROG, ADV),
     S_OTHER_ADVISOR: (PROG, ADV_B),
@@ -64,6 +67,8 @@ STUDENTS = {
     # Stored with stray spaces and in lower case: matched as the record's own
     # scope check matches it, trimmed and upper-cased.
     S_MESSY: (" fbs ", " ADV-71 "),
+    # Whitespace that is not a space, which the record check strips too.
+    S_TABBED: (f"FBS{NBSP}", f"{TAB}ADV-71{NBSP}"),
 }
 _TERMS = itertools.count(1)
 
@@ -193,21 +198,32 @@ def scoped(people, students):
         "raw": case_for(S_RAW_NAME),
         "blank": case_for(S_BLANK),
         "messy": case_for(S_MESSY),
+        "tabbed": case_for(S_TABBED),
         "gone": case_for(S_GONE),
     }
 
 
-EVERY_CASE = {"mine", "other_advisor", "assigned", "other_prog", "raw", "blank", "messy", "gone"}
+EVERY_CASE = {
+    "mine",
+    "other_advisor",
+    "assigned",
+    "other_prog",
+    "raw",
+    "blank",
+    "messy",
+    "tabbed",
+    "gone",
+}
 
 
 @pytest.mark.parametrize(
     ("who", "expected"),
     [
-        ("advisor", {"mine", "assigned", "other_prog", "messy"}),
-        ("twin", {"mine", "assigned", "other_prog", "messy"}),
+        ("advisor", {"mine", "assigned", "other_prog", "messy", "tabbed"}),
+        ("twin", {"mine", "assigned", "other_prog", "messy", "tabbed"}),
         ("other", {"other_advisor", "assigned"}),
         ("no_id", set()),
-        ("department", {"mine", "other_advisor", "assigned", "raw", "blank", "messy"}),
+        ("department", {"mine", "other_advisor", "assigned", "raw", "blank", "messy", "tabbed"}),
         ("department_with_id", {"other_prog"}),
         ("department_empty", set()),
         ("admin", EVERY_CASE),
@@ -307,6 +323,9 @@ def test_accounts_holding_an_id_count_the_active_advisors_only(people):
     only the advisors see cases by it. A superuser holding it does not either."""
     staff_user("ttf-root-with-id", "superuser", advisor_id=ADV)
     assert staff_service.accounts_holding(ADV) == 2
+    # Stored with a no-break space by some import: `get_user_scope` strips it.
+    UserScope.objects.filter(user=people.twin).update(advisor_id=f"{ADV}{NBSP}")
+    assert staff_service.accounts_holding(ADV) == 2
     assert staff_service.accounts_holding(ADV_GONE) == 0
     assert staff_service.accounts_holding("") == 0
     assert staff_service.advisor_id_exists(ADV)
@@ -369,6 +388,23 @@ def waiting(people, students):
         "unrouted_new": case_for(S_RAW_NAME),
         "unrouted_taken_by_colleague": case_for(S_BLANK, "IN_REVIEW", handled_by=people.admin),
         "unrouted_taken_by_me": case_for(S_BLANK, "IN_REVIEW", handled_by=people.department),
+        # Its advisor took it, then the student moved to another advisor.
+        "taken_by_moved_away": case_for(
+            S_MINE, "IN_REVIEW", handled_by=people.other, handled_advisor_id=ADV_B
+        ),
+        # Its handler's account was switched off. Held by no advisor id, so only
+        # the switched-off account, not the advisor's own id, frees it.
+        "taken_by_deactivated": case_for(
+            S_MINE, "IN_REVIEW", handled_by=people.gone, handled_advisor_id=""
+        ),
+        # The department handed it to a colleague, who took it: theirs, not ours.
+        "assigned_and_taken": case_for(
+            S_MINE,
+            "IN_REVIEW",
+            assigned_advisor_id=ADV_B,
+            handled_by=people.other,
+            handled_advisor_id=ADV_B,
+        ),
     }
 
 
@@ -385,8 +421,10 @@ def test_an_advisor_is_waited_on_by_new_cases_and_their_own_not_the_departments(
         "taken_by_twin",
         "in_review_free",
         "no_forecast_and_more",
+        "taken_by_moved_away",
+        "taken_by_deactivated",
     }
-    assert staff_service.action_count(advisor) == 5
+    assert staff_service.action_count(advisor) == 7
 
 
 def test_the_department_is_waited_on_by_forwarded_unrouted_and_no_timetable_cases(people, waiting):
@@ -401,6 +439,35 @@ def test_the_department_is_waited_on_by_forwarded_unrouted_and_no_timetable_case
     }
     assert staff_service.action_count(department) == 6
     assert staff_service.action_count(None) == 0
+
+
+def test_a_reply_after_the_student_moved_waits_on_their_new_advisor(people, students):
+    case = case_for(S_MINE)
+    staff_service.ask(as_staff(people.advisor), case.reference, version=0, body="Which one?")
+    untaken = TimetableFeedback.objects.filter(staff_service.untaken_q())
+    assert not untaken.filter(pk=case.pk).exists()
+    Student.objects.filter(student_id=S_MINE).update(advisor_id=ADV_B)
+    # The old advisor's handling lapses with the move.
+    assert untaken.filter(pk=case.pk).exists()
+    workflow.reply(student_id=S_MINE, reference=case.reference, body="M2, please.")
+    case.refresh_from_db()
+    assert (case.status, case.handled_by) == ("IN_REVIEW", people.advisor)
+    old, new = as_staff(people.advisor), as_staff(people.other)
+    assert not staff_service.visible_to(old).filter(pk=case.pk).exists()
+    assert _waiting_names(new, {"case": case}) == {"case"}
+    # The department sees it, but it is the student's advisor's.
+    assert _waiting_names(as_staff(people.department), {"case": case}) == set()
+
+
+def test_the_departments_handling_is_never_tied_to_an_advisor_id(people, students):
+    """A department account that also holds an advisor id handles by its
+    programmes, so its handling never lapses when the student's advisor changes."""
+    case = case_for(S_OTHER_PROG)
+    staff_service.take(as_staff(people.department_with_id), case.reference, version=0)
+    case.refresh_from_db()
+    assert (case.handled_by, case.handled_advisor_id) == (people.department_with_id, "")
+    Student.objects.filter(student_id=S_OTHER_PROG).update(advisor_id=ADV_B)
+    assert not TimetableFeedback.objects.filter(staff_service.untaken_q(), pk=case.pk).exists()
 
 
 def test_the_tabs_group_by_status_for_everyone(people, waiting):
@@ -451,6 +518,17 @@ def _changed_only_by_staff(before, after, now):
     assert after.version == before.version + 1
     assert after.updated_at == now
     assert after.last_staff_action_at == now
+
+
+def _claimed_without_acting(before, after, now):
+    """Housekeeping: the case is claimed (version, last change) but nobody has
+    acted on it for the student, so the student's "wrote since" mark stays."""
+    assert after.version == before.version + 1
+    assert after.updated_at == now
+    assert (after.last_staff_action_at, after.first_staff_action_at) == (
+        before.last_staff_action_at,
+        before.first_staff_action_at,
+    )
 
 
 @pytest.mark.parametrize(
@@ -640,9 +718,13 @@ def test_a_comment_can_be_added_in_any_status_and_is_never_the_students(people, 
     )
     assert message.body_script == "en"
     after = fresh(case)
-    _changed_only_by_staff(case, after, now)
+    _claimed_without_acting(case, after, now)
     assert after.status == status
     assert after.last_student_visible_at is None
+    # The student wrote a day ago and nobody has answered: still marked so.
+    assert TimetableFeedback.objects.filter(
+        staff_service.student_wrote_since_staff_q(), pk=case.pk
+    ).exists()
     event = after.events.get()
     assert (event.kind, event.message_id) == ("NOTE_ADDED", message.pk)
 
@@ -1063,7 +1145,7 @@ def test_the_department_removes_words_from_a_students_message(people, students):
     message.refresh_from_db()
     assert (message.body, message.redacted_at) == ("I care for […] on Mondays.", now)
     after = fresh(case)
-    _changed_only_by_staff(case, after, now)
+    _claimed_without_acting(case, after, now)
     assert after.status == "IN_REVIEW"
     assert list(after.events.values_list("kind", "message_id", "point_id")) == [
         ("REDACTED", message.pk, None)
@@ -1156,13 +1238,13 @@ def test_only_the_department_removes_words(people, students, who):
 def test_an_opening_is_kept_once_an_hour_per_person(people, students):
     case = case_for(S_MINE)
     advisor, twin = as_staff(people.advisor), as_staff(people.twin)
-    assert staff_service.record_view(advisor, case) is True
-    assert staff_service.record_view(advisor, case) is False
-    assert staff_service.record_view(twin, case) is True
-    case.events.filter(actor=people.advisor).update(
-        created_at=timezone.now() - timedelta(minutes=61)
-    )
-    assert staff_service.record_view(advisor, case) is True
+    start = timezone.now()
+    assert staff_service.record_view(advisor, case, now=start) is True
+    # Half an hour on: the same person's opening is not kept again.
+    assert staff_service.record_view(advisor, case, now=start + timedelta(minutes=30)) is False
+    assert staff_service.record_view(twin, case, now=start) is True
+    # More than an hour after it, it is.
+    assert staff_service.record_view(advisor, case, now=start + timedelta(minutes=61)) is True
     viewed = case.events.filter(kind="VIEWED")
     assert viewed.filter(actor=people.advisor).count() == 2
     assert viewed.filter(actor=people.twin).count() == 1
@@ -1212,6 +1294,38 @@ def test_a_bulk_answer_answers_each_case_in_its_students_language_and_lists_the_
         assert case.messages.get().body == copy.REPLY_TEMPLATES["REGISTERED_IN_PORTAL"][index]
     for case in (stale, outside):
         assert fresh(case).status == "SUBMITTED"
+
+
+@pytest.mark.parametrize("bulk", ["answer", "close"])
+def test_many_at_once_leave_a_case_someone_else_handles_to_them(people, students, bulk):
+    mine = case_for(S_MINE, "IN_REVIEW", handled_by=people.advisor, handled_advisor_id=ADV)
+    colleagues = case_for(S_MINE, "NEEDS_INFORMATION", handled_by=people.twin)
+    nobodys = case_for(S_MINE)
+    picks = [(case.reference, "0") for case in (mine, colleagues, nobodys)]
+    advisor = as_staff(people.advisor)
+    if bulk == "answer":
+        outcomes = staff_service.bulk_answer(advisor, picks, template="NOTED_FOR_PLANNING")
+    else:
+        outcomes = staff_service.bulk_close_duplicates(advisor, picks, body="Dup.")
+    assert [(o.reference, o.refused) for o in outcomes] == [
+        (mine.reference, ""),
+        (colleagues.reference, "HANDLED_BY_OTHER"),
+        (nobodys.reference, ""),
+    ]
+    colleagues.refresh_from_db()
+    assert (colleagues.status, colleagues.handled_by, colleagues.version) == (
+        "NEEDS_INFORMATION",
+        people.twin,
+        0,
+    )
+    assert not colleagues.messages.exists()
+
+
+def test_one_case_at_a_time_anyone_in_scope_may_still_act(people, students):
+    """On the case's own page the handler is shown, and a colleague may answer."""
+    case = case_for(S_MINE, "NEEDS_INFORMATION", handled_by=people.twin)
+    staff_service.answer(as_staff(people.advisor), case.reference, version=0, body="Answered.")
+    assert fresh(case).status == "ANSWERED"
 
 
 def test_a_bulk_close_closes_each_as_a_duplicate_with_one_comment(people, students):

@@ -158,6 +158,12 @@ def _case(
     return case
 
 
+def _in_scope_now(staff: service.Staff, case: TimetableFeedback) -> TimetableFeedback | None:
+    """``case`` read again through ``staff``'s scope: None once it has left it (the
+    student moved to another advisor, say) since it was first read."""
+    return service.visible_to(staff).filter(pk=case.pk).select_related("handled_by").first()
+
+
 def _date(value: Any) -> str:
     """A plain ISO date: Django's Arabic formats would add marks and 12-hour times."""
     return timezone.localtime(value).strftime("%Y-%m-%d") if value else ""
@@ -808,12 +814,14 @@ def _refused_page(
     field: str,
     values: dict[str, str],
 ) -> HttpResponse:
-    """The case again, as it is now, with the refusal."""
-    if refused.code == "CASE_NOT_FOUND":
+    """The case again, as it is now, with the refusal: read again through the
+    person's scope, which may have changed since the case was first read."""
+    fresh = _in_scope_now(staff, case) if refused.code != "CASE_NOT_FOUND" else None
+    if fresh is None:
         return _unavailable(
             request, language, status=404, message=scopy.refusal("CASE_NOT_FOUND", language)
         )
-    case.refresh_from_db()
+    case = fresh
     errors = [
         {
             "field": field if refused.code in _TEXT_CODES else _FIELD_OF_CODE.get(refused.code, ""),
@@ -950,14 +958,15 @@ def redact_view(request: HttpRequest, reference: str) -> HttpResponse:
                 status="deny",
                 details={"reference": case.reference, "reason_code": refused.code},
             )
-            if refused.code == "CASE_NOT_FOUND":
+            fresh = _in_scope_now(staff, case) if refused.code != "CASE_NOT_FOUND" else None
+            if fresh is None:
                 return _unavailable(
                     request,
                     language,
                     status=404,
                     message=scopy.refusal("CASE_NOT_FOUND", language),
                 )
-            case.refresh_from_db()
+            case = fresh
             target = _redaction_target(case, query)
             current_text = target[2] if target else current_text
             errors = [

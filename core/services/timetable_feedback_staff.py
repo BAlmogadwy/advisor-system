@@ -45,8 +45,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Exists, F, OuterRef, Q, QuerySet
-from django.db.models.functions import Trim, Upper
+from django.db.models import Exists, F, OuterRef, Q, QuerySet, TextField, Value
+from django.db.models.functions import Replace, Trim, Upper
 from django.utils import timezone
 
 from core.models import (
@@ -156,13 +156,32 @@ def staff_of(user: Any, scope: Mapping[str, Any] | None = None) -> Staff | None:
     )
 
 
+#: Whitespace an import can leave in a stored id or programme besides spaces: tab,
+#: line feed, vertical tab, form feed, carriage return and the no-break space.
+#: Python's ``strip()``, which the record check uses, removes them all; SQL's TRIM
+#: removes spaces only.
+_STRAY_WHITESPACE = (chr(9), chr(10), chr(11), chr(12), chr(13), chr(0xA0))
+
+
+def _bare(field: str) -> Trim:
+    """``field`` as `require_student_scope` reads it: without that whitespace,
+    trimmed. The characters go wherever they are, not only at the ends, which
+    changes nothing for a value that can match: an advisor id is a number and a
+    programme a code."""
+    value: Any = F(field)
+    for character in _STRAY_WHITESPACE:
+        value = Replace(value, Value(character), Value(""), output_field=TextField())
+    return Trim(value)
+
+
 def _students_advised_by(advisor_id: str) -> QuerySet[Student]:
-    # Compared trimmed, as `require_student_scope` compares them.
-    return Student.objects.annotate(live_advisor=Trim("advisor_id")).filter(live_advisor=advisor_id)
+    return Student.objects.annotate(live_advisor=_bare("advisor_id")).filter(
+        live_advisor=advisor_id
+    )
 
 
 def students_in(programmes: Sequence[str]) -> QuerySet[Student]:
-    return Student.objects.annotate(live_programme=Upper(Trim("program"))).filter(
+    return Student.objects.annotate(live_programme=Upper(_bare("program"))).filter(
         live_programme__in=list(programmes)
     )
 
@@ -226,7 +245,7 @@ def _advisor_scopes() -> QuerySet[UserScope]:
     return (
         UserScope.objects.filter(user__is_active=True, user__is_superuser=False)
         .exclude(user__groups__name__in=_NOT_ADVISOR_GROUPS)
-        .annotate(held=Trim("advisor_id"))
+        .annotate(held=_bare("advisor_id"))
         .exclude(held="")
     )
 
@@ -259,12 +278,35 @@ def unrouted_q() -> Q:
     """Cases no advisor account can see: the student's advisor id is held by no
     active account (a raw name, a blank, or no student row at all), and the case
     is not assigned to an id an active account holds. The department's."""
-    routed = Student.objects.annotate(live_advisor=Trim("advisor_id")).filter(
+    routed = Student.objects.annotate(live_advisor=_bare("advisor_id")).filter(
         live_advisor__in=active_advisor_ids()
     )
     return ~Q(student_id__in=routed.values("student_id")) & ~Q(
         assigned_advisor_id__in=active_advisor_ids()
     )
+
+
+def handler_gone_q() -> Q:
+    """Cases whose handler can no longer act on them: the account is switched off,
+    or it took the case as the advisor of a student who has since moved to another
+    advisor, and the department did not assign the case to it. Such a case counts
+    as untaken; otherwise it would wait on nobody. Only an advisor's handling is
+    tied to an advisor id (`_handled_by`), so the department's never lapses so."""
+    still_routes = Exists(
+        Student.objects.annotate(live_advisor=_bare("advisor_id")).filter(
+            student_id=OuterRef("student_id"), live_advisor=OuterRef("handled_advisor_id")
+        )
+    )
+    return Q(handled_by__is_active=False) | (
+        ~Q(handled_advisor_id="")
+        & ~Q(still_routes)
+        & ~Q(assigned_advisor_id=F("handled_advisor_id"))
+    )
+
+
+def untaken_q() -> Q:
+    """Cases nobody is handling, or whose handler can no longer act on them."""
+    return Q(handled_by__isnull=True) | handler_gone_q()
 
 
 def no_forecast_only_q() -> Q:
@@ -292,12 +334,13 @@ def needs_action_q(staff: Staff) -> Q:
     count.
 
     An advisor: cases nobody has answered, unless they are about a missing
-    timetable (the department's) or a colleague outside their advisor id has
-    taken them. The department: cases forwarded to it; unanswered cases with no
-    advisor to see them, or about a missing timetable, that nobody has taken; and
-    unanswered cases they took themselves."""
+    timetable (the department's) or a colleague outside their advisor id is
+    handling them. The department: cases forwarded to it; unanswered cases with no
+    advisor to see them, or about a missing timetable, that nobody is handling;
+    and unanswered cases they took themselves. A handler who can no longer act
+    (`handler_gone_q`) handles nothing."""
     waiting = Q(status__in=WAITING_ON_STAFF)
-    free = Q(handled_by__isnull=True)
+    free = untaken_q()
     if staff.is_department:
         return (
             Q(status=S.FORWARDED)
@@ -456,10 +499,13 @@ def _touched(case: TimetableFeedback, now: datetime) -> dict[str, Any]:
 
 
 def _handled_by(staff: Staff) -> dict[str, Any]:
+    """``staff`` as the case's handler. The advisor id is kept only for an advisor,
+    whose handling lapses when the student moves to another advisor
+    (`handler_gone_q`); the department's handling follows its programmes."""
     return {
         "handled_by": staff.user,
         "handled_by_username": staff.username,
-        "handled_advisor_id": staff.advisor_id,
+        "handled_advisor_id": staff.advisor_id if staff.role == ROLE_ADVISOR else "",
     }
 
 
@@ -469,17 +515,29 @@ def _claim(
     now: datetime,
     *,
     to_status: str | None = None,
+    acted: bool = True,
     **changes: Any,
 ) -> None:
+    """Claim the case for a staff write. ``acted`` is False for housekeeping that
+    is no answer to anyone (a comment for colleagues, removing words): it still
+    claims the case, but leaves the times staff last and first acted, which say
+    whether the student has had a response."""
     workflow.cas_transition(
         visible_to(staff),
         case,
         actor=workflow.STAFF,
         now=now,
         to_status=to_status,
-        **_touched(case, now),
+        **(_touched(case, now) if acted else {}),
         **changes,
     )
+
+
+def _leave_a_colleagues_case(staff: Staff, case: TimetableFeedback) -> None:
+    """For many cases at once: a case someone else is handling is left to them. On
+    its own page the handler is shown, and anyone in scope may still act."""
+    if case.handled_by_id is not None and case.handled_by_id != staff.user.pk:
+        raise WorkflowRefused("HANDLED_BY_OTHER")
 
 
 def _message(
@@ -542,7 +600,7 @@ def add_note(
         case = _locked_case(staff, reference)
         _expect_version(case, version)
         _check_note(staff, case)
-        _claim(staff, case, now)
+        _claim(staff, case, now, acted=False)
         message = _message(case, staff, audience=Message.Audience.INTERNAL, body=text)
         _event(case, staff, Event.NOTE_ADDED, message_id=message.pk)
     return message
@@ -593,10 +651,12 @@ def answer(
     body: object = "",
     template: str = "",
     now: datetime | None = None,
+    leave_colleagues: bool = False,
 ) -> TimetableFeedbackMessage:
     """Answer the student. ``template`` names a ready-made answer, used in the
     language the student wrote in when no text is given. The student may then
-    accept the answer or reopen the case within its window, which starts now."""
+    accept the answer or reopen the case within its window, which starts now.
+    ``leave_colleagues`` (many cases at once) refuses a case someone else handles."""
     now = now or timezone.now()
     if template and template not in copy.REPLY_TEMPLATES:
         raise WorkflowRefused("TEMPLATE_UNKNOWN", status=400)
@@ -606,6 +666,8 @@ def answer(
         case = _locked_case(staff, reference)
         _expect_version(case, version)
         _CHECKS["answer"](staff, case)
+        if leave_colleagues:
+            _leave_a_colleagues_case(staff, case)
         if not text:
             text = copy.reply_template(template, case.submitted_language or "en")
         before = case.status
@@ -671,9 +733,11 @@ def close(
     reason: object,
     body: object,
     now: datetime | None = None,
+    leave_colleagues: bool = False,
 ) -> TimetableFeedbackMessage:
     """Close the case for one of the staff's reasons, saying why in a comment for
-    colleagues. The student sees the case closed, and why, as something new."""
+    colleagues. The student sees the case closed, and why, as something new.
+    ``leave_colleagues`` (many cases at once) refuses a case someone else handles."""
     now = now or timezone.now()
     code = str(reason or "").strip().upper()
     if code not in STAFF_CLOSE_REASONS:
@@ -683,6 +747,8 @@ def close(
         case = _locked_case(staff, reference)
         _expect_version(case, version)
         _CHECKS["close"](staff, case)
+        if leave_colleagues:
+            _leave_a_colleagues_case(staff, case)
         before = case.status
         _claim(
             staff,
@@ -814,7 +880,7 @@ def redact(
             if message is None:
                 raise WorkflowRefused("REDACT_TARGET_NOT_FOUND", status=404)
             text = redacted(message.body, passages)
-            _claim(staff, case, now)
+            _claim(staff, case, now, acted=False)
             case.messages.filter(pk=message_pk).update(body=text, redacted_at=now)
             _event(case, staff, Event.REDACTED, message_id=message_pk)
             return
@@ -822,7 +888,7 @@ def redact(
         if point is None:
             raise WorkflowRefused("REDACT_TARGET_NOT_FOUND", status=404)
         text = redacted(point.note, passages)
-        _claim(staff, case, now)
+        _claim(staff, case, now, acted=False)
         case.points.filter(pk=point_pk).update(note=text, note_redacted_at=now)
         _event(case, staff, Event.REDACTED, point_id=point_pk)
 
@@ -895,7 +961,7 @@ def bulk_answer(
     return _bulk(
         picks,
         lambda reference, version: answer(
-            staff, reference, version=version, template=template, now=now
+            staff, reference, version=version, template=template, now=now, leave_colleagues=True
         ),
     )
 
@@ -918,5 +984,6 @@ def bulk_close_duplicates(
             reason=TimetableFeedback.CloseReason.DUPLICATE,
             body=text,
             now=now,
+            leave_colleagues=True,
         ),
     )
