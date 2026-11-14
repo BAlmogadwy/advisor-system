@@ -959,16 +959,35 @@ def test_a_full_case_offers_no_further_point(world):
             seen_fingerprint=f"{n:064d}",
         )
     t = copy.strings("en")
+    # Every page names the full case where its button would be: the list shows several.
+    full = str(
+        copy.text(
+            "case_full",
+            "en",
+            reference=copy.bdi(case.reference),
+            max=copy.bdi(feedback.MAX_LIVE_POINTS),
+        )
+    )
     home = _html(_get(client, reverse("student_home")))
-    assert t["detail_add_point"] not in _html(_get(client, location))
+    detail = _html(_get(client, location))
+    listed = _html(_get(client, LIST)).split("<main", 1)[1]
+    form = _get(client, NEW)
+    assert t["detail_add_point"] not in detail and full in detail
     # Neither "add" nor "send": the service would refuse a point to a full case.
     assert t["home_add_point"] not in home and t["home_send"] not in home
-    assert "View my feedback" in home
+    assert "View my feedback" in home and full in home
+    assert f'href="{NEW}"' not in listed and full in listed
+    assert form.status_code == 409 and full in _html(form)
+    assert not FINGERPRINT.search(_html(form))
 
-    # A withdrawn point frees its place, on both pages alike.
+    # A withdrawn point frees its place, on every page alike.
     TimetableFeedbackPoint.objects.filter(note="point 0").update(withdrawn_at=timezone.now())
-    assert t["detail_add_point"] in _html(_get(client, location))
-    assert t["home_add_point"] in _html(_get(client, reverse("student_home")))
+    detail = _html(_get(client, location))
+    home = _html(_get(client, reverse("student_home")))
+    assert t["detail_add_point"] in detail and full not in detail
+    assert t["home_add_point"] in home and full not in home
+    assert f'href="{NEW}"' in _html(_get(client, LIST)).split("<main", 1)[1]
+    assert _get(client, NEW).status_code == 200
 
 
 def test_a_closed_case_is_not_shown_on_the_home_page(world):
@@ -986,13 +1005,124 @@ def test_an_answer_past_its_window_offers_a_new_send_not_another_point(world, se
     settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
     client = _client()
     location = _send(client, world)["Location"]
+    t = copy.strings("en")
+    # Inside its window an answer still takes a point: the student's to reopen.
+    TimetableFeedback.objects.update(
+        status="ANSWERED", answered_at=timezone.now() - timedelta(days=1)
+    )
+    assert t["home_add_point"] in _html(_get(client, reverse("student_home")))
+    detail = _html(_get(client, location))
+    assert t["detail_add_point"] in detail and t["detail_send_new"] not in detail
+
+    TimetableFeedback.objects.update(answered_at=timezone.now() - timedelta(days=30))
+    home = _html(_get(client, reverse("student_home")))
+    assert t["home_add_point"] not in home
+    assert t["home_send"] in home and "View my feedback" in home
+    # The case page offers the same way forward, named for what it does.
+    detail = _html(_get(client, location))
+    assert t["detail_add_point"] not in detail and t["detail_send_new"] in detail
+    assert _get(client, NEW).status_code == 200
+
+
+def test_past_the_window_at_the_cap_nothing_new_is_offered_and_both_pages_say_why(world, settings):
+    """The answered case counts towards the cap, and a new case is what a point
+    past its window would open."""
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    client = _client()
+    location = _send(client, world)["Location"]
     TimetableFeedback.objects.update(
         status="ANSWERED", answered_at=timezone.now() - timedelta(days=30)
     )
+    for _ in range(feedback.MAX_CASES_PER_TERM - 1):
+        TimetableFeedback.objects.create(
+            student_id=SID,
+            academic_year=YEAR,
+            term=TERM,
+            status="CLOSED",
+            close_reason="ANSWER_ACCEPTED",
+            closed_at=timezone.now(),
+        )
+    t = copy.strings("en")
+    why = str(copy.refusal("TOO_MANY_CASES", "en"))
     home = _html(_get(client, reverse("student_home")))
-    assert copy.strings("en")["home_add_point"] not in home
-    assert copy.strings("en")["home_send"] in home and "View my feedback" in home
-    assert copy.strings("en")["detail_add_point"] not in _html(_get(client, location))
+    detail = _html(_get(client, location))
+    assert t["home_send"] not in home and t["home_add_point"] not in home
+    assert "View my feedback" in home and why in home
+    assert t["detail_send_new"] not in detail and t["detail_add_point"] not in detail
+    assert why in detail
+    assert _get(client, NEW).status_code == 409
+
+
+@pytest.mark.parametrize("refusal", ["TOO_MANY_CASES", "COOLING_DOWN"])
+def test_when_no_new_case_can_open_no_page_offers_a_send_and_each_says_why(world, refusal):
+    if refusal == "TOO_MANY_CASES":
+        for _ in range(feedback.MAX_CASES_PER_TERM):
+            TimetableFeedback.objects.create(
+                student_id=SID,
+                academic_year=YEAR,
+                term=TERM,
+                status="CLOSED",
+                close_reason="ANSWER_ACCEPTED",
+                closed_at=timezone.now(),
+            )
+    else:
+        TimetableFeedback.objects.create(
+            student_id=SID,
+            academic_year=YEAR,
+            term=TERM,
+            status="WITHDRAWN",
+            closed_at=timezone.now() - timedelta(hours=1),
+        )
+    client = _client()
+    why = str(copy.refusal(refusal, "en"))
+
+    home = _html(_get(client, reverse("student_home")))
+    assert copy.strings("en")["home_send"] not in home
+    assert why in home.split('id="student-home-feedback-refused"', 1)[1].split("</p>", 1)[0]
+
+    listed = _html(_get(client, LIST)).split("<main", 1)[1]
+    assert f'href="{NEW}"' not in listed and why in listed
+
+    # Refused before anything is written, not after.
+    form = _get(client, NEW)
+    assert form.status_code == 409 and why in _html(form)
+    assert not FINGERPRINT.search(_html(form))
+
+
+def test_at_the_cap_a_point_still_joins_the_open_case(world):
+    """The cap is on new cases: a point that joins the open case is not one."""
+    for _ in range(feedback.MAX_CASES_PER_TERM - 1):
+        TimetableFeedback.objects.create(
+            student_id=SID,
+            academic_year=YEAR,
+            term=TERM,
+            status="CLOSED",
+            close_reason="ANSWER_ACCEPTED",
+            closed_at=timezone.now(),
+        )
+    client = _client()
+    location = _send(client, world)["Location"]
+    assert TimetableFeedback.objects.count() == feedback.MAX_CASES_PER_TERM
+    t = copy.strings("en")
+    assert t["home_add_point"] in _html(_get(client, reverse("student_home")))
+    assert t["detail_add_point"] in _html(_get(client, location))
+    assert f'href="{NEW}"' in _html(_get(client, LIST)).split("<main", 1)[1]
+    assert _get(client, NEW).status_code == 200
+
+
+def test_the_no_timetable_card_is_not_offered_when_no_case_can_open(world):
+    """Its body says the student can tell their advisor; at the cap they cannot."""
+    assert 'id="student-home-feedback-no-forecast"' in _home(EMPTY_SID)
+    for _ in range(feedback.MAX_CASES_PER_TERM):
+        TimetableFeedback.objects.create(
+            student_id=EMPTY_SID,
+            academic_year=YEAR,
+            term=TERM,
+            status="CLOSED",
+            close_reason="ANSWER_ACCEPTED",
+            closed_at=timezone.now(),
+        )
+    assert 'id="student-home-feedback-no-forecast"' not in _home(EMPTY_SID)
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])
@@ -1014,7 +1144,11 @@ def test_once_feedback_closes_an_open_case_is_shown_but_takes_nothing_more(
     home = _html(_get(client, reverse("student_home")))
     assert "View my feedback" in home and "Status: Sent" in home
     assert t["home_add_point"] not in home and t["home_send"] not in home
-    assert t["detail_add_point"] not in _html(_get(client, location))
+    detail = _html(_get(client, location))
+    assert t["detail_add_point"] not in detail and t["detail_send_new"] not in detail
+    # Closed is said once, on the list: not as a refusal beside every case.
+    assert 'id="ttfSendRefused"' not in detail
+    assert 'id="student-home-feedback-refused"' not in home
 
 
 REFERS_TO = re.compile(r'aria-(?:describedby|labelledby)="([^"]+)"')

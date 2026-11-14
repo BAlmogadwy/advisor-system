@@ -209,11 +209,12 @@
             {% if feedback_entry.open_case.can_add %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_add_point }}</a>
             {% elif feedback_entry.open_case.can_send_new %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_send }}</a>{% endif %}
           </div>
-        {% elif feedback_entry.can_raise %}
+        {% elif feedback_entry.can_send %}
           <div class="student-page-actions">
             <a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_send }}</a>
           </div>
         {% endif %}
+        {% if feedback_entry.send_refused %}<p class="student-guidance-note mt-2 mb-0" id="student-home-feedback-refused" dir="auto">{{ feedback_entry.send_refused }}</p>{% endif %}
       </div>
     {% endif %}
   {% else %}

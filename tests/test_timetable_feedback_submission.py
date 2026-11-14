@@ -1567,3 +1567,40 @@ def test_a_note_of_only_invisible_marks_counts_as_no_note(world):
 def test_a_note_holding_a_lone_surrogate_is_refused_rather_than_failing_to_save(world):
     _refused("NOTE_INVALID", **_base(world, note="clash " + chr(0xD800)))
     assert not TimetableFeedbackPoint.objects.exists()
+
+
+@pytest.mark.parametrize("state", ["open", "TOO_MANY_CASES", "COOLING_DOWN"])
+def test_the_pages_question_about_a_new_case_is_the_service_answer(world, state):
+    """The student pages ask `new_case_refusal` before they offer a send. It must
+    answer what `submit_point` then does, and ask without writing or spending."""
+    now = timezone.now()
+    if state == "TOO_MANY_CASES":
+        for _ in range(feedback.MAX_CASES_PER_TERM):
+            TimetableFeedback.objects.create(
+                student_id=SID,
+                academic_year=YEAR,
+                term=TERM,
+                status="CLOSED",
+                close_reason="ANSWER_ACCEPTED",
+            )
+    elif state == "COOLING_DOWN":
+        TimetableFeedback.objects.create(
+            student_id=SID,
+            academic_year=YEAR,
+            term=TERM,
+            status="WITHDRAWN",
+            closed_at=now - timedelta(hours=1),
+        )
+    cases = TimetableFeedback.objects.count()
+    buckets = rate_limit.RateLimitBucket.objects.count()
+
+    foreseen = feedback.new_case_refusal(SID, YEAR, TERM, now=now)
+
+    assert TimetableFeedback.objects.count() == cases
+    assert rate_limit.RateLimitBucket.objects.count() == buckets
+    if state == "open":
+        assert foreseen is None
+        assert feedback.submit_point(**_base(world, now=now)).created_case
+    else:
+        assert foreseen is not None and foreseen.code == state
+        _refused(state, **_base(world, now=now))

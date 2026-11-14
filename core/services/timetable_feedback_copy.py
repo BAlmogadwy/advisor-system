@@ -231,7 +231,7 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "detail_requested_course": ("Missing course", "المقرر غير الموجود"),
     "detail_note": ("More details", "التفاصيل الإضافية"),
     "detail_note_removed": (
-        "Part of these details was removed.",
+        "Part of the details of this point was removed.",
         "حُذف جزء من التفاصيل الإضافية لهذه النقطة.",
     ),
     "detail_withdrawn": ("Withdrawn", "مسحوبة"),
@@ -253,6 +253,14 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         " تُعرض كما أُرسلت.",
     ),
     "detail_add_point": ("Add another point", "إضافة نقطة أخرى"),
+    # Past its answer's window a new point opens a new case, so it is "new".
+    "detail_send_new": ("Send new feedback", "إرسال ملاحظة جديدة"),
+    # Where a page would offer to send but the open case is full. It names the case,
+    # because the list shows several.
+    "case_full": (
+        "Feedback {reference} already holds the most points allowed ({max}).",
+        "تحتوي الملاحظة {reference} على الحد الأقصى لعدد النقاط: {max}.",
+    ),
     "detail_back": ("All my timetable feedback", "جميع ملاحظاتي على الجدول"),
     # Pages that are not there, or not open
     "unavailable_title": (
@@ -440,10 +448,10 @@ REFUSAL: Mapping[str, tuple[str, str]] = {
         "Feedback was withdrawn recently. New feedback can be sent {hours} after a withdrawal.",
         "سُحبت ملاحظة لك مؤخرًا، ويمكن إرسال ملاحظة جديدة بعد مرور {hours} على السحب.",
     ),
+    # Nothing about who holds it: the case may be answered, or not yet routed.
     "ALREADY_RAISED": (
-        "You already sent this point in feedback {reference}, and it is with your academic"
-        " advisor.",
-        "سبق إرسال هذه النقطة ضمن الملاحظة {reference}، وهي لدى مرشدك الأكاديمي.",
+        "You already sent this point in feedback {reference}.",
+        "سبق إرسال هذه النقطة ضمن الملاحظة {reference}.",
     ),
     "TOO_MANY_POINTS": (
         "This feedback already holds the most points allowed ({max}).",

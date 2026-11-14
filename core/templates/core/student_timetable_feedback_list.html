@@ -35,8 +35,8 @@
   <div class="student-page-actions ttf-actions mt-3">
     <a class="btn btn-primary" href="{% url 'student_timetable_feedback_new' %}">{{ t.list_new }}</a>
   </div>
-  {% elif closed %}
-  <p class="student-guidance-note mt-3 mb-0" dir="auto">{{ closed }}</p>
+  {% elif send_refused %}
+  <p class="student-guidance-note mt-3 mb-0" id="ttfSendRefused" dir="auto">{{ send_refused }}</p>
   {% endif %}
 </section>
 {% endblock %}

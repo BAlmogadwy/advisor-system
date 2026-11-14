@@ -54,10 +54,14 @@
     </li>
     {% endfor %}
   </ol>
-  {% if can_add %}
+  {% if can_add or can_send_new %}
   <div class="student-page-actions ttf-actions mt-3">
-    <a class="btn btn-outline-secondary" href="{% url 'student_timetable_feedback_new' %}">{{ t.detail_add_point }}</a>
+    {% comment %}Past its answer's window a new point does not join this case: the
+    service closes it and opens a new one, so the button says so.{% endcomment %}
+    <a class="btn btn-outline-secondary" href="{% url 'student_timetable_feedback_new' %}">{% if can_add %}{{ t.detail_add_point }}{% else %}{{ t.detail_send_new }}{% endif %}</a>
   </div>
+  {% elif send_refused %}
+  <p class="student-guidance-note mt-3 mb-0" id="ttfSendRefused" dir="auto">{{ send_refused }}</p>
   {% endif %}
 </section>
 

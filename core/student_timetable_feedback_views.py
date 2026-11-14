@@ -152,6 +152,70 @@ def _normalise_newlines(value: object) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Where the next point would go
+# ---------------------------------------------------------------------------
+#
+# Every page asks the same two questions before it offers to send: which case the
+# student's next point would go into, and whether the service would take it. A
+# page offers "add another point" or "send" only where the answer is yes, and
+# otherwise says why, so nobody writes a point that is then refused.
+
+
+def _open_case_for(
+    student_id: int, academic_year: object, term: object
+) -> TimetableFeedback | None:
+    """The student's open case for that term: the one a new point is offered to."""
+    return (
+        TimetableFeedback.objects.filter(
+            student_id=student_id, academic_year=str(academic_year), term=str(term)
+        )
+        .exclude(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES)
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _settled(case: TimetableFeedback) -> bool:
+    """An answer past its reopen window. The next point does not join it: the
+    service closes it and opens a new case."""
+    return case.status == TimetableFeedback.Status.ANSWERED and workflow.answer_window_passed(
+        case, timezone.now()
+    )
+
+
+def _next_point(
+    open_case: TimetableFeedback | None, student_id: int, academic_year: object, term: object
+) -> tuple[bool, str]:
+    """``(joins_open_case, refusal)`` for the student's next point in that term.
+
+    The point joins the open case unless that case is settled, and a full case
+    refuses it. Otherwise it opens a new case, under the cap and the cool-down,
+    which are asked of the service itself. ``refusal`` is the service's code, or
+    "". Rate limits are not foreseen: they guard against floods, and their own
+    refusal says how long to wait."""
+    if open_case is not None and not _settled(open_case):
+        live = open_case.points.filter(withdrawn_at__isnull=True).count()
+        return True, ("TOO_MANY_POINTS" if live >= feedback.MAX_LIVE_POINTS else "")
+    refused = feedback.new_case_refusal(student_id, str(academic_year), str(term))
+    return False, (refused.code if refused is not None else "")
+
+
+def _why_not(refusal: str, language: str, open_case: TimetableFeedback | None) -> object:
+    """The sentence a page shows where its send button would be, or ""."""
+    if not refusal:
+        return ""
+    if refusal == "TOO_MANY_POINTS" and open_case is not None:
+        # "This feedback is full" would not say which, on a page that lists them.
+        return copy.text(
+            "case_full",
+            language,
+            reference=copy.bdi(open_case.reference),
+            max=copy.bdi(feedback.MAX_LIVE_POINTS),
+        )
+    return copy.refusal(refusal, language)
+
+
+# ---------------------------------------------------------------------------
 # The list
 # ---------------------------------------------------------------------------
 
@@ -183,7 +247,14 @@ def feedback_list_view(request: HttpRequest) -> HttpResponse:
         }
         for case in cases
     ]
-    can_raise = student is not None and feedback.accepting_for(student.program)
+    accepting = student is not None and feedback.accepting_for(student.program)
+    refusal = ""
+    open_case = None
+    if accepting:
+        academic_year, term = feedback.planning_term()
+        open_case = _open_case_for(student_id, academic_year, term)
+        _, refusal = _next_point(open_case, student_id, academic_year, term)
+    can_raise = accepting and not refusal
     return render(
         request,
         "core/student_timetable_feedback_list.html",
@@ -192,8 +263,16 @@ def feedback_list_view(request: HttpRequest) -> HttpResponse:
             language,
             rows=rows,
             can_raise=can_raise,
-            # Say so, rather than leave an empty list with no way forward.
-            closed=("" if can_raise else copy.refusal("NOT_ACCEPTING", language)),
+            # Say why, rather than leave a list with no way forward.
+            send_refused=(
+                ""
+                if can_raise
+                else (
+                    _why_not(refusal, language, open_case)
+                    if accepting
+                    else copy.refusal("NOT_ACCEPTING", language)
+                )
+            ),
         ),
     )
 
@@ -441,7 +520,16 @@ def feedback_new_view(request: HttpRequest) -> HttpResponse:
         "programme": programme,
     }
     if request.method == "POST":
+        # The service decides, under its lock; a refusal comes back with the form.
         return _submit(request, forecast=forecast, **form)
+
+    # A point the service would refuse is refused before it is written, not after.
+    open_case = _open_case_for(student_id, forecast.academic_year, forecast.term)
+    _, refusal = _next_point(open_case, student_id, forecast.academic_year, forecast.term)
+    if refusal:
+        return _unavailable(
+            request, language, status=409, message=_why_not(refusal, language, open_case)
+        )
 
     about = request.GET.get("about")
     if not forecast.sections:
@@ -612,19 +700,6 @@ def _refused(
 # ---------------------------------------------------------------------------
 
 
-def _takes_another_point(case: TimetableFeedback, live_points: int) -> bool:
-    """Whether a new point would go into THIS case. Not into a finished case, nor a
-    full one, nor an answer past its window: that one gives way to a new case."""
-    if case.status in TIMETABLE_FEEDBACK_TERMINAL_STATUSES:
-        return False
-    if live_points >= feedback.MAX_LIVE_POINTS:
-        return False
-    return not (
-        case.status == TimetableFeedback.Status.ANSWERED
-        and workflow.answer_window_passed(case, timezone.now())
-    )
-
-
 def _point_view(point: Any, language: str) -> dict[str, Any]:
     t = copy.strings(language)
     about: str
@@ -714,13 +789,20 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
         str(planning[1]),
     )
     student = Student.objects.filter(student_id=student_id).first()
-    live = sum(1 for point in points if not point["withdrawn"])
-    can_add = (
+    # Only this term's open case is offered anything, and only while feedback is
+    # taken: the next point joins it, or, past its answer's window, opens a new case.
+    can_add = can_send_new = False
+    send_refused: object = ""
+    if (
         is_planning_term
-        and _takes_another_point(case, live)
+        and case.status not in TIMETABLE_FEEDBACK_TERMINAL_STATUSES
         and student is not None
         and feedback.accepting_for(student.program)
-    )
+    ):
+        joins, refusal = _next_point(case, student_id, case.academic_year, case.term)
+        can_add = joins and not refusal
+        can_send_new = not joins and not refusal
+        send_refused = _why_not(refusal, language, case)
     term = copy.term_html(case.academic_year, case.term)
     return render(
         request,
@@ -751,6 +833,8 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
                 "" if is_planning_term else copy.text("detail_other_term", language, term=term)
             ),
             can_add=can_add,
+            can_send_new=can_send_new,
+            send_refused=send_refused,
         ),
     )
 
@@ -780,20 +864,23 @@ def home_feedback_entry(
         return None
     language = copy.language_of(language)
     accepting = student is not None and feedback.accepting_for(student.program)
-    open_case = (
-        TimetableFeedback.objects.filter(
-            student_id=student_id, academic_year=str(academic_year), term=str(term)
-        )
-        .exclude(status__in=TIMETABLE_FEEDBACK_TERMINAL_STATUSES)
-        .order_by("-created_at")
-        .first()
-    )
+    open_case = _open_case_for(student_id, academic_year, term)
     term_html = copy.term_html(academic_year, term)
-    can_raise = accepting and not read_failed and timetable.has_forecast
+    # Both cards that send ask first where the next point would go, and whether
+    # the service would take it.
+    may_send = accepting and not read_failed
+    joins, refusal = (
+        _next_point(open_case, student_id, academic_year, term) if may_send else (False, "")
+    )
+    can_raise = may_send and timetable.has_forecast
     entry: dict[str, Any] = {
         "list_url": reverse("student_timetable_feedback_list"),
         "new_url": reverse("student_timetable_feedback_new"),
         "can_raise": can_raise,
+        # A first case, where nothing is open yet.
+        "can_send": can_raise and open_case is None and not refusal,
+        # Where a send button would be, the reason there is none.
+        "send_refused": _why_not(refusal, language, open_case),
         # Only where feedback can be sent: while it is closed, "it still reaches your
         # academic advisor" would be untrue.
         "registered_notice": (
@@ -801,13 +888,15 @@ def home_feedback_entry(
             if can_raise and timetable.has_registration
             else ""
         ),
-        # Offered once: after it is sent, the open case is shown instead.
+        # Offered once: after it is sent, the open case is shown instead. Not offered
+        # at all when the service would refuse a new case: its body says the student
+        # can tell their advisor, and the list says why they cannot.
         "no_forecast": (
-            accepting
-            and not read_failed
+            may_send
             and not timetable.has_forecast
             and not timetable.has_registration
             and open_case is None
+            and not refusal
         ),
         # Without this term's expected card the open case gets a card of its own.
         "on_expected_card": timetable.has_forecast,
@@ -817,10 +906,6 @@ def home_feedback_entry(
     if entry["no_forecast"]:
         entry["no_forecast_body"] = copy.text("no_forecast_body", language, term=term_html)
     if open_case is not None:
-        live = open_case.points.filter(withdrawn_at__isnull=True).count()
-        settled = open_case.status == TimetableFeedback.Status.ANSWERED and (
-            workflow.answer_window_passed(open_case, timezone.now())
-        )
         entry["open_case"] = {
             "url": reverse("student_timetable_feedback_detail", args=[open_case.reference]),
             "label": copy.text("home_view_case", language, reference=copy.bdi(open_case.reference)),
@@ -829,9 +914,9 @@ def home_feedback_entry(
                 language,
                 status=copy.status_label(open_case.status, language),
             ),
-            "can_add": can_raise and _takes_another_point(open_case, live),
+            "can_add": can_raise and joins and not refusal,
             # A point sent now would not join an answer past its window: it closes
             # that case and opens a new one, so the card offers "send", not "add".
-            "can_send_new": can_raise and settled,
+            "can_send_new": can_raise and not joins and not refusal,
         }
     return entry
