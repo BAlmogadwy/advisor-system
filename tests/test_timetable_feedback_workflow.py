@@ -899,3 +899,150 @@ def test_an_answer_without_its_time_is_timed_from_the_cases_last_change(settings
         now=now,
     )
     assert _state(stale) == ("ANSWERED", 0)
+
+
+# ---------------------------------------------------------------------------
+# What a page may ask before it offers an action
+# ---------------------------------------------------------------------------
+
+
+def _offered(action, status, edge):
+    """A case in ``status``, two live points (one with the edge "one point"), an
+    answer given now (thirty days ago with "window passed"), and every follow-up
+    used with "follow-ups used"; and the arguments ``action`` takes."""
+    answered = timezone.now() - timedelta(days=30 if edge == "window passed" else 0)
+    case = _case(status, answered_at=answered)
+    points = [_point(case, 11)] + ([] if edge == "one point" else [_point(case, 12)])
+    if edge == "follow-ups used":
+        for _ in range(workflow.MAX_FOLLOW_UPS):
+            TimetableFeedbackEvent.objects.create(
+                case=case, kind=TimetableFeedbackEvent.Kind.STUDENT_FOLLOWUP
+            )
+    extra = {"body": "hi"} if action in ("reply", "follow_up", "reopen_answer") else {}
+    if action == "withdraw_point":
+        extra = {"point_id": str(points[0].pk)}
+    return case, extra
+
+
+OFFERS = [(action, status, "") for action in STUDENT_ACTIONS for status in STATUSES] + [
+    ("follow_up", "SUBMITTED", "follow-ups used"),
+    ("withdraw_point", "SUBMITTED", "one point"),
+    ("reopen_answer", "ANSWERED", "window passed"),
+]
+
+
+@pytest.mark.parametrize(("action", "status", "edge"), OFFERS)
+def test_the_question_a_page_asks_gets_the_answer_the_action_gives(action, status, edge, settings):
+    """`student_action_refusal` is the action's own check, so in every status a
+    page offers exactly what the action then takes, and refuses it with the same
+    code. Asking writes nothing and spends nothing."""
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    case, extra = _offered(action, status, edge)
+    before = _state(case)
+    events = TimetableFeedbackEvent.objects.count()
+
+    foreseen = workflow.student_action_refusal(case, action)
+
+    assert _state(case) == before
+    assert TimetableFeedbackEvent.objects.count() == events
+    assert not rate_limit.RateLimitBucket.objects.exists()
+    try:
+        getattr(workflow, action)(student_id=SID, reference=case.reference, **extra)
+    except workflow.WorkflowRefused as refused:
+        assert foreseen is not None, f"offered, then refused {refused.code}"
+        assert (foreseen.code, foreseen.status) == (refused.code, refused.status)
+    else:
+        assert foreseen is None, f"withheld ({foreseen.code}), but the action was taken"
+
+
+@pytest.mark.parametrize(
+    ("status", "answered_days_ago", "waits"),
+    [
+        ("NEEDS_INFORMATION", 0, True),
+        ("ANSWERED", 1, True),
+        ("ANSWERED", 14, True),
+        ("ANSWERED", 15, False),
+        ("SUBMITTED", 0, False),
+        ("IN_REVIEW", 0, False),
+        ("FORWARDED", 0, False),
+        ("CLOSED", 0, False),
+        ("WITHDRAWN", 0, False),
+    ],
+)
+def test_a_case_waits_on_the_student_for_a_reply_or_an_answer_in_its_window(
+    status, answered_days_ago, waits, settings
+):
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    now = timezone.now()
+    case = _case(status, answered_at=now - timedelta(days=answered_days_ago))
+    assert workflow.waits_on_student(case, now) is waits
+
+
+# ---------------------------------------------------------------------------
+# What the student has not seen
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("visible", "seen", "unread"),
+    [
+        (None, None, False),
+        (None, 0, False),
+        (0, None, True),
+        (0, 0, False),
+        (0, -1, True),
+        (-1, 0, False),
+    ],
+)
+def test_a_case_is_unread_while_what_the_student_may_read_is_newer_than_their_look(
+    visible, seen, unread
+):
+    """Minutes from now; None is a field never set. The query and the in-memory
+    rule answer alike, so a list, a badge and a banner can never disagree."""
+    now = timezone.now()
+    case = _case(
+        last_student_visible_at=None if visible is None else now + timedelta(minutes=visible),
+        student_seen_at=None if seen is None else now + timedelta(minutes=seen),
+    )
+    assert workflow.has_unread(case) is unread
+    assert TimetableFeedback.objects.filter(workflow.unread_q(), pk=case.pk).exists() is unread
+
+
+def test_opening_a_case_marks_what_the_page_read_as_seen_and_disturbs_no_claim():
+    now = timezone.now()
+    case = _case(last_student_visible_at=now - timedelta(minutes=5))
+    TimetableFeedback.objects.filter(pk=case.pk).update(updated_at=now - timedelta(days=3))
+    case.refresh_from_db()
+    claim = (case.version, case.updated_at)
+
+    workflow.mark_seen(case)
+
+    case.refresh_from_db()
+    assert case.student_seen_at == now - timedelta(minutes=5)  # what was read, not the clock
+    assert not workflow.has_unread(case)
+    assert (case.version, case.updated_at) == claim
+
+
+def test_a_write_landing_while_the_page_renders_stays_unread():
+    now = timezone.now()
+    case = _case(last_student_visible_at=now - timedelta(minutes=5))
+    read = TimetableFeedback.objects.get(pk=case.pk)
+    TimetableFeedback.objects.filter(pk=case.pk).update(last_student_visible_at=now)
+
+    workflow.mark_seen(read)
+
+    case.refresh_from_db()
+    assert workflow.has_unread(case)
+
+
+def test_the_seen_mark_never_moves_back_and_needs_something_to_mark():
+    now = timezone.now()
+    nothing = _case(student_id=OTHER_SID)
+    workflow.mark_seen(nothing)
+    nothing.refresh_from_db()
+    assert nothing.student_seen_at is None
+
+    case = _case(last_student_visible_at=now - timedelta(minutes=5), student_seen_at=now)
+    workflow.mark_seen(case)
+    case.refresh_from_db()
+    assert case.student_seen_at == now

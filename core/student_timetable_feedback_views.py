@@ -244,6 +244,7 @@ def feedback_list_view(request: HttpRequest) -> HttpResponse:
             "status": copy.status_label(case.status, language),
             "sent": _date(case.created_at),
             "points": copy.text("list_points", language, count=copy.bdi(case.live_points)),
+            "unread": workflow.has_unread(case),
         }
         for case in cases
     ]
@@ -738,18 +739,12 @@ def _point_view(point: Any, language: str) -> dict[str, Any]:
     }
 
 
-@never_cache
-@require_GET
-def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
-    language = copy.language_of(getattr(request, "LANGUAGE_CODE", ""))
-    student_id = _student(request)
-    if isinstance(student_id, HttpResponse):
-        return student_id
-    if not settings.TIMETABLE_FEEDBACK_ENABLED:
-        return _unavailable(request, language, status=404)
-
+def _own_case(
+    request: HttpRequest, language: str, student_id: int, reference: object
+) -> TimetableFeedback | HttpResponse:
+    """The student's case by its reference, or the not-found page. Ownership is
+    part of the query: another student's reference is simply not found."""
     wanted = workflow.case_reference(reference)
-    # Ownership is part of the query: another student's reference is not found.
     case = (
         TimetableFeedback.objects.filter(student_id=student_id, reference=wanted).first()
         if wanted
@@ -759,11 +754,95 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
         return _unavailable(
             request, language, status=404, message=copy.refusal("CASE_NOT_FOUND", language)
         )
+    return case
+
+
+@never_cache
+@require_GET
+def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
+    language = copy.language_of(getattr(request, "LANGUAGE_CODE", ""))
+    student_id = _student(request)
+    if isinstance(student_id, HttpResponse):
+        return student_id
+    if not settings.TIMETABLE_FEEDBACK_ENABLED:
+        return _unavailable(request, language, status=404)
+    case = _own_case(request, language, student_id, reference)
+    if isinstance(case, HttpResponse):
+        return case
 
     notice = ""
     for message in messages.get_messages(request):
         if NOTICE_TAG in message.tags and message.message in copy.NOTICE:
             notice = copy.notice(message.message, language, reference=case.reference)
+    # Opening the case is seeing it as it was just read. Marked before the page is
+    # drawn, so the sidebar on this page no longer counts it as new.
+    workflow.mark_seen(case)
+    return case_page(request, case, student_id=student_id, language=language, notice=notice)
+
+
+#: The student's actions a case page may offer, by the service's own names.
+STUDENT_ACTIONS = (
+    "reply",
+    "follow_up",
+    "withdraw_point",
+    "withdraw_case",
+    "confirm_answer",
+    "reopen_answer",
+)
+#: Refusals worth a sentence where the action would be: a limit reached, or a time
+#: run out. NOT_ALLOWED only means the action does not belong to this status.
+_SAID_WHERE_WITHHELD = frozenset({"TOO_MANY_FOLLOW_UPS", "REOPEN_WINDOW_PASSED"})
+
+
+def case_page(
+    request: HttpRequest,
+    case: TimetableFeedback,
+    *,
+    student_id: int,
+    language: str,
+    notice: object = "",
+    errors: list[dict[str, Any]] | None = None,
+    values: dict[str, str] | None = None,
+    status: int = 200,
+) -> HttpResponse:
+    """One case as the student sees it, with what they can do on it now.
+
+    The GET draws it, and so does an action the service refused: with the
+    refusal's status, its sentence at the top and at the field it is about, and the
+    text the student typed kept. Each action is offered only where the service's
+    own check says it would be taken."""
+    now = timezone.now()
+    errors = list(errors or [])
+    for index, error in enumerate(errors):
+        error["id"] = f"ttfError-{index}"
+    refusals = {
+        action: workflow.student_action_refusal(case, action, now=now) for action in STUDENT_ACTIONS
+    }
+
+    def offered(action: str) -> bool:
+        return refusals[action] is None
+
+    def why_withheld(action: str) -> object:
+        refusal = refusals[action]
+        if refusal is None or refusal.code not in _SAID_WHERE_WITHHELD:
+            return ""
+        return copy.refusal(refusal.code, language)
+
+    text_max = copy.bdi(workflow.STUDENT_TEXT_MAX_CHARS)
+    answer: dict[str, object] | None = None
+    if case.status == TimetableFeedback.Status.ANSWERED:
+        answer = {
+            "open": (
+                copy.text(
+                    "detail_answer_open",
+                    language,
+                    date=copy.bdi(_date(workflow.reopen_until(case))),
+                )
+                if offered("reopen_answer")
+                else ""
+            ),
+            "reopen_withheld": why_withheld("reopen_answer"),
+        }
 
     # Only what a student may read is fetched at all.
     thread = [
@@ -835,7 +914,29 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
             can_add=can_add,
             can_send_new=can_send_new,
             send_refused=send_refused,
+            # The student's own actions on the case.
+            can_reply=offered("reply"),
+            can_follow_up=offered("follow_up"),
+            follow_up_withheld=why_withheld("follow_up"),
+            can_withdraw_point=offered("withdraw_point"),
+            can_withdraw_case=offered("withdraw_case"),
+            can_confirm=offered("confirm_answer"),
+            can_reopen=offered("reopen_answer"),
+            answer=answer,
+            reply_hint=copy.text("detail_reply_hint", language, max=text_max),
+            follow_up_hint=copy.text(
+                "detail_follow_up_hint",
+                language,
+                left=copy.bdi(workflow.MAX_FOLLOW_UPS - workflow.follow_ups_used(case)),
+                max=text_max,
+            ),
+            reopen_hint=copy.text("detail_reopen_hint", language, max=text_max),
+            text_max=workflow.STUDENT_TEXT_MAX_CHARS,
+            errors=errors,
+            error_for={error["field"]: error for error in errors if error.get("field")},
+            values=values or {},
         ),
+        status=status,
     )
 
 
@@ -864,7 +965,17 @@ def home_feedback_entry(
         return None
     language = copy.language_of(language)
     accepting = student is not None and feedback.accepting_for(student.program)
-    open_case = _open_case_for(student_id, academic_year, term)
+    # This term's cases, newest first (three at most): one read for the card and
+    # the banner. The open one is the case a new point is offered to.
+    this_term = list(
+        TimetableFeedback.objects.filter(
+            student_id=student_id, academic_year=str(academic_year), term=str(term)
+        ).order_by("-created_at")
+    )
+    open_case = next(
+        (case for case in this_term if case.status not in TIMETABLE_FEEDBACK_TERMINAL_STATUSES),
+        None,
+    )
     term_html = copy.term_html(academic_year, term)
     # Both cards that send ask first where the next point would go, and whether
     # the service would take it.
@@ -918,5 +1029,42 @@ def home_feedback_entry(
             # A point sent now would not join an answer past its window: it closes
             # that case and opens a new one, so the card offers "send", not "add".
             "can_send_new": can_raise and not joins and not refusal,
+            "unread": workflow.has_unread(open_case),
         }
+    # Feedback already sent goes on, whatever the flags say about sending more.
+    entry["banner"] = _banner(this_term, language)
     return entry
+
+
+def _banner(cases: list[TimetableFeedback], language: str) -> dict[str, object] | None:
+    """The one thing about this term's feedback the home page leads with, or None.
+
+    First a case that waits on the student (a request for information, or an
+    answer they can still accept or reopen); then one with something they have
+    not seen. A finished case counts too: its closing may be the news."""
+    now = timezone.now()
+    chosen = next(
+        (
+            (
+                case,
+                "reply" if case.status == TimetableFeedback.Status.NEEDS_INFORMATION else "answer",
+            )
+            for case in cases
+            if workflow.waits_on_student(case, now)
+        ),
+        None,
+    ) or next(((case, "news") for case in cases if workflow.has_unread(case)), None)
+    if chosen is None:
+        return None
+    case, kind = chosen
+    reference = copy.bdi(case.reference)
+    details: dict[str, object] = {"reference": reference}
+    if kind == "answer":
+        details["date"] = copy.bdi(_date(workflow.reopen_until(case)))
+    return {
+        "kind": kind,
+        "title": copy.text(f"banner_{kind}_title", language),
+        "body": copy.text(f"banner_{kind}_body", language, **details),
+        "url": reverse("student_timetable_feedback_detail", args=[case.reference]),
+        "link": copy.text("home_view_case", language, reference=reference),
+    }

@@ -3,7 +3,7 @@
 
 {% block title %}{{ t.list_title }}{% endblock %}
 
-{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=2">{% endblock %}
 
 {% block page_heading %}{{ t.list_title }}{% endblock %}
 
@@ -18,7 +18,8 @@
   <ul class="ttf-case-list">
     {% for row in rows %}
     <li class="ttf-case">
-      <a class="ttf-case-link" href="{{ row.url }}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi></a>
+      {% comment %}"New" sits inside the link, so the link's own name says it too.{% endcomment %}
+      <a class="ttf-case-link" href="{{ row.url }}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi>{% if row.unread %} <span class="ttf-unread"><span class="ttf-unread-dot" aria-hidden="true"></span>{{ t.unread }}</span>{% endif %}</a>
       <dl class="ttf-meta">
         <div><dt>{{ t.list_term }}</dt><dd>{{ row.term }}</dd></div>
         <div><dt>{{ t.list_status }}</dt><dd dir="auto">{{ row.status }}</dd></div>

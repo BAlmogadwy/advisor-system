@@ -277,3 +277,59 @@
   font-size: max(12px, var(--text-sm));
   margin: 0 0 4px;
 }
+
+/* ── What the student can do on a case ────────────────────────── */
+
+/* "Was the answer helpful?" side by side: two short answers, one row. */
+.ttf-choice-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* A point's own action: a text link at the point's foot, its 44px target
+   from the padding, never from a larger font. */
+.ttf-point-action {
+  display: inline-block;
+  font-size: max(12px, var(--text-sm));
+  font-weight: 600;
+  min-height: 44px;
+  padding-block: 12px;
+}
+
+/* ── Something the student has not seen ───────────────────────── */
+
+/* Said in words; the dot only repeats them, so colour is never the only sign. */
+.ttf-unread {
+  align-items: center;
+  color: var(--sev-info);
+  display: inline-flex;
+  font-size: max(12px, var(--text-sm));
+  font-weight: 700;
+  gap: 6px;
+  margin-inline-start: 6px;
+}
+
+.ttf-unread-dot {
+  background: var(--sev-info);
+  border-radius: var(--radius-full);
+  display: inline-block;
+  flex: none;
+  height: 8px;
+  width: 8px;
+}
+
+/* The home page's lead for this term's feedback: an info tint, not an alarm. */
+.ttf-banner {
+  background: var(--sev-info-bg);
+  border: 1px solid var(--sev-info);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius);
+  color: var(--t0);
+  padding: 12px 16px;
+}
+
+.ttf-banner-title {
+  color: var(--t0);
+  font-size: var(--text-md);
+  font-weight: 700;
+  margin: 0 0 6px;
+}

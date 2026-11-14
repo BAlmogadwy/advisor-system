@@ -26,6 +26,24 @@ answer stands: the case is closed, and the new point opens a new case.
 The student is always identified by the session and the case by its reference,
 together, in the query: another student's reference is simply not found.
 
+Each action's own check of the case (the status it needs, a follow-up left, a
+point other than the last, an answer still inside its window) is one function,
+called by the action under the case's row lock and by `student_action_refusal`
+without it. A page asks that before it offers the action, so it offers only what
+the action will take.
+
+WHAT THE STUDENT HAS NOT SEEN
+
+A case is unread while ``last_student_visible_at`` is later than
+``student_seen_at``. Every staff or system write the student can see (a message
+to them, a request for information, an answer, a closing) sets
+``last_student_visible_at`` to its ``now`` inside its own claim, and never moves
+it back: it takes the later of the stored value and its ``now`` (GREATEST in
+SQL), or a write that took its ``now`` early and committed late could land behind
+a look already marked, and never show as new. The student's own actions never set
+it. Opening the case moves ``student_seen_at`` up to the value the page read,
+never to the clock, and never back.
+
 Staff moves and the system's closing commands use the same tables and the same
 claim; they land with the advisor queue and the lifecycle commands.
 """
@@ -34,13 +52,13 @@ from __future__ import annotations
 
 import unicodedata
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F, QuerySet
+from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 
 from core.models import (
@@ -187,8 +205,14 @@ def answer_window_passed(case: TimetableFeedback, now: datetime) -> bool:
     lifecycle command will close the rest. Staff must set ``answered_at`` with
     every answer. A case marked answered without it (set by hand, say) is timed
     from its last change: neither refused outright nor open for ever."""
+    return now > reopen_until(case)
+
+
+def reopen_until(case: TimetableFeedback) -> datetime:
+    """The last moment an answer can still be reopened: the end of its window,
+    which the pages show as a date."""
     answered_at = case.answered_at or case.updated_at
-    return now - answered_at > timedelta(days=settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS)
+    return answered_at + timedelta(days=settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS)
 
 
 def close_settled_answer(case: TimetableFeedback, *, now: datetime) -> None:
@@ -332,6 +356,143 @@ def _event(case: TimetableFeedback, kind: str, **fields: Any) -> TimetableFeedba
     return TimetableFeedbackEvent.objects.create(case=case, kind=kind, **fields)
 
 
+# What each action needs of the case, in the order the action checks it. Each
+# raises the action's own refusal; ``point_id`` matters to withdraw_point only.
+
+
+def _check_reply(case: TimetableFeedback, now: datetime, point_id: uuid.UUID | None) -> None:
+    if case.status != S.NEEDS_INFORMATION:
+        raise WorkflowRefused("NOT_ALLOWED")
+
+
+def follow_ups_used(case: TimetableFeedback) -> int:
+    """Follow-ups the student has added to ``case`` over its whole life."""
+    return case.events.filter(kind=TimetableFeedbackEvent.Kind.STUDENT_FOLLOWUP).count()
+
+
+def _point_uuid(value: object) -> uuid.UUID:
+    """A point id as sent, or POINT_NOT_FOUND for text that cannot be one."""
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        raise WorkflowRefused("POINT_NOT_FOUND", status=404) from None
+
+
+def _check_follow_up(case: TimetableFeedback, now: datetime, point_id: uuid.UUID | None) -> None:
+    if case.status not in FOLLOW_UP_STATUSES:
+        raise WorkflowRefused("NOT_ALLOWED")
+    if follow_ups_used(case) >= MAX_FOLLOW_UPS:
+        raise WorkflowRefused("TOO_MANY_FOLLOW_UPS")
+
+
+def _check_withdraw_point(
+    case: TimetableFeedback, now: datetime, point_id: uuid.UUID | None
+) -> None:
+    """With no ``point_id``: whether some point of the case could be withdrawn."""
+    if case.status not in POINT_WITHDRAWAL_STATUSES:
+        raise WorkflowRefused("NOT_ALLOWED")
+    live = case.points.filter(withdrawn_at__isnull=True)
+    if point_id is not None and not live.filter(pk=point_id).exists():
+        raise WorkflowRefused("POINT_NOT_FOUND", status=404)
+    if live.count() <= 1:
+        raise WorkflowRefused("LAST_POINT")
+
+
+def _check_withdraw_case(
+    case: TimetableFeedback, now: datetime, point_id: uuid.UUID | None
+) -> None:
+    if not may_move(STUDENT, case.status, S.WITHDRAWN):
+        raise WorkflowRefused("NOT_ALLOWED")
+
+
+def _check_confirm_answer(
+    case: TimetableFeedback, now: datetime, point_id: uuid.UUID | None
+) -> None:
+    if case.status != S.ANSWERED:
+        raise WorkflowRefused("NOT_ALLOWED")
+
+
+def _check_reopen_answer(
+    case: TimetableFeedback, now: datetime, point_id: uuid.UUID | None
+) -> None:
+    if case.status != S.ANSWERED:
+        raise WorkflowRefused("NOT_ALLOWED")
+    if answer_window_passed(case, now):
+        raise WorkflowRefused("REOPEN_WINDOW_PASSED")
+
+
+_STUDENT_CHECKS: Mapping[str, Callable[[TimetableFeedback, datetime, uuid.UUID | None], None]] = {
+    "reply": _check_reply,
+    "follow_up": _check_follow_up,
+    "withdraw_point": _check_withdraw_point,
+    "withdraw_case": _check_withdraw_case,
+    "confirm_answer": _check_confirm_answer,
+    "reopen_answer": _check_reopen_answer,
+}
+
+
+def student_action_refusal(
+    case: TimetableFeedback,
+    action: str,
+    *,
+    now: datetime | None = None,
+    point_id: object = None,
+) -> WorkflowRefused | None:
+    """Why the student's ``action`` would be refused on ``case`` now, or None.
+
+    Read-only, and the very check the action makes under its lock, so a page
+    offers an action only where it would be taken. What no page can foresee is
+    left out: the rate limit, the text the student has yet to write, and a case
+    that changes between this read and the action. For withdraw_point without a
+    ``point_id`` it answers for the case: whether a point other than the last is
+    live.
+    """
+    try:
+        wanted = None if point_id is None else _point_uuid(point_id)
+        _STUDENT_CHECKS[action](case, now or timezone.now(), wanted)
+    except WorkflowRefused as refused:
+        return refused
+    return None
+
+
+def waits_on_student(case: TimetableFeedback, now: datetime) -> bool:
+    """Whether the case can move on only when the student acts: a request for
+    information to answer, or an answer to accept or reopen while it still can be."""
+    if case.status == S.NEEDS_INFORMATION:
+        return True
+    return case.status == S.ANSWERED and not answer_window_passed(case, now)
+
+
+def unread_q() -> Q:
+    """Cases where something the student may read appeared after they last looked."""
+    return Q(last_student_visible_at__isnull=False) & (
+        Q(student_seen_at__isnull=True) | Q(last_student_visible_at__gt=F("student_seen_at"))
+    )
+
+
+def has_unread(case: TimetableFeedback) -> bool:
+    """`unread_q` for a case already read."""
+    visible = case.last_student_visible_at
+    seen = case.student_seen_at
+    return visible is not None and (seen is None or visible > seen)
+
+
+def mark_seen(case: TimetableFeedback) -> None:
+    """Record that the student saw ``case`` as it was read.
+
+    The mark is the ``last_student_visible_at`` the page read, not the clock, so a
+    write that lands while the page renders stays unread. It only moves forward,
+    and it is a plain UPDATE of that one column: the version and ``updated_at``
+    stay as they were, so no claim made since the read is refused for it and no
+    window timed from ``updated_at`` moves."""
+    seen = case.last_student_visible_at
+    if seen is None:
+        return
+    TimetableFeedback.objects.filter(pk=case.pk, student_id=case.student_id).filter(
+        Q(student_seen_at__isnull=True) | Q(student_seen_at__lt=seen)
+    ).update(student_seen_at=seen)
+
+
 def reply(
     *, student_id: int, reference: object, body: object, now: datetime | None = None
 ) -> TimetableFeedbackMessage:
@@ -342,8 +503,7 @@ def reply(
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
-        if case.status != S.NEEDS_INFORMATION:
-            raise WorkflowRefused("NOT_ALLOWED")
+        _check_reply(case, now, None)
         target = reopen_target(case)
         cas_transition(
             _student_scope(student_id),
@@ -373,12 +533,7 @@ def follow_up(
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
-        if case.status not in FOLLOW_UP_STATUSES:
-            raise WorkflowRefused("NOT_ALLOWED")
-        if case.events.filter(kind=TimetableFeedbackEvent.Kind.STUDENT_FOLLOWUP).count() >= (
-            MAX_FOLLOW_UPS
-        ):
-            raise WorkflowRefused("TOO_MANY_FOLLOW_UPS")
+        _check_follow_up(case, now, None)
         cas_transition(
             _student_scope(student_id),
             case,
@@ -398,21 +553,11 @@ def withdraw_point(
     never withdrawn alone: an empty case in an advisor's queue helps nobody, so the
     case is withdrawn instead."""
     now = now or timezone.now()
-    try:
-        wanted = uuid.UUID(str(point_id))
-    except (TypeError, ValueError):
-        raise WorkflowRefused("POINT_NOT_FOUND", status=404) from None
+    wanted = _point_uuid(point_id)
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
-        if case.status not in POINT_WITHDRAWAL_STATUSES:
-            raise WorkflowRefused("NOT_ALLOWED")
-        live = case.points.filter(withdrawn_at__isnull=True)
-        point = live.filter(pk=wanted).first()
-        if point is None:
-            raise WorkflowRefused("POINT_NOT_FOUND", status=404)
-        if live.count() <= 1:
-            raise WorkflowRefused("LAST_POINT")
+        _check_withdraw_point(case, now, wanted)
         cas_transition(
             _student_scope(student_id),
             case,
@@ -420,8 +565,8 @@ def withdraw_point(
             now=now,
             last_student_activity_at=now,
         )
-        live.filter(pk=point.pk).update(withdrawn_at=now)
-        _event(case, TimetableFeedbackEvent.Kind.POINT_WITHDRAWN, point_id=point.pk)
+        case.points.filter(pk=wanted, withdrawn_at__isnull=True).update(withdrawn_at=now)
+        _event(case, TimetableFeedbackEvent.Kind.POINT_WITHDRAWN, point_id=wanted)
 
 
 def withdraw_case(*, student_id: int, reference: object, now: datetime | None = None) -> None:
@@ -430,6 +575,7 @@ def withdraw_case(*, student_id: int, reference: object, now: datetime | None = 
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
+        _check_withdraw_case(case, now, None)
         before = case.status
         cas_transition(
             _student_scope(student_id),
@@ -455,8 +601,7 @@ def confirm_answer(
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
-        if case.status != S.ANSWERED:
-            raise WorkflowRefused("NOT_ALLOWED")
+        _check_confirm_answer(case, now, None)
         cas_transition(
             _student_scope(student_id),
             case,
@@ -485,10 +630,7 @@ def reopen_answer(
     _spend(student_id, now)
     with transaction.atomic():
         case = _own_case(student_id, reference)
-        if case.status != S.ANSWERED:
-            raise WorkflowRefused("NOT_ALLOWED")
-        if answer_window_passed(case, now):
-            raise WorkflowRefused("REOPEN_WINDOW_PASSED")
+        _check_reopen_answer(case, now, None)
         target = reopen_target(case)
         cas_transition(
             _student_scope(student_id),

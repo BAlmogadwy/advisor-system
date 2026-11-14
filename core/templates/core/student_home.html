@@ -5,7 +5,7 @@
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}{% endblock %}
 
-{% block extra_css %}{% if feedback_entry %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endif %}{% endblock %}
+{% block extra_css %}{% if feedback_entry %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=2">{% endif %}{% endblock %}
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: <bdi dir="ltr">{{ student_id }}</bdi></span>
@@ -33,6 +33,19 @@
     </form>
   </div>
 {% else %}
+
+{% if feedback_entry and feedback_entry.banner %}
+{% comment %}What this term's feedback waits on the student for, or has that they have
+not seen: a request for information, an answer, or anything new. It offers no new
+feedback, so it shows whatever the flags say about sending more.{% endcomment %}
+<section class="ttf-banner mb-3" id="student-home-feedback-banner" aria-labelledby="student-feedback-banner-title" data-kind="{{ feedback_entry.banner.kind }}">
+  <h2 class="ttf-banner-title" id="student-feedback-banner-title">{{ feedback_entry.banner.title }}</h2>
+  <p class="mb-2" dir="auto">{{ feedback_entry.banner.body }}</p>
+  <div class="student-page-actions ttf-actions">
+    <a class="btn btn-primary" href="{{ feedback_entry.banner.url }}">{{ feedback_entry.banner.link }}</a>
+  </div>
+</section>
+{% endif %}
 
 <nav class="student-course-jumps student-home-jumps mb-3" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقسام الصفحة{% else %}Page sections{% endif %}">
   <a href="#student-home-summary">{% if LANGUAGE_CODE == 'ar' %}الملخص الأكاديمي{% else %}Academic summary{% endif %}</a>
@@ -203,7 +216,7 @@
       <div class="student-feedback-entry" id="student-home-feedback">
         {% if feedback_entry.registered_notice %}<p class="student-guidance-note" dir="auto">{{ feedback_entry.registered_notice }}</p>{% endif %}
         {% if feedback_entry.open_case %}
-          <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>
+          <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}{% if feedback_entry.open_case.unread %} <span class="ttf-unread"><span class="ttf-unread-dot" aria-hidden="true"></span>{{ feedback_entry.t.unread }}</span>{% endif %}</p>
           <div class="student-page-actions">
             <a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>
             {% if feedback_entry.open_case.can_add %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_add_point }}</a>
@@ -310,7 +323,7 @@ who said no timetable was prepared, or one whose expected timetable has gone.{% 
   <div class="student-home-section-head mb-2">
     <h2 class="student-section-title mb-0" id="student-feedback-case-title">{{ feedback_entry.t.home_case_title }}</h2>
   </div>
-  <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>
+  <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}{% if feedback_entry.open_case.unread %} <span class="ttf-unread"><span class="ttf-unread-dot" aria-hidden="true"></span>{{ feedback_entry.t.unread }}</span>{% endif %}</p>
   <div class="student-page-actions student-feedback-entry">
     <a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>
   </div>

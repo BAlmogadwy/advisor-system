@@ -199,9 +199,14 @@ def test_the_deck_uses_the_portal_glossary():
 
 
 def test_the_sidebar_link_reads_like_the_deck():
+    """The sidebar writes its words inline, as every sidebar link does; the deck is
+    what they are checked against, the count's words included."""
     sidebar = (ROOT / "core/templates/core/partials/sidebar.html").read_text(encoding="utf-8")
     english, arabic = copy.STRINGS["nav"]
     assert english in sidebar and arabic in sidebar
+    for words in copy.STRINGS["nav_unread"]:
+        before, after = words.split("{count}")
+        assert f"{before}{{{{ timetable_feedback_unread }}}}{after}" in sidebar, words
 
 
 # ---------------------------------------------------------------------------

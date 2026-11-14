@@ -194,6 +194,7 @@
     <a class="nav-a nav-link{% if '/student/timetable-feedback/' in request.path %} active{% endif %}" href="{% url 'student_timetable_feedback_list' %}" tabindex="0"{% if '/student/timetable-feedback/' in request.path %} aria-current="page"{% endif %}>
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3h6v3H9z"/><path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M8 12h8M8 16h5"/></svg></span>
       {% if LANGUAGE_CODE == 'ar' %}ملاحظاتي على الجدول{% else %}My timetable feedback{% endif %}
+      {% if timetable_feedback_unread %}{% comment %}How many cases hold something new: the number is drawn for the eye, and the words are what a screen reader reads.{% endcomment %}<span class="nav-badge" aria-hidden="true">{{ timetable_feedback_unread }}</span><span class="visually-hidden"> ({% if LANGUAGE_CODE == 'ar' %}جديد: {{ timetable_feedback_unread }}{% else %}New: {{ timetable_feedback_unread }}{% endif %})</span>{% endif %}
     </a>
     {% endif %}
     <a class="nav-a nav-link" href="{% url 'student_advisor' %}" tabindex="0">
