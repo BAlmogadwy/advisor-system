@@ -152,7 +152,9 @@ class LensTests(WorkspaceBrowserMixin, StaticLiveServerTestCase):
                     reads = [
                         url for url in self.requested if "/quality/" in url or "/plan-lens/" in url
                     ]
-                    lens_reads = [url for url in reads if url.endswith("/quality/?lens=1")]
+                    lens_reads = [
+                        url for url in reads if url.endswith("/quality/?blockers=1&lens=1")
+                    ]
                     if len(lens_reads) != 1 or any("/plan-lens/" in url for url in reads):
                         found.append(f"reads: {reads}")
                     if sent or errors:

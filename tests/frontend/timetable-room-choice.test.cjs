@@ -217,7 +217,8 @@ test("a room in use, or outside the programme rooms, is worded and toned as the 
       { IS_AR: arabic, pluralAr: w.pluralAr });
     const label = kind => page.ISSUE_KINDS[kind][arabic ? 'ar' : 'en'];
     const own = w.TimetableRoomChoice.words(arabic);
-    assert.deepEqual(plain(own.toneLead), plain(page.TONE_LEAD));
+    // The tones a room choice can have, worded as Issues words them.
+    assert.deepEqual(plain(own.toneLead), plain(Object.fromEntries(Object.keys(own.toneLead).map(k => [k, page.TONE_LEAD[k]]))));
     // The room kinds, in Issues' order (5c-audit added "Room too small").
     assert.deepEqual(Object.keys(own.kinds), ['room', 'roomSmall', 'roomUnsuitable', 'roomElsewhere']);
     assert.deepEqual(plain(page.ISSUE_KIND_ORDER.filter(kind => kind in own.kinds)), Object.keys(own.kinds));
