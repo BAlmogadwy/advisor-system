@@ -544,6 +544,17 @@ def test_news_is_marked_on_the_list_the_sidebar_and_the_home_card_until_opened(w
     assert "ttf-unread" not in _html(_get(client, LIST)).split("<main", 1)[1]
 
 
+def test_a_refused_action_marks_the_case_seen_as_its_page_shows_it(world):
+    """A refusal redraws the whole case, the news included, so it is seen too, and
+    the sidebar on that same page no longer counts it."""
+    client, case = _case_in(world, "NEEDS_INFORMATION")
+    at = _news(case)
+    response = _post(client, _url("reply", case), {"body": "  "})
+    assert response.status_code == 400
+    assert _badge(_html(response)) is None
+    assert TimetableFeedback.objects.get(pk=case.pk).student_seen_at == at
+
+
 def test_opening_a_case_marks_it_without_disturbing_any_claim(world):
     client, case = _case_in(world, "IN_REVIEW")
     _news(case)

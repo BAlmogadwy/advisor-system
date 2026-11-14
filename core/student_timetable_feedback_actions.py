@@ -94,6 +94,8 @@ def _refused(
             request, language, status=404, message=copy.refusal("CASE_NOT_FOUND", language)
         )
     case.refresh_from_db()
+    # The page shows the whole case again, so it is seen, as on a plain visit.
+    workflow.mark_seen(case)
     error = {
         "field": field if refused.code in _TEXT_CODES else "",
         "html": copy.refusal(refused.code, language, retry_after=refused.retry_after),

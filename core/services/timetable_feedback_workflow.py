@@ -37,9 +37,12 @@ WHAT THE STUDENT HAS NOT SEEN
 A case is unread while ``last_student_visible_at`` is later than
 ``student_seen_at``. Every staff or system write the student can see (a message
 to them, a request for information, an answer, a closing) sets
-``last_student_visible_at`` to its ``now`` inside its own claim; the student's own
-actions never do. Opening the case moves ``student_seen_at`` up to the value the
-page read, never to the clock, and never back.
+``last_student_visible_at`` to its ``now`` inside its own claim, and never moves
+it back: it takes the later of the stored value and its ``now`` (GREATEST in
+SQL), or a write that took its ``now`` early and committed late could land behind
+a look already marked, and never show as new. The student's own actions never set
+it. Opening the case moves ``student_seen_at`` up to the value the page read,
+never to the clock, and never back.
 
 Staff moves and the system's closing commands use the same tables and the same
 claim; they land with the advisor queue and the lifecycle commands.
