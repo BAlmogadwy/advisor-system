@@ -430,7 +430,7 @@ const OVERLAP_LABELS = {
   en: { critical: 'Blocks publishing', warning: 'Lowers quality', criticalKind: 'Time clash', warningKind: 'Overlap students can route round' },
   ar: { critical: 'يمنع النشر', warning: 'يُضعف الجودة', criticalKind: 'تعارض زمني', warningKind: 'تداخل يمكن تجاوزه' },
 };
-for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning on the board button, cards, Issues and MRI (${arabic ? 'ar' : 'en'})`, async t => {
+for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning on the board button and MRI, and is never listed in Issues (${arabic ? 'ar' : 'en'})`, async t => {
   const at = (id, day) => ({ ...placement, id, term_section_id: id + 100, course_code: `AI${id}`, day, room: '' });
   const overlap = (ids, severity) => ({ ids, sections: ids.map(id => `AI${id}-S1`), detail: `${ids[0]} vs ${ids[1]}`,
     severity, same_course: false, shared_students: 30, blocked_students: severity === 'critical' ? 30 : 0 });
@@ -445,9 +445,8 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
   assert.deepEqual([flag.dataset.tone, flag.textContent], ['critical', '1']);
   const card = id => h.d.querySelector(`.tw-card[data-placement-id="${id}"]`);
   assert.ok(card(10).classList.contains('critical'));
-  assert.ok(card(12).classList.contains('warning'));
-  assert.equal(card(12).classList.contains('critical'), false);
-  assert.ok(card(12).title.startsWith(`${label.warning}: ${label.warningKind}`), card(12).title);
+  // Students route round it, so it costs nobody a seat: its cards are not toned.
+  assert.deepEqual([card(12).classList.contains('warning'), card(12).classList.contains('critical')], [false, false]);
   h.w.renderRightPanel('issues');
   const issue = text => {
     const head = [...h.d.querySelectorAll('#twRightBody .tw-issue-head')].find(node => node.children[1]?.textContent === text);
@@ -457,8 +456,10 @@ for (const arabic of [false, true]) test(`a non-blocking overlap stays a warning
     return [head.dataset.tone, head.querySelector('.tw-issue-count').textContent, row.dataset.tone, row.querySelector('.tw-issue-kind').textContent, row.querySelector('.tw-issue-subject').textContent];
   };
   assert.deepEqual(issue(label.critical), ['critical', '1', 'critical', label.criticalKind, 'AI10-S1 / AI11-S1']);
-  // Lowers quality: the overlap, and the quality fixture's room too small for AI10.
-  assert.deepEqual(issue(label.warning), ['warning', '2', 'warning', label.warningKind, 'AI12-S1 / AI13-S1']);
+  // Lowers quality: only the quality fixture's room too small for AI10; the
+  // overlap students route round is not listed at all.
+  assert.deepEqual(issue(label.warning).slice(0, 2), ['warning', '1']);
+  assert.doesNotMatch(h.d.getElementById('twRightBody').textContent, new RegExp(`AI12-S1|${label.warningKind}`));
   // With only the warning left, the MRI panel counts no critical and paints it amber.
   h.w.TW.conflicts = { ...conflicts, summary: { critical: 0, warning: 1 }, overlaps: [conflicts.overlaps[1]] };
   h.w.renderRightPanel('mri');
@@ -655,16 +656,18 @@ test('a failed conflicts refresh on the same board shows them as not loaded, not
   const h = await harness(t, url => {
     if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     if (fail && url === '/ops/tw/boards/2/conflicts/') return { httpError: 500, error: { message: 'Conflicts failed' } };
+    if (url === '/ops/tw/boards/2/conflicts/') return { summary: { critical: 1, warning: 0 }, instructor_clashes: [], room_clashes: [], cross_board_conflicts: [],
+      overlaps: [{ ids: [91, 92], sections: ['AI91-S1', 'AI91-S2'], severity: 'critical', same_course: true, shared_students: 0 }] };
     return undefined;
   });
   await h.select();
-  assert.equal(h.d.getElementById('twIssuesCount').textContent, '1', 'its undersized room');
-  assert.match(h.d.getElementById('twRightBody').textContent, /CS323 ↔ FE2/, 'the cross-board pair is listed while known');
+  assert.equal(h.d.getElementById('twIssuesCount').textContent, '1', 'the blocking clash');
+  assert.match(h.d.getElementById('twRightBody').textContent, /AI91-S1 \/ AI91-S2/, 'the clash is listed while known');
   fail = true;
   await h.w.selectBoard(2);
   const body = h.d.getElementById('twRightBody').textContent;
   assert.match(body, /This board’s clashes are not loaded/);
-  assert.doesNotMatch(body, /CS323 ↔ FE2/, 'the earlier clash is not listed as current');
+  assert.doesNotMatch(body, /AI91-S1/, 'the earlier clash is not listed as current');
   assert.equal(h.d.getElementById('twIssuesCount').textContent, '1', 'the room, from the quality check, still counts');
 });
 
@@ -812,13 +815,86 @@ test('a check older than the last edit lists its rows as being checked and tones
   assert.match(text, /they are being checked/);
 });
 
-test('a cross-board pair at the publish line lowers quality; below it, it is context and never counted', async t => {
+// A pair of sections students need both of, with another board, costs nobody
+// a seat unless the seating says so: who it does leave out is the
+// registration group's. So it is never listed, counted or toned, at the
+// publish line or below it.
+test('a cross-board pair is never listed, counted or toned, at the publish line or below it', async t => {
   const pair = n => ({ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: n, board_a_label: 'Term 7', board_b_label: 'Term 8' });
-  for (const [n, expected] of [[20, ['1', 'warning', 'warning']], [19, ['', '', '']]]) {
+  for (const n of [20, 19]) {
     const h = await modelHarness(t, { placements: [at(10)], conflicts: { ...quiet, cross_board_conflicts: [pair(n)] } });
     await h.select();
-    assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone || '', tone(h, 10)], expected, `overlap ${n}`);
-    assert.match(issuesText(h), n >= 20 ? /Lowers quality1Overlap with another board/ : /For context1Possible overlap with another board/);
+    assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone || '', tone(h, 10)], ['', '', ''], `overlap ${n}`);
+    assert.doesNotMatch(issuesText(h), /AI10 ↔ FE2|another board/, `overlap ${n}`);
+  }
+});
+
+/* Who cannot register (the quality check's `registration_blockers`, asked with
+   `blockers=1`): the first group, one row per course drawn on this board or
+   blocked by a section drawn on it, in the server's order. */
+const blockersQ = courses => ({ ...noRooms, registration_blockers: { assessed: true, students: 9, requests: 9, courses } });
+const stuck = (code, students, extra = {}) => ({ course_key: code, course_code: code, students, reasons: { all_clash: students },
+  placements: [], blocked_by: [], blocked_by_more: 0, ...extra });
+const blockedBy = (code, section, students, every, placements) => ({ course_key: code, course_code: code, section, students, every_section: every, placements });
+const term8 = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
+const registrationRows = h => [...h.d.querySelectorAll('#twRightBody .tw-issue-group[data-group="registration"] .tw-issue-row')];
+
+test('the first Issues group is who cannot register, why, and the section that blocks them', async t => {
+  const q = blockersQ([
+    // Drawn here, blocked on every section by a section on another board; a
+    // section that blocks only some is not named beside it.
+    stuck('AI10', 8, { placements: [{ id: 10, board_id: 2 }], blocked_by: [
+      blockedBy('DS331', 'S1', 8, 8, [{ id: 99, board_id: 3 }]), blockedBy('MATH243', 'S2', 3, 0, [{ id: 98, board_id: 3 }])] }),
+    // Full: the seats it needs.
+    stuck('AI12', 5, { reasons: { full: 5 }, placements: [{ id: 12, board_id: 2 }] }),
+    // On another board, blocked by nothing drawn here: that board's.
+    stuck('AI55', 4, { placements: [{ id: 55, board_id: 3 }] }),
+    // On another board, blocked by a section drawn here: listed here.
+    stuck('AI77', 2, { placements: [{ id: 77, board_id: 3 }], blocked_by: [blockedBy('AI11', 'S1', 2, 0, [{ id: 11, board_id: 2 }])], blocked_by_more: 1 }),
+    // No section placed: drawn nowhere, so every board says it.
+    stuck('AI90', 1, { reasons: { no_sections: 1 } }),
+  ]);
+  const h = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON' }), at(12, { day: 'TUE' })], boards: [board, term8], q });
+  await h.select();
+  assert.match(issuesText(h), /^Students can’t register4/, 'the first group, counting its courses');
+  assert.deepEqual(registrationRows(h).map(r => [...r.children].map(c => c.textContent)), [
+    ['Every section clashes', 'AI10 · 8 students', 'Blocked by DS331 S1 (Term 8)'],
+    ['Sections full', 'AI12 · 5 students', 'needs 5 seats'],
+    ['Every section clashes', 'AI77 · 2 students', 'Clashes with AI11 S1 +1 more'],
+    ['No section placed', 'AI90 · 1 student'],
+  ]);
+  // The badge counts them as it counts what blocks publishing, and they tone no card.
+  assert.deepEqual([h.d.getElementById('twIssuesCount').textContent, h.d.getElementById('twIssuesCount').dataset.tone], ['4', 'critical']);
+  assert.deepEqual([tone(h, 10), tone(h, 11), tone(h, 12)], ['', '', '']);
+  assert.deepEqual([10, 11, 12].map(id => card(h, id).querySelector('.tw-card-tone').hidden), [true, true, true], 'no tone mark either');
+  // A row shows the course and its blockers drawn on this board.
+  registrationRows(h)[0].click();
+  await settle();
+  assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId), ['10']);
+  registrationRows(h)[2].click();
+  await settle();
+  assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId), ['11']);
+  assert.equal(registrationRows(h)[3].tagName, 'DIV', 'a course drawn nowhere has nothing to show');
+  assert.deepEqual(h.errors, []);
+});
+
+test('Arabic: who cannot register, counted by the plural; a check older than the data marks its rows', async t => {
+  const q = blockersQ([stuck('AI10', 2, { placements: [{ id: 10, board_id: 2 }], blocked_by: [blockedBy('AI11', 'S1', 2, 2, [{ id: 11, board_id: 2 }])] })]);
+  const h = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON' })], q, arabic: true });
+  await h.select();
+  assert.match(issuesText(h), /^طلاب لا يستطيعون التسجيل1/);
+  assert.deepEqual(registrationRows(h).map(r => [...r.children].map(c => c.textContent)), [['كل شعبه متعارضة', 'AI10 · طالبان', 'بسبب AI11 S1']]);
+  h.w.TW.dataVersion++;  // an edit: the check now describes older data
+  h.w.renderRightPanel('issues');
+  assert.match(registrationRows(h)[0].querySelector('.tw-issue-kind').textContent, /^كل شعبه متعارضة · ./);
+});
+
+test('an older server, or a check that could not name them, lists no one', async t => {
+  const failed = { ...noRooms, registration_blockers: { assessed: false, students: null, requests: null, courses: [], reason: 'assessment_failed' } };
+  for (const q of [noRooms, failed]) {
+    const h = await modelHarness(t, { placements: [at(10)], q });
+    await h.select();
+    assert.doesNotMatch(issuesText(h), /can’t register/);
   }
 });
 
@@ -907,14 +983,13 @@ test('the open board’s flag keeps the list’s clash count while its own clash
   assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"] .ux-seg-flag').textContent, '4');
 });
 
-test('an issue row takes the user to its sections, on another board too; a meeting off the grid is found in its strip', async t => {
+test('an issue row takes the user to its sections; a meeting off the grid is found in its strip', async t => {
   const other = { ...board, id: 3, label: 'Term 8', nominal_term: 8 };
-  const pair = { board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: 25, board_a_label: 'Term 7', board_b_label: 'Term 8' };
   const h = await harness(t, url => {
     if (url.startsWith('/ops/tw/boards/?')) return { boards: [board, other] };
     if (url === '/ops/tw/boards/2/') return { placements: [at(10), at(11), at(12, { day: 'MON', start_time: '18:30', end_time: '19:45' })], slot_config: scenario.slot_config };
     if (url === '/ops/tw/boards/3/') return { placements: [at(99)], slot_config: scenario.slot_config };
-    if (url === '/ops/tw/boards/2/conflicts/') return { ...quiet, hard_overlap_threshold: 20, room_clashes: [{ ids: [10, 11], room: 'R1', sections: ['AI10-S1', 'AI11-S1'] }], cross_board_conflicts: [pair] };
+    if (url === '/ops/tw/boards/2/conflicts/') return { ...quiet, hard_overlap_threshold: 20, room_clashes: [{ ids: [10, 11], room: 'R1', sections: ['AI10-S1', 'AI11-S1'] }] };
     if (url.includes('/conflicts/')) return quiet;
     if (url.includes('/quality/')) return noRooms;
     return undefined;
@@ -931,9 +1006,6 @@ test('an issue row takes the user to its sections, on another board too; a meeti
   row('Room double-booked').click();
   await settle();
   assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId).sort(), ['10', '11']);
-  row('Overlap with another board').click();
-  await wait(() => h.w.TW.loadedBoardId === 3);
-  await wait(() => h.d.querySelector('.tw-card.highlight[data-placement-id="99"]'));
 });
 
 test('rooms are words everywhere, and those are the words the filter finds', async t => {
@@ -1066,7 +1138,7 @@ test('LN8 two courses sharing a code are told apart: colour by key, and named on
   // with the quality read, after the board is first drawn.
   let courses = { 'CS112::PROGRAMMING_I': {}, 'CS112::PROGRAMMING_II': {} };
   const h = await harness(t, url => url === '/ops/tw/boards/2/' ? { placements, slot_config: scenario.slot_config }
-    : url.includes('/quality/') && url.endsWith('?lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses } }
+    : url.includes('/quality/') && url.endsWith('lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses } }
     : url.includes('/conflicts/') ? quiet : url.includes('/quality/') ? noRooms : undefined);
   const draws = [];
   const draw = h.w.renderGridWithSlots;
@@ -1116,25 +1188,25 @@ test('a located card lets go without an animation too, and a second locate is ne
 });
 
 /* ── Inspector (design record §7.2, PR 4a) ── */
-test('Issues groups open and close, context starts closed, and a choice survives every redraw', async t => {
-  const pair = n => ({ board_a_id: 2, board_b_id: 3, placement_a_id: 10, placement_b_id: 99, section_a: 'AI10', section_b: 'FE2', overlap_count: n, board_a_label: 'Term 7', board_b_label: 'Term 8' });
+test('Issues groups open and close, and a choice survives every redraw', async t => {
   const h = await modelHarness(t, { placements: [at(10, { room: 'UNASSIGNED', room_state: 'unassigned' })],
-    conflicts: { ...quiet, cross_board_conflicts: [pair(5)] } });
+    q: { ...noRooms, registration_blockers: { assessed: true, students: 3, requests: 3, courses: [
+      { course_key: 'AI10', course_code: 'AI10', students: 3, reasons: { full: 3 }, placements: [{ id: 10, board_id: 2 }], blocked_by: [], blocked_by_more: 0 }] } } });
   await h.select();
   h.w.sessionStorage.clear();
   h.w.renderRightPanel('issues');
-  const toggle = tone => h.d.querySelector(`#twRightBody .tw-issue-head[data-tone="${tone}"]`);
-  const region = tone => h.d.getElementById(toggle(tone).getAttribute('aria-controls'));
-  assert.deepEqual([toggle('critical').getAttribute('aria-expanded'), region('critical').hidden], ['true', false]);
-  assert.deepEqual([toggle('info').getAttribute('aria-expanded'), region('info').hidden], ['false', true], 'context starts closed');
-  assert.equal(toggle('info').querySelector('.tw-issue-count').textContent, '1', 'its count shows while closed');
+  const toggle = group => h.d.querySelector(`#twRightBody .tw-issue-group[data-group="${group}"] .tw-issue-head`);
+  const region = group => h.d.getElementById(toggle(group).getAttribute('aria-controls'));
+  const state = group => [toggle(group).getAttribute('aria-expanded'), region(group).hidden];
+  assert.deepEqual([state('registration'), state('critical')], [['true', false], ['true', false]], 'both start open');
+  assert.equal(toggle('registration').dataset.tone, 'critical', 'it looks like what blocks publishing');
   toggle('critical').click();
-  assert.deepEqual([toggle('critical').getAttribute('aria-expanded'), region('critical').hidden], ['false', true]);
+  assert.deepEqual([state('registration'), state('critical')], [['true', false], ['false', true]]);
   h.w.renderReadinessViews();  // a redraw: the user's choice holds
-  assert.deepEqual([toggle('critical').getAttribute('aria-expanded'), region('critical').hidden], ['false', true]);
-  toggle('info').click();
+  assert.deepEqual(state('critical'), ['false', true]);
+  toggle('registration').click();
   h.w.renderRightPanel('issues');
-  assert.equal(region('info').hidden, false);
+  assert.deepEqual(state('registration'), ['false', true]);
 });
 
 test('Selection lists the section’s own issues, its teacher by the rule, and tells 0 from unknown', async t => {
@@ -1307,7 +1379,7 @@ function viewHarness(t, { placements, labs = VIEW_LABS, lens = null, q = noRooms
     if (other && url === '/ops/tw/boards/3/') return { placements: other, slot_config: scenario.slot_config, lab_slot_config: labs };
     if (url.includes('/conflicts/')) return quiet;
     // The lens comes with the quality read that asks for it (6d).
-    if (url.includes('/quality/')) return lens && url.endsWith('?lens=1') ? { ...q, plan_lens: lens } : q;
+    if (url.includes('/quality/')) return lens && url.endsWith('lens=1') ? { ...q, plan_lens: lens } : q;
     if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     return undefined;
   }, {}, arabic);
@@ -2054,7 +2126,7 @@ async function markHarness(t, { sections = () => ({ 110: { actual_total: 38, act
   const seen = { posts: [], lens: 0, quality: 0, readiness: 0 };
   const h = await harness(t, async (url, opts) => {
     if (url === '/ops/tw/boards/2/') return { placements: rows, slot_config: scenario.slot_config };
-    if (url.includes('/quality/') && url.endsWith('?lens=1')) {
+    if (url.includes('/quality/') && url.endsWith('lens=1')) {
       seen.quality++;
       const n = ++seen.lens;
       if (hold.lens) await hold.lens(n);
@@ -2622,7 +2694,7 @@ async function lensHarness(t, { rows = lensRows(), answer = () => lensAnswer(), 
     if (url.includes('/conflicts/')) return quiet;
     if (url.includes('/readiness/')) return { readiness: { ready: true, blockers: [], warnings: [], blocker_items: [], warning_items: [] } };
     if (!url.includes('/quality/')) return undefined;
-    const lens = url.endsWith('/quality/?lens=1');
+    const lens = url.endsWith('lens=1');
     reads.push(lens ? 'lens' : 'plain');
     const n = reads.length;
     if (hold) await hold(n, lens);
@@ -2639,7 +2711,7 @@ const planLensReads = h => h.requests.filter(r => r.url.includes('/plan-lens/'))
 
 test('LN1 the lens comes with the quality read: on open, while the filter names a programme, never on a read of its own', async t => {
   const h = await lensHarness(t);
-  assert.deepEqual(h.requests.filter(r => r.url.includes('/quality/')).map(r => r.url), ['/ops/tw/scenarios/1/quality/?lens=1'],
+  assert.deepEqual(h.requests.filter(r => r.url.includes('/quality/')).map(r => r.url), ['/ops/tw/scenarios/1/quality/?blockers=1&lens=1'],
     'open: the first quality read brings the lens');
   await edit(h);
   assert.deepEqual(h.reads, ['lens', 'plain'], 'an edit with no programme in the filter: a plain read');
@@ -2682,7 +2754,7 @@ test('LN1b a scenario generated in place never shows the one before it: its boar
     if (url === '/ops/tw/boards/2/') return { placements: [at(10, { course_code: 'CS112', course_key: 'CS112::PROGRAMMING_I', course_name: 'Programming I' })], slot_config: scenario.slot_config };
     if (url.includes('/quality/')) {
       reads.push(url);
-      return url.endsWith('?lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses: url.includes('/scenarios/1/') ? courses : {} } } : noRooms;
+      return url.endsWith('lens=1') ? { ...noRooms, plan_lens: { plans: [], sections: {}, courses: url.includes('/scenarios/1/') ? courses : {} } } : noRooms;
     }
     if (url.includes('/conflicts/')) return quiet;
     return undefined;
@@ -2694,7 +2766,7 @@ test('LN1b a scenario generated in place never shows the one before it: its boar
   h.w.renderGridWithSlots = (...args) => { draw(...args); names.push(card(h, 10)?.querySelector('.tw-card-name')?.textContent || ''); };
   await h.w.runGenerate('classic', GENERATE);
   assert.deepEqual(names, [''], 'the new board is drawn without the old scenario’s lens');
-  assert.ok(reads.includes('/ops/tw/scenarios/7/quality/?lens=1'), JSON.stringify(reads));
+  assert.ok(reads.includes('/ops/tw/scenarios/7/quality/?blockers=1&lens=1'), JSON.stringify(reads));
   assert.deepEqual([h.w.TW.planLens.loaded, Object.keys(h.w.TW.planLens.courses)], [true, []], 'its own lens');
 });
 

@@ -160,12 +160,19 @@ class _Seated(NamedTuple):
     demands: list[StudentCourseDemand] | None = None
 
 
-def build_scenario_quality(scenario_id: int, *, with_lens: bool = False) -> dict[str, Any]:
+def build_scenario_quality(
+    scenario_id: int, *, with_lens: bool = False, with_blockers: bool = False
+) -> dict[str, Any]:
     """The scenario's quality; ``with_lens`` adds ``plan_lens`` as its last key.
 
     Without the lens the answer and its reads are exactly what they always
     were. With it, the quality keys are the same and the lens comes from the
     same seating, inside the same one-teacher scope.
+
+    ``with_blockers`` adds ``registration_blockers`` after the quality keys
+    (before any lens): who cannot register for which course and what blocks
+    them, read off the same seating (``timetable_registration_blockers``) for
+    one more read, the placements. Without it nothing changes.
     """
     from core.services.timetable_flags import is_one_teacher_active
 
@@ -173,11 +180,13 @@ def build_scenario_quality(scenario_id: int, *, with_lens: bool = False) -> dict
         from core.services.section_teacher_assignment import assignment_scope
 
         with assignment_scope(scenario_id):  # one teacher map for the whole panel
-            return _quality_and_lens(scenario_id, with_lens=with_lens)
-    return _quality_and_lens(scenario_id, with_lens=with_lens)
+            return _quality_and_lens(scenario_id, with_lens=with_lens, with_blockers=with_blockers)
+    return _quality_and_lens(scenario_id, with_lens=with_lens, with_blockers=with_blockers)
 
 
-def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
+def _quality_and_lens(
+    scenario_id: int, *, with_lens: bool, with_blockers: bool = False
+) -> dict[str, Any]:
     """Quality, then (``with_lens``) the plan lens from the same seating.
 
     The lens equals ``/plan-lens/``, plus ``programme_view`` (what each board
@@ -191,7 +200,9 @@ def _quality_and_lens(scenario_id: int, *, with_lens: bool) -> dict[str, Any]:
     same as the two reads apart). Any failure here is logged and the lens is
     ``None``; the quality keys are never touched.
     """
-    result, seated = _build_scenario_quality(scenario_id, keep_demands=with_lens)
+    result, seated = _build_scenario_quality(
+        scenario_id, keep_demands=with_lens, with_blockers=with_blockers
+    )
     if not with_lens:
         return result
     lens: dict[str, Any] | None
@@ -226,12 +237,13 @@ def _lens_seating(seated: _Seated) -> SeatingEvidence | None:
 
 
 def _build_scenario_quality(
-    scenario_id: int, *, keep_demands: bool = False
+    scenario_id: int, *, keep_demands: bool = False, with_blockers: bool = False
 ) -> tuple[dict[str, Any], _Seated]:
     """Quality, and what its seating leaves for a lens (``_Seated``).
 
     ``keep_demands``: hold the demand rows for a lens; without one they are
-    let go before the seating, as they always were.
+    let go before the seating, as they always were. ``with_blockers``: add
+    ``registration_blockers`` (see ``build_scenario_quality``).
     """
     result: dict[str, Any] = {
         "scenario_id": scenario_id,
@@ -271,6 +283,13 @@ def _build_scenario_quality(
             "source": "canonical_assignment_evaluation",
         },
     }
+    if with_blockers:
+        result["registration_blockers"] = {
+            "assessed": False,
+            "students": None,
+            "requests": None,
+            "courses": [],
+        }
     try:
         result["rooms"] = _rooms(scenario_id)
     except Exception:
@@ -319,6 +338,8 @@ def _build_scenario_quality(
             result["soft_seats"]["reason"] = "no_student_demand"
             result["seats"]["reason"] = "no_student_demand"
             result["assigned_student_clashes"]["reason"] = "no_student_demand"
+            if with_blockers:
+                result["registration_blockers"]["reason"] = "no_student_demand"
             return result, _Seated(no_demand=True, demands=demands)
         tiers = (
             build_course_tier_map_for_scenario(scenario_id)
@@ -350,5 +371,48 @@ def _build_scenario_quality(
         result["soft_seats"]["reason"] = "assessment_failed"
         result["seats"]["reason"] = "assessment_failed"
         result["assigned_student_clashes"]["reason"] = "assessment_failed"
+        if with_blockers:
+            result["registration_blockers"]["reason"] = "assessment_failed"
         return result, _Seated()
+    if with_blockers:
+        result["registration_blockers"] = _registration_blockers(scenario_id, evaluation, sections)
     return result, _Seated(evaluation=evaluation, demands=demands)
+
+
+def _registration_blockers(
+    scenario_id: int, evaluation: TimetableEvaluationResult, sections: list[SectionState]
+) -> dict[str, Any]:
+    """Who cannot register and what blocks them, off this read's seating.
+
+    Its own failure is logged and leaves it unknown; it never touches the
+    quality keys, which the seating has already answered.
+    """
+    from core.models import SectionPlacement
+    from core.services.timetable_registration_blockers import registration_blockers
+
+    try:
+        placements = [
+            {
+                "id": row["id"],
+                "board_id": row["board_id"],
+                "course_key": row["term_section__course_key"] or row["term_section__course_code"],
+                "section": row["term_section__section"],
+            }
+            for row in SectionPlacement.objects.filter(board__scenario_id=scenario_id).values(
+                "id",
+                "board_id",
+                "term_section__course_key",
+                "term_section__course_code",
+                "term_section__section",
+            )
+        ]
+        return registration_blockers(evaluation.assignment_states, sections, placements)
+    except Exception:
+        logger.exception("Could not name the registration blockers of scenario %s", scenario_id)
+        return {
+            "assessed": False,
+            "students": None,
+            "requests": None,
+            "courses": [],
+            "reason": "assessment_failed",
+        }
