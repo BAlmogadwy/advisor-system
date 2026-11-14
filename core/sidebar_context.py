@@ -5,12 +5,14 @@ Import and call `get_sidebar_context(request)` in any view that
 renders a template including the sidebar partial.
 """
 
+from django.conf import settings
 from django.http import HttpRequest
 
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_EXAM_COMMITTEE,
     ROLE_GENERAL_ADVISOR,
+    ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
     ensure_role_groups,
     ensure_scope_schema,
@@ -35,4 +37,8 @@ def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
         "can_exam_timetable": role in {ROLE_SUPER_ADMIN, ROLE_EXAM_COMMITTEE},
         "can_delete_exam_timetable": role == ROLE_SUPER_ADMIN,
         "can_section_planning": role in {ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR},
+        # A setting, not a query: staff pages (the MRI page among them) pay nothing.
+        "can_timetable_feedback": (
+            role == ROLE_STUDENT and bool(settings.TIMETABLE_FEEDBACK_ENABLED)
+        ),
     }

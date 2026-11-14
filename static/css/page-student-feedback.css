@@ -1,0 +1,279 @@
+/* Student timetable feedback: the list, the form and one case.
+
+   Loaded only by those pages (through {% block extra_css %}), so nothing here
+   reaches another page, and every selector is prefixed .ttf- for the same reason.
+   Colours are the design tokens, which flip for the Deep Navy theme, so there is
+   no dark-mode block: text uses --t0..--t2 or a --sev-* ink, fills use the
+   --sev-*-bg tints, and the brand teal is only ever a border or an outline. */
+
+/* ── Action rows ───────────────────────────────────────────────── */
+
+/* On a phone the portal's action rows stack and give each button width:100%. A
+   <button> sizes its border box, but an <a> drawn as a button sizes its content
+   box, so its padding pushed it 25px past the card. Labels may wrap. */
+.ttf-actions .btn,
+.student-feedback-entry .btn {
+  box-sizing: border-box;
+  text-align: center;
+  white-space: normal;
+}
+
+/* ── Messages at the top of a page ─────────────────────────────── */
+
+.ttf-error-summary,
+.ttf-notice {
+  border: 1px solid var(--line-strong);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius);
+  color: var(--t0);
+  padding: 12px 16px;
+  margin-block-end: 16px;
+}
+
+.ttf-error-summary {
+  border-color: var(--sev-critical);
+  background: var(--sev-critical-bg);
+}
+
+.ttf-notice {
+  border-color: var(--sev-ok);
+  background: var(--sev-ok-bg);
+}
+
+.ttf-error-summary:focus,
+.ttf-notice:focus {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
+
+.ttf-error-title {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--sev-critical);
+  margin: 0 0 6px;
+}
+
+.ttf-error-summary ul {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+/* ── The form ──────────────────────────────────────────────────── */
+
+.ttf-fieldset {
+  border: 0;
+  margin: 0 0 16px;
+  min-width: 0;
+  padding: 0;
+}
+
+.ttf-legend {
+  color: var(--t0);
+  font-size: var(--text-md);
+  font-weight: 700;
+  margin-block-end: 8px;
+  padding: 0;
+}
+
+.ttf-label {
+  color: var(--t0);
+  display: block;
+  font-weight: 700;
+  margin-block-end: 4px;
+}
+
+.ttf-hint,
+.ttf-small {
+  color: var(--t2);
+  font-size: max(12px, var(--text-sm));
+}
+
+.ttf-hint {
+  margin: 0 0 8px;
+}
+
+.ttf-choice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ttf-choice {
+  align-items: flex-start;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  /* The 44px touch target includes the padding, not 44px plus it. */
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.ttf-choice input[type="radio"] {
+  accent-color: var(--btn-primary-bg);
+  flex: none;
+  height: 18px;
+  margin: 2px 0 0;
+  width: 18px;
+}
+
+.ttf-choice:has(input:checked) {
+  border-color: var(--text-brand);
+  box-shadow: inset 0 0 0 1px var(--text-brand);
+}
+
+.ttf-choice:focus-within {
+  outline: 2px solid var(--text-brand);
+  outline-offset: 2px;
+}
+
+.ttf-choice-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ttf-choice-title {
+  color: var(--t0);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ttf-choice-meta {
+  color: var(--t2);
+  font-size: max(12px, var(--text-sm));
+  overflow-wrap: anywhere;
+}
+
+.ttf-choice-flag {
+  color: var(--sev-warning);
+  font-size: max(12px, var(--text-sm));
+  font-weight: 600;
+}
+
+.ttf-fieldset[aria-invalid="true"] .ttf-choice {
+  border-color: var(--sev-critical);
+}
+
+/* The error again, at the field it is about: not by colour alone, and where a
+   student who scrolls to the field will see it. */
+.ttf-field-error {
+  color: var(--sev-critical);
+  font-size: max(12px, var(--text-sm));
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+/* .form-control's border is !important, so the invalid border must be too. */
+.ttf-note[aria-invalid="true"] {
+  border-color: var(--sev-critical) !important;
+}
+
+/* At least 16px, so a phone does not zoom the page when the note is focused. */
+.ttf-form textarea.ttf-note {
+  font-size: max(16px, 1rem) !important;
+}
+
+/* ── Cases, points and messages ────────────────────────────────── */
+
+.ttf-ref {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  unicode-bidi: isolate;
+}
+
+.ttf-status {
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  color: var(--t1);
+  display: inline-flex;
+  font-size: max(12px, var(--text-sm));
+  font-weight: 600;
+  min-height: 26px;
+  padding: 2px 10px;
+}
+
+.ttf-meta {
+  display: grid;
+  gap: 8px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin: 0;
+}
+
+.ttf-meta dt {
+  color: var(--t2);
+  font-size: max(12px, var(--text-xs));
+  font-weight: 600;
+}
+
+.ttf-meta dd {
+  color: var(--t0);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ttf-case-list,
+.ttf-points,
+.ttf-thread {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ttf-case,
+.ttf-point,
+.ttf-message {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-width: 0;
+  padding: 12px;
+}
+
+.ttf-case-link {
+  display: inline-block;
+  font-size: var(--text-md);
+  margin-block-end: 6px;
+}
+
+.ttf-point-about {
+  color: var(--t0);
+  font-weight: 600;
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+
+/* A withdrawn point keeps full contrast; only its edge and its tag say so. */
+.ttf-point.is-withdrawn {
+  border-style: dashed;
+}
+
+.ttf-tag {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  color: var(--t1);
+  font-size: max(12px, var(--text-xs));
+  font-weight: 600;
+  margin-inline-start: 6px;
+  padding: 0 8px;
+}
+
+.ttf-text {
+  color: var(--t0);
+  overflow-wrap: anywhere;
+}
+
+.ttf-message.is-mine {
+  border-inline-start: 4px solid var(--line-strong);
+}
+
+.ttf-message-meta {
+  color: var(--t2);
+  font-size: max(12px, var(--text-sm));
+  margin: 0 0 4px;
+}

@@ -1,0 +1,42 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ t.list_title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endblock %}
+
+{% block page_heading %}{{ t.list_title }}{% endblock %}
+
+{% block page_intro %}<p class="student-home-intro mb-0" dir="auto">{{ t.list_intro }}</p>{% endblock %}
+
+{% block content %}
+<section class="card p-3 mb-3" aria-labelledby="ttfListTitle">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="ttfListTitle">{{ t.list_title }}</h2>
+  </div>
+  {% if rows %}
+  <ul class="ttf-case-list">
+    {% for row in rows %}
+    <li class="ttf-case">
+      <a class="ttf-case-link" href="{{ row.url }}"><bdi dir="ltr" class="ttf-ref">{{ row.reference }}</bdi></a>
+      <dl class="ttf-meta">
+        <div><dt>{{ t.list_term }}</dt><dd>{{ row.term }}</dd></div>
+        <div><dt>{{ t.list_status }}</dt><dd dir="auto">{{ row.status }}</dd></div>
+        <div><dt>{{ t.list_sent }}</dt><dd><bdi dir="ltr">{{ row.sent }}</bdi></dd></div>
+      </dl>
+      <p class="ttf-small mb-0" dir="auto">{{ row.points }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="student-home-empty mb-0" dir="auto">{{ t.list_empty }}</p>
+  {% endif %}
+  {% if can_raise %}
+  <div class="student-page-actions ttf-actions mt-3">
+    <a class="btn btn-primary" href="{% url 'student_timetable_feedback_new' %}">{{ t.list_new }}</a>
+  </div>
+  {% elif send_refused %}
+  <p class="student-guidance-note mt-3 mb-0" id="ttfSendRefused" dir="auto">{{ send_refused }}</p>
+  {% endif %}
+</section>
+{% endblock %}

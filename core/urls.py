@@ -198,6 +198,11 @@ from .student_auth_views import (
     student_otp_verify_view,
     student_plan_map_view,
 )
+from .student_timetable_feedback_views import (
+    feedback_detail_view,
+    feedback_list_view,
+    feedback_new_view,
+)
 from .timetable_workspace_views import (
     timetable_workspace_graph_page,
     timetable_workspace_mri_page,
@@ -342,6 +347,24 @@ urlpatterns = [
         "student/graduation/",
         login_required(student_graduation_view, login_url="student_login"),
         name="student_graduation",
+    ),
+    # Timetable feedback. Registered whatever the flags say, so templates can always
+    # reverse them; each view answers 404 itself while TIMETABLE_FEEDBACK_ENABLED is
+    # off. 'new/' comes before the reference, which would otherwise capture it.
+    path(
+        "student/timetable-feedback/",
+        login_required(feedback_list_view, login_url="student_login"),
+        name="student_timetable_feedback_list",
+    ),
+    path(
+        "student/timetable-feedback/new/",
+        login_required(feedback_new_view, login_url="student_login"),
+        name="student_timetable_feedback_new",
+    ),
+    path(
+        "student/timetable-feedback/<str:reference>/",
+        login_required(feedback_detail_view, login_url="student_login"),
+        name="student_timetable_feedback_detail",
     ),
     # Durable conversations. Every one of these resolves the student from the
     # session and filters on it in the same query, so a conversation belonging to

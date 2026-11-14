@@ -5,6 +5,8 @@
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}{% endblock %}
 
+{% block extra_css %}{% if feedback_entry %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=1">{% endif %}{% endblock %}
+
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: <bdi dir="ltr">{{ student_id }}</bdi></span>
   {% if student and student.program %}<span class="ph-chip ph-chip-context student-program-chip"><bdi dir="ltr">{{ student.program }}</bdi></span>{% endif %}
@@ -195,6 +197,26 @@
     <p class="small text-secondary" dir="auto">
       {% if LANGUAGE_CODE == 'ar' %}يعرض هذا الجدول المقررات المتوقع دراستها وفق بيانات الخطة، ولا يُعدّ تسجيلًا رسميًا. يتم التسجيل الفعلي عبر بوابة الجامعة.{% else %}This is an expected plan, not an actual registration. Review it here, then register the courses you choose yourself in the university's main portal.{% endif %}
     </p>
+    {% if feedback_entry and not panel.is_fallback %}
+      {% comment %}Feedback is about the CONFIGURED term only: a fallback panel shows
+      another term, which the service would refuse.{% endcomment %}
+      <div class="student-feedback-entry" id="student-home-feedback">
+        {% if feedback_entry.registered_notice %}<p class="student-guidance-note" dir="auto">{{ feedback_entry.registered_notice }}</p>{% endif %}
+        {% if feedback_entry.open_case %}
+          <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>
+          <div class="student-page-actions">
+            <a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>
+            {% if feedback_entry.open_case.can_add %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_add_point }}</a>
+            {% elif feedback_entry.open_case.can_send_new %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_send }}</a>{% endif %}
+          </div>
+        {% elif feedback_entry.can_send %}
+          <div class="student-page-actions">
+            <a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_send }}</a>
+          </div>
+        {% endif %}
+        {% if feedback_entry.send_refused %}<p class="student-guidance-note mt-2 mb-0" id="student-home-feedback-refused" dir="auto">{{ feedback_entry.send_refused }}</p>{% endif %}
+      </div>
+    {% endif %}
   {% else %}
     <p class="small text-secondary" dir="auto">
       {% if LANGUAGE_CODE == 'ar' %}يعرض هذا الجدول المقررات المسجّلة فعليًا وفق آخر بيانات مستوردة من بوابة الجامعة.{% else %}This is what the university has actually recorded for you.{% endif %}
@@ -280,6 +302,34 @@
   <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا تتوفر حاليًا بيانات للجدول المسجّل فعليًا أو الجدول المتوقع لهذا الفصل.{% else %}We do not yet have registered or expected timetable data for this term.{% endif %}</p>
 </section>
 {% endfor %}
+
+{% if feedback_entry and feedback_entry.open_case and not feedback_entry.on_expected_card %}
+{% comment %}An open case for this term with no expected card to sit on: the student
+who said no timetable was prepared, or one whose expected timetable has gone.{% endcomment %}
+<section class="card p-3 mb-3" id="student-home-feedback-case" aria-labelledby="student-feedback-case-title">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="student-feedback-case-title">{{ feedback_entry.t.home_case_title }}</h2>
+  </div>
+  <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>
+  <div class="student-page-actions student-feedback-entry">
+    <a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>
+  </div>
+</section>
+{% endif %}
+
+{% if feedback_entry and feedback_entry.no_forecast %}
+{% comment %}Only with neither an expected nor a registered timetable for the
+configured term, and only when that term was read without error.{% endcomment %}
+<section class="card p-3 mb-3" id="student-home-feedback-no-forecast" aria-labelledby="student-feedback-no-forecast-title">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="student-feedback-no-forecast-title">{{ feedback_entry.t.no_forecast_title }}</h2>
+  </div>
+  <p dir="auto">{{ feedback_entry.no_forecast_body }}</p>
+  <div class="student-page-actions student-feedback-entry">
+    <a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.no_forecast_button }}</a>
+  </div>
+</section>
+{% endif %}
 
 {# ── Recommended courses ── #}
 <section class="card p-3" id="student-home-recommendations" aria-labelledby="student-recommendations-title">

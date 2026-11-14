@@ -677,6 +677,24 @@ def _refuse_a_new_case_if_capped(
         raise FeedbackRefused("COOLING_DOWN", status=409)
 
 
+def new_case_refusal(
+    student_id: int, academic_year: str, term: str, *, now: datetime | None = None
+) -> FeedbackRefused | None:
+    """Why a NEW case could not be opened for this student and term now, or None.
+
+    Read-only: the student's pages ask it before offering a send that would open a
+    case, so nobody writes a point that the cap or the cool-down would then refuse.
+    ``submit_point`` still decides, under its lock; this is the same check, not a
+    copy of it."""
+    try:
+        _refuse_a_new_case_if_capped(
+            student_id, str(academic_year), str(term), now or timezone.now()
+        )
+    except FeedbackRefused as refused:
+        return refused
+    return None
+
+
 def _open_cases(student_id: int, academic_year: str, term: str) -> QuerySet[TimetableFeedback]:
     return TimetableFeedback.objects.filter(
         student_id=student_id, academic_year=academic_year, term=term
