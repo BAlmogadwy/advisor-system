@@ -116,6 +116,18 @@ def test_a_blocker_of_more_students_on_one_section_ranks_below_one_that_takes_ev
     ]
 
 
+def test_a_student_with_a_full_section_in_the_way_never_makes_a_blocker_decisive():
+    # DS331 takes both AI201 sections, but for a mixed student some section is
+    # (also) full: moving DS331 alone gives them no seat.
+    states = {"1": _state("1", ("DS331_S1",), {"AI201": "mixed_blockers"})}
+    (blocker,) = registration_blockers(states, SECTIONS)["courses"][0]["blocked_by"]
+    assert (blocker["course_code"], blocker["students"], blocker["every_section"]) == (
+        "DS331",
+        1,
+        0,
+    )
+
+
 def test_a_full_course_and_one_with_no_section_name_no_blocker():
     states = {
         "1": _state("1", ("DS331_S1",), {"AI201": "full", "AI999": "no_sections"}),

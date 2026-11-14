@@ -17,11 +17,14 @@ was left without a seat in, the seating has already said why
 For the reasons with a clash this names what takes the course's times: each
 section the stuck students are seated in that meets at the same time as a
 section of the course (a "blocker"), with how many of the course's stuck
-students it collides with (``students``) and for how many of them it collides
-with EVERY section of the course on its own (``every_section``). A blocker with
-``every_section`` is the one to move: moving it frees those students, whatever
-else they take. Clashes are read the way the seating reads them: any two
-meetings on one day whose times overlap, online meetings included.
+students it collides with (``students``) and, among those whose every section
+clashes (``all_clash``), for how many it collides with EVERY section of the
+course on its own (``every_section``). That is the decisive cause: moving it
+frees those students unless another of their sections also takes every
+section. A student with a full section in the way (``mixed_blockers``) never
+counts there: moving a blocker does not give them a seat. Clashes are read the
+way the seating reads them: any two meetings on one day whose times overlap,
+online meetings included.
 """
 
 from __future__ import annotations
@@ -85,7 +88,7 @@ def registration_blockers(
                 if not hits:
                     continue
                 blocked[course_key][blocker.section_id].add(student_id)
-                if hits == len(targets):
+                if hits == len(targets) and unresolved.reason == "all_clash":
                     every[course_key][blocker.section_id].add(student_id)
 
     courses = []

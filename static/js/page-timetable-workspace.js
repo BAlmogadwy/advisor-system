@@ -3843,7 +3843,7 @@ function instructorBackstopWords(data) {
    behind a modal is never seen); otherwise each is a toast, as before. */
 function editReport(verbWords, ids, hint = '') {
   const wanted = (ids || []).map(String);
-  const rows = buildBoardIssues().rows.filter(row => !row.pending && !row.quiet && row.tone !== 'info' && row.ids.some(id => wanted.includes(id)));
+  const rows = buildBoardIssues().rows.filter(row => !row.pending && !row.quiet && row.tone !== 'info' && row.tone !== 'registration' && row.ids.some(id => wanted.includes(id)));
   const worst = rows.some(row => row.tone === 'critical') ? 'critical' : rows.length ? 'warning' : '';
   let text = verbWords;
   if (worst) text += ` · ${TONE_LEAD[worst]}: ${[...new Set(rows.map(row => row.kind))].map(issueKindLabel).join(', ')}`;
@@ -6178,7 +6178,7 @@ function renderRightPanel(tab) {
     // blocks publishing or lowers quality (context stays in the Issues tab),
     // each naming what it is about — a pair shows both sections. An item from
     // before the last edit says so, as in Issues (the card does not ring for it).
-    const ownRows = buildBoardIssues().rows.filter(row => !row.quiet && row.tone !== 'info' && row.ids.includes(String(p.id)));
+    const ownRows = buildBoardIssues().rows.filter(row => !row.quiet && row.tone !== 'info' && row.tone !== 'registration' && row.ids.includes(String(p.id)));
     const ownIssues = ownRows.length
       ? `<h3 class="tw-sel-subhead">${IS_AR ? 'مشاكل هذه الشعبة' : 'This section’s issues'}</h3><ul class="tw-sel-issues">${ownRows.map(row =>
         `<li data-tone="${row.tone}"><span class="ux-tone-icon" data-tone="${row.tone}" role="img" aria-label="${esc(TONE_LEAD[row.tone])}"></span>`
@@ -6810,9 +6810,9 @@ const studentsCount = n => (IS_AR
 /* Why students cannot register for a course: the seating's reason that holds
    the most of them, in a row's own words. */
 const REGISTRATION_REASONS = {
-  all_clash:      { en: 'Every section clashes',     ar: 'كل شعبه متعارضة' },
-  mixed_blockers: { en: 'Full or clashing',          ar: 'شعبه ممتلئة أو متعارضة' },
-  full:           { en: 'Sections full',             ar: 'شعبه ممتلئة' },
+  all_clash:      { en: 'Every section clashes',     ar: 'كل شعب المقرر متعارضة' },
+  mixed_blockers: { en: 'Full or clashing',          ar: 'شعب المقرر ممتلئة أو متعارضة' },
+  full:           { en: 'Sections full',             ar: 'شعب المقرر ممتلئة' },
   reserve_only:   { en: 'Only reserved seats left',  ar: 'لم تبقَ إلا مقاعد محجوزة' },
   no_sections:    { en: 'No section placed',         ar: 'لا شعبة موضوعة' },
   unknown:        { en: 'Not seated',                ar: 'لم يُقبَلوا في شعبة' },

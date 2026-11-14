@@ -875,6 +875,12 @@ test('the first Issues group is who cannot register, why, and the section that b
   await settle();
   assert.deepEqual([...h.d.querySelectorAll('.tw-card.highlight')].map(c => c.dataset.placementId), ['11']);
   assert.equal(registrationRows(h)[3].tagName, 'DIV', 'a course drawn nowhere has nothing to show');
+  // They name a course, not a fault of a section: never in a section's own
+  // issues, nor in what an edit left behind.
+  card(h, 11).click();
+  assert.equal(h.d.querySelector('#twRightBody .tw-sel-issues'), null);
+  const report = h.w.editReport('Moved', [10, 11]);
+  assert.deepEqual([report.text, report.tone], ['Moved', 'success']);
   assert.deepEqual(h.errors, []);
 });
 
@@ -883,10 +889,10 @@ test('Arabic: who cannot register, counted by the plural; a check older than the
   const h = await modelHarness(t, { placements: [at(10), at(11, { day: 'MON' })], q, arabic: true });
   await h.select();
   assert.match(issuesText(h), /^طلاب لا يستطيعون التسجيل1/);
-  assert.deepEqual(registrationRows(h).map(r => [...r.children].map(c => c.textContent)), [['كل شعبه متعارضة', 'AI10 · طالبان', 'بسبب AI11 S1']]);
+  assert.deepEqual(registrationRows(h).map(r => [...r.children].map(c => c.textContent)), [['كل شعب المقرر متعارضة', 'AI10 · طالبان', 'بسبب AI11 S1']]);
   h.w.TW.dataVersion++;  // an edit: the check now describes older data
   h.w.renderRightPanel('issues');
-  assert.match(registrationRows(h)[0].querySelector('.tw-issue-kind').textContent, /^كل شعبه متعارضة · ./);
+  assert.match(registrationRows(h)[0].querySelector('.tw-issue-kind').textContent, /^كل شعب المقرر متعارضة · ./);
 });
 
 test('an older server, or a check that could not name them, lists no one', async t => {
