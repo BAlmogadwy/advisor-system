@@ -1473,6 +1473,11 @@ def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResp
     ``null`` when it cannot be built. That lens ends with ``programme_view``,
     what each board programme's per-plan file shows (``null`` when it cannot
     be built). No preview lane, with or without it.
+
+    ``?blockers=1`` (exactly ``"1"``) adds ``registration_blockers`` after the
+    quality keys: every course some student cannot register for, why, and the
+    sections that take its times, read off the same seating. Without either
+    parameter the answer is exactly what it always was.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -1482,7 +1487,10 @@ def tw_scenario_quality_view(request: HttpRequest, scenario_id: int) -> JsonResp
     from core.services.timetable_scenario_quality import build_scenario_quality
 
     with_lens = request.GET.get("lens") == "1"
-    return _ok(build_scenario_quality(scenario_id, with_lens=with_lens))
+    with_blockers = request.GET.get("blockers") == "1"
+    return _ok(
+        build_scenario_quality(scenario_id, with_lens=with_lens, with_blockers=with_blockers)
+    )
 
 
 @login_required(login_url="login")

@@ -3843,7 +3843,7 @@ function instructorBackstopWords(data) {
    behind a modal is never seen); otherwise each is a toast, as before. */
 function editReport(verbWords, ids, hint = '') {
   const wanted = (ids || []).map(String);
-  const rows = buildBoardIssues().rows.filter(row => !row.pending && row.tone !== 'info' && row.ids.some(id => wanted.includes(id)));
+  const rows = buildBoardIssues().rows.filter(row => !row.pending && !row.quiet && row.tone !== 'info' && row.tone !== 'registration' && row.ids.some(id => wanted.includes(id)));
   const worst = rows.some(row => row.tone === 'critical') ? 'critical' : rows.length ? 'warning' : '';
   let text = verbWords;
   if (worst) text += ` · ${TONE_LEAD[worst]}: ${[...new Set(rows.map(row => row.kind))].map(issueKindLabel).join(', ')}`;
@@ -6097,7 +6097,7 @@ function renderRightPanel(tab) {
 
   if (tab === 'issues') {
     const model = buildBoardIssues();
-    setIssuesCount(issueCountOf(model), model.counts.critical);
+    setIssuesCount(issueCountOf(model), model.shown.critical + model.shown.registration);
     // With no board open (a scenario with none yet), the tab has no board to
     // speak for; the scenario's own blockers are on Publish.
     if (!TW.boardId) {
@@ -6109,14 +6109,15 @@ function renderRightPanel(tab) {
     if (!model.known.conflicts) notes += note(IS_AR ? 'تعارضات هذه اللوحة غير محمّلة.' : 'This board’s clashes are not loaded.');
     const checking = Boolean(TW.readinessLoading || TW.qualityLoading);
     const pendingWord = issuePendingWord();
-    if (model.rows.some(row => row.pending)) {
+    if (model.rows.some(row => row.pending && !row.quiet)) {
       notes += note(checking
         ? (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ يجري التحقق منها.' : 'Some items are from before your last change; they are being checked.')
         : (IS_AR ? 'بعض البنود من قبل آخر تعديل؛ لم يُعَد التحقق منها بعد.' : 'Some items are from before your last change and have not been checked again.'));
     }
     if (TW.quality && !TW.quality.rooms?.assessed) notes += note(IS_AR ? 'صلاحية القاعات لم تُقيّم بعد.' : 'Room suitability has not been assessed yet.');
 
-    if (!model.rows.length) {
+    const listed = model.rows.filter(row => !row.quiet);
+    if (!listed.length) {
       draw(model.known.conflicts
         ? `<div class="tw-empty tw-empty-sm"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span><p>${IS_AR ? 'لا مشاكل في هذه اللوحة' : 'No issues on this board'}</p></div>${notes}`
         : notes);
@@ -6128,24 +6129,26 @@ function renderRightPanel(tab) {
     // Context starts closed. Inside each, rows by kind as the model sorts.
     let html = notes;
     TONE_ORDER.forEach(tone => {
-      const rows = model.rows.filter(row => row.tone === tone);
+      const rows = listed.filter(row => row.tone === tone);
       if (!rows.length) return;
       const key = `tw-issues:${tone}`;
       const fallback = tone !== 'info';
       const open = window.UXControls?.disclosure ? window.UXControls.disclosure.isOpen(key, fallback) : fallback;
       const region = `twIssues-${tone}`;
-      html += `<section class="tw-issue-group" data-tone="${tone}"><h3 class="tw-issue-group-head">`
-        + `<button type="button" class="ux-disclosure-toggle tw-issue-head" data-tone="${tone}" data-ux-disclosure="${key}" aria-expanded="${open}" aria-controls="${region}">`
-        + `<span class="ux-tone-icon" data-tone="${tone}" aria-hidden="true"></span><span class="ux-disclosure-label">${esc(TONE_LEAD[tone])}</span>`
-        + `<span class="tw-issue-count tnum">${model.counts[tone]}</span><span class="ux-disclosure-chevron" aria-hidden="true"></span></button></h3>`
+      // The registration group looks like the critical one (same tone styles).
+      const look = tone === 'registration' ? 'critical' : tone;
+      html += `<section class="tw-issue-group" data-tone="${esc(look)}" data-group="${tone}"><h3 class="tw-issue-group-head">`
+        + `<button type="button" class="ux-disclosure-toggle tw-issue-head" data-tone="${esc(look)}" data-ux-disclosure="${key}" aria-expanded="${open}" aria-controls="${region}">`
+        + `<span class="ux-tone-icon" data-tone="${esc(look)}" aria-hidden="true"></span><span class="ux-disclosure-label">${esc(TONE_LEAD[tone])}</span>`
+        + `<span class="tw-issue-count tnum">${esc(model.shown[tone])}</span><span class="ux-disclosure-chevron" aria-hidden="true"></span></button></h3>`
         + `<div class="tw-issue-group-body" id="${region}"${open ? '' : ' hidden'}>`;
       rows.forEach(row => {
-        const inner = `<span class="tw-issue-kind">${esc(issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
+        const inner = `<span class="tw-issue-kind">${esc(row.label || issueKindLabel(row.kind))}${row.pending ? ` · ${pendingWord}` : ''}</span>`
           + `<span class="tw-issue-subject"><bdi>${isolateTimes(row.subject)}</bdi></span>`
           + (row.detail ? `<span class="tw-issue-detail"><bdi>${isolateTimes(row.detail)}</bdi></span>` : '');
         html += row.ids.length
-          ? `<button type="button" class="tw-issue-row" data-tone="${tone}" data-focus-key="${esc(`${row.kind}:${row.ids.join(',')}`)}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
-          : `<div class="tw-issue-row tw-issue-static" data-tone="${tone}">${inner}</div>`;
+          ? `<button type="button" class="tw-issue-row" data-tone="${esc(look)}" data-focus-key="${esc(`${row.kind}:${row.ids.join(',')}`)}" data-ids='${esc(JSON.stringify(row.ids))}'${row.boardTarget ? ` data-board-target="${esc(row.boardTarget)}"` : ''}>${inner}</button>`
+          : `<div class="tw-issue-row tw-issue-static" data-tone="${esc(look)}">${inner}</div>`;
       });
       html += '</div></section>';
     });
@@ -6175,7 +6178,7 @@ function renderRightPanel(tab) {
     // blocks publishing or lowers quality (context stays in the Issues tab),
     // each naming what it is about — a pair shows both sections. An item from
     // before the last edit says so, as in Issues (the card does not ring for it).
-    const ownRows = buildBoardIssues().rows.filter(row => row.tone !== 'info' && row.ids.includes(String(p.id)));
+    const ownRows = buildBoardIssues().rows.filter(row => !row.quiet && row.tone !== 'info' && row.tone !== 'registration' && row.ids.includes(String(p.id)));
     const ownIssues = ownRows.length
       ? `<h3 class="tw-sel-subhead">${IS_AR ? 'مشاكل هذه الشعبة' : 'This section’s issues'}</h3><ul class="tw-sel-issues">${ownRows.map(row =>
         `<li data-tone="${row.tone}"><span class="ux-tone-icon" data-tone="${row.tone}" role="img" aria-label="${esc(TONE_LEAD[row.tone])}"></span>`
@@ -6580,7 +6583,9 @@ async function refreshWorkspaceQuality(force = false, { lens = lensWanted() } = 
   read.promise = (async () => {
     let data;
     try {
-      data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/${lens ? '?lens=1' : ''}`);
+      // `blockers=1`: who cannot register and what blocks them, off the same
+      // seating (the Issues tab's first group).
+      data = await twFetch(`/ops/tw/scenarios/${scenarioId}/quality/?blockers=1${lens ? '&lens=1' : ''}`);
     } finally {
       if (revision === qualityLoadRevision) setQualityRead(null);
     }
@@ -6766,6 +6771,9 @@ function renderDemandTable(body) {
    meeting that needs a room and has none is read from the board itself and
    never waits for a check. */
 const ISSUE_KINDS = {
+  // A course some students cannot register for (the quality check's seating);
+  // each row says why in its own words (`label`).
+  registration:    { tone: 'registration', en: 'Can’t register',             ar: 'لا يستطيعون التسجيل' },
   time:            { tone: 'critical', en: 'Time clash',                         ar: 'تعارض زمني' },
   instructor:      { tone: 'critical', en: 'Instructor clash',                   ar: 'تعارض مدرّس' },
   room:            { tone: 'critical', en: 'Room double-booked',                 ar: 'القاعة محجوزة مرتين' },
@@ -6784,8 +6792,9 @@ const ISSUE_KINDS = {
   instructorElsewhere: { tone: 'warning', en: 'Teacher also teaching on another board', ar: 'المدرّس يدرّس في لوحة أخرى في الوقت نفسه' },
 };
 const ISSUE_KIND_ORDER = Object.keys(ISSUE_KINDS);
-const TONE_ORDER = ['critical', 'warning', 'info'];
+const TONE_ORDER = ['registration', 'critical', 'warning', 'info'];
 const TONE_LEAD = {
+  registration: IS_AR ? 'طلاب لا يستطيعون التسجيل' : 'Students can’t register',
   critical: IS_AR ? 'يمنع النشر' : 'Blocks publishing',
   warning: IS_AR ? 'يُضعف الجودة' : 'Lowers quality',
   info: IS_AR ? 'للاطلاع' : 'For context',
@@ -6795,6 +6804,66 @@ const dayName = code => dayText(code);
 const studentsNeedBoth = n => (IS_AR
   ? pluralAr(n, { zero: 'لا طلاب يحتاجون كليهما', one: 'طالب واحد يحتاج كليهما', two: 'طالبان يحتاجان كليهما', few: '{n} طلاب يحتاجون كليهما', many: '{n} طالباً يحتاجون كليهما', other: '{n} طالب يحتاجون كليهما' })
   : `${n} ${n === 1 ? 'student needs' : 'students need'} both`);
+const studentsCount = n => (IS_AR
+  ? pluralAr(n, { zero: 'لا طلاب', one: 'طالب واحد', two: 'طالبان', few: '{n} طلاب', many: '{n} طالباً', other: '{n} طالب' })
+  : `${n} ${n === 1 ? 'student' : 'students'}`);
+/* Why students cannot register for a course: the seating's reason that holds
+   the most of them, in a row's own words. */
+const REGISTRATION_REASONS = {
+  all_clash:      { en: 'Every section clashes',     ar: 'كل شعب المقرر متعارضة' },
+  mixed_blockers: { en: 'Full or clashing',          ar: 'شعب المقرر ممتلئة أو متعارضة' },
+  full:           { en: 'Sections full',             ar: 'شعب المقرر ممتلئة' },
+  reserve_only:   { en: 'Only reserved seats left',  ar: 'لم تبقَ إلا مقاعد محجوزة' },
+  no_sections:    { en: 'No section placed',         ar: 'لا شعبة موضوعة' },
+  unknown:        { en: 'Not seated',                ar: 'لم يُقبَلوا في شعبة' },
+};
+/* The registration group's rows for the open board, from the quality check
+   (`registration_blockers`): a course drawn on this board, or blocked by a
+   section drawn on it. Subject: the course and how many cannot register.
+   Detail: the sections that take its times (the ones that take every section
+   first, at most three), then the seats a full course needs. The ids are the
+   course's and its blockers' meetings on this board, so a click shows both. */
+function registrationRows(fresh) {
+  const blockers = TW.quality?.registration_blockers;
+  if (!blockers?.assessed || !TW.boardId) return [];
+  const here = String(TW.boardId);
+  const onBoard = list => (list || []).filter(p => String(p.board_id) === here).map(p => String(p.id));
+  const boardLabel = id => (TW.boards.find(b => String(b.id) === String(id)) || {}).label || '';
+  return (blockers.courses || []).flatMap(course => {
+    const by = course.blocked_by || [];
+    const ids = [...onBoard(course.placements), ...by.flatMap(b => onBoard(b.placements))];
+    const drawnHere = onBoard(course.placements).length || by.some(b => onBoard(b.placements).length);
+    // A course with no placed section is drawn nowhere: every board says it.
+    if (!drawnHere && (course.placements || []).length) return [];
+    const reasons = course.reasons || {};
+    const top = Object.keys(reasons).sort((a, b) => reasons[b] - reasons[a] || a.localeCompare(b))[0];
+    const words = REGISTRATION_REASONS[top] || REGISTRATION_REASONS.unknown;
+    const name = b => {
+      const elsewhere = (b.placements || []).find(p => String(p.board_id) !== here);
+      const board = elsewhere && !onBoard(b.placements).length ? boardLabel(elsewhere.board_id) : '';
+      return `${b.course_code} ${b.section}${board ? ` (${board})` : ''}`;
+    };
+    // A section that takes every section of the course is the one to move:
+    // when there is one, only such sections are named.
+    const decisive = by.filter(b => b.every_section > 0);
+    const pick = decisive.length ? decisive : by;
+    const shown = pick.slice(0, 3).map(name);
+    const more = pick.length - shown.length + (decisive.length ? 0 : Number(course.blocked_by_more) || 0);
+    const parts = [];
+    if (shown.length) {
+      const list = shown.join(IS_AR ? '، ' : ', ') + (more > 0 ? (IS_AR ? ` و${more} غيرها` : ` +${more} more`) : '');
+      parts.push(decisive.length ? (IS_AR ? `بسبب ${list}` : `Blocked by ${list}`)
+        : (IS_AR ? `تتعارض مع ${list}` : `Clashes with ${list}`));
+    }
+    if (reasons.full) parts.push(seatsNeeded(reasons.full));
+    return [{
+      ids: [...new Set(ids)],
+      subject: `${course.course_code} · ${studentsCount(course.students)}`,
+      detail: parts.join(' · '),
+      extra: { pending: !fresh, label: IS_AR ? words.ar : words.en },
+    }];
+  });
+}
 const seatsNeeded = n => (IS_AR
   ? pluralAr(n, { one: 'يحتاج مقعداً واحداً', two: 'يحتاج مقعدين', few: 'يحتاج {n} مقاعد', many: 'يحتاج {n} مقعداً', other: 'يحتاج {n} مقعد' })
   : `needs ${n} ${n === 1 ? 'seat' : 'seats'}`);
@@ -6836,11 +6905,17 @@ function computeBoardIssues() {
   // The board's clashes.
   const roomClashIds = new Set();
   if (conflictsKnown) {
+    // An overlap students can route round, here or with another board, costs
+    // nobody a seat: who it does leave without one is the registration
+    // group's, named by its course. Such rows are `quiet`: counted in `counts`
+    // (the MRI tab reads them, as it always did), never listed in Issues,
+    // never toning a card, never on the badge.
     (conflicts.overlaps || []).forEach(o => {
       const ps = placementsOf(o.ids);
       const subject = (o.sections && o.sections.length ? o.sections : ps.map(name)).join(' / ');
       const detail = [ps[0] ? when(ps[0]) : '', o.shared_students ? studentsNeedBoth(o.shared_students) : ''].filter(Boolean).join(' · ');
-      add(isWarningOverlap(o) ? 'softOverlap' : 'time', o.ids, subject, detail);
+      if (isWarningOverlap(o)) add('softOverlap', o.ids, subject, detail, { quiet: true });
+      else add('time', o.ids, subject, detail);
     });
     (conflicts.instructor_clashes || []).forEach(c => {
       const ps = placementsOf(c.ids);
@@ -6855,13 +6930,16 @@ function computeBoardIssues() {
     const line = Number.isFinite(conflicts.hard_overlap_threshold) ? conflicts.hard_overlap_threshold : Infinity;
     activeBoardCrossBoardClashes().forEach(c => {
       const ids = c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean);
-      const other = String(c.board_a_id) === String(TW.boardId) ? c.board_b_id : c.board_a_id;
       add((c.overlap_count || 0) >= line ? 'crossBoard' : 'crossBoardMinor', ids,
         `${c.section_a} ↔ ${c.section_b}`,
         [studentsNeedBoth(c.overlap_count || 0), `${c.board_a_label || ''} ↔ ${c.board_b_label || ''}`].join(' · '),
-        { boardTarget: other });
+        { quiet: true });
     });
   }
+
+  // Who cannot register, from the quality check's seating: one row per course
+  // drawn on this board, or blocked by a section drawn on it.
+  registrationRows(qualityFresh).forEach(row => add('registration', row.ids, row.subject, row.detail, row.extra));
 
   // The board itself: rooms, blocked times, the grid's columns.
   const blocked = new Set((TW.scenario?.blocked_slots || []).map(b => `${b.day}|${b.start}`));
@@ -6908,7 +6986,8 @@ function computeBoardIssues() {
   // What tones each card: critical and warning rows from known, fresh sources.
   const byPlacement = new Map();
   rows.forEach(row => {
-    if (row.tone === 'info' || row.pending) return;
+    // Registration rows name a course, not a fault of its card: the Issues tab says them.
+    if (row.quiet || row.tone === 'info' || row.tone === 'registration' || row.pending) return;
     row.ids.forEach(id => {
       const entry = byPlacement.get(id) || { tone: row.tone, kinds: [] };
       if (row.tone === 'critical') entry.tone = 'critical';
@@ -6916,10 +6995,16 @@ function computeBoardIssues() {
       byPlacement.set(id, entry);
     });
   });
+  // `counts`: every row but who cannot register, as the MRI tab and the board
+  // flags have always read them. `shown`: the rows Issues lists (no quiet row).
   const counts = { critical: 0, warning: 0, info: 0 };
-  rows.forEach(row => { counts[row.tone] += row.weight || 1; });
+  const shown = { registration: 0, critical: 0, warning: 0, info: 0 };
+  rows.forEach(row => {
+    if (row.tone !== 'registration') counts[row.tone] += row.weight || 1;
+    if (!row.quiet) shown[row.tone] += row.weight || 1;
+  });
   return {
-    rows, byPlacement, counts,
+    rows, byPlacement, counts, shown,
     known: { conflicts: conflictsKnown, placements: placementsKnown, quality: Boolean(quality), readiness: Boolean(TW.readiness) },
     fresh: { quality: qualityFresh, readiness: readinessFresh },
   };
@@ -6940,7 +7025,7 @@ function buildBoardIssues() {
 /* The count says how much blocks publishing, or else how much lowers quality;
    context is never counted. */
 function issueCountOf(model) {
-  return model.counts.critical || model.counts.warning;
+  return (model.shown.registration + model.shown.critical) || model.shown.warning;
 }
 
 /* Tone every card from the model, in place: a check that answers later never
@@ -6975,7 +7060,7 @@ function applyCardTones() {
    exists to say how much is wrong. */
 function renderBoardIssueViews() {
   const model = buildBoardIssues();
-  setIssuesCount(issueCountOf(model), model.counts.critical);
+  setIssuesCount(issueCountOf(model), model.shown.critical + model.shown.registration);
   applyCardTones();
 }
 
