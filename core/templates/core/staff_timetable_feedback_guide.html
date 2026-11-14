@@ -1,0 +1,40 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ t.guide_title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=2"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=1">{% endblock %}
+
+{% block page_heading %}{{ t.guide_title }}{% endblock %}
+
+{% block page_intro %}<p class="mb-0" dir="auto">{{ t.guide_intro }}</p>{% endblock %}
+
+{% block content %}
+{% comment %}The advisor guide: every word from the staff copy deck.{% endcomment %}
+<section class="card p-3 mb-3" aria-labelledby="ttfsGuideSteps">
+  <h2 class="ttfs-section-title" id="ttfsGuideSteps">{{ t.guide_steps_title }}</h2>
+  <ol class="ttfs-guide-list">
+    {% for step in steps %}
+    <li><strong dir="auto">{{ step.title }}</strong> — <span dir="auto">{{ step.body }}</span></li>
+    {% endfor %}
+  </ol>
+</section>
+
+<section class="card p-3 mb-3" aria-labelledby="ttfsGuideRules">
+  <h2 class="ttfs-section-title" id="ttfsGuideRules">{{ t.guide_rules_title }}</h2>
+  <ul class="ttfs-guide-list">
+    {% for rule in rules %}<li dir="auto">{{ rule }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section class="card p-3 mb-3" aria-labelledby="ttfsGuideReasons">
+  <h2 class="ttfs-section-title" id="ttfsGuideReasons">{{ t.guide_reasons_title }}</h2>
+  <dl class="ttfs-guide-reasons">
+    {% for item in reasons %}
+    <div><dt dir="auto">{{ item.reason }}</dt><dd dir="auto">{{ item.advice }}</dd></div>
+    {% endfor %}
+  </dl>
+</section>
+
+<p><a href="{% url 'staff_timetable_feedback_queue' %}">{{ t.back_to_queue }}</a></p>
+{% endblock %}

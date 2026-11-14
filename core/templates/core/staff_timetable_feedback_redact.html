@@ -1,0 +1,51 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/page-student-feedback.css' %}?v=2"><link rel="stylesheet" href="{% static 'css/page-staff-feedback.css' %}?v=1">{% endblock %}
+
+{% block page_heading %}{{ title }}{% endblock %}
+
+{% block content %}
+{% comment %}
+  The department removes words from one message or one point's details. The text
+  is shown as it is now; the passages typed below are replaced, and nothing else
+  can be changed from here. It works without JavaScript.
+{% endcomment %}
+{% if errors %}
+<div class="ttf-error-summary" id="ttfsErrors" role="alert" tabindex="-1" aria-labelledby="ttfsErrorsTitle">
+  <h2 class="ttf-error-title" id="ttfsErrorsTitle">{{ t.errors_title }}</h2>
+  <ul>
+    {% for error in errors %}
+    <li id="{{ error.id }}"><span dir="auto">{{ error.html }}</span>{% if error.changed_by %} <span dir="auto">{{ error.changed_by }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<section class="card p-3 mb-3" aria-labelledby="ttfsRedactTitle">
+  <h2 class="ttfs-section-title" id="ttfsRedactTitle">{{ t.redact_current }} — {{ what }}</h2>
+  <div class="ttf-text ttfs-redact-current" id="ttfsRedactCurrent" dir="auto">{{ current_text|linebreaksbr }}</div>
+</section>
+
+<section class="card p-3 mb-3">
+  <p dir="auto">{{ intro }}</p>
+  <form method="post" class="ttf-form" id="ttfsRedactForm" novalidate>
+    {% csrf_token %}
+    <input type="hidden" name="version" value="{{ case.version }}">
+    <input type="hidden" name="{{ kind }}" value="{{ target_id }}">
+    <div class="ttf-field">
+      <label class="ttf-label" for="ttfsRemove">{{ t.redact_label }}</label>
+      {% if error_for.remove %}<p class="ttf-field-error" id="{{ error_for.remove.id }}-field" dir="auto">{{ error_for.remove.html }}</p>{% endif %}
+      <textarea class="form-control ttf-note" id="ttfsRemove" name="remove" rows="3" dir="auto" aria-required="true"{% if error_for.remove %} aria-invalid="true" aria-describedby="{{ error_for.remove.id }}-field"{% endif %}>{{ remove }}</textarea>
+    </div>
+    <div class="ttfs-row-actions">
+      <button type="submit" class="btn btn-outline-danger">{{ t.redact_submit }}</button>
+      <a class="btn btn-outline-secondary" href="{% url 'staff_timetable_feedback_case' case.reference %}">{{ t.redact_cancel }}</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/page-staff-feedback.js' %}?v=1" defer></script>{% endblock %}

@@ -38,6 +38,7 @@ TABLES = {
     "DAY": copy.DAY,
     "NOTICE": copy.NOTICE,
     "REFUSAL": copy.REFUSAL,
+    "REPLY_TEMPLATES": copy.REPLY_TEMPLATES,
 }
 ENTRIES = [
     (table, key, pair) for table, values in TABLES.items() for key, pair in values.items()

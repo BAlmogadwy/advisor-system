@@ -375,27 +375,29 @@ STATUS: Mapping[str, tuple[str, str]] = {
     "WITHDRAWN": ("Withdrawn", "مسحوبة"),
 }
 
-#: What a status means for the student, shown under it.
+#: What a status means for the student, shown under it. Once a case is being
+#: handled, the department may be the one acting on it, so these name nobody: the
+#: messages below say who wrote.
 STATUS_EXPLAINED: Mapping[str, tuple[str, str]] = {
     "SUBMITTED": (
         "Your academic advisor will read it and reply here.",
         "سيطّلع عليها مرشدك الأكاديمي ويرد عليك هنا.",
     ),
     "IN_REVIEW": (
-        "Your academic advisor is looking at it.",
-        "يراجعها مرشدك الأكاديمي حاليًا.",
+        "It is being looked at.",
+        "يجري الاطلاع عليها حاليًا.",
     ),
     "NEEDS_INFORMATION": (
-        "Your academic advisor has asked for more information; see the messages below.",
-        "طلب مرشدك الأكاديمي مزيدًا من المعلومات؛ يُرجى الاطلاع على الرسائل أدناه.",
+        "More information is needed from you; see the messages below.",
+        "يلزم مزيد من المعلومات منك؛ يُرجى الاطلاع على الرسائل أدناه.",
     ),
     "FORWARDED": (
-        "Your academic advisor has passed it to the department.",
-        "أحال مرشدك الأكاديمي الملاحظة إلى القسم.",
+        "It has been passed to the department.",
+        "أُحيلت الملاحظة إلى القسم.",
     ),
     "ANSWERED": (
-        "Your academic advisor has answered; see the messages below.",
-        "رد مرشدك الأكاديمي؛ يُرجى الاطلاع على الرسائل أدناه.",
+        "There is an answer; see the messages below.",
+        "صدر رد على ملاحظتك؛ يُرجى الاطلاع على الرسائل أدناه.",
     ),
     "CLOSED": ("This feedback is closed.", "أُغلقت هذه الملاحظة."),
     "WITHDRAWN": ("This feedback was withdrawn.", "سُحبت هذه الملاحظة."),
@@ -595,6 +597,33 @@ REFUSAL: Mapping[str, tuple[str, str]] = {
     ),
 }
 
+#: Answers staff may send as they are, one case or many at once, each in the
+#: language the student wrote in. They promise nothing the department has not
+#: decided: they say what was done with the feedback and where registration is
+#: changed. Stored as the message text, so they are plain text, not markup.
+REPLY_TEMPLATES: Mapping[str, tuple[str, str]] = {
+    "REGISTERED_IN_PORTAL": (
+        "Thank you for your feedback. Your registration for this term is already recorded,"
+        " so any change to it is made in the university portal. Your feedback has been"
+        " noted and can be taken into account when the next timetables are prepared.",
+        "شكرًا على ملاحظتك. سبق تسجيلك في هذا الفصل الدراسي، وتُجرى أي تعديلات على التسجيل"
+        " عبر بوابة الجامعة. وقد سُجّلت ملاحظتك، ويمكن أخذها في الحسبان عند إعداد الجداول"
+        " القادمة.",
+    ),
+    "NOTED_FOR_PLANNING": (
+        "Thank you for your feedback. It has been passed to those who prepare the timetables"
+        " and can be taken into account. Sending it does not change your registration.",
+        "شكرًا على ملاحظتك. أُحيلت إلى المعنيين بإعداد الجداول، ويمكن أخذها في الحسبان،"
+        " ولا يغيّر إرسالها تسجيلك.",
+    ),
+    "NO_CHANGE_THIS_TERM": (
+        "Thank you for your feedback. This cannot be changed in this term's timetable."
+        " Registration questions are handled in the university portal.",
+        "شكرًا على ملاحظتك. لا يمكن تغيير ذلك في جدول هذا الفصل الدراسي، وتُعالج مسائل"
+        " التسجيل عبر بوابة الجامعة.",
+    ),
+}
+
 #: For a code no entry covers yet: a plain apology, with the code shown so it
 #: can be reported.
 UNKNOWN_REFUSAL = (
@@ -709,6 +738,12 @@ def author_label(kind: str, language: str) -> str:
     """Who wrote a message. Anything that is not the student reads as the department
     unless it is plainly the advisor, so no staff name or role code reaches a student."""
     return _pick(AUTHOR.get(kind, AUTHOR["DEPARTMENT"]), language)
+
+
+def reply_template(key: str, language: str) -> str:
+    """A ready-made answer as plain text, in ``language``. KeyError for an unknown
+    key: the caller checks it against `REPLY_TEMPLATES` first."""
+    return _pick(REPLY_TEMPLATES[key], language)
 
 
 def day_label(code: str, language: str) -> str:
