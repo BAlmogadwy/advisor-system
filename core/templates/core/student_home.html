@@ -202,12 +202,17 @@
       another term, which the service would refuse.{% endcomment %}
       <div class="student-feedback-entry" id="student-home-feedback">
         {% if feedback_entry.registered_notice %}<p class="student-guidance-note" dir="auto">{{ feedback_entry.registered_notice }}</p>{% endif %}
-        {% if feedback_entry.open_case %}<p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>{% endif %}
-        {% if feedback_entry.open_case or feedback_entry.can_raise %}
-        <div class="student-page-actions">
-          {% if feedback_entry.open_case %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>{% endif %}
-          {% if feedback_entry.can_raise %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{% if feedback_entry.open_case %}{{ feedback_entry.t.home_add_point }}{% else %}{{ feedback_entry.t.home_send }}{% endif %}</a>{% endif %}
-        </div>
+        {% if feedback_entry.open_case %}
+          <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>
+          <div class="student-page-actions">
+            <a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>
+            {% if feedback_entry.open_case.can_add %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_add_point }}</a>
+            {% elif feedback_entry.open_case.can_send_new %}<a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_send }}</a>{% endif %}
+          </div>
+        {% elif feedback_entry.can_raise %}
+          <div class="student-page-actions">
+            <a class="btn btn-outline-secondary" href="{{ feedback_entry.new_url }}">{{ feedback_entry.t.home_send }}</a>
+          </div>
         {% endif %}
       </div>
     {% endif %}
@@ -296,6 +301,20 @@
   <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا تتوفر حاليًا بيانات للجدول المسجّل فعليًا أو الجدول المتوقع لهذا الفصل.{% else %}We do not yet have registered or expected timetable data for this term.{% endif %}</p>
 </section>
 {% endfor %}
+
+{% if feedback_entry and feedback_entry.open_case and not feedback_entry.on_expected_card %}
+{% comment %}An open case for this term with no expected card to sit on: the student
+who said no timetable was prepared, or one whose expected timetable has gone.{% endcomment %}
+<section class="card p-3 mb-3" id="student-home-feedback-case" aria-labelledby="student-feedback-case-title">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="student-feedback-case-title">{{ feedback_entry.t.home_case_title }}</h2>
+  </div>
+  <p class="small text-secondary mb-2" dir="auto">{{ feedback_entry.open_case.status }}</p>
+  <div class="student-page-actions student-feedback-entry">
+    <a class="btn btn-outline-secondary" href="{{ feedback_entry.open_case.url }}">{{ feedback_entry.open_case.label }}</a>
+  </div>
+</section>
+{% endif %}
 
 {% if feedback_entry and feedback_entry.no_forecast %}
 {% comment %}Only with neither an expected nor a registered timetable for the

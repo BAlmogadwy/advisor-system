@@ -259,3 +259,24 @@ def test_an_unknown_code_gets_an_apology_that_shows_the_code():
 def test_an_unknown_author_kind_reads_as_the_department_never_a_raw_code():
     assert copy.author_label("SOMEONE", "en") == "The department"
     assert copy.author_label("ADVISOR", "ar") == "مرشدك الأكاديمي"
+
+
+def test_strings_without_placeholders_never_call_format_html_bare():
+    """format_html() with nothing to format is deprecated, and an error in Django 6:
+    every plain refusal and required-field message would become a server error."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert copy.text("new_reason_required", "en") == "Please choose the issue."
+        assert "<" not in copy.refusal("NOT_OFFERED", "ar")
+        assert copy.text("new_errors_title", "en") == "Your feedback was not sent"
+
+
+def test_plain_strings_carry_no_markup_for_places_markup_cannot_go():
+    assert copy.plain("detail_title", "en", reference="TTF-2026-00007") == (
+        "Feedback TTF-2026-00007"
+    )
+    assert copy.plain("detail_title", "ar", reference="TTF-2026-00007") == (
+        "الملاحظة TTF-2026-00007"
+    )

@@ -835,3 +835,254 @@ def test_no_page_leaks_template_syntax(world, language):
         html = _html(_get(client, url, language))
         for token in ("{%", "%}", "{{", "}}", "{#", "#}"):
             assert token not in html, (url, token)
+
+
+# ---------------------------------------------------------------------------
+# Review of 3a: what the first round of tests missed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_continue_with_nothing_chosen_is_an_error_not_a_reload(world, language):
+    """A radio group with nothing chosen sends nothing, so the form's own marker is
+    the only sign the student pressed Continue."""
+    response = _get(_client(), NEW, language, step="choose")
+    html = _html(response)
+    assert response.status_code == 400
+    _assert_language(html, language)
+    message = copy.strings(language)["new_about_required"]
+    assert html.count(message) == 2  # in the summary, and at the choice
+    assert re.search(
+        r'role="radiogroup" aria-labelledby="ttfAboutLegend" '
+        r'aria-describedby="ttfError-1-field" aria-invalid="true"',
+        html,
+    )
+    # A first visit is not an error.
+    assert _get(_client(), NEW, language).status_code == 200
+
+
+def test_a_case_page_title_is_plain_text(world):
+    client = _client()
+    location = _send(client, world)["Location"]
+    title = re.search(r"<title>(.*?)</title>", _html(_get(client, location)), re.S).group(1)
+    assert "<" not in title and "&lt;" not in title
+    assert TimetableFeedback.objects.get().reference in title
+
+
+def test_needing_another_section_is_not_offered_when_there_is_none(world):
+    """SB201 has no other section this student could take."""
+    html = _html(_describe(_client(), world, "SB201-M1")[0])
+    reasons = re.findall(r'name="reason" value="([A-Z_]+)"', html)
+    assert "PREFER_OTHER_SECTION" not in reasons
+    assert "TIME_CLASH" in reasons  # a clash needs no other section to be sent
+
+
+def test_a_missing_course_is_not_offered_when_none_could_be_named(world):
+    world["SC201-M1"].delete()
+    html = _html(_describe(_client(), world, "TIMETABLE")[0])
+    assert "MISSING_COURSE" not in re.findall(r'name="reason" value="([A-Z_]+)"', html)
+
+
+def test_a_missing_course_is_sent_through_the_form(world):
+    response = _send(
+        _client(), world, about="TIMETABLE", reason="MISSING_COURSE", requested_course="SC201"
+    )
+    assert response.status_code == 302
+    assert TimetableFeedbackPoint.objects.get().request_key == "COURSE|SC201"
+
+
+def test_a_course_left_chosen_for_another_issue_is_ignored(world):
+    response = _send(
+        _client(), world, about="TIMETABLE", reason="LOAD_TOO_HIGH", requested_course="SC201"
+    )
+    assert response.status_code == 302
+    assert TimetableFeedbackPoint.objects.get().request_key == ""
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [("TIMETABLE_FEEDBACK_ACCEPTING", False), ("TIMETABLE_FEEDBACK_PROGRAMMES", ("OTHER",))],
+)
+def test_while_feedback_is_closed_nothing_says_it_still_reaches_the_advisor(
+    world, settings, setting, value
+):
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["SC201-M1"],
+        source="scraper_timetable",
+    )
+    setattr(settings, setting, value)
+    assert "already recorded" not in _home()
+    html = _html(_get(_client(), LIST))
+    assert str(copy.refusal("NOT_ACCEPTING", "en")) in html
+    assert f'href="{NEW}"' not in html.split("<main", 1)[1]
+
+
+def test_after_saying_no_timetable_was_prepared_the_home_page_shows_the_case(world):
+    client = _client(EMPTY_SID)
+    fingerprint = FINGERPRINT.search(_html(_get(client, NEW))).group(1)
+    _post(client, NEW, {"anchor": "NO_FORECAST", "seen_fingerprint": fingerprint})
+    case = TimetableFeedback.objects.get(student_id=EMPTY_SID)
+
+    html = _html(_get(client, reverse("student_home")))
+    assert 'id="student-home-feedback-no-forecast"' not in html
+    card = html.split('id="student-home-feedback-case"', 1)[1].split("</section>", 1)[0]
+    assert f'href="{_detail_url(case.reference)}"' in card and "Status: Sent" in card
+
+
+def test_another_students_case_is_on_neither_this_students_list_nor_home(world):
+    theirs = feedback.submit_point(
+        student_id=OTHER_SID,
+        anchor=f"SECTION|{world['SA101-M1'].pk}",
+        reason="TIME_CLASH",
+        seen_fingerprint=_fingerprint(OTHER_SID),
+    )
+    client = _client()
+    for url in (LIST, reverse("student_home")):
+        main = _html(_get(client, url)).split("<main", 1)[1]
+        assert theirs.reference not in main, url
+
+
+def test_a_full_case_offers_no_further_point(world):
+    client = _client()
+    location = _send(client, world)["Location"]
+    case = TimetableFeedback.objects.get(student_id=SID)
+    for n in range(feedback.MAX_LIVE_POINTS - 1):
+        TimetableFeedbackPoint.objects.create(
+            case=case,
+            anchor_kind="TIMETABLE",
+            anchor_key="TIMETABLE",
+            reason_code="OTHER",
+            note=f"point {n}",
+            seen_fingerprint=f"{n:064d}",
+        )
+    t = copy.strings("en")
+    home = _html(_get(client, reverse("student_home")))
+    assert t["detail_add_point"] not in _html(_get(client, location))
+    # Neither "add" nor "send": the service would refuse a point to a full case.
+    assert t["home_add_point"] not in home and t["home_send"] not in home
+    assert "View my feedback" in home
+
+    # A withdrawn point frees its place, on both pages alike.
+    TimetableFeedbackPoint.objects.filter(note="point 0").update(withdrawn_at=timezone.now())
+    assert t["detail_add_point"] in _html(_get(client, location))
+    assert t["home_add_point"] in _html(_get(client, reverse("student_home")))
+
+
+def test_a_closed_case_is_not_shown_on_the_home_page(world):
+    client = _client()
+    _send(client, world)
+    TimetableFeedback.objects.update(
+        status="CLOSED", close_reason="DUPLICATE", closed_at=timezone.now()
+    )
+    html = _html(_get(client, reverse("student_home")))
+    assert "View my feedback" not in html
+    assert copy.strings("en")["home_send"] in html
+
+
+def test_an_answer_past_its_window_offers_a_new_send_not_another_point(world, settings):
+    settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS = 14
+    client = _client()
+    location = _send(client, world)["Location"]
+    TimetableFeedback.objects.update(
+        status="ANSWERED", answered_at=timezone.now() - timedelta(days=30)
+    )
+    home = _html(_get(client, reverse("student_home")))
+    assert copy.strings("en")["home_add_point"] not in home
+    assert copy.strings("en")["home_send"] in home and "View my feedback" in home
+    assert copy.strings("en")["detail_add_point"] not in _html(_get(client, location))
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_the_no_timetable_form_names_no_issue_in_its_hint(world, language):
+    html = _html(_get(_client(EMPTY_SID), NEW, language))
+    assert copy.reason_label("OTHER", language) not in html
+
+
+@pytest.mark.parametrize(
+    "setting", ["TIMETABLE_FEEDBACK_ACCEPTING", "TIMETABLE_FEEDBACK_PROGRAMMES"]
+)
+def test_once_feedback_closes_an_open_case_is_shown_but_takes_nothing_more(
+    world, settings, setting
+):
+    client = _client()
+    location = _send(client, world)["Location"]
+    setattr(settings, setting, False if setting.endswith("ACCEPTING") else ("OTHER",))
+    t = copy.strings("en")
+    home = _html(_get(client, reverse("student_home")))
+    assert "View my feedback" in home and "Status: Sent" in home
+    assert t["home_add_point"] not in home and t["home_send"] not in home
+    assert t["detail_add_point"] not in _html(_get(client, location))
+
+
+REFERS_TO = re.compile(r'aria-(?:describedby|labelledby)="([^"]+)"')
+FIELDSET = re.compile(r"<fieldset\b[^>]*>.*?</fieldset>", re.S)
+SUMMARY_ITEM = re.compile(r'<li id="(ttfError-\d+)"><span dir="auto">(.*?)</span>', re.S)
+FIELD_ERROR = re.compile(
+    r'<p class="ttf-field-error" id="(ttfError-\d+)-field" dir="auto">(.*?)</p>', re.S
+)
+
+
+def _one_error_on(world, field):
+    """A response whose one error is about ``field``."""
+    client = _client()
+    if field == "about":
+        return _get(client, NEW, step="choose")
+    if field == "reason":
+        return _send(client, world, reason="")
+    if field == "requested_section":
+        return _send(client, world, reason="PREFER_OTHER_SECTION")
+    if field == "requested_course":
+        return _send(client, world, about="TIMETABLE", reason="MISSING_COURSE")
+    if field == "note":
+        return _send(client, world, reason="OTHER", note="   ")
+    # The note of the "no timetable was prepared" form, which is a different form.
+    client = _client(EMPTY_SID)
+    fingerprint = FINGERPRINT.search(_html(_get(client, NEW))).group(1)
+    data = {
+        "anchor": "NO_FORECAST",
+        "seen_fingerprint": fingerprint,
+        "note": "a" * (feedback.NOTE_MAX_CHARS + 1),
+    }
+    return _post(client, NEW, data)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["about", "reason", "requested_section", "requested_course", "note", "no_forecast_note"],
+)
+def test_each_error_is_said_at_its_field_and_every_reference_resolves(world, field):
+    response = _one_error_on(world, field)
+    assert response.status_code == 400
+    main = _html(response).split("<main", 1)[1]
+
+    # Nothing names an element the page does not have.
+    ids = set(re.findall(r'\sid="([^"]+)"', main))
+    for tokens in REFERS_TO.findall(main):
+        for token in tokens.split():
+            assert token in ids, f"an aria reference names a missing element: {token}"
+
+    # Every group of choices is a radio group named by its own legend: there,
+    # aria-invalid is a state a screen reader announces.
+    groups = FIELDSET.findall(main)
+    # Step one has one group; the describe step two (the issue, then the section or
+    # course it names); the no-timetable form none. Never a loop over nothing.
+    assert len(groups) == {"about": 1, "no_forecast_note": 0}.get(field, 2), len(groups)
+    for fieldset in groups:
+        opening = fieldset.split(">", 1)[0]
+        assert 'role="radiogroup"' in opening, opening
+        legend = re.search(r'aria-labelledby="([^"]+)"', opening).group(1)
+        assert f'<legend class="ttf-legend" id="{legend}">' in fieldset, opening
+
+    # The error is said twice, the same both times: in the summary, which takes
+    # focus, and at its field, which the field names and marks invalid.
+    summary = dict(SUMMARY_ITEM.findall(main))
+    at_field = FIELD_ERROR.findall(main)
+    assert len(summary) == 1 and len(at_field) == 1, (summary, at_field)
+    error_id, text = at_field[0]
+    assert summary[error_id] == text
+    assert re.search(
+        rf'aria-describedby="(?:[^"]* )?{error_id}-field" aria-invalid="true"', main
+    ), "the field neither names its error nor is marked invalid"

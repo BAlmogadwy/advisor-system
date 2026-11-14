@@ -86,6 +86,10 @@ REASON_ORDER: dict[str, tuple[str, ...]] = {
 #: The marker on our own one-shot notices, so a notice is read only by this page.
 NOTICE_TAG = "ttf"
 
+#: Issues that must name something: the service refuses them without a requested
+#: section (PREFER_OTHER_SECTION) or course (MISSING_COURSE).
+NEEDS_A_CHOICE = frozenset({"PREFER_OTHER_SECTION", "MISSING_COURSE"})
+
 
 # ---------------------------------------------------------------------------
 # Shared
@@ -183,7 +187,14 @@ def feedback_list_view(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "core/student_timetable_feedback_list.html",
-        _context(request, language, rows=rows, can_raise=can_raise),
+        _context(
+            request,
+            language,
+            rows=rows,
+            can_raise=can_raise,
+            # Say so, rather than leave an empty list with no way forward.
+            closed=("" if can_raise else copy.refusal("NOT_ACCEPTING", language)),
+        ),
     )
 
 
@@ -276,13 +287,17 @@ def _alternative(term_section: TermSection, language: str) -> dict:
     }
 
 
-def _reasons(kind: str, section: Any, language: str) -> list[dict[str, str]]:
+def _reasons(kind: str, section: Any, language: str, *, has_choices: bool) -> list[dict[str, str]]:
+    """The issues to offer for this choice. An issue the student could never send is
+    left out: one that names a section or a course when there is none to name."""
     allowed = feedback.REASONS_BY_ANCHOR[kind]
     codes = [code for code in REASON_ORDER[kind] if code in allowed]
     if section is not None and section.meetings:
         # Offered only for a section that really has no times; the service refuses
         # it for one that has them.
         codes = [code for code in codes if code != "SECTION_HAS_NO_TIMES"]
+    if not has_choices:
+        codes = [code for code in codes if code not in NEEDS_A_CHOICE]
     return [{"code": code, "label": copy.reason_label(code, language)} for code in codes]
 
 
@@ -304,11 +319,12 @@ def _render_form(
         error["id"] = f"ttfError-{index}"
     t = copy.strings(language)
     term = copy.term_html(forecast.academic_year, forecast.term)
+    max_chars = copy.bdi(feedback.NOTE_MAX_CHARS)
     extra: dict[str, Any] = {
         "values": values,
         "errors": errors,
-        # Each field names its own error, through aria-describedby.
-        "error_for": {error["field"]: error["id"] for error in errors if error.get("field")},
+        # Each field shows its own error and names it through aria-describedby.
+        "error_for": {error["field"]: error for error in errors if error.get("field")},
         "fingerprint": forecast.fingerprint,
         # Only beside a form: with no forecast there is nothing for it to qualify.
         "registered_notice": (
@@ -316,7 +332,7 @@ def _render_form(
             if forecast.timetable.has_registration and forecast.sections
             else ""
         ),
-        "note_hint": copy.text("new_note_hint", language, max=copy.bdi(feedback.NOTE_MAX_CHARS)),
+        "note_hint": copy.text("new_note_hint", language, max=max_chars),
         "note_max": feedback.NOTE_MAX_CHARS,
     }
     if not forecast.sections:
@@ -326,6 +342,8 @@ def _render_form(
         else:
             extra["mode"] = "no_forecast"
             extra["no_forecast_body"] = copy.text("new_no_forecast_body", language, term=term)
+            # There is no issue to choose here, so the hint names none.
+            extra["note_hint"] = copy.text("new_note_hint_plain", language, max=max_chars)
     elif anchor is None:
         extra["mode"] = "choose"
         extra["choices"] = [
@@ -337,7 +355,6 @@ def _render_form(
         kind, section = anchor
         extra["mode"] = "describe"
         extra["anchor_kind"] = kind
-        extra["reasons"] = _reasons(kind, section, language)
         if kind == "SECTION":
             extra["anchor_value"] = f"SECTION|{section.term_section_id}"
             extra["about"] = _section_choice(section, forecast, language)
@@ -353,6 +370,7 @@ def _render_form(
                     student_id, programme, section
                 )
             ]
+            choices = extra["alternatives"]
         else:
             extra["anchor_value"] = "TIMETABLE"
             extra["heading"] = t["new_about_timetable"]
@@ -362,6 +380,8 @@ def _render_form(
                 forecast.timetable,
                 feedback.catalogue_sections_for(student_id, programme),
             )
+            choices = extra["candidates"]
+        extra["reasons"] = _reasons(kind, section, language, has_choices=bool(choices))
     return render(
         request,
         "core/student_timetable_feedback_new.html",
@@ -424,8 +444,21 @@ def feedback_new_view(request: HttpRequest) -> HttpResponse:
         return _submit(request, forecast=forecast, **form)
 
     about = request.GET.get("about")
-    if about is None or not forecast.sections:
+    if not forecast.sections:
         return _render_form(request, forecast=forecast, anchor=None, **form)
+    if about is None:
+        if request.GET.get("step") != "choose":
+            return _render_form(request, forecast=forecast, anchor=None, **form)
+        # Continue pressed with nothing chosen: a radio group sends nothing at all,
+        # so only the form's own marker tells this apart from a first visit.
+        return _render_form(
+            request,
+            forecast=forecast,
+            anchor=None,
+            errors=[_error("about", copy.text("new_about_required", language))],
+            status=400,
+            **form,
+        )
     anchor = _anchor_of(about, forecast)
     if anchor is None:
         return _render_form(
@@ -579,6 +612,19 @@ def _refused(
 # ---------------------------------------------------------------------------
 
 
+def _takes_another_point(case: TimetableFeedback, live_points: int) -> bool:
+    """Whether a new point would go into THIS case. Not into a finished case, nor a
+    full one, nor an answer past its window: that one gives way to a new case."""
+    if case.status in TIMETABLE_FEEDBACK_TERMINAL_STATUSES:
+        return False
+    if live_points >= feedback.MAX_LIVE_POINTS:
+        return False
+    return not (
+        case.status == TimetableFeedback.Status.ANSWERED
+        and workflow.answer_window_passed(case, timezone.now())
+    )
+
+
 def _point_view(point: Any, language: str) -> dict[str, Any]:
     t = copy.strings(language)
     about: str
@@ -671,8 +717,7 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
     live = sum(1 for point in points if not point["withdrawn"])
     can_add = (
         is_planning_term
-        and case.status not in TIMETABLE_FEEDBACK_TERMINAL_STATUSES
-        and live < feedback.MAX_LIVE_POINTS
+        and _takes_another_point(case, live)
         and student is not None
         and feedback.accepting_for(student.program)
     )
@@ -686,6 +731,8 @@ def feedback_detail_view(request: HttpRequest, reference: str) -> HttpResponse:
             case={
                 "reference": case.reference,
                 "title": copy.text("detail_title", language, reference=copy.bdi(case.reference)),
+                # A <title> shows markup literally, so it gets the same words as text.
+                "page_title": copy.plain("detail_title", language, reference=case.reference),
                 "term": term,
                 "status_code": case.status,
                 "status": copy.status_label(case.status, language),
@@ -742,27 +789,38 @@ def home_feedback_entry(
         .first()
     )
     term_html = copy.term_html(academic_year, term)
+    can_raise = accepting and not read_failed and timetable.has_forecast
     entry: dict[str, Any] = {
         "list_url": reverse("student_timetable_feedback_list"),
         "new_url": reverse("student_timetable_feedback_new"),
-        "can_raise": accepting and not read_failed and timetable.has_forecast,
+        "can_raise": can_raise,
+        # Only where feedback can be sent: while it is closed, "it still reaches your
+        # academic advisor" would be untrue.
         "registered_notice": (
             copy.text("registered_notice", language, term=term_html)
-            if timetable.has_registration and timetable.has_forecast
+            if can_raise and timetable.has_registration
             else ""
         ),
+        # Offered once: after it is sent, the open case is shown instead.
         "no_forecast": (
             accepting
             and not read_failed
             and not timetable.has_forecast
             and not timetable.has_registration
+            and open_case is None
         ),
+        # Without this term's expected card the open case gets a card of its own.
+        "on_expected_card": timetable.has_forecast,
         "t": copy.strings(language),
         "open_case": None,
     }
     if entry["no_forecast"]:
         entry["no_forecast_body"] = copy.text("no_forecast_body", language, term=term_html)
     if open_case is not None:
+        live = open_case.points.filter(withdrawn_at__isnull=True).count()
+        settled = open_case.status == TimetableFeedback.Status.ANSWERED and (
+            workflow.answer_window_passed(open_case, timezone.now())
+        )
         entry["open_case"] = {
             "url": reverse("student_timetable_feedback_detail", args=[open_case.reference]),
             "label": copy.text("home_view_case", language, reference=copy.bdi(open_case.reference)),
@@ -771,5 +829,9 @@ def home_feedback_entry(
                 language,
                 status=copy.status_label(open_case.status, language),
             ),
+            "can_add": can_raise and _takes_another_point(open_case, live),
+            # A point sent now would not join an answer past its window: it closes
+            # that case and opens a new one, so the card offers "send", not "add".
+            "can_send_new": can_raise and settled,
         }
     return entry

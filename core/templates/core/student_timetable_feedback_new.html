@@ -14,6 +14,11 @@
   One template, four states, chosen by the view: "choose" (what is the feedback
   about), "describe" (what is the issue), "no_forecast" and "registered_only".
   Every word comes from the copy deck (core/services/timetable_feedback_copy.py).
+
+  An error is said twice on purpose: once in the summary at the top, which takes
+  focus, and once inside the field it is about, which that field names through
+  aria-describedby. Radio groups are role=radiogroup, where aria-invalid is a state
+  screen readers announce; on a plain fieldset it is not.
 {% endcomment %}
 
 {% if errors %}
@@ -32,8 +37,12 @@
 {% if mode == 'choose' %}
 <section class="card p-3 mb-3">
   <form method="get" action="{% url 'student_timetable_feedback_new' %}" class="ttf-form" novalidate>
-    <fieldset class="ttf-fieldset"{% if error_for.about %} aria-describedby="{{ error_for.about }}" aria-invalid="true"{% endif %}>
-      <legend class="ttf-legend">{{ t.new_what_legend }}</legend>
+    {% comment %}A radio group with nothing chosen sends nothing, so this marker is
+    what tells "Continue with no choice" apart from a first visit.{% endcomment %}
+    <input type="hidden" name="step" value="choose">
+    <fieldset class="ttf-fieldset" role="radiogroup" aria-labelledby="ttfAboutLegend"{% if error_for.about %} aria-describedby="{{ error_for.about.id }}-field" aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend" id="ttfAboutLegend">{{ t.new_what_legend }}</legend>
+      {% if error_for.about %}<p class="ttf-field-error" id="{{ error_for.about.id }}-field" dir="auto">{{ error_for.about.html }}</p>{% endif %}
       <div class="ttf-choice-list">
         {% for choice in choices %}
         <label class="ttf-choice">
@@ -78,8 +87,9 @@
     <input type="hidden" name="anchor" value="{{ anchor_value }}">
     <input type="hidden" name="seen_fingerprint" value="{{ fingerprint }}">
 
-    <fieldset class="ttf-fieldset"{% if error_for.reason %} aria-describedby="{{ error_for.reason }}" aria-invalid="true"{% endif %}>
-      <legend class="ttf-legend">{{ t.new_reason_legend }}</legend>
+    <fieldset class="ttf-fieldset" role="radiogroup" aria-labelledby="ttfReasonLegend"{% if error_for.reason %} aria-describedby="{{ error_for.reason.id }}-field" aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend" id="ttfReasonLegend">{{ t.new_reason_legend }}</legend>
+      {% if error_for.reason %}<p class="ttf-field-error" id="{{ error_for.reason.id }}-field" dir="auto">{{ error_for.reason.html }}</p>{% endif %}
       <div class="ttf-choice-list">
         {% for reason in reasons %}
         <label class="ttf-choice">
@@ -91,9 +101,10 @@
     </fieldset>
 
     {% if anchor_kind == 'SECTION' %}
-    <fieldset class="ttf-fieldset" data-ttf-for="TIME_CLASH TIME_UNSUITABLE PREFER_OTHER_SECTION" aria-describedby="ttfRequestedHint{% if error_for.requested_section %} {{ error_for.requested_section }}{% endif %}"{% if error_for.requested_section %} aria-invalid="true"{% endif %}>
-      <legend class="ttf-legend">{{ t.new_requested_legend }}</legend>
+    <fieldset class="ttf-fieldset" role="radiogroup" aria-labelledby="ttfRequestedLegend" data-ttf-for="TIME_CLASH TIME_UNSUITABLE PREFER_OTHER_SECTION" aria-describedby="ttfRequestedHint{% if error_for.requested_section %} {{ error_for.requested_section.id }}-field{% endif %}"{% if error_for.requested_section %} aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend" id="ttfRequestedLegend">{{ t.new_requested_legend }}</legend>
       <p class="ttf-hint" id="ttfRequestedHint" dir="auto">{{ t.new_requested_hint }}</p>
+      {% if error_for.requested_section %}<p class="ttf-field-error" id="{{ error_for.requested_section.id }}-field" dir="auto">{{ error_for.requested_section.html }}</p>{% endif %}
       {% if alternatives %}
       <div class="ttf-choice-list">
         <label class="ttf-choice">
@@ -115,9 +126,10 @@
       {% endif %}
     </fieldset>
     {% else %}
-    <fieldset class="ttf-fieldset" data-ttf-for="MISSING_COURSE" aria-describedby="ttfMissingHint{% if error_for.requested_course %} {{ error_for.requested_course }}{% endif %}"{% if error_for.requested_course %} aria-invalid="true"{% endif %}>
-      <legend class="ttf-legend">{{ t.new_missing_legend }}</legend>
+    <fieldset class="ttf-fieldset" role="radiogroup" aria-labelledby="ttfMissingLegend" data-ttf-for="MISSING_COURSE" aria-describedby="ttfMissingHint{% if error_for.requested_course %} {{ error_for.requested_course.id }}-field{% endif %}"{% if error_for.requested_course %} aria-invalid="true"{% endif %}>
+      <legend class="ttf-legend" id="ttfMissingLegend">{{ t.new_missing_legend }}</legend>
       <p class="ttf-hint" id="ttfMissingHint" dir="auto">{{ t.new_missing_hint }}</p>
+      {% if error_for.requested_course %}<p class="ttf-field-error" id="{{ error_for.requested_course.id }}-field" dir="auto">{{ error_for.requested_course.html }}</p>{% endif %}
       {% if candidates %}
       <div class="ttf-choice-list">
         <label class="ttf-choice">
@@ -143,7 +155,8 @@
     <div class="ttf-field">
       <label class="ttf-label" for="ttfNote">{{ t.new_note_label }}</label>
       <p class="ttf-hint" id="ttfNoteHint" dir="auto">{{ note_hint }}</p>
-      <textarea class="form-control ttf-note" id="ttfNote" name="note" rows="5" maxlength="{{ note_max }}" dir="auto" aria-describedby="ttfNoteHint ttfPrivacy{% if error_for.note %} {{ error_for.note }}{% endif %}"{% if error_for.note %} aria-invalid="true"{% endif %}>{{ values.note }}</textarea>
+      {% if error_for.note %}<p class="ttf-field-error" id="{{ error_for.note.id }}-field" dir="auto">{{ error_for.note.html }}</p>{% endif %}
+      <textarea class="form-control ttf-note" id="ttfNote" name="note" rows="5" maxlength="{{ note_max }}" dir="auto" aria-describedby="ttfNoteHint ttfPrivacy{% if error_for.note %} {{ error_for.note.id }}-field{% endif %}"{% if error_for.note %} aria-invalid="true"{% endif %}>{{ values.note }}</textarea>
       <p class="ttf-hint mt-2" id="ttfPrivacy" dir="auto">{{ t.new_privacy }}</p>
     </div>
 
@@ -167,7 +180,8 @@
     <div class="ttf-field">
       <label class="ttf-label" for="ttfNote">{{ t.new_note_label }}</label>
       <p class="ttf-hint" id="ttfNoteHint" dir="auto">{{ note_hint }}</p>
-      <textarea class="form-control ttf-note" id="ttfNote" name="note" rows="4" maxlength="{{ note_max }}" dir="auto" aria-describedby="ttfNoteHint ttfPrivacy{% if error_for.note %} {{ error_for.note }}{% endif %}"{% if error_for.note %} aria-invalid="true"{% endif %}>{{ values.note }}</textarea>
+      {% if error_for.note %}<p class="ttf-field-error" id="{{ error_for.note.id }}-field" dir="auto">{{ error_for.note.html }}</p>{% endif %}
+      <textarea class="form-control ttf-note" id="ttfNote" name="note" rows="4" maxlength="{{ note_max }}" dir="auto" aria-describedby="ttfNoteHint ttfPrivacy{% if error_for.note %} {{ error_for.note.id }}-field{% endif %}"{% if error_for.note %} aria-invalid="true"{% endif %}>{{ values.note }}</textarea>
       <p class="ttf-hint mt-2" id="ttfPrivacy" dir="auto">{{ t.new_privacy }}</p>
     </div>
     <div class="student-page-actions ttf-actions mt-3">

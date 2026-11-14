@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from django.conf import settings
-from django.utils.html import format_html
+from django.utils.html import conditional_escape, format_html
 from django.utils.safestring import SafeString
 
 # The services import nothing from this module, so taking their limits from them
@@ -69,19 +69,22 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "home_case_status": ("Status: {status}", "الحالة: {status}"),
     "home_add_point": ("Add another point", "إضافة نقطة أخرى"),
     "home_all_feedback": ("All my timetable feedback", "جميع ملاحظاتي على الجدول"),
+    # «الخطة» is the study plan in this portal, and nothing here promises an effect.
     "registered_notice": (
         "Your registration for term {term} is already recorded, and changes to it are made"
-        " in the university portal. Feedback still reaches your academic advisor and helps"
-        " the next plan.",
+        " in the university portal. Your feedback still reaches your academic advisor and can"
+        " be taken into account when the next timetables are prepared.",
         "سبق تسجيلك في الفصل الدراسي {term}، وتُجرى أي تعديلات على التسجيل عبر بوابة"
-        " الجامعة. ومع ذلك تصل ملاحظتك إلى مرشدك الأكاديمي وتُسهم في إعداد الخطة القادمة.",
+        " الجامعة. ومع ذلك تصل ملاحظتك إلى مرشدك الأكاديمي، ويمكن أخذها في الحسبان عند إعداد"
+        " الجداول القادمة.",
     ),
     "no_forecast_title": ("No expected timetable yet", "لا يوجد جدول متوقع حتى الآن"),
     "no_forecast_body": (
-        "No expected timetable has been prepared for you for term {term} yet. Your academic"
-        " advisor can be told about it.",
+        "No expected timetable has been prepared for you for term {term} yet. You can let"
+        " your academic advisor know.",
         "لم يُعدّ لك جدول متوقع للفصل الدراسي {term} حتى الآن، ويمكن إبلاغ مرشدك الأكاديمي بذلك.",
     ),
+    "home_case_title": ("My timetable feedback", "ملاحظاتي على الجدول"),
     "no_forecast_button": ("Let my academic advisor know", "إبلاغ مرشدي الأكاديمي"),
     # The form, step one: what is it about
     "new_title": (
@@ -118,10 +121,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         " الجداول. ولا يغيّر إرسالها تسجيلك أو الجدول المتوقع بحد ذاته، إذ يتم التسجيل عبر"
         " بوابة الجامعة.",
     ),
+    # A section without times is still listed, so this says "a section", not "a time".
     "new_only_timetabled": (
-        "Only courses that have a place in the timetable are listed; projects and courses"
-        " without a section do not appear.",
-        "تظهر هنا المقررات التي لها موعد في الجدول فقط، ولا تظهر المشاريع ولا المقررات التي"
+        "Only courses with a section in your expected timetable are listed; projects and"
+        " courses without a section do not appear.",
+        "تظهر هنا مقررات الجدول المتوقع التي لها شعبة فقط، ولا تظهر المشاريع ولا المقررات التي"
         " ليس لها شعبة.",
     ),
     # The form, step two: what is the issue
@@ -164,10 +168,16 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "No course from your plan can be listed here this term.",
         "لا يوجد مقرر من خطتك يمكن عرضه هنا في هذا الفصل الدراسي.",
     ),
-    "new_note_label": ("Your note", "ملاحظتك"),
+    # The free-text field is «تفاصيل إضافية», never «ملاحظة»: that word is the whole
+    # feedback, and "part of this note was removed" must not read as the whole case.
+    "new_note_label": ("More details", "تفاصيل إضافية"),
     "new_note_hint": (
         'Optional, except when the issue is "Something else". At most {max} characters.',
         "اختيارية، إلا عند اختيار «أمر آخر». الحد الأقصى لعدد الأحرف: {max}.",
+    ),
+    "new_note_hint_plain": (
+        "Optional. At most {max} characters.",
+        "اختيارية. الحد الأقصى لعدد الأحرف: {max}.",
     ),
     "new_privacy": (
         "Your academic advisor and the department can read this. Please do not include"
@@ -196,8 +206,8 @@ STRINGS: Mapping[str, tuple[str, str]] = {
         "لم يُعدّ لك جدول متوقع",
     ),
     "new_no_forecast_body": (
-        "There is no expected timetable for you for term {term}. Your academic advisor can"
-        " be told, to look into it.",
+        "There is no expected timetable for you for term {term}. You can tell your academic"
+        " advisor, who can look into it.",
         "لا يوجد جدول متوقع لك للفصل الدراسي {term}، ويمكن إبلاغ مرشدك الأكاديمي ليتابع ذلك.",
     ),
     "new_no_forecast_submit": ("Tell my academic advisor", "إبلاغ مرشدي الأكاديمي"),
@@ -219,8 +229,11 @@ STRINGS: Mapping[str, tuple[str, str]] = {
     "detail_reason": ("Issue", "المشكلة"),
     "detail_requested_section": ("A section that would suit you better", "الشعبة الأنسب"),
     "detail_requested_course": ("Missing course", "المقرر غير الموجود"),
-    "detail_note": ("Your note", "ملاحظتك"),
-    "detail_note_removed": ("Part of this note was removed.", "حُذف جزء من هذه الملاحظة."),
+    "detail_note": ("More details", "التفاصيل الإضافية"),
+    "detail_note_removed": (
+        "Part of these details was removed.",
+        "حُذف جزء من التفاصيل الإضافية لهذه النقطة.",
+    ),
     "detail_withdrawn": ("Withdrawn", "مسحوبة"),
     "detail_seen": (
         "As it was in your expected timetable:",
@@ -400,16 +413,16 @@ REFUSAL: Mapping[str, tuple[str, str]] = {
         "يُرجى اختيار إحدى المشكلات المعروضة.",
     ),
     "NOTE_REQUIRED": (
-        "Please describe the issue in your note.",
-        "يُرجى توضيح المشكلة في الملاحظة.",
+        "Please describe the issue under More details.",
+        "يُرجى توضيح المشكلة في خانة التفاصيل الإضافية.",
     ),
     "NOTE_TOO_LONG": (
-        "Your note is too long. The most it can hold is {max} characters.",
-        "الملاحظة أطول من المسموح، والحد الأقصى لعدد الأحرف: {max}.",
+        "The details are too long. The most they can hold is {max} characters.",
+        "التفاصيل الإضافية أطول من المسموح، والحد الأقصى لعدد الأحرف: {max}.",
     ),
     "NOTE_INVALID": (
-        "Your note contains characters that cannot be saved. Please remove them and try again.",
-        "تحتوي الملاحظة على رموز لا يمكن حفظها. يُرجى حذفها والمحاولة مجددًا.",
+        "The details contain characters that cannot be saved. Please remove them and try again.",
+        "تحتوي التفاصيل الإضافية على رموز لا يمكن حفظها. يُرجى حذفها والمحاولة مجددًا.",
     ),
     "NOT_OFFERED": (
         "That choice is not available for this feedback. Please choose again.",
@@ -428,9 +441,9 @@ REFUSAL: Mapping[str, tuple[str, str]] = {
         "سُحبت ملاحظة لك مؤخرًا، ويمكن إرسال ملاحظة جديدة بعد مرور {hours} على السحب.",
     ),
     "ALREADY_RAISED": (
-        "You already sent this point in feedback {reference}. To add more to it, open that"
-        " feedback.",
-        "سبق إرسال هذه النقطة ضمن الملاحظة {reference}. ولإضافة أي تفاصيل يُرجى فتح تلك الملاحظة.",
+        "You already sent this point in feedback {reference}, and it is with your academic"
+        " advisor.",
+        "سبق إرسال هذه النقطة ضمن الملاحظة {reference}، وهي لدى مرشدك الأكاديمي.",
     ),
     "TOO_MANY_POINTS": (
         "This feedback already holds the most points allowed ({max}).",
@@ -545,9 +558,24 @@ def strings(language: str) -> dict[str, str]:
     return {key: _pick(pair, language) for key, pair in STRINGS.items() if "{" not in pair[0]}
 
 
+def _render(template: str, params: Mapping[str, object]) -> SafeString:
+    """``template`` filled and escaped. A string with no placeholders is escaped
+    directly: format_html() without arguments is deprecated, and an error in
+    Django 6, which would turn every plain refusal into a server error."""
+    if not params:
+        return conditional_escape(template)
+    return format_html(template, **params)
+
+
 def text(key: str, language: str, **params: object) -> SafeString:
     """One page string, with its placeholders filled and escaped."""
-    return format_html(_pick(STRINGS[key], language), **params)
+    return _render(_pick(STRINGS[key], language), params)
+
+
+def plain(key: str, language: str, **params: object) -> str:
+    """One page string as plain text, for places markup cannot go: a page's <title>
+    shows tags literally, in the tab and to a screen reader."""
+    return _pick(STRINGS[key], language).format(**{k: str(v) for k, v in params.items()})
 
 
 def status_label(code: str, language: str) -> str:
@@ -577,7 +605,7 @@ def day_label(code: str, language: str) -> str:
 
 
 def notice(code: str, language: str, *, reference: str) -> SafeString:
-    return format_html(_pick(NOTICE[code], language), reference=bdi(reference))
+    return _render(_pick(NOTICE[code], language), {"reference": bdi(reference)})
 
 
 def wait_text(seconds: int | float | None, language: str) -> str:
@@ -636,4 +664,4 @@ def refusal(
         params["days"] = count_text(
             int(settings.TIMETABLE_FEEDBACK_ANSWER_REOPEN_DAYS), "day", language
         )
-    return format_html(_pick(pair, language), **params)
+    return _render(_pick(pair, language), params)

@@ -157,6 +157,15 @@
   border-color: var(--sev-critical);
 }
 
+/* The error again, at the field it is about: not by colour alone, and where a
+   student who scrolls to the field will see it. */
+.ttf-field-error {
+  color: var(--sev-critical);
+  font-size: max(12px, var(--text-sm));
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
 /* .form-control's border is !important, so the invalid border must be too. */
 .ttf-note[aria-invalid="true"] {
   border-color: var(--sev-critical) !important;

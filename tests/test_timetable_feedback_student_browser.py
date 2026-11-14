@@ -190,13 +190,13 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
 
         page.get_by_label("SA101", exact=False).check()
         page.get_by_role("button", name="Continue").click()
-        page.wait_for_url("**/student/timetable-feedback/new/?about=*")
+        page.wait_for_url("**/student/timetable-feedback/new/?*about=*")
         requested = page.locator("fieldset[data-ttf-for]")
         expect(requested).to_be_hidden()
         page.get_by_label("The time does not suit me").check()
         expect(requested).to_be_visible()
         page.get_by_label("Section M2", exact=False).check()
-        page.get_by_label("Your note").fill("Sunday mornings clash with my work.")
+        page.get_by_label("More details").fill("Sunday mornings clash with my work.")
         self._check(page, "3-describe-en")
 
         page.get_by_role("button", name="Send to my academic advisor").click()
@@ -231,8 +231,25 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
     def test_the_choices_read_right_to_left_in_arabic_and_fit_the_phone(self):
         page = self._page("ar")
         page.goto(f"{self.live_server_url}/student/timetable-feedback/new/")
-        expect(page.get_by_role("group", name="ما موضوع ملاحظتك؟")).to_be_visible()
+        expect(page.get_by_role("radiogroup", name="ما موضوع ملاحظتك؟")).to_be_visible()
         self._check(page, "6-choose-ar")
         page.goto(f"{self.live_server_url}/student/")
         expect(page.get_by_role("link", name="إرسال ملاحظة إلى مرشدي الأكاديمي")).to_be_visible()
         self._check(page, "7-home-ar", "#student-home-timetable-expected")
+
+    def test_continue_with_nothing_chosen_says_so_where_the_choice_is(self):
+        """A radio group with nothing chosen sends nothing at all; the page must
+        still say what is missing, in the summary and at the choice itself."""
+        page = self._page("en")
+        page.goto(f"{self.live_server_url}/student/timetable-feedback/new/")
+        page.get_by_role("button", name="Continue").click()
+
+        summary = page.locator("#ttfErrors")
+        expect(summary).to_be_focused()
+        expect(summary).to_contain_text("Please choose what your feedback is about.")
+        group = page.get_by_role("radiogroup", name="What is your feedback about?")
+        expect(group).to_have_attribute("aria-invalid", "true")
+        expect(group.locator(".ttf-field-error")).to_have_text(
+            "Please choose what your feedback is about."
+        )
+        self._check(page, "8-nothing-chosen-en")
