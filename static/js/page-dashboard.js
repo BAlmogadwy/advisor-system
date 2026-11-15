@@ -69,8 +69,14 @@ const IS_AR = document.documentElement.lang === 'ar';
     termHeading: (term) => IS_AR ? `الفصل ${term}` : `Term ${term}`,
     listSep: IS_AR ? '، ' : ', ',
     /* A word, not a dash: "—" is ambiguous between "no prerequisites" and "not
-       known", and it rendered as a missing glyph at this size. */
+       known", and those are exactly the two states this column must keep
+       apart — so each gets its own word. */
     noPrereqsShort: IS_AR ? 'لا يوجد' : 'None',
+    prereqsUnknownShort: IS_AR ? 'غير متاح' : 'Unavailable',
+    prereqColumnFailed: IS_AR ? 'تعذّر تحميل المتطلبات السابقة' : 'Could not load prerequisites',
+    prereqColumnFailedHint: IS_AR
+      ? 'عُرضت الخطة، لكن عمود المتطلبات السابقة غير متاح. افتح تبويب المتطلبات السابقة لمقرر واحد.'
+      : 'The plan loaded, but the Prerequisites column is unavailable. Open the Prerequisites tab for a single course.',
     planContext: (program, courses, terms, credits) => IS_AR
       ? `${program} · ${terms} فصل · ${courses} مقرر · ${credits} ساعة`
       : `${program} · ${terms} terms · ${courses} courses · ${credits} credits`,
@@ -723,12 +729,28 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     /* Every prerequisite link in the program, in ONE request, so the course
        list can carry them inline instead of making the reader click each
-       course. A failure here must not cost the plan: the column falls back to
-       "—" and the Prerequisites tab still works per course. */
+       course. A failure here must not cost the plan — but it must not be
+       allowed to read as an ANSWER either: an empty map and a program whose
+       courses genuinely have no prerequisites look identical, and printing
+       "None" for a gated course is worse than printing nothing. So the column
+       has three states, and `prereqsKnown` decides between the last two:
+       listed, "None", and "unavailable". */
     const prereqByCourse = new Map();
+    let prereqsKnown = false;
     try {
-      const preRes = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}`);
-      const preData = await preRes.json();
+      /* The plan is already on screen behind this await: a prerequisite
+         endpoint that never answers must not leave the button disabled and
+         the skeleton up for ever. */
+      const preAbort = new AbortController();
+      const preTimer = setTimeout(() => preAbort.abort(), 10000);
+      let preRes;
+      let preData;
+      try {
+        preRes = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}`, { signal: preAbort.signal });
+        preData = await preRes.json();
+      } finally {
+        clearTimeout(preTimer);
+      }
       if (preRes.ok && Array.isArray(preData.items)) {
         preData.items.forEach((link) => {
           const key = planCodeKey(link.course_code);
@@ -737,10 +759,12 @@ const IS_AR = document.documentElement.lang === 'ar';
           if (!prereqByCourse.has(key)) prereqByCourse.set(key, []);
           prereqByCourse.get(key).push(requires);
         });
+        prereqsKnown = true;
       }
     } catch (err) {
-      /* The plan is the request that matters; the column stays empty. */
+      /* Left unknown on purpose; the toast below says so. */
     }
+    if (!prereqsKnown) notify.error(T.prereqColumnFailed, T.prereqColumnFailedHint);
 
     const termMap = {};
     const termCredits = {};
@@ -783,7 +807,8 @@ const IS_AR = document.documentElement.lang === 'ar';
             /* The class is an inline ternary of literals and the text is
                escaped, so this adds no raw HTML sink to
                tests/fixtures/html_sink_allowlist.json. */
-            const requiresText = requires.length ? requires.join(T.listSep) : T.noPrereqsShort;
+            const requiresText = requires.length ? requires.join(T.listSep)
+              : (prereqsKnown ? T.noPrereqsShort : T.prereqsUnknownShort);
             return `<tr><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${esc(loadedProgram)}" data-course="${esc(code)}">${esc(code)}</button></td><td>${esc(name || '-')}</td><td><span class="course-prereqs${requires.length ? '' : ' is-none'}">${esc(requiresText)}</span></td><td>${esc(row.credit_hours ?? '-')}</td></tr>`;
           })
           .join('');
@@ -824,7 +849,12 @@ const IS_AR = document.documentElement.lang === 'ar';
         if (!course || !prog) return;
         /* The prerequisites live in their own tab now, so bring it forward —
            otherwise the click would load a table nobody can see. */
+        /* The pane holding this button is about to be hidden, which would drop
+           focus to <body> and send a keyboard user back to the top of the
+           page. Move focus to the tab we are opening instead. */
         selectPlanTab('Prereq');
+        const prereqTab = q('planTabPrereq');
+        if (prereqTab) prereqTab.focus();
         await loadPrereqsForPlanCourse(prog, course);
       });
     });

@@ -76,9 +76,12 @@ function wireSortableTable(tableId) {
       dir = asc ? 'desc' : 'asc';
       /* Re-append section by section; handle detail/companion rows */
       const detailRows = rows.filter(r => r.classList.contains('ap-detail-row') || r.querySelector('td[colspan], th[colspan]'));
+      /* A Set, not `validRows.includes`: this runs per click on every sorted
+         table in the app, and the linear scan made it quadratic in row count. */
+      const isData = new Set(validRows);
       sections.forEach((sec) => {
         if (sec.head) tbody.appendChild(sec.head);
-        const sortable = sec.rows.filter(r => validRows.includes(r));
+        const sortable = sec.rows.filter(r => isData.has(r));
         sortable.sort(compare);
         sortable.forEach(r => {
           tbody.appendChild(r);
