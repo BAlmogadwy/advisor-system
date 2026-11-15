@@ -17,10 +17,24 @@
    DESIGN TOKENS
    ============================================================ */
 :root {
-  /* backgrounds */
-  --bg:             #eef1f7;
+  /* ── backgrounds — a warm paper ground ──────────────────────
+     These were a cool blue-grey (#eef1f7 / #f3f6fa). That ground only works
+     while every panel is a white card floating on it: the card supplies the
+     reading surface and the grey is just the gap between cards. Once the cards
+     retire and the page itself becomes the sheet (see "Sheet sections"), the
+     ground IS the reading surface, so it has to be paper rather than gap.
+
+     Warm, and lighter than the grey it replaces, so this RAISES contrast rather
+     than spending it: measured against every ink token the worst case goes from
+     4.80:1 (--sev-warning on the old --bg) to 4.93:1 here. --surface lands at
+     4.72 and --surface-2 at 4.56, the latter matching the 4.57 the old
+     --surface-2 measured, so no token that passed before fails now.
+
+     --card stays white: a genuinely raised surface (a modal, a popover, a drag
+     ghost) still needs to read as lifted off the sheet. */
+  --bg:             #f6f4ee;
   --card:           #ffffff;
-  --surface:        #f3f6fa;
+  --surface:        #f2efe7;
 
   /* ink — WCAG AA compliant text hierarchy */
   --ink:            #111144;
@@ -37,11 +51,27 @@
   --muted:          #5c5c7a;
   --muted-light:    #66667f;
 
-  /* borders */
-  --line:           #dde3ed;
-  --line-strong:    #c8d0df;
+  /* borders — warmed to match the paper ground above; same strength as before
+     (--line measures 1.29:1 on the sheet, exactly what #dde3ed measured on a
+     white card), so nothing that was readable has become fainter. */
+  --line:           #ded8ca;
+  --line-strong:    #c4bca7;
   --line-h:         rgba(17,17,68,0.10);
   --line-a:         rgba(17,17,68,0.15);
+
+  /* ── rules — structure, where a card used to do the structuring ──────
+     A separate pair from --line on purpose. --line is an EDGE: it draws round
+     the thing it belongs to (a table cell, an input, a chip) and is allowed to
+     be faint because the thing it edges is visible anyway. A RULE is the only
+     thing dividing two regions of one sheet, so it has to survive a theme where
+     --line does not: dark mode's --line is rgba(255,255,255,0.06), which is
+     invisible as a divider on a near-black page. Dark overrides these to 0.12
+     and 0.24; light keeps them identical to --line / --line-strong.
+
+     Like --line, a rule is a separator rather than a control boundary, so WCAG
+     1.4.11's 3:1 is not its bar (--control-edge carries that, unchanged). */
+  --rule:           #ded8ca;
+  --rule-strong:    #c4bca7;
 
   /* Taibah University brand — primary teal */
   --brand:          #0A8E6E;
@@ -173,7 +203,7 @@
      first, which is how `.sa-escalate.is-prominent` — the panel whose whole job is
      to stand out when the adviser abstains — ended up 1.00:1 inside a bubble that
      is already `--surface`. */
-  --surface-2:      #e7ecf4;
+  --surface-2:      #efebe3;
 
   /* The edge of a form field, an outline button and the sidebar controls. The old
      edge was rgba(17,17,68,.08-.10) and the field was drawn by an inset shadow
@@ -295,6 +325,31 @@
 }
 html[dir="rtl"] { --fs-floor: 12px; }
 
+/* ── MRI stays exactly as it was (owner, 2026-10-23) ─────────────────────────
+   The MRI page itself needs nothing here: `page-timetable-mri.js` puts
+   `.twm-root` on <body>, and `timetable-mri-full.css` then hides .color-mesh,
+   .sidebar and the page chrome outright, paints its own opaque background with
+   !important, and draws every colour from hard-coded --twm-* values of its own.
+   None of the ground changes above reach it.
+
+   The CLASSIC INSPECTOR'S MRI TAB does read the globals: `timetable-mri.css`
+   takes var(--line) seven times and var(--bg) three, so warming those would
+   have moved its panel edges and fills. Scoping the previous values onto
+   `.tw-mri` holds the whole tab where it was — every .tw-mri-* element is built
+   inside that one wrapper (page-timetable-workspace.js), so they all inherit
+   it, while --brand, --radius and the rest still come from :root.
+
+   It lives in the global sheet precisely so that neither MRI file is touched,
+   and it sits AFTER :root rather than inside it: tests/test_design_system_tokens.py
+   reads the FIRST `:root {` block up to its first `\n}`, so splitting :root in
+   two hides every token below the split from the contrast tests.
+   Dark needs no entry — none of the dark values changed. */
+.tw-mri {
+  --bg:             #eef1f7;
+  --line:           #dde3ed;
+  --line-strong:    #c8d0df;
+}
+
 /* ============================================================
    DARK MODE — Deep Navy
    ============================================================ */
@@ -336,6 +391,13 @@ html[data-theme="dark"] {
   --line-strong:    rgba(255,255,255,0.10);
   --line-h:         rgba(255,255,255,0.06);
   --line-a:         rgba(255,255,255,0.10);
+
+  /* A rule divides two regions of the sheet with nothing else to help it, so it
+     cannot inherit --line's 0.06 here: on #0d0f1a that is a 1.04:1 difference,
+     which is to say no line at all. These are the dividers the light theme gets
+     for free from a warm hairline on paper. */
+  --rule:           rgba(255,255,255,0.12);
+  --rule-strong:    rgba(255,255,255,0.24);
 
   /* brand — slightly brighter teal for dark bg */
   --brand:          #0CA87E;
@@ -457,7 +519,7 @@ html[dir="rtl"] { --text-micro: max(12px, 0.75rem); }
 
 /* ── Dark body background ── */
 html[data-theme="dark"] body {
-  background: #0d0f1a !important;
+  background: var(--bg) !important;
   color: var(--t2) !important;
 }
 
@@ -594,8 +656,6 @@ html[data-theme="dark"] .btt {
 html[data-theme="dark"] .soft-card,
 html[data-theme="dark"] .term-card,
 html[data-theme="dark"] .term-details,
-html[data-theme="dark"] .metric,
-html[data-theme="dark"] .mc,
 html[data-theme="dark"] .glass-card,
 html[data-theme="dark"] .task-card {
   background: rgba(255,255,255,0.04) !important;
@@ -603,10 +663,19 @@ html[data-theme="dark"] .task-card {
   border:     1px solid rgba(10,142,110,0.2) !important;
 }
 
+/* .metric and .mc left the rule above: they are sheet tiles in both themes
+   now, and that rule's `!important` would otherwise outrank the light
+   conversion and hand dark its cards straight back. */
+html[data-theme="dark"] .metric,
+html[data-theme="dark"] .mc {
+  background: none !important;
+  box-shadow: none !important;
+  border:     0 !important;
+  border-top: 1px solid var(--rule) !important;
+}
+
 /* Cards & panels — bg + shadow only (no teal border) */
-html[data-theme="dark"] .filter-bar,
 html[data-theme="dark"] .actions-row,
-html[data-theme="dark"] .table-wrap,
 html[data-theme="dark"] .page-nav,
 html[data-theme="dark"] .skel-card,
 html[data-theme="dark"] .glass-filter-row,
@@ -616,6 +685,15 @@ html[data-theme="dark"] .mobile-cards tbody tr {
   background: rgba(255,255,255,0.04) !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
 }
+/* The filter bar left the rule above for the same reason as .metric and .mc.
+   It still needs an OPAQUE fill, because it is sticky on several screens and
+   would otherwise let the rows it is pinned over show through — in dark that
+   is --bg, the sheet it sits on, exactly as in light. */
+html[data-theme="dark"] .filter-bar {
+  background: var(--bg) !important;
+  box-shadow: none !important;
+}
+
 /* Kill backdrop-filter in dark mode — flat look matching advisor-block */
 html[data-theme="dark"] .mc,
 html[data-theme="dark"] .cpanel,
@@ -643,8 +721,10 @@ html[data-theme="dark"] .drawer h3 {
   color: #e2e4ec;
 }
 
-/* Panels with stronger glass for data readability */
-html[data-theme="dark"] .table-wrap,
+/* Panels with stronger glass for data readability. .table-wrap left this rule:
+   it is a sheet section in both themes now, and the `!important` here would
+   have given dark back the card light just took off it. Its sticky header
+   keeps its own opaque fill, which is what actually protects the rows. */
 html[data-theme="dark"] .soft-card {
   background: rgba(255,255,255,0.06) !important;
 }
@@ -675,21 +755,32 @@ html[data-theme="dark"] .table-wrap thead {
   background: rgba(255,255,255,0.06) !important;
 }
 
-/* Batch metrics — kill the hardcoded light green */
+/* Batch metrics. The id raises this to (1,1,1), above every rule the sheet
+   conversion wrote, so these tiles were the one place in dark still painted as
+   boxes. Flat, like every other .metric. */
 html[data-theme="dark"] #batchMetrics .metric {
-  background: rgba(255,255,255,0.04) !important;
-  border-color: rgba(255,255,255,0.06) !important;
+  background: none !important;
+  border-color: var(--rule) !important;
 }
 
-/* Card/panel hover — slightly deeper */
+/* Card/panel hover — slightly deeper.
+   .metric, .mc and .cpanel left this rule: they are flat sheet tiles now, and
+   `!important` here made hovering one in dark paint a shadowed card back on.
+   Worse, the `border-top: … !important` they carry blocks the light theme's
+   hover (a border-colour change), so dark's ONLY hover cue was the card this
+   rule drew. Their dark hover is restated just below. */
 html[data-theme="dark"] .soft-card:hover,
-html[data-theme="dark"] .metric:hover,
-html[data-theme="dark"] .mc:hover,
-html[data-theme="dark"] .cpanel:hover,
 html[data-theme="dark"] .tbl-card tbody tr.cr-row:hover,
 html[data-theme="dark"] .tbl-card tbody tr.cr-row:focus-within {
   background: rgba(255,255,255,0.06) !important;
   box-shadow: 0 4px 16px rgba(0,0,0,0.35) !important;
+}
+html[data-theme="dark"] .metric:hover,
+html[data-theme="dark"] .mc:hover,
+html[data-theme="dark"] .cpanel:hover {
+  border-top-color: var(--rule-strong) !important;
+  background: rgba(255,255,255,0.04) !important;
+  box-shadow: none !important;
 }
 
 /* Buttons — flat with subtle shadow */
@@ -842,11 +933,11 @@ html[data-theme="dark"] .page-header {
    so leaving it translucent would silently undo the fix in dark mode only. */
 html[data-theme="dark"] .table-wrap thead th {
   background: linear-gradient(rgba(255,255,255,0.06), rgba(255,255,255,0.06)),
-              var(--card) !important;
+              var(--bg) !important;
 }
 html[data-theme="dark"] .table-wrap thead th:hover {
   background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.10)),
-              var(--card) !important;
+              var(--bg) !important;
 }
 
 /* ── Dark: mc spark bars ─── */
@@ -856,8 +947,8 @@ html[data-theme="dark"] .mc .spark .b {
 
 /* ── Dark: panel-specific hardcoded backgrounds ─── */
 html[data-theme="dark"] #batchMetrics .metric {
-  background: rgba(255,255,255,0.04) !important;
-  border-color: rgba(10,142,110,0.2) !important;
+  background: none !important;
+  border-color: var(--rule) !important;
 }
 html[data-theme="dark"] #advisorportfolio #advTable thead th {
   background: rgba(10,142,110,0.08) !important;
@@ -1023,7 +1114,12 @@ html {
 }
 
 body {
-  background:          #f0f2f0 !important;
+  /* Was a hard-coded #f0f2f0, which quietly outranked --bg: the page ground was
+     NOT the token every component was matched against, so changing --bg moved
+     the components and left the paper underneath them unchanged. The token is
+     the ground now, which is also what makes the dark override below a
+     restatement of dark's own --bg rather than a second source of truth. */
+  background:          var(--bg) !important;
   background-attachment: fixed;
   color:               var(--t2) !important;
   font-family:         var(--font-body) !important;
@@ -1090,19 +1186,22 @@ body::after {
 /* ============================================================
    BACKGROUND EFFECTS — gradient mesh + ambient blobs
    ============================================================ */
+/* The light mesh was nine radial washes in five hues — teal, sky, royal,
+   turquoise, yellow, pink — over an opaque #f2f5f2 base. The base is the part
+   that mattered: being opaque and fixed over the whole viewport, IT was the
+   page ground, and --bg underneath it was never visible on any screen. So the
+   ground could not be changed without this rule, and the washes tinted every
+   surface sitting on it a slightly different colour depending on where it
+   happened to fall down the page.
+
+   Light drops the paint and keeps the element: body's --bg shows through, with
+   the 2% fractal-noise grain body::after already draws, which is what gives the
+   paper its tooth. Dark keeps its mesh (see the dark block above) — over a
+   near-black ground those washes read as depth rather than as a tint, and
+   reworking Deep Navy is not this change. */
 .color-mesh {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(ellipse 80% 60% at 0% 0%, color-mix(in srgb, var(--teal) 10%, transparent) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.07) 0%, transparent 55%),
-    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.08) 0%, transparent 55%),
-    radial-gradient(ellipse 70% 50% at 15% 45%, rgba(64,224,208,0.07) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 40% at 55% 40%, rgba(229,198,3,0.07) 0%, transparent 45%),
-    radial-gradient(ellipse 55% 50% at 95% 45%, rgba(255,209,220,0.11) 0%, transparent 50%),
-    radial-gradient(ellipse 60% 45% at 40% 90%, color-mix(in srgb, var(--teal) 5%, transparent) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 45% at 85% 85%, rgba(0,174,218,0.06) 0%, transparent 50%),
-    radial-gradient(ellipse 45% 40% at 10% 90%, rgba(64,86,227,0.04) 0%, transparent 45%),
-    linear-gradient(160deg, #f2f5f2 0%, #f0f3f5 25%, #f2f0f3 50%, #f5f3f0 75%, #f2f5f3 100%);
+  background: none;
 }
 
 /* [hidden] always hides. The UA rule is a weak `display:none`, so any component
@@ -2878,12 +2977,18 @@ html body .ux-dialog-body:focus-visible { outline-offset: -2px !important; box-s
      the screen actually has. */
   max-height:    clamp(340px, 70vh, 900px);
   overflow:      auto;
+  /* The table sat in a translucent, blurred, neumorphic box. With the panels
+     around it on the sheet, that box was the last card on the page — ten
+     screens of data reading as an object instead of as the page's own content.
+     The rule under the last row is the only edge it needs; its sticky header
+     keeps its own fill (below), so rows cannot scroll up through it. */
   border:        none;
-  border-radius: 14px;
-  background:    var(--glass-bg-data);
-  backdrop-filter: blur(16px) saturate(120%);
-  -webkit-backdrop-filter: blur(16px) saturate(120%);
-  box-shadow:    var(--shadow-neu);
+  border-block-end: 1px solid var(--rule);
+  border-radius: 0;
+  background:    none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow:    none;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
@@ -2895,17 +3000,18 @@ html body .ux-dialog-body:focus-visible { outline-offset: -2px !important; box-s
 .table-wrap thead th {
   /* Sticky, so the column names survive scrolling. Ten rows in, "CS112(2.92)"
      under an unlabelled column is just a number.
-     The glass tint is composited OVER an opaque card colour rather than used
-     alone: --glass-bg-header is rgba(255,255,255,0.08) in dark mode, and a
-     sticky header that transparent shows the rows travelling underneath it. */
+     The fill must stay OPAQUE or the rows travel visibly underneath it — that
+     is why the glass tint was composited over a solid colour rather than used
+     alone. It composites over --bg now instead of --card: with the wrapper's
+     own card gone, a white band was the only white left on the sheet. */
   position:      sticky;
   top:           0;
   z-index:       2;
   background:    linear-gradient(var(--glass-bg-header), var(--glass-bg-header)),
-                 var(--card) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 2px solid color-mix(in srgb, var(--teal) 15%, transparent);
+                 var(--bg) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid var(--rule-strong);
   cursor:        pointer;
   font-family:   var(--font-mono);
   font-weight:   700;
@@ -3188,35 +3294,28 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
    METRICS
    ============================================================ */
 .metric {
-  border:        1px solid var(--teal-border);
-  border-radius: var(--radius);
-  padding:       0.875rem 1rem;
-  background:    linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%);
+  border:        0;
+  border-top:    1px solid var(--rule);
+  border-radius: 0;
+  padding:       0.75rem 0;
+  background:    none;
   height:        100%;
-  box-shadow:    var(--shadow-card);
-  transition:    all .25s var(--ease);
+  box-shadow:    none;
+  transition:    border-color .25s var(--ease);
   position:      relative;
-  overflow:      hidden;
+  overflow:      visible;
 }
 
-.metric::before {
-  content:    '';
-  position:   absolute;
-  top:        0;
-  inset-inline-start: 15%;
-  inset-inline-end:   15%;
-  height:     1.5px;
-  background: var(--teal);
-  opacity:    0.3;
-  transition: all 0.25s var(--ease);
-}
+/* The inset accent bar needed the card's rounded top to sit in; the tile's own
+   opening rule now carries it. */
+.metric::before { content: none; }
 
 .metric:hover {
-  transform:    translateY(-2px);
-  box-shadow:   var(--shadow-lift);
-  background:   var(--glass-bg);
+  transform:    none;
+  box-shadow:   none;
+  background:   none;
+  border-color: var(--rule-strong);
 }
-.metric:hover::before { inset-inline-start: 5%; inset-inline-end: 5%; opacity: 0.5; }
 
 .metric .k {
   font-family:    var(--font-mono);
@@ -3241,28 +3340,36 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
    MC — Enhanced Metric Cards (Taibah design)
    ============================================================ */
 .mc {
-  background:      linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%);
-  border:          1px solid var(--teal-border);
-  border-radius:   var(--radius);
-  padding:         20px;
+  background:      none;
+  border:          0;
+  border-top:      1px solid var(--rule);
+  border-radius:   0;
+  padding:         16px 0;
   position:        relative;
-  overflow:        hidden;
-  box-shadow:      var(--shadow-card);
-  transition:      all .25s var(--ease);
+  overflow:        visible;
+  box-shadow:      none;
+  transition:      border-color .25s var(--ease);
 }
+/* The glowing accent bar floated inside the card's rounded top, so with the
+   card gone it had nothing to sit in. The tile's own opening rule carries the
+   same signal, and takes --mc-c when the tile is colour-coded. */
 .mc::before {
-  content:''; position:absolute; top:0; inset-inline-start:15%; inset-inline-end:15%; height:1.5px;
-  background: var(--mc-c, var(--teal)); opacity:0.4;
-  box-shadow: 0 0 12px var(--mc-c, var(--teal)); transition:all .25s var(--ease);
+  content:''; position:absolute; top:-1px; inset-inline-start:0; inset-inline-end:0; height:1px;
+  background: var(--mc-c, transparent); opacity:0.55; transition:opacity .25s var(--ease);
 }
-.mc:hover::before { inset-inline-start:5%; inset-inline-end:5%; opacity:0.65; }
-.mc::after {
-  content:''; position:absolute; top:-10px; inset-inline-end:-10px;
-  width:70px; height:70px; background:var(--mc-c, var(--teal));
-  opacity:0.04; border-radius:50%; filter:blur(22px); transition:opacity .25s var(--ease);
+.mc:hover::before { opacity:0.9; }
+/* A blurred teal orb bled out of the card's top corner. It was only ever
+   visible because `overflow:hidden` clipped it into a corner wash, and on an
+   unclipped sheet it would spill across its neighbours. */
+.mc::after { content: none; }
+/* Nothing is floating, so there is nothing to lift. Several .mc tiles are
+   links, so the cue is a wash as well as the rule, not the rule alone. */
+.mc:hover {
+  transform: none;
+  box-shadow: none;
+  border-top-color: var(--rule-strong);
+  background: color-mix(in srgb, var(--teal) 5%, transparent);
 }
-.mc:hover { transform:translateY(-2px); box-shadow:var(--shadow-lift); }
-.mc:hover::after { opacity:0.07; }
 
 .mc-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 .mc-icon {
@@ -3392,17 +3499,32 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
 /* ============================================================
    FILTER BAR — Glassmorphic toolbar
    ============================================================ */
+/* A translucent card with a neumorphic shadow, wrapped around controls that
+   are themselves outlined pills — a box inside a box, on thirteen screens. It
+   is a ruled band now: the controls keep their own edges and the rule says
+   where the bar ends.
+
+   The background is opaque --bg rather than `none` ON PURPOSE. This bar is
+   sticky on several screens (.sticky-cta raises it to z-index 6), and a sticky
+   bar with a transparent background lets the rows it is pinned over show
+   through it. --bg is the sheet it sits on, so it still reads as flush. */
 .filter-bar {
   display:flex; align-items:center; gap:10px; margin-bottom:18px;
-  padding:12px 18px;
-  background:var(--glass-bg-data);
-  backdrop-filter:blur(24px) saturate(130%);
-  -webkit-backdrop-filter:blur(24px) saturate(130%);
+  padding:12px 0;
+  background:var(--bg);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
   border:none;
-  border-radius:14px;
-  box-shadow:var(--shadow-neu);
+  border-block-end:1px solid var(--rule);
+  border-radius:0;
+  box-shadow:none;
   flex-wrap:wrap;
 }
+/* The three places that are still a card on purpose: a bar inside one must
+   match ITS surface, or --bg paints a cream strip across a white drawer. */
+.drawer .filter-bar,
+.dlg-box .filter-bar,
+.matrix-fullscreen .filter-bar { background: var(--card); }
 .fb-search {
   display:flex; align-items:center; gap:8px; flex:1; max-width:320px;
   padding:0 1rem; border-radius:14px;
@@ -3569,19 +3691,20 @@ html[data-theme="dark"] .fb-fit .fb-search.fb-sm:focus-within { box-shadow: inse
 /* ============================================================
    CPANEL — Bottom Panel Cards (Recommendations, Activity)
    ============================================================ */
-.cpanel {  overflow:hidden;
-  transition:all .25s var(--ease);
+.cpanel {  overflow:visible;
+  transition:border-color .25s var(--ease);
 }
-.cpanel:hover { box-shadow:var(--shadow-lift); }
-.cpanel::before {
-  content:''; display:block; height:2px;
-  background:linear-gradient(90deg, transparent 5%, var(--teal) 25%, var(--sky) 50%, var(--royal) 75%, transparent 95%);
-  opacity:0.15; transition:opacity .25s var(--ease);
-}
-.cpanel:hover::before { opacity:0.35; }
+.cpanel:hover { box-shadow:none; border-color:var(--rule-strong); }
+/* The same teal-sky-royal wash the page mesh and the dashboard hero carried.
+   The panel's opening rule is the divider now, so this is a second line drawn
+   under the first. */
+.cpanel::before { content: none; }
+/* The panel's header kept a translucent-white band, which on the sheet showed
+   as a pale stripe across an otherwise flat section. The panel's own opening
+   rule already separates it; this just needs its own baseline. */
 .cp-h {
-  padding:14px 20px; border-block-end:var(--border-subtle);
-  display:flex; align-items:center; gap:9px; background:var(--glass-bg);
+  padding:14px 0; border-block-end:1px solid var(--rule);
+  display:flex; align-items:center; gap:9px; background:none;
 }
 .cp-t { font-size:clamp(0.75rem, 0.697rem + 0.23vw, 0.844rem); /* 12px → 13.5px */ font-weight:700; color:var(--t1); }
 .cp-live {
@@ -3596,11 +3719,8 @@ html[data-theme="dark"] .fb-fit .fb-search.fb-sm:focus-within { box-shadow: inse
 /* ============================================================
    STICKY-CTA — Gradient accent line
    ============================================================ */
-.sticky-cta::before {
-  content:''; display:block; height:2px; margin-bottom:16px;
-  background:linear-gradient(90deg, transparent 5%, var(--teal) 25%, var(--sky) 50%, var(--royal) 75%, transparent 95%);
-  opacity:0.12; border-radius:2px;
-}
+/* Same rainbow strip as .cpanel carried, above a bar that now rules itself. */
+.sticky-cta::before { content: none; }
 
 /* ============================================================
    STATUS INDICATORS
@@ -3938,7 +4058,10 @@ html[dir="rtl"] .course-prereqs.is-none { font-style: normal; }
 #student .secondary-inline-actions .btn { min-height: 34px; }
 
 #batch .batch-filters .btn-success { font-weight: 700; }
-#batchMetrics .metric              { border-color: var(--teal-border); background: var(--teal-dim); }
+/* The id makes this (1,1,0), so it outranked the sheet conversion on .metric
+   and left the batch tiles tinted teal in LIGHT mode — the dark counterparts of
+   this rule were found in review, this one sits 3,000 lines away from them. */
+#batchMetrics .metric              { border-color: var(--rule); background: none; }
 #batch .batch-export-row           { margin-top: 0.75rem; }
 #batch .batch-export-row .btn      { min-height: 36px; }
 
@@ -5645,14 +5768,35 @@ textarea:focus-visible {
    pattern. Individual components layer their own padding / margin
    / transitions on top of this surface.
    ============================================================ */
+/* These were a teal-tinted gradient inside a teal border with a drop shadow —
+   a card, and a coloured one. Two costs: the page became a field of identical
+   tinted boxes with no hierarchy between them, and the brand colour was spent
+   on the furniture, so a teal that MEANT something (a link, an active state, a
+   passing figure) had to shout over a page already teal all over.
+
+   They are sections of the sheet now, opened by a rule. Padding, margin and
+   transitions stay with each component; only the surface is retired. */
 .page-panel, .et-panel, .planner-panel, .sp-panel, .pl-panel, .si-panel,
-.advisor-block, .cpanel, .zone-card, .drawer,
+.advisor-block, .cpanel, .zone-card,
 .ov-kpi, .ov-action, .ov-activity, .student-ctx-card,
 .sp-mc, .kpi {
-  background:    linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%);
-  border:        1px solid var(--teal-border);
+  background:    none;
+  border:        0;
+  border-top:    1px solid var(--rule);
+  border-radius: 0;
+  box-shadow:    none;
+}
+
+/* .drawer is the exception, and it was in the list above. It floats OVER the
+   page rather than sitting in it, which is the one job a shadow exists to do:
+   without an edge and a lift there is nothing to say where the page stops and
+   the drawer starts. Modals (.dlg-box) and toasts (.ux-toast) keep theirs for
+   the same reason, in their own rules. */
+.drawer {
+  background:    var(--card);
+  border:        1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow:    var(--shadow-card);
+  box-shadow:    var(--shadow-lift);
 }
 
 /* ============================================================
@@ -5683,12 +5827,17 @@ textarea:focus-visible {
 /* KPI tile — single metric.
    Canonical definition consolidating prior copies in
    exam_timetable.html, sections_import.html, dashboard partial. */
+/* `.kpi` is styled TWICE: once in the V2 unified surface rule above and again
+   here, and this one is later, so it wins. Converting only the group rule left
+   every KPI tile in the app still painted as a card — the one place where the
+   sheet visibly did not land. Both now say the same thing. */
 .kpi {
-  border:        1px solid var(--teal-border);
-  border-radius: var(--radius);
-  padding:       0.6rem;
-  background:    linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%);
-  box-shadow:    var(--shadow-card);
+  border:        0;
+  border-top:    1px solid var(--rule);
+  border-radius: 0;
+  padding:       0.6rem 0;
+  background:    none;
+  box-shadow:    none;
 }
 .kpi .k {
   font-family:    var(--font-mono);
@@ -5712,18 +5861,29 @@ textarea:focus-visible {
   cursor:     pointer;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.kpi-click:hover {
-  border-color: var(--teal);
-  box-shadow:   0 0 0 2px var(--teal-border);
+/* The ring hugged the card's rounded box; on a flat tile with no side padding
+   it drew a cramped rectangle around the text. A wash reads on the sheet, and
+   unlike `border-color` it is not blocked by the dark `border: 0 !important`
+   these tiles carry — in dark these drill-downs had no hover or selected state
+   at all. Restated at (0,2,0)/(0,3,0) so dark's (0,2,1) .kpi rule cannot win. */
+.kpi-click:hover,
+html[data-theme="dark"] .kpi-click:hover {
+  border-top-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+  box-shadow: none;
 }
 .kpi-click .v {
   text-decoration:        underline;
   text-decoration-style:  dotted;
   text-underline-offset:  3px;
 }
-.kpi-click.active {
-  border-color: var(--teal);
-  box-shadow:   0 0 0 2px var(--brand-glow);
+/* The selected drill-down. Same reasoning as the hover above, and a touch
+   stronger so "which one am I filtered to" is readable at a glance. */
+.kpi-click.active,
+html[data-theme="dark"] .kpi-click.active {
+  border-top-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
+  box-shadow: none;
 }
 
 /* Toggle chip — radio/checkbox rendered as a pill. Canonical name is
@@ -5819,6 +5979,10 @@ textarea:focus-visible {
 .et-chip.active        .et-online-dot { color: #fef3c7; }
 
 /* Dark-mode adjustments. */
+/* These are sheet sections in both themes now (see the V2 unified surface rule),
+   so dark no longer re-paints them as cards — it would have put the card back
+   on exactly the screens light just took it off. Only .drawer, which floats,
+   keeps a surface here. */
 html[data-theme="dark"] .page-panel,
 html[data-theme="dark"] .et-panel,
 html[data-theme="dark"] .planner-panel,
@@ -5833,11 +5997,15 @@ html[data-theme="dark"] .ov-activity,
 html[data-theme="dark"] .student-ctx-card,
 html[data-theme="dark"] .advisor-block,
 html[data-theme="dark"] .cpanel,
-html[data-theme="dark"] .zone-card,
+html[data-theme="dark"] .zone-card {
+  background:   none;
+  border-color: var(--rule);
+  box-shadow:   none;
+}
 html[data-theme="dark"] .drawer {
-  background:   rgba(255,255,255,0.04);
-  border-color: rgba(10,142,110,0.2);
-  box-shadow:   0 2px 8px rgba(0,0,0,0.25);
+  background:   var(--card);
+  border-color: var(--line-strong);
+  box-shadow:   0 8px 28px rgba(0,0,0,0.45);
 }
 html[data-theme="dark"] .chip-toggle,
 html[data-theme="dark"] .et-chip { color: var(--t1); }
@@ -6243,6 +6411,19 @@ html[data-theme="dark"] .et-chip:has(input:checked) { color: var(--btn-primary-i
   background:      var(--card);
   border-radius:   0;
   overflow:        hidden;
+}
+/* `.page-panel.matrix-fullscreen` is (0,2,0) and the dark panel rule above is
+   (0,2,1), so the dark rule wins on this element too — and it now says
+   `background: none`. Unqualified, a fullscreen matrix in dark mode would be
+   completely see-through, with the sidebar and the page behind it showing
+   through an overlay that covers the viewport. (It was already half
+   see-through at rgba(255,255,255,0.04); the sheet conversion made it total.)
+   This restates the opaque fill at (0,3,0) so it wins back. */
+html[data-theme="dark"] .page-panel.matrix-fullscreen,
+html[data-theme="dark"] .et-panel.matrix-fullscreen {
+  background:   var(--card);
+  border:       0;
+  box-shadow:   none;
 }
 .page-panel.matrix-fullscreen .et-matrix-viewport,
 .et-panel.matrix-fullscreen   .et-matrix-viewport {
@@ -7329,7 +7510,14 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 .ov-date { font-size: 0.82rem; color: var(--t3); margin-bottom: 1.5rem; }
 .ov-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
 .ov-kpi { padding: 1.25rem;     transition: transform 0.15s, box-shadow 0.15s; cursor: pointer; }
-.ov-kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+/* Nothing is floating, so nothing lifts. A recoloured 1px top line is too
+   little for a pointer target, so the cue is a wash plus the rule going teal. */
+.ov-kpi:hover {
+  transform: none;
+  box-shadow: none;
+  border-top-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+}
 .ov-kpi-label {
   font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); font-family: var(--font-mono); margin-bottom: 0.35rem; }
 .ov-kpi-value { font-family: var(--font-serif); font-size: 2rem; color: var(--text-brand); font-weight: 700; line-height: 1; }
@@ -7347,7 +7535,11 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   background: rgba(192,48,48,0.08); color: var(--danger); }
 .ov-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
 .ov-action {  display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem;     cursor: pointer; transition: all 0.15s; text-decoration: none; color: inherit; }
-.ov-action:hover { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-dim), var(--shadow-card); }
+.ov-action:hover {
+  border-top-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 7%, transparent);
+  box-shadow: none;
+}
 .ov-action-icon {
   width: 40px; height: 40px; border-radius: 10px; background: var(--teal-dim); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ov-action-icon svg {
@@ -7362,19 +7554,26 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 .ov-activity-ts { font-family: var(--font-mono); font-size: 0.75rem; color: var(--t4); white-space: nowrap; }
 
 /* Dashboard Command Center */
+/* ── Sheet sections (dashboard) ───────────────────────────────────────
+   The dashboard was a grid of white cards on grey: every panel carried a
+   border, a radius and two shadows, which made the page one repeating texture
+   and spent the brand colour on a gradient that said nothing. Here the page is
+   one sheet and the structure is drawn with rules and space. A card still
+   exists in the system (--card, --shadow-card) for things that genuinely float.
+
+   Only the dashboard's own `dcc-` namespace is converted. Nothing shared is
+   touched, and in particular no selector that also names the MRI page. */
 .dcc-hero {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1.1rem 1.25rem;
-  margin-bottom: 1rem;
-  border: 1px solid var(--brand-glow);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--teal) 12%, transparent), rgba(0,174,218,0.07)),
-    var(--card);
-  box-shadow: var(--shadow-card);
+  padding: 0.9rem 0;
+  margin-bottom: 1.5rem;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  box-shadow: none;
 }
 .dcc-eyebrow,
 /* ── Section kicker (eyebrow) — unified base; variants set only font-size ── */
@@ -7402,18 +7601,20 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   color: var(--t3);
   font-size: 0.88rem;
 }
+/* The white chip read as a card-within-a-card, and its rgba(255,255,255,…)
+   fill was a light-theme constant that merely happened to survive dark mode.
+   On the sheet it is simply a line of status text. */
 .dcc-hero-status {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
   min-width: 220px;
-  padding: 0.65rem 0.75rem;
-  border-radius: var(--radius-sm);
+  padding: 0;
   font-family: var(--font-mono);
   font-size: max(var(--fs-floor), 0.72rem);
-  color: var(--ink);
-  background: rgba(255,255,255,0.55);
-  border: 1px solid rgba(255,255,255,0.65);
+  color: var(--t2);
+  background: none;
+  border: 0;
   white-space: nowrap;
 }
 .dcc-status-dot {
@@ -7427,39 +7628,51 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   background: var(--danger);
   box-shadow: 0 0 0 4px rgba(192,48,48,0.12);
 }
+/* Cards carried their own padding, so a tight gap was enough to separate them.
+   Rules do not: the space between sections IS the separation now, so both grids
+   open up. */
 .dcc-kpis,
 .dcc-grid {
   display: grid;
-  gap: 0.85rem;
+  gap: 2.2rem 2rem;
 }
 .dcc-kpis {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 0.85rem;
+  gap: 0;
+  margin-bottom: 2.4rem;
+  padding-bottom: 1.6rem;
+  border-bottom: 1px solid var(--rule);
 }
 .dcc-kpi,
 .dcc-panel,
 .dcc-launcher {
-  border: 1px solid rgba(148,163,184,0.16);
-  border-radius: var(--radius-md);
-  background: var(--card);
-  box-shadow: var(--shadow-card);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
+/* The four figures are one row divided by rules, not four boxes. `border-inline-start`
+   rather than `border-left`: in Arabic the row runs the other way and a left
+   border would leave the first figure ruled and the last one open. */
 .dcc-kpi {
   display: flex;
   flex-direction: column;
   min-height: 124px;
-  padding: 0.95rem;
+  padding: 0.1rem 1.15rem;
+  border-inline-start: 1px solid var(--rule);
   color: inherit;
   text-decoration: none;
-  transition: transform 0.16s var(--ease), border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+  transition: border-color 0.16s var(--ease);
 }
-.dcc-kpi:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--teal) 34%, transparent);
-  box-shadow: var(--shadow-lift);
-}
-.dcc-kpi-primary {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--teal) 14%, transparent), rgba(255,255,255,0.6));
+.dcc-kpis > .dcc-kpi:first-child { border-inline-start: 0; padding-inline-start: 0; }
+/* No lift on hover: nothing is floating, so there is nothing to lift. The rule
+   the figure already sits against is what responds. */
+.dcc-kpi:hover { border-color: var(--teal); }
+.dcc-kpi:hover .dcc-kpi-label { color: var(--text-brand); }
+.dcc-kpi:hover strong {
+  text-decoration: underline;
+  text-decoration-color: var(--teal);
+  text-underline-offset: 6px;
 }
 .dcc-kpi-label {
   font-family: var(--font-mono);
@@ -7469,12 +7682,15 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   text-transform: uppercase;
   color: var(--t3);
 }
+/* Tabular figures: these four numbers sit in a row and change on every refresh,
+   so proportional digits made the column edges shuffle between loads. */
 .dcc-kpi strong {
   margin: 0.45rem 0 0.3rem;
   font-family: var(--font-serif);
-  font-size: 2rem;
-  line-height: 1;
+  font-size: 2.3rem;
+  line-height: 1.04;
   color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 .dcc-kpi-note {
   color: var(--t3);
@@ -7484,9 +7700,12 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 .dcc-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+/* Each panel opens with a rule, the way a bulletin opens a section — that one
+   line does the job the card's four borders were doing. */
 .dcc-panel {
   min-width: 0;
-  padding: 1rem;
+  padding: 0.9rem 0 0;
+  border-top: 1px solid var(--rule-strong);
 }
 .dcc-panel-wide {
   grid-column: span 2;
@@ -7537,20 +7756,25 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 .dcc-program-list,
 .dcc-readiness-list {
   display: grid;
-  gap: 0.55rem;
+  gap: 0;
 }
+/* Rows were tinted chips stacked with a gap — a third surface on top of the
+   card on top of the page. On the sheet they are ruled lines. */
 .dcc-triage-row,
 .dcc-activity-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.65rem;
-  padding: 0.72rem;
-  border-radius: var(--radius-sm);
+  gap: 0.75rem;
+  padding: 0.72rem 0;
+  border-radius: 0;
   color: inherit;
   text-decoration: none;
-  background: rgba(148,163,184,0.07);
-  border: 1px solid rgba(148,163,184,0.12);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
 }
+.dcc-triage-row:hover,
+.dcc-activity-row:hover { background: color-mix(in srgb, var(--teal) 6%, transparent); }
 .dcc-triage-row strong,
 .dcc-activity-row strong {
   display: block;
@@ -7564,23 +7788,41 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   font-size: 0.76rem;
   line-height: 1.35;
 }
+/* Severity was a coloured dot and nothing else. A dot alone tells a reader who
+   cannot separate the hues nothing at all, and tells everyone else nothing
+   about rank — amber and red are a guess until you hover the row. The margin
+   now carries the word, in the severity colour, and the colours come from the
+   severity vocabulary the tokens already define (--sev-*, each measured to pass
+   as text) rather than from --warning / --danger, which are fill colours.
+   The word is real text in the markup, not CSS `content`, so it is in the
+   accessibility tree and in the page a translator would work from. */
 .dcc-triage-dot {
-  width: 0.62rem;
-  height: 0.62rem;
-  border-radius: 50%;
-  margin-top: 0.2rem;
-  background: var(--teal);
+  width: auto;
+  height: auto;
+  min-width: 4.4rem;
+  border-radius: 0;
+  margin-top: 0.1rem;
+  background: none;
+  font-size: var(--text-micro);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--sev-ok);
 }
-.dcc-triage-row.is-warning .dcc-triage-dot { background: var(--warning); }
-.dcc-triage-row.is-danger .dcc-triage-dot { background: var(--danger); }
+.dcc-triage-row.is-warning .dcc-triage-dot { color: var(--sev-warning); }
+.dcc-triage-row.is-danger  .dcc-triage-dot { color: var(--sev-critical); }
+/* Arabic letters join, so spacing them apart breaks the word, and there is no
+   upper case to go to — the same guard the other micro-labels carry. */
+html[dir="rtl"] .dcc-triage-dot { letter-spacing: 0; text-transform: none; }
 .dcc-program-row,
 .dcc-readiness-list div {
   display: flex;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.54rem 0.62rem;
-  border-radius: var(--radius-sm);
-  background: rgba(148,163,184,0.07);
+  padding: 0.5rem 0;
+  border-radius: 0;
+  background: none;
+  border-bottom: 1px solid var(--rule);
 }
 .dcc-program-row span,
 .dcc-readiness-list span {
@@ -7695,17 +7937,25 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   padding: 0.85rem;
 }
 
+/* The dashboard's dark block. Every selector here is (0,2,1), so it outranks
+   the light-mode conversion above AND the new hover rules (0,2,0): left as it
+   was, dark painted the hero, the figures, the panels and the launcher back as
+   navy cards with tinted chips, and the hover affordances on the KPI and triage
+   links — both are <a> — never fired at all. Dark is the same sheet as light.
+   The borders take --rule / --rule-strong rather than slate at 0.07-0.16, which
+   were weaker than the dividers this layout is built from.
+   `.dcc-kpi-primary` is dropped: the template no longer carries it. */
 html[data-theme="dark"] .dcc-hero,
 html[data-theme="dark"] .dcc-kpi,
 html[data-theme="dark"] .dcc-panel,
 html[data-theme="dark"] .dcc-launcher {
-  background-color: rgba(20,27,45,0.88);
-  border-color: rgba(148,163,184,0.16);
+  background-color: transparent;
+  border-color: var(--rule);
 }
-html[data-theme="dark"] .dcc-hero-status,
-html[data-theme="dark"] .dcc-kpi-primary {
-  background: rgba(255,255,255,0.06);
-  border-color: rgba(255,255,255,0.08);
+html[data-theme="dark"] .dcc-panel { border-top-color: var(--rule-strong); }
+html[data-theme="dark"] .dcc-hero-status {
+  background: none;
+  border-color: transparent;
 }
 html[data-theme="dark"] .dcc-triage-row,
 html[data-theme="dark"] .dcc-activity-row,
@@ -7713,9 +7963,15 @@ html[data-theme="dark"] .dcc-program-row,
 html[data-theme="dark"] .dcc-readiness-list div,
 html[data-theme="dark"] .dcc-mini-grid div,
 html[data-theme="dark"] .dcc-empty {
-  background: rgba(255,255,255,0.045);
-  border-color: rgba(255,255,255,0.07);
+  background: none;
+  border-color: var(--rule);
 }
+/* Re-stated at (0,3,0) so it outranks the (0,2,1) dark rules just above; at
+   (0,2,0) the light hover never reached dark and these links had no hover at
+   all there. */
+html[data-theme="dark"] .dcc-triage-row:hover,
+html[data-theme="dark"] .dcc-activity-row:hover { background: rgba(10,142,110,0.14); }
+html[data-theme="dark"] .dcc-kpi:hover { border-color: var(--teal); }
 /* ── Student context sidebar ── */
 .student-ctx-sidebar { width: 280px; flex-shrink: 0; transition: transform 0.25s var(--ease), opacity 0.25s var(--ease); }
 .student-ctx-sidebar.hidden {
@@ -7755,7 +8011,8 @@ html[data-theme="dark"] .dcc-empty {
   .ov-activity-title { margin-bottom: 0.4rem; }
   .dcc-hero {
     flex-direction: column;
-    padding: 0.85rem;
+    /* no side padding: the strip stays flush with the sheet's own margin */
+    padding: 0.85rem 0;
   }
   .dcc-title { font-size: 1.15rem; }
   .dcc-hero-status {
@@ -7767,10 +8024,17 @@ html[data-theme="dark"] .dcc-empty {
   .dcc-grid {
     grid-template-columns: 1fr;
   }
+  /* The figures stack here, so the rule that divides them has to turn with
+     them: an inline-start border on a one-column stack draws a vertical line
+     down the left of every figure instead of separating them from each other. */
   .dcc-kpi {
-    min-height: 96px;
-    padding: 0.78rem;
+    min-height: 0;
+    padding: 0.85rem 0;
+    border-inline-start: 0;
+    border-bottom: 1px solid var(--rule);
   }
+  .dcc-kpis > .dcc-kpi:last-child { border-bottom: 0; }
+  .dcc-kpis { padding-bottom: 0.4rem; }
   .dcc-kpi strong { font-size: 1.55rem; }
   .dcc-panel-wide { grid-column: auto; }
   .dcc-activity-row {
@@ -7895,7 +8159,10 @@ html[data-theme="dark"] .dcc-empty {
 
 .fb-search-full { max-width: none; }
 .fb-w-110 { max-width: 110px; }
-.filter-bar-sm { padding: 8px 14px; }
+/* `padding: 8px 14px` indented the controls 14px while the bar's rule still
+   spanned the full width, so a small bar read as misaligned against every
+   other one on the page. */
+.filter-bar-sm { padding: 8px 0; }
 
 .meta-mono { font-family: var(--font-mono); font-size: 12px; border-radius: var(--radius-sm); padding: 10px 14px; }
 .ts-updated { font-size: 11px; color: var(--t3); font-family: var(--font-mono); }
@@ -9276,7 +9543,12 @@ html[data-theme="dark"] .btn-export {
     .sp-mc .k { font-size: var(--text-micro); color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .sp-mc .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.35rem; color: var(--text-brand); }
     .sp-mc.mc-navy .v { color: var(--navy); }
+    /* The hero tile's teal marker. It survived on the light sheet at (0,2,0),
+       but dark's (0,2,1) `border-color: var(--rule)` greyed it out, so the one
+       tile meant to stand out stopped doing so in dark only. Naming the edge
+       explicitly keeps it teal in both themes. */
     .sp-mc.mc-hero { border-inline-start: 3px solid var(--teal); }
+    html[data-theme="dark"] .sp-mc.mc-hero { border-inline-start-color: var(--teal); }
 
     /* Progress bar */
     .sp-progress { height: 3px; border-radius: 2px; background: var(--t5); overflow: hidden; margin-bottom: 10px; }
