@@ -67,6 +67,19 @@ const IS_AR = document.documentElement.lang === 'ar';
     termLabel: (term, count, credits) => IS_AR ? `الفصل ${term} (${count} مقرر، ${credits} ساعة)` : `Term ${term} (${count} courses, ${credits} credits)`,
     showPrereqFor: (c) => IS_AR ? `عرض متطلبات ${c}` : `Show prerequisites for ${c}`,
     termHeading: (term) => IS_AR ? `الفصل ${term}` : `Term ${term}`,
+    listSep: IS_AR ? '، ' : ', ',
+    /* A word, not a dash: "—" is ambiguous between "no prerequisites" and "not
+       known", and those are exactly the two states this column must keep
+       apart — so each gets its own word. */
+    noPrereqsShort: IS_AR ? 'لا يوجد' : 'None',
+    prereqsUnknownShort: IS_AR ? 'غير متاح' : 'Unavailable',
+    prereqColumnFailed: IS_AR ? 'تعذّر تحميل المتطلبات السابقة' : 'Could not load prerequisites',
+    prereqColumnFailedHint: IS_AR
+      ? 'عُرضت الخطة، لكن عمود المتطلبات السابقة غير متاح. افتح تبويب المتطلبات السابقة لمقرر واحد.'
+      : 'The plan loaded, but the Prerequisites column is unavailable. Open the Prerequisites tab for a single course.',
+    planContext: (program, courses, terms, credits) => IS_AR
+      ? `${program} · ${terms} فصل · ${courses} مقرر · ${credits} ساعة`
+      : `${program} · ${terms} terms · ${courses} courses · ${credits} credits`,
     termSummary: (courses, credits) => IS_AR ? `المقررات: ${courses} | الساعات: ${credits}` : `Courses: ${courses} | Credits: ${credits}`,
     planLoaded: IS_AR ? 'تم تحميل خطة البرنامج' : 'Program plan loaded',
 
@@ -644,9 +657,27 @@ const IS_AR = document.documentElement.lang === 'ar';
       .join('');
   }
 
+  /* Course codes are compared the way report_views.normalize_code does it, so
+     a plan row and a prerequisite row match even when one carries a space. */
+  const planCodeKey = (code) => String(code ?? '').toUpperCase().replace(/\s+/g, '');
+
+  /* The plan panel's four views. `.active` marks the tab; ux-controls.js keeps
+     aria-selected, the roving tabindex and the arrow keys, the same way the
+     instructor-management tabs work. */
+  function selectPlanTab(name) {
+    const tabs = [...document.querySelectorAll('#planTabs [data-plan-tab]')];
+    if (!tabs.some(btn => btn.dataset.planTab === name)) return;
+    tabs.forEach((btn) => {
+      const on = btn.dataset.planTab === name;
+      btn.classList.toggle('active', on);
+      const pane = q(`planView${btn.dataset.planTab}`);
+      if (pane) pane.hidden = !on;
+    });
+  }
+
   q('loadPlan').onclick = async () => {
     const btn = q('loadPlan');
-    showSkeleton('planTable', 3);
+    showSkeleton('planTable', 4);
     btn.disabled = true;
     btn.textContent = T.loading;
 
@@ -682,6 +713,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       termBars.innerHTML = `<div class="empty-note">${T.noTermDist}</div>`;
       termCards.innerHTML = `<div class="empty-note">${T.noTermCards}</div>`;
       q('planMetrics').classList.add('d-none');
+      const emptyContext = q('planContext');
+      if (emptyContext) emptyContext.textContent = '';
       setUpdated('planUpdated', true);
       btn.disabled = false;
       btn.textContent = T.loadPlan;
@@ -694,16 +727,49 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('planMetricCredits').textContent = String(totalCredits);
     q('planMetrics').classList.remove('d-none');
 
-    tbody.innerHTML = data.items
-      .map((row) => {
-        const name = String(row.course_name || '').trim();
-        return `<tr><td>${row.programme_term ?? '-'}</td><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${data.program || ''}" data-course="${row.course_code}">${row.course_code}</button></td><td>${name || '-'}</td><td>${row.credit_hours ?? '-'}</td></tr>`;
-      })
-      .join('');
+    /* Every prerequisite link in the program, in ONE request, so the course
+       list can carry them inline instead of making the reader click each
+       course. A failure here must not cost the plan — but it must not be
+       allowed to read as an ANSWER either: an empty map and a program whose
+       courses genuinely have no prerequisites look identical, and printing
+       "None" for a gated course is worse than printing nothing. So the column
+       has three states, and `prereqsKnown` decides between the last two:
+       listed, "None", and "unavailable". */
+    const prereqByCourse = new Map();
+    let prereqsKnown = false;
+    try {
+      /* The plan is already on screen behind this await: a prerequisite
+         endpoint that never answers must not leave the button disabled and
+         the skeleton up for ever. */
+      const preAbort = new AbortController();
+      const preTimer = setTimeout(() => preAbort.abort(), 10000);
+      let preRes;
+      let preData;
+      try {
+        preRes = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}`, { signal: preAbort.signal });
+        preData = await preRes.json();
+      } finally {
+        clearTimeout(preTimer);
+      }
+      if (preRes.ok && Array.isArray(preData.items)) {
+        preData.items.forEach((link) => {
+          const key = planCodeKey(link.course_code);
+          const requires = String(link.prerequisite_course_code ?? '').trim();
+          if (!key || !requires) return;
+          if (!prereqByCourse.has(key)) prereqByCourse.set(key, []);
+          prereqByCourse.get(key).push(requires);
+        });
+        prereqsKnown = true;
+      }
+    } catch (err) {
+      /* Left unknown on purpose; the toast below says so. */
+    }
+    if (!prereqsKnown) notify.error(T.prereqColumnFailed, T.prereqColumnFailedHint);
 
     const termMap = {};
     const termCredits = {};
     const termCourses = {};
+    const termRows = {};
     data.items.forEach((row) => {
       const term = String(row.programme_term ?? 'Unknown');
       termMap[term] = (termMap[term] || 0) + 1;
@@ -713,7 +779,45 @@ const IS_AR = document.documentElement.lang === 'ar';
         code: String(row.course_code),
         name: String(row.course_name || '').trim(),
       });
+      if (!termRows[term]) termRows[term] = [];
+      termRows[term].push(row);
     });
+
+    /* Terms in plan order, with anything unnumbered last. */
+    const orderedTerms = Object.keys(termRows).sort((a, b) => {
+      const an = Number(a);
+      const bn = Number(b);
+      if (Number.isNaN(an) && Number.isNaN(bn)) return a.localeCompare(b);
+      if (Number.isNaN(an)) return 1;
+      if (Number.isNaN(bn)) return -1;
+      return an - bn;
+    });
+
+    /* The term lives in a group subhead rather than being repeated down a
+       column. Sorting any column flattens the groups (shared-ux.js). */
+    const loadedProgram = data.program || '';
+    tbody.innerHTML = orderedTerms
+      .map((term) => {
+        const head = `<tr class="table-group-row"><th scope="colgroup" colspan="4">${esc(T.termLabel(term, termMap[term], termCredits[term]))}</th></tr>`;
+        const body = termRows[term]
+          .map((row) => {
+            const name = String(row.course_name || '').trim();
+            const code = String(row.course_code ?? '');
+            const requires = prereqByCourse.get(planCodeKey(code)) || [];
+            /* The class is an inline ternary of literals and the text is
+               escaped, so this adds no raw HTML sink to
+               tests/fixtures/html_sink_allowlist.json. */
+            const requiresText = requires.length ? requires.join(T.listSep)
+              : (prereqsKnown ? T.noPrereqsShort : T.prereqsUnknownShort);
+            return `<tr><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${esc(loadedProgram)}" data-course="${esc(code)}">${esc(code)}</button></td><td>${esc(name || '-')}</td><td><span class="course-prereqs${requires.length ? '' : ' is-none'}">${esc(requiresText)}</span></td><td>${esc(row.credit_hours ?? '-')}</td></tr>`;
+          })
+          .join('');
+        return head + body;
+      })
+      .join('');
+
+    const planContext = q('planContext');
+    if (planContext) planContext.textContent = T.planContext(loadedProgram, data.items.length, orderedTerms.length, totalCredits);
 
     const max = Math.max(...Object.values(termMap));
     termBars.innerHTML = Object.entries(termMap)
@@ -743,6 +847,14 @@ const IS_AR = document.documentElement.lang === 'ar';
         const course = el.getAttribute('data-course') || '';
         const prog = el.getAttribute('data-program') || program;
         if (!course || !prog) return;
+        /* The prerequisites live in their own tab now, so bring it forward —
+           otherwise the click would load a table nobody can see. */
+        /* The pane holding this button is about to be hidden, which would drop
+           focus to <body> and send a keyboard user back to the top of the
+           page. Move focus to the tab we are opening instead. */
+        selectPlanTab('Prereq');
+        const prereqTab = q('planTabPrereq');
+        if (prereqTab) prereqTab.focus();
         await loadPrereqsForPlanCourse(prog, course);
       });
     });
@@ -1083,7 +1195,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       return;
     }
 
-      showSkeleton('planTable', 3);
+      showSkeleton('planTable', 4);
     q('loadStudentPlan').disabled = true;
     q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loading}`;
     container.innerHTML = `<div class="empty-note">${T.loadingPlanMatrix}</div>`;
@@ -2581,6 +2693,9 @@ const IS_AR = document.documentElement.lang === 'ar';
   wireSortableTable('batchTable');
   wireSortableTable('preTable');
   wireSortableTable('planTable');
+  document.querySelectorAll('#planTabs [data-plan-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => selectPlanTab(btn.dataset.planTab));
+  });
   wireSortableTable('planPrereqTable');
   wireSortableTable('dbgTable');
   wireSortableTable('elTable');

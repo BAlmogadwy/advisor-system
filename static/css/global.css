@@ -3726,19 +3726,53 @@ tr.attention-row td { background: #fff7ed !important; }
    ============================================================ */
 .zone-card { padding: 1rem; margin-top: 0.75rem; }
 
-.zone-card .zone-title {
+/* `.zone-card .zone-title` used to re-style the heading here as uppercase grey
+   with a 3px teal pipe. It out-specified (0,2,0) the app-wide card-title rule
+   that retired that look (plain `.zone-title`, 0,1,0), so the one panel wrapped
+   in `.zone-card` was the last screen still rendering the old chrome. The
+   override is gone: `.zone-title` inside a zone card now gets the same teal
+   sentence-case heading as every other card title in the app. */
+
+/* ============================================================
+   TABLE GROUP ROW
+   A full-width subhead inside a table body — "TERM 1 · 16 CREDITS" —
+   so long tables carry their own structure instead of repeating the
+   grouping value in every row.
+   ============================================================ */
+.table > tbody > tr.table-group-row > th {
+  background:     var(--card);
+  color:          var(--text-brand);
   font-family:    var(--font-body);
-  font-size:      0.72rem; font-weight: 700;
-  letter-spacing: 0.07em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 0.6rem;
-  display: flex; align-items: center; gap: 0.4rem;
+  font-size:      var(--text-micro);
+  font-weight:    700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align:     start;
+  padding:        var(--space-5) var(--space-8);
+  border-bottom:  1px solid var(--line);
+}
+/* Arabic letters join: spacing them apart breaks the word, and there is no
+   upper case to go to (the same guard `.ux-stat-scope` carries). */
+html[dir="rtl"] .table > tbody > tr.table-group-row > th {
+  letter-spacing: 0;
+  text-transform: none;
 }
 
-.zone-card .zone-title::before {
-  content: ""; display: inline-block;
-  width: 3px; height: 0.8rem; border-radius: 2px;
-  background: var(--brand); opacity: 0.6;
+/* A course's prerequisites, read down a column: codes in the mono face so they
+   line up, and "none" kept quiet so the eye catches the courses that DO gate. */
+.course-prereqs {
+  font-family: var(--font-mono);
+  font-size:  0.92em;   /* relative to the row: table data, not a caption */
+  color:      var(--t2);
 }
+.course-prereqs.is-none {
+  font-family: var(--font-body);
+  font-size:  1em;
+  color:      var(--t4);
+  font-style: italic;
+}
+/* Arabic has no italic: slanting it is a distortion, not an emphasis. */
+html[dir="rtl"] .course-prereqs.is-none { font-style: normal; }
 
 /* ============================================================
    TERM CARDS

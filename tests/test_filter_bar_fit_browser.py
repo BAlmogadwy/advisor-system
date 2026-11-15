@@ -60,7 +60,7 @@ SCREENS = {
     "dashboard: student": ("/#student", "#student > .filter-bar"),
     "dashboard: batch": ("/#batch", "#batch > .filter-bar"),
     "dashboard: prerequisites": ("/#prereq", "#prereq > .filter-bar"),
-    "dashboard: program plan": ("/#plan", "#plan .field-row"),
+    "dashboard: program plan": ("/#plan", "#plan > .filter-bar"),
     "dashboard: scrape": ("/#scrape", "#scrape > .filter-bar"),
     "dashboard: debug": ("/#debug", "#debug > .filter-bar"),
     "dashboard: conflict matrix": ("/#conflictmatrix", "#conflictmatrix > .filter-bar"),
@@ -204,6 +204,9 @@ FIT = r"""(sel) => {
 # (or the field, outside a capsule). An outline or a solid box-shadow ring.
 RING = r"""(sel) => {
   const bar = document.querySelector(sel);
+  // Same guard as FIT: a bar that has been renamed away is a finding to report,
+  // not a TypeError on querySelectorAll that hides which screen went missing.
+  if (!bar) return [['no bar', 0]];
   const cv = document.createElement('canvas'); cv.width = cv.height = 1;
   const cx = cv.getContext('2d', { willReadFrequently: true });
   const rgba = v => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = 'rgba(0,0,0,0)'; cx.fillStyle = v; cx.fillRect(0, 0, 1, 1);
