@@ -3758,6 +3758,22 @@ html[dir="rtl"] .table > tbody > tr.table-group-row > th {
   text-transform: none;
 }
 
+/* A course's prerequisites, read down a column: codes in the mono face so they
+   line up, and "none" kept quiet so the eye catches the courses that DO gate. */
+.course-prereqs {
+  font-family: var(--font-mono);
+  font-size:  0.92em;   /* relative to the row: table data, not a caption */
+  color:      var(--t2);
+}
+.course-prereqs.is-none {
+  font-family: var(--font-body);
+  font-size:  1em;
+  color:      var(--t4);
+  font-style: italic;
+}
+/* Arabic has no italic: slanting it is a distortion, not an emphasis. */
+html[dir="rtl"] .course-prereqs.is-none { font-style: normal; }
+
 /* ============================================================
    TERM CARDS
    ============================================================ */

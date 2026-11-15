@@ -67,6 +67,10 @@ const IS_AR = document.documentElement.lang === 'ar';
     termLabel: (term, count, credits) => IS_AR ? `الفصل ${term} (${count} مقرر، ${credits} ساعة)` : `Term ${term} (${count} courses, ${credits} credits)`,
     showPrereqFor: (c) => IS_AR ? `عرض متطلبات ${c}` : `Show prerequisites for ${c}`,
     termHeading: (term) => IS_AR ? `الفصل ${term}` : `Term ${term}`,
+    listSep: IS_AR ? '، ' : ', ',
+    /* A word, not a dash: "—" is ambiguous between "no prerequisites" and "not
+       known", and it rendered as a missing glyph at this size. */
+    noPrereqsShort: IS_AR ? 'لا يوجد' : 'None',
     planContext: (program, courses, terms, credits) => IS_AR
       ? `${program} · ${terms} فصل · ${courses} مقرر · ${credits} ساعة`
       : `${program} · ${terms} terms · ${courses} courses · ${credits} credits`,
@@ -647,6 +651,10 @@ const IS_AR = document.documentElement.lang === 'ar';
       .join('');
   }
 
+  /* Course codes are compared the way report_views.normalize_code does it, so
+     a plan row and a prerequisite row match even when one carries a space. */
+  const planCodeKey = (code) => String(code ?? '').toUpperCase().replace(/\s+/g, '');
+
   /* The plan panel's four views. `.active` marks the tab; ux-controls.js keeps
      aria-selected, the roving tabindex and the arrow keys, the same way the
      instructor-management tabs work. */
@@ -663,7 +671,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
   q('loadPlan').onclick = async () => {
     const btn = q('loadPlan');
-    showSkeleton('planTable', 3);
+    showSkeleton('planTable', 4);
     btn.disabled = true;
     btn.textContent = T.loading;
 
@@ -695,7 +703,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     prereqTbody.innerHTML = `<tr><td colspan="2" class="empty-note">${T.noPrereqData}</td></tr>`;
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPlanRows}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.noPlanRows}</td></tr>`;
       termBars.innerHTML = `<div class="empty-note">${T.noTermDist}</div>`;
       termCards.innerHTML = `<div class="empty-note">${T.noTermCards}</div>`;
       q('planMetrics').classList.add('d-none');
@@ -712,6 +720,27 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('planMetricCount').textContent = String(data.count ?? data.items.length);
     q('planMetricCredits').textContent = String(totalCredits);
     q('planMetrics').classList.remove('d-none');
+
+    /* Every prerequisite link in the program, in ONE request, so the course
+       list can carry them inline instead of making the reader click each
+       course. A failure here must not cost the plan: the column falls back to
+       "—" and the Prerequisites tab still works per course. */
+    const prereqByCourse = new Map();
+    try {
+      const preRes = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}`);
+      const preData = await preRes.json();
+      if (preRes.ok && Array.isArray(preData.items)) {
+        preData.items.forEach((link) => {
+          const key = planCodeKey(link.course_code);
+          const requires = String(link.prerequisite_course_code ?? '').trim();
+          if (!key || !requires) return;
+          if (!prereqByCourse.has(key)) prereqByCourse.set(key, []);
+          prereqByCourse.get(key).push(requires);
+        });
+      }
+    } catch (err) {
+      /* The plan is the request that matters; the column stays empty. */
+    }
 
     const termMap = {};
     const termCredits = {};
@@ -745,12 +774,17 @@ const IS_AR = document.documentElement.lang === 'ar';
     const loadedProgram = data.program || '';
     tbody.innerHTML = orderedTerms
       .map((term) => {
-        const head = `<tr class="table-group-row"><th scope="colgroup" colspan="3">${esc(T.termLabel(term, termMap[term], termCredits[term]))}</th></tr>`;
+        const head = `<tr class="table-group-row"><th scope="colgroup" colspan="4">${esc(T.termLabel(term, termMap[term], termCredits[term]))}</th></tr>`;
         const body = termRows[term]
           .map((row) => {
             const name = String(row.course_name || '').trim();
             const code = String(row.course_code ?? '');
-            return `<tr><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${esc(loadedProgram)}" data-course="${esc(code)}">${esc(code)}</button></td><td>${esc(name || '-')}</td><td>${esc(row.credit_hours ?? '-')}</td></tr>`;
+            const requires = prereqByCourse.get(planCodeKey(code)) || [];
+            /* The class is an inline ternary of literals and the text is
+               escaped, so this adds no raw HTML sink to
+               tests/fixtures/html_sink_allowlist.json. */
+            const requiresText = requires.length ? requires.join(T.listSep) : T.noPrereqsShort;
+            return `<tr><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${esc(loadedProgram)}" data-course="${esc(code)}">${esc(code)}</button></td><td>${esc(name || '-')}</td><td><span class="course-prereqs${requires.length ? '' : ' is-none'}">${esc(requiresText)}</span></td><td>${esc(row.credit_hours ?? '-')}</td></tr>`;
           })
           .join('');
         return head + body;
@@ -1131,7 +1165,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       return;
     }
 
-      showSkeleton('planTable', 3);
+      showSkeleton('planTable', 4);
     q('loadStudentPlan').disabled = true;
     q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loading}`;
     container.innerHTML = `<div class="empty-note">${T.loadingPlanMatrix}</div>`;
