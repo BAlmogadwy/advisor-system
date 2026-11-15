@@ -159,9 +159,30 @@ class ExamStudentExportBrowserTests(StaticLiveServerTestCase):
         page.locator("#examStudentDataBtn").click()
         state = page.evaluate(
             """() => { const button = document.getElementById('examStudentExportDownload');
-                return [button.getAttribute('aria-disabled'), getComputedStyle(button).backgroundColor]; }"""
+                // The waiting fill is --et-subtle (page-exam-timetable.css, the
+                // [aria-disabled="true"] rule). Resolve the token here instead
+                // of hard-coding its hex: the literal pinned one theme's value,
+                // so re-colouring the page failed this test while the behaviour
+                // it guards -- waiting shown from the first frame, never the
+                // last visit's ready colour -- was entirely unchanged. The probe
+                // sits inside the dialog so it resolves the token in the same
+                // scope the button sees it.
+                const probe = document.createElement('span');
+                probe.style.background = 'var(--et-subtle)';
+                button.parentElement.appendChild(probe);
+                const waiting = getComputedStyle(probe).backgroundColor;
+                probe.remove();
+                return [button.getAttribute('aria-disabled'), getComputedStyle(button).backgroundColor, waiting]; }"""
         )
-        self.assertEqual(state, ["true", "rgb(248, 250, 252)"])
+        self.assertEqual(state[0], "true", "Download is disabled while the check is in flight")
+        # Not a vacuous pass: a token that resolved to nothing would make the
+        # comparison below true against any button fill at all.
+        self.assertNotIn(state[2], ("rgba(0, 0, 0, 0)", "transparent"))
+        self.assertEqual(
+            state[1],
+            state[2],
+            "Download shows the waiting fill, not the previous visit's ready colour",
+        )
         for route in held:
             route.abort()
 

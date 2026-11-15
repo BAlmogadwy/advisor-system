@@ -230,9 +230,25 @@
   --shadow-lift:    0 4px 12px rgba(13,21,38,.10), 0 16px 40px rgba(13,21,38,.09);
   --shadow-input:   0 1px 2px rgba(13,21,38,.04);
   --shadow-sm:      0 1px 3px rgba(13,21,38,.08);
-  --shadow-neu:     6px 6px 16px rgba(163,177,198,0.35), -6px -6px 16px rgba(255,255,255,0.8);
-  --shadow-neu-sm:  3px 3px 8px rgba(163,177,198,0.3), -3px -3px 8px rgba(255,255,255,0.8);
-  --shadow-neu-inset: inset 3px 3px 6px rgba(163,177,198,0.35), inset -3px -3px 6px rgba(255,255,255,0.8);
+  /* ── the neumorphic shadows, retired ──────────────────────────────
+     These drew the soft raised/dished look on every button, input, capsule and
+     pager — 73 rules take one of the three. Two problems on the sheet: the dark
+     half of each pair is rgba(163,177,198,…), a COOL blue-grey, which on a warm
+     ground reads as grime rather than shadow; and a blurred 16px halo beside a
+     crisp 1px rule is two design languages touching. A control is an outlined
+     rectangle now, and its edge is --control-edge (3.4-3.9:1, so it clears the
+     3:1 WCAG 1.4.11 needs for a control boundary) rather than a shadow.
+
+     They are kept as TOKENS, set to a transparent layer, instead of being
+     deleted. `none` is not a shadow layer: a rule like
+         box-shadow: inset 0 0 0 1px var(--teal), var(--shadow-neu-inset),
+                     0 0 0 2px var(--teal);
+     is invalid the moment one layer is `none`, and the browser drops the WHOLE
+     declaration — which in that example is the focus ring on a dialog input.
+     A zero-size transparent layer composes correctly and paints nothing. */
+  --shadow-neu:     0 0 0 0 rgba(0,0,0,0);
+  --shadow-neu-sm:  0 0 0 0 rgba(0,0,0,0);
+  --shadow-neu-inset: inset 0 0 0 0 rgba(0,0,0,0);
 
   /* borders — reusable subtle border */
   --border-subtle:  1px solid rgba(17,17,68,0.05);
@@ -489,9 +505,10 @@ html[data-theme="dark"] {
   --shadow-lift:    0 4px 12px rgba(0,0,0,.25), 0 16px 40px rgba(0,0,0,.35);
   --shadow-input:   0 1px 2px rgba(0,0,0,.15);
   --shadow-sm:      0 1px 3px rgba(0,0,0,.28);
-  --shadow-neu:     4px 4px 12px rgba(0,0,0,0.40), -4px -4px 12px rgba(255,255,255,0.03);
-  --shadow-neu-sm:  2px 2px 6px rgba(0,0,0,0.35), -2px -2px 6px rgba(255,255,255,0.02);
-  --shadow-neu-inset: inset 2px 2px 5px rgba(0,0,0,0.35), inset -2px -2px 5px rgba(255,255,255,0.02);
+  /* Flat here too, and for the same reason — see the light block. */
+  --shadow-neu:     0 0 0 0 rgba(0,0,0,0);
+  --shadow-neu-sm:  0 0 0 0 rgba(0,0,0,0);
+  --shadow-neu-inset: inset 0 0 0 0 rgba(0,0,0,0);
 
   /* borders */
   --border-subtle:  1px solid rgba(255,255,255,0.05);
@@ -783,37 +800,62 @@ html[data-theme="dark"] .cpanel:hover {
   box-shadow: none !important;
 }
 
-/* Buttons — flat with subtle shadow */
-html[data-theme="dark"] .btn-circle,
-html[data-theme="dark"] .pg-btn,
-html[data-theme="dark"] .fb-dd,
+/* Buttons — flat with subtle shadow.
+   The CONTROLS in this list are split out below: a drop shadow on a near-black
+   page is not a boundary (it measures about 1.03:1 against --bg), so in dark
+   these had no visible edge at all, as they did before this change. They take
+   the same --btn-neutral-border ring the light theme gives them, which is the
+   alpha the token's own comment computed to clear 3:1 in dark.
+   .tbl-cnt and .pill-status stay as they are — they are counts and status
+   chips, not controls — and a DISABLED control is exempt from 1.4.11 and must
+   not be given an edge that makes it read as live. */
 html[data-theme="dark"] .tbl-cnt,
 html[data-theme="dark"] .pill-status,
-html[data-theme="dark"] .empty-state-action,
 html[data-theme="dark"] body .btn:disabled,
 html[data-theme="dark"] body .btn.disabled {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2) !important;
 }
+html[data-theme="dark"] .btn-circle,
+html[data-theme="dark"] .pg-btn,
+html[data-theme="dark"] .fb-dd,
+html[data-theme="dark"] .empty-state-action {
+  box-shadow: inset 0 0 0 1px var(--btn-neutral-border), 0 1px 4px rgba(0,0,0,0.2) !important;
+}
 
 /* Button hover — slight lift */
-html[data-theme="dark"] .btn-circle:hover,
-html[data-theme="dark"] .pg-btn:hover,
-html[data-theme="dark"] .fb-dd:hover,
+/* The outline variants carry a real 1px border, so they keep their edge through
+   this layer; the three that are ringed by box-shadow need it restating. */
 html[data-theme="dark"] body .btn-outline-secondary:hover,
 html[data-theme="dark"] body .btn-outline-success:hover,
 html[data-theme="dark"] body .btn-outline-warning:hover,
 html[data-theme="dark"] body .btn-outline-info:hover,
 html[data-theme="dark"] body .btn-outline-dark:hover,
 html[data-theme="dark"] body .btn-export:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+  box-shadow: inset 0 0 0 1px var(--teal) !important;
 }
+html[data-theme="dark"] .btn-circle:hover,
+html[data-theme="dark"] .pg-btn:hover,
+html[data-theme="dark"] .fb-dd:hover {
+  box-shadow: inset 0 0 0 1px var(--control-edge), 0 2px 8px rgba(0,0,0,0.3) !important;
+}
+/* Dark hovers by getting LIGHTER. The light theme's navy hover tint is darker
+   than the resting white-7% fill here, so without this the control's fill
+   disappears at the moment you point at it. .fb-dd already has its own. */
+html[data-theme="dark"] .btn-circle:hover,
+html[data-theme="dark"] .pg-btn:hover { background: rgba(255,255,255,0.12) !important; }
 
 /* Button active / pressed — inset dark */
-html[data-theme="dark"] .btn-circle:active,
-html[data-theme="dark"] .pg-btn.active,
-html[data-theme="dark"] .fb-dd.active,
 html[data-theme="dark"] body .btn-outline-secondary:active {
   box-shadow: inset 1px 1px 3px rgba(0,0,0,0.3) !important;
+  /* Without this the dark :hover background (same !important, higher
+     specificity than the light :active rule) wins through the press. */
+  background: rgba(255,255,255,0.16) !important;
+}
+/* Selected/pressed: the teal ring says which one, and survives the layer. */
+html[data-theme="dark"] .btn-circle:active,
+html[data-theme="dark"] .pg-btn.active,
+html[data-theme="dark"] .fb-dd.active {
+  box-shadow: inset 0 0 0 1px var(--teal), inset 1px 1px 3px rgba(0,0,0,0.3) !important;
 }
 /* The outline buttons keep their ring through the dark hover and press layers. */
 html[data-theme="dark"] body .btn-outline-danger:hover {
@@ -865,7 +907,8 @@ html[data-theme="dark"] .dlg-box {
   box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
 }
 html[data-theme="dark"] .dlg-footer .btn-cancel:hover {
-  box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important;
+  box-shadow: inset 0 0 0 1px var(--control-edge) !important;
+  background: rgba(255,255,255,0.12) !important;
 }
 html[data-theme="dark"] .dlg-footer .btn-confirm:disabled {
   box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
@@ -909,8 +952,11 @@ html[data-theme="dark"] .ux-dialog::backdrop { background: rgba(2,4,10,0.72); }
 html[data-theme="dark"] .fb-dd {
   background: rgba(255,255,255,0.03) !important;
 }
+/* The light hover tints with navy, which in dark is almost the page colour —
+   the resting fill would VANISH on hover and only the ring would remain. Dark
+   hovers by getting lighter, the same direction light gets darker. */
 html[data-theme="dark"] .fb-dd:hover {
-  background: rgba(255,255,255,0.06) !important;
+  background: rgba(255,255,255,0.12) !important;
 }
 html[data-theme="dark"] .fb-dd.active {
   background: rgba(10,142,110,0.08) !important;
@@ -1836,7 +1882,10 @@ main.p-0 .page-header {
   font-size:        clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important; /* ~12.8px → 14px */
   color:            var(--ink) !important;
   border:           1px solid var(--control-edge) !important;
-  border-radius:    14px !important;
+  /* 14px was the soft-era radius and never matched the system's own --radius
+     (10px) or --radius-sm (7px); beside a 1px rule it reads as a different
+     design language. Controls take --radius-sm. */
+  border-radius:    var(--radius-sm) !important;
   background-color: transparent !important;
   padding:          0.45rem 1rem !important;
   box-sizing:       border-box !important;
@@ -1887,7 +1936,7 @@ main.p-0 .page-header {
 
 /* Textareas keep rounded-rectangle */
 textarea.form-control {
-  border-radius: 14px !important;
+  border-radius: var(--radius-sm) !important;
   padding:       0.45rem 1rem !important;
 }
 
@@ -1899,7 +1948,7 @@ html body .btn {
   font-family:     var(--font-body) !important;
   font-weight:     600 !important;
   font-size:       clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important; /* ~12.8px → 14px */
-  border-radius:   14px !important;
+  border-radius:   var(--radius-sm) !important;
   border:          none !important;
   min-height:      38px;
   padding:         0.45rem 1.25rem !important;
@@ -1923,67 +1972,61 @@ html body a.btn:not(.btn-link):focus { text-decoration: none; }
 html body .btn-primary {
   background:   var(--btn-primary-bg) !important;
   color:        var(--btn-primary-ink) !important;
-  box-shadow:   3px 3px 8px color-mix(in srgb, var(--btn-primary-bg) 35%, transparent),
-                -2px -2px 6px rgba(255,255,255,0.25) !important;
+  /* The filled button's own neumorphic pair: an offset coloured drop plus a
+     white counter-light. On the sheet the FILL is the definition — a solid
+     #067858 at 5.48:1 against its own text needs no halo to be found. */
+  box-shadow:   none !important;
 }
 html body .btn-primary:hover,
 html body .btn-primary:focus {
   background:   var(--btn-primary-hover) !important;
-  box-shadow:   4px 4px 12px color-mix(in srgb, var(--btn-primary-bg) 40%, transparent),
-                -2px -2px 8px rgba(255,255,255,0.3) !important;
+  box-shadow:   none !important;
 }
 html body .btn-primary:active {
   background:   var(--btn-primary-bg) !important;
-  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
-                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
+  box-shadow:   inset 0 0 0 999px rgba(0,0,0,0.12) !important;
 }
 
 html body .btn-success {
   background:   var(--btn-primary-bg) !important;
   color:        var(--btn-primary-ink) !important;
-  box-shadow:   3px 3px 8px color-mix(in srgb, var(--btn-primary-bg) 35%, transparent),
-                -2px -2px 6px rgba(255,255,255,0.25) !important;
+  /* The filled button's own neumorphic pair: an offset coloured drop plus a
+     white counter-light. On the sheet the FILL is the definition — a solid
+     #067858 at 5.48:1 against its own text needs no halo to be found. */
+  box-shadow:   none !important;
 }
 html body .btn-success:hover {
   background:   var(--btn-primary-hover) !important;
-  box-shadow:   4px 4px 12px color-mix(in srgb, var(--teal) 40%, transparent),
-                -2px -2px 8px rgba(255,255,255,0.3) !important;
+  box-shadow:   none !important;
 }
 html body .btn-success:active {
-  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
-                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
+  box-shadow:   inset 0 0 0 999px rgba(0,0,0,0.12) !important;
 }
 
 html body .btn-danger {
   background:   var(--danger) !important;
   color:        #fff !important;
-  box-shadow:   3px 3px 8px rgba(192,48,48,0.3),
-                -2px -2px 6px rgba(255,255,255,0.2) !important;
+  box-shadow:   none !important;
 }
 html body .btn-danger:hover {
-  box-shadow:   4px 4px 12px rgba(192,48,48,0.4),
-                -2px -2px 8px rgba(255,255,255,0.25) !important;
+  box-shadow:   none !important;
 }
 html body .btn-danger:active {
-  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
-                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
+  box-shadow:   inset 0 0 0 999px rgba(0,0,0,0.12) !important;
 }
 
 /* Warning (amber) */
 html body .btn-warning {
   background:   var(--amber) !important;
   color:        #fff !important;
-  box-shadow:   3px 3px 8px rgba(217,119,6,0.3),
-                -2px -2px 6px rgba(255,255,255,0.2) !important;
+  box-shadow:   none !important;
 }
 html body .btn-warning:hover {
   background:   var(--pl-warn-text) !important;
-  box-shadow:   4px 4px 12px rgba(217,119,6,0.4),
-                -2px -2px 8px rgba(255,255,255,0.25) !important;
+  box-shadow:   none !important;
 }
 html body .btn-warning:active {
-  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
-                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
+  box-shadow:   inset 0 0 0 999px rgba(0,0,0,0.12) !important;
 }
 
 /* In dark the danger and warning fills are the LIGHT tints (#F06060, #f59e0b),
@@ -2013,8 +2056,12 @@ html body .btn-outline-primary:hover {
   color:        var(--text-brand) !important;
   box-shadow:   inset 0 0 0 1px var(--text-brand), var(--shadow-neu) !important;
 }
+/* Pressed. The dished inset WAS the whole press cue; flat, it left :active
+   looking identical to :hover. A deeper wash of the same colour reads as
+   pressed without moving the control. */
 html body .btn-outline-primary:active {
   box-shadow:   inset 0 0 0 1px var(--text-brand), var(--shadow-neu-inset) !important;
+  background:   color-mix(in srgb, var(--teal) 14%, transparent) !important;
 }
 
 /* The outline variants that had no ring at all (secondary, dark, info, warning)
@@ -2034,6 +2081,7 @@ html body .btn-outline-secondary:hover {
 }
 html body .btn-outline-secondary:active {
   box-shadow:   var(--shadow-neu-inset) !important;
+  background:   rgba(17,17,68,0.10) !important;
 }
 
 html body .btn-outline-success {
@@ -3189,20 +3237,26 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .btn-circle {
   width:32px; height:32px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  background:transparent; border:none;
+  /* Dark got a ring in the split below; light had nothing left once the
+     shadow flattened, leaving a bare glyph with no control boundary. */
+  background:var(--btn-neutral-bg); border:none;
   color:var(--t3); cursor:pointer; transition:all .18s var(--ease);
-  box-shadow:var(--shadow-neu-sm);
+  box-shadow:inset 0 0 0 1px var(--btn-neutral-border);
 }
 .btn-circle:hover {
   color:var(--text-brand);
-  box-shadow:var(--shadow-neu);
+  background:rgba(17,17,68,0.11);
+  box-shadow:inset 0 0 0 1px var(--control-edge);
 }
-.btn-circle:active { box-shadow:var(--shadow-neu-inset); }
+/* Same as the outline buttons: the press cue was the dished inset alone. */
+.btn-circle:active {
+  box-shadow:var(--shadow-neu-inset);
+  background:color-mix(in srgb, var(--teal) 16%, transparent);
+}
 .btn-circle.ac {
   background:linear-gradient(135deg, var(--btn-primary-bg), var(--btn-primary-hover));
   color:var(--btn-primary-ink);
-  box-shadow:2px 2px 6px color-mix(in srgb, var(--teal) 30%, transparent),
-             -2px -2px 6px rgba(255,255,255,0.2);
+  box-shadow:none;
 }
 .btn-circle .i { width:14px; height:14px; }
 
@@ -3212,7 +3266,7 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
   padding:14px 22px; margin-top:4px;
   background:var(--glass-bg);
   backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
-  border:none; border-radius:14px;
+  border:none; border-radius:var(--radius-sm);
   box-shadow:var(--shadow-neu-sm);
 }
 .pg-info { font-size:clamp(0.6875rem, 0.664rem + 0.09vw, 0.75rem); /* 11px → 12px */ color:var(--t3); font-weight:500; }
@@ -3221,13 +3275,15 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .pg-btn {
   width:32px; height:32px; border-radius:8px;
   display:flex; align-items:center; justify-content:center;
-  background:transparent; border:none;
+  background:var(--btn-neutral-bg); border:none;
   color:var(--t3); font-size:clamp(0.6875rem, 0.664rem + 0.09vw, 0.75rem); /* 11px → 12px */ font-weight:600; cursor:pointer;
   transition:all .15s var(--ease); font-family:var(--font-mono);
-  box-shadow:var(--shadow-neu-sm);
+  box-shadow:inset 0 0 0 1px var(--btn-neutral-border);
 }
-.pg-btn:hover { color:var(--t1); box-shadow:var(--shadow-neu); }
-.pg-btn.active { background:var(--btn-primary-bg); color:var(--btn-primary-ink); box-shadow:inset 2px 2px 5px rgba(0,0,0,0.12), inset -2px -2px 5px rgba(255,255,255,0.1); }
+.pg-btn:hover { color:var(--t1); background:rgba(17,17,68,0.11); box-shadow:inset 0 0 0 1px var(--control-edge); }
+/* The selected page kept its own dished pair, hard-coded rather than tokenised,
+   so it survived the retirement. Its fill is what says "selected". */
+.pg-btn.active { background:var(--btn-primary-bg); color:var(--btn-primary-ink); box-shadow:none; }
 .pg-btn:disabled { opacity:0.5; pointer-events:none; }
 
 /* ── Prereq Dependency Graph ── */
@@ -3527,7 +3583,7 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
 .matrix-fullscreen .filter-bar { background: var(--card); }
 .fb-search {
   display:flex; align-items:center; gap:8px; flex:1; max-width:320px;
-  padding:0 1rem; border-radius:14px;
+  padding:0 1rem; border-radius:var(--radius-sm);
   background:transparent; border:none;
   box-shadow:inset 0 0 0 1px var(--control-edge), var(--shadow-neu-inset);
   transition:box-shadow .25s var(--ease);
@@ -3586,17 +3642,29 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
   background-color: transparent !important;
 }
 .fb-spacer { flex:1; }
+/* This was `background: transparent; border: none` with the neumorphic shadow
+   as its ONLY boundary, so flattening that shadow left it at 1.00:1 against the
+   sheet — a button with no edge at all, which is a WCAG 1.4.11 failure, not a
+   style choice. It takes the neutral-control pair the design system already
+   measured for this exact job (the tokens' own comment: the fill lands at
+   1.15:1 on four different backdrops and the border alpha was COMPUTED to
+   clear 3:1 on the hardest of them, with headroom).
+
+   The ring is an inset shadow rather than a border so the control's box does
+   not grow by 2px and re-wrap every bar it sits in. */
 .fb-dd {
   display:flex; align-items:center; gap:6px;
   padding:7px 14px; border-radius:10px;
-  background:transparent; border:none;
+  background:var(--btn-neutral-bg); border:none;
   font-size:clamp(0.6875rem, 0.664rem + 0.09vw, 0.75rem); /* 11px → 12px */ font-weight:600; color:var(--t2);
   cursor:pointer; transition:all .18s var(--ease);
-  box-shadow:var(--shadow-neu-sm);
-  backdrop-filter:blur(8px);
+  box-shadow:inset 0 0 0 1px var(--btn-neutral-border);
+  backdrop-filter:none;
 }
-.fb-dd:hover { box-shadow:var(--shadow-neu); color:var(--t1); }
-.fb-dd.active { background:var(--brand-soft); color:var(--text-brand); box-shadow:var(--shadow-neu-inset); }
+.fb-dd:hover { box-shadow:inset 0 0 0 1px var(--control-edge); background:rgba(17,17,68,0.11); color:var(--t1); }
+/* Selected. The old cue was raised-versus-dished; flat, the only difference
+   left was hue, which is not a cue for everyone. Weight carries it too. */
+.fb-dd.active { background:var(--brand-soft); color:var(--text-brand); font-weight:800; box-shadow:inset 0 0 0 1px var(--teal); }
 .fb-dd .i { opacity:0.4; }
 .fb-dd-count {
   display:inline-flex; align-items:center; justify-content:center;
@@ -4780,7 +4848,7 @@ pre, .pre-output {
   width:         100%;
   padding:       0.5rem 0.75rem;
   border:        none;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   font-family:   var(--font-mono);
   font-size:     0.875rem;
   font-weight:   600;
@@ -4826,15 +4894,21 @@ pre, .pre-output {
   font-weight:   600;
   font-size:     0.875rem;
   padding:       0.5rem 1.25rem;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   cursor:        pointer;
   transition:    all 0.18s;
-  box-shadow:    var(--shadow-neu-sm);
+  /* `background: transparent; border: none` with the neumorphic shadow as its
+     ONLY edge, so flattening that shadow left the Cancel button of every
+     confirm dialog as bare text at 1.00:1. Same fix, same measured tokens, as
+     .fb-dd. */
+  background:    var(--btn-neutral-bg);
+  box-shadow:    inset 0 0 0 1px var(--btn-neutral-border);
 }
 
 .dlg-footer .btn-cancel:hover {
   color:        var(--ink);
-  box-shadow:    var(--shadow-neu);
+  background:   rgba(17,17,68,0.11);
+  box-shadow:   inset 0 0 0 1px var(--control-edge);
 }
 
 .dlg-footer .btn-confirm {
@@ -4842,7 +4916,8 @@ pre, .pre-output {
   font-weight:   700;
   font-size:     0.875rem;
   padding:       0.5rem 1.5rem;
-  border-radius: 14px;
+  /* 7px, to match .btn-cancel beside it in the same footer. */
+  border-radius: var(--radius-sm);
   border:        none;
   cursor:        pointer;
   transition:    all 0.18s;
@@ -4852,34 +4927,29 @@ pre, .pre-output {
 .dlg-footer .btn-confirm.danger {
   background: var(--danger);
   color:      #fff;
-  box-shadow: 3px 3px 8px rgba(192,48,48,0.3),
-              -2px -2px 6px rgba(255,255,255,0.2);
+  box-shadow: none;
 }
 
 .dlg-footer .btn-confirm.danger:hover {
   background: #d43a3a;
-  box-shadow: 4px 4px 12px rgba(192,48,48,0.4),
-              -2px -2px 8px rgba(255,255,255,0.25);
+  box-shadow: none;
 }
 
 .dlg-footer .btn-confirm.primary {
   background: var(--btn-primary-bg);
   color:      var(--btn-primary-ink);
-  box-shadow: 3px 3px 8px color-mix(in srgb, var(--teal) 35%, transparent),
-              -2px -2px 6px rgba(255,255,255,0.25);
+  box-shadow: none;
 }
 
 .dlg-footer .btn-confirm.primary:hover {
   background: var(--btn-primary-hover);
-  box-shadow: 4px 4px 12px color-mix(in srgb, var(--teal) 40%, transparent),
-              -2px -2px 8px rgba(255,255,255,0.3);
+  box-shadow: none;
 }
 
 .dlg-footer .btn-confirm.warning {
   background: var(--amber);
   color:      #fff;
-  box-shadow: 3px 3px 8px rgba(217,119,6,0.3),
-              -2px -2px 6px rgba(255,255,255,0.2);
+  box-shadow: none;
 }
 
 /* A dialog that only INFORMS (the publish-blockers list: one OK button, nothing is
@@ -5351,11 +5421,13 @@ kbd {
   color: var(--text-brand); background: var(--brand-soft);
   cursor: pointer; transition: all 0.18s var(--ease);
   text-decoration: none;
-  box-shadow: var(--shadow-neu-sm);
+  box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 .empty-state-action:hover {
   background: color-mix(in srgb, var(--teal) 12%, transparent);
-  box-shadow: var(--shadow-neu-sm);
+  /* --shadow-neu-sm is transparent now, so this said "no ring on hover": the
+     button lost its edge exactly when pointed at. */
+  box-shadow: inset 0 0 0 1px var(--teal);
   color: var(--text-brand);
 }
 .empty-state-action .i { width: 14px; height: 14px; }
@@ -5441,40 +5513,51 @@ html body .btn.btn-neutral.disabled:focus {
 }
 
 /* ── Export button style (was undefined in audit_explorer) ──── */
+/* `html body .btn` forces `border: none !important`, so a real border cannot
+   reach this button: the shadow was its only edge in light, and dark never had
+   one (its 1px border loses to that same !important). An inset ring wins. */
 html body .btn-export {
   color: var(--text-brand) !important;
-  background: transparent !important;
+  background: color-mix(in srgb, var(--teal) 6%, transparent) !important;
   font-weight: 600 !important;
-  box-shadow: var(--shadow-neu-sm) !important;
+  /* --teal-border is rgba(10,142,110,0.16): about 1.2:1, a tint rather than an
+     edge. A control boundary needs the real one. */
+  box-shadow: inset 0 0 0 1px var(--control-edge) !important;
 }
 html body .btn-export:hover {
-  background: color-mix(in srgb, var(--teal) 5%, transparent) !important;
+  background: color-mix(in srgb, var(--teal) 12%, transparent) !important;
   color: var(--text-brand) !important;
-  box-shadow: var(--shadow-neu) !important;
+  box-shadow: inset 0 0 0 1px var(--teal) !important;
 }
 
 /* ── Neumorphic audit table (replaces plain .audit-table) ──── */
+/* The audit table's own wrapper, the twin of .table-wrap. Its sticky header
+   keeps an opaque fill of its own (below), so the wrapper needs no card. */
 .audit-table-wrap {
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: none;
-  border-radius: var(--radius-lg);
+  border-block-end: 1px solid var(--rule);
+  border-radius: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  box-shadow: var(--shadow-neu);
+  box-shadow: none;
 }
 
 /* ── Glassmorphic filter row ───────────────────────────────── */
+/* The last translucent, blurred, neumorphic bar in the app — the same shape
+   .filter-bar had, on the audit screen. A ruled band, and opaque, because it
+   can sit above a scrolling table. */
 .glass-filter-row {
   display: flex; gap: 0.5rem; flex-wrap: wrap;
   align-items: center; margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: none; border-radius: var(--radius);
-  box-shadow: var(--shadow-neu);
+  padding: 0.75rem 0;
+  background: var(--bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none; border-block-end: 1px solid var(--rule); border-radius: 0;
+  box-shadow: none;
 }
 
 /* ── Table row status highlights — accessible colors ───────── */
@@ -5571,7 +5654,12 @@ html body .btn-export:hover {
   background: var(--glass-bg-header);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
-  box-shadow: var(--shadow-card);
+  /* Pre-existing, not caused by the control conversion: a near-white glass disc
+     on a light ground measured about 1.1:1 against the page, with only a 6%
+     drop shadow to find it by — under the 3:1 WCAG 1.4.11 asks of a control's
+     boundary. It is a control, and this pass is about control boundaries, so
+     it takes the same --control-edge ring as the rest. */
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--control-edge);
   color: var(--text-brand);
   cursor: pointer;
   display: flex;
@@ -9198,9 +9286,13 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       padding: 0.55rem 0.75rem; vertical-align: top;
     }
     .audit-table th {
-      background: var(--glass-bg-data);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      /* Composited over --bg, as the other table headers are: the wrapper's
+         card is gone, so a translucent white tint would read as the only white
+         band on the sheet. This header is not sticky, so the fill is about
+         appearance rather than protecting the rows. */
+      background: linear-gradient(var(--glass-bg-data), var(--glass-bg-data)), var(--bg);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
       font-family: var(--font-mono); font-size: var(--text-micro);
       text-transform: uppercase; letter-spacing: 0.06em;
       color: var(--t3); font-weight: 700; white-space: nowrap;
@@ -9222,16 +9314,19 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     .audit-id { font-family: var(--font-mono); font-weight: 700; color: var(--text-brand); font-size: 11px; }
     .audit-ts { font-family: var(--font-mono); font-size: 11px; color: var(--t3); white-space: nowrap; }
     .audit-endpoint { font-family: var(--font-mono); font-size: 11px; color: var(--t2); }
+    /* This bar's neumorphic pair is written out here rather than taken from
+       --shadow-neu, so retiring the tokens never reached it. Same treatment as
+       every other filter bar: a ruled band, opaque because it sits above a
+       scrolling table. */
     .audit-filter-row {
       display: flex; gap: 0.5rem; flex-wrap: wrap;
       margin-bottom: 1rem; align-items: flex-end;
-      padding: 0.75rem 1rem;
-      background: rgba(255,255,255,0.40);
-      backdrop-filter: var(--glass-blur);
-      -webkit-backdrop-filter: var(--glass-blur);
-      border: none; border-radius: var(--radius);
-      box-shadow: 5px 5px 14px rgba(163,177,198,0.25),
-                  -5px -5px 14px rgba(255,255,255,0.75);
+      padding: 0.75rem 0;
+      background: var(--bg);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border: none; border-block-end: 1px solid var(--rule); border-radius: 0;
+      box-shadow: none;
     }
     .audit-filter-row .form-control,
     .audit-filter-row .form-select { max-width: 180px; }
@@ -9241,16 +9336,19 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     .audit-filter-row .form-select,
     .audit-filter-row .btn { box-sizing: border-box; height: 36px; min-height: 36px; }
     .audit-filter-row #audit-f-limit { width: 96px !important; }
+    /* .audit-table-wrap is declared TWICE. This one is later with the same
+       specificity, so it wins, and converting only the earlier rule left the
+       audit table rendering as the old neumorphic card while the diff claimed
+       otherwise. Both now say the same thing. */
     .audit-table-wrap {
-      background: rgba(255,255,255,0.45);
-      backdrop-filter: var(--glass-blur);
-      -webkit-backdrop-filter: var(--glass-blur);
-      border: none; border-radius: 14px;
+      background: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border: none; border-block-end: 1px solid var(--rule); border-radius: 0;
       overflow-x: auto; overflow-y: auto;
       max-height: 520px;
       -webkit-overflow-scrolling: touch;
-      box-shadow: 6px 6px 16px rgba(163,177,198,0.28),
-                  -6px -6px 16px rgba(255,255,255,0.8);
+      box-shadow: none;
       scrollbar-width: thin;
       scrollbar-color: var(--line-strong) transparent;
     }
@@ -9299,7 +9397,7 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       box-shadow: var(--shadow-neu-sm);
       transition: all 0.15s;
     }
-    .btn-export:hover { color: var(--text-brand); box-shadow: 4px 4px 10px rgba(163,177,198,0.35), -4px -4px 10px rgba(255,255,255,0.85); }
+    .btn-export:hover { color: var(--text-brand); box-shadow: inset 0 0 0 1px var(--teal); }
 
     /* -- Issue #19: Color-only status indicators — icon prefixes -- */
     .audit-status-icon { display: inline-flex; align-items: center; gap: 0.25rem; }
@@ -9313,23 +9411,23 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     /* -- Pagination controls -- */
     .audit-pagination {
       display: flex; align-items: center; justify-content: space-between;
-      gap: 1rem; flex-wrap: wrap; padding: 0.75rem 1rem; margin-top: 0.75rem;
-      background: rgba(255,255,255,0.40); backdrop-filter: var(--glass-blur);
-      -webkit-backdrop-filter: var(--glass-blur);
-      border-radius: var(--radius);
-      box-shadow: 5px 5px 14px rgba(163,177,198,0.25), -5px -5px 14px rgba(255,255,255,0.75);
+      gap: 1rem; flex-wrap: wrap; padding: 0.75rem 0; margin-top: 0.75rem;
+      background: none; backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border-block-start: 1px solid var(--rule); border-radius: 0;
+      box-shadow: none;
       font-size: 0.82rem; color: var(--t3);
     }
     .audit-page-nav { display: flex; align-items: center; gap: 0.35rem; }
     .audit-page-btn {
-      width: 32px; height: 32px; border-radius: 8px; border: none;
-      background: var(--glass-bg); color: var(--t3);
+      width: 32px; height: 32px; border-radius: var(--radius-sm); border: none;
+      background: var(--btn-neutral-bg); color: var(--t3);
       font-size: 1rem; font-weight: 700; cursor: pointer;
-      box-shadow: 2px 2px 5px rgba(163,177,198,0.25), -2px -2px 5px rgba(255,255,255,0.7);
+      box-shadow: inset 0 0 0 1px var(--btn-neutral-border);
       transition: all 0.15s;
       display: flex; align-items: center; justify-content: center;
     }
-    .audit-page-btn:hover:not(:disabled) { color: var(--text-brand); box-shadow: 3px 3px 7px rgba(163,177,198,0.3), -3px -3px 7px rgba(255,255,255,0.8); }
+    .audit-page-btn:hover:not(:disabled) { color: var(--text-brand); background: rgba(17,17,68,0.11); box-shadow: inset 0 0 0 1px var(--control-edge); }
     .audit-page-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .audit-page-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
     .audit-page-current { font-weight: 600; font-family: var(--font-mono); font-size: 0.78rem; }
@@ -9339,17 +9437,18 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
     /* -- View toggle (table / timeline) -- */
     .audit-view-toggle {
-      display: flex; gap: 0; border-radius: 10px; overflow: hidden; width: fit-content;
-      box-shadow: inset 3px 3px 7px rgba(163,177,198,0.3), inset -3px -3px 7px rgba(255,255,255,0.7);
+      display: flex; gap: 0; border-radius: var(--radius-sm); overflow: hidden; width: fit-content;
+      box-shadow: none;
     }
     .audit-view-btn {
-      padding: 0.4rem 1.2rem; border: none; background: transparent;
+      padding: 0.4rem 1.2rem; border: none; background: var(--btn-neutral-bg);
+      box-shadow: inset 0 0 0 1px var(--btn-neutral-border);
       font-size: 0.78rem; font-weight: 700; color: var(--t3); cursor: pointer;
       transition: all 0.15s; font-family: var(--font-mono);
       text-transform: uppercase; letter-spacing: 0.04em;
     }
     .audit-view-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
-    .audit-view-btn.active { background: var(--btn-primary-bg); color: var(--btn-primary-ink); box-shadow: 0 2px 6px color-mix(in srgb, var(--teal) 25%, transparent); }
+    .audit-view-btn.active { background: var(--btn-primary-bg); color: var(--btn-primary-ink); box-shadow: none; }
 
     /* -- Timeline view -- */
     .audit-timeline { max-height: 600px; overflow-y: auto; padding: 1rem; }
@@ -9431,26 +9530,45 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
     html[data-theme="dark"] .audit-status-error   { color: #f06060; }
     html[data-theme="dark"] .audit-status-allow   { color: #2ec9a0; }
     html[data-theme="dark"] .audit-status-deny    { color: #f5a060; }
-    html[data-theme="dark"] .audit-status-critical { color: #f06060; }html[data-theme="dark"] .audit-filter-row,
-html[data-theme="dark"] .audit-table-wrap,
-html[data-theme="dark"] .audit-pagination,
+    html[data-theme="dark"] .audit-status-critical { color: #f06060; }/* These dark rules re-boxed the audit screen on top of the light conversion:
+   a translucent fill plus a full 1px border, which with the new flush padding
+   put the controls hard against the box edge. Dark is the same sheet now. The
+   filter row keeps an OPAQUE fill because it can sit over a scrolling table. */
+html[data-theme="dark"] .audit-filter-row {
+  background: var(--bg);
+  box-shadow: none;
+  border: none;
+  border-block-end: 1px solid var(--rule);
+}
+html[data-theme="dark"] .audit-table-wrap {
+  background: none;
+  box-shadow: none;
+  border: none;
+  border-block-end: 1px solid var(--rule);
+}
+html[data-theme="dark"] .audit-pagination {
+  background: none;
+  box-shadow: none;
+  border: none;
+  border-block-start: 1px solid var(--rule);
+}
 html[data-theme="dark"] .btn-export {
   background: rgba(255,255,255,0.04);
-      box-shadow: none;
-      border: 1px solid rgba(255,255,255,0.06);
-}    html[data-theme="dark"] .audit-page-btn {
+  box-shadow: inset 0 0 0 1px var(--btn-neutral-border);
+  border: none;
+}    /* `box-shadow: none` plus a 6%-alpha border left these at about 1.1:1 in
+       dark — no boundary at rest, only on hover. */
+    html[data-theme="dark"] .audit-page-btn {
       background: rgba(255,255,255,0.04);
       color: #a0a4b8;
-      box-shadow: none;
-      border: 1px solid rgba(255,255,255,0.06);
+      box-shadow: inset 0 0 0 1px var(--btn-neutral-border);
+      border: none;
     }
-    html[data-theme="dark"] .audit-page-btn:hover:not(:disabled) { color: var(--text-brand); background: rgba(255,255,255,0.08); }
+    html[data-theme="dark"] .audit-page-btn:hover:not(:disabled) { color: var(--text-brand); background: rgba(255,255,255,0.10); box-shadow: inset 0 0 0 1px var(--control-edge); }
 
-    html[data-theme="dark"] .audit-view-toggle {
-      box-shadow: inset 2px 2px 5px rgba(0,0,0,0.3), inset -2px -2px 5px rgba(255,255,255,0.03);
-    }
+    html[data-theme="dark"] .audit-view-toggle { box-shadow: none; }
     html[data-theme="dark"] .audit-view-btn { color: #a0a4b8; }
-    html[data-theme="dark"] .audit-view-btn.active { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }    html[data-theme="dark"] .btn-export:hover { box-shadow: none; background: rgba(255,255,255,0.08); }
+    html[data-theme="dark"] .audit-view-btn.active { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }    html[data-theme="dark"] .btn-export:hover { box-shadow: inset 0 0 0 1px var(--teal); background: rgba(255,255,255,0.10); }
 
     /* Timeline view dark overrides */
     html[data-theme="dark"] .atl-day { color: #e2e4ec; }
@@ -9507,7 +9625,9 @@ html[data-theme="dark"] .btn-export {
        a filled dot, so the choice never rests on colour alone; the focused
        chip has the fields' full-strength teal ring. Logical properties only,
        so Arabic mirrors it. */
-    .sp-page .sp-seg-group { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 3px; padding-block: 3px; padding-inline: 1rem 3px; border-radius: 14px; box-shadow: var(--shadow-neu-inset); }
+    /* The capsule's only boundary was the dished inset, and it sat at 14px
+       beside .fb-search capsules now at 7px in the same bar. */
+    .sp-page .sp-seg-group { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 3px; padding-block: 3px; padding-inline: 1rem 3px; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--control-edge); }
     .sp-page .sp-seg-group .fb-lbl { flex: none; white-space: nowrap; margin-inline-end: 3px; }
     .sp-page .sp-seg { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: .38rem .55rem; border-radius: 11px; color: var(--t3); font-size: .88rem; font-weight: 600; white-space: nowrap; cursor: pointer; user-select: none; transition: box-shadow .18s var(--ease), color .18s var(--ease), background-color .18s var(--ease); }
     .sp-page .sp-seg:hover { color: var(--t1); }
@@ -10452,16 +10572,16 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(370px, .88fr);
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--teal) 22%, var(--line));
-  border-radius: 26px;
-  background:
-    radial-gradient(circle at 10% 5%, color-mix(in srgb, var(--sky) 14%, transparent), transparent 34%),
-    radial-gradient(circle at 58% 105%, color-mix(in srgb, var(--teal) 12%, transparent), transparent 40%),
-    linear-gradient(135deg,
-      color-mix(in srgb, var(--teal) 7%, var(--glass-bg)) 0%,
-      color-mix(in srgb, var(--royal) 4%, var(--glass-bg)) 100%);
-  box-shadow: 0 24px 65px color-mix(in srgb, var(--navy) 13%, transparent),
-              0 1px 0 rgba(255,255,255,.5) inset;
+  /* Two radial washes in sky and teal over a teal-to-royal linear gradient,
+     inside a 26px radius under a 65px shadow. The same gradient-wash idiom the
+     page mesh and the dashboard hero carried, at the largest scale in the app.
+     The layout keeps its two columns; the decoration goes, and the rule that
+     divides it from the page is the one the rest of the app uses. */
+  border: 0;
+  border-top: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
 .admin-grad-landing-shell::before,
 .admin-grad-landing-shell::after {
@@ -10588,11 +10708,13 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
 .admin-grad-lookup-card {
   width: min(100%, 420px);
   padding: clamp(1.15rem, 2.2vw, 1.6rem);
-  border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--line));
-  border-radius: 20px;
-  background: color-mix(in srgb, var(--glass-bg) 94%, transparent);
-  box-shadow: 0 18px 45px color-mix(in srgb, var(--navy) 12%, transparent),
-              0 1px 0 rgba(255,255,255,.65) inset;
+  /* The "start here" panel. It is a section of the sheet, not a floating
+     card: the inline-start rule separates it from the copy beside it. */
+  border: 0;
+  border-inline-start: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
 .admin-grad-lookup-head {
   display: flex;
@@ -12362,7 +12484,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
 [dir="rtl"] .um-pw-wrap .um-gen-pw { box-shadow: inset 4px 0 8px rgba(163,177,198,0.15); }
 .um-pw-wrap .um-gen-pw:hover { background: var(--card); color: var(--text-brand); border-color: var(--brand); }
 .um-create-btn {
-  height: 36px; padding: 0 20px; border: none; border-radius: 14px;
+  height: 36px; padding: 0 20px; border: none; border-radius: var(--radius-sm);
   background: var(--btn-primary-bg); color: var(--btn-primary-ink); font-size: 0.78rem;
   font-weight: 700; cursor: pointer; white-space: nowrap;
   transition: background 0.12s, transform 0.1s; flex-shrink: 0;
@@ -12418,7 +12540,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
   padding-bottom: 1px;
 }
 .um-edit-row .um-edit-actions .um-act-btn {
-  height: 36px; padding: 0 14px; border: none; border-radius: 14px;
+  height: 36px; padding: 0 14px; border: none; border-radius: var(--radius-sm);
   font-size: max(var(--fs-floor), 0.74rem); font-weight: 700; cursor: pointer;
   white-space: nowrap; transition: all 0.12s; display: inline-flex;
   align-items: center; gap: 5px;

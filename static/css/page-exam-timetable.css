@@ -3,14 +3,31 @@
 
 main.exam-builder-page,
 #matrixPanel {
-  --et-bg: #f4f6f9;
+  /* This screen carries a complete token set of its own, which is why it kept
+     a cool grey ground of its own after the app moved to warm paper: --bg never
+     reached it. The ground and the separators follow the sheet now. Measured
+     against paper first, every ink on this page still clears its bar:
+     --et-text 13.01:1, --et-muted 5.64:1, --et-accent-text 6.06:1, and the
+     non-text --et-icon 3.93:1 against the 3:1 it needs.
+
+     --et-surface stays #ffffff and --et-accent stays as it is: the surface is
+     the opaque fill behind controls and the scrolling course list, and the
+     accent's contrast was measured against THESE fills, not the page. */
+  --et-bg: var(--bg);
   --et-surface: #ffffff;
-  --et-subtle: #f8fafc;
+  --et-subtle: var(--surface);
   --et-text: #172b45;
   --et-muted: #52627a;
   --et-icon: #6b7b90;
-  --et-border: #d8e0e9;
-  --et-field-border: #8796a8;
+  --et-border: var(--rule);
+  /* The control edge, and the one token the ground change broke. #8796a8 was
+     3.02:1 against the white .et-section card these fields used to sit in —
+     passing WCAG 1.4.11 by two hundredths. On the sheet they sit on --bg, where
+     it measures 2.74:1, and on --et-subtle 2.63:1: a failure on every input,
+     select and button on this screen. #71808f measures 3.68 / 3.52 / 4.05 on
+     paper, subtle and white, so it clears the bar on all three with room, in
+     the same spirit as --btn-neutral-border's computed alpha. */
+  --et-field-border: #71808f;
   --et-accent: #087f72;
   --et-accent-hover: #06685e;
   /* Accent as small text: 4.5:1 on every card fill the review colours use. */
@@ -41,7 +58,7 @@ main.exam-builder-page *::after { box-sizing: border-box; }
 
 html[data-theme="dark"] main.exam-builder-page,
 html[data-theme="dark"] #matrixPanel {
-  --et-bg: #101923;
+  --et-bg: var(--bg);
   --et-surface: #172330;
   --et-subtle: #1c2a39;
   --et-text: #e8eef6;
@@ -185,14 +202,17 @@ main.exam-builder-page .btn:focus {
 }
 
 main.exam-builder-page .et-setup-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+/* Each numbered step was a bordered white card. On the sheet a step opens with
+   a rule, like every other section in the app. */
 main.exam-builder-page .et-section,
 main.exam-builder-page .et-panel {
   min-width: 0;
-  margin-bottom: 20px;
-  padding: 24px;
-  border: 1px solid var(--et-border);
-  border-radius: 10px;
-  background: var(--et-surface);
+  margin-bottom: 28px;
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: none;
   box-shadow: none;
 }
 main.exam-builder-page .et-section-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
@@ -574,7 +594,7 @@ main.exam-builder-page .et-request-error a:focus-visible { outline: 2px solid va
 main.exam-builder-page .et-request-error .et-source-review-action { margin-inline-start: 8px; min-height: 36px; white-space: normal; }
 
 /* The page owns vertical scrolling; only compact editing controls follow it. */
-main.exam-builder-page .et-workspace-details { min-width: 0; margin-block: 0 12px; border: 1px solid var(--et-border); border-radius: 8px; background: var(--et-surface); }
+main.exam-builder-page .et-workspace-details { min-width: 0; margin-block: 0 12px; border: 0; border-top: 1px solid var(--rule); border-radius: 0; background: none; }
 main.exam-builder-page .et-workspace-details > summary { min-height: 46px; padding: 12px 16px; color: var(--et-text); font-size: .875rem; font-weight: 600; line-height: 1.5; cursor: pointer; overflow-wrap: anywhere; }
 main.exam-builder-page .et-workspace-details > summary:hover { background: var(--et-subtle); border-radius: 8px; }
 main.exam-builder-page .et-workspace-details[open] > summary { border-bottom: 1px solid var(--et-border); }
@@ -1133,7 +1153,7 @@ html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
   /* An odd card count would leave the last card alone in a half row. */
   main.exam-builder-page .et-summary-grid > .et-summary-cell:last-child:nth-child(odd) { grid-column: 1 / -1; }
   main.exam-builder-page .et-section,
-  main.exam-builder-page .et-panel { padding: 20px; }
+  main.exam-builder-page .et-panel { padding: 16px 0 0; }
   main.exam-builder-page .et-section-heading { margin-bottom: 18px; }
   main.exam-builder-page #progList { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   main.exam-builder-page .et-course-table-head,
@@ -1210,7 +1230,7 @@ html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
   main.exam-builder-page .page-intro { margin-block: 18px; }
   main.exam-builder-page .panel-sub { font-size: .8125rem; }
   main.exam-builder-page .et-section,
-  main.exam-builder-page .et-panel { padding: 16px; margin-bottom: 16px; border-radius: 8px; }
+  main.exam-builder-page .et-panel { padding: 14px 0 0; margin-bottom: 20px; border-radius: 0; }
   main.exam-builder-page .et-section-heading { gap: 10px; }
   main.exam-builder-page .et-section-heading h2 { font-size: .9375rem; }
   main.exam-builder-page :is(.et-courses-panel, .et-fixed-exams) .et-section-heading { flex-wrap: wrap; }
