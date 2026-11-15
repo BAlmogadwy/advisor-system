@@ -1,49 +1,66 @@
     <div id="plan" class="panel" role="region">
-      <div class="zone-card">
-        <div class="zone-title">Filters</div>
-        <div class="field-row fb-fit">
-          <div class="flex-field" style="max-width:220px">
-            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-            <div class="fb-search fb-search-full"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال CS{% else %}e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
-          </div>
-          <div class="field-action"><button id="loadPlan" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}</button></div>
+      {% comment %}The program selector is a page-level control, not a filter
+      worth its own card: the same `.filter-bar` every other panel on this
+      dashboard uses, holding the action that consumes it.{% endcomment %}
+      <div class="filter-bar fb-fit mb-14">
+        <div class="fb-search"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" class="fb-w-16ch" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-actions">
+          <button id="loadPlan" class="btn btn-primary">
+            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}
+          </button>
         </div>
       </div>
-      <div class="zone-card">
-        <div class="zone-title">Results</div>
-        <div class="row g-2 mt-1 mb-2 d-none" id="planMetrics">
-          <div class="col-md-3"><div class="metric"><div class="k">Program</div><div class="v" id="planMetricProgram">-</div></div></div>
-          <div class="col-md-3"><div class="metric"><div class="k">Total courses</div><div class="v" id="planMetricCount">0</div></div></div>
-          <div class="col-md-3"><div class="metric"><div class="k">Total credit hours</div><div class="v" id="planMetricCredits">0</div></div></div>
-        </div>
-        <div id="planUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
-        <div class="table-wrap mt-3 overflow-x">
-          <table class="table table-sm mb-0" id="planTable">
-            <thead><tr><th scope="col" data-sort="num">Term</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Course Name</th><th scope="col" data-sort="num">Credit Hours</th></tr></thead>
-            <tbody><tr><td colspan="4"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span><div class="empty-title">No plan loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load Plan</strong></div></div></td></tr></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="zone-card">
-        <div class="zone-title">Visuals</div>
-        <h4>Term distribution</h4>
-        <div id="termBars"></div>
 
-        <div class="mt-3">
-          <h4>Term cards</h4>
+      <div id="planContext" class="small text-secondary mb-3"></div>
+
+      <div class="row g-2 mb-3 d-none" id="planMetrics">
+        <div class="col-md-4"><div class="metric"><div class="k">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</div><div class="v" id="planMetricProgram">-</div></div></div>
+        <div class="col-md-4"><div class="metric"><div class="k">{% if LANGUAGE_CODE == 'ar' %}إجمالي المقررات{% else %}Total courses{% endif %}</div><div class="v" id="planMetricCount">0</div></div></div>
+        <div class="col-md-4"><div class="metric"><div class="k">{% if LANGUAGE_CODE == 'ar' %}إجمالي الساعات{% else %}Total credit hours{% endif %}</div><div class="v" id="planMetricCredits">0</div></div></div>
+      </div>
+
+      {% comment %}One card, four views of the same plan — instead of stacking
+      each view under its own heading down the page. `.ux-tabs` is the app's
+      tab strip: `.active` marks the chosen tab and ux-controls.js keeps
+      aria-selected, the roving tabindex and the arrow keys (mirrored in
+      Arabic).{% endcomment %}
+      <div class="zone-card">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+          <div class="ux-tabs" id="planTabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}طريقة عرض الخطة{% else %}Plan view{% endif %}">
+            <button type="button" class="ux-tab active" role="tab" id="planTabList" data-plan-tab="List" aria-controls="planViewList">{% if LANGUAGE_CODE == 'ar' %}قائمة المقررات{% else %}Course list{% endif %}</button>
+            <button type="button" class="ux-tab" role="tab" id="planTabDist" data-plan-tab="Dist" aria-controls="planViewDist">{% if LANGUAGE_CODE == 'ar' %}توزيع الفصول{% else %}Term distribution{% endif %}</button>
+            <button type="button" class="ux-tab" role="tab" id="planTabCards" data-plan-tab="Cards" aria-controls="planViewCards">{% if LANGUAGE_CODE == 'ar' %}بطاقات الفصول{% else %}Term cards{% endif %}</button>
+            <button type="button" class="ux-tab" role="tab" id="planTabPrereq" data-plan-tab="Prereq" aria-controls="planViewPrereq">{% if LANGUAGE_CODE == 'ar' %}المتطلبات السابقة{% else %}Prerequisites{% endif %}</button>
+          </div>
+          <div class="ms-auto small text-secondary" id="planUpdated"></div>
+        </div>
+
+        <div id="planViewList" class="plan-pane" role="tabpanel" tabindex="0">
+          <div class="table-wrap overflow-x">
+            <table class="table table-sm mb-0" id="planTable">
+              <thead><tr><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course Name{% endif %}</th><th scope="col" data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credit Hours{% endif %}</th></tr></thead>
+              <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لم تُحمَّل أي خطة{% else %}No plan loaded{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر برنامجاً أعلاه ثم اضغط <strong>تحميل الخطة</strong>{% else %}Choose a program above, then click <strong>Load Plan</strong>{% endif %}</div></div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="planViewDist" class="plan-pane" role="tabpanel" tabindex="0" hidden>
+          <div id="termBars"></div>
+        </div>
+
+        <div id="planViewCards" class="plan-pane" role="tabpanel" tabindex="0" hidden>
           <div id="termCards" class="row g-2"></div>
         </div>
-      </div>
 
-      <div class="zone-card">
-        <div class="zone-title">Selected course prerequisites</div>
-        <div class="small text-secondary mb-2">Click a course in Program Plan table to load its prerequisites.</div>
-        <div id="planPrereqMeta" class="small text-secondary">No course selected.</div>
-        <div class="table-wrap mt-2">
-          <table class="table table-sm mb-0" id="planPrereqTable">
-            <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Prerequisite</th></tr></thead>
-            <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No course selected</div><div class="empty-hint">Click any course row in the plan table above</div></div></td></tr></tbody>
-          </table>
+        <div id="planViewPrereq" class="plan-pane" role="tabpanel" tabindex="0" hidden>
+          <div class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}اضغط على أي مقرر في قائمة المقررات لعرض متطلباته السابقة.{% else %}Click a course in the course list to load its prerequisites.{% endif %}</div>
+          <div id="planPrereqMeta" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار مقرر.{% else %}No course selected.{% endif %}</div>
+          <div class="table-wrap mt-2">
+            <table class="table table-sm mb-0" id="planPrereqTable">
+              <thead><tr><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th><th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المتطلب السابق{% else %}Prerequisite{% endif %}</th></tr></thead>
+              <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار مقرر{% else %}No course selected{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اضغط على أي صف مقرر في قائمة المقررات{% else %}Click any course row in the course list{% endif %}</div></div></td></tr></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

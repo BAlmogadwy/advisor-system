@@ -40,26 +40,51 @@ function wireSortableTable(tableId) {
       const tbody = table.querySelector('tbody');
       if (!tbody) return;
       const rows = Array.from(tbody.querySelectorAll('tr'));
-      const validRows = rows.filter(r => r.children.length > idx && !r.querySelector('td[colspan]'));
+      /* A spanning cell is never a data row: an empty state, a detail row, or a
+         `.table-group-row` subhead. `th[colspan]` matters as much as `td[colspan]`
+         — a group row's only child is a `th`, so without this it survived the
+         `children.length > idx` guard for column 0 and got sorted as data. */
+      const validRows = rows.filter(r => r.children.length > idx && !r.querySelector('td[colspan], th[colspan]'));
       if (!validRows.length) return;
+      /* A grouped table keeps its groups: sorting reorders the rows INSIDE each
+         `.table-group-row` section rather than flattening the table, so a
+         subhead never ends up labelling rows that left its group — and there is
+         no state the user cannot get back out of. An ungrouped table is simply
+         one section with no head. */
+      const sections = [];
+      let section = { head: null, rows: [] };
+      rows.forEach((r) => {
+        if (r.classList.contains('table-group-row')) {
+          sections.push(section);
+          section = { head: r, rows: [] };
+        } else {
+          section.rows.push(r);
+        }
+      });
+      sections.push(section);
       const isNum = th.dataset.sort === 'num';
       const asc = dir === 'asc';
-      validRows.sort((a, b) => {
+      const compare = (a, b) => {
         const av = a.children[idx]?.textContent?.trim() || '';
         const bv = b.children[idx]?.textContent?.trim() || '';
         if (isNum) return asc ? parseFloat(av || 0) - parseFloat(bv || 0) : parseFloat(bv || 0) - parseFloat(av || 0);
         return asc ? av.localeCompare(bv, undefined, { numeric: true }) : bv.localeCompare(av, undefined, { numeric: true });
-      });
+      };
       headers.forEach(h => { h.removeAttribute('data-dir'); h.setAttribute('aria-sort', 'none'); });
       th.setAttribute('data-dir', asc ? 'asc' : 'desc');
       th.setAttribute('aria-sort', asc ? 'ascending' : 'descending');
       dir = asc ? 'desc' : 'asc';
-      /* Re-append rows; handle detail/companion rows */
-      const detailRows = rows.filter(r => r.classList.contains('ap-detail-row') || r.querySelector('td[colspan]'));
-      validRows.forEach(r => {
-        tbody.appendChild(r);
-        const next = r.nextElementSibling;
-        if (next && detailRows.includes(next)) tbody.appendChild(next);
+      /* Re-append section by section; handle detail/companion rows */
+      const detailRows = rows.filter(r => r.classList.contains('ap-detail-row') || r.querySelector('td[colspan], th[colspan]'));
+      sections.forEach((sec) => {
+        if (sec.head) tbody.appendChild(sec.head);
+        const sortable = sec.rows.filter(r => validRows.includes(r));
+        sortable.sort(compare);
+        sortable.forEach(r => {
+          tbody.appendChild(r);
+          const next = r.nextElementSibling;
+          if (next && detailRows.includes(next)) tbody.appendChild(next);
+        });
       });
     }
     th.addEventListener('click', doSort);
