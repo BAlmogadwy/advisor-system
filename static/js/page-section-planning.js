@@ -10,7 +10,6 @@ const T = {
   exported:    IS_AR ? 'تم تصدير الملف.' : 'File exported successfully.',
   full:        IS_AR ? 'ممتلئ' : 'Full',
   underfilled: IS_AR ? 'ناقص' : 'Underfilled',
-  lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
   deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
   noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
   emptyScope:  IS_AR ? 'حدد السنة والفصل والشطر ثم انقر حساب.' : 'Set Year, Semester & Section, then click Generate.',
@@ -1439,7 +1438,6 @@ function renderSingleProgramResults(data) {
   renderKpis(data, data.summary);
 
   /* Timestamp */
-  $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
 
   /* Table */
   const tbody = $('spTable').querySelector('tbody');
@@ -1477,7 +1475,6 @@ function renderMultiProgramResults(data) {
   renderKpis(data, cs);
 
   /* Timestamp */
-  $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
 
   /* ── Union table (main table) ── */
   const combinedPlan = data.combined_plan || [];

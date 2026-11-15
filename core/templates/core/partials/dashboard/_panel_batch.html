@@ -43,12 +43,13 @@
         <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
         <button id="copyBatchCsv" type="button" class="fb-dd">Copy CSV link</button>
         <div class="fb-spacer"></div>
-        <div id="batchUpdated" class="small color-t3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       </div>
+
+      <div id="batchMeta" class="meta-banner meta-danger mb-14 d-none" role="status"></div>
 
       <div class="mb-6">
         <table class="tbl-card" id="batchTable">
-          <thead><tr><th scope="col" data-sort="num"># <span class="sort-arrow">▲</span></th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Course Name</th><th scope="col" data-sort="num">Count</th><th scope="col">Share</th></tr></thead>
+          <thead><tr><th scope="col" data-sort="num">#</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Course Name</th><th scope="col" data-sort="num">Count</th><th scope="col">Share</th></tr></thead>
           <tbody><tr><td colspan="5"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
         </table>
       </div>
