@@ -16,7 +16,12 @@
       </section>
 
       <section class="dcc-kpis" aria-label="Executive metrics">
-        <a class="dcc-kpi dcc-kpi-primary" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
+        {% comment %}
+          `dcc-kpi-primary` is gone with the card: it painted a teal-to-white
+          gradient over the first tile, which on a sheet is just a stain. The
+          four figures are peers.
+        {% endcomment %}
+        <a class="dcc-kpi" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
           <span class="dcc-kpi-label">Students in scope</span>
           <strong>{{ command_center.kpis.students }}</strong>
           <span class="dcc-kpi-note">{{ command_center.kpis.mapped_students }} advisor-mapped</span>
@@ -48,8 +53,14 @@
             <a href="/audit-explorer/" class="dcc-link">Open Audit</a>
           </div>
           <div class="dcc-triage">
+            {% comment %}
+              The severity word and the severity class read the same value, so a
+              row cannot end up painted amber while it says "Clear". The word is
+              what carries the rank: the dot alone said nothing to a reader who
+              cannot separate the hues, and nothing about ordering to anyone.
+            {% endcomment %}
             <a class="dcc-triage-row {% if command_center.audit.ok %}is-clean{% else %}is-danger{% endif %}" href="/audit-explorer/">
-              <span class="dcc-triage-dot"></span>
+              <span class="dcc-triage-dot">{% if command_center.audit.ok %}Clear{% else %}Blocks{% endif %}</span>
               <span>
                 <strong>Audit integrity</strong>
                 {% if command_center.audit.ok %}
@@ -60,21 +71,21 @@
               </span>
             </a>
             <a class="dcc-triage-row {% if command_center.kpis.low_gpa %}is-warning{% else %}is-clean{% endif %}" href="/advisor-portfolio/">
-              <span class="dcc-triage-dot"></span>
+              <span class="dcc-triage-dot">{% if command_center.kpis.low_gpa %}Watch{% else %}Clear{% endif %}</span>
               <span>
                 <strong>{{ command_center.kpis.low_gpa }} low-GPA students</strong>
                 <small>Students below GPA 2.0 inside the current role scope.</small>
               </span>
             </a>
             <a class="dcc-triage-row {% if command_center.kpis.zero_load %}is-warning{% else %}is-clean{% endif %}" href="#debug" onclick="event.preventDefault();activatePanel('debug');history.pushState(null,'','#debug')">
-              <span class="dcc-triage-dot"></span>
+              <span class="dcc-triage-dot">{% if command_center.kpis.zero_load %}Watch{% else %}Clear{% endif %}</span>
               <span>
                 <strong>{{ command_center.kpis.zero_load }} zero-load students</strong>
                 <small>Students with no current registered credits recorded.</small>
               </span>
             </a>
             <a class="dcc-triage-row {% if command_center.timetable.unassigned_rooms %}is-warning{% else %}is-clean{% endif %}" href="{{ command_center.timetable.split_url }}">
-              <span class="dcc-triage-dot"></span>
+              <span class="dcc-triage-dot">{% if command_center.timetable.unassigned_rooms %}Watch{% else %}Clear{% endif %}</span>
               <span>
                 <strong>{{ command_center.timetable.unassigned_rooms }} unassigned rooms</strong>
                 <small>{{ command_center.timetable.name }} has {{ command_center.timetable.placements }} placed sections.</small>
