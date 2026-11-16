@@ -48,7 +48,6 @@
     drop(key) { try { localStorage.removeItem(key); } catch (e) { /* private mode */ } }
   };
 
-  const navWrap = document.getElementById('navWrap');
   const navSec = document.getElementById('menu');
   const railToggle = document.getElementById('sbRailToggle');
   const findBtn = document.getElementById('navFind');
@@ -64,16 +63,29 @@
   }
 
   /* ── Section groups ───────────────────────────────────────────────────── */
-  function collapsedIds() {
+  /* Everything the store holds that is shaped like a group name. The key is
+     per browser, not per role, so this is a superset of the groups on THIS
+     page: a student's sidebar has one group, and reading only that one would
+     erase a super admin's on the next save. */
+  function storedIds() {
     let stored = [];
     try { stored = JSON.parse(store.get(GROUPS_KEY) || '[]'); } catch (e) { stored = []; }
     if (!Array.isArray(stored)) return [];
-    const known = new Set(groups.map((group) => group.dataset.group));
-    return stored.filter((id) => typeof id === 'string' && GROUP_ID.test(id) && known.has(id));
+    return stored.filter((id) => typeof id === 'string' && GROUP_ID.test(id));
   }
 
+  /* Of those, the ones this page actually draws. */
+  function collapsedIds() {
+    const known = new Set(groups.map((group) => group.dataset.group));
+    return storedIds().filter((id) => known.has(id));
+  }
+
+  /* `ids` replaces what this page knows about and leaves every other role's
+     groups where they were. */
   function saveCollapsed(ids) {
-    store.set(GROUPS_KEY, JSON.stringify(ids));
+    const known = new Set(groups.map((group) => group.dataset.group));
+    const theirs = storedIds().filter((id) => !known.has(id));
+    store.set(GROUPS_KEY, JSON.stringify(theirs.concat(ids)));
   }
 
   /* Writes the collapsed set to <html> for the stylesheet and mirrors it onto
@@ -113,7 +125,6 @@
       else ids.splice(at, 1);
       saveCollapsed(ids);
       applyGroups(false);
-      measureScroll();
     });
   });
 
@@ -150,7 +161,6 @@
       }
       syncRail();
       hideTip();
-      measureScroll();
     });
   }
 
@@ -235,6 +245,9 @@
 
   function fadeTip() {
     window.clearTimeout(tipTimer);
+    /* The pointer leaving an item the keyboard is still on is not a reason to
+       take its name away. */
+    if (tipFor && tipFor === document.activeElement) return;
     /* A moment's grace, so the pointer can cross the gap onto the tooltip. */
     tipTimer = window.setTimeout(hideTip, 140);
   }
@@ -242,6 +255,10 @@
   sidebar.addEventListener('pointerover', (event) => {
     const item = tipItem(event.target);
     if (!item) return;
+    /* Escape dismissed the tooltip: moving between an item's own icon and its
+       padding is not "asking again", so tooltips come back only once the
+       pointer reaches a different item. */
+    if (tipMuted && item === tipFor) return;
     tipMuted = false;
     showTip(item);
   });
@@ -269,21 +286,11 @@
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || !tip || tip.hidden) return;
     tipMuted = true;
-    hideTip();
+    /* `tipFor` is kept: the pointer has not moved, so it is still what the
+       dismissal applies to. */
+    window.clearTimeout(tipTimer);
+    tip.hidden = true;
   });
-
-  /* ── "There is more to scroll" ─────────────────────────────────────────── */
-  function measureScroll() {
-    if (!navWrap || !navSec) return;
-    const slack = navSec.scrollHeight - navSec.clientHeight;
-    const at = navSec.scrollTop;
-    /* 2px of slack is sub-pixel rounding on a list that actually fits. */
-    const scrolls = slack > 2;
-    if (scrolls && at > 1) navWrap.setAttribute('data-more-above', '');
-    else navWrap.removeAttribute('data-more-above');
-    if (scrolls && at < slack - 1) navWrap.setAttribute('data-more-below', '');
-    else navWrap.removeAttribute('data-more-below');
-  }
 
   /* The page you are on is brought into the list's view — on a short window the
      links below Insights start off-screen. Only the nav scrolls: scrollIntoView
@@ -305,14 +312,8 @@
   }
 
   if (navSec) {
-    navSec.addEventListener('scroll', () => { measureScroll(); followTip(); }, { passive: true });
-    window.addEventListener('resize', () => { measureScroll(); followTip(); });
-    if (typeof ResizeObserver === 'function') {
-      /* The scroller's own box, and each group's, so collapsing one is noticed. */
-      const watch = new ResizeObserver(() => { measureScroll(); });
-      watch.observe(navSec);
-      groups.forEach((group) => { watch.observe(group); });
-    }
+    navSec.addEventListener('scroll', followTip, { passive: true });
+    window.addEventListener('resize', followTip);
   }
 
   /* ── The command palette ──────────────────────────────────────────────── */
@@ -455,6 +456,7 @@
 
     let shell = null;
     let input = null;
+    let panel = null;
     let list = null;
     let empty = null;
     let count = null;
@@ -488,6 +490,7 @@
       document.body.appendChild(shell);
 
       input = shell.querySelector('#sbpInput');
+      panel = shell.querySelector('.sbp-panel');
       list = shell.querySelector('#sbpList');
       empty = shell.querySelector('#sbpEmpty');
       count = shell.querySelector('#sbpCount');
@@ -498,21 +501,40 @@
       if (glass && slot) slot.appendChild(glass.cloneNode(true));
 
       input.addEventListener('input', () => { render(input.value); });
-      input.addEventListener('keydown', onKey);
+      /* On the PANEL, not the field: keydown bubbles, so the field is covered
+         and so is anything else inside the dialog. Bound on both, every key
+         would be handled twice and one arrow press would move two rows. */
+      panel.addEventListener('keydown', onKey);
+      /* And Escape on the document, because a press only bubbles from where
+         the focus IS: once focus has left the dialog altogether the panel
+         never sees the key, and the rest of the page is inert. */
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || !isOpen() || panel.contains(event.target)) return;
+        event.preventDefault();
+        close();
+      });
 
-      /* Keeping the press off the list keeps the caret in the field. */
-      list.addEventListener('pointerdown', (event) => { event.preventDefault(); });
+      /* Keeping the press off the panel keeps the caret in the field. Without
+         this, pressing the footer, the empty-state line or the field's own
+         padding moves focus to <body>, and since the rest of the page is inert
+         the arrow keys and Escape would then do nothing at all. */
+      panel.addEventListener('pointerdown', (event) => {
+        if (event.target !== input) event.preventDefault();
+      });
       list.addEventListener('click', (event) => {
         const option = event.target.closest('.sbp-opt');
         if (!option) return;
         const at = Array.prototype.indexOf.call(list.children, option);
         if (at !== -1) go(at);
       });
-      list.addEventListener('pointerover', (event) => {
+      /* pointermove, not pointerover: an arrow key scrolls the list under a
+         resting pointer, and the pointerover that fires for that would snap the
+         selection straight back to whatever slid under the cursor. */
+      list.addEventListener('pointermove', (event) => {
         const option = event.target.closest('.sbp-opt');
         if (!option) return;
         const at = Array.prototype.indexOf.call(list.children, option);
-        if (at !== -1) choose(at, false);
+        if (at !== -1 && at !== chosen) choose(at, false);
       });
       shell.addEventListener('pointerdown', (event) => {
         if (event.target.closest('[data-sbp-close]')) close();
@@ -629,8 +651,18 @@
         hint.textContent = String.fromCharCode(0x2318) + ' K';
       }
       document.addEventListener('keydown', (event) => {
-        if (event.key !== 'k' && event.key !== 'K') return;
+        /* `code` as well as `key`: on an Arabic keyboard layout the K key
+           reports its Arabic letter, and this app is read in Arabic. `code` is
+           the physical key, so Ctrl and the key the row calls "K" opens the
+           palette whatever the layout is. */
+        if (event.code !== 'KeyK' && event.key !== 'k' && event.key !== 'K') return;
         if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+        /* Not on a page that hides the sidebar outright. The MRI page does, and
+           it is off limits: no overlay of ours opens over it. Asked when the key
+           is pressed rather than when this binds, because that page marks itself
+           from a script that loads after this one. The phone drawer is hidden
+           with `visibility`, not `display`, so it still gets the palette. */
+        if (window.getComputedStyle(sidebar).display === 'none') return;
         event.preventDefault();
         palette.toggle();
       });
@@ -643,18 +675,21 @@
   syncRail();
   applyGroups(true);
   revealHere();
-  measureScroll();
-  /* Once more after the first frame: both read the laid-out box, and both are
-     no-ops when the first reading was already right. */
-  requestAnimationFrame(() => { revealHere(); measureScroll(); });
+  /* Once more after the first frame: it reads the laid-out box, and it is a
+     no-op when the first reading was already right. */
+  requestAnimationFrame(revealHere);
 
   /* The dashboard marks its current panel after this file runs, and marks a new
      one every time the hash changes. Each of those is an arrival, so the group
      holding it is brought back into view. */
   if (navSec && typeof MutationObserver === 'function') {
-    const marks = new MutationObserver(() => {
+    const marks = new MutationObserver((changes) => {
+      /* Only a LINK's own class is an arrival. The dashboard also rewrites its
+         sidebar badges' className after a fetch (_js_i18n.html), and those are
+         nodes inside this nav: treating one as an arrival would re-open a group
+         the user had just deliberately collapsed, and write that to the store. */
+      if (!changes.some((change) => change.target.classList && change.target.classList.contains('nav-a'))) return;
       applyGroups(true);
-      measureScroll();
     });
     marks.observe(navSec, { subtree: true, attributes: true, attributeFilter: ['class', 'aria-current'] });
   }

@@ -46,9 +46,6 @@
     </button>
   </div>
 
-  {% comment %}The scroller is wrapped so its top and bottom shadows can sit
-  outside it: an element inside a scroller scrolls with the list.{% endcomment %}
-  <div class="nav-wrap" id="navWrap">
   <!-- Navigation -->
   <nav class="nav-sec" id="menu" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}القائمة الرئيسية{% else %}Main navigation{% endif %}">
     {% comment %}Restricted roles get their own navigation: several staff links below
@@ -179,7 +176,13 @@
     </div>
 
     {# ── Insights — analytics & reporting ── #}
-    {% if can_view_portfolio or can_db_admin %}
+    {% comment %}The group is drawn when ANY of its three links is. The header's
+    own condition used to leave can_graduation_planning out, which costs nothing
+    today — only a super admin has it, and a super admin has can_db_admin too —
+    but with the links now inside the group it would silently drop Graduation
+    Planning the moment that flag reached another role.
+    {% endcomment %}
+    {% if can_view_portfolio or can_graduation_planning or can_db_admin %}
     <div class="nav-grp" data-group="insights">
       <button type="button" class="nav-lbl" id="nav-lbl-insights" tabindex="0" aria-expanded="true" aria-controls="nav-grp-insights">
         <span class="nav-lbl-t">{% if LANGUAGE_CODE == 'ar' %}التحليلات{% else %}Insights{% endif %}</span>
@@ -297,7 +300,6 @@
     </div>
     {% endif %}{# /role navigation #}
   </nav>
-  </div><!-- /.nav-wrap -->
 
   <!-- Footer: user card + language switcher -->
   <div class="s-foot">

@@ -339,9 +339,12 @@
      below), so a bar fixed to the page can sit in the content column */
   --sb-w:           252px;
 
-  /* the sidebar's own two surfaces: the shadow that says its nav list has more
-     to scroll, and the tooltip the icon rail shows for each item's name */
-  --sb-scroll-shade: rgba(17,17,68,0.16);
+  /* the sidebar's own two surfaces: its nav scrollbar, and the tooltip the
+     icon rail shows for each item's name.
+     The thumb is a control, not decoration, so it clears the 3:1 of WCAG
+     1.4.11 against the glass behind it: 3.42:1 here, 3.57:1 in dark. */
+  --sb-thumb:        rgba(17,17,68,0.50);
+  --sb-thumb-strong: rgba(17,17,68,0.68);
   --sb-tip-bg:       #1e1e4a;
   --sb-tip-ink:      #ffffff;
   --sb-tip-edge:     transparent;
@@ -559,7 +562,8 @@ html[data-theme="dark"] .sidebar {
 /* A dark scrim is invisible on a near-black sidebar, and a near-black tooltip
    needs an edge to separate it from the page behind it. */
 html[data-theme="dark"] {
-  --sb-scroll-shade: rgba(255,255,255,0.14);
+  --sb-thumb:        rgba(255,255,255,0.38);
+  --sb-thumb-strong: rgba(255,255,255,0.52);
   --sb-tip-bg:       #272a3d;
   --sb-tip-ink:      var(--t0);
   --sb-tip-edge:     rgba(255,255,255,0.12);
@@ -1744,32 +1748,9 @@ html[dir="rtl"] .sb-rail-toggle .i { transform: scaleX(-1); }
   line-height:   1.4;
 }
 
-/* ── The nav scroller and its "there is more" shadows ─────── */
-.nav-wrap {
-  position:       relative;
-  flex:           1;
-  min-height:     0;
-  display:        flex;
-  flex-direction: column;
-}
-/* A cut-off list of 33 links has to read as scrollable. A shadow inside the
-   scroller would scroll away with the list, so it is drawn on this wrapper and
-   lit by the sidebar script at whichever edge still has list beyond it. */
-.nav-wrap::before,
-.nav-wrap::after {
-  content:        '';
-  position:       absolute;
-  inset-inline:   0;
-  height:         16px;
-  pointer-events: none;
-  opacity:        0;
-  z-index:        1;
-  transition:     opacity 0.18s var(--ease);
-}
-.nav-wrap::before { top: 0;    background: linear-gradient(to bottom, var(--sb-scroll-shade), transparent); }
-.nav-wrap::after  { bottom: 0; background: linear-gradient(to top,    var(--sb-scroll-shade), transparent); }
-.nav-wrap[data-more-above]::before { opacity: 1; }
-.nav-wrap[data-more-below]::after  { opacity: 1; }
+/* The list already says when it has more to scroll: `.nav-sec` carries a
+   scroll-driven mask that fades whichever edge still has list beyond it (the
+   "G16" block near the end of this file). Nothing here duplicates it. */
 
 /* ── Collapsed section groups ─────────────────────────────── */
 /* Which groups are collapsed is applied as an attribute on <html> by the
@@ -1979,12 +1960,14 @@ html[data-theme="dark"] .sbp-panel {
 }
 
 .sbp-list {
-  list-style: none;
-  margin:     0;
-  padding:    6px;
-  overflow-y: auto;
-  flex:       1;
-  min-height: 0;
+  list-style:       none;
+  margin:           0;
+  padding:          6px;
+  overflow-y:       auto;
+  flex:             1;
+  min-height:       0;
+  scrollbar-width:  thin;
+  scrollbar-color:  var(--sb-thumb) transparent;
 }
 .sbp-opt {
   display:       flex;
@@ -2022,12 +2005,15 @@ html[dir="rtl"] .sbp-foot {
   letter-spacing: 0;
   text-transform: none;
 }
+/* The highlight is a background and nothing else. A weight or a padding on it
+   splits the label into runs with different font properties, and a browser
+   shapes those separately — which breaks the cursive joins of an Arabic word
+   at every edge of a match. */
 .sbp-opt mark {
   background:    color-mix(in srgb, var(--teal) 24%, transparent);
   color:         inherit;
-  font-weight:   700;
+  font-weight:   inherit;
   border-radius: 3px;
-  padding:       0 1px;
 }
 
 .sbp-empty {
@@ -16798,7 +16784,14 @@ html[dir="rtl"] .audit-endpoint {
    to scroll to: the bottom fade is full at the top and gone at the end, the top
    fade grows in once you have scrolled. Scroll-linked, no script. A menu that
    fits does not scroll, so its timeline is inactive and no fade is drawn. */
-.nav-sec { scrollbar-width: thin; scrollbar-color: var(--t4) transparent; }
+/* Its own scrollbar, not the operating system's. `scrollbar-width` is set on
+   `*` near the top of this sheet, and a modern browser ignores the
+   ::-webkit-scrollbar pseudo-elements as soon as it is — so the standard
+   properties are the ones that paint, and the thumb's colour is all there is
+   to design with. A slim translucent navy rather than the flat --t4 slab,
+   stronger while the pointer is over the list. */
+.nav-sec       { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+.nav-sec:hover { scrollbar-color: var(--sb-thumb-strong) transparent; }
 @property --nav-fade-t { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --nav-fade-b { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @keyframes nav-scroll-cue {

@@ -77,6 +77,27 @@ CONTRAST = """(selector) => {
 }"""
 
 
+#: The same arithmetic as CONTRAST, for a colour that is painted ON an element
+#: rather than taken from it — a scrollbar thumb has no element of its own.
+CONTRAST_ON = """({ selector, colour }) => {
+  const el = document.querySelector(selector);
+  if (!el) return null;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  const rgba = (v) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = 'rgba(0,0,0,0)'; cx.fillStyle = v;
+    cx.fillRect(0, 0, 1, 1); const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (top, under) => top.slice(0, 3).map((c, i) => c * top[3] + under[i] * (1 - top[3])).concat(1);
+  const behind = (node) => { const chain = [];
+    for (let e = node; e; e = e.parentElement) chain.push(rgba(getComputedStyle(e).backgroundColor));
+    return chain.reverse().reduce((under, c) => c[3] > 0 ? over(c, under) : under, [255, 255, 255, 1]); };
+  const lum = (c) => c.slice(0, 3).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; })
+    .reduce((s, x, i) => s + x * [0.2126, 0.7152, 0.0722][i], 0);
+  const bg = behind(el);
+  const a = lum(over(rgba(colour), bg)), b = lum(bg);
+  return +(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toFixed(2));
+}"""
+
+
 class SidebarNavBrowserTests(StaticLiveServerTestCase):
     maxDiff = None
 
@@ -127,15 +148,19 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         )
         return context
 
-    def _open(self, context, path: str = "/planner/", language: str = "en"):
+    def _open(self, context, path: str = "/planner/", language: str = "en", still: bool = True):
         page = context.new_page()
         page.goto(f"{self.live_server_url}{path}")
         # The language has to be the SERVER's, or an Arabic assertion asserts
         # nothing (and a translated page would read Arabic while declaring en).
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
-        page.add_style_tag(
-            content="*, *::before, *::after { transition: none !important; animation: none !important; }"
-        )
+        if still:
+            # `animation: none` also resets animation-timeline, which is what
+            # drives the nav's scroll fade — so the test for that one asks for
+            # a page that still moves.
+            page.add_style_tag(
+                content="*, *::before, *::after { transition: none !important; animation: none !important; }"
+            )
         return page
 
     # ── The command palette ──────────────────────────────────────────────
@@ -249,7 +274,11 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#navFind .nav-find-kbd")).to_have_count(0)
 
         page.keyboard.press("Control+k")
-        expect(page.locator("#cmdPalette")).not_to_have_class("d-none")
+        # Visibility, not `not_to_have_class("d-none")`: given a string that
+        # matches the WHOLE class attribute, and the dashboard's is
+        # "cmd-backdrop d-none", so it would have passed however the chord went.
+        expect(page.locator("#cmdPalette")).to_be_visible()
+        expect(page.locator("#cmdInput")).to_be_focused()
         expect(page.locator("#sbp")).to_have_count(0)
 
         page.keyboard.press("Escape")
@@ -426,37 +455,71 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             again.evaluate("localStorage.getItem('sidebar-nav-collapsed')"), '["advising"]'
         )
 
-    # ── The scroll affordance ────────────────────────────────────────────
-    def test_the_shadow_shows_only_at_an_edge_with_more_list_beyond_it(self) -> None:
-        # Short enough that 33 links cannot all show.
-        page = self._open(self._context(height=620), path="/planner/")
-        wrap = page.locator("#navWrap")
+    # ── The scroll affordance that was already there ───────────────
+    def test_the_list_still_fades_at_whichever_edge_has_more_to_scroll(self) -> None:
+        """`.nav-sec` carries a scroll-driven mask that fades the edge the list
+        continues past (global.css, "G16"). It is pure CSS and it was already
+        there; wrapping or re-parenting the scroller would have killed it
+        silently, and a second, scripted shadow would have doubled it."""
+        page = self._open(self._context(height=620), path="/planner/", still=False)
+        nav = page.locator("#menu")
+        # The module brings the current page into view, which can leave the
+        # list part-scrolled: settle that, then drive the scroller from the top.
+        page.wait_for_function(
+            "const n = document.getElementById('menu'); n.scrollHeight - n.clientHeight > 2"
+        )
         page.evaluate("document.getElementById('menu').scrollTop = 0")
-        page.wait_for_function("document.getElementById('menu').scrollTop === 0")
-        self.assertIsNone(wrap.get_attribute("data-more-above"))
-        self.assertIsNotNone(wrap.get_attribute("data-more-below"))
+        page.wait_for_function(
+            "getComputedStyle(document.getElementById('menu'))"
+            ".getPropertyValue('--nav-fade-t').trim() === '0px'"
+        )
+        # At the top: the bottom edge fades, the top edge does not.
+        self.assertEqual(
+            nav.evaluate("el => getComputedStyle(el).animationTimeline"), "scroll(self)"
+        )
+        self.assertEqual(
+            nav.evaluate("el => getComputedStyle(el).getPropertyValue('--nav-fade-t').trim()"),
+            "0px",
+        )
+        self.assertNotEqual(
+            nav.evaluate("el => getComputedStyle(el).getPropertyValue('--nav-fade-b').trim()"),
+            "0px",
+        )
 
         page.evaluate(
             "const n = document.getElementById('menu'); n.scrollTop = n.scrollHeight - n.clientHeight;"
         )
         page.wait_for_function(
-            "const n = document.getElementById('menu'); n.scrollTop >= n.scrollHeight - n.clientHeight - 1"
+            "getComputedStyle(document.getElementById('menu'))"
+            ".getPropertyValue('--nav-fade-t').trim() !== '0px'"
         )
-        self.assertIsNotNone(wrap.get_attribute("data-more-above"))
-        self.assertIsNone(wrap.get_attribute("data-more-below"))
+        # At the bottom the two have swapped.
+        self.assertEqual(
+            nav.evaluate("el => getComputedStyle(el).getPropertyValue('--nav-fade-b').trim()"),
+            "0px",
+        )
 
-    def test_a_list_that_fits_draws_no_shadow(self) -> None:
-        # Collapsing every group leaves a list of headers, which fits at any
-        # height this suite runs at — no viewport guess to go stale.
-        page = self._open(self._context(), path="/planner/")
-        for header in page.locator(".nav-grp .nav-lbl").all():
-            header.click()
-        page.wait_for_function(
-            "const n = document.getElementById('menu'); n.scrollHeight - n.clientHeight <= 2"
-        )
-        wrap = page.locator("#navWrap")
-        self.assertIsNone(wrap.get_attribute("data-more-above"))
-        self.assertIsNone(wrap.get_attribute("data-more-below"))
+    def test_the_nav_scrollbar_is_the_design_system_s_and_not_the_browser_s(self) -> None:
+        """The owner asked for a scrollbar that belongs to the app. It is also
+        the affordance that says the list runs on, so its thumb clears the 3:1
+        WCAG 1.4.11 asks of a control against what is behind it."""
+        for theme in ("light", "dark"):
+            with self.subTest(theme=theme):
+                page = self._open(self._context(theme=theme), path="/planner/")
+                nav = page.locator("#menu")
+                self.assertEqual(nav.evaluate("el => getComputedStyle(el).scrollbarWidth"), "thin")
+                colour = nav.evaluate("el => getComputedStyle(el).scrollbarColor")
+                thumb, track = (
+                    colour.rsplit(" ", 1)
+                    if " rgba(0, 0, 0, 0)" not in colour
+                    else (
+                        colour.replace(" rgba(0, 0, 0, 0)", ""),
+                        "rgba(0, 0, 0, 0)",
+                    )
+                )
+                self.assertEqual(track, "rgba(0, 0, 0, 0)", colour)
+                ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": thumb})
+                self.assertGreaterEqual(ratio, MIN_ICON, f"{theme}: the thumb is {ratio}:1")
 
     # ── The contrast fix ─────────────────────────────────────────────────
     def test_an_inactive_nav_icon_clears_three_to_one_in_both_themes(self) -> None:
