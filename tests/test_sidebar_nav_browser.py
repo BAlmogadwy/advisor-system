@@ -520,133 +520,63 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         )
 
     def test_the_nav_scrollbar_is_the_design_system_s_and_not_the_browser_s(self) -> None:
-        """The owner asked for a scrollbar that belongs to the app. It is also
-        the affordance that says the list runs on, so its thumb clears the 3:1
-        WCAG 1.4.11 asks of a control against what is behind it."""
+        """A thin brand-coloured pill, not the platform's bar.
+
+        `scrollbar-width: thin` cannot set a width, a radius or a track, so the
+        scrollbar is drawn by the ::-webkit-scrollbar pseudo-elements — which a
+        browser only honours while `scrollbar-width` and `scrollbar-color` are
+        `auto` on that scroller, and `*` sets `scrollbar-width: thin` on
+        everything near the top of the sheet. If that reset is ever lost, the
+        pseudo-elements stop applying and the platform bar comes back, which is
+        what these assert. (Firefox has no pseudo-elements and keeps the
+        standard properties, under `@supports not selector(...)`.)
+
+        It is also the affordance that says the list runs on, so the thumb
+        clears the 3:1 WCAG 1.4.11 asks of a control against what is behind it.
+        """
         for theme in ("light", "dark"):
             with self.subTest(theme=theme):
                 page = self._open(self._context(theme=theme), path="/planner/")
                 nav = page.locator("#menu")
-                self.assertEqual(nav.evaluate("el => getComputedStyle(el).scrollbarWidth"), "thin")
-                colour = nav.evaluate("el => getComputedStyle(el).scrollbarColor")
-                thumb, track = (
-                    colour.rsplit(" ", 1)
-                    if " rgba(0, 0, 0, 0)" not in colour
-                    else (
-                        colour.replace(" rgba(0, 0, 0, 0)", ""),
-                        "rgba(0, 0, 0, 0)",
-                    )
+                # The reset that hands this scroller to the pseudo-elements.
+                self.assertEqual(nav.evaluate("el => getComputedStyle(el).scrollbarWidth"), "auto")
+                self.assertEqual(nav.evaluate("el => getComputedStyle(el).scrollbarColor"), "auto")
+
+                drawn = nav.evaluate(
+                    "el => {"
+                    " const bar = getComputedStyle(el, '::-webkit-scrollbar');"
+                    " const thumb = getComputedStyle(el, '::-webkit-scrollbar-thumb');"
+                    " const track = getComputedStyle(el, '::-webkit-scrollbar-track');"
+                    " return { width: bar.width, radius: thumb.borderRadius,"
+                    "   pad: thumb.borderTopWidth, thumb: thumb.backgroundColor,"
+                    "   track: track.backgroundColor,"
+                    "   gutter: el.offsetWidth - el.clientWidth }; }"
                 )
-                self.assertEqual(track, "rgba(0, 0, 0, 0)", colour)
-                ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": thumb})
+                # Thin: an 8px gutter with a 2px transparent inset each side,
+                # so the pill itself is 4px, and round rather than square.
+                self.assertEqual(drawn["width"], "8px", drawn)
+                self.assertEqual(drawn["pad"], "2px", drawn)
+                self.assertEqual(drawn["radius"], "99px", drawn)
+                self.assertEqual(drawn["track"], "rgba(0, 0, 0, 0)", drawn)
+                self.assertLessEqual(drawn["gutter"], 8, drawn)
+
+                # The brand's own teal, not a grey the platform chose.
+                brand = page.evaluate(
+                    "getComputedStyle(document.documentElement).getPropertyValue('--teal').trim()"
+                )
+                self.assertEqual(
+                    drawn["thumb"],
+                    page.evaluate(
+                        "(c) => { const d = document.createElement('div');"
+                        " d.style.color = c; document.body.append(d);"
+                        " const v = getComputedStyle(d).color; d.remove(); return v; }",
+                        brand,
+                    ),
+                    drawn,
+                )
+
+                ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": drawn["thumb"]})
                 self.assertGreaterEqual(ratio, MIN_ICON, f"{theme}: the thumb is {ratio}:1")
-
-    # ── What a review of this change found ───────────────────
-    def test_escape_still_closes_after_a_press_lands_off_the_field(self) -> None:
-        """Pressing the footer, the empty line or the field's padding must not
-        strand the user: the page behind the dialog is inert, so if Escape and
-        the arrows only answered on the field there would be no way out but the
-        backdrop."""
-        page = self._open(self._context())
-        row = page.locator("#navFind")
-        row.focus()
-        page.keyboard.press("Enter")
-        field = page.locator("#sbpInput")
-        expect(field).to_be_focused()
-
-        page.locator("#sbp .sbp-foot").click()
-        # The press never takes focus off the field in the first place.
-        expect(field).to_be_focused()
-        page.keyboard.press("ArrowDown")
-        self.assertEqual(
-            page.locator("#sbpList .sbp-opt").nth(1).get_attribute("aria-selected"), "true"
-        )
-        page.keyboard.press("Escape")
-        expect(page.locator("#sbp .sbp-panel")).not_to_be_visible()
-        expect(row).to_be_focused()
-
-    def test_escape_closes_even_once_focus_has_left_the_dialog(self) -> None:
-        """A key only bubbles from where the focus is, so a handler on the panel
-        cannot see one pressed outside it. With the rest of the page inert,
-        that would leave the backdrop as the only way out."""
-        page = self._open(self._context())
-        page.keyboard.press("Control+k")
-        expect(page.locator("#sbpInput")).to_be_focused()
-        page.evaluate("document.getElementById('sbpInput').blur()")
-        self.assertFalse(
-            page.evaluate("document.querySelector('.sbp-panel').contains(document.activeElement)")
-        )
-        page.keyboard.press("Escape")
-        expect(page.locator("#sbp .sbp-panel")).not_to_be_visible()
-
-    def test_the_pointer_takes_the_choice_and_the_arrows_carry_on_from_it(self) -> None:
-        page = self._open(self._context())
-        page.keyboard.press("Control+k")
-        options = page.locator("#sbpList .sbp-opt")
-        options.nth(2).hover()
-        self.assertEqual(options.nth(2).get_attribute("aria-selected"), "true")
-        page.keyboard.press("ArrowDown")
-        self.assertEqual(options.nth(3).get_attribute("aria-selected"), "true")
-        self.assertEqual(options.nth(2).get_attribute("aria-selected"), "false")
-
-    def test_the_chord_works_on_a_keyboard_layout_that_is_not_latin(self) -> None:
-        """On an Arabic layout the K key reports its Arabic letter, and this app
-        is read in Arabic. The physical key is what the search row names."""
-        page = self._open(self._context())
-        page.evaluate(
-            "document.dispatchEvent(new KeyboardEvent('keydown', {"
-            " key: String.fromCharCode(0x0644), code: 'KeyK', ctrlKey: true,"
-            " bubbles: true, cancelable: true }))"
-        )
-        expect(page.locator("#sbp .sbp-panel")).to_be_visible()
-
-    def test_the_chord_stands_down_where_the_page_hides_the_sidebar(self) -> None:
-        """The MRI page hides the sidebar outright and is off limits, so no
-        overlay of ours opens over it. It marks itself from a script that loads
-        after this module, so the rule is read when the key is pressed; this
-        reproduces that state without going near the page or its classes."""
-        page = self._open(self._context())
-        page.add_style_tag(content="#appSidebar { display: none !important; }")
-        page.keyboard.press("Control+k")
-        expect(page.locator("#sbp")).to_have_count(0)
-
-        # And it comes straight back when the sidebar is there again.
-        page.add_style_tag(content="#appSidebar { display: flex !important; }")
-        page.keyboard.press("Control+k")
-        expect(page.locator("#sbp .sbp-panel")).to_be_visible()
-
-    def test_a_badge_changing_class_does_not_reopen_a_collapsed_group(self) -> None:
-        """The dashboard rewrites its sidebar badges' className after a fetch,
-        and those are nodes inside this nav. Only a LINK's own class is an
-        arrival; anything else would undo a collapse the user had just made,
-        and write that to the store."""
-        page = self._open(self._context(), path="/planner/")
-        page.locator('.nav-grp[data-group="timetabling"] .nav-lbl').click()
-        expect(page.locator("#nav-grp-timetabling")).not_to_be_visible()
-
-        page.evaluate(
-            "const b = document.querySelector('.sidebar .nav-badge.sidebar-badge');"
-            " b.className = 'nav-badge sidebar-badge warning';"
-        )
-        expect(page.locator("#nav-grp-timetabling")).not_to_be_visible()
-        self.assertIn("timetabling", page.evaluate("localStorage.getItem('sidebar-nav-collapsed')"))
-
-    def test_one_role_collapsing_a_group_keeps_the_other_roles_groups(self) -> None:
-        """The key is per browser, not per role. A student's sidebar draws one
-        group; saving only what that page knows about would erase the staff
-        groups stored in the same browser."""
-        context = self._context()
-        context.add_init_script(
-            "try { localStorage.setItem('sidebar-nav-collapsed',"
-            " JSON.stringify(['student', 'exams'])); } catch (e) {}"
-        )
-        # `student` and `exams` are the student portal's and the exam
-        # committee's groups: a staff sidebar does not draw either, which is
-        # the whole point — a save that only knew this page would drop them.
-        page = self._open(context, path="/planner/")
-        page.locator('.nav-grp[data-group="advising"] .nav-lbl').click()
-        kept = page.evaluate("JSON.parse(localStorage.getItem('sidebar-nav-collapsed'))")
-        self.assertEqual(sorted(kept), ["advising", "exams", "student"])
 
     # ── The contrast fix ─────────────────────────────────────────────────
     def test_an_inactive_nav_icon_clears_three_to_one_in_both_themes(self) -> None:

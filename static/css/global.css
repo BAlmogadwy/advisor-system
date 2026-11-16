@@ -343,8 +343,8 @@
      icon rail shows for each item's name.
      The thumb is a control, not decoration, so it clears the 3:1 of WCAG
      1.4.11 against the glass behind it: 3.42:1 here, 3.57:1 in dark. */
-  --sb-thumb:        rgba(17,17,68,0.50);
-  --sb-thumb-strong: rgba(17,17,68,0.68);
+  --sb-thumb:        var(--teal);
+  --sb-thumb-strong: var(--text-brand);
   --sb-tip-bg:       #1e1e4a;
   --sb-tip-ink:      #ffffff;
   --sb-tip-edge:     transparent;
@@ -562,8 +562,8 @@ html[data-theme="dark"] .sidebar {
 /* A dark scrim is invisible on a near-black sidebar, and a near-black tooltip
    needs an edge to separate it from the page behind it. */
 html[data-theme="dark"] {
-  --sb-thumb:        rgba(255,255,255,0.38);
-  --sb-thumb-strong: rgba(255,255,255,0.52);
+  /* Both tokens follow the theme on their own; dark needs no values of its
+     own for the thumb. */
   --sb-tip-bg:       #272a3d;
   --sb-tip-ink:      var(--t0);
   --sb-tip-edge:     rgba(255,255,255,0.12);
@@ -1973,8 +1973,6 @@ html[data-theme="dark"] .sbp-panel {
   overflow-y:       auto;
   flex:             1;
   min-height:       0;
-  scrollbar-width:  thin;
-  scrollbar-color:  var(--sb-thumb) transparent;
 }
 .sbp-opt {
   display:       flex;
@@ -16791,14 +16789,56 @@ html[dir="rtl"] .audit-endpoint {
    to scroll to: the bottom fade is full at the top and gone at the end, the top
    fade grows in once you have scrolled. Scroll-linked, no script. A menu that
    fits does not scroll, so its timeline is inactive and no fade is drawn. */
-/* Its own scrollbar, not the operating system's. `scrollbar-width` is set on
-   `*` near the top of this sheet, and a modern browser ignores the
-   ::-webkit-scrollbar pseudo-elements as soon as it is — so the standard
-   properties are the ones that paint, and the thumb's colour is all there is
-   to design with. A slim translucent navy rather than the flat --t4 slab,
-   stronger while the pointer is over the list. */
-.nav-sec       { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
-.nav-sec:hover { scrollbar-color: var(--sb-thumb-strong) transparent; }
+/* Its own scrollbar, not the operating system's.
+
+   `scrollbar-width: thin` is the whole of what the standard property offers:
+   it cannot set a width, a radius or a track, and what it draws is still the
+   platform's bar. The ::-webkit-scrollbar pseudo-elements can draw all three
+   — but a browser ignores them for a scroller as soon as `scrollbar-width` or
+   `scrollbar-color` is set on it to anything but `auto`, and `*` near the top
+   of this sheet sets `scrollbar-width: thin` on everything. Putting both back
+   to `auto` here is what hands this scroller to the rules below.
+
+   Firefox has no such pseudo-elements, so it keeps the standard properties
+   and gets the thin bar in the same colour. */
+.nav-sec,
+.sbp-list { scrollbar-width: auto; scrollbar-color: auto; }
+
+@supports not selector(::-webkit-scrollbar) {
+  .nav-sec,
+  .sbp-list { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+}
+
+/* A 4px pill inside an 8px gutter: the transparent border is the padding, and
+   `background-clip: padding-box` keeps the fill off it.
+
+   Each selector names the ancestor as well. The sheet already carries global
+   `html[data-theme="dark"] ::-webkit-scrollbar-*` rules, dormant until now
+   because `scrollbar-width` was set on everything; the reset above wakes them
+   for this scroller, and at (0,1,1) they outrank a bare `.nav-sec::...`. The
+   ancestor takes these to (0,2,0), which wins on specificity rather than on
+   where they happen to sit in the file. */
+.sidebar .nav-sec::-webkit-scrollbar,
+.sbp-panel .sbp-list::-webkit-scrollbar { width: 8px; height: 8px; }
+
+.sidebar .nav-sec::-webkit-scrollbar-track,
+.sbp-panel .sbp-list::-webkit-scrollbar-track { background: transparent; }
+
+.sidebar .nav-sec::-webkit-scrollbar-thumb,
+.sbp-panel .sbp-list::-webkit-scrollbar-thumb {
+  background:      var(--sb-thumb);
+  background-clip: padding-box;
+  border:          2px solid transparent;
+  border-radius:   99px;
+}
+
+/* On the brand ink while the pointer is over the list: darker than the teal in
+   light, lighter in dark, so it reads as "live" either way. */
+.sidebar .nav-sec:hover::-webkit-scrollbar-thumb,
+.sbp-panel .sbp-list:hover::-webkit-scrollbar-thumb {
+  background:      var(--sb-thumb-strong);
+  background-clip: padding-box;
+}
 @property --nav-fade-t { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --nav-fade-b { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @keyframes nav-scroll-cue {
