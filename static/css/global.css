@@ -2129,6 +2129,10 @@ main.p-0 .page-header {
   main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) > .content-wrap > .page-header:has(+ .page-intro:empty) {
     margin-bottom: 1.25rem !important;
   }
+  /* ...and the same when the intro holds only a blank subtitle box. */
+  main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) > .content-wrap > .page-header:has(+ .page-intro > .panel-sub:empty:only-child) {
+    margin-bottom: 1.25rem !important;
+  }
   main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-left {
     flex-direction: row; flex-wrap: wrap; align-items: center;
     gap: 0.4rem 0.75rem; min-width: 0;
@@ -2265,6 +2269,10 @@ main.p-0 .page-header {
 .page-intro { margin: 0.75rem 0 1.25rem; }
 /* An empty intro still carried its 2rem of margin into the page. */
 .page-intro:empty { display: none; }
+/* The dashboard's Overview panel shows no subtitle, so #pageIntroSub renders
+   empty -- the box stays in the DOM because activatePanel fills it when another
+   panel opens. An intro holding nothing but that blank box is blank too. */
+.page-intro:has(> .panel-sub:empty:only-child) { display: none; }
 /* The page's title is the header's h1. An intro heading, where a page has one,
    names the view inside the page (Exam Timetable: "Student lists"; a student's
    name on their graduation plan), so it reads as a subtitle, not a second title. */
@@ -8153,19 +8161,6 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 
    Only the dashboard's own `dcc-` namespace is converted. Nothing shared is
    touched, and in particular no selector that also names the MRI page. */
-.dcc-hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.9rem 0;
-  margin-bottom: 1.5rem;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  background: none;
-  box-shadow: none;
-}
-.dcc-eyebrow,
 /* ── Section kicker (eyebrow) — unified base; variants set only font-size ── */
 .dcc-panel-kicker, .va-kicker, .ga-kicker, .tg-kicker, .twm-kicker, .tw-mri-kicker {
   font-weight: 800;
@@ -8176,47 +8171,6 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
 .dcc-panel-kicker {
   font-family: var(--font-mono);
   font-size: var(--text-micro);
-}
-.dcc-title {
-  margin: 0.15rem 0 0.25rem;
-  font-family: var(--font-serif);
-  font-size: 1.45rem;
-  color: var(--ink);
-  border: none;
-  box-shadow: none;
-  padding: 0;
-}
-.dcc-subtitle {
-  max-width: 760px;
-  color: var(--t3);
-  font-size: 0.88rem;
-}
-/* The white chip read as a card-within-a-card, and its rgba(255,255,255,…)
-   fill was a light-theme constant that merely happened to survive dark mode.
-   On the sheet it is simply a line of status text. */
-.dcc-hero-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 220px;
-  padding: 0;
-  font-family: var(--font-mono);
-  font-size: max(var(--fs-floor), 0.72rem);
-  color: var(--t2);
-  background: none;
-  border: 0;
-  white-space: nowrap;
-}
-.dcc-status-dot {
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  background: var(--teal);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 12%, transparent);
-}
-.dcc-status-danger .dcc-status-dot {
-  background: var(--danger);
-  box-shadow: 0 0 0 4px rgba(192,48,48,0.12);
 }
 /* Cards carried their own padding, so a tight gap was enough to separate them.
    Rules do not: the space between sections IS the separation now, so both grids
@@ -8529,13 +8483,13 @@ html[dir="rtl"] .dcc-triage-dot { letter-spacing: 0; text-transform: none; }
 
 /* The dashboard's dark block. Every selector here is (0,2,1), so it outranks
    the light-mode conversion above AND the new hover rules (0,2,0): left as it
-   was, dark painted the hero, the figures, the panels and the launcher back as
-   navy cards with tinted chips, and the hover affordances on the KPI and triage
+   was, dark painted the figures, the panels and the launcher back as navy
+   cards with tinted chips, and the hover affordances on the KPI and triage
    links — both are <a> — never fired at all. Dark is the same sheet as light.
    The borders take --rule / --rule-strong rather than slate at 0.07-0.16, which
    were weaker than the dividers this layout is built from.
-   `.dcc-kpi-primary` is dropped: the template no longer carries it. */
-html[data-theme="dark"] .dcc-hero,
+   `.dcc-kpi-primary` is dropped: the template no longer carries it, and
+   `.dcc-hero` / `.dcc-hero-status` went the same way with the hero block. */
 html[data-theme="dark"] .dcc-kpi,
 html[data-theme="dark"] .dcc-panel,
 html[data-theme="dark"] .dcc-launcher {
@@ -8543,10 +8497,6 @@ html[data-theme="dark"] .dcc-launcher {
   border-color: var(--rule);
 }
 html[data-theme="dark"] .dcc-panel { border-top-color: var(--rule-strong); }
-html[data-theme="dark"] .dcc-hero-status {
-  background: none;
-  border-color: transparent;
-}
 html[data-theme="dark"] .dcc-triage-row,
 html[data-theme="dark"] .dcc-activity-row,
 html[data-theme="dark"] .dcc-program-row,
@@ -8599,17 +8549,6 @@ html[data-theme="dark"] .dcc-kpi:hover { border-color: var(--teal); }
   .ov-action-text { font-size: 0.78rem; }
   .ov-activity { padding: 0.65rem 0.75rem; }
   .ov-activity-title { margin-bottom: 0.4rem; }
-  .dcc-hero {
-    flex-direction: column;
-    /* no side padding: the strip stays flush with the sheet's own margin */
-    padding: 0.85rem 0;
-  }
-  .dcc-title { font-size: 1.15rem; }
-  .dcc-hero-status {
-    width: 100%;
-    min-width: 0;
-    white-space: normal;
-  }
   .dcc-kpis,
   .dcc-grid {
     grid-template-columns: 1fr;
@@ -16749,7 +16688,7 @@ html[dir="rtl"] .student-timetable-calendar .wg-blocks .wg-h { letter-spacing: 0
    so nothing is asked for a bold that the browser would have to fake. */
 .logo-title, .empty-title, .panel h2, .tbl-title, .metric .v,
 .mc-val, .term-header-sticky h4, .kpi .v, .cb-title, .ov-greeting,
-.ov-kpi-value, .dcc-title, .dcc-kpi strong, .dcc-mini-grid strong,
+.ov-kpi-value, .dcc-kpi strong, .dcc-mini-grid strong,
 .student-ctx-card h3, .section-heading h3, .dba-snapshot-metric strong,
 .atl-day, .sp-mc .v, .admin-grad-search .admin-grad-landing-copy h2,
 .sp-boundary-icon, .student-grad-progress-value strong,
@@ -16881,7 +16820,7 @@ html[dir="rtl"] :is(.nav-lbl, .logo-sub, .u-rl, .ph-chip, .um-time, .um-time-nev
     .card-heading, .wg-h, .pf-label, .fb-dd, .metric .k, .kpi .k,
     #umUserCount, #imInstructorCount, #apAdvisorChip, #apCountChip, #fetchState,
     #trustStrip, #pfRoleBadge, .dlg-input-row label,
-    .dcc-hero-status, .dcc-mini-stats, .dcc-scenario-meta, .dcc-activity-time,
+    .dcc-mini-stats, .dcc-scenario-meta, .dcc-activity-time,
     .student-timetable-room, .student-timetable-block-name,
     .student-timetable-table th) {
   font-size: max(12px, 0.75rem);
