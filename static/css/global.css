@@ -1479,6 +1479,11 @@ html[data-theme="dark"] .system-footer {
   padding:    14px 10px;
   flex:       1;
   overflow-y: auto;
+  /* The gutter is kept whether or not the list scrolls: collapsing a group can
+     make it fit, and without this every label would jump sideways by the width
+     of the scrollbar the moment it did. No effect where the browser draws an
+     overlay scrollbar, which reserves nothing. */
+  scrollbar-gutter: stable;
 }
 
 /* Each group's header is a <button>, because the group collapses. A bare
@@ -1791,7 +1796,9 @@ html[data-sidebar-collapsed~="student"]     .nav-grp[data-group="student"]     >
     padding:        14px 0 12px;
   }
   html[data-sidebar-rail] .nav-find { padding: 10px 8px 0; }
-  html[data-sidebar-rail] .nav-sec  { padding-inline: 8px; }
+  /* Both edges: a gutter on one side alone pushes every icon half its width
+     off the centre of a 64px rail, which is plain to see. */
+  html[data-sidebar-rail] .nav-sec  { padding-inline: 4px; scrollbar-gutter: stable both-edges; }
   html[data-sidebar-rail] .nav-find-btn,
   html[data-sidebar-rail] .nav-a {
     justify-content: center;

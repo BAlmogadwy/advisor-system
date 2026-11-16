@@ -352,6 +352,26 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#nav-grp-insights")).to_be_visible()
         expect(page.locator('.sidebar .nav-a[href="/audit-explorer/"]')).to_be_visible()
 
+    def test_the_rail_centres_its_icons_whatever_the_scrollbar_takes(self) -> None:
+        """A browser that reserves a gutter for its scrollbar reserves it at one
+        edge, which pushes every icon half a scrollbar off the centre of a 64px
+        rail. Where the scrollbar is an overlay there is no gutter and this is
+        already true, so it holds either way."""
+        page = self._open(self._context(height=620), path="/planner/")
+        page.locator("#sbRailToggle").click()
+        page.wait_for_function(
+            "const n = document.getElementById('menu'); n.scrollHeight - n.clientHeight > 2"
+        )
+        rail = page.locator("#appSidebar").bounding_box()
+        for href in ("/planner/", "/db-admin/", "/#student"):
+            icon = page.locator(f'.sidebar .nav-a[href="{href}"] .i').bounding_box()
+            self.assertAlmostEqual(
+                icon["x"] + icon["width"] / 2,
+                rail["x"] + rail["width"] / 2,
+                delta=2,
+                msg=href,
+            )
+
     def test_the_rail_has_no_toggle_on_a_phone(self) -> None:
         # There the sidebar is already a drawer the hamburger opens, and there
         # is no rail to collapse to. Asserted with the DRAWER OPEN: with it
@@ -520,6 +540,113 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
                 self.assertEqual(track, "rgba(0, 0, 0, 0)", colour)
                 ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": thumb})
                 self.assertGreaterEqual(ratio, MIN_ICON, f"{theme}: the thumb is {ratio}:1")
+
+    # ── What a review of this change found ───────────────────
+    def test_escape_still_closes_after_a_press_lands_off_the_field(self) -> None:
+        """Pressing the footer, the empty line or the field's padding must not
+        strand the user: the page behind the dialog is inert, so if Escape and
+        the arrows only answered on the field there would be no way out but the
+        backdrop."""
+        page = self._open(self._context())
+        row = page.locator("#navFind")
+        row.focus()
+        page.keyboard.press("Enter")
+        field = page.locator("#sbpInput")
+        expect(field).to_be_focused()
+
+        page.locator("#sbp .sbp-foot").click()
+        # The press never takes focus off the field in the first place.
+        expect(field).to_be_focused()
+        page.keyboard.press("ArrowDown")
+        self.assertEqual(
+            page.locator("#sbpList .sbp-opt").nth(1).get_attribute("aria-selected"), "true"
+        )
+        page.keyboard.press("Escape")
+        expect(page.locator("#sbp .sbp-panel")).not_to_be_visible()
+        expect(row).to_be_focused()
+
+    def test_escape_closes_even_once_focus_has_left_the_dialog(self) -> None:
+        """A key only bubbles from where the focus is, so a handler on the panel
+        cannot see one pressed outside it. With the rest of the page inert,
+        that would leave the backdrop as the only way out."""
+        page = self._open(self._context())
+        page.keyboard.press("Control+k")
+        expect(page.locator("#sbpInput")).to_be_focused()
+        page.evaluate("document.getElementById('sbpInput').blur()")
+        self.assertFalse(
+            page.evaluate("document.querySelector('.sbp-panel').contains(document.activeElement)")
+        )
+        page.keyboard.press("Escape")
+        expect(page.locator("#sbp .sbp-panel")).not_to_be_visible()
+
+    def test_the_pointer_takes_the_choice_and_the_arrows_carry_on_from_it(self) -> None:
+        page = self._open(self._context())
+        page.keyboard.press("Control+k")
+        options = page.locator("#sbpList .sbp-opt")
+        options.nth(2).hover()
+        self.assertEqual(options.nth(2).get_attribute("aria-selected"), "true")
+        page.keyboard.press("ArrowDown")
+        self.assertEqual(options.nth(3).get_attribute("aria-selected"), "true")
+        self.assertEqual(options.nth(2).get_attribute("aria-selected"), "false")
+
+    def test_the_chord_works_on_a_keyboard_layout_that_is_not_latin(self) -> None:
+        """On an Arabic layout the K key reports its Arabic letter, and this app
+        is read in Arabic. The physical key is what the search row names."""
+        page = self._open(self._context())
+        page.evaluate(
+            "document.dispatchEvent(new KeyboardEvent('keydown', {"
+            " key: String.fromCharCode(0x0644), code: 'KeyK', ctrlKey: true,"
+            " bubbles: true, cancelable: true }))"
+        )
+        expect(page.locator("#sbp .sbp-panel")).to_be_visible()
+
+    def test_the_chord_stands_down_where_the_page_hides_the_sidebar(self) -> None:
+        """The MRI page hides the sidebar outright and is off limits, so no
+        overlay of ours opens over it. It marks itself from a script that loads
+        after this module, so the rule is read when the key is pressed; this
+        reproduces that state without going near the page or its classes."""
+        page = self._open(self._context())
+        page.add_style_tag(content="#appSidebar { display: none !important; }")
+        page.keyboard.press("Control+k")
+        expect(page.locator("#sbp")).to_have_count(0)
+
+        # And it comes straight back when the sidebar is there again.
+        page.add_style_tag(content="#appSidebar { display: flex !important; }")
+        page.keyboard.press("Control+k")
+        expect(page.locator("#sbp .sbp-panel")).to_be_visible()
+
+    def test_a_badge_changing_class_does_not_reopen_a_collapsed_group(self) -> None:
+        """The dashboard rewrites its sidebar badges' className after a fetch,
+        and those are nodes inside this nav. Only a LINK's own class is an
+        arrival; anything else would undo a collapse the user had just made,
+        and write that to the store."""
+        page = self._open(self._context(), path="/planner/")
+        page.locator('.nav-grp[data-group="timetabling"] .nav-lbl').click()
+        expect(page.locator("#nav-grp-timetabling")).not_to_be_visible()
+
+        page.evaluate(
+            "const b = document.querySelector('.sidebar .nav-badge.sidebar-badge');"
+            " b.className = 'nav-badge sidebar-badge warning';"
+        )
+        expect(page.locator("#nav-grp-timetabling")).not_to_be_visible()
+        self.assertIn("timetabling", page.evaluate("localStorage.getItem('sidebar-nav-collapsed')"))
+
+    def test_one_role_collapsing_a_group_keeps_the_other_roles_groups(self) -> None:
+        """The key is per browser, not per role. A student's sidebar draws one
+        group; saving only what that page knows about would erase the staff
+        groups stored in the same browser."""
+        context = self._context()
+        context.add_init_script(
+            "try { localStorage.setItem('sidebar-nav-collapsed',"
+            " JSON.stringify(['student', 'exams'])); } catch (e) {}"
+        )
+        # `student` and `exams` are the student portal's and the exam
+        # committee's groups: a staff sidebar does not draw either, which is
+        # the whole point — a save that only knew this page would drop them.
+        page = self._open(context, path="/planner/")
+        page.locator('.nav-grp[data-group="advising"] .nav-lbl').click()
+        kept = page.evaluate("JSON.parse(localStorage.getItem('sidebar-nav-collapsed'))")
+        self.assertEqual(sorted(kept), ["advising", "exams", "student"])
 
     # ── The contrast fix ─────────────────────────────────────────────────
     def test_an_inactive_nav_icon_clears_three_to_one_in_both_themes(self) -> None:
