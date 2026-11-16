@@ -22,7 +22,6 @@
       "Students Assigned": "الطلاب المعينون",
       "Pending Recommendations": "توصيات معلقة",
       "Overdue Schedules": "جداول متأخرة",
-      "High Priority Missing": "أولوية عالية مفقودة",
       "Look up a student": "البحث عن طالب",
       "Build timetable": "بناء الجدول الزمني",
       "Run batch recommender": "تشغيل التوصيات الجماعية",
@@ -60,7 +59,6 @@
       "Open Audit Explorer": "فتح مستكشف التدقيق",
       // Student module
       "Get a per-student recommendation list and export it instantly.": "استخرج قائمة توصيات لكل طالب مع إمكانية التصدير فوراً.",
-      "Student ID": "الرقم الجامعي",
       "Year": "السنة",
       "Semester": "الفصل",
       "Recommend courses": "توليد التوصيات",
@@ -90,7 +88,6 @@
       "Collapse all": "طيّ الكل",
       "Sort options": "خيارات الفرز",
       "Importance": "الأهمية",
-      "Status": "الحالة",
       "Code": "الرمز",
       "Target settings": "إعدادات الهدف",
       "Credits": "الساعات",
@@ -110,6 +107,16 @@
       "Year/Semester": "السنة/الفصل",
       "Students scanned": "عدد الطلاب المفحوصين",
       "Top list size": "حجم قائمة الأعلى",
+      // The batch panel renders these three with different capitals and
+      // spacing than the keys above, so their Arabic was only ever reached by
+      // the prefix path -- as «السنة / Semester» and «الطلاب Scanned». Same
+      // wording, keyed as the template actually writes it.
+      "Year / Semester": "السنة / الفصل",
+      "Students Scanned": "عدد الطلاب المفحوصين",
+      "Top List Size": "حجم قائمة الأعلى",
+      // page-dashboard.js:21 writes this one too, from resetBatch's click
+      // handler; its wording, so clicking Reset does not reword the hint.
+      "Run a batch preview to see top course recommendations.": "شغّل المعاينة لعرض أفضل المقررات الموصى بها.",
       "Download aggregate CSV": "تنزيل CSV تجميعي",
       "Open summary JSON": "فتح ملخص JSON",
       "Copy aggregate CSV link": "نسخ رابط CSV التجميعي",
@@ -129,6 +136,18 @@
       "No data loaded yet. Next step: choose filters and click Load.": "لم يتم تحميل بيانات بعد. الخطوة التالية: اختر المرشحات ثم اضغط «تحميل».",
       "Graph": "الرسم البياني",
       "Load prerequisites to visualize dependency chains.": "حمّل المتطلبات لعرض سلاسل الاعتماد بين المقررات.",
+      // The panel's empty state writes the same sentence without the full
+      // stop, which is a different key: it rendered «تحميل prerequisites to
+      // visualize dependency chains» until this line existed.
+      "Load prerequisites to visualize dependency chains": "حمّل المتطلبات لعرض سلاسل الاعتماد بين المقررات",
+      // page-dashboard.js keeps its own IS_AR string table and rewrites
+      // this empty state and the two scrape-history ones below -- the graph's
+      // only once a graph is loaded, the scrape history's on the first status
+      // poll. Until then the server's placeholder is what the walker sees, so
+      // both mechanisms render these labels and the wording here is the JS's,
+      // or the same label would reword itself mid-session.
+      "No graph data": "لا توجد بيانات رسم بياني",
+      "No prerequisites loaded": "لم يتم تحميل المتطلبات",
       // Plan module
       "Inspect full program requirements, term breakdown, and credit totals.": "استعرض متطلبات البرنامج كاملة، توزيعها على الفصول، وإجمالي الساعات.",
       "Load Plan": "تحميل الخطة",
@@ -157,6 +176,8 @@
       "No scrape run started.": "لم يبدأ أي تشغيل للاستخراج.",
       "No history yet.": "لا يوجد سجل بعد.",
       "No logs yet.": "لا توجد سجلات بعد.",
+      "No scrape history": "لا يوجد سجل عمليات",
+      "Run a scrape to see history here": "شغّل عملية جلب لعرض السجل هنا",
       "Time (UTC)": "الوقت (UTC)",
       "Event": "الحدث",
       // Debug module
@@ -167,6 +188,7 @@
       "Run": "تشغيل",
       "Export debug CSV": "تصدير CSV للتشخيص",
       "No debug report loaded.": "لم يتم تحميل تقرير تشخيص.",
+      "No debug data": "لا توجد بيانات تشخيص",
       "Students matched": "الطلاب المطابقون",
       "With recommendations": "لديهم توصيات",
       "Empty recommendations": "بدون توصيات",
@@ -179,6 +201,7 @@
       "Check eligibility": "فحص الأهلية",
       "Export eligibility CSV": "تصدير CSV للأهلية",
       "No eligibility report loaded.": "لم يتم تحميل تقرير أهلية.",
+      "No eligibility results": "لا توجد نتائج أهلية",
       "Eligible IDs": "الأرقام المؤهلة",
       "Eligible Student IDs": "أرقام الطلاب المؤهلين",
       "No eligibility rows yet. Next step: enter course code and click Check eligibility.": "لا توجد نتائج بعد. الخطوة التالية: أدخل رمز المقرر ثم اضغط «فحص الأهلية».",
@@ -226,7 +249,6 @@
       "Apply filters": "تطبيق التصفية",
       "Needs Attention": "تحتاج متابعة",
       "At Risk Only": "المخاطر فقط",
-      "High Priority Missing": "نواقص عالية الأولوية",
       "Zero Term Hours": "ساعات الفصل = صفر",
       "Clear Focus": "إلغاء التركيز",
       "Copy high-risk IDs": "نسخ أرقام عالي المخاطر",
@@ -250,6 +272,9 @@
       // Exports
       "Quick links for all operational exports in one place.": "روابط سريعة لجميع عمليات التصدير في مكان واحد.",
       "What these exports contain": "محتوى هذه الصادرات",
+      // Its body text, which rendered «الطالب/aggregate recommendations, …»:
+      // one Arabic word followed by the whole English sentence.
+      "Student/aggregate recommendations, student plan matrix, debug diagnostics, eligibility IDs, advisor roster, and high-priority XLSX snapshot based on current filters.": "توصيات الطلاب الفردية والمجمّعة، ومصفوفة خطة الطالب، وتقارير التشخيص، وأرقام الطلاب المؤهلين، وقائمة المرشدين، ولقطة XLSX للمقررات عالية الأولوية — وفق المرشحات الحالية.",
       "Tip: run each module once to auto-fill parameterized export links.": "ملاحظة: شغّل كل وحدة مرة واحدة لتعبئة روابط التصدير تلقائياً.",
       "Download": "تنزيل",
       "Copy": "نسخ",
@@ -282,6 +307,7 @@
       "Run report": "تشغيل التقرير",
       "Export XLSX": "تصدير XLSX",
       "No report loaded.": "لم يتم تحميل تقرير.",
+      "No report loaded": "لم يتم تحميل تقرير",
       "Student": "الطالب",
       "Missing this parity": "النواقص لهذا النمط",
       "Missing other": "النواقص للنمط الآخر",
@@ -324,6 +350,51 @@
       "default: data/students_list.csv": "افتراضي: data/students_list.csv"
     };
 
+    // `MAP[text]` answers for every key Object.prototype carries, so a label
+    // reading "constructor" or "toString" came back truthy and was replaced
+    // with JavaScript source. Look the key up on the object itself.
+    const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+    // Prefix matching exists for one shape only: a caption whose tail is a
+    // value the page fills in, like "Role: Super Admin" or "Advisor ID: A001".
+    // Every key written for that shape ends in ":", and restricting the branch
+    // to those is what stops the matcher half-translating ordinary labels --
+    // "Students" is a key, so "Students Scanned" used to render
+    // «الطلاب Scanned». Now a label is either translated whole or left in
+    // English, where it is plainly a missing key rather than a broken one.
+    // Longest first, so the most specific caption wins among several that
+    // fit. No key in the table above is a prefix of another, so nothing
+    // exercises that today and no test can reach it; it is here so that
+    // adding "Role:" next to "Role: Advisor" cannot quietly pick the shorter
+    // one. The .sort() also makes the result independent of where in the
+    // table a key sits, which IS exercised, by the whole-key tests.
+    const PREFIX_KEYS = Object.keys(MAP)
+      .filter(key => key.endsWith(":"))
+      .sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
+
+    // The Arabic for one label, or null when the MAP has nothing for it.
+    // Pure, and exposed on `window` below so a test can drive the shipped
+    // matcher over every key instead of a copy of it that cannot go wrong.
+    function translateString(raw) {
+      if (!raw) return null;
+
+      // An EXACT key always wins. This used to be one loop over
+      // Object.entries(MAP) that took the first key the text merely started
+      // with, so a short key declared earlier beat the exact key written for
+      // the same label: "Copy" came before "Copy Link", so "Copy Link"
+      // rendered «نسخ Link», and "Run report", "Load Plan" and "Stopped" went
+      // the same way. 21 keys' Arabic could never be reached at all.
+      if (has(MAP, raw)) return MAP[raw];
+
+      // Then a "caption: value" key, carrying the value through untouched.
+      for (const en of PREFIX_KEYS) {
+        if (raw.length > en.length && raw.startsWith(en)) {
+          return MAP[en] + raw.slice(en.length);
+        }
+      }
+      return null;
+    }
+
     function translateNodeText(el) {
       if (!el) return;
       // Avoid translating inputs/selects/textarea values directly here
@@ -333,34 +404,25 @@
       if (el.children && el.children.length) return;
 
       const raw = (el.textContent || "").trim();
-      if (!raw) return;
-
-      // Handle common prefixes like "Role: X" or "Last update: never"
-      for (const [en, ar] of Object.entries(MAP)) {
-        if (raw === en) { el.textContent = ar; return; }
-        // Prefix case: "Role: {{ role }}" etc.
-        if (raw.startsWith(en) && raw.length > en.length) {
-          el.textContent = ar + raw.slice(en.length);
-          return;
-        }
-      }
+      const translated = translateString(raw);
+      if (translated !== null) el.textContent = translated;
     }
 
     function translateAttributes(root) {
       root.querySelectorAll("[placeholder]").forEach(el => {
         const p = el.getAttribute("placeholder");
-        if (p && PLACEHOLDERS[p]) el.setAttribute("placeholder", PLACEHOLDERS[p]);
+        if (p && has(PLACEHOLDERS, p)) el.setAttribute("placeholder", PLACEHOLDERS[p]);
       });
       root.querySelectorAll("a[title],button[title],input[title],select[title],textarea[title]").forEach(el => {
         const t = el.getAttribute("title");
-        if (t && MAP[t]) el.setAttribute("title", MAP[t]);
+        if (t && has(MAP, t)) el.setAttribute("title", MAP[t]);
       });
     }
 
     function translateOptions(root) {
       root.querySelectorAll("option").forEach(opt => {
         const raw = (opt.textContent || "").trim();
-        if (MAP[raw]) opt.textContent = MAP[raw];
+        if (has(MAP, raw)) opt.textContent = MAP[raw];
       });
     }
 
@@ -371,6 +433,16 @@
       translateOptions(root);
       translateAttributes(root);
     }
+
+    // The shipped matcher and its table, so a test can assert that every key
+    // in the table is actually reachable through it. Read-only for the page
+    // itself; nothing here reads these back.
+    window.dashboardI18n = {
+      translate: translateString,
+      walk: walkAndTranslate,
+      map: () => ({ ...MAP }),
+      placeholders: () => ({ ...PLACEHOLDERS }),
+    };
 
     // Initial pass
     walkAndTranslate(document);
