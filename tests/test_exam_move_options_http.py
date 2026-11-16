@@ -80,9 +80,11 @@ def test_every_offered_time_counts_what_check_counts_with_the_exam_moved_there(c
 
     assert answer["course_code"] == "CR3"
     assert answer["members"] == ["CR3"]
-    # Built without rooms: no seats to count, no rooms to estimate staff from.
+    # Built without rooms: no seats to count.
     assert answer["seats_counted"] is False
-    assert answer["invigilators_estimated"] is False
+    # The invigilators are no level of this ranking, and no claim of it either.
+    assert "staff_excess" not in answer["current"]["levels"]
+    assert "invigilators_estimated" not in answer
     assert (answer["current"]["day"], answer["current"]["period"]) == CROWDED["CR3"]
     assert {key: answer["current"]["levels"][key] for key in here} == here
     offered = [_cell(option) for option in answer["options"]]
@@ -184,7 +186,9 @@ def test_locked_cells_are_never_offered_and_an_exam_in_one_is_refused(client_):
 
     assert answer["options"]
     assert answer["seats_counted"] is True
-    assert answer["invigilators_estimated"] is True, "the saved rooms say what each exam needs"
+    # Rooms were assigned, so Optimize would count invigilators; the ranking
+    # does not, on this board or any other.
+    assert all("staff_excess" not in option["levels"] for option in answer["options"])
     assert not cells & {_cell(option) for option in answer["options"]}
     assert len(answer["options"]) == len(DAYS) * len(PERIODS) - len(cells) - 1
     refused = _options(client_, saved, saved["schedule"], "CR1", status=409, assign_rooms=True)

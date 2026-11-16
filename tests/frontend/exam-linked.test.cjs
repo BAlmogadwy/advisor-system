@@ -102,7 +102,7 @@ async function page(t, { run = null, onRequest = null, loadCourses = true, liveU
     if (url === '/ops/exam-timetable/preview-courses/') return reply({ ok: true, courses: catalog });
     if (url === '/ops/exam-timetable/draft-impact/') return reply(evaluated(JSON.parse(options.body), run || savedRun()));
     // Opening the Move dialog asks for the other times, ranked: none here.
-    if (url === '/ops/exam-timetable/move-options/') { const body = JSON.parse(options.body); return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false })); }
+    if (url === '/ops/exam-timetable/move-options/') { const body = JSON.parse(options.body); return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false })); }
     if (url === '/ops/exam-timetable/build/') return reply({ ok: false, error: 'Fixture ends at request validation' });
     if (String(url).split('?')[0] === '/ops/exam-timetable/jobs/active/') return reply({ ok: true, job: null });
     const error = new Error(`Unexpected HTTP request: ${url}`);

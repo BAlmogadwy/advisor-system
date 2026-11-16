@@ -3591,8 +3591,10 @@ const OPTIMISE_TEXT = {
 
 // The other times one exam could move to (the Move dialog), judged level by
 // level as Optimize judges a timetable: the server's LEVELS, in its order.
+// One level of Optimize's is missing on purpose - the invigilators over the
+// busiest day: an estimate that outranked the students a move really spares.
 const MOVE_TEXT = {
-  levels: ['rule_breaks', 'unseated', 'seats_short', 'staff_excess', 'over_limit', 'heavy_day', 'multi_exam_day', 'spacing'],
+  levels: ['rule_breaks', 'unseated', 'seats_short', 'over_limit', 'heavy_day', 'multi_exam_day', 'spacing'],
   verdict: {
     better: IS_AR ? 'أفضل' : 'Better',
     same: IS_AR ? 'دون تغيير' : 'No change',
@@ -3602,7 +3604,6 @@ const MOVE_TEXT = {
     rule_breaks: () => OPTIMISE_TEXT.ruleBreaks(),
     unseated: () => OPTIMISE_TEXT.unseated(),
     seats_short: () => IS_AR ? 'طلاب بلا مقعد اختبار' : 'Students without an exam seat',
-    staff_excess: () => IS_AR ? 'مراقبون فوق أكثر الأيام انشغالاً (تقدير)' : 'Invigilators above the busiest day (estimate)',
     over_limit: () => OPTIMISE_TEXT.overLimit(),
     heavy_day: () => OPTIMISE_TEXT.heavyDay(),
     multi_exam_day: () => OPTIMISE_TEXT.multiExamDay(),
