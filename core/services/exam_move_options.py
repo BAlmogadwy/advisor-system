@@ -2,8 +2,8 @@
 
 Clicking an exam on the exam timetable lists the other open periods it could
 move to, best first. Each place is judged the way "Optimize" judges a board
-(``exam_optimise.score``), level by level and in the same order, with one
-level added for the seats - Optimize does not count them:
+(``exam_optimise.score``), level by level and in the same order, with the seats
+added - Optimize does not count them - and the invigilators left out:
 
   1. rule breaks: a student's two exams in one period, two exams of one
      (programme, term) on one day;
@@ -12,12 +12,18 @@ level added for the seats - Optimize does not count them:
      whole room inventory (``exam_add_courses.seat_demand``/``seat_capacity``,
      the seats Add courses counts): a shortfall is certain, a fit is not - the
      rooming decides, and Check after the move rooms the board for real;
-  4. invigilators over the busiest day the board has now (an estimate from
-     the rooms the saved run gave each exam, as Optimize estimates them);
-  5. students over the exams-per-day limit;
-  6. students with a heavy-credit day;
-  7. students with two or more exams on one day;
-  8. the spacing penalty between exams of one (programme, term).
+  4. students over the exams-per-day limit;
+  5. students with a heavy-credit day;
+  6. students with two or more exams on one day;
+  7. the spacing penalty between exams of one (programme, term).
+
+Optimize also counts invigilators over the busiest day the board has now, and
+that level is deliberately absent here (owner, 2026-11-16). It is an estimate
+from the rooms the saved run happened to give each exam, measured against a
+ceiling that is only the board's own current peak, and standing above the
+student levels it hid real gains: a time that spared forty students a
+two-exam day was filed under "worse" for needing one invigilator more. The
+invigilators are balanced after the move, by Optimize and by the rooming.
 
 A place is "better" when the board with the exam there is better at the first
 level that differs, "same" when no level differs, and "worse" otherwise.
@@ -25,8 +31,8 @@ Nothing is moved and nothing is saved: the registrar picks a place, the page
 moves the exam exactly as a drag would, and Check counts the result.
 
 Only the students who sit the exam and the (programme, term) pairs holding it
-can change levels 5 to 8, so those are counted for them alone and added to the
-whole board's count; levels 1 to 4 are counted over the whole board for every
+can change levels 4 to 7, so those are counted for them alone and added to the
+whole board's count; levels 1 to 3 are counted over the whole board for every
 place. A place costs about a millisecond on the real 172-exam board.
 
 A linked exam is one exam here, as it is for Optimize: the board's units.
@@ -36,16 +42,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.services.exam_optimise import Board, Score, _bucket_pairs, _profiles, score
 
-#: The levels a place is judged by, most important first.
+#: The levels a place is judged by, most important first. The invigilator
+#: level Optimize carries (``staff_excess``) is not one of them: see above.
 LEVELS = (
     "rule_breaks",
     "unseated",
     "seats_short",
-    "staff_excess",
     "over_limit",
     "heavy_day",
     "multi_exam_day",
@@ -137,6 +143,9 @@ def rank_move_options(
     """
     if exam not in board.exams:
         raise ValueError(f"Exam {exam} is not on this board.")
+    # No invigilator level here: without a limit to pass, ``score`` counts no
+    # excess and does not walk the board's staff for every place it judges.
+    board = replace(board, staff_limits={})
     if exam in board.fixed:
         raise ExamNotMovable(
             "This exam is pinned or in a locked cell, so it stays where it is. "
@@ -180,12 +189,13 @@ def rank_move_options(
             continue
         moved = {**placements, exam: slot}
         local = score(board, moved, day_is_heavy, _profiles_of=near_profiles, _pairs_of=near_pairs)
-        # Levels 1-4 are the whole board's already; 5-8 change only for the
-        # students and pairs counted in ``local``.
+        # Levels 1-3 are the whole board's already; 4-7 change only for the
+        # students and pairs counted in ``local``. ``staff_excess`` is no level
+        # here, so what ``local`` makes of it is never read.
         found = Score(
             rule_breaks=local.rule_breaks,
             unseated=local.unseated,
-            staff_excess=local.staff_excess,
+            staff_excess=0,
             over_limit=whole.over_limit - near.over_limit + local.over_limit,
             heavy_day=whole.heavy_day - near.heavy_day + local.heavy_day,
             multi_exam_day=whole.multi_exam_day - near.multi_exam_day + local.multi_exam_day,

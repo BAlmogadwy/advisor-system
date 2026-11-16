@@ -23,7 +23,7 @@ const courses = [
   { course_code: 'CS111 (2)', source_course_code: 'CS111', course_name: 'Programming I', course_identity: 'cs111-programming', enrolled_count: 14, credit_hours: 3, programs: ['CS'], is_online: true },
 ];
 // The move-options answer for a board with no other open time.
-const noMoveOptions = body => ({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false });
+const noMoveOptions = body => ({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false });
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function savedRun(periods = ['08:00-10:00', '10:30-12:30', '13:00-15:00']) {
@@ -1724,7 +1724,7 @@ test('Move dialog supplies keyboard/touch placement controls using the same undo
 });
 
 // ── Other times for an exam: the ranked list in the Move dialog ─────────────
-const LEVEL_NAMES = ['rule_breaks', 'unseated', 'seats_short', 'staff_excess', 'over_limit', 'heavy_day', 'multi_exam_day', 'spacing'];
+const LEVEL_NAMES = ['rule_breaks', 'unseated', 'seats_short', 'over_limit', 'heavy_day', 'multi_exam_day', 'spacing'];
 const moveOption = (day, period, verdict, changes = {}, extra = {}) => ({
   day, period, slot_index: 0, verdict, levels: {},
   changes: { ...Object.fromEntries(LEVEL_NAMES.map(level => [level, 0])), ...changes },
@@ -1781,6 +1781,29 @@ test('clicking a course card opens Move with its other times ranked, better and 
   assert.equal(rowWhen(worse), 'Wed · 10:30-12:30');
   assert.match(worse.querySelector('.et-move-detail').textContent, language === 'ar' ? /CS111 \(1\).*12 طالباً/ : /Clashes at this time with CS111 \(1\) \(12 students\)/);
   assert.equal(ui.$('examEditorRequestError')?.hidden ?? true, true);
+});
+
+// The invigilator estimate is no level of this ranking (owner, 2026-11-16):
+// a time is judged by the students it spares, and an answer that still carries
+// the old count must not put it beside them as if it weighed the same.
+test('an invigilator count in the answer is shown nowhere in the Move dialog', async t => {
+  const option = moveOption('Mon', '08:00-10:00', 'better', { multi_exam_day: -40, staff_excess: 3 });
+  const ui = await loadedEditor(t, { onRequest: answering([option]) });
+  await clickCard(ui);
+  const [row] = suggestRows(ui);
+  const chips = Array.from(row.querySelectorAll('.et-move-change'));
+  assert.deepEqual(chips.map(chip => chip.textContent),
+    [language === 'ar' ? '−40 طلاب لديهم اختباران أو أكثر في يوم واحد' : '−40 Students with 2+ exams in a day']);
+  assert.doesNotMatch(row.textContent, language === 'ar' ? /مراقب/ : /nvigilator/);
+  assert.equal(row.className, 'et-move-option is-better', 'The students decide the verdict');
+});
+
+// Nothing left to say once the invigilators are out of the counting.
+test('a time whose only change was the invigilators changes no count at all', async t => {
+  const ui = await loadedEditor(t, { onRequest: answering([moveOption('Mon', '08:00-10:00', 'same', { staff_excess: 3 })]) });
+  await clickCard(ui);
+  assert.equal(suggestRows(ui)[0].querySelector('.et-move-changes').textContent,
+    language === 'ar' ? 'لا يتغير أي عدد' : 'No count changes');
 });
 
 test('choosing a ranked time fills in the day and period, and Move exam moves it there in one Undo step', async t => {

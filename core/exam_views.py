@@ -2260,7 +2260,6 @@ def _move_options(payload: dict) -> dict:
         ],
         # What the levels could and could not count on this board.
         "seats_counted": seats is not None,
-        "invigilators_estimated": bool(board.staff_limits),
     }
 
 

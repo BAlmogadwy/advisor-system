@@ -76,7 +76,7 @@ async function page(t, { run = savedRun(), onRequest = null } = {}) {
     if (url === `/ops/exam-timetable/${sourceRun.run_id}/`) return reply(sourceRun);
     if (url === '/ops/exam-timetable/preview-courses/') return reply({ ok: true, courses });
     // Opening the Move dialog asks for the other times, ranked: none here.
-    if (url === '/ops/exam-timetable/move-options/') { const body = JSON.parse(options.body); return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false })); }
+    if (url === '/ops/exam-timetable/move-options/') { const body = JSON.parse(options.body); return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false })); }
     if (url === '/ops/exam-timetable/draft-impact/' || url === '/ops/exam-timetable/build/') {
       const payload = JSON.parse(options.body);
       const data = { ...clone(sourceRun), editor_revision: payload.editor_revision, run_id: undefined,
