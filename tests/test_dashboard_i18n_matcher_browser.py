@@ -85,6 +85,42 @@ ARABIC_FOR_EMPTY_STATES = (
 )
 
 
+def _lone_letter_after_number(text: str, match: re.Match[str]) -> bool:
+    """Is this run a single letter that belongs to the number before it?
+
+    The run pattern starts at a letter, so it finds the "s" inside "5s" and
+    the "x" of "3 x 100" as runs of their own. Those are units and
+    multipliers, not English prose left untranslated beside Arabic.
+    """
+    if len(match.group()) != 1:
+        return False
+    before = text[: match.start()].rstrip()
+    return bool(before) and before[-1].isdigit()
+
+
+def test_a_lone_letter_counts_as_prose_unless_a_number_claims_it() -> None:
+    """The one-letter rule the stray-English check below leans on.
+
+    No browser needed, and worth its own test: the rule decides whether a
+    half-translated label is reported or waved through, and the page has no
+    label of either shape today, so nothing else here would notice it break.
+    """
+    pattern = re.compile(r"[A-Za-z][A-Za-z0-9.+_-]*")
+
+    def lone_runs(text: str) -> list[tuple[str, bool]]:
+        return [(m.group(), _lone_letter_after_number(text, m)) for m in pattern.finditer(text)]
+
+    # Prose: the "a" is the whole tell that this label is half-translated.
+    assert lone_runs("تشغيل a scrape to see history here")[0] == ("a", False)
+    # Notation: a unit or a multiplier belonging to the number before it.
+    assert lone_runs("5s")[0] == ("s", True)
+    assert lone_runs("3 x 100")[0] == ("x", True)
+    # Nothing before it to claim it, so prose again.
+    assert lone_runs("a")[0] == ("a", False)
+    # Longer runs are never claimed, however they are spelled.
+    assert lone_runs("100 students")[0] == ("students", False)
+
+
 class DashboardI18nMatcherTests(StaticLiveServerTestCase):
     """Drive the real matcher in a real page."""
 
@@ -360,8 +396,13 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
                 continue
             stray = [
                 run
-                for run in re.findall(r"[A-Za-z][A-Za-z0-9.+_-]*", text)
+                for run, lone_after_number in (
+                    (m.group(), _lone_letter_after_number(text, m))
+                    for m in re.finditer(r"[A-Za-z][A-Za-z0-9.+_-]*", text)
+                )
                 if run not in ALLOWED_LATIN
+                # A unit or a multiplier: the s of "5s", the x of "3 x 100".
+                and not lone_after_number
                 # A course or programme code: CS101, AI2, COE2.
                 and not re.fullmatch(r"[A-Z]{2,}[0-9]*", run)
                 # A dotted path or a snake_case column name: code, not prose.
