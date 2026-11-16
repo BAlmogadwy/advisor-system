@@ -74,6 +74,16 @@ ALLOWED_LATIN = {
 #: so it is data beside Arabic, not an untranslated label.
 ADMIN_USERNAME = "i18n-browser-admin"
 
+# The Arabic the MAP gives the four server-only empty-state captions, spelled
+# out here rather than read back from the table so that a wrong edit to either
+# one has to disagree with the other.
+ARABIC_FOR_EMPTY_STATES = (
+    "لم يتم تحميل المتطلبات",
+    "لا توجد بيانات تشخيص",
+    "لا توجد نتائج أهلية",
+    "لم يتم تحميل تقرير",
+)
+
 
 class DashboardI18nMatcherTests(StaticLiveServerTestCase):
     """Drive the real matcher in a real page."""
@@ -123,8 +133,14 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
 
     # -- the invariant that makes the whole table trustworthy ---------------
 
-    def test_every_key_in_the_table_reaches_the_page(self) -> None:
-        """No key may be shadowed by a shorter one that merely prefixes it."""
+    def test_every_key_in_the_table_survives_the_matcher(self) -> None:
+        """No key may be shadowed by a shorter one that merely prefixes it.
+
+        This is about the matcher, not about coverage: it proves every key
+        comes back as its own Arabic, not that the page renders a label
+        that key matches. Nothing here would notice a key for a string
+        that no template produces.
+        """
         context, page = self._arabic_dashboard()
         try:
             unreachable = page.evaluate(
@@ -300,6 +316,11 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
                         stopped: translate("Stopped"),
                         yearSemester: translate("Year/Semester"),
                         lockedOnly: translate("Locked only"),
+                        // Rendered «تشغيل a scrape to see history here»,
+                        // because "Run" is a key and this sentence is not.
+                        scrapeHint: translate(
+                          "Run a scrape to see history here"
+                        ),
                     };
                 }"""
             )
@@ -343,11 +364,17 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
                 if run not in ALLOWED_LATIN
                 # A course or programme code: CS101, AI2, COE2.
                 and not re.fullmatch(r"[A-Z]{2,}[0-9]*", run)
-                # A dotted path, a snake_case column name, or a lone symbol
-                # such as the K in "Top K": code and notation, not prose.
+                # A dotted path or a snake_case column name: code, not prose.
                 and "." not in run
                 and "_" not in run
-                and len(run) > 1
+                # A lone CAPITAL is notation, like the K in "Top K". A lone
+                # lowercase letter is English prose: «تشغيل a scrape to see
+                # history here» is a real half-translation whose only unlisted
+                # run is the "a", and `len(run) > 1` would wave it through. No
+                # label on the page has that shape today -- that one is
+                # rewritten by page-dashboard.js before it can be read -- so
+                # this is a hole closed, not a bug caught.
+                and not re.fullmatch(r"[A-Z]", run)
             ]
             if stray:
                 offenders.append((text, stray))
@@ -355,6 +382,48 @@ class DashboardI18nMatcherTests(StaticLiveServerTestCase):
         assert offenders == [], "half-translated labels on the page:\n" + "\n".join(
             f"  {text!r} -- stray {stray}" for text, stray in offenders
         )
+
+    def test_the_panel_empty_states_render_arabic(self) -> None:
+        """A key is only worth adding if some label on the page matches it.
+
+        The matcher tests above cannot tell: they drive it over the table, so a
+        key for a string no template produces passes them all. These four
+        empty-state captions are server-rendered and appear in no JS string
+        table, which makes the MAP the only thing that can translate them --
+        so asserting on the page is the only way to know the keys are live.
+        """
+        wanted = [
+            "No prerequisites loaded",
+            "No debug data",
+            "No eligibility results",
+            "No report loaded",
+        ]
+        context, page = self._arabic_dashboard()
+        try:
+            found = page.evaluate(
+                """(english) => {
+                    const out = {};
+                    const leaves = [...document.querySelectorAll("div,span,td")]
+                      .filter(el => !el.children.length)
+                      .map(el => (el.textContent || "").trim());
+                    for (const en of english) out[en] = leaves.includes(en);
+                    return { out, leaves };
+                }""",
+                wanted,
+            )
+        finally:
+            context.close()
+
+        still_english = [en for en in wanted if found["out"][en]]
+        assert still_english == [], (
+            "these captions render in English, so their MAP key is not "
+            f"reaching them: {still_english}"
+        )
+        # And the Arabic really is on the page, not merely the English absent
+        # because the caption moved or was renamed.
+        table = ARABIC_FOR_EMPTY_STATES
+        missing = [ar for ar in table if ar not in found["leaves"]]
+        assert missing == [], f"Arabic captions not rendered: {missing}"
 
     def test_the_table_has_no_duplicate_keys(self) -> None:
         """Two entries for one key means one Arabic string is dead weight."""
