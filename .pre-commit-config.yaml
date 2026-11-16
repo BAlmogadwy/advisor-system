@@ -49,6 +49,19 @@ repos:
         entry: node --check
         language: system
         files: ^static/js/.*\.js$
+      # global.css is ~16k lines and keeps shipping declarations that a later
+      # rule with the SAME selector silently overrides. Five were found in one
+      # piece of work in November 2026, one of them a sticky table header that
+      # had been dead app-wide on every sortable column. Nothing errors; the
+      # page just renders the losing rule's absence.
+      # scripts/css_collision_baseline.json records the ones that predate the
+      # gate, so only NEW collisions block a commit, and the list may only
+      # shrink.
+      - id: css-collisions
+        name: no dead CSS declarations
+        entry: python scripts/check_css_collisions.py
+        language: system
+        files: ^static/css/.*\.css$
       - id: no-control-characters
         name: no control characters in source
         entry: python scripts/check_control_chars.py

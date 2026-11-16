@@ -39,8 +39,16 @@ def main(paths: list[str]) -> int:
             data = open(path, "rb").read()
         except OSError:
             continue
-        if b"\x00" in data:
-            continue  # binary; not ours to police
+        # A NUL used to mean "binary, not ours to police" -- and that let the
+        # worst case straight through: `content:'\00b7'` in a Python-generated
+        # stylesheet lands as NUL + "b7", so the one file that most needed
+        # checking was the one file skipped. Decodability is the honest test:
+        # real binaries are not valid UTF-8, while a text file carrying a stray
+        # NUL decodes fine and is exactly what this hook is for.
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
         for index, byte in enumerate(data):
             if byte < 0x20 and byte not in ALLOWED:
                 line = data.count(b"\n", 0, index) + 1
