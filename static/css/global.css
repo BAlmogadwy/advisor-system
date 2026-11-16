@@ -343,8 +343,14 @@
      icon rail shows for each item's name.
      The thumb is a control, not decoration, so it clears the 3:1 of WCAG
      1.4.11 against the glass behind it: 3.42:1 here, 3.57:1 in dark. */
-  --sb-thumb:        var(--teal);
-  --sb-thumb-strong: var(--text-brand);
+  /* Quiet at rest, full strength under the pointer. The resting value is a
+     soft wash of the brand teal: it measures 1.7:1 light and 2.0:1 dark, under
+     the 3:1 of WCAG 1.4.11, which it can be because it is not what tells you
+     the list runs on — `.nav-sec` fades at whichever edge has more ("G16"),
+     and that is the affordance. Reach for the bar and it goes to the full
+     teal, 3.9:1 and 5.9:1, so the control itself is never faint. */
+  --sb-thumb:        color-mix(in srgb, var(--teal) 42%, transparent);
+  --sb-thumb-strong: var(--teal);
   --sb-tip-bg:       #1e1e4a;
   --sb-tip-ink:      #ffffff;
   --sb-tip-edge:     transparent;
@@ -16819,7 +16825,7 @@ html[dir="rtl"] .audit-endpoint {
    ancestor takes these to (0,2,0), which wins on specificity rather than on
    where they happen to sit in the file. */
 .sidebar .nav-sec::-webkit-scrollbar,
-.sbp-panel .sbp-list::-webkit-scrollbar { width: 8px; height: 8px; }
+.sbp-panel .sbp-list::-webkit-scrollbar { width: 7px; height: 7px; }
 
 .sidebar .nav-sec::-webkit-scrollbar-track,
 .sbp-panel .sbp-list::-webkit-scrollbar-track { background: transparent; }
@@ -16828,16 +16834,20 @@ html[dir="rtl"] .audit-endpoint {
 .sbp-panel .sbp-list::-webkit-scrollbar-thumb {
   background:      var(--sb-thumb);
   background-clip: padding-box;
+  /* 2px of transparent padding in a 7px gutter leaves a 3px pill. A browser
+     snaps a scrollbar border to whole pixels, so 2.5px in 8px gives 4px. */
   border:          2px solid transparent;
   border-radius:   99px;
 }
 
-/* On the brand ink while the pointer is over the list: darker than the teal in
-   light, lighter in dark, so it reads as "live" either way. */
+/* The full teal while the pointer is over the list. */
 .sidebar .nav-sec:hover::-webkit-scrollbar-thumb,
 .sbp-panel .sbp-list:hover::-webkit-scrollbar-thumb {
-  background:      var(--sb-thumb-strong);
-  background-clip: padding-box;
+  /* The longhand, not `background`: a var() inside a shorthand is dropped from
+     the CSSOM, and getComputedStyle on a pseudo-element does not follow the
+     host's :hover — so the longhand is the only way a test can read this. */
+  background-color: var(--sb-thumb-strong);
+  background-clip:  padding-box;
 }
 @property --nav-fade-t { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --nav-fade-b { syntax: '<length>'; inherits: false; initial-value: 0px; }

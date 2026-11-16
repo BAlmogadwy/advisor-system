@@ -520,7 +520,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         )
 
     def test_the_nav_scrollbar_is_the_design_system_s_and_not_the_browser_s(self) -> None:
-        """A thin brand-coloured pill, not the platform's bar.
+        """A 3px brand pill, not the platform's bar.
 
         `scrollbar-width: thin` cannot set a width, a radius or a track, so the
         scrollbar is drawn by the ::-webkit-scrollbar pseudo-elements — which a
@@ -528,11 +528,8 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         `auto` on that scroller, and `*` sets `scrollbar-width: thin` on
         everything near the top of the sheet. If that reset is ever lost, the
         pseudo-elements stop applying and the platform bar comes back, which is
-        what these assert. (Firefox has no pseudo-elements and keeps the
-        standard properties, under `@supports not selector(...)`.)
-
-        It is also the affordance that says the list runs on, so the thumb
-        clears the 3:1 WCAG 1.4.11 asks of a control against what is behind it.
+        what the first two assertions are for. (Firefox has no pseudo-elements
+        and keeps the standard properties, under `@supports not selector(...)`.)
         """
         for theme in ("light", "dark"):
             with self.subTest(theme=theme):
@@ -552,31 +549,72 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
                     "   track: track.backgroundColor,"
                     "   gutter: el.offsetWidth - el.clientWidth }; }"
                 )
-                # Thin: an 8px gutter with a 2px transparent inset each side,
-                # so the pill itself is 4px, and round rather than square.
-                self.assertEqual(drawn["width"], "8px", drawn)
+                # Thin: a 7px gutter with 2px of transparent inset each side, so
+                # the pill is 3px, and round rather than square. (A browser
+                # snaps a scrollbar border to whole pixels, so 2.5px in 8px
+                # would give 4px, not 3.)
+                self.assertEqual(drawn["width"], "7px", drawn)
                 self.assertEqual(drawn["pad"], "2px", drawn)
                 self.assertEqual(drawn["radius"], "99px", drawn)
                 self.assertEqual(drawn["track"], "rgba(0, 0, 0, 0)", drawn)
-                self.assertLessEqual(drawn["gutter"], 8, drawn)
+                self.assertLessEqual(drawn["gutter"], 7, drawn)
 
-                # The brand's own teal, not a grey the platform chose.
-                brand = page.evaluate(
-                    "getComputedStyle(document.documentElement).getPropertyValue('--teal').trim()"
+                # At rest it is a WASH of the brand teal, deliberately quiet —
+                # under 3:1, which it may be because it is not what says the
+                # list runs on. That is the fade on `.nav-sec` ("G16"), which
+                # test_the_list_still_fades_at_whichever_edge_has_more_to_scroll
+                # keeps honest.
+                resting = page.evaluate(
+                    CONTRAST_ON, {"selector": "#menu", "colour": drawn["thumb"]}
                 )
+                self.assertLess(resting, MIN_ICON, f"{theme}: the resting thumb is {resting}:1")
+                # And it is OUR wash, not whatever else paints a quiet thumb:
+                # the sheet's global dark ::-webkit-scrollbar rules draw white
+                # at 8%, which is just as quiet and just as wrong.
                 self.assertEqual(
                     drawn["thumb"],
                     page.evaluate(
-                        "(c) => { const d = document.createElement('div');"
-                        " d.style.color = c; document.body.append(d);"
-                        " const v = getComputedStyle(d).color; d.remove(); return v; }",
-                        brand,
+                        "(v) => { const d = document.createElement('div');"
+                        " d.style.backgroundColor = v; document.body.append(d);"
+                        " const c = getComputedStyle(d).backgroundColor; d.remove(); return c; }",
+                        page.evaluate(
+                            "getComputedStyle(document.documentElement)"
+                            ".getPropertyValue('--sb-thumb').trim()"
+                        ),
                     ),
-                    drawn,
+                    "the resting thumb is not --sb-thumb",
                 )
 
-                ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": drawn["thumb"]})
-                self.assertGreaterEqual(ratio, MIN_ICON, f"{theme}: the thumb is {ratio}:1")
+                # Reach for it and it is the full teal, clear of 3:1, so the
+                # control itself is never faint even though its resting state
+                # is. `getComputedStyle` on a pseudo-element does NOT follow
+                # the host's :hover — it returns the resting value whatever the
+                # pointer is doing — so the rule is read from the stylesheet
+                # and its token resolved against the page.
+                rule = page.evaluate(
+                    "() => { for (const sheet of document.styleSheets) {"
+                    "   let rules; try { rules = sheet.cssRules; } catch (e) { continue; }"
+                    "   for (const r of rules || []) {"
+                    "     if (r.selectorText && r.selectorText.includes("
+                    "         '.nav-sec:hover::-webkit-scrollbar-thumb'))"
+                    "       return r.style.getPropertyValue('background-color');"
+                    "   } } return null; }"
+                )
+                self.assertEqual(rule, "var(--sb-thumb-strong)", "no hover rule for the thumb")
+
+                resolve = (
+                    "(name) => { const d = document.createElement('div');"
+                    " d.style.color = getComputedStyle(document.documentElement)"
+                    "   .getPropertyValue(name).trim();"
+                    " document.body.append(d);"
+                    " const v = getComputedStyle(d).color; d.remove(); return v; }"
+                )
+                hovered = page.evaluate(resolve, "--sb-thumb-strong")
+                self.assertEqual(
+                    hovered, page.evaluate(resolve, "--teal"), "the hover thumb is not the teal"
+                )
+                ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": hovered})
+                self.assertGreaterEqual(ratio, MIN_ICON, f"{theme}: the hovered thumb is {ratio}:1")
 
     # ── The contrast fix ─────────────────────────────────────────────────
     def test_an_inactive_nav_icon_clears_three_to_one_in_both_themes(self) -> None:
