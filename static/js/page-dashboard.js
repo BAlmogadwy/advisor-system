@@ -1721,23 +1721,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     else    notify.error(message);
   }
 
-  function savePreset(key, fieldIds) {
-    const payload = {};
-    fieldIds.forEach((id) => { payload[id] = q(id)?.value ?? ''; });
-    localStorage.setItem(`preset.${key}`, JSON.stringify(payload));
-    toast(`Saved ${key} preset`, true);
-  }
-  function loadPreset(key, fieldIds) {
-    try {
-      const raw = localStorage.getItem(`preset.${key}`);
-      if (!raw) return toast(`No saved ${key} preset`, false);
-      const payload = JSON.parse(raw);
-      fieldIds.forEach((id) => { if (q(id) && payload[id] !== undefined) q(id).value = payload[id]; });
-      toast(`Loaded ${key} preset`, true);
-    } catch {
-      toast(`Invalid ${key} preset`, false);
-    }
-  }
   function requireFields(fieldIds, metaId, label) {
     const missing = fieldIds.filter((id) => !(String(q(id)?.value || '').trim()));
     if (!missing.length) return true;
@@ -2419,15 +2402,6 @@ const IS_AR = document.documentElement.lang === 'ar';
   });
   syncExportCenterLinks();
 
-  q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
-  q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
-  q('cmSavePreset')?.addEventListener('click', () => savePreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
-  q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
-  q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
-  q('elLoadPreset')?.addEventListener('click', () => {
-    loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']);
-    syncExportCenterLinks();
-  });
   q('elCopyIds')?.addEventListener('click', async () => {
     // Scrape every eligible ID from the table (paginateTable only hides rows, so all are in the DOM).
     const ids = Array.from(document.querySelectorAll('#elTable .cr-id'))
@@ -2454,8 +2428,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1500);
     toast(T.idsCopied(ids.length), true);
   });
-  q('hpSavePreset')?.addEventListener('click', () => savePreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
-  q('hpLoadPreset')?.addEventListener('click', () => loadPreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
 
   function exportMissingFields(href) {
     if (!href || href.endsWith('#')) return [T.requiredFilters];

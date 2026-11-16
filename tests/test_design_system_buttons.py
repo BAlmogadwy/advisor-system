@@ -77,8 +77,6 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/advisor_inbox_case.html", "add_note"),
     ("core/templates/core/db_admin.html", "elecRefreshBtn"),
     ("core/templates/core/instructor_management.html", "imModalCancel"),
-    ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmSavePreset"),
-    ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmLoadPreset"),
     ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmXlsx"),
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),
     ("core/templates/core/student_advisor.html", "saHistoryToggle"),
