@@ -141,7 +141,7 @@ async function page(t, { run = null, onRequest = null, loadCourses = true, liveU
     if (url === '/ops/exam-timetable/preview-courses/') return reply({ ok: true, courses });
     if (url === '/ops/exam-timetable/draft-impact/') return reply(evaluated(body, run || savedRun()));
     // Opening the Move dialog asks for the other times, ranked: none here.
-    if (url === '/ops/exam-timetable/move-options/') return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false, invigilators_estimated: false }));
+    if (url === '/ops/exam-timetable/move-options/') return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false }));
     if (url === '/ops/exam-timetable/build/' && body?.mode === 'save_loaded_changes') {
       return reply({ ...evaluated(body, run || savedRun()), run_id: 18, label: body.label });
     }

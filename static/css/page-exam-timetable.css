@@ -201,7 +201,12 @@ main.exam-builder-page .btn:focus {
   box-shadow: none !important;
 }
 
-main.exam-builder-page .et-setup-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+/* The gutter has to be wider than the spacing INSIDE a column, or the eye has
+   nothing to group on: at 20px it was narrower than the 22px between the
+   fieldsets of step 02, so the two steps read as one continuous field of
+   controls rather than two. Fluid, because 48px is right at 1640px but would
+   squeeze the programme chips at the 1151px end of this layout's range. */
+main.exam-builder-page .et-setup-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; column-gap: clamp(24px, 3vw, 48px); align-items: stretch; }
 /* Each numbered step was a bordered white card. On the sheet a step opens with
    a rule, like every other section in the app. */
 main.exam-builder-page .et-section,
@@ -298,7 +303,11 @@ main.exam-builder-page :is(#progCount, #secCount, #courseCount) { color: var(--e
 main.exam-builder-page #courseCount { margin-inline-start: auto; }
 /* an empty count is not drawn as an empty pill */
 main.exam-builder-page :is(#progCount, #secCount, #courseCount):empty { display: none; }
-main.exam-builder-page .et-scope-footer { display: flex; align-items: center; gap: 14px; padding-top: 20px; margin-top: auto; }
+/* `margin-top: auto` pinned Load Courses to the bottom of the stretched
+   column, leaving 96px of dead space between it and the note it belongs to --
+   on wide screens only, since the <=1150px block below already replaces it
+   with a fixed margin. Sit under the note, as that block does. */
+main.exam-builder-page .et-scope-footer { display: flex; align-items: center; gap: 14px; margin-top: 24px; }
 main.exam-builder-page .et-scope-footer .btn { flex: 0 0 auto; }
 main.exam-builder-page .et-scope-footer :is(p, small) { margin: 0; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
 
@@ -1144,7 +1153,8 @@ html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
   main.exam-builder-page .et-basic-fields > :first-child { grid-column: auto; }
   main.exam-builder-page #etPeriodsRepeater { max-width: 440px; }
   main.exam-builder-page #progList { grid-template-columns: repeat(7, minmax(0, 1fr)); }
-  main.exam-builder-page .et-scope-footer { margin-top: 20px; padding-top: 0; }
+  /* `padding-top: 0` here undid a padding the base rule no longer sets. */
+  main.exam-builder-page .et-scope-footer { margin-top: 20px; }
 }
 
 @media (max-width: 800px) {

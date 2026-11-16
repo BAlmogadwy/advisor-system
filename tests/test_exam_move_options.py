@@ -157,10 +157,34 @@ def test_every_place_scores_as_a_full_recount_of_the_board_with_the_exam_there(s
         ), "best first, then calendar order"
 
 
-def test_the_levels_are_optimizes_in_its_order_with_the_seats_after_the_overflow():
-    optimise_order = list(Score.__dataclass_fields__)
+def _staffed_board() -> Board:
+    """One student sits A and B; the busiest day of three needs 4 invigilators.
+
+    Days are slots 0-1, 2-3, 4-5. Moving A to slot 3 puts it beside C, which
+    spares that student their shared day and wants 6 invigilators on it.
+    """
+    return _board(
+        exams=["A", "B", "C"],
+        current={"A": 0, "B": 1, "C": 2},
+        adj={"A": {"B": 1}, "B": {"A": 1}},
+        sittings={1: [("A", 3), ("B", 3)]},
+        staff={"A": {"total": 3}, "B": {"total": 1}, "C": {"total": 3}},
+        staff_limits={"total": 4},
+    )
+
+
+def test_the_levels_are_optimizes_in_its_order_with_the_seats_in_and_the_staff_out():
+    """Optimize's own order, the seats added after the overflow, the staff gone.
+
+    ``staff_excess`` is Optimize's level and stays Optimize's (owner,
+    2026-11-16): the Move dialog ranks by students, not by an estimate of the
+    invigilators a place would want.
+    """
+    optimise_order = [level for level in Score.__dataclass_fields__ if level != "staff_excess"]
     assert [level for level in LEVELS if level != "seats_short"] == optimise_order
     assert LEVELS.index("seats_short") == LEVELS.index("unseated") + 1
+    assert "staff_excess" in Score.__dataclass_fields__, "Optimize still counts them"
+    assert "staff_excess" not in LEVELS
 
 
 def test_the_page_names_every_level_in_the_servers_order():
@@ -196,20 +220,8 @@ def test_an_exam_in_overflow_is_offered_every_open_place_and_seating_it_is_bette
 
 
 def test_the_levels_decide_in_the_order_optimize_decides_them():
-    # One student sits A and B. Days: slots 0-1, 2-3, 4-5.
-    board = _board(
-        exams=["A", "B", "C"],
-        current={"A": 0, "B": 1, "C": 2},
-        adj={"A": {"B": 1}, "B": {"A": 1}},
-        sittings={1: [("A", 3), ("B", 3)]},
-        staff={"A": {"total": 3}, "B": {"total": 1}, "C": {"total": 3}},
-        staff_limits={"total": 4},
-    )
+    board = _staffed_board()
     ranked = {option.slot: option for option in _rank(board, "A").options}
-    # Off the shared day, beside C: the student is spared, the invigilators are not.
-    assert ranked[3].changes["multi_exam_day"] == -1
-    assert ranked[3].changes["staff_excess"] == 2
-    assert ranked[3].verdict == WORSE
     # Spared and within the busiest day: better.
     assert ranked[4].changes == {**dict.fromkeys(LEVELS, 0), "multi_exam_day": -1}
     assert ranked[4].verdict == BETTER
@@ -217,6 +229,27 @@ def test_the_levels_decide_in_the_order_optimize_decides_them():
     assert ranked[1].changes["rule_breaks"] == 1
     assert ranked[1].verdict == WORSE
     assert ranked[1].clashes_with == (("B", 1),)
+
+
+def test_the_invigilators_are_no_level_so_they_never_outrank_a_student():
+    """A time that spares a student is better, whatever it does to the staff.
+
+    Slot 3 spares the student A and B shared their two-exam day, and wants two
+    invigilators more than the busiest day the board has. That rise is not
+    counted here, and it is not reported either (owner,
+    2026-11-16): Optimize and the rooming balance the invigilators after the
+    move. Optimize itself still counts them - this is the Move dialog only.
+    """
+    board = _staffed_board()
+    ranked = {option.slot: option for option in _rank(board, "A").options}
+
+    assert "staff_excess" not in LEVELS
+    assert "staff_excess" not in ranked[3].levels
+    assert "staff_excess" not in ranked[3].changes
+    assert ranked[3].changes["multi_exam_day"] == -1
+    assert ranked[3].verdict == BETTER, "the student outranks the invigilator estimate"
+    # Optimize, scoring the same move itself, does count the excess it brings.
+    assert score(board, {"A": 3, "B": 1, "C": 2}, is_heavy_credit_day).staff_excess == 2
 
 
 def test_ending_a_clash_is_better_even_when_the_students_keep_their_shared_day():
