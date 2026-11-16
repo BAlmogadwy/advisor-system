@@ -339,6 +339,22 @@
      below), so a bar fixed to the page can sit in the content column */
   --sb-w:           252px;
 
+  /* the sidebar's own two surfaces: its nav scrollbar, and the tooltip the
+     icon rail shows for each item's name.
+     The thumb is a control, not decoration, so it clears the 3:1 of WCAG
+     1.4.11 against the glass behind it: 3.42:1 here, 3.57:1 in dark. */
+  /* Quiet at rest, full strength under the pointer. The resting value is a
+     soft wash of the brand teal: it measures 1.7:1 light and 2.0:1 dark, under
+     the 3:1 of WCAG 1.4.11, which it can be because it is not what tells you
+     the list runs on — `.nav-sec` fades at whichever edge has more ("G16"),
+     and that is the affordance. Reach for the bar and it goes to the full
+     teal, 3.9:1 and 5.9:1, so the control itself is never faint. */
+  --sb-thumb:        color-mix(in srgb, var(--teal) 42%, transparent);
+  --sb-thumb-strong: var(--teal);
+  --sb-tip-bg:       #1e1e4a;
+  --sb-tip-ink:      #ffffff;
+  --sb-tip-edge:     transparent;
+
   /* the smallest an Arabic page lets running text be: 12px. Latin keeps the sizes
      it was designed at (0 = no floor); a rule writes max(var(--fs-floor), 0.72rem). */
   --fs-floor:       0px;
@@ -548,6 +564,15 @@ html[data-theme="dark"] body {
 html[data-theme="dark"] .sidebar {
   background: rgba(255,255,255,0.03);
   border-inline-end-color: rgba(255,255,255,0.05);
+}
+/* A dark scrim is invisible on a near-black sidebar, and a near-black tooltip
+   needs an edge to separate it from the page behind it. */
+html[data-theme="dark"] {
+  /* Both tokens follow the theme on their own; dark needs no values of its
+     own for the thumb. */
+  --sb-tip-bg:       #272a3d;
+  --sb-tip-ink:      var(--t0);
+  --sb-tip-edge:     rgba(255,255,255,0.12);
 }
 html[data-theme="dark"] .sidebar .form-select {
   background-color: rgba(255,255,255,0.06) !important;
@@ -1460,8 +1485,17 @@ html[data-theme="dark"] .system-footer {
   padding:    14px 10px;
   flex:       1;
   overflow-y: auto;
+  /* The gutter is kept whether or not the list scrolls: collapsing a group can
+     make it fit, and without this every label would jump sideways by the width
+     of the scrollbar the moment it did. No effect where the browser draws an
+     overlay scrollbar, which reserves nothing. */
+  scrollbar-gutter: stable;
 }
 
+/* Each group's header is a <button>, because the group collapses. A bare
+   <button> has no surface of its own and falls through to the user agent's
+   ButtonFace grey (the defect tests/test_design_system_buttons.py pins for
+   `.btn`), so the box is reset here explicitly. */
 .nav-lbl {
   padding:        14px 10px 5px;
   font-size:      var(--text-2xs);
@@ -1470,7 +1504,31 @@ html[data-theme="dark"] .system-footer {
   letter-spacing: 0.14em;
   color:          var(--t3);
   font-family:    var(--font-mono);
+  display:         flex;
+  align-items:     center;
+  justify-content: space-between;
+  gap:             8px;
+  width:           100%;
+  background:      transparent;
+  border:          0;
+  border-radius:   var(--radius-sm);
+  text-align:      start;
+  line-height:     1.3;
+  cursor:          pointer;
+  transition:      color 0.15s var(--ease);
 }
+.nav-lbl:hover { color: var(--t2); }
+
+.nav-lbl-chev {
+  width:      13px;
+  height:     13px;
+  opacity:    0.8;
+  transition: transform 0.18s var(--ease);
+}
+/* Collapsed: the chevron turns from "down" to the reading direction's forward
+   edge — right in English, left in Arabic. */
+.nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotate(-90deg); }
+html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotate(90deg); }
 
 /* ── Nav links ────────────────────────────────────────────── */
 .nav-a {
@@ -1485,7 +1543,12 @@ html[data-theme="dark"] .system-footer {
   font-weight:     400;
   text-decoration: none;
   cursor:          pointer;
-  transition:      all 0.15s var(--ease);
+  /* Named, not `all`: hover and the active state move colour, the gradient
+     wash and the inset ring, and nothing else. `all` also animated width,
+     padding and transform, which the icon rail changes in one step. */
+  transition:      color 0.15s var(--ease),
+                   background 0.15s var(--ease),
+                   box-shadow 0.15s var(--ease);
   position:        relative;
 }
 .nav-a:hover {
@@ -1515,7 +1578,11 @@ html[data-theme="dark"] .system-footer {
   box-shadow: 0 0 8px color-mix(in srgb, var(--teal) 30%, transparent), 0 0 4px rgba(0,174,218,0.2);
 }
 
-.nav-a .i        { opacity: 0.4; color: var(--t3); }
+/* 0.4 put --t3 at 1.84:1 on the sidebar's glass in light and 2.21:1 in dark —
+   below the 3:1 WCAG 1.4.11 asks of a non-text graphic, and far too faint to
+   scan a 33-item list by. 0.75 measures 3.52:1 light and 4.64:1 dark, and the
+   active icon (0.9, and --text-brand rather than --t3) still reads apart. */
+.nav-a .i        { opacity: 0.75; color: var(--t3); }
 .nav-a.active .i,
 .nav-a.on .i     { opacity: 0.9; color: var(--text-brand); }
 
@@ -1625,6 +1692,367 @@ html[data-theme="dark"] .system-footer {
   border-color:     var(--teal) !important;
   box-shadow:       0 0 0 3px color-mix(in srgb, var(--teal) 15%, transparent) !important;
   color:            var(--t0) !important;
+}
+
+/* ── Collapse-to-rail toggle (in the logo area) ───────────── */
+.sb-rail-toggle {
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  width:           28px;   /* ≥24px: WCAG 2.2 SC 2.5.8 */
+  height:          28px;
+  flex-shrink:     0;
+  margin-inline-start: auto;
+  padding:         0;
+  border-radius:   var(--radius-sm);
+  /* A <button> with no surface of its own renders as the user agent's grey
+     ButtonFace, as `.s-usr-logout` below records. */
+  background:      transparent;
+  border:          1px solid var(--control-edge);
+  color:           var(--t3);
+  cursor:          pointer;
+  transition:      color 0.15s var(--ease), background-color 0.15s var(--ease);
+}
+.sb-rail-toggle .i     { width: 14px; height: 14px; }
+.sb-rail-toggle:hover  { color: var(--t1); background: color-mix(in srgb, var(--teal) 8%, transparent); }
+/* The chevron points the way a press moves the sidebar's edge: inline-start
+   while the sidebar is wide, inline-end once it is a rail. That is an XOR of
+   the rail and the reading direction, so it takes three rules. */
+.sb-rail-toggle .i            { transform: scaleX(1); }
+html[dir="rtl"] .sb-rail-toggle .i { transform: scaleX(-1); }
+
+/* ── Nav search row — the command palette's way in ────────── */
+.nav-find { padding: 10px 10px 0; }
+.nav-find-btn {
+  display:       flex;
+  align-items:   center;
+  gap:           9px;
+  width:         100%;
+  padding:       8px 10px;
+  border-radius: var(--radius-sm);
+  background:    var(--glass-bg-data);
+  border:        1px solid var(--control-edge);
+  color:         var(--t3);
+  font-family:   var(--font-body);
+  font-size:     var(--text-xs);
+  text-align:    start;
+  cursor:        pointer;
+  position:      relative;
+  transition:    color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.nav-find-btn:hover { color: var(--t1); border-color: var(--teal); }
+.nav-find-i  { opacity: 0.8; }
+.nav-find-t  { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The global `kbd` rule is 0.72rem, which renders at 10.1px on the fluid root
+   of a narrow window — under the 11px type floor. */
+.nav-find-kbd {
+  flex-shrink:   0;
+  font-family:   var(--font-mono);
+  font-size:     var(--text-2xs);
+  font-weight:   600;
+  color:         var(--t3);
+  background:    color-mix(in srgb, var(--t3) 9%, transparent);
+  border:        1px solid var(--control-edge);
+  border-bottom: 1px solid var(--control-edge);
+  border-radius: 5px;
+  padding:       1px 5px;
+  line-height:   1.4;
+}
+
+/* The list already says when it has more to scroll: `.nav-sec` carries a
+   scroll-driven mask that fades whichever edge still has list beyond it (the
+   "G16" block near the end of this file). Nothing here duplicates it. */
+
+/* ── Collapsed section groups ─────────────────────────────── */
+/* Which groups are collapsed is applied as an attribute on <html> by the
+   anti-flash script in base.html, so a collapsed group is never painted open
+   first. One selector per group: CSS cannot compare the attribute's value
+   against the group's own name, and a loose match would collapse the wrong
+   group. The script keeps the group holding the current page out of the
+   attribute, so the page you are on is never hidden. */
+html[data-sidebar-collapsed~="exams"]       .nav-grp[data-group="exams"]       > .nav-grp-items,
+html[data-sidebar-collapsed~="advising"]    .nav-grp[data-group="advising"]    > .nav-grp-items,
+html[data-sidebar-collapsed~="curriculum"]  .nav-grp[data-group="curriculum"]  > .nav-grp-items,
+html[data-sidebar-collapsed~="timetabling"] .nav-grp[data-group="timetabling"] > .nav-grp-items,
+html[data-sidebar-collapsed~="insights"]    .nav-grp[data-group="insights"]    > .nav-grp-items,
+html[data-sidebar-collapsed~="admin"]       .nav-grp[data-group="admin"]       > .nav-grp-items,
+html[data-sidebar-collapsed~="student"]     .nav-grp[data-group="student"]     > .nav-grp-items {
+  display: none;
+}
+
+/* ── Icon rail — the sidebar at 64px ──────────────────────── */
+/* Only above the phone breakpoint: at ≤768px the sidebar is already a drawer
+   the hamburger opens, and those rules set its width themselves. */
+@media (min-width: 769px) {
+  /* `:root` so this outranks the `:root { --sb-w }` steps in the ≤1200px and
+     ≤992px blocks, which sit later in the file. */
+  html[data-sidebar-rail]:root   { --sb-w: 64px; }
+  html[data-sidebar-rail] .sidebar { width: 64px; }
+
+  /* The words go; the mark, the icons and the avatar stay. */
+  html[data-sidebar-rail] .logo-words,
+  html[data-sidebar-rail] .nav-lbl,
+  html[data-sidebar-rail] .nav-find-kbd,
+  html[data-sidebar-rail] .s-usr-words,
+  html[data-sidebar-rail] .s-lang { display: none; }
+
+  html[data-sidebar-rail] .logo-area {
+    flex-direction: column;
+    gap:            10px;
+    padding:        14px 0 12px;
+  }
+  html[data-sidebar-rail] .nav-find { padding: 10px 8px 0; }
+  /* Both edges: a gutter on one side alone pushes every icon half its width
+     off the centre of a 64px rail, which is plain to see. */
+  html[data-sidebar-rail] .nav-sec  { padding-inline: 4px; scrollbar-gutter: stable both-edges; }
+  html[data-sidebar-rail] .nav-find-btn,
+  html[data-sidebar-rail] .nav-a {
+    justify-content: center;
+    gap:             0;
+    padding-inline:  0;
+  }
+
+  /* Every group's items show in the rail: with the headers gone there would be
+     nothing left to re-open a collapsed one with. Same specificity as the
+     collapse rule above and later in the file, so this wins. */
+  html[data-sidebar-rail] .nav-grp[data-group] > .nav-grp-items { display: block; }
+  html[data-sidebar-rail] .nav-grp + .nav-grp {
+    margin-block-start:  8px;
+    padding-block-start: 8px;
+    border-block-start:  var(--border-subtle);
+  }
+
+  /* The label stays in the DOM, clipped: it is the link's accessible name, and
+     the sidebar script draws it as a tooltip on hover and on focus. A
+     `display: none` here would leave 33 unnamed links. */
+  html[data-sidebar-rail] .nav-t,
+  html[data-sidebar-rail] .nav-find-t {
+    position:    absolute;
+    width:       1px;
+    height:      1px;
+    padding:     0;
+    margin:      -1px;
+    overflow:    hidden;
+    clip:        rect(0,0,0,0);
+    white-space: nowrap;
+    border:      0;
+  }
+
+  /* The count becomes a dot on the icon — 64px has no room for a number beside
+     one. The spoken count in the `.visually-hidden` span beside it is
+     untouched, so a screen reader still hears how many. `.sidebar-badge` is
+     left out: it is display:none until the dashboard fills it. */
+  html[data-sidebar-rail] .nav-badge:not(.sidebar-badge) {
+    display:          block;
+    position:         absolute;
+    top:              5px;
+    inset-inline-end: 9px;
+    min-width:        0;
+    width:            9px;
+    height:           9px;
+    padding:          0;
+    border-radius:    50%;
+    background:       var(--danger);
+    border-color:     var(--danger);
+    /* The digits are pushed out of the 9px box and clipped. */
+    color:            transparent;
+    overflow:         hidden;
+    text-indent:      100%;
+    white-space:      nowrap;
+  }
+
+  html[data-sidebar-rail] .s-foot     { padding: 10px 8px; }
+  html[data-sidebar-rail] .s-usr-row  { flex-direction: column; gap: 8px; }
+  html[data-sidebar-rail] .s-usr      { justify-content: center; padding-inline: 0; gap: 0; }
+  html[data-sidebar-rail] .s-foot-row { justify-content: center; }
+
+  html[data-sidebar-rail] .sb-rail-toggle .i          { transform: scaleX(-1); }
+  html[dir="rtl"][data-sidebar-rail] .sb-rail-toggle .i { transform: scaleX(1); }
+}
+
+@media (max-width: 768px) {
+  /* The drawer has the hamburger; there is no rail to collapse to, and a
+     keyboard shortcut means nothing on a phone. */
+  .sb-rail-toggle,
+  .nav-find-kbd { display: none; }
+}
+
+/* ── The icon rail's tooltip ──────────────────────────────── */
+/* Drawn at the body, not inside the link: `.nav-sec` scrolls, and a scroller
+   clips both axes, so a tooltip positioned inside it is cut off at the rail's
+   edge. */
+.sb-tip {
+  position:      fixed;
+  z-index:       var(--z-drawer);
+  max-width:     260px;
+  padding:       6px 10px;
+  border-radius: var(--radius-sm);
+  background:    var(--sb-tip-bg);
+  color:         var(--sb-tip-ink);
+  border:        1px solid var(--sb-tip-edge);
+  font-family:   var(--font-body);
+  font-size:     var(--text-xs);
+  line-height:   1.35;
+  box-shadow:    0 10px 28px rgba(17,17,68,0.22);
+}
+.sb-tip[hidden] { display: none; }
+
+/* ============================================================
+   SIDEBAR COMMAND PALETTE  (Ctrl/Cmd+K — every nav destination)
+   ============================================================ */
+.sbp {
+  position:        fixed;
+  inset:           0;
+  z-index:         var(--z-modal);
+  display:         flex;
+  align-items:     flex-start;
+  justify-content: center;
+  padding:         clamp(48px, 12vh, 140px) 16px 16px;
+}
+.sbp[hidden] { display: none; }
+
+.sbp-backdrop {
+  position:                absolute;
+  inset:                   0;
+  background:              rgba(17,17,68,0.38);
+  backdrop-filter:         blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.sbp-panel {
+  position:       relative;
+  width:          100%;
+  max-width:      560px;
+  max-height:     min(70vh, 560px);
+  display:        flex;
+  flex-direction: column;
+  overflow:       hidden;
+  background:     rgba(255,255,255,0.94);
+  backdrop-filter:         blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  border:         1px solid var(--line);
+  border-radius:  var(--radius-lg);
+  box-shadow:     0 28px 70px rgba(17,17,68,0.26);
+}
+html[data-theme="dark"] .sbp-panel {
+  background:   #161a2b;
+  border-color: rgba(255,255,255,0.10);
+}
+
+.sbp-field {
+  display:          flex;
+  align-items:      center;
+  gap:              10px;
+  padding:          14px 16px;
+  flex-shrink:      0;
+  border-block-end: 1px solid var(--line);
+}
+.sbp-field .i { color: var(--t3); opacity: 0.85; flex-shrink: 0; }
+.sbp-input {
+  flex:        1;
+  min-width:   0;
+  background:  transparent;
+  border:      0;
+  color:       var(--t0);
+  font-family: var(--font-body);
+  font-size:   var(--text-md);
+}
+/* As `.nav-find-kbd`: the global `kbd` size renders under the 11px floor. */
+.sbp-esc {
+  flex-shrink:   0;
+  font-family:   var(--font-mono);
+  font-size:     var(--text-2xs);
+  font-weight:   600;
+  color:         var(--t3);
+  background:    color-mix(in srgb, var(--t3) 9%, transparent);
+  border:        1px solid var(--control-edge);
+  border-bottom: 1px solid var(--control-edge);
+  border-radius: 5px;
+  padding:       1px 5px;
+  line-height:   1.4;
+}
+
+.sbp-list {
+  list-style:       none;
+  margin:           0;
+  padding:          6px;
+  overflow-y:       auto;
+  flex:             1;
+  min-height:       0;
+}
+.sbp-opt {
+  display:       flex;
+  align-items:   center;
+  gap:           10px;
+  padding:       9px 10px;
+  border-radius: var(--radius-sm);
+  color:         var(--t2);
+  font-size:     var(--text-sm);
+  cursor:        pointer;
+  scroll-margin: 6px;
+}
+/* The same three signals as the sidebar's own active link — a wash, an inset
+   ring and the brand ink — never colour alone. */
+.sbp-opt[aria-selected="true"] {
+  color:      var(--text-brand);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 14%, transparent), rgba(0,174,218,0.05));
+  box-shadow: 0 0 0 1px var(--teal-border) inset;
+}
+.sbp-opt .i                       { opacity: 0.8; color: var(--t3); flex-shrink: 0; }
+.sbp-opt[aria-selected="true"] .i { opacity: 0.95; color: var(--text-brand); }
+.sbp-opt-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbp-opt-sec {
+  flex-shrink:    0;
+  font-family:    var(--font-mono);
+  font-size:      var(--text-2xs);
+  color:          var(--t4);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+/* Latin utility typography must not leak into Arabic labels (as `.nav-lbl`). */
+html[dir="rtl"] .sbp-opt-sec,
+html[dir="rtl"] .sbp-foot {
+  font-family:    var(--font-body);
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* The highlight is a background and nothing else. A weight or a padding on it
+   splits the label into runs with different font properties, and a browser
+   shapes those separately — which breaks the cursive joins of an Arabic word
+   at every edge of a match. */
+.sbp-opt mark {
+  background:    color-mix(in srgb, var(--teal) 24%, transparent);
+  color:         inherit;
+  font-weight:   inherit;
+  border-radius: 3px;
+}
+
+.sbp-empty {
+  margin:     0;
+  padding:    22px 16px;
+  text-align: center;
+  color:      var(--t3);
+  font-size:  var(--text-sm);
+}
+.sbp-foot {
+  flex-shrink:        0;
+  padding:            9px 14px;
+  border-block-start: 1px solid var(--line);
+  color:              var(--t4);
+  font-size:          var(--text-2xs);
+  font-family:        var(--font-mono);
+}
+
+@media (forced-colors: active) {
+  /* The wash and the inset ring are dropped here; a border keeps the chosen
+     row and the panel visible boxes. */
+  .sbp-opt[aria-selected="true"] { border: 1px solid currentColor; }
+  .sb-tip { border: 1px solid currentColor; }
+}
+
+@media (max-width: 768px) {
+  .sbp { padding-top: 24px; }
+  .sbp-panel { max-height: 78vh; }
 }
 
 /* ============================================================
@@ -5784,6 +6212,8 @@ html body .btn-export:hover {
   #ux-loading-bar,
   #toast-container,
   .cmd-backdrop,
+  .sbp,
+  .sb-tip,
   .nav-badge,
   body::after {
     display: none !important;
@@ -16365,7 +16795,60 @@ html[dir="rtl"] .audit-endpoint {
    to scroll to: the bottom fade is full at the top and gone at the end, the top
    fade grows in once you have scrolled. Scroll-linked, no script. A menu that
    fits does not scroll, so its timeline is inactive and no fade is drawn. */
-.nav-sec { scrollbar-width: thin; scrollbar-color: var(--t4) transparent; }
+/* Its own scrollbar, not the operating system's.
+
+   `scrollbar-width: thin` is the whole of what the standard property offers:
+   it cannot set a width, a radius or a track, and what it draws is still the
+   platform's bar. The ::-webkit-scrollbar pseudo-elements can draw all three
+   — but a browser ignores them for a scroller as soon as `scrollbar-width` or
+   `scrollbar-color` is set on it to anything but `auto`, and `*` near the top
+   of this sheet sets `scrollbar-width: thin` on everything. Putting both back
+   to `auto` here is what hands this scroller to the rules below.
+
+   Firefox has no such pseudo-elements, so it keeps the standard properties
+   and gets the thin bar in the same colour. */
+.nav-sec,
+.sbp-list { scrollbar-width: auto; scrollbar-color: auto; }
+
+@supports not selector(::-webkit-scrollbar) {
+  .nav-sec,
+  .sbp-list { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+}
+
+/* A 4px pill inside an 8px gutter: the transparent border is the padding, and
+   `background-clip: padding-box` keeps the fill off it.
+
+   Each selector names the ancestor as well. The sheet already carries global
+   `html[data-theme="dark"] ::-webkit-scrollbar-*` rules, dormant until now
+   because `scrollbar-width` was set on everything; the reset above wakes them
+   for this scroller, and at (0,1,1) they outrank a bare `.nav-sec::...`. The
+   ancestor takes these to (0,2,0), which wins on specificity rather than on
+   where they happen to sit in the file. */
+.sidebar .nav-sec::-webkit-scrollbar,
+.sbp-panel .sbp-list::-webkit-scrollbar { width: 7px; height: 7px; }
+
+.sidebar .nav-sec::-webkit-scrollbar-track,
+.sbp-panel .sbp-list::-webkit-scrollbar-track { background: transparent; }
+
+.sidebar .nav-sec::-webkit-scrollbar-thumb,
+.sbp-panel .sbp-list::-webkit-scrollbar-thumb {
+  background:      var(--sb-thumb);
+  background-clip: padding-box;
+  /* 2px of transparent padding in a 7px gutter leaves a 3px pill. A browser
+     snaps a scrollbar border to whole pixels, so 2.5px in 8px gives 4px. */
+  border:          2px solid transparent;
+  border-radius:   99px;
+}
+
+/* The full teal while the pointer is over the list. */
+.sidebar .nav-sec:hover::-webkit-scrollbar-thumb,
+.sbp-panel .sbp-list:hover::-webkit-scrollbar-thumb {
+  /* The longhand, not `background`: a var() inside a shorthand is dropped from
+     the CSSOM, and getComputedStyle on a pseudo-element does not follow the
+     host's :hover — so the longhand is the only way a test can read this. */
+  background-color: var(--sb-thumb-strong);
+  background-clip:  padding-box;
+}
 @property --nav-fade-t { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --nav-fade-b { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @keyframes nav-scroll-cue {
