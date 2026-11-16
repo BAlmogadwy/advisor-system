@@ -848,11 +848,12 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             self.assertEqual(len({tuple(c) for c in facts["bands"].values()}), 3, theme)
 
     # The export bar: both buttons' boxes, their whole labels, and whether the
-    # bar's own row holds them with the timestamp still pushed to its end.
+    # bar's own row holds them. The bar used to end with a "Last update" stamp
+    # whose placement was checked here; that stamp is gone, so only the buttons
+    # are left to place.
     EXPORT_BAR = """() => {
       const bar = document.querySelector('.sp-export-bar');
       const barBox = bar.getBoundingClientRect();
-      const stamp = document.getElementById('spTimestamp').getBoundingClientRect();
       const buttons = ['spExport', 'spExportRosters'].map(id => {
         const el = document.getElementById(id);
         const box = el.getBoundingClientRect();
@@ -864,18 +865,11 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                  inView: box.left >= -0.5 && box.right <= innerWidth + 0.5 };
       });
       const [plan, rosters] = buttons.map(b => b.box);
-      /* "After" is along the reading direction: to the right in English, to
-       * the left in Arabic. A bar that wrapped puts it on a later line. */
-      const rtl = getComputedStyle(document.documentElement).direction === 'rtl';
-      const after = rtl
-        ? stamp.right <= Math.min(plan.left, rosters.left) + 0.5
-        : stamp.left >= Math.max(plan.right, rosters.right) - 0.5;
       return {
         buttons: buttons.map(({ box, ...rest }) => rest),
         overlap: !(plan.right <= rosters.left + 0.5 || rosters.right <= plan.left + 0.5)
                  && !(plan.bottom <= rosters.top + 0.5 || rosters.bottom <= plan.top + 0.5),
         sameRow: Math.abs(plan.top - rosters.top) < 0.5,
-        stampAfter: after || stamp.top >= Math.max(plan.bottom, rosters.bottom) - 0.5,
         page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       };
     }"""
@@ -899,7 +893,6 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                     self.assertTrue(button["inBar"], f"{where}: {button}")
                     self.assertTrue(button["inView"], f"{where}: {button}")
                 self.assertFalse(bar["overlap"], f"{where}: the buttons overlap")
-                self.assertTrue(bar["stampAfter"], f"{where}: the timestamp is not last")
                 self.assertLessEqual(bar["page"], 0, f"{where}: the page scrolls sideways")
             page.context.close()
 

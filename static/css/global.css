@@ -697,7 +697,6 @@ html[data-theme="dark"] .page-nav,
 html[data-theme="dark"] .skel-card,
 html[data-theme="dark"] .glass-filter-row,
 html[data-theme="dark"] .audit-table-wrap,
-html[data-theme="dark"] .tbl-card tbody tr.cr-row,
 html[data-theme="dark"] .mobile-cards tbody tr {
   background: rgba(255,255,255,0.04) !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
@@ -786,9 +785,7 @@ html[data-theme="dark"] #batchMetrics .metric {
    Worse, the `border-top: … !important` they carry blocks the light theme's
    hover (a border-colour change), so dark's ONLY hover cue was the card this
    rule drew. Their dark hover is restated just below. */
-html[data-theme="dark"] .soft-card:hover,
-html[data-theme="dark"] .tbl-card tbody tr.cr-row:hover,
-html[data-theme="dark"] .tbl-card tbody tr.cr-row:focus-within {
+html[data-theme="dark"] .soft-card:hover {
   background: rgba(255,255,255,0.06) !important;
   box-shadow: 0 4px 16px rgba(0,0,0,0.35) !important;
 }
@@ -987,7 +984,8 @@ html[data-theme="dark"] .table-wrap thead th:hover {
 }
 
 /* ── Dark: mc spark bars ─── */
-html[data-theme="dark"] .mc .spark .b {
+html[data-theme="dark"] .mc .spark .b,
+html[data-theme="dark"] .ps-item .spark .b {
   background: rgba(255,255,255,0.08);
 }
 
@@ -1002,6 +1000,13 @@ html[data-theme="dark"] #advisorportfolio #advTable thead th {
 }
 html[data-theme="dark"] #advisorportfolio .metric {
   border-color: rgba(255,255,255,0.06) !important;
+}
+
+/* The flattened row's dark hover. The light wash is navy-tinted teal, which is
+   DARKER than the dark surface, so it would read as a hole here. */
+html[data-theme="dark"] .tbl-card tbody tr.cr-row:hover,
+html[data-theme="dark"] .tbl-card tbody tr.cr-row:focus-within {
+  background: rgba(255,255,255,0.06) !important;
 }
 
 /* ── Dark: .tbl-card backgrounds ─── */
@@ -3119,7 +3124,7 @@ html body .ux-dialog-body:focus-visible { outline-offset: -2px !important; box-s
 }
 .tbl-actions { display:flex; gap:6px; }
 
-.tbl-card { width:100%; border-collapse:separate; border-spacing:0 8px; }
+.tbl-card { width:100%; border-collapse:collapse; }
 .tbl-card thead th {
   font-size:clamp(0.75rem, 0.715rem + 0.09vw, 0.8125rem); /* 12px → 13px (a11y: min 12px) */ font-weight:700; text-transform:uppercase;
   letter-spacing:0.08em; color:var(--t3); padding:0 14px 4px;
@@ -3130,25 +3135,53 @@ html body .ux-dialog-body:focus-visible { outline-offset: -2px !important; box-s
 /* Arabic letters join and have no capitals: spacing them apart breaks the
    word, and the mono face has no Arabic glyphs (the fallback reads tiny). */
 html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; font-family: inherit; }
-.tbl-card thead th:hover { color:var(--t3); }
-.tbl-card thead th.sorted { color:var(--text-brand); }
-.tbl-card thead th .sort-arrow {
-  /* The only sort cue on some pages: 8px at 30% opacity was 1.5:1 (light) and
-     1.8:1 (dark). At 75% the --t3 arrow measures 3.4:1 (light, on the page) to
-     4.1:1 (dark). */
-  display:inline-block; font-size:var(--text-micro); opacity:0.75; margin-inline-start:3px;
-  transition:opacity .12s;
+/* `:not(.sp-plan-table)` is load-bearing: Section Planning's headers set their
+   own padding and vertical alignment so the 11-column table still fits the
+   pane in Arabic. */
+.tbl-card:not(.sp-plan-table) thead th {
+  border-bottom:1px solid var(--rule); padding-bottom:8px;
 }
-.tbl-card thead th:hover .sort-arrow { opacity:1; }
-.tbl-card thead th.sorted .sort-arrow { opacity:1; color:var(--text-brand); }
+
+/* A sticky header needs a box that SCROLLS. With no scrolling ancestor the
+   header sticks to the viewport instead and floats over the page, so this is
+   opt-in per container rather than global: `.cp-scroll` marks the panel bodies
+   that carry their own max-height and overflow. The fill must stay OPAQUE or
+   rows travel visibly underneath it, and it composites over --bg so no white
+   band appears on the sheet. */
+/* Both selectors, because `.tbl-card thead th[data-sort]` below sets
+   `position:relative` for the arrow and ties with the bare selector on
+   specificity -- and it comes later, so it would win. The [data-sort] form here
+   outranks it, and sticky anchors the arrow just as well as relative. */
+.cp-scroll .tbl-card thead th,
+.cp-scroll .tbl-card thead th[data-sort] {
+  position:sticky; top:0; z-index:2;
+  background: linear-gradient(var(--glass-bg-header), var(--glass-bg-header)),
+              var(--bg);
+}
+.tbl-card thead th:hover { color:var(--t3); }
+.tbl-card thead th[data-dir] { color:var(--text-brand); }
+
+/* Sort affordance, driven by the attributes wireSortableTable actually sets.
+   `.sorted` was never set by anything, and the two hand-written arrows in the
+   markup never moved off "up". Opacity is the measured 0.75 from the rule this
+   replaces -- the --t3 glyph is 3.4:1 (light) to 4.1:1 (dark) there, where the
+   0.28 resting arrow this mirrors measured about 1.5:1. */
+.tbl-card thead th[data-sort] { padding-inline-end:1.5rem; position:relative; }
+.tbl-card thead th[data-sort]::after {
+  content:'↕'; position:absolute; inset-inline-end:0.4rem; top:calc(50% - 2px);
+  transform:translateY(-50%); opacity:0.75; font-size:0.7rem; transition:opacity .12s;
+}
+.tbl-card thead th[data-sort]:hover::after { opacity:1; }
+.tbl-card thead th[data-sort][data-dir="asc"]::after  { content:'↑'; opacity:1; color:var(--text-brand); }
+.tbl-card thead th[data-sort][data-dir="desc"]::after { content:'↓'; opacity:1; color:var(--text-brand); }
 
 /* ── Card rows — glassmorphic table rows ── */
 .tbl-card tbody tr.cr-row {
-  background:var(--glass-bg-data);
-  backdrop-filter:blur(16px) saturate(120%);
-  -webkit-backdrop-filter:blur(16px) saturate(120%);
-  box-shadow:var(--shadow-neu-sm);
-  transition:all .2s var(--ease);
+  background:none;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+  box-shadow:none;
+  transition:background .10s var(--ease);
   cursor:pointer; position:relative;
 }
 .tbl-card tbody tr.cr-row td {
@@ -3158,24 +3191,11 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
   vertical-align:middle; font-size:clamp(0.75rem, 0.715rem + 0.09vw, 0.8125rem); /* 12px → 13px */
 }
 .tbl-card tbody tr.cr-row td:first-child {
-  border-radius:var(--radius) 0 0 var(--radius);
   border-inline-start:3px solid transparent;
   transition:border-color .2s var(--ease);
 }
-.tbl-card tbody tr.cr-row td:last-child {
-  border-radius:0 var(--radius) var(--radius) 0;
-  border-inline-end:var(--border-subtle);
-}
-[dir="rtl"] .tbl-card tbody tr.cr-row td:first-child {
-  border-radius:0 var(--radius) var(--radius) 0;
-}
-[dir="rtl"] .tbl-card tbody tr.cr-row td:last-child {
-  border-radius:var(--radius) 0 0 var(--radius);
-}
 .tbl-card tbody tr.cr-row:hover {
-  transform:translateY(-2px);
-  box-shadow:var(--shadow-neu);
-  background:var(--glass-bg);
+  background:color-mix(in srgb, var(--teal) 7%, transparent);
 }
 .tbl-card tbody tr.cr-row:hover td:first-child {
   border-inline-start-color:var(--teal);
@@ -3186,6 +3206,12 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 .tbl-card tbody tr.cr-row.selected {
   background:color-mix(in srgb, var(--teal) 4%, transparent);
 }
+/* Without this the selected rule, which comes later and ties on specificity,
+   would answer a hover over a selected row with a FAINTER wash than the row
+   already had. */
+.tbl-card tbody tr.cr-row.selected:hover {
+  background:color-mix(in srgb, var(--teal) 10%, transparent);
+}
 .tbl-card tbody tr.cr-row.selected td:first-child {
   border-inline-start-color:var(--teal);
 }
@@ -3193,10 +3219,7 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
   border-inline-start-color:var(--teal);
 }
 
-/* Group separator every 3 rows for visual rhythm */
-.tbl-card tbody tr.cr-row:nth-child(3n+4) td {
-  padding-top:22px;
-}
+
 
 /* Cell typography */
 .cr-id {
@@ -3427,12 +3450,11 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
   background: color-mix(in srgb, var(--teal) 5%, transparent);
 }
 
-.mc-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.mc-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
 .mc-icon {
   width:38px; height:38px; border-radius:10px;
   display:flex; align-items:center; justify-content:center;
   border:none;
-  box-shadow:var(--shadow-neu-inset);
 }
 .mc-icon .i { width:18px; height:18px; }
 .mc-lbl {
@@ -3467,11 +3489,11 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 /* MC color variants */
 .mc-teal { --mc-c:var(--teal); }
 .mc-teal .mc-icon  { background:color-mix(in srgb, var(--teal) 8%, transparent); color:var(--text-brand); }
-.mc-teal .mc-val   { color:var(--text-brand); }
+.mc-teal .mc-val   { color:var(--t0); }
 
 .mc-royal { --mc-c:var(--royal); }
 .mc-royal .mc-icon { background:rgba(64,86,227,0.08); color:var(--royal); }
-.mc-royal .mc-val  { color:var(--royal); }
+.mc-royal .mc-val  { color:var(--t0); }
 
 .mc-err { --mc-c:var(--danger); }
 .mc-err .mc-icon   { background:rgba(192,48,48,0.08); color:var(--danger); }
@@ -3479,11 +3501,54 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 
 .mc-sky { --mc-c:var(--sky); }
 .mc-sky .mc-icon   { background:rgba(0,174,218,0.08); color:var(--sky); }
-.mc-sky .mc-val    { color:var(--sky); }
+.mc-sky .mc-val    { color:var(--t0); }
 
 .mc-warn { --mc-c:var(--warning); }
 .mc-warn .mc-icon  { background:rgba(154,106,8,0.08); color:var(--sev-warning); }
 .mc-warn .mc-val   { color:var(--sev-warning); }
+
+/* ── Page summary line ──────────────────────────────────────────────
+   What the .mc tile rows became. A row of them cost 111px of a 950px viewport
+   -- a third of the chrome above the fold -- while largely restating the
+   filter the user had just typed: "PROGRAM / COE" sat two rows under the box
+   they typed COE into. The same figures read fine on one ~41px line, so the
+   graph and the table a screen exists for start above the fold.
+   The containers keep their ids and their d-none, and the values keep theirs,
+   so the JS that fills all six is untouched.
+   ──────────────────────────────────────────────────────────────────── */
+.page-summary {
+  display:     flex;
+  flex-wrap:   wrap;
+  align-items: baseline;
+  row-gap:     6px;
+  padding:     10px 0;
+  border-top:  1px solid var(--rule);
+}
+.ps-item { display:inline-flex; align-items:baseline; gap:7px; }
+/* The separator belongs to the item that FOLLOWS it, so a line that wraps
+   never opens with a stray dot. */
+.ps-item:not(:first-child)::before {
+  content:'·'; color:var(--t4); opacity:0.55; margin:0 14px;
+}
+.ps-lbl {
+  font-size:var(--text-micro); font-weight:700; text-transform:uppercase;
+  letter-spacing:0.07em; color:var(--t4); white-space:nowrap;
+}
+/* Arabic letters join and have no capitals: spacing them apart breaks the word. */
+html[dir="rtl"] .ps-lbl { letter-spacing:0; text-transform:none; }
+.ps-val {
+  font-family:var(--font-serif); font-size:1.0625rem; line-height:1.25;
+  letter-spacing:-0.01em; color:var(--t0); white-space:nowrap;
+}
+/* Severity keeps its colour, because here the colour is the message. The
+   decorative tones deliberately do not: the tile row's three differently
+   coloured peer figures are what the summary line set out to fix. */
+.ps-item.mc-err  .ps-val { color:var(--sev-critical); }
+.ps-item.mc-warn .ps-val { color:var(--sev-warning); }
+
+/* The student panel's sparklines ride along -- they are data, not a restated
+   filter -- at line height rather than the 28px tile height. */
+.ps-item .spark { height:14px; margin:0; align-self:center; }
 
 /* ============================================================
    REC — Recommendation Item Cards
@@ -5103,7 +5168,9 @@ pre, .pre-output {
    ============================================================ */
 .table-wrap thead th[data-sort] {
   padding-inline-end: 1.5rem; /* room for arrow */
-  position: relative;
+  /* No `position` here: it would override the sticky set on `.table-wrap thead
+     th` above, which is both earlier and less specific. Sticky already anchors
+     the ::after arrow. */
 }
 
 .table-wrap thead th[data-sort]::after {
@@ -5112,12 +5179,15 @@ pre, .pre-output {
   inset-inline-end: 0.4rem;
   top:       50%;
   transform: translateY(-50%);
-  opacity:   0.28;
+  /* 0.28 put this glyph at roughly 1.5:1 -- the project's own .sort-arrow rule
+     had already measured that and settled on 0.75, where --t3 reads 3.4:1
+     (light) to 4.1:1 (dark). Both tables now use that value. */
+  opacity:   0.75;
   font-size: 0.7rem;
   transition: opacity 0.1s;
 }
 
-.table-wrap thead th[data-sort]:hover::after { opacity: 0.55; }
+.table-wrap thead th[data-sort]:hover::after { opacity: 1; }
 
 .table-wrap thead th[data-sort][data-dir="asc"]::after  { content: '↑'; opacity: 0.85; }
 .table-wrap thead th[data-sort][data-dir="desc"]::after { content: '↓'; opacity: 0.85; }
@@ -9709,7 +9779,6 @@ html[data-theme="dark"] .btn-export {
 
     /* Export bar */
     .sp-export-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 0; }
-    .sp-export-bar .sp-ts { font-size: max(var(--fs-floor), .72rem); color: var(--t3); margin-inline-start: auto; }
 
     /* Alert */
     .sp-alert { padding: 8px 14px; border-radius: var(--radius); font-size: .82rem; margin-bottom: 10px; }
@@ -9773,6 +9842,10 @@ html[data-theme="dark"] .btn-export {
        make the table wider than the pane at 1440px in Arabic, in a wider font
        and with every programme's tags. */
     .sp-page .sp-plan-table thead th { white-space: normal; padding-inline: 8px; vertical-align: bottom; }
+    /* The line above sets padding-inline wholesale and ties with
+       `.tbl-card thead th[data-sort]`, winning on order -- so the sort arrow's
+       gutter has to be restated at a specificity that beats it. */
+    .sp-page .sp-plan-table thead th[data-sort] { padding-inline-end: 1.5rem; }
     /* When it does scroll sideways (769px and up), the course code stays in
        view. It is opaque only while the box is scrolled (the page script
        sets .sp-scrolled), so at rest it looks like every other column. */

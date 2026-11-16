@@ -11,24 +11,12 @@
         </div>
       </div>
       <div id="scrapeSourceMeta" class="meta-banner meta-info mb-10" role="status" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}جارٍ فحص طلاب قاعدة البيانات…{% else %}Checking database student roster…{% endif %}</div>
-      <div class="scrape-metrics-row" id="scrapeMetrics">
-        <div class="flex-field"><div class="mc mc-teal">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Status</div></div>
-          <div class="mc-val mc-val-lg" id="scrapeMetricStatus"><span class="status-dot status-stopped"></span>Idle</div>
-        </div></div>
-        <div style="flex:0.6;min-width:100px"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg></span></div><div class="mc-lbl">PID</div></div>
-          <div class="mc-val mc-val-lg" id="scrapeMetricPid">-</div>
-        </div></div>
-        <div class="flex-field"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div><div class="mc-lbl">Started</div></div>
-          <div class="mc-val mc-val-mono-sm" id="scrapeMetricStarted">-</div>
-        </div></div>
-        <div class="flex-field"><div class="mc mc-warn">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span></div><div class="mc-lbl">Stopped</div></div>
-          <div class="mc-val mc-val-mono-sm" id="scrapeMetricStopped">-</div>
-        </div></div>
-      </div>
+      <div id="scrapeMetrics" class="page-summary">
+          <span class="ps-item mc-teal"><span class="ps-lbl">Status</span><span class="ps-val" id="scrapeMetricStatus"><span class="status-dot status-stopped"></span>Idle</span></span>
+          <span class="ps-item mc-royal"><span class="ps-lbl">PID</span><span class="ps-val" id="scrapeMetricPid">-</span></span>
+          <span class="ps-item mc-sky"><span class="ps-lbl">Started</span><span class="ps-val" id="scrapeMetricStarted">-</span></span>
+          <span class="ps-item mc-warn"><span class="ps-lbl">Stopped</span><span class="ps-val" id="scrapeMetricStopped">-</span></span>
+        </div>
       <!-- Oracle Student List Generator -->
       <div class="cpanel mb-14">
         <div class="cp-h">

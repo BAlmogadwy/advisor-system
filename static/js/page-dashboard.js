@@ -382,7 +382,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchSummary').href = '#';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
     const bpEl = document.getElementById('batchPager'); if (bpEl) bpEl.innerHTML = '';
-    setUpdated('batchUpdated');
     syncExportCenterLinks();
   };
 
@@ -399,7 +398,7 @@ const IS_AR = document.documentElement.lang === 'ar';
   }
 
   q('runBatch').onclick = async () => {
-    if (!requireFields(['batchYear','batchSemester'], 'batchUpdated', T.batchPreview)) return;
+    if (!requireFields(['batchYear','batchSemester'], 'batchMeta', T.batchPreview)) return;
     const runBtn = q('runBatch');
       showSkeleton('batchTable', 5);
     runBtn.disabled = true;
@@ -421,14 +420,17 @@ const IS_AR = document.documentElement.lang === 'ar';
       data = await res.json();
     } catch (err) {
       if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Network error</td></tr>`;
+      q('batchMeta').textContent = preciseError(null, null, T.batchLoadFailed, err);
+      q('batchMeta').className = 'meta-banner meta-danger mb-14';
       q('batchMetrics').classList.add('d-none');
-      setUpdated('batchUpdated', true);
       notify.error(T.batchLoadFailed, err.message || String(err));
       runBtn.disabled = false;
       runBtn.textContent = T.runPreview;
       return;
     }
 
+    q('batchMeta').textContent = '';
+    q('batchMeta').className = 'meta-banner meta-danger mb-14 d-none';
     q('batchCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
     q('batchXlsx').href = `/export/aggregate.xlsx?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
     q('batchSummary').href = url;
@@ -439,7 +441,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       }
       q('batchTopChips').innerHTML = `<div class="empty-note">${T.batchRecFailed}</div>`;
       q('batchMetrics').classList.add('d-none');
-      setUpdated('batchUpdated', true);
       runBtn.disabled = false;
       runBtn.textContent = T.runPreview;
       return;
@@ -473,7 +474,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       }
     }
 
-    setUpdated('batchUpdated');
     toast(T.batchLoaded, true);
     runBtn.disabled = false;
     runBtn.textContent = T.runPreview;
@@ -579,7 +579,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       }
     } catch (err) {
       notify.error(T.noPrereqRows, err.message || String(err));
-      setUpdated('preUpdated', true);
       btn.disabled = false; btn.textContent = T.load;
       return;
     }
@@ -594,7 +593,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       const lc = q('preLinkCount'); if (lc) lc.classList.add('d-none');
       const px = q('preXlsx'); if (px) px.classList.add('d-none');
       preGraph.innerHTML = `<div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">${T.noGraphData}</div><div class="empty-hint">${T.noPrereqMap}</div></div>`;
-      setUpdated('preUpdated', true);
       btn.disabled = false; btn.textContent = T.load; return;
     }
 
@@ -624,7 +622,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       preXlsx.classList.remove('d-none');
     }
 
-    setUpdated('preUpdated');
     toast(T.prereqsLoaded, true);
     btn.disabled = false; btn.textContent = T.load;
   };
@@ -688,7 +685,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       data = await res.json();
     } catch (err) {
       notify.error(T.noPlanRows, err.message || String(err));
-      setUpdated('planUpdated', true);
       btn.disabled = false;
       btn.textContent = T.loadPlan;
       return;
@@ -715,7 +711,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('planMetrics').classList.add('d-none');
       const emptyContext = q('planContext');
       if (emptyContext) emptyContext.textContent = '';
-      setUpdated('planUpdated', true);
       btn.disabled = false;
       btn.textContent = T.loadPlan;
       return;
@@ -859,7 +854,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       });
     });
 
-    setUpdated('planUpdated');
     toast(T.planLoaded, true);
     btn.disabled = false;
     btn.textContent = T.loadPlan;
@@ -1752,7 +1746,9 @@ const IS_AR = document.documentElement.lang === 'ar';
     if (!missing.length) return true;
     const msg = `${label}: missing required fields (${missing.join(', ')})`;
     const meta = q(metaId);
-    if (meta) meta.textContent = msg;
+    /* A successful run hides its banner; a later validation failure has to
+       bring it back or the message lands in a hidden element. */
+    if (meta) { meta.textContent = msg; meta.classList.remove('d-none'); }
     toast(msg, false);
     return false;
   }
@@ -1794,12 +1790,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     /* Only reach here on repeated genuine network failures */
     throw lastNetworkErr || new Error('Network request failed after retries');
-  }
-
-  function setUpdated(elId, failed = false) {
-    const el = q(elId);
-    if (!el) return;
-    el.textContent = `${T.lastUpdate}: ${new Date().toLocaleTimeString()}${failed ? ' (failed)' : ''}`;
   }
 
   function preciseError(res, data, fallback, err) {
@@ -1860,7 +1850,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('dbgMeta').textContent = preciseError(null, null, 'Unable to load debug report.', err);
       q('dbgMeta').className = 'meta-banner meta-danger';
       q('dbgSummary').classList.add('d-none');
-      setUpdated('dbgUpdated', true);
       toast(T.debugFailed, false);
       btn.disabled = false;
       btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
@@ -1872,14 +1861,14 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('dbgMeta').textContent = preciseError(res, data, T.failedLoadDebug);
       q('dbgMeta').className = 'meta-banner meta-warn';
       q('dbgSummary').classList.add('d-none');
-      setUpdated('dbgUpdated', true);
       btn.disabled = false;
       btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
       return;
     }
-    q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-');
-    if (data.filters?.mode) q('dbgMeta').textContent += ` • mode=${data.filters.mode}`;
-    q('dbgMeta').className = 'meta-banner meta-info';
+    /* The count is the summary line's first figure; section, program, join and
+       mode are the filter inputs directly above, unchanged since the run. */
+    q('dbgMeta').textContent = '';
+    q('dbgMeta').className = 'meta-banner meta-info d-none';
     const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
     q('dbgCount').textContent = String(data.count || 0);
     q('dbgWithRec').textContent = String(withRec);
@@ -1928,7 +1917,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       });
     });
 
-    setUpdated('dbgUpdated');
     toast(T.debugLoaded, true);
     btn.disabled = false;
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
@@ -1983,14 +1971,11 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('cmCourseCount').textContent = n;
     q('cmConflictCount').textContent = conflictCount;
 
-    // Update meta
-    const sec = q('cmSection').value || '-';
-    const prog = q('cmProgram').value || '-';
-    const join = q('cmJoin').value || '-';
-    q('cmMeta').textContent = IS_AR
-      ? `تم تحميل ${data.student_count} طالب • الفلاتر: الشعبة=${sec} البرنامج=${prog} سنة الالتحاق=${join}.`
-      : `Loaded ${data.student_count} students \u2022 filters: section=${sec} program=${prog} join=${join}.`;
-    q('cmMeta').className = 'meta-banner meta-info meta-mono mb-14';
+    /* Student count is the summary line's first figure and the filters are the
+       inputs above, so the message is gone -- and the three consts that only
+       fed it went with it. */
+    q('cmMeta').textContent = '';
+    q('cmMeta').className = 'meta-banner meta-info meta-mono mb-14 d-none';
 
     // Build matrix table
     let html = '<table class="cm-table"><thead><tr><th class="cm-corner"></th>';
@@ -2044,7 +2029,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('elMeta').textContent = preciseError(null, null, 'Unable to load eligibility report.', err);
       q('elMeta').className = 'meta-banner meta-danger';
       q('elSummary').classList.add('d-none');
-      setUpdated('elUpdated', true);
       tbody.innerHTML = `<tr><td class="text-danger">${T.networkErrorEligibility}</td></tr>`;
       toast(T.eligibilityFailed, false);
       btn.disabled = false;
@@ -2055,7 +2039,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('elMeta').textContent = preciseError(res, data, T.failedLoadEligibility);
       q('elMeta').className = 'meta-banner meta-warn';
       q('elSummary').classList.add('d-none');
-      setUpdated('elUpdated', true);
       tbody.innerHTML = `<tr><td class="text-danger">${T.failedLoadEligibility}</td></tr>`;
       btn.disabled = false;
       btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.check;
@@ -2067,8 +2050,10 @@ const IS_AR = document.documentElement.lang === 'ar';
       (p.eligible_student_ids || []).forEach((sid) => eligibleIds.push(sid));
     });
 
-    q('elMeta').textContent = `Course ${data.course_code} • mode=${data.strict_passed_only ? 'strict' : 'relaxed'} • IDs=${eligibleIds.length}`;
-    q('elMeta').className = 'meta-banner meta-info';
+    /* Was: `Course X • mode=Y • IDs=N` -- the same three values the summary
+       line below writes, two lines later in this same function. */
+    q('elMeta').textContent = '';
+    q('elMeta').className = 'meta-banner meta-info d-none';
     q('elCount').textContent = String(eligibleIds.length);
     q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
     q('elCourseBadge').textContent = String(data.course_code || '-');
@@ -2079,7 +2064,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       ? eligibleIds.map((sid) => `<tr class="cr-row"><td><span class="cr-id">${sid}</span></td></tr>`).join('')
       : `<tr><td class="empty-note">${T.noEligibleIds}</td></tr>`;
 
-    setUpdated('elUpdated');
     toast(T.eligibilityLoaded, true);
     btn.disabled = false;
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.check;
@@ -2093,14 +2077,12 @@ const IS_AR = document.documentElement.lang === 'ar';
       const { res, data } = await fetchJsonWithRetry('/report/advisors/');
       if (!res.ok || !Array.isArray(data.items)) {
         q('advMeta').textContent = preciseError(res, data, 'Failed to load advisors list.');
-        setUpdated('advUpdated', true);
         return;
       }
       sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` + data.items.map((a) => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
       if (selectAdvisorId) sel.value = selectAdvisorId;
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      setUpdated('advUpdated', true);
     }
   }
 
@@ -2161,7 +2143,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       if (!email) setAdvisorFieldError('advEmail', 'advEmailErr', T.emailReq);
       if (!department) setAdvisorFieldError('advDept', 'advDeptErr', T.deptReqShort);
       q('advMeta').textContent = T.fixFieldsRetry;
-      setUpdated('advUpdated', true);
       toast('Advisor save failed', false);
       return;
     }
@@ -2170,7 +2151,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     if (!emailOk) {
       setAdvisorFieldError('advEmail', 'advEmailErr', T.emailFormatError);
       q('advMeta').textContent = T.fixFieldsRetry;
-      setUpdated('advUpdated', true);
       toast('Advisor save failed', false);
       return;
     }
@@ -2190,17 +2170,14 @@ const IS_AR = document.documentElement.lang === 'ar';
         const msg = preciseError(res, data, 'Failed to save advisor.');
         mapAdvisorSaveErrorToFields(msg);
         q('advMeta').textContent = msg;
-        setUpdated('advUpdated', true);
         toast('Advisor save failed', false);
         return;
       }
       q('advMeta').textContent = T.advisorSaved(advisor_id, full_name);
-      setUpdated('advUpdated');
       toast(T.advisorSavedToast, true);
       await refreshAdvisorsDropdown(advisor_id);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      setUpdated('advUpdated', true);
       toast('Advisor save failed', false);
     } finally {
       btn.disabled = false;
@@ -2218,16 +2195,13 @@ const IS_AR = document.documentElement.lang === 'ar';
       const data = await res.json();
       if (!res.ok) {
         q('advMeta').textContent = preciseError(res, data, T.enableFailed);
-        setUpdated('advUpdated', true);
         toast(T.enableColumnFailed, false);
         return;
       }
       q('advMeta').textContent = data.added ? T.columnCreated : T.columnExists;
-      setUpdated('advUpdated');
       toast(T.columnReady, true);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      setUpdated('advUpdated', true);
       toast(T.enableColumnFailed, false);
     } finally {
       btn.disabled = false;
@@ -2254,19 +2228,16 @@ const IS_AR = document.documentElement.lang === 'ar';
       if (!res.ok) {
         q('advMeta').textContent = preciseError(res, data, 'Seed advisors failed.');
         outputEl.textContent = data.error || 'Unknown error';
-        setUpdated('advUpdated', true);
         toast(IS_AR ? 'فشل بذر المرشدين' : 'Seed advisors failed', false);
         return;
       }
       q('advMeta').textContent = IS_AR ? 'تم بذر المرشدين بنجاح' : 'Advisors seeded successfully';
       outputEl.textContent = data.output || 'Done';
-      setUpdated('advUpdated');
       toast(IS_AR ? 'تم بذر المرشدين' : 'Advisors seeded', true);
       await refreshAdvisorsDropdown();
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       outputEl.textContent = err.message || 'Network error';
-      setUpdated('advUpdated', true);
       toast(IS_AR ? 'فشل بذر المرشدين' : 'Seed advisors failed', false);
     } finally {
       btn.disabled = false;
@@ -2279,7 +2250,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     const csv_text = (q('advAssignCsv').value || '').trim();
     if (!csv_text) {
       q('advMeta').textContent = T.pasteCsvFirst;
-      setUpdated('advUpdated', true);
       return;
     }
 
@@ -2295,16 +2265,13 @@ const IS_AR = document.documentElement.lang === 'ar';
       const data = await res.json();
       if (!res.ok) {
         q('advMeta').textContent = preciseError(res, data, T.csvMappingFailed);
-        setUpdated('advUpdated', true);
         toast(T.mappingFailed, false);
         return;
       }
       q('advMeta').textContent = T.mappingApplied(data.updated, data.errors_count);
-      setUpdated('advUpdated');
       toast(T.mappingAppliedToast, true);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      setUpdated('advUpdated', true);
       toast(T.mappingFailed, false);
     } finally {
       btn.disabled = false;
@@ -2320,7 +2287,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     if (!sidRaw || !Number.isInteger(sid) || sid <= 0 || !aidRaw) {
       q('advMeta').textContent = T.provideStudentAdvisor;
-      setUpdated('advUpdated', true);
       toast(T.singleAssignFailed, false);
       return;
     }
@@ -2337,16 +2303,13 @@ const IS_AR = document.documentElement.lang === 'ar';
       const data = await res.json();
       if (!res.ok) {
         q('advMeta').textContent = preciseError(res, data, T.failedAssignStudent);
-        setUpdated('advUpdated', true);
         toast(T.singleAssignFailed, false);
         return;
       }
       q('advMeta').textContent = T.assignResult(sid, aidRaw, data.updated, data.errors_count);
-      setUpdated('advUpdated');
       toast(T.studentAssigned, true);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      setUpdated('advUpdated', true);
       toast(T.singleAssignFailed, false);
     } finally {
       btn.disabled = false;
@@ -2389,7 +2352,6 @@ const IS_AR = document.documentElement.lang === 'ar';
       ({ res, data } = await fetchJsonWithRetry(url));
     } catch (err) {
       q('hpMeta').textContent = preciseError(null, null, 'Network request failed.', err);
-      setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Network error while loading report.</td></tr>';
       requestSidebarBadgeUpdate();
       toast(T.hpFailed, false);
@@ -2399,7 +2361,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
     if (!res.ok || !Array.isArray(data.items)) {
       q('hpMeta').textContent = preciseError(res, data, 'Failed to load report.');
-      setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load report.</td></tr>';
       requestSidebarBadgeUpdate();
       btn.disabled = false;
@@ -2409,7 +2370,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     q('hpMeta').textContent = T.hpMeta(data.count, data.params?.discount, data.params?.min_score, data.params?.top_k_per_student);
     tbody.innerHTML = data.items.map((r) => `<tr><td>${r.student_id}</td><td>${r.program}</td><td>${(r.missing_this_parity || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${(r.missing_other || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${r.missing_total}</td></tr>`).join('') || `<tr><td colspan="5" class="empty-note">${T.noFlaggedStudents}</td></tr>`;
-    setUpdated('hpUpdated');
     toast(T.hpLoaded, true);
     btn.disabled = false;
     btn.textContent = T.runReport;

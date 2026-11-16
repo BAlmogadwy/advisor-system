@@ -355,8 +355,8 @@
       : `min-width:${svgW}px;max-width:${pgMaxW}px;height:auto`;
     let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="${sizing}" role="img">`;
     s += '<defs>';
-    s += `<marker id="pgA" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--teal)" opacity="0.78"/></marker>`;
-    s += `<marker id="pgAW" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--pg-warn)" opacity="0.9"/></marker>`;
+    s += `<marker id="pgA" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--teal)" opacity="0.78"/></marker>`;
+    s += `<marker id="pgAW" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--pg-warn)" opacity="0.9"/></marker>`;
     s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(17,17,68,0.12)"/></filter>`;
     s += '</defs>';
 

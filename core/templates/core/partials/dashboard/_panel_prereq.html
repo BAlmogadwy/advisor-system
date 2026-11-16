@@ -10,21 +10,11 @@
         </div>
       </div>
       <!-- Metrics -->
-      <div id="preMetrics" class="d-none metrics-row-14 mb-16">
-        <div class="flex-card"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
-          <div class="mc-val" id="preMetricProgram">—</div>
-        </div></div>
-        <div class="flex-card"><div class="mc mc-teal">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Courses</div></div>
-          <div class="mc-val" id="preMetricCourses">0</div>
-        </div></div>
-        <div class="flex-card"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span></div><div class="mc-lbl">Prereq Links</div></div>
-          <div class="mc-val" id="preMetricLinks">0</div>
-        </div></div>
-      </div>
-      <div id="preUpdated" class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+      <div id="preMetrics" class="page-summary d-none mb-16">
+          <span class="ps-item mc-royal"><span class="ps-lbl">Program</span><span class="ps-val" id="preMetricProgram">—</span></span>
+          <span class="ps-item mc-teal"><span class="ps-lbl">Courses</span><span class="ps-val" id="preMetricCourses">0</span></span>
+          <span class="ps-item mc-sky"><span class="ps-lbl">Prereq Links</span><span class="ps-val" id="preMetricLinks">0</span></span>
+        </div>
       <!-- Graph full width on top -->
       <div class="cpanel mb-3">
         <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span>
@@ -40,7 +30,7 @@
       <!-- Table below -->
       <div class="cpanel">
         <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b d-none" id="preLinkCount"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
-        <div class="cp-b" style="padding:0;max-height:420px;overflow-y:auto">
+        <div class="cp-b cp-scroll" style="padding:0;max-height:420px;overflow-y:auto">
           <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
             <thead><tr><th scope="col" data-sort="text">Course</th><th class="text-center" scope="col" style="width:32px">→</th><th scope="col" data-sort="text">Requires</th></tr></thead>
             <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
