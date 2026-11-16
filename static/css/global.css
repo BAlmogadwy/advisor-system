@@ -303,11 +303,15 @@
      smallest steps carry a px floor. 11px is the least any text may be (micro
      labels: chips, kickers, counts); 12px is the least DATA may be. */
   --fs-sm:          0.72rem;   /* legacy alias: .pill (unchanged size) */
-  --text-2xs:       max(11px, 0.6875rem);
   /* The floor for the micro-labels that used to sit at 8-10.9px (badges, kickers,
      counts, matrix cells). 11px in Latin; 12px in Arabic, set below under
      html[dir="rtl"], because Arabic at 11px is not legible. */
   --text-micro:     max(11px, 0.6875rem);
+  /* The name the TYPOGRAPHY SCALE block below documents. It was a second copy
+     of the literal, so the Arabic floor -- which only ever redefined
+     --text-micro -- missed all 18 rules that used this name, and they stayed
+     at 11px in Arabic. An alias cannot drift out of step again. */
+  --text-2xs:       var(--text-micro);
   --text-xs:        max(12px, 0.75rem);
   --text-sm:        max(12.5px, 0.8125rem);
   --text-base:      0.875rem;

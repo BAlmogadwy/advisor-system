@@ -1,56 +1,64 @@
-    <div id="overview" class="panel active" role="region" aria-label="Dashboard Command Center">
+    {% comment %}
+      Every other dashboard panel carries its Arabic through the
+      `{% if LANGUAGE_CODE == 'ar' %}` idiom; this one -- the panel that opens
+      by default -- had none at all, so an Arabic session landed on an English
+      screen. The strings below are the panel's own chrome. Values that come
+      from `command_center` (scenario names, statuses, actor names) are data
+      and stay as the database holds them.
+    {% endcomment %}
+    <div id="overview" class="panel active" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}مركز قيادة لوحة التحكم{% else %}Dashboard Command Center{% endif %}">
       <section class="dcc-hero" aria-labelledby="dccTitle">
         <div>
-          <div class="dcc-eyebrow">Live Command Center</div>
-          <h2 class="dcc-title" id="dccTitle">Good morning, {{ user.get_short_name|default:user.username }}</h2>
+          <div class="dcc-eyebrow">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة المباشر{% else %}Live Command Center{% endif %}</div>
+          <h2 class="dcc-title" id="dccTitle">{% if LANGUAGE_CODE == 'ar' %}أهلاً، {{ user.get_short_name|default:user.username }}{% else %}Good morning, {{ user.get_short_name|default:user.username }}{% endif %}</h2>
           <div class="dcc-subtitle">
-            Scope-aware overview for advising, timetable building, audit integrity, and operational readiness.
+            {% if LANGUAGE_CODE == 'ar' %}نظرة عامة ضمن نطاق صلاحياتك: الإرشاد، وبناء الجداول، وسلامة سجل التدقيق، والجاهزية التشغيلية.{% else %}Scope-aware overview for advising, timetable building, audit integrity, and operational readiness.{% endif %}
           </div>
         </div>
         <div class="dcc-hero-status {% if command_center.audit.ok %}dcc-status-ok{% else %}dcc-status-danger{% endif %}">
           <span class="dcc-status-dot" aria-hidden="true"></span>
-          <span>{% if command_center.audit.ok %}Audit chain OK{% else %}Audit chain failed{% endif %}</span>
+          <span>{% if command_center.audit.ok %}{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Audit chain OK{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Audit chain failed{% endif %}{% endif %}</span>
           <strong>{{ command_center.audit.checked }}</strong>
-          <span>records checked</span>
+          <span>{% if LANGUAGE_CODE == 'ar' %}سجلات تم فحصها{% else %}records checked{% endif %}</span>
         </div>
       </section>
 
-      <section class="dcc-kpis" aria-label="Executive metrics">
+      <section class="dcc-kpis" aria-label="{% if LANGUAGE_CODE == 'ar' %}المؤشرات الرئيسية{% else %}Executive metrics{% endif %}">
         {% comment %}
           `dcc-kpi-primary` is gone with the card: it painted a teal-to-white
           gradient over the first tile, which on a sheet is just a stain. The
           four figures are peers.
         {% endcomment %}
         <a class="dcc-kpi" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
-          <span class="dcc-kpi-label">Students in scope</span>
+          <span class="dcc-kpi-label">{% if LANGUAGE_CODE == 'ar' %}الطلاب ضمن النطاق{% else %}Students in scope{% endif %}</span>
           <strong>{{ command_center.kpis.students }}</strong>
-          <span class="dcc-kpi-note">{{ command_center.kpis.mapped_students }} advisor-mapped</span>
+          <span class="dcc-kpi-note">{% if LANGUAGE_CODE == 'ar' %}مرتبطون بمرشد: {{ command_center.kpis.mapped_students }}{% else %}{{ command_center.kpis.mapped_students }} advisor-mapped{% endif %}</span>
         </a>
         <a class="dcc-kpi" href="#highpriority" onclick="event.preventDefault();activatePanel('highpriority');history.pushState(null,'','#highpriority')">
-          <span class="dcc-kpi-label">Action queue</span>
+          <span class="dcc-kpi-label">{% if LANGUAGE_CODE == 'ar' %}قائمة الإجراءات{% else %}Action queue{% endif %}</span>
           <strong>{{ command_center.kpis.urgent }}</strong>
-          <span class="dcc-kpi-note">risk, zero-load, audit, and timetable signals</span>
+          <span class="dcc-kpi-note">{% if LANGUAGE_CODE == 'ar' %}مؤشرات المخاطر وانعدام العبء والتدقيق والجداول{% else %}risk, zero-load, audit, and timetable signals{% endif %}</span>
         </a>
         <a class="dcc-kpi" href="/timetable-workspace/split/?scenario={{ command_center.timetable.scenario_id }}">
-          <span class="dcc-kpi-label">Latest timetable</span>
+          <span class="dcc-kpi-label">{% if LANGUAGE_CODE == 'ar' %}أحدث جدول{% else %}Latest timetable{% endif %}</span>
           <strong>{{ command_center.timetable.cross_board_affected_students }}</strong>
-          <span class="dcc-kpi-note">{{ command_center.timetable.cross_board_clashes }} cross-board section clashes</span>
+          <span class="dcc-kpi-note">{% if LANGUAGE_CODE == 'ar' %}تعارضات شعب بين اللوحات: {{ command_center.timetable.cross_board_clashes }}{% else %}{{ command_center.timetable.cross_board_clashes }} cross-board section clashes{% endif %}</span>
         </a>
         <a class="dcc-kpi" href="#eligibility" onclick="event.preventDefault();activatePanel('eligibility');history.pushState(null,'','#eligibility')">
-          <span class="dcc-kpi-label">85+ earned credits</span>
+          <span class="dcc-kpi-label">{% if LANGUAGE_CODE == 'ar' %}85+ ساعة مكتسبة{% else %}85+ earned credits{% endif %}</span>
           <strong>{{ command_center.kpis.near_graduation }}</strong>
-          <span class="dcc-kpi-note">near-graduation students</span>
+          <span class="dcc-kpi-note">{% if LANGUAGE_CODE == 'ar' %}طلاب قاربوا التخرج{% else %}near-graduation students{% endif %}</span>
         </a>
       </section>
 
-      <section class="dcc-grid" aria-label="Operational panels">
+      <section class="dcc-grid" aria-label="{% if LANGUAGE_CODE == 'ar' %}اللوحات التشغيلية{% else %}Operational panels{% endif %}">
         <div class="dcc-panel dcc-panel-wide">
           <div class="dcc-panel-head">
             <div>
-              <div class="dcc-panel-kicker">Where to work first</div>
-              <h3>Operational Triage</h3>
+              <div class="dcc-panel-kicker">{% if LANGUAGE_CODE == 'ar' %}من أين تبدأ{% else %}Where to work first{% endif %}</div>
+              <h3>{% if LANGUAGE_CODE == 'ar' %}الفرز التشغيلي{% else %}Operational Triage{% endif %}</h3>
             </div>
-            <a href="/audit-explorer/" class="dcc-link">Open Audit</a>
+            <a href="/audit-explorer/" class="dcc-link">{% if LANGUAGE_CODE == 'ar' %}فتح سجل التدقيق{% else %}Open Audit{% endif %}</a>
           </div>
           <div class="dcc-triage">
             {% comment %}
@@ -60,35 +68,35 @@
               cannot separate the hues, and nothing about ordering to anyone.
             {% endcomment %}
             <a class="dcc-triage-row {% if command_center.audit.ok %}is-clean{% else %}is-danger{% endif %}" href="/audit-explorer/">
-              <span class="dcc-triage-dot">{% if command_center.audit.ok %}Clear{% else %}Blocks{% endif %}</span>
+              <span class="dcc-triage-dot">{% if command_center.audit.ok %}{% if LANGUAGE_CODE == 'ar' %}سليم{% else %}Clear{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}يُعيق{% else %}Blocks{% endif %}{% endif %}</span>
               <span>
-                <strong>Audit integrity</strong>
+                <strong>{% if LANGUAGE_CODE == 'ar' %}سلامة سجل التدقيق{% else %}Audit integrity{% endif %}</strong>
                 {% if command_center.audit.ok %}
-                  <small>Healthy chain, {{ command_center.audit.hmac_count }} HMAC rows and {{ command_center.audit.legacy_count }} legacy rows validated.</small>
+                  <small>{% if LANGUAGE_CODE == 'ar' %}السلسلة سليمة · سجلات HMAC: {{ command_center.audit.hmac_count }} · سجلات قديمة: {{ command_center.audit.legacy_count }}{% else %}Healthy chain, {{ command_center.audit.hmac_count }} HMAC rows and {{ command_center.audit.legacy_count }} legacy rows validated.{% endif %}</small>
                 {% else %}
-                  <small>Broken chain. Invalid row sample: {{ command_center.audit.invalid_ids|join:", " }}</small>
+                  <small>{% if LANGUAGE_CODE == 'ar' %}السلسلة معطوبة. عيّنة من السجلات غير الصالحة: {{ command_center.audit.invalid_ids|join:"، " }}{% else %}Broken chain. Invalid row sample: {{ command_center.audit.invalid_ids|join:", " }}{% endif %}</small>
                 {% endif %}
               </span>
             </a>
             <a class="dcc-triage-row {% if command_center.kpis.low_gpa %}is-warning{% else %}is-clean{% endif %}" href="/advisor-portfolio/">
-              <span class="dcc-triage-dot">{% if command_center.kpis.low_gpa %}Watch{% else %}Clear{% endif %}</span>
+              <span class="dcc-triage-dot">{% if command_center.kpis.low_gpa %}{% if LANGUAGE_CODE == 'ar' %}للمتابعة{% else %}Watch{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}سليم{% else %}Clear{% endif %}{% endif %}</span>
               <span>
-                <strong>{{ command_center.kpis.low_gpa }} low-GPA students</strong>
-                <small>Students below GPA 2.0 inside the current role scope.</small>
+                <strong>{% if LANGUAGE_CODE == 'ar' %}طلاب بمعدل منخفض: {{ command_center.kpis.low_gpa }}{% else %}{{ command_center.kpis.low_gpa }} low-GPA students{% endif %}</strong>
+                <small>{% if LANGUAGE_CODE == 'ar' %}طلاب معدلهم أقل من 2.0 ضمن نطاق صلاحياتك الحالي.{% else %}Students below GPA 2.0 inside the current role scope.{% endif %}</small>
               </span>
             </a>
             <a class="dcc-triage-row {% if command_center.kpis.zero_load %}is-warning{% else %}is-clean{% endif %}" href="#debug" onclick="event.preventDefault();activatePanel('debug');history.pushState(null,'','#debug')">
-              <span class="dcc-triage-dot">{% if command_center.kpis.zero_load %}Watch{% else %}Clear{% endif %}</span>
+              <span class="dcc-triage-dot">{% if command_center.kpis.zero_load %}{% if LANGUAGE_CODE == 'ar' %}للمتابعة{% else %}Watch{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}سليم{% else %}Clear{% endif %}{% endif %}</span>
               <span>
-                <strong>{{ command_center.kpis.zero_load }} zero-load students</strong>
-                <small>Students with no current registered credits recorded.</small>
+                <strong>{% if LANGUAGE_CODE == 'ar' %}طلاب بلا عبء دراسي: {{ command_center.kpis.zero_load }}{% else %}{{ command_center.kpis.zero_load }} zero-load students{% endif %}</strong>
+                <small>{% if LANGUAGE_CODE == 'ar' %}طلاب لا توجد لهم ساعات مسجلة في الفصل الحالي.{% else %}Students with no current registered credits recorded.{% endif %}</small>
               </span>
             </a>
             <a class="dcc-triage-row {% if command_center.timetable.unassigned_rooms %}is-warning{% else %}is-clean{% endif %}" href="{{ command_center.timetable.split_url }}">
-              <span class="dcc-triage-dot">{% if command_center.timetable.unassigned_rooms %}Watch{% else %}Clear{% endif %}</span>
+              <span class="dcc-triage-dot">{% if command_center.timetable.unassigned_rooms %}{% if LANGUAGE_CODE == 'ar' %}للمتابعة{% else %}Watch{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}سليم{% else %}Clear{% endif %}{% endif %}</span>
               <span>
-                <strong>{{ command_center.timetable.unassigned_rooms }} unassigned rooms</strong>
-                <small>{{ command_center.timetable.name }} has {{ command_center.timetable.placements }} placed sections.</small>
+                <strong>{% if LANGUAGE_CODE == 'ar' %}قاعات غير مسندة: {{ command_center.timetable.unassigned_rooms }}{% else %}{{ command_center.timetable.unassigned_rooms }} unassigned rooms{% endif %}</strong>
+                <small>{% if LANGUAGE_CODE == 'ar' %}<bdi>{{ command_center.timetable.name }}</bdi> · الشعب المجدولة: {{ command_center.timetable.placements }}{% else %}{{ command_center.timetable.name }} has {{ command_center.timetable.placements }} placed sections.{% endif %}</small>
               </span>
             </a>
           </div>
@@ -97,10 +105,10 @@
         <div class="dcc-panel">
           <div class="dcc-panel-head">
             <div>
-              <div class="dcc-panel-kicker">Academic data</div>
-              <h3>Program Radar</h3>
+              <div class="dcc-panel-kicker">{% if LANGUAGE_CODE == 'ar' %}البيانات الأكاديمية{% else %}Academic data{% endif %}</div>
+              <h3>{% if LANGUAGE_CODE == 'ar' %}رادار البرامج{% else %}Program Radar{% endif %}</h3>
             </div>
-            <a href="#plan" class="dcc-link" onclick="event.preventDefault();activatePanel('plan');history.pushState(null,'','#plan')">Plan</a>
+            <a href="#plan" class="dcc-link" onclick="event.preventDefault();activatePanel('plan');history.pushState(null,'','#plan')">{% if LANGUAGE_CODE == 'ar' %}الخطة{% else %}Plan{% endif %}</a>
           </div>
           <div class="dcc-program-list">
             {% for item in command_center.academic.programs %}
@@ -109,21 +117,21 @@
                 <strong>{{ item.count }}</strong>
               </div>
             {% empty %}
-              <div class="dcc-empty">No scoped program population found.</div>
+              <div class="dcc-empty">{% if LANGUAGE_CODE == 'ar' %}لا توجد أعداد طلاب ضمن النطاق.{% else %}No scoped program population found.{% endif %}</div>
             {% endfor %}
           </div>
           <div class="dcc-mini-stats">
-            <span>{{ command_center.academic.courses }} courses</span>
-            <span>{{ command_center.academic.requirements }} requirements</span>
-            <span>{{ command_center.academic.prerequisites }} prereq links</span>
+            <span>{% if LANGUAGE_CODE == 'ar' %}المقررات: {{ command_center.academic.courses }}{% else %}{{ command_center.academic.courses }} courses{% endif %}</span>
+            <span>{% if LANGUAGE_CODE == 'ar' %}المتطلبات: {{ command_center.academic.requirements }}{% else %}{{ command_center.academic.requirements }} requirements{% endif %}</span>
+            <span>{% if LANGUAGE_CODE == 'ar' %}روابط المتطلبات السابقة: {{ command_center.academic.prerequisites }}{% else %}{{ command_center.academic.prerequisites }} prereq links{% endif %}</span>
           </div>
         </div>
 
         <div class="dcc-panel">
           <div class="dcc-panel-head">
             <div>
-              <div class="dcc-panel-kicker">Timetable builder</div>
-              <h3>Scenario Health</h3>
+              <div class="dcc-panel-kicker">{% if LANGUAGE_CODE == 'ar' %}بناء الجداول{% else %}Timetable builder{% endif %}</div>
+              <h3>{% if LANGUAGE_CODE == 'ar' %}حالة السيناريو{% else %}Scenario Health{% endif %}</h3>
             </div>
             <a href="{{ command_center.timetable.mri_url }}" class="dcc-link">MRI</a>
           </div>
@@ -132,42 +140,42 @@
             {{ command_center.timetable.year }}/{{ command_center.timetable.term }} · {{ command_center.timetable.status }}
           </div>
           <div class="dcc-mini-grid">
-            <div><strong>{{ command_center.timetable.students }}</strong><span>students</span></div>
-            <div><strong>{{ command_center.timetable.boards }}</strong><span>boards</span></div>
-            <div><strong>{{ command_center.timetable.placements }}</strong><span>placed</span></div>
-            <div><strong>{{ command_center.timetable.cross_board_affected_students }}</strong><span>affected</span></div>
+            <div><strong>{{ command_center.timetable.students }}</strong><span>{% if LANGUAGE_CODE == 'ar' %}طالب{% else %}students{% endif %}</span></div>
+            <div><strong>{{ command_center.timetable.boards }}</strong><span>{% if LANGUAGE_CODE == 'ar' %}لوحة{% else %}boards{% endif %}</span></div>
+            <div><strong>{{ command_center.timetable.placements }}</strong><span>{% if LANGUAGE_CODE == 'ar' %}مجدولة{% else %}placed{% endif %}</span></div>
+            <div><strong>{{ command_center.timetable.cross_board_affected_students }}</strong><span>{% if LANGUAGE_CODE == 'ar' %}متأثر{% else %}affected{% endif %}</span></div>
           </div>
           <div class="dcc-panel-actions">
-            <a href="{{ command_center.timetable.split_url }}">Open Split</a>
-            <a href="{{ command_center.timetable.mri_url }}">Open MRI</a>
-            <a href="{{ command_center.timetable.graph_url }}">Open Graph</a>
+            <a href="{{ command_center.timetable.split_url }}">{% if LANGUAGE_CODE == 'ar' %}فتح العرض المقسوم{% else %}Open Split{% endif %}</a>
+            <a href="{{ command_center.timetable.mri_url }}">{% if LANGUAGE_CODE == 'ar' %}فتح MRI{% else %}Open MRI{% endif %}</a>
+            <a href="{{ command_center.timetable.graph_url }}">{% if LANGUAGE_CODE == 'ar' %}فتح الرسم البياني{% else %}Open Graph{% endif %}</a>
           </div>
         </div>
 
         <div class="dcc-panel">
           <div class="dcc-panel-head">
             <div>
-              <div class="dcc-panel-kicker">Operations</div>
-              <h3>System Readiness</h3>
+              <div class="dcc-panel-kicker">{% if LANGUAGE_CODE == 'ar' %}العمليات{% else %}Operations{% endif %}</div>
+              <h3>{% if LANGUAGE_CODE == 'ar' %}جاهزية النظام{% else %}System Readiness{% endif %}</h3>
             </div>
-            <a href="/user-management/" class="dcc-link">Users</a>
+            <a href="/user-management/" class="dcc-link">{% if LANGUAGE_CODE == 'ar' %}المستخدمون{% else %}Users{% endif %}</a>
           </div>
           <div class="dcc-readiness-list">
-            <div><span>Advisors</span><strong>{{ command_center.operations.advisors }}</strong></div>
-            <div><span>Users</span><strong>{{ command_center.operations.users }}</strong></div>
-            <div><span>Scenarios</span><strong>{{ command_center.operations.scenarios }}</strong></div>
-            <div><span>Planner jobs running</span><strong>{{ command_center.operations.running_jobs }}</strong></div>
-            <div><span>Planner jobs failed</span><strong>{{ command_center.operations.failed_jobs }}</strong></div>
+            <div><span>{% if LANGUAGE_CODE == 'ar' %}المرشدون{% else %}Advisors{% endif %}</span><strong>{{ command_center.operations.advisors }}</strong></div>
+            <div><span>{% if LANGUAGE_CODE == 'ar' %}المستخدمون{% else %}Users{% endif %}</span><strong>{{ command_center.operations.users }}</strong></div>
+            <div><span>{% if LANGUAGE_CODE == 'ar' %}السيناريوهات{% else %}Scenarios{% endif %}</span><strong>{{ command_center.operations.scenarios }}</strong></div>
+            <div><span>{% if LANGUAGE_CODE == 'ar' %}مهام المخطط قيد التنفيذ{% else %}Planner jobs running{% endif %}</span><strong>{{ command_center.operations.running_jobs }}</strong></div>
+            <div><span>{% if LANGUAGE_CODE == 'ar' %}مهام المخطط المتعثرة{% else %}Planner jobs failed{% endif %}</span><strong>{{ command_center.operations.failed_jobs }}</strong></div>
           </div>
         </div>
 
         <div class="dcc-panel dcc-panel-wide">
           <div class="dcc-panel-head">
             <div>
-              <div class="dcc-panel-kicker">Trace</div>
-              <h3>Recent System Activity</h3>
+              <div class="dcc-panel-kicker">{% if LANGUAGE_CODE == 'ar' %}التتبع{% else %}Trace{% endif %}</div>
+              <h3>{% if LANGUAGE_CODE == 'ar' %}أحدث نشاط في النظام{% else %}Recent System Activity{% endif %}</h3>
             </div>
-            <a href="/audit-explorer/" class="dcc-link">Full trail</a>
+            <a href="/audit-explorer/" class="dcc-link">{% if LANGUAGE_CODE == 'ar' %}السجل الكامل{% else %}Full trail{% endif %}</a>
           </div>
           <div class="dcc-activity-list">
             {% for item in command_center.recent_activity %}
@@ -178,20 +186,20 @@
                 <em class="dcc-activity-status is-{{ item.status }}">{{ item.status }}</em>
               </a>
             {% empty %}
-              <div class="dcc-empty">No audit activity yet.</div>
+              <div class="dcc-empty">{% if LANGUAGE_CODE == 'ar' %}لا يوجد نشاط في سجل التدقيق بعد.{% else %}No audit activity yet.{% endif %}</div>
             {% endfor %}
           </div>
         </div>
       </section>
 
-      <section class="dcc-launcher" aria-label="Fast actions">
-        <a href="#student" onclick="event.preventDefault();activatePanel('student');history.pushState(null,'','#student')">Student plan</a>
-        <a href="/virtual-advisor/">Virtual advisor</a>
-        <a href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">Batch demand</a>
-        <a href="/section-planning/">Section planning</a>
-        <a href="/timetable-workspace/">Timetable workspace</a>
-        <a href="{{ command_center.timetable.graph_url }}">Graph twin</a>
-        <a href="/exam-timetable/">Exam timetable</a>
-        <a href="/db-admin/">Data console</a>
+      <section class="dcc-launcher" aria-label="{% if LANGUAGE_CODE == 'ar' %}إجراءات سريعة{% else %}Fast actions{% endif %}">
+        <a href="#student" onclick="event.preventDefault();activatePanel('student');history.pushState(null,'','#student')">{% if LANGUAGE_CODE == 'ar' %}خطة الطالب{% else %}Student plan{% endif %}</a>
+        <a href="/virtual-advisor/">{% if LANGUAGE_CODE == 'ar' %}المرشد الافتراضي{% else %}Virtual advisor{% endif %}</a>
+        <a href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">{% if LANGUAGE_CODE == 'ar' %}الطلب المجمّع{% else %}Batch demand{% endif %}</a>
+        <a href="/section-planning/">{% if LANGUAGE_CODE == 'ar' %}تخطيط الشعب{% else %}Section planning{% endif %}</a>
+        <a href="/timetable-workspace/">{% if LANGUAGE_CODE == 'ar' %}مساحة عمل الجداول{% else %}Timetable workspace{% endif %}</a>
+        <a href="{{ command_center.timetable.graph_url }}">{% if LANGUAGE_CODE == 'ar' %}المخطط الشبكي{% else %}Graph twin{% endif %}</a>
+        <a href="/exam-timetable/">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam timetable{% endif %}</a>
+        <a href="/db-admin/">{% if LANGUAGE_CODE == 'ar' %}وحدة البيانات{% else %}Data console{% endif %}</a>
       </section>
     </div>
