@@ -96,12 +96,53 @@ def test_the_two_secondary_text_levels_stay_distinct() -> None:
         assert _ratio(t3, card) > _ratio(t4, card), theme
 
 
+def _resolve_token(block: str, token: str, depth: int = 4) -> str:
+    """A token's value, following `var(--other)` aliases to the literal.
+
+    `--text-2xs` is an alias of `--text-micro` rather than a second copy of the
+    same literal: the two were copies, and the Arabic floor below only ever
+    redefined `--text-micro`, so every rule using the other name stayed at 11px
+    in Arabic. Asserting the spelling would forbid the fix; assert the floor
+    the token actually resolves to.
+    """
+    for _ in range(depth):
+        found = re.search(rf"{re.escape(token)}:\s*([^;]+);", block)
+        assert found, f"{token} is not defined in this block"
+        value = found.group(1).strip()
+        alias = re.fullmatch(r"var\((--[\w-]+)\)", value)
+        if not alias:
+            return value
+        token = alias.group(1)
+    raise AssertionError(f"{token} aliases more than {depth} deep")
+
+
 def test_the_small_type_steps_never_go_under_their_px_floor() -> None:
     # The root size is fluid (14px at 375px wide), so a rem-only floor renders
     # under itself on a phone: the two smallest steps carry a px floor.
     root = THEMES["light"]
-    assert re.search(r"--text-2xs:\s*max\(11px,", root)
-    assert re.search(r"--text-xs:\s*max\(12px,", root)
+    assert _resolve_token(root, "--text-2xs").startswith("max(11px,")
+    assert _resolve_token(root, "--text-micro").startswith("max(11px,")
+    assert _resolve_token(root, "--text-xs").startswith("max(12px,")
+
+
+def test_every_micro_label_token_takes_the_arabic_floor() -> None:
+    """Arabic at 11px is not legible, so `html[dir="rtl"]` lifts the micro
+    floor to 12px. It redefines `--text-micro` only -- which is correct while
+    `--text-2xs` is an ALIAS of it, and silently wrong the moment someone
+    turns the alias back into its own literal."""
+    # Several `html[dir="rtl"]` blocks exist, so match the declaration itself
+    # rather than picking one block and hoping it is the right one.
+    assert re.search(r'html\[dir="rtl"\]\s*\{[^}]*--text-micro:\s*max\(12px,', CSS), (
+        "the Arabic micro floor is gone"
+    )
+    root = THEMES["light"]
+    for token in ("--text-2xs", "--text-micro"):
+        value = re.search(rf"{re.escape(token)}:\s*([^;]+);", root).group(1).strip()
+        aliased = re.fullmatch(r"var\(--text-micro\)", value)
+        assert token == "--text-micro" or aliased, (
+            f"{token} must alias --text-micro, or it will miss the Arabic "
+            f"floor the way it did before 2026-11-16; found {value!r}"
+        )
 
 
 # ── Stage 3, C1 (docs/stage3/C1.md): the pairs the remap now relies on ───────
