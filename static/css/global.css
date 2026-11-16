@@ -8358,7 +8358,6 @@ html[data-theme="dark"] .dcc-kpi:hover { border-color: var(--teal); }
 .plan-layout:has(#studentPlanTerms:empty) { display: none; }
 
 .can-register-pill { background: var(--teal-dim); }
-.preset-actions { display: flex; gap: 6px; margin-top: 8px; }
 .scrape-metrics-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 
 /* ── Inline style extractions (panels) ── */

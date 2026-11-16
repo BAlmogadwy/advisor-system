@@ -238,7 +238,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     linkCopied: (label, path) => IS_AR ? `تم نسخ رابط ${label}: ${path}` : `${label} copied to clipboard: ${path}`,
     labelCopied: (label) => IS_AR ? `تم نسخ ${label}` : `${label} copied`,
     studentCsvLink: IS_AR ? 'رابط CSV الطالب' : 'Student CSV link',
-    aggregateCsvLink: IS_AR ? 'رابط CSV المجمع' : 'Aggregate CSV link',
     requiredFilters: IS_AR ? 'الفلاتر المطلوبة' : 'required filters',
     exportBlocked: (missing) => IS_AR ? `التصدير محظور: أكمل ${missing} أولاً.` : `Export blocked: fill ${missing} first.`,
 
@@ -379,7 +378,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchMetrics').classList.add('d-none');
     q('batchCsv').href = '#';
     q('batchXlsx').href = '#';
-    q('batchSummary').href = '#';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
     const bpEl = document.getElementById('batchPager'); if (bpEl) bpEl.innerHTML = '';
     syncExportCenterLinks();
@@ -433,7 +431,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchMeta').className = 'meta-banner meta-danger mb-14 d-none';
     q('batchCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
     q('batchXlsx').href = `/export/aggregate.xlsx?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
-    q('batchSummary').href = url;
 
     if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
       if (tbody) {
@@ -2394,11 +2391,6 @@ const IS_AR = document.documentElement.lang === 'ar';
     copyStudentBtn.onclick = async () => copyLinkFrom('studentCsvLink', T.studentCsvLink);
   }
 
-  const copyBatchBtn = q('copyBatchCsv');
-  if (copyBatchBtn) {
-    copyBatchBtn.onclick = async () => copyLinkFrom('batchCsv', T.aggregateCsvLink);
-  }
-
   function syncExportCenterLinks() {
     const sid = q('studentIdInput')?.value || '';
     const year = q('batchYear')?.value || q('dbgYear')?.value || '';
@@ -2427,11 +2419,6 @@ const IS_AR = document.documentElement.lang === 'ar';
   });
   syncExportCenterLinks();
 
-  q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection','batchMode']));
-  q('batchLoadPreset')?.addEventListener('click', () => {
-    loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection','batchMode']);
-    syncExportCenterLinks();
-  });
   q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
   q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
   q('cmSavePreset')?.addEventListener('click', () => savePreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
