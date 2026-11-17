@@ -251,7 +251,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         context = self._context(language="ar")
         page = self._open(context, language="ar")
         # The words are the template's Arabic, not a string this script built.
-        expect(page.locator("#navFind .nav-find-t")).to_have_text("الانتقال إلى صفحة…")
+        expect(page.locator("#navFind .nav-find-t")).to_have_text("انتقل لصفحة…")
 
         page.keyboard.press("Control+k")
         field = page.locator("#sbpInput")
@@ -390,6 +390,43 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         row = page.locator("#navFind")
         self.assertEqual(row.get_attribute("aria-keyshortcuts"), "Control+K Meta+K")
         expect(page.locator("#navFind .nav-find-kbd")).to_have_text("Ctrl K")
+
+    def test_the_search_rows_label_is_never_cut_short(self) -> None:
+        """The row shares its width with the rail toggle. At the 210px and
+        195px sidebar steps the label and the shortcut badge do not both fit,
+        and the label was cut to an ellipsis ("Go t…"); in Arabic it was
+        cut even at full width. The badge yields: it shows where the label
+        fits beside it, and only there."""
+        clipped = (
+            "() => { const t = document.querySelector('#navFind .nav-find-t');"
+            " return t.scrollWidth > t.clientWidth; }"
+        )
+        settle = (
+            "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
+        )
+        badge_shown_at_full_width = {}
+        for language in ("en", "ar"):
+            page = self._open(self._context(language=language), language=language)
+            badge = page.locator("#navFind .nav-find-kbd")
+            for width in (1440, 1100, 900):
+                page.set_viewport_size({"width": width, "height": 820})
+                page.evaluate(settle)
+                self.assertFalse(
+                    page.evaluate(clipped),
+                    f"the search row's label is cut short at {width}px ({language})",
+                )
+                if width == 1440:
+                    badge_shown_at_full_width[language] = badge.is_visible()
+            # Below the first step the English label and the badge cannot share
+            # the 40px the label is left with, so the badge must have gone, and
+            # it comes back when there is room again.
+            if language == "en":
+                expect(badge).to_be_hidden()
+                page.set_viewport_size({"width": 1440, "height": 820})
+                page.evaluate(settle)
+                expect(badge).to_be_visible()
+        # A badge that simply never showed would pass everything above.
+        self.assertTrue(badge_shown_at_full_width["en"], "the badge never shows")
 
     # ── The icon rail ────────────────────────────────────────────────────
     def test_the_rail_is_remembered_and_applied_before_the_body_is_parsed(self) -> None:
@@ -849,6 +886,25 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             page.evaluate("document.activeElement.offsetParent !== null"),
             "the drawer gave focus to an element it does not draw",
         )
+
+    def test_the_drawer_passes_over_controls_it_does_not_show(self) -> None:
+        """The test above holds today whatever the drawer does, because its
+        first candidate in document order happens to be drawn. Here the first
+        two are not: one has no box (display:none), the other has a box it
+        does not show (visibility:hidden), and neither can take focus."""
+        page = self._open(self._context())
+        page.set_viewport_size({"width": 390, "height": 760})
+        page.evaluate(
+            "() => { const s = document.getElementById('appSidebar');"
+            " for (const [id, css] of [['sbGhostB', 'visibility:hidden'], ['sbGhostA', 'display:none']]) {"
+            " const b = document.createElement('button'); b.type = 'button'; b.id = id;"
+            " b.textContent = id; b.style.cssText = css; s.prepend(b); } }"
+        )
+        page.locator(".sidebar-toggle").click()
+
+        focused = page.locator("#appSidebar :focus")
+        expect(focused).to_have_count(1)
+        self.assertNotIn(focused.get_attribute("id"), ("sbGhostA", "sbGhostB"))
 
     def test_the_palettes_status_region_lives_inside_the_dialog(self) -> None:
         """`aria-modal="true"` tells assistive technology to ignore everything
