@@ -7,6 +7,22 @@
       and stay as the database holds them.
     {% endcomment %}
     <div id="overview" class="panel active" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}مركز قيادة لوحة التحكم{% else %}Dashboard Command Center{% endif %}">
+      <section class="dcc-hero" aria-labelledby="dccTitle">
+        <div>
+          <div class="dcc-eyebrow">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة المباشر{% else %}Live Command Center{% endif %}</div>
+          <h2 class="dcc-title" id="dccTitle">{% if LANGUAGE_CODE == 'ar' %}أهلاً، {{ user.get_short_name|default:user.username }}{% else %}Good morning, {{ user.get_short_name|default:user.username }}{% endif %}</h2>
+          <div class="dcc-subtitle">
+            {% if LANGUAGE_CODE == 'ar' %}نظرة عامة ضمن نطاق صلاحياتك: الإرشاد، وبناء الجداول، وسلامة سجل التدقيق، والجاهزية التشغيلية.{% else %}Scope-aware overview for advising, timetable building, audit integrity, and operational readiness.{% endif %}
+          </div>
+        </div>
+        <div class="dcc-hero-status {% if command_center.audit.ok %}dcc-status-ok{% else %}dcc-status-danger{% endif %}">
+          <span class="dcc-status-dot" aria-hidden="true"></span>
+          <span>{% if command_center.audit.ok %}{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Audit chain OK{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Audit chain failed{% endif %}{% endif %}</span>
+          <strong>{{ command_center.audit.checked }}</strong>
+          <span>{% if LANGUAGE_CODE == 'ar' %}سجلات تم فحصها{% else %}records checked{% endif %}</span>
+        </div>
+      </section>
+
       <section class="dcc-kpis" aria-label="{% if LANGUAGE_CODE == 'ar' %}المؤشرات الرئيسية{% else %}Executive metrics{% endif %}">
         {% comment %}
           `dcc-kpi-primary` is gone with the card: it painted a teal-to-white

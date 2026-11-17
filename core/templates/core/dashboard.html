@@ -16,13 +16,7 @@
 {% endblock %}
 
 {% block page_intro %}
-      {% comment %}
-        Overview -- the panel that opens by default -- carries no subtitle: the
-        page heading already names it. The box still has to be in the DOM, because
-        `activatePanel` fills it from PANEL_SUBS when another panel opens, so it
-        renders empty and global.css collapses a blank intro away.
-      {% endcomment %}
-      <div class="panel-sub" id="pageIntroSub"></div>
+      <div class="panel-sub" id="pageIntroSub">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة التشغيلي للإرشاد والجداول والتدقيق.{% else %}Live command center for advising, timetable health, audit integrity, and system readiness.{% endif %}</div>
 {% endblock %}
 
 {% block content %}

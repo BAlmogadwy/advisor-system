@@ -18,24 +18,6 @@
       root.setAttribute('data-theme-storage-key', storageKey);
       root.setAttribute('data-theme', t);
     })();
-    /* Anti-flash, part two: the sidebar's icon rail and its collapsed section
-       groups. The stylesheet reads these two attributes, so a collapsed
-       sidebar is never painted open first and then snapped shut. The regex
-       keeps a tampered or stale store from putting anything but a group name
-       into an attribute value; static/js/sidebar-nav.js reads and writes the
-       same two keys and the same two attributes, and nothing else holds this
-       state. */
-    (function(){
-      var root = document.documentElement;
-      try {
-        if (localStorage.getItem('sidebar-rail') === '1') root.setAttribute('data-sidebar-rail', '1');
-        var stored = JSON.parse(localStorage.getItem('sidebar-nav-collapsed') || '[]');
-        if (Array.isArray(stored)) {
-          var ids = stored.filter(function(id){ return typeof id === 'string' && /^[a-z-]+$/.test(id); });
-          if (ids.length) root.setAttribute('data-sidebar-collapsed', ids.join(' '));
-        }
-      } catch (e) {}
-    })();
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="{% if LANGUAGE_CODE == 'ar' %}منصة الإرشاد الأكاديمي — جامعة طيبة{% else %}Academic Advisor Dashboard — Taibah University{% endif %}">
@@ -47,7 +29,7 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=127" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=125" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}?v=6" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
@@ -93,12 +75,6 @@
 <script src="{% static 'js/dialog.js' %}?v=5"></script>
 <script src="{% static 'js/shared-ux.js' %}?v=4"></script>
 <script src="{% static 'js/ux-controls.js' %}?v=7"></script>
-{% comment %}The sidebar's command palette, icon rail and section groups. After
-the sidebar partial's own script, which is what marks the current page. Written
-as a comment TAG: Django's hash-brace comment is one line only, and a two-line
-one renders straight into the page.
-{% endcomment %}
-<script src="{% static 'js/sidebar-nav.js' %}?v=1"></script>
 <script>
 /* ── Back to top button ── */
 (function(){
