@@ -242,7 +242,7 @@ def test_contract_rejects_optional_empty_values_on_worker(
 
 def test_contract_rejects_runtime_version_drift(blueprint: Blueprint, tmp_path: Path) -> None:
     (tmp_path / ".python-version").write_text("3.12.0\n", encoding="utf-8")
-    (tmp_path / "runtime.txt").write_text("python-3.11.9\n", encoding="utf-8")
+    (tmp_path / "runtime.txt").write_text("python-3.11.18\n", encoding="utf-8")
 
     errors = validate_blueprint(blueprint, project_root=tmp_path)
 
@@ -358,7 +358,7 @@ def test_contract_pins_student_advisor_v21_rollout_and_plan_budget(
 def test_contract_keeps_playwright_browser_inside_the_deployed_worker(
     blueprint: Blueprint, tmp_path: Path
 ) -> None:
-    (tmp_path / ".python-version").write_text("3.11.9\n", encoding="utf-8")
+    (tmp_path / ".python-version").write_text("3.11.18\n", encoding="utf-8")
     (tmp_path / "build.sh").write_text(
         "#!/usr/bin/env bash\npython -m playwright install chromium\n",
         encoding="utf-8",

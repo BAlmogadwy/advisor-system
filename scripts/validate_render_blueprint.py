@@ -17,7 +17,7 @@ from typing import Any
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PYTHON_VERSION = "3.11.9"
+EXPECTED_PYTHON_VERSION = "3.11.18"
 EXPECTED_SERVICE_IDENTITIES = {
     ("web", "advisor-system"),
     ("worker", "advisor-telegram-worker"),

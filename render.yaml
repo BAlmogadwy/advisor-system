@@ -27,7 +27,7 @@ services:
       # Existing Render services may retain a legacy PYTHON_VERSION variable,
       # which takes precedence over .python-version. Pin both surfaces.
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11.18"
       # The dashboard launches the student scraper as a child of this web
       # service, so it must resolve the browser installed beside Playwright.
       - key: PLAYWRIGHT_BROWSERS_PATH
@@ -238,7 +238,7 @@ services:
       - key: DJANGO_DEBUG
         value: "false"
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11.18"
       # The build stores Chromium with the installed Playwright package. Render's
       # shared build cache is not mounted in a running worker.
       - key: PLAYWRIGHT_BROWSERS_PATH
@@ -456,7 +456,7 @@ services:
       - key: DJANGO_DEBUG
         value: "false"
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.11.18"
       - key: ALLOW_NO_SMTP_PROCESS
         value: "true"
       - key: DJANGO_ALLOWED_HOSTS
