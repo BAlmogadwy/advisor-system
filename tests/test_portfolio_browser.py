@@ -229,6 +229,30 @@ class PortfolioBrowserTests(StaticLiveServerTestCase):
         )
         assert errors == [], errors
 
+    def test_copy_ids_keeps_its_icon_after_saying_copied(self):
+        """`copyText` saved and restored the button's TEXT, so once "Copy IDs"
+        carried an icon (the export-button style, #239) the first click would
+        have stripped it for good. It must come back exactly as it was."""
+        self._students()
+        page = self._page()
+        page.context.grant_permissions(
+            ["clipboard-read", "clipboard-write"], origin=self.live_server_url
+        )
+        self._open(page)
+        page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=15_000)
+        button = page.locator('button[onclick^="copyFilteredIds"]')
+        before = button.inner_html()
+        assert "<svg" in before, "the copy icon is not there to begin with"
+
+        button.click()
+        playwright_expect = playwright.expect
+        playwright_expect(button).to_have_text("Copied!")
+        playwright_expect(button).not_to_have_text("Copied!", timeout=5_000)
+
+        assert button.inner_html() == before
+        copied = page.evaluate("() => navigator.clipboard.readText()")
+        assert sorted(copied.split(",")) == ["990001", "990002", "990003"], copied
+
 
 # ── the three defects the revived branch exposed ─────────────────
 #

@@ -6051,6 +6051,13 @@ html body .btn-export {
 /* In a filter bar an export button sits among .fb-dd chips (36px tall); the
    small size would stop 2px short of them. */
 html body .filter-bar .btn-export.btn-sm { min-height: 36px; }
+/* On a phone the label carries the meaning and the icon is the first thing to
+   give up its room. The portfolio's actions (CSV, Copy IDs, Copy Risk IDs) are
+   one group that may not wrap apart; in Arabic they need 390px of a 338px bar
+   with their icons and fit without them. */
+@media (max-width: 480px) {
+  html body .filter-bar .btn-export > .i { display: none; }
+}
 html body .btn-export:hover {
   background: color-mix(in srgb, var(--teal) 12%, transparent) !important;
   color: var(--text-brand) !important;

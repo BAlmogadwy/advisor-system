@@ -21,7 +21,7 @@
           <span class="cp-live">{{ recommendations|length }} courses · {{ recommendation_mode }}</span>
           <div class="flex-spacer"></div>
           <a id="studentCsvLink" class="btn btn-sm btn-export" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}&mode={{ recommendation_mode|urlencode }}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
-          <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
+          <button id="copyStudentCsv" type="button" class="btn btn-sm btn-export">Copy link</button>
         </div>
         <div class="cp-b">
           {% for code in recommendations %}

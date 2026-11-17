@@ -1,4 +1,4 @@
-"""Every export or download control looks the same: `btn btn-export`.
+"""Every export, download or copy-out control looks the same: `btn btn-export`.
 
 Before this, the app's export controls wore five different styles. The Batch,
 Debug, Eligibility, Student-plan and Advisor-portfolio links were `.fb-dd` filter
@@ -7,9 +7,14 @@ teal (the chip's own "selected" cue) while CSV beside it stayed grey. Others wer
 `btn-outline-primary`, `btn-outline-secondary`, `btn-outline-success` or
 `btn-neutral`, chosen screen by screen.
 
-The guard is structural: it finds export controls by what they SAY (CSV, XLSX,
-Excel, Export, Download and the Arabic تصدير / تنزيل / إكسل) and requires the
-class on each one. A few export controls are deliberately something else; they are
+The first pass converted only the exports, and the owner's next screenshot still
+showed a mixed row: "Copy IDs" stayed a grey chip beside the new CSV button. The
+copy-out controls take data OUT of a screen just as an export does, and the
+portfolio's "Copy selected IDs" was already `btn-export`, so they are in scope.
+
+The guard is structural: it finds the controls by what they SAY (CSV, XLSX,
+Excel, Export, Download, Copy and the Arabic تصدير / تنزيل / إكسل / نسخ) and
+requires the class on each one. A few export controls are deliberately something else; they are
 listed with the reason, and the list is checked both ways so it cannot rot.
 """
 
@@ -23,7 +28,7 @@ from django.conf import settings
 ROOT = pathlib.Path(settings.BASE_DIR)
 
 _CONTROL = re.compile(r"<(a|button)\b([^>]*)>(.*?)</\1>", re.S)
-_EXPORT_WORDS = re.compile(r"\b(?:CSV|XLSX|Excel|Export|Download)\b|تصدير|تنزيل|إكسل")
+_EXPORT_WORDS = re.compile(r"\b(?:CSV|XLSX|Excel|Export|Download|Copy)\b|تصدير|تنزيل|إكسل|نسخ")
 
 #: Export-worded controls that are deliberately NOT `btn-export`, and why.
 EXEMPT = {
@@ -55,6 +60,10 @@ def _key(rel: str, attrs: str, label: str) -> tuple[str, str]:
         found = re.search(probe, attrs)
         if found:
             return rel, found.group(1)
+    # The Exports table's Copy buttons are told apart by the link they copy.
+    found = re.search(r'data-link-id="([^"]+)"', attrs)
+    if found:
+        return rel, f"copy:{found.group(1)}"
     for cls in ("advisor-grad-export",):
         if cls in attrs:
             return rel, cls
@@ -129,5 +138,12 @@ def test_the_scan_still_sees_the_controls_it_was_written_for():
         ("core/templates/core/user_management.html", "exportCSV"),
         ("core/templates/core/section_planning.html", "spExportRosters"),
         ("core/templates/core/partials/dashboard/_panel_exports.html", "exHighPriorityXlsx"),
+        # The copy-out controls the owner's second screenshot showed.
+        ("core/templates/core/partials/dashboard/_panel_eligibility.html", "elCopyIds"),
+        ("core/templates/core/advisor_portfolio.html", "copyFilteredIds"),
+        ("core/templates/core/advisor_portfolio.html", "copyHighRiskIds"),
+        ("core/templates/core/partials/dashboard/_panel_student.html", "copyStudentCsv"),
+        ("core/templates/core/partials/dashboard/_panel_exports.html", "copy:exStudentCsv"),
+        ("core/templates/core/partials/dashboard/_panel_exports.html", "copy:exHighPriorityXlsx"),
     ):
         assert key in found, key
