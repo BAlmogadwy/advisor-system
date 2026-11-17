@@ -273,9 +273,11 @@ const IS_AR = document.documentElement.lang === 'ar';
   };
   const links = document.querySelectorAll('.nav-link[data-target]');
   const panels = document.querySelectorAll('.panel');
-  /* Panel descriptions for page_intro subtitle */
+  /* Panel descriptions for the page_intro subtitle. Overview is absent on
+     purpose: it shows no subtitle at all. A panel with no entry here clears
+     the box, rather than leaving the previous panel's sentence sitting
+     under the wrong screen. */
   const PANEL_SUBS = {
-    overview:     IS_AR ? 'مركز القيادة التشغيلي.' : 'Live command center for advising, timetable health, audit integrity, and system readiness.',
     student:      IS_AR ? 'احصل على قائمة توصيات لكل طالب وصدّرها فوراً.' : 'Get a per-student recommendation list and export it instantly.',
     batch:        IS_AR ? 'معاينة التوصيات على مستوى الدفعة وتصدير CSV.' : 'Run cohort-level preview, inspect top courses, and export aggregate CSV.',
     prereq:       IS_AR ? 'استكشف روابط المتطلبات حسب البرنامج أو المقرر.' : 'Explore prerequisite links by program and optionally by a specific course.',
@@ -304,7 +306,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     const introTitle = q('pageIntroTitle');
     const introSub = q('pageIntroSub');
     if (introTitle) introTitle.textContent = titleText;
-    if (introSub && PANEL_SUBS[target]) introSub.textContent = PANEL_SUBS[target];
+    if (introSub) introSub.textContent = PANEL_SUBS[target] || '';
     const panel = document.getElementById(target);
     if (panel) {
       panel.classList.add('active');
@@ -2655,29 +2657,6 @@ const IS_AR = document.documentElement.lang === 'ar';
   /* ═══════════════════════════════════════════════════════════════
      ENHANCEMENT JS — Overview, Student Context, Issues 14/15/20/28
      ═══════════════════════════════════════════════════════════════ */
-
-  /* ── Overview panel: greeting + date ── */
-  (() => {
-    const greetEl = q('ovGreeting');
-    const dateEl = q('ovDate');
-    if (!greetEl || !dateEl) return;
-
-    const now = new Date();
-    const hour = now.getHours();
-    let greeting;
-    if (IS_AR) {
-      greeting = hour < 12 ? 'صباح الخير' : hour < 17 ? 'مساء الخير' : 'مساء الخير';
-    } else {
-      greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-    }
-    const username = greetEl.textContent.split(',').pop()?.trim() || '';
-    greetEl.textContent = greeting + ', ' + username;
-
-    const opts = IS_AR
-      ? { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }
-      : { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    dateEl.textContent = now.toLocaleDateString(IS_AR ? 'ar-SA' : 'en-US', opts);
-  })();
 
   /* ── Overview panel: activity feed logger ── */
   const ovActivityLog = [];
