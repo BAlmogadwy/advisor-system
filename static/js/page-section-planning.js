@@ -1677,7 +1677,7 @@ async function runExport(button, { url, stem, idleLabel }) {
 $('spExport').onclick = () => runExport($('spExport'), {
   url: '/ops/section-planning/export/',
   stem: 'section_plan',
-  idleLabel: () => IS_AR ? '📥 تصدير XLSX' : '📥 Export XLSX',
+  idleLabel: () => IS_AR ? 'تصدير XLSX' : 'Export XLSX',
 });
 
 /* The students: a row per student per course, the roster behind every count.
@@ -1685,7 +1685,7 @@ $('spExport').onclick = () => runExport($('spExport'), {
 $('spExportRosters').onclick = () => runExport($('spExportRosters'), {
   url: '/ops/section-planning/export-rosters/',
   stem: 'section_rosters',
-  idleLabel: () => IS_AR ? '👥 تصدير الطلاب (XLSX)' : '👥 Export Students XLSX',
+  idleLabel: () => IS_AR ? 'تصدير الطلاب (XLSX)' : 'Export Students XLSX',
 });
 
 /* ── Reset click: clears the scope and the result; the chosen section is a

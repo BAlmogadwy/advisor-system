@@ -111,7 +111,7 @@
         </div>
         <span id="apTruncatedNote" class="small text-warning d-none"></span>
         <div class="fb-actions">
-          <a id="apCsvLink" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+          <a id="apCsvLink" class="btn btn-sm btn-export" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
           <button class="fb-dd" type="button" onclick="copyFilteredIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب المصفّين إلى الحافظة{% else %}Copy filtered student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
           <button class="fb-dd" type="button" onclick="copyHighRiskIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب ذوي الخطورة العالية إلى الحافظة{% else %}Copy high-risk student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات المخاطر{% else %}Copy Risk IDs{% endif %}</button>
         </div>

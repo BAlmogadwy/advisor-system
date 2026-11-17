@@ -6039,7 +6039,18 @@ html body .btn-export {
   /* --teal-border is rgba(10,142,110,0.16): about 1.2:1, a tint rather than an
      edge. A control boundary needs the real one. */
   box-shadow: inset 0 0 0 1px var(--control-edge) !important;
+  /* Nothing in the app resets box-sizing, so an <a class="btn"> is content-box
+     while a <button> is border-box: the same `min-height: 38px` then grew the
+     link by its padding — 52px beside a 40px Run button. Half of the export
+     controls are links. The browser's own <button> face also sets
+     `line-height: normal` where a link inherits 1.5; take the button's, or a
+     link stops 2px short of the Run button beside it. (`.btn-sm` sets its own.) */
+  box-sizing: border-box;
+  line-height: normal;
 }
+/* In a filter bar an export button sits among .fb-dd chips (36px tall); the
+   small size would stop 2px short of them. */
+html body .filter-bar .btn-export.btn-sm { min-height: 36px; }
 html body .btn-export:hover {
   background: color-mix(in srgb, var(--teal) 12%, transparent) !important;
   color: var(--text-brand) !important;
