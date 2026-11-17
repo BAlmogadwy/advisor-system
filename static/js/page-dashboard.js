@@ -2405,6 +2405,9 @@ const IS_AR = document.documentElement.lang === 'ar';
   syncExportCenterLinks();
 
   q('elCopyIds')?.addEventListener('click', async () => {
+    // A second click inside the 1.5s "Copied" flash would save the flash as
+    // the label and leave the button reading "Copied" for good.
+    if (q('elCopyIds').classList.contains('copied')) return;
     // Scrape every eligible ID from the table (paginateTable only hides rows, so all are in the DOM).
     const ids = Array.from(document.querySelectorAll('#elTable .cr-id'))
       .map((el) => el.textContent.trim())

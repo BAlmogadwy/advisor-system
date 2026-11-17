@@ -20,8 +20,8 @@
           <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}التوصيات{% else %}Recommendations{% endif %}</div>
           <span class="cp-live">{{ recommendations|length }} courses · {{ recommendation_mode }}</span>
           <div class="flex-spacer"></div>
-          <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}&mode={{ recommendation_mode|urlencode }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
-          <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
+          <a id="studentCsvLink" class="btn btn-sm btn-export" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}&mode={{ recommendation_mode|urlencode }}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
+          <button id="copyStudentCsv" type="button" class="btn btn-sm btn-export">Copy link</button>
         </div>
         <div class="cp-b">
           {% for code in recommendations %}
@@ -84,7 +84,7 @@
         <div class="filter-bar mb-2 d-none" id="studentPlanActions">
           <button id="spFocusNext" type="button" class="fb-dd active"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span> Focus next</button>
           <button id="spBuildTargetPlan" type="button" class="fb-dd sp-build-plan"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span> Build plan</button>
-          <a id="spCsvExport" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+          <a id="spCsvExport" class="btn btn-sm btn-export" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
           <div class="fb-spacer"></div>
 
           <details class="d-inline-block">

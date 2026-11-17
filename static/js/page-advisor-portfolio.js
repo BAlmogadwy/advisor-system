@@ -244,10 +244,10 @@ async function copyText(text, triggerBtn) {
     await navigator.clipboard.writeText(text);
     notify.success(T.copied);
     if (triggerBtn) {
-      const orig = triggerBtn.textContent;
+      const orig = triggerBtn.innerHTML;  // keeps the icon, not only the label
       triggerBtn.textContent = IS_AR ? 'تم النسخ!' : 'Copied!';
       triggerBtn.disabled = true;
-      setTimeout(() => { triggerBtn.textContent = orig; triggerBtn.disabled = false; }, 2000);
+      setTimeout(() => { triggerBtn.innerHTML = orig; triggerBtn.disabled = false; }, 2000);
     }
   }
   catch { notify.warning(T.copyFailed); }

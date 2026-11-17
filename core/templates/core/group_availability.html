@@ -45,7 +45,7 @@
         <button type="button" class="ga-tab" id="gaTabLab" role="tab" aria-selected="false" aria-controls="gaPanelLab" tabindex="-1" data-grid="lab">{% if LANGUAGE_CODE == 'ar' %}معامل (100 د){% else %}Lab (100m){% endif %}</button>
         <button type="button" class="ga-tab" id="gaTabTimeline" role="tab" aria-selected="false" aria-controls="gaPanelTimeline" tabindex="-1" data-grid="timeline">{% if LANGUAGE_CODE == 'ar' %}اليوم الكامل (10 د){% else %}Full day (10m){% endif %}</button>
       </div>
-      <button type="button" class="btn btn-sm btn-outline-success ga-export" id="gaExport" disabled aria-busy="false">
+      <button type="button" class="btn btn-sm btn-export ga-export" id="gaExport" disabled aria-busy="false">
         {% if LANGUAGE_CODE == 'ar' %}تصدير كل الشبكات (XLSX){% else %}Export all grids (XLSX){% endif %}
       </button>
       <div class="ga-legend" aria-hidden="false">
