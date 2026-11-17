@@ -1812,6 +1812,11 @@ html[data-sidebar-collapsed~="student"]     .nav-grp[data-group="student"]     >
     gap:             0;
     padding-inline:  0;
   }
+  /* The search row is a column here, so the button's `flex: 1` buys it height,
+     not width, and `align-items: center` sizes it to its contents: without
+     this it shrinks to its 18px icon, under the 24px minimum the toggle's own
+     rule cites. The toggle keeps its 28px and stays centred. */
+  html[data-sidebar-rail] .nav-find-btn { align-self: stretch; }
 
   /* Every group's items show in the rail: with the headers gone there would be
      nothing left to re-open a collapsed one with. Same specificity as the

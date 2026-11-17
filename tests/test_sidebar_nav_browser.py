@@ -484,6 +484,39 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#navFind")).to_be_visible()
         expect(page.locator("#sbRailToggle")).not_to_be_visible()
 
+    def test_the_rails_controls_stay_big_enough_to_hit(self) -> None:
+        """The search row stacks into a column on the rail.
+
+        A column sizes its children to their content, and the button's
+        `flex: 1` buys height there, not width — so the button has to be told
+        to stretch or it collapses to its icon. Both controls owe the 24px of
+        WCAG 2.5.8, and the button should fill the rail as the nav links do.
+        """
+        page = self._open(self._context())
+        page.locator("#sbRailToggle").click()
+        rail = page.locator("#appSidebar")
+        self.assertAlmostEqual(rail.bounding_box()["width"], 64, delta=2)
+
+        button = page.locator("#navFind").bounding_box()
+        toggle = page.locator("#sbRailToggle").bounding_box()
+        self.assertGreaterEqual(button["width"], 24, "the rail's search button is too small")
+        self.assertGreaterEqual(button["height"], 24, "the rail's search button is too short")
+        self.assertGreaterEqual(toggle["width"], 24)
+        self.assertGreaterEqual(toggle["height"], 24)
+
+        # It spans its row — the rail less that row's own 8px gutters — rather
+        # than sitting as a lone icon-sized box. (The nav links below sit in
+        # `.nav-sec`, which keeps a different gutter, so they are not the
+        # yardstick.)
+        row = page.locator(".nav-find").bounding_box()
+        self.assertAlmostEqual(
+            button["width"], row["width"] - 16, delta=2, msg="the button did not stretch"
+        )
+        # And both are still centred on the rail.
+        centre = rail.bounding_box()["x"] + rail.bounding_box()["width"] / 2
+        for name, box in (("button", button), ("toggle", toggle)):
+            self.assertAlmostEqual(box["x"] + box["width"] / 2, centre, delta=2, msg=name)
+
     # ── Applied before the first paint ───────────────────────────────────
     def _without_the_module(self, stored: str):
         """A context whose pages never load static/js/sidebar-nav.js. What the
@@ -787,7 +820,13 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             " return true; }"
         )
         self.assertTrue(changed, "no sidebar badge to repaint")
-        page.wait_for_timeout(150)
+        # This asserts that nothing happens, so it has to give "something"
+        # room to happen first. Two animation frames outlast the observer's
+        # microtask and would outlast a rAF-deferred one too — a wall-clock
+        # wait would quietly start passing if the handling were ever deferred.
+        page.evaluate(
+            "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
+        )
 
         expect(page.locator("#nav-grp-advising")).not_to_be_visible()
         self.assertEqual(header.get_attribute("aria-expanded"), "false")
