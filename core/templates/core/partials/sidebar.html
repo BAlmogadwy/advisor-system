@@ -12,18 +12,6 @@
       <div class="logo-title">{% if role == "STUDENT" %}{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}{% elif role == "EXAM_COMMITTEE" %}{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}منصة الإرشاد الأكاديمي{% else %}Advisor{% endif %}{% endif %}</div>
       <div class="logo-sub">{% if LANGUAGE_CODE == 'ar' %}جامعة طيبة{% else %}Taibah University{% endif %}</div>
     </div>
-    {% comment %}Collapses the sidebar to an icon rail, so the wide data tables and
-    timetable grids get the width back. Its label says what pressing it does, so
-    both wordings live here and the script picks the one for the current state.
-    {% endcomment %}
-    <button type="button" class="sb-rail-toggle" id="sbRailToggle" tabindex="0"
-      aria-controls="appSidebar" aria-expanded="true"
-      data-label-collapse="{% if LANGUAGE_CODE == 'ar' %}تصغير القائمة إلى أيقونات{% else %}Collapse the menu to icons{% endif %}"
-      data-label-expand="{% if LANGUAGE_CODE == 'ar' %}توسيع القائمة{% else %}Expand the menu{% endif %}"
-      title="{% if LANGUAGE_CODE == 'ar' %}تصغير القائمة إلى أيقونات{% else %}Collapse the menu to icons{% endif %}"
-      aria-label="{% if LANGUAGE_CODE == 'ar' %}تصغير القائمة إلى أيقونات{% else %}Collapse the menu to icons{% endif %}">
-      <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>
-    </button>
   </div>
 
   {% comment %}The way into the command palette, and the only thing on the screen
@@ -43,6 +31,18 @@
       <span class="i nav-find-i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></span>
       <span class="nav-find-t">{% if LANGUAGE_CODE == 'ar' %}الانتقال إلى صفحة…{% else %}Go to page…{% endif %}</span>
       <kbd class="nav-find-kbd" aria-hidden="true">Ctrl K</kbd>
+    </button>
+    {% comment %}Collapses the sidebar to an icon rail, so the wide data tables and
+    timetable grids get the width back. Its label says what pressing it does, so
+    both wordings live here and the script picks the one for the current state.
+    {% endcomment %}
+    <button type="button" class="sb-rail-toggle" id="sbRailToggle" tabindex="0"
+      aria-controls="appSidebar" aria-expanded="true"
+      data-label-collapse="{% if LANGUAGE_CODE == 'ar' %}تصغير القائمة إلى أيقونات{% else %}Collapse the menu to icons{% endif %}"
+      data-label-expand="{% if LANGUAGE_CODE == 'ar' %}توسيع القائمة{% else %}Expand the menu{% endif %}"
+      title="{% if LANGUAGE_CODE == 'ar' %}تصغير القائمة إلى أيقونات{% else %}Collapse the menu to icons{% endif %}"
+      aria-label="{% if LANGUAGE_CODE == 'ar' %}تصغير القائمة إلى أيقونات{% else %}Collapse the menu to icons{% endif %}">
+      <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>
     </button>
   </div>
 
@@ -434,7 +434,13 @@
     toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}إغلاق قائمة التنقل{% else %}Close navigation{% endif %}');
     document.body.style.overflow = 'hidden';
     setBackgroundInert(true);
-    const firstItem = sidebar.querySelector('.nav-link, a[href], button:not([disabled])');
+    /* The first candidate in document order is not always a focusable one: the
+       rail toggle sits above the links and is display:none at this breakpoint,
+       and focus() on a hidden element is a no-op -- which left the drawer
+       calling itself a modal dialog it had never moved focus into. Take the
+       first candidate the layout actually renders. */
+    const candidates = sidebar.querySelectorAll('.nav-link, a[href], button:not([disabled])');
+    const firstItem = Array.from(candidates).find((el) => el.offsetParent !== null);
     if (firstItem) requestAnimationFrame(() => firstItem.focus());
   }
 

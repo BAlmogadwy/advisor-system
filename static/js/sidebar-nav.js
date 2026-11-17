@@ -485,8 +485,8 @@
   <ul class="sbp-list" id="sbpList" role="listbox" aria-label="${words('palList')}"></ul>
   <p class="sbp-empty" id="sbpEmpty" hidden>${words('palEmpty')}</p>
   <div class="sbp-foot">${words('palHint')}</div>
-</div>
-<p class="sr-only" id="sbpCount" role="status" aria-live="polite"></p>`;
+  <p class="sr-only" id="sbpCount" role="status" aria-live="polite"></p>
+</div>`;
       document.body.appendChild(shell);
 
       input = shell.querySelector('#sbpInput');
