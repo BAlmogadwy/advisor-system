@@ -11,10 +11,16 @@ env:
   DJANGO_SECRET_KEY: ci-test-secret-key-not-for-production
   DJANGO_DEBUG: 'true'
 
+# Every job names its runner image instead of `ubuntu-latest`. On
+# 2026-11-17 `ubuntu-latest` moved to Ubuntu 26.04 between two pushes, and
+# two jobs broke on code that had not changed: setup-python has no 3.11.9
+# build for 26.04, and the pinned Playwright refuses to install Chromium
+# there. A red check holds the Render deploy, so the image moves only when a
+# PR moves it, with those two checked first.
 jobs:
   lint:
     name: lint (ruff)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +43,7 @@ jobs:
     # Do NOT add path exclusions here — the follow-up cleanup PR reduces
     # the backlog directly, starting with the top 6.
     name: typecheck (mypy, advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,7 +59,7 @@ jobs:
 
   test:
     name: test (pytest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DATABASE_URL: sqlite:////tmp/advisor-pytest-source.sqlite3
       ADVISOR_DB_PATH: /tmp/nonexistent-legacy-advisor.sqlite3
@@ -117,7 +123,7 @@ jobs:
     # case numbers, duplicate point, two submissions opening one case or joining
     # an open one, a withdrawal against a new point) only exist on PostgreSQL.
     name: planner (PostgreSQL 16)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -209,7 +215,7 @@ jobs:
     # regular jobs intentionally install requirements-dev.txt, which can hide a
     # missing runtime dependency by pulling it in transitively.
     name: production dependency + deploy preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:18
@@ -875,7 +881,7 @@ jobs:
 
   security:
     name: security (bandit + pip-audit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, typecheck, test, production-preflight]
     steps:
       - uses: actions/checkout@v4
