@@ -485,8 +485,8 @@
   <ul class="sbp-list" id="sbpList" role="listbox" aria-label="${words('palList')}"></ul>
   <p class="sbp-empty" id="sbpEmpty" hidden>${words('palEmpty')}</p>
   <div class="sbp-foot">${words('palHint')}</div>
-</div>
-<p class="sr-only" id="sbpCount" role="status" aria-live="polite"></p>`;
+  <p class="sr-only" id="sbpCount" role="status" aria-live="polite"></p>
+</div>`;
       document.body.appendChild(shell);
 
       input = shell.querySelector('#sbpInput');
@@ -669,6 +669,29 @@
     } else if (hint) {
       hint.remove();
     }
+  }
+
+  /* ── The search row's words before its badge ───────────────────────────────
+     The row shares its width with the rail toggle, and at the narrower
+     sidebar steps the label and the "Ctrl K" badge do not both fit: the
+     label was cut to "Go t…". The label says what the button does; the
+     badge is a convenience, and the shortcut stays announced through
+     `aria-keyshortcuts`. So the badge shows only where the label fits
+     beside it. Measured rather than set per breakpoint: the room depends on
+     the language, the font that loaded and the rail. The button's own width
+     does not depend on the badge (`flex: 1`), so this cannot feed back. */
+  const findWords = findBtn && findBtn.querySelector('.nav-find-t');
+  const findBadge = findBtn && findBtn.querySelector('.nav-find-kbd');
+  if (findWords && findBadge && typeof ResizeObserver === 'function') {
+    const fitBadge = () => {
+      findBadge.hidden = false;
+      /* Where the stylesheet already hides it (the rail, a phone) there is
+         nothing to decide, and the label is clipped on purpose there. */
+      if (!findBadge.getClientRects().length) return;
+      findBadge.hidden = findWords.scrollWidth > findWords.clientWidth;
+    };
+    new ResizeObserver(fitBadge).observe(findBtn);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBadge);
   }
 
   /* ── First run ────────────────────────────────────────────────────────── */

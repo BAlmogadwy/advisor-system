@@ -1435,6 +1435,7 @@ html[data-theme="dark"] .system-footer {
 .logo-mark {
   width:           40px;
   height:          40px;
+  flex-shrink:     0;
   border-radius:   11px;
   position:        relative;
   background:      linear-gradient(135deg, var(--teal), var(--sky), var(--royal));
@@ -1694,7 +1695,7 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
   color:            var(--t0) !important;
 }
 
-/* ── Collapse-to-rail toggle (in the logo area) ───────────── */
+/* ── Collapse-to-rail toggle (in the search row) ──────────── */
 .sb-rail-toggle {
   display:         flex;
   align-items:     center;
@@ -1702,7 +1703,6 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
   width:           28px;   /* ≥24px: WCAG 2.2 SC 2.5.8 */
   height:          28px;
   flex-shrink:     0;
-  margin-inline-start: auto;
   padding:         0;
   border-radius:   var(--radius-sm);
   /* A <button> with no surface of its own renders as the user agent's grey
@@ -1722,12 +1722,13 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
 html[dir="rtl"] .sb-rail-toggle .i { transform: scaleX(-1); }
 
 /* ── Nav search row — the command palette's way in ────────── */
-.nav-find { padding: 10px 10px 0; }
+.nav-find { padding: 10px 10px 0; display: flex; align-items: center; gap: 8px; }
 .nav-find-btn {
   display:       flex;
   align-items:   center;
   gap:           9px;
-  width:         100%;
+  flex:          1;
+  min-width:     0;
   padding:       8px 10px;
   border-radius: var(--radius-sm);
   background:    var(--glass-bg-data);
@@ -1801,7 +1802,7 @@ html[data-sidebar-collapsed~="student"]     .nav-grp[data-group="student"]     >
     gap:            10px;
     padding:        14px 0 12px;
   }
-  html[data-sidebar-rail] .nav-find { padding: 10px 8px 0; }
+  html[data-sidebar-rail] .nav-find { padding: 10px 8px 0; flex-direction: column; gap: 8px; }
   /* Both edges: a gutter on one side alone pushes every icon half its width
      off the centre of a 64px rail, which is plain to see. */
   html[data-sidebar-rail] .nav-sec  { padding-inline: 4px; scrollbar-gutter: stable both-edges; }
@@ -1811,6 +1812,11 @@ html[data-sidebar-collapsed~="student"]     .nav-grp[data-group="student"]     >
     gap:             0;
     padding-inline:  0;
   }
+  /* The search row is a column here, so the button's `flex: 1` buys it height,
+     not width, and `align-items: center` sizes it to its contents: without
+     this it shrinks to its 18px icon, under the 24px minimum the toggle's own
+     rule cites. The toggle keeps its 28px and stays centred. */
+  html[data-sidebar-rail] .nav-find-btn { align-self: stretch; }
 
   /* Every group's items show in the rail: with the headers gone there would be
      nothing left to re-open a collapsed one with. Same specificity as the
@@ -2045,8 +2051,10 @@ html[dir="rtl"] .sbp-foot {
 
 @media (forced-colors: active) {
   /* The wash and the inset ring are dropped here; a border keeps the chosen
-     row and the panel visible boxes. */
-  .sbp-opt[aria-selected="true"] { border: 1px solid currentColor; }
+     row and the panel visible boxes. The row's marker is an outline, not a
+     border: a border is laid out, so it grew the row 2px and shunted every
+     row below it on each arrow key. */
+  .sbp-opt[aria-selected="true"] { outline: 1px solid currentColor; outline-offset: -1px; }
   .sb-tip { border: 1px solid currentColor; }
 }
 

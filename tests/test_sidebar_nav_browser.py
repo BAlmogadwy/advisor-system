@@ -251,19 +251,119 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         context = self._context(language="ar")
         page = self._open(context, language="ar")
         # The words are the template's Arabic, not a string this script built.
-        expect(page.locator("#navFind .nav-find-t")).to_have_text("الانتقال إلى صفحة…")
+        expect(page.locator("#navFind .nav-find-t")).to_have_text("انتقل لصفحة…")
 
         page.keyboard.press("Control+k")
         field = page.locator("#sbpInput")
         expect(field).to_be_focused()
         # "تخطيط" — the Arabic for Section Planning is "تخطيط الشعب", and
         # Graduation Planning is "تخطيط التخرج".
+        # Every destination, before a key is typed: the number the filtered
+        # list has to be SMALLER than. Without this the assertions below hold
+        # just as well on a palette that filtered nothing at all, because
+        # `ranked('')` returns the lot.
+        everything = page.locator("#sbpList .sbp-opt").count()
+        self.assertGreater(everything, 10)
+
         field.type("تخطيط")
+        options = page.locator("#sbpList .sbp-opt")
+        matched = options.count()
+        self.assertGreater(matched, 0)
+        self.assertLess(matched, everything, "the Arabic query filtered nothing")
+
         labels = page.locator("#sbpList .sbp-opt .sbp-opt-t").all_text_contents()
         self.assertIn("تخطيط الشعب", labels)
         self.assertIn("تخطيط التخرج", labels)
+        # Nothing got in that does not hold the needle, and the characters it
+        # matched are the ones marked.
+        for label in labels:
+            self.assertIn("تخطيط", label, f"{label} does not contain the query")
+        self.assertEqual(
+            options.first.locator("mark").all_text_contents(),
+            ["تخطيط"],
+            "the Arabic highlight is not over the matched characters",
+        )
         # An English name is not what an Arabic page offers.
         self.assertNotIn("Section Planning", labels)
+
+    def test_the_palette_folds_a_shadda_and_maps_the_highlight_back(self) -> None:
+        """Batch Recommender is «الاقتراحات المجمّعة» — with a shadda (U+0651).
+
+        Typing the plain letters has to find it, which is `fold()` stripping
+        the mark, and the highlight has to land on the characters the reader
+        sees, which is `foldWithMap()` mapping folded indices back. Folding
+        SHORTENS this label, so an identity map would mark the wrong run.
+        """
+        page = self._open(self._context(language="ar"), language="ar")
+        page.keyboard.press("Control+k")
+        page.locator("#sbpInput").type("المجمعة")
+
+        option = page.locator("#sbpList .sbp-opt").first
+        expect(option.locator(".sbp-opt-t")).to_have_text("الاقتراحات المجمّعة")
+        # The match is a subsequence, so it marks runs. Joined, they are
+        # exactly the letters typed — the shadda sits BETWEEN two runs and is
+        # left unmarked, which is only possible if the folded indices were
+        # mapped back onto the characters the reader sees.
+        marks = option.locator("mark").all_text_contents()
+        self.assertEqual("".join(marks), "المجمعة")
+        self.assertNotIn("ّ", "".join(marks))
+
+    def test_the_palette_folds_the_alef_forms(self) -> None:
+        """Timetable Builder is «إنشاء الجداول», with an alef-hamza-below.
+
+        Nobody types the hamza, so a plain alef has to reach it.
+
+        Asserted on the MARKS, not on the label's presence: the group's own
+        name is searched too, so an unfolded query can still drag this page in
+        through its section and look like a match. Only a hit on the label
+        itself marks characters, and only folding can produce one here.
+        """
+        page = self._open(self._context(language="ar"), language="ar")
+        page.keyboard.press("Control+k")
+        page.locator("#sbpInput").type("انشاء")
+
+        options = page.locator("#sbpList .sbp-opt")
+        labels = [t.strip() for t in options.locator(".sbp-opt-t").all_text_contents()]
+        self.assertIn("إنشاء الجداول", labels)
+
+        marks = options.nth(labels.index("إنشاء الجداول")).locator("mark").all_text_contents()
+        self.assertEqual("".join(marks), "إنشاء", "the plain alef did not match the hamza form")
+
+    def test_a_section_name_finds_the_pages_under_it(self) -> None:
+        """A page is reachable by the name of the group it sits in.
+
+        "timetabling" is no label's subsequence — after `timetabl` neither
+        "Timetable Builder" nor "Timetable Workspace" can supply the `i` and
+        then the `n` — so every one of these matches through the section
+        fallback, and nothing else.
+        """
+        page = self._open(self._context())
+        page.keyboard.press("Control+k")
+        page.locator("#sbpInput").type("timetabling")
+
+        options = page.locator("#sbpList .sbp-opt")
+        self.assertGreater(options.count(), 0, "a section name finds nothing")
+        sections = set(page.locator("#sbpList .sbp-opt .sbp-opt-sec").all_text_contents())
+        self.assertEqual(sections, {"Timetabling"})
+
+    def test_a_label_hit_outranks_a_section_hit(self) -> None:
+        """ "adv" is in several labels AND in the Advising section's name.
+
+        The pages that say it themselves come first; the rest of Advising
+        follows. That ordering is the `+ 1000` in `ranked()`, and without it
+        the two kinds interleave by raw score.
+        """
+        page = self._open(self._context())
+        page.keyboard.press("Control+k")
+        page.locator("#sbpInput").type("adv")
+
+        labels = page.locator("#sbpList .sbp-opt .sbp-opt-t").all_text_contents()
+        self.assertGreater(len(labels), 1)
+        direct = [i for i, t in enumerate(labels) if "adv" in t.lower()]
+        indirect = [i for i, t in enumerate(labels) if "adv" not in t.lower()]
+        self.assertTrue(direct, "no label matched directly")
+        self.assertTrue(indirect, "nothing matched through its section")
+        self.assertLess(max(direct), min(indirect), "a section hit was ranked above a label hit")
 
     def test_the_shortcut_stands_down_where_the_dashboard_already_owns_it(self) -> None:
         # The dashboard's own Ctrl/Cmd+K jumps to a student, course or advisor
@@ -290,6 +390,43 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         row = page.locator("#navFind")
         self.assertEqual(row.get_attribute("aria-keyshortcuts"), "Control+K Meta+K")
         expect(page.locator("#navFind .nav-find-kbd")).to_have_text("Ctrl K")
+
+    def test_the_search_rows_label_is_never_cut_short(self) -> None:
+        """The row shares its width with the rail toggle. At the 210px and
+        195px sidebar steps the label and the shortcut badge do not both fit,
+        and the label was cut to an ellipsis ("Go t…"); in Arabic it was
+        cut even at full width. The badge yields: it shows where the label
+        fits beside it, and only there."""
+        clipped = (
+            "() => { const t = document.querySelector('#navFind .nav-find-t');"
+            " return t.scrollWidth > t.clientWidth; }"
+        )
+        settle = (
+            "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
+        )
+        badge_shown_at_full_width = {}
+        for language in ("en", "ar"):
+            page = self._open(self._context(language=language), language=language)
+            badge = page.locator("#navFind .nav-find-kbd")
+            for width in (1440, 1100, 900):
+                page.set_viewport_size({"width": width, "height": 820})
+                page.evaluate(settle)
+                self.assertFalse(
+                    page.evaluate(clipped),
+                    f"the search row's label is cut short at {width}px ({language})",
+                )
+                if width == 1440:
+                    badge_shown_at_full_width[language] = badge.is_visible()
+            # Below the first step the English label and the badge cannot share
+            # the 40px the label is left with, so the badge must have gone, and
+            # it comes back when there is room again.
+            if language == "en":
+                expect(badge).to_be_hidden()
+                page.set_viewport_size({"width": 1440, "height": 820})
+                page.evaluate(settle)
+                expect(badge).to_be_visible()
+        # A badge that simply never showed would pass everything above.
+        self.assertTrue(badge_shown_at_full_width["en"], "the badge never shows")
 
     # ── The icon rail ────────────────────────────────────────────────────
     def test_the_rail_is_remembered_and_applied_before_the_body_is_parsed(self) -> None:
@@ -383,6 +520,39 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         page.locator(".sidebar-toggle").click()
         expect(page.locator("#navFind")).to_be_visible()
         expect(page.locator("#sbRailToggle")).not_to_be_visible()
+
+    def test_the_rails_controls_stay_big_enough_to_hit(self) -> None:
+        """The search row stacks into a column on the rail.
+
+        A column sizes its children to their content, and the button's
+        `flex: 1` buys height there, not width — so the button has to be told
+        to stretch or it collapses to its icon. Both controls owe the 24px of
+        WCAG 2.5.8, and the button should fill the rail as the nav links do.
+        """
+        page = self._open(self._context())
+        page.locator("#sbRailToggle").click()
+        rail = page.locator("#appSidebar")
+        self.assertAlmostEqual(rail.bounding_box()["width"], 64, delta=2)
+
+        button = page.locator("#navFind").bounding_box()
+        toggle = page.locator("#sbRailToggle").bounding_box()
+        self.assertGreaterEqual(button["width"], 24, "the rail's search button is too small")
+        self.assertGreaterEqual(button["height"], 24, "the rail's search button is too short")
+        self.assertGreaterEqual(toggle["width"], 24)
+        self.assertGreaterEqual(toggle["height"], 24)
+
+        # It spans its row — the rail less that row's own 8px gutters — rather
+        # than sitting as a lone icon-sized box. (The nav links below sit in
+        # `.nav-sec`, which keeps a different gutter, so they are not the
+        # yardstick.)
+        row = page.locator(".nav-find").bounding_box()
+        self.assertAlmostEqual(
+            button["width"], row["width"] - 16, delta=2, msg="the button did not stretch"
+        )
+        # And both are still centred on the rail.
+        centre = rail.bounding_box()["x"] + rail.bounding_box()["width"] / 2
+        for name, box in (("button", button), ("toggle", toggle)):
+            self.assertAlmostEqual(box["x"] + box["width"] / 2, centre, delta=2, msg=name)
 
     # ── Applied before the first paint ───────────────────────────────────
     def _without_the_module(self, stored: str):
@@ -615,6 +785,172 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
                 )
                 ratio = page.evaluate(CONTRAST_ON, {"selector": "#menu", "colour": hovered})
                 self.assertGreaterEqual(ratio, MIN_ICON, f"{theme}: the hovered thumb is {ratio}:1")
+
+    # ── What the review of #233 found unpinned ───────────────────────────
+    def test_a_save_keeps_the_groups_this_role_does_not_draw(self) -> None:
+        """One store serves every role, and a sidebar only draws its own groups.
+
+        Saving from here must not erase the rest. "exams" is drawn for the exam
+        committee alone, so a super admin's save is exactly the case that used
+        to be able to lose it — and every other test in this file runs as that
+        super admin, so nothing else can see this.
+        """
+        context = self._context()
+        context.add_init_script(
+            "try { localStorage.setItem('sidebar-nav-collapsed',"
+            " JSON.stringify(['exams'])); } catch (e) {}"
+        )
+        page = self._open(context, path="/planner/")
+        expect(page.locator('.nav-grp[data-group="exams"]')).to_have_count(0)
+
+        page.locator('.nav-grp[data-group="advising"] .nav-lbl').click()
+        expect(page.locator("#nav-grp-advising")).not_to_be_visible()
+
+        stored = page.evaluate("JSON.parse(localStorage.getItem('sidebar-nav-collapsed') || '[]')")
+        self.assertEqual(
+            sorted(stored),
+            ["advising", "exams"],
+            "a save dropped a group this role never drew",
+        )
+
+    def test_moving_between_dashboard_panels_reopens_the_group_that_holds_one(self) -> None:
+        """The dashboard changes page without changing document.
+
+        Its panels are hash routes, and the sidebar marks the matching link
+        active as they switch. Arriving at one has to count as arriving at a
+        page, or the link you just landed on stays hidden under a collapsed
+        header.
+        """
+        page = self._open(self._context(), path="/")
+        header = page.locator('.nav-grp[data-group="advising"] .nav-lbl')
+        header.click()
+        self.assertEqual(header.get_attribute("aria-expanded"), "false")
+        expect(page.locator("#nav-grp-advising")).not_to_be_visible()
+
+        page.evaluate("location.hash = '#batch'")
+        expect(page.locator("#nav-grp-advising")).to_be_visible()
+        self.assertEqual(header.get_attribute("aria-expanded"), "true")
+
+    def test_a_badge_repaint_does_not_reopen_a_collapsed_group(self) -> None:
+        """The dashboard rewrites its sidebar badges' className after a fetch.
+
+        That is not an arrival. Counting it as one would pull a group the user
+        has just collapsed back open — and write it to the store, so it would
+        not even stay collapsed on the next load.
+
+        The active link has to be INSIDE the collapsed group for this to say
+        anything: `applyGroups(true)` only ever rescues the group holding the
+        page you are on, so with the active link elsewhere a repaint treated
+        as an arrival would be harmless and the test would pass either way.
+        """
+        page = self._open(self._context(), path="/")
+        page.evaluate("location.hash = '#batch'")
+        expect(page.locator('.sidebar .nav-a.active[data-target="batch"]')).to_have_count(1)
+
+        header = page.locator('.nav-grp[data-group="advising"] .nav-lbl')
+        header.click()
+        expect(page.locator("#nav-grp-advising")).not_to_be_visible()
+
+        changed = page.evaluate(
+            "() => { const b = document.querySelector('#menu .nav-badge');"
+            " if (!b) return false; b.className = b.className + ' sb-badge-repaint';"
+            " return true; }"
+        )
+        self.assertTrue(changed, "no sidebar badge to repaint")
+        # This asserts that nothing happens, so it has to give "something"
+        # room to happen first. Two animation frames outlast the observer's
+        # microtask and would outlast a rAF-deferred one too — a wall-clock
+        # wait would quietly start passing if the handling were ever deferred.
+        page.evaluate(
+            "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
+        )
+
+        expect(page.locator("#nav-grp-advising")).not_to_be_visible()
+        self.assertEqual(header.get_attribute("aria-expanded"), "false")
+        self.assertEqual(
+            page.evaluate("localStorage.getItem('sidebar-nav-collapsed')"), '["advising"]'
+        )
+
+    def test_the_drawer_moves_focus_to_something_the_layout_renders(self) -> None:
+        """The drawer calls itself a modal dialog, so it owes focus to its own
+        contents. The first candidate in document order is not always one the
+        layout draws — the rail toggle is display:none at this width, and
+        focus() on a hidden element goes nowhere at all."""
+        page = self._open(self._context())
+        page.set_viewport_size({"width": 390, "height": 760})
+        page.locator(".sidebar-toggle").click()
+
+        focused = page.locator("#appSidebar :focus")
+        expect(focused).to_have_count(1)
+        self.assertTrue(
+            page.evaluate("document.activeElement.offsetParent !== null"),
+            "the drawer gave focus to an element it does not draw",
+        )
+
+    def test_the_drawer_passes_over_controls_it_does_not_show(self) -> None:
+        """The test above holds today whatever the drawer does, because its
+        first candidate in document order happens to be drawn. Here the first
+        two are not: one has no box (display:none), the other has a box it
+        does not show (visibility:hidden), and neither can take focus."""
+        page = self._open(self._context())
+        page.set_viewport_size({"width": 390, "height": 760})
+        page.evaluate(
+            "() => { const s = document.getElementById('appSidebar');"
+            " for (const [id, css] of [['sbGhostB', 'visibility:hidden'], ['sbGhostA', 'display:none']]) {"
+            " const b = document.createElement('button'); b.type = 'button'; b.id = id;"
+            " b.textContent = id; b.style.cssText = css; s.prepend(b); } }"
+        )
+        page.locator(".sidebar-toggle").click()
+
+        focused = page.locator("#appSidebar :focus")
+        expect(focused).to_have_count(1)
+        self.assertNotIn(focused.get_attribute("id"), ("sbGhostA", "sbGhostB"))
+
+    def test_the_palettes_status_region_lives_inside_the_dialog(self) -> None:
+        """`aria-modal="true"` tells assistive technology to ignore everything
+        outside the dialog, which included the live region reporting how many
+        pages matched."""
+        page = self._open(self._context())
+        page.keyboard.press("Control+k")
+        expect(page.locator("#sbp .sbp-panel #sbpCount")).to_have_count(1)
+
+        page.locator("#sbpInput").type("secpl")
+        expect(page.locator("#sbpCount")).to_have_text("1 page matches")
+
+    def test_the_chosen_row_does_not_resize_the_list_in_forced_colours(self) -> None:
+        """In forced colours the chosen row is marked with an outline, not a
+        border: a border is laid out, so every arrow key grew the row by 2px
+        and shunted the rows under the pointer."""
+        context = self.browser.new_context(
+            viewport={"width": 1440, "height": 820}, forced_colors="active"
+        )
+        self.addCleanup(context.close)
+        context.add_cookies(
+            [
+                {
+                    "name": settings.SESSION_COOKIE_NAME,
+                    "value": self.session,
+                    "url": self.live_server_url,
+                }
+            ]
+        )
+        page = context.new_page()
+        page.goto(f"{self.live_server_url}/planner/")
+        page.add_style_tag(
+            content="*, *::before, *::after { transition: none !important; animation: none !important; }"
+        )
+        page.keyboard.press("Control+k")
+        rows = page.locator("#sbpList .sbp-opt")
+        expect(rows.first).to_be_visible()
+        self.assertGreater(rows.count(), 2)
+
+        first = rows.nth(0).bounding_box()["height"]
+        page.keyboard.press("ArrowDown")
+        self.assertEqual(rows.nth(1).get_attribute("aria-selected"), "true")
+        after = rows.nth(0).bounding_box()["height"]
+        self.assertAlmostEqual(
+            first, after, delta=0.5, msg="the row changed height when it lost the selection"
+        )
 
     # ── The contrast fix ─────────────────────────────────────────────────
     def test_an_inactive_nav_icon_clears_three_to_one_in_both_themes(self) -> None:
