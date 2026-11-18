@@ -577,7 +577,21 @@ def test_room_candidate_outside_programme_pool_is_warning_not_clean() -> None:
     assert preview["candidates"][0]["room_code"] == "AI100"
 
 
-def test_bulk_clean_room_preview_reserves_unique_room_slots() -> None:
+@pytest.mark.parametrize(
+    ("first_end", "second_day", "second_start", "second_end", "distinct_rooms"),
+    [
+        ("10:15", "MON", "09:00", "10:15", 2),
+        ("10:15", "MON", "09:45", "11:00", 2),
+        ("10:15", "MON", "10:15", "11:30", 1),
+        ("10:17", "MON", "10:16", "11:31", 2),
+        ("10:17", "MON", "10:17", "11:32", 1),
+        ("10:17", "MONDAY", "10:16", "11:31", 2),
+        ("10:17", "TUE", "10:16", "11:31", 1),
+    ],
+)
+def test_bulk_clean_room_preview_reserves_unique_room_slots(
+    first_end, second_day, second_start, second_end, distinct_rooms
+) -> None:
     scenario, target_board, _other_board = _workspace()
     first_ts = _term_section(scenario, "AI101", "S1")
     second_ts = _term_section(scenario, "DS201", "S1")
@@ -592,23 +606,25 @@ def test_bulk_clean_room_preview_reserves_unique_room_slots() -> None:
         term_section=first_ts,
         day="MON",
         start_time="09:00",
-        end_time="10:15",
+        end_time=first_end,
         room="UNASSIGNED",
     )
     SectionPlacement.objects.create(
         board=target_board,
         term_section=second_ts,
-        day="MON",
-        start_time="09:00",
-        end_time="10:15",
+        day=second_day,
+        start_time=second_start,
+        end_time=second_end,
         room="UNASSIGNED",
     )
 
     preview = preview_bulk_clean_room_assignments(scenario.id)
 
-    rooms = {row["new_room"] for row in preview["assignments"]}
+    proposed = {row["placement_id"]: row["new_room"] for row in preview["assignments"]}
     assert preview["ready_count"] == 2
-    assert rooms == {"R100", "R200"}
+    assert len(set(proposed.values())) == distinct_rooms
+    applied = apply_bulk_clean_room_assignments(scenario.id)
+    assert {row["placement_id"]: row["new_room"] for row in applied["applied"]} == proposed
 
 
 def test_bulk_clean_room_apply_updates_rooms_and_returns_undo_moves() -> None:

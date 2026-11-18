@@ -3203,9 +3203,7 @@ def apply_approved_repair_candidate(
 
     with transaction.atomic():
         run = (
-            TimetableRepairRun.objects.select_for_update()
-            .select_related("scenario", "target_placement")
-            .get(id=run_id)
+            TimetableRepairRun.objects.select_for_update().select_related("scenario").get(id=run_id)
         )
         candidate = _candidate_for_run(run, candidate_identifier, lock=True)
         _ensure_scenario_mutable(run)
@@ -3334,25 +3332,24 @@ def rollback_repair_run(
 
     with transaction.atomic():
         run = (
-            TimetableRepairRun.objects.select_for_update()
-            .select_related("scenario", "target_placement")
-            .get(id=run_id)
+            TimetableRepairRun.objects.select_for_update().select_related("scenario").get(id=run_id)
         )
         _ensure_scenario_mutable(run)
         approval = (
             TimetableRepairApproval.objects.select_for_update()
             .filter(run=run, status=TimetableRepairApproval.STATUS_APPLIED)
-            .select_related("candidate")
             .order_by("-decided_at", "-created_at", "-id")
             .first()
         )
-        if approval is None or approval.candidate is None:
+        if approval is None or approval.candidate_id is None:
             raise TimetableRepairOperationError(
                 "No applied repair candidate is available to rollback",
                 code="REPAIR_NOT_APPLIED",
                 status=409,
             )
-        candidate = approval.candidate
+        candidate = TimetableRepairCandidate.objects.select_for_update().get(
+            pk=approval.candidate_id
+        )
         placements_by_id = _placements_for_candidate_moves(candidate, lock=True)
         for move in _candidate_move_set(candidate):
             scoped_placement = placements_by_id.get(int(move.get("placement_id") or 0))
@@ -5745,9 +5742,7 @@ def _validate_candidate_write_preconditions(
     """Validate the current scenario still matches the audited repair proposal."""
 
     placements_by_id = _placements_for_candidate_moves(candidate, lock=True)
-    placement = placements_by_id.get(int(run.target_placement_id)) or _target_placement_for_update(
-        run
-    )
+    placement = placements_by_id.get(run.target_placement_id) or _target_placement_for_update(run)
     for scoped_placement in placements_by_id.values():
         _assert_placement_matches_before_snapshot(run, scoped_placement)
     planning_scope = (run.request_payload or {}).get("planning_scope") or {}

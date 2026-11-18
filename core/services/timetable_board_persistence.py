@@ -23,9 +23,12 @@ See ``docs/BOARD-PERSISTENCE-DOR.md`` for the full contract and rationale.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from django.db import transaction
+from django.db.models import Model
 
 from core.models import SectionPlacement, TermSectionMeeting
 from core.services.board_ownership import assert_rebuild_ownership, external_shared_section_ids
@@ -72,6 +75,8 @@ _SECTION_TEACHER_FIELDS = (
     "instructor_id",
     "role",
     "source",
+    "created_at",
+    "updated_at",
 )
 
 
@@ -305,6 +310,25 @@ def _teacher_frozen_row_keys(scenario_id: int) -> set[tuple[str, str]]:
     }
 
 
+def recreate_snapshot_rows(model: type[Model], rows: Sequence[Mapping[str, Any]]) -> None:
+    """Reinsert captured rows with their original IDs and audit timestamps."""
+    if not rows:
+        return
+    objects = [model(**row) for row in rows]
+    model._default_manager.bulk_create(objects, batch_size=500)
+    # bulk_create stamps auto timestamps even when values were supplied.
+    timestamps = [
+        field.attname
+        for field in model._meta.concrete_fields
+        if getattr(field, "auto_now", False) or getattr(field, "auto_now_add", False)
+    ]
+    if timestamps:
+        for obj, row in zip(objects, rows, strict=True):
+            for name in timestamps:
+                setattr(obj, name, row[name])
+        model._default_manager.bulk_update(objects, timestamps, batch_size=500)
+
+
 def _restore_section_teachers(
     scenario_id: int, rows: list[dict], frozen_keys: set[tuple[str, str]]
 ) -> None:
@@ -329,13 +353,12 @@ def _restore_section_teachers(
     if doomed:
         SectionInstructor.objects.filter(pk__in=doomed).delete()
     keep = [
-        SectionInstructor(**row)
+        row
         for row in rows
         if _row_key(row["course_key"], row["section"]) not in frozen_keys
         and _row_key(row["course_key"], row["section"]) not in pinned
     ]
-    if keep:
-        SectionInstructor.objects.bulk_create(keep, batch_size=500)
+    recreate_snapshot_rows(SectionInstructor, keep)
     invalidate_scope(scenario_id)
 
 

@@ -128,7 +128,7 @@ const S = {
   // Up to 16 pane slots (a 4×4 matrix is the max the picker exposes).
   // The current layout (cols × rows) decides how many are visible; the
   // rest carry `hidden` on their DOM node and no boardId.
-  panes: Array.from({ length: 16 }, () => ({ boardId: null, group: 0, boardData: null })),
+  panes: Array.from({ length: 16 }, () => ({ boardId: null, group: 0, boardData: null, loadRevision: 0 })),
   // Global undo/redo stacks shared across panes, matching the main page's
   // single-stack model. Each action has enough state to fully revert.
   undoStack: [],
@@ -280,8 +280,8 @@ const SB = {
 };
 
 /* ── API helpers ── */
-// Copy needs a stable, loaded source. These counters only control Copy;
-// ordinary read requests and planner polling do not take ownership of it.
+// Copy needs a stable, loaded source. Keep the scenario picker on that
+// source during a save so its completion updates the correct board and undo history.
 const COPY_ACTIVITY = { pending: null, writes: 0, loading: 0, optimising: false,
   copiedScenarioId: window.history.state?.timetableCopiedScenario || null };
 function splitCanCopyScenario() {
@@ -291,6 +291,8 @@ function splitCanCopyScenario() {
 }
 function syncCopyScenarioControl() {
   if ($('twsCopyScenario')) $('twsCopyScenario').disabled = !splitCanCopyScenario();
+  const selector = $('twsScenario');
+  if (selector) selector.disabled = Boolean(COPY_ACTIVITY.pending || COPY_ACTIVITY.writes);
 }
 /* Heavy previews (rooms, outcomes, slot candidates, move analysis) share a
    small server lane that keeps threads free for saves and the health check.
@@ -2201,6 +2203,7 @@ function clearCreateSectionAssistDecorations() {
 
 function clearCreateSectionAssist({ announce = false } = {}) {
   const wasActive = S.createAssist.active;
+  for (const idx of S.createAssist.targetPaneIdxs) abortPreview(`create-assist-${idx}`);
   clearCreateSectionAssistDecorations();
   S.createAssist.active = false;
   S.createAssist.payload = null;
@@ -2281,6 +2284,7 @@ function createAssistCandidateCells(candidate) {
 }
 
 function createAssistCandidateIsVisible(candidate) {
+  if (candidate.paneIdx >= paneCount() || S.panes[candidate.paneIdx]?.boardId !== candidate.boardId) return false;
   const meetings = createAssistCandidateMeetings(candidate);
   return meetings.length > 0 && createAssistCandidateCells(candidate).length === meetings.length;
 }
@@ -2662,21 +2666,27 @@ async function loadScenarios(preferredScenarioId = null) {
   finally { COPY_ACTIVITY.loading--; syncCopyScenarioControl(); }
 }
 
+let splitScenarioRevision = 0;
+let boardSummaryRevision = 0;
+
 async function loadSplitScenarios(preferredScenarioId = null) {
+  const revision = ++splitScenarioRevision;
   const requested = preferredScenarioId || S.scenarioId || INITIAL_SCENARIO || '';
   const qs = (DEFAULT_YEAR && DEFAULT_TERM)
     ? `?year=${DEFAULT_YEAR}&term=${DEFAULT_TERM}`
     : '';
   const data = await api(`/ops/tw/scenarios/${qs}`);
-  if (!data) return;
+  if (!data || revision !== splitScenarioRevision) return;
   S.scenarios = data.scenarios || [];
   // Direct links and newly-created scenarios can belong to another term.
   // Resolve the requested scenario before selecting a default list entry.
   if (requested && !S.scenarios.some(scenario => String(scenario.id) === String(requested))) {
     const detail = await api(`/ops/tw/scenarios/${encodeURIComponent(requested)}/`);
+    if (revision !== splitScenarioRevision) return;
     if (detail?.scenario) {
       const scope = new URLSearchParams({ year: detail.scenario.academic_year, term: detail.scenario.term });
       const scoped = await api(`/ops/tw/scenarios/?${scope}`);
+      if (revision !== splitScenarioRevision) return;
       S.scenarios = scoped?.scenarios || [detail.scenario];
       if (!S.scenarios.some(scenario => String(scenario.id) === String(requested))) S.scenarios.unshift(detail.scenario);
     } else {
@@ -2703,9 +2713,9 @@ async function loadSplitScenarios(preferredScenarioId = null) {
 }
 
 async function onScenarioChange(copyToken = null) {
-  if (COPY_ACTIVITY.pending && copyToken !== COPY_ACTIVITY.pending) {
+  if (COPY_ACTIVITY.writes || (COPY_ACTIVITY.pending && copyToken !== COPY_ACTIVITY.pending)) {
     $('twsScenario').value = String(S.scenarioId || '');
-    return;
+    return false;
   }
   COPY_ACTIVITY.loading++;
   syncCopyScenarioControl();
@@ -2718,13 +2728,13 @@ async function onScenarioChange(copyToken = null) {
 }
 
 async function loadSplitScenario() {
+  const revision = ++splitScenarioRevision;
   // Undo/redo stacks are scoped to a scenario's placements; carrying them
   // across scenarios would let an undo mutate a different scenario's data.
   S.undoStack = [];
   S.redoStack = [];
   updateUndoRedoButtons();
-  S.selectedPlacementId = null;
-  S.selectedPaneIdx = null;
+  clearPlacementSelection({ announce: false });
   // Every cached structure belongs to the previous scenario and would
   // paint stale data if left in place — invalidate before loading new.
   RP.capacity = {};
@@ -2765,39 +2775,32 @@ async function loadSplitScenario() {
   if (typeof DRAWER !== 'undefined' && DRAWER.placementId != null) closeDrawer();
 
   const sid = $('twsScenario').value;
-  if (!sid) {
-    persistWorkspaceScenario(null);
-    S.scenarioId = null;
-    S.scenarioMeta = null;
-    S.scenarioSummary = null;
-    resetProtections();
-    S.boards = [];
-    $('twsPublish').disabled = true;
-    $('twsOptimise').disabled = true;
-    $('twsGlobalRepairPlan') && ($('twsGlobalRepairPlan').disabled = true);
-    $('twsExport').disabled = true;
-    renderSlotBar();
-    for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
-    return;
-  }
+  if (!sid || sid !== String(S.scenarioId)) clearLoadedSplitScenario();
+  if (!sid) return false;
   const data = await api(`/ops/tw/scenarios/${sid}/`);
-  if (!data) return;
+  if (revision !== splitScenarioRevision) return false;
+  const bdata = data?.scenario && await api(`/ops/tw/boards/?scenario_id=${sid}`);
+  if (revision !== splitScenarioRevision) return false;
+  if (!Array.isArray(bdata?.boards)) {
+    if (!S.scenarioId) $('twsScenario').value = '';
+    return false;
+  }
   S.scenarioId = data.scenario.id;
   S.scenarioMeta = data.scenario;
   loadProtections();
   // The lens is a heavy preview: the boards never wait for it, and the panes
   // repaint with its plan badges when it arrives.
   loadPlanLens({ rerender: true });
-  const bdata = await api(`/ops/tw/boards/?scenario_id=${sid}`);
-  S.boards = (bdata && bdata.boards) || [];
-  S.scenarioSummary = (bdata && bdata.scenario_summary) || null;
-  S.crossBoardClashCount = (bdata && Number(bdata.cross_board_clashes || 0)) || 0;
-  S.crossBoardAffectedCount = (bdata && Number(bdata.cross_board_affected_students || 0)) || 0;
+  S.boards = bdata.boards;
+  S.scenarioSummary = bdata.scenario_summary || null;
+  S.crossBoardClashCount = Number(bdata.cross_board_clashes || 0);
+  S.crossBoardAffectedCount = Number(bdata.cross_board_affected_students || 0);
 
-  for (let i = 0; i < paneCount(); i++) {
-    S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
+  for (let i = 0; i < S.panes.length; i++) {
+    S.panes[i].boardId = i < paneCount() && S.boards[i] ? S.boards[i].id : null;
     S.panes[i].group = 0;
     S.panes[i].boardData = null;
+    if (i < paneCount()) renderPaneEmpty(i);
   }
   if (INITIAL_BOARD) {
     const idx = S.boards.findIndex(b => String(b.id) === String(INITIAL_BOARD));
@@ -2807,25 +2810,58 @@ async function loadSplitScenario() {
   $('twsSub').textContent =
     `${data.scenario.name} · ${data.scenario.status.toUpperCase()} · ${S.boards.length} boards`;
   $('twsStBoards').textContent = S.boards.length;
-  const published = data.scenario.status === 'published';
-  $('twsPublish').disabled = published;
-  $('twsOptimise').disabled = false;
-  $('twsOptimiseMenu') && ($('twsOptimiseMenu').disabled = false);
-  $('twsGlobalRepairPlan') && ($('twsGlobalRepairPlan').disabled = published);
-  $('twsExport').disabled = false;
-  $('twsNewBoard') && ($('twsNewBoard').disabled = published);
-  $('twsSlots') && ($('twsSlots').disabled = published);
-  $('twsBlockMode') && ($('twsBlockMode').disabled = published);
-  if (published && S.blockMode) setBlockMode(false);
-  $('twsElectives') && ($('twsElectives').disabled = false);
+  syncSplitScenarioActions();
 
   updateAggregateMetrics();
   renderSlotBar();
-  let fullyLoaded = Boolean(bdata);
-  for (let i = 0; i < paneCount(); i++) if (await loadAndRenderPane(i) === false) fullyLoaded = false;
+  let fullyLoaded = true;
+  for (let i = 0; i < paneCount(); i++) {
+    if (await loadAndRenderPane(i) === false) fullyLoaded = false;
+    if (revision !== splitScenarioRevision) return false;
+  }
   if (RP.open) renderRpanel();
   if (SB.open) loadSidebarBudget();
   return fullyLoaded;
+}
+
+function syncSplitScenarioActions() {
+  const loaded = Boolean(S.scenarioId);
+  const editable = loaded && S.scenarioMeta.status !== 'published';
+  for (const id of ['twsPublish', 'twsGlobalRepairPlan', 'twsNewBoard', 'twsSlots', 'twsBlockMode']) {
+    if ($(id)) $(id).disabled = !editable;
+  }
+  for (const id of ['twsExport', 'twsElectives']) {
+    if ($(id)) $(id).disabled = !loaded;
+  }
+  for (const id of ['twsOptimise', 'twsOptimiseMenu']) {
+    if ($(id)) $(id).disabled = !loaded || COPY_ACTIVITY.optimising;
+  }
+  if (!editable && S.blockMode) setBlockMode(false);
+}
+
+function clearLoadedSplitScenario() {
+  S.scenarioId = null;
+  S.scenarioMeta = null;
+  S.boards = [];
+  S.scenarioSummary = null;
+  S.crossBoardClashCount = 0;
+  S.crossBoardAffectedCount = 0;
+  S.selectedPaneIdx = null;
+  S.selectedPlacementId = null;
+  RP.capacity = {};
+  S.panes.forEach(pane => { pane.boardId = null; pane.boardData = null; pane.group = 0; });
+  resetProtections();
+  closeDrawer();
+  persistWorkspaceScenario(null);
+  $('twsSub').textContent = '';
+  $('twsStBoards').textContent = '—';
+  syncSplitScenarioActions();
+  updateAggregateMetrics();
+  renderSlotBar();
+  for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
+  if (RP.open) renderRpanel();
+  if (BP.open) renderBpanel();
+  if (SB.open) renderSidebar();
 }
 
 function updateAggregateMetrics() {
@@ -2894,23 +2930,22 @@ function renderSlotBar() {
 }
 
 async function setPaneBoard(idx, boardId) {
-  S.panes[idx].boardId = boardId ? parseInt(boardId) : null;
+  const nextId = boardId ? parseInt(boardId) : null;
+  if (S.panes[idx].boardId !== nextId
+      && (S.selectedPaneIdx === idx || S.slotAssist.active || S.createAssist.active)) {
+    clearPlacementSelection();
+  }
+  S.panes[idx].boardId = nextId;
   S.panes[idx].group = 0;
   S.panes[idx].boardData = null;
   renderSlotBar();
   await loadAndRenderPane(idx);
 }
 async function togglePaneOff(idx) {
-  if (S.panes[idx].boardId) {
-    S.panes[idx].boardId = null;
-  } else {
-    const used = new Set(S.panes.filter(p => p.boardId).map(p => p.boardId));
-    const nextBoard = S.boards.find(b => !used.has(b.id)) || S.boards[0];
-    if (nextBoard) S.panes[idx].boardId = nextBoard.id;
-  }
-  S.panes[idx].boardData = null;
-  renderSlotBar();
-  await loadAndRenderPane(idx);
+  if (S.panes[idx].boardId) return setPaneBoard(idx, null);
+  const used = new Set(S.panes.filter(p => p.boardId).map(p => p.boardId));
+  const nextBoard = S.boards.find(b => !used.has(b.id)) || S.boards[0];
+  return setPaneBoard(idx, nextBoard?.id);
 }
 
 /* ── Pane loading + rendering ── */
@@ -2925,16 +2960,29 @@ async function loadAndRenderPane(idx) {
 
 async function loadSplitPane(idx) {
   const p = S.panes[idx];
+  const revision = ++p.loadRevision;
+  const scenarioRevision = splitScenarioRevision;
+  const scenarioId = S.scenarioId;
+  const boardId = p.boardId;
   const el = paneEl(idx);
   if (!el) return false;
-  if (!p.boardId || !S.scenarioId) { renderPaneEmpty(idx); return true; }
+  if (!boardId || !scenarioId) { renderPaneEmpty(idx); return true; }
+  if (!p.boardData) renderPaneEmpty(idx, IS_AR ? 'جارٍ تحميل اللوحة…' : 'Loading board…');
   // Board detail carries slot config + placements; the conflicts list is a
   // separate endpoint so we fetch both in parallel.
   const [bdata, cdata] = await Promise.all([
-    api(`/ops/tw/boards/${p.boardId}/`),
-    api(`/ops/tw/boards/${p.boardId}/conflicts/`),
+    api(`/ops/tw/boards/${boardId}/`),
+    api(`/ops/tw/boards/${boardId}/conflicts/`),
   ]);
-  if (!bdata) return false;
+  if (p.loadRevision !== revision || p.boardId !== boardId
+      || S.scenarioId !== scenarioId || splitScenarioRevision !== scenarioRevision) return false;
+  // Maximising a pane can move this same pane object while its request is in flight.
+  const currentIndex = S.panes.indexOf(p);
+  if (currentIndex < 0) return false;
+  if (!bdata) {
+    if (!p.boardData) renderPaneEmpty(currentIndex, IS_AR ? 'تعذر تحميل اللوحة.' : 'Could not load board.');
+    return false;
+  }
   p.boardData = bdata;
   // conflicts endpoint spreads its fields at the response root.
   p.boardData.conflicts = cdata
@@ -2942,13 +2990,13 @@ async function loadSplitPane(idx) {
         room_clashes: cdata.room_clashes || [], cross_board: cdata.cross_board_conflicts || [],
         student_impact: cdata.student_impact || {} }
     : {};
-  renderPane(idx);
+  renderPane(currentIndex);
   if (S.createAssist.active) paintCreateSectionTargets();
   if (activeSplitSearch()) refreshSplitSearch();
   return !!cdata;
 }
 
-function renderPaneEmpty(idx) {
+function renderPaneEmpty(idx, message = T.selectBoard) {
   const el = paneEl(idx);
   if (!el) return;
   el.innerHTML = `
@@ -2960,7 +3008,7 @@ function renderPaneEmpty(idx) {
         <button data-action="maximise" title="Maximise pane" aria-label="Maximise pane">⤢</button>
       </span>
     </div>
-    <div class="empty-pane">${T.selectBoard}</div>
+    <div class="empty-pane">${esc(message)}</div>
   `;
   bindPaneControls(idx);
   updateMaximiseButtons();
@@ -3742,7 +3790,8 @@ async function createPlannedPlacementFromCell(paneIdx, cell, payload) {
 }
 
 async function createPlannedPlacementFromCandidate(candidate, payload) {
-  const boardId = candidate?.boardId || S.panes[candidate?.paneIdx]?.boardId;
+  const boardId = S.panes[candidate.paneIdx]?.boardId;
+  if (boardId !== candidate.boardId || candidate.paneIdx >= paneCount()) return null;
   const meetings = createAssistCandidateMeetings(candidate).map(meeting => ({
     day: meeting.day,
     start_time: meeting.start,
@@ -3836,8 +3885,13 @@ async function onCellDrop(paneIdx, cell, e) {
 }
 
 async function refreshBoardsSummary() {
-  if (!S.scenarioId) return;
-  const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
+  const scenarioId = S.scenarioId;
+  if (!scenarioId) return false;
+  const scenarioRevision = splitScenarioRevision;
+  const revision = ++boardSummaryRevision;
+  const bdata = await api(`/ops/tw/boards/?scenario_id=${scenarioId}`);
+  if (scenarioId !== S.scenarioId || scenarioRevision !== splitScenarioRevision
+      || revision !== boardSummaryRevision) return false;
   if (bdata && bdata.boards) {
     S.boards = bdata.boards;
     S.scenarioSummary = bdata.scenario_summary || null;
@@ -3948,6 +4002,7 @@ function applyLayout(cols, rows, opts = {}) {
     return;
   }
   const prev = paneCount();
+  if (prev !== c * r && (S.slotAssist.active || S.createAssist.active)) clearPlacementSelection();
   S.cols = c; S.rows = r;
   const q = $('twsQuad');
   q.style.setProperty('--tws-cols', String(c));
@@ -4128,6 +4183,7 @@ function initLayoutMatrix() {
 /* ── Presets ── */
 function applyPreset(name) {
   if (!S.boards.length) return;
+  clearPlacementSelection();
   if (name === 'first4') {
     for (let i = 0; i < paneCount(); i++) S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
   } else if (name === 'cross') {
@@ -4775,12 +4831,9 @@ async function refreshBuilderConsole(body) {
   const actionsBox = body.querySelector('#twsNextActions');
   if (readinessBox) readinessBox.innerHTML = readinessConsoleHtml(RP.builder.readiness);
   if (actionsBox) actionsBox.innerHTML = renderBuilderActionsHtml(RP.builder.actions.length ? RP.builder.actions : null);
-  const [readinessData, actionsData] = await Promise.all([
-    api(`/ops/tw/scenarios/${S.scenarioId}/readiness/`),
-    api(`/ops/tw/scenarios/${S.scenarioId}/builder-actions/?limit=12`),
-  ]);
+  const actionsData = await api(`/ops/tw/scenarios/${S.scenarioId}/builder-actions/?limit=12`);
   if (token !== RP.builder.token || !RP.open || RP.tab !== 'issues') return;
-  RP.builder.readiness = readinessData?.readiness || actionsData?.readiness || null;
+  RP.builder.readiness = actionsData?.readiness || null;
   RP.builder.actions = actionsData?.actions || [];
   if (readinessBox) readinessBox.innerHTML = readinessConsoleHtml(RP.builder.readiness);
   if (actionsBox) {
@@ -7929,15 +7982,6 @@ function copyScenarioSuggestedName(name) {
   }
   return suggestion;
 }
-function clearCopySplitBoards() {
-  S.boards = []; S.scenarioSummary = null;
-  S.selectedPaneIdx = null; S.selectedPlacementId = null;
-  RP.capacity = {};
-  S.panes.forEach(pane => { pane.boardId = null; pane.boardData = null; pane.group = 0; });
-  closeDrawer(); renderSlotBar();
-  for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
-  if (RP.open) renderRpanel();
-}
 function openCopyScenarioModal() {
   if (!splitCanCopyScenario() || _modalOpen) return;
   const sourceId = S.scenarioId;
@@ -7983,7 +8027,6 @@ function openCopyScenarioModal() {
           if (!data?.scenario) return false;
           copied = data.scenario;
           COPY_ACTIVITY.copiedScenarioId = copied.id;
-          clearCopySplitBoards();
           const option = document.createElement('option');
           option.value = copied.id; option.textContent = `${copied.name} (${copied.status})`;
           selector.appendChild(option);
@@ -7997,10 +8040,8 @@ function openCopyScenarioModal() {
           notify.success(IS_AR ? 'تم إنشاء النسخة وفتحها' : 'Copy created and opened');
         } catch (error) {
           if (copied) {
-            S.scenarioId = null; S.scenarioMeta = null;
             selector.value = '';
-            persistWorkspaceScenario(null);
-            clearCopySplitBoards();
+            clearLoadedSplitScenario();
             notify.warning(IS_AR ? `حُفظت النسخة «${copied.name}» (رقم ${copied.id}). تعذر فتحها؛ اخترها من قائمة السيناريوهات.` : `Copy “${copied.name}” (ID ${copied.id}) was saved but could not be opened. Select it from the scenario list.`);
           }
           else { status.textContent = error.message; notify.error(error.message); return false; }
@@ -9298,8 +9339,8 @@ async function doOptimise(mode = 'current') {
     // Re-enable LAST, after the panes have settled. This ordering predates the
     // async change here, but "current" now runs for minutes, which makes a
     // second click on a half-loaded grid far more likely than it was.
-    btn.disabled = false; menuBtn && (menuBtn.disabled = false);
     COPY_ACTIVITY.optimising = false; syncCopyScenarioControl();
+    syncSplitScenarioActions();
     renderSplitMeetingSummary();
   }
 

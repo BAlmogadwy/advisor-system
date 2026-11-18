@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from operator import itemgetter
 from typing import TypeVar
 
 from django.conf import settings
@@ -201,13 +202,12 @@ def get_programme_rooms(programmes: list[str]) -> list[dict]:
     Matches any room whose comma-separated ``department`` field contains
     at least one of the given programme codes.
 
-    Returns list of dicts sorted by capacity ASC (for best-fit allocation):
+    Returns rooms in best-fit order, breaking capacity ties by room code and section:
         ``[{room_code, capacity, room_type, wing, building}, ...]``
     """
-    all_rooms = Room.objects.all().order_by("capacity")
     result = []
     progs_upper = {p.strip().upper() for p in programmes if p.strip()}
-    for r in all_rooms:
+    for r in Room.objects.all():
         room_progs = {p.strip().upper() for p in r.department.split(",") if p.strip()}
         if room_progs & progs_upper:
             result.append(
@@ -220,6 +220,8 @@ def get_programme_rooms(programmes: list[str]) -> list[dict]:
                     "section": (r.section or "").upper(),
                 }
             )
+    # Use the same room-code ordering regardless of the database collation.
+    result.sort(key=itemgetter("capacity", "room_code", "section"))
     return result
 
 

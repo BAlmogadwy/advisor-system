@@ -1,4 +1,4 @@
-"""Focused adversarial cancellation probe; all writes use the test database."""
+"""A planner that loses ownership must leave the next editor's timetable intact."""
 
 import pytest
 from django.utils import timezone
@@ -12,7 +12,8 @@ from core.services.planner_job_runner import (
 
 
 @pytest.mark.django_db
-def test_reconciled_worker_cannot_restore_over_later_manual_edit(monkeypatch):
+@pytest.mark.parametrize("cancel", [False, True])
+def test_reconciled_worker_cannot_restore_over_later_manual_edit(monkeypatch, cancel):
     scenario = TimetableScenario.objects.create(academic_year="1448", term="1", name="Long run")
     board = DeliveryBoard.objects.create(scenario=scenario, label="AI")
     section = TermSection.objects.create(
@@ -33,7 +34,8 @@ def test_reconciled_worker_cannot_restore_over_later_manual_edit(monkeypatch):
     job_id = submit_planner_job(scenario_id=scenario.id, mode=PlannerJob.MODE_OPTIMISE_CURRENT)
 
     def long_pipeline(*args, **kwargs):
-        assert cancel_planner_job(job_id)
+        if cancel:
+            assert cancel_planner_job(job_id)
         # Simulate an external reconciliation/ownership-loss decision. The old
         # in-process solver is still finishing, but it no longer owns the job.
         PlannerJob.objects.filter(pk=job_id).update(
@@ -43,7 +45,7 @@ def test_reconciled_worker_cannot_restore_over_later_manual_edit(monkeypatch):
         )
         # Manual writes are now allowed because there is no queued/running job.
         SectionPlacement.objects.filter(pk=placement.pk).update(room="MANUAL AFTER FAILED")
-        return {"placements": 1}
+        return {"error": "solver error after losing ownership"}
 
     monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", long_pipeline)
     run_planner_job(job_id)

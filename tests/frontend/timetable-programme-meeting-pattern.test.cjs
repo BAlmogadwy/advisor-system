@@ -827,10 +827,12 @@ test('split: choosing another scenario draws the line empty at once, before anyt
   assert.deepEqual([h.summary().hidden, h.summary().querySelector('button')], [true, null], 'scenario 1’s line is gone while 2 loads');
   gate();
   await loading;
-  // No scenario chosen: empty too.
+  // A failed switch leaves the picker and sidebar empty until a scenario is selected.
+  assert.equal(select.value, '');
+  const reads = h.requests.filter(item => item.url === '/ops/tw/scenarios/1/budget/').length;
   await h.w.loadSidebarBudget();
-  assert.ok(button(h.summary(), 'Use programme defaults (2)'));
-  select.value = '';
+  assert.equal(h.requests.filter(item => item.url === '/ops/tw/scenarios/1/budget/').length, reads);
+  assert.deepEqual([h.summary().hidden, h.summary().querySelector('button')], [true, null]);
   await h.w.onScenarioChange();
   assert.deepEqual([h.summary().hidden, h.summary().querySelector('button')], [true, null]);
 });

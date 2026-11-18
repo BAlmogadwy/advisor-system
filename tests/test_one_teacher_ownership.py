@@ -181,8 +181,9 @@ def test_i10_restore_brings_back_the_engine_rows_and_leaves_a_frozen_row_alone(f
     sc, _board, x, y, a, b = _shared_out_board()
     sta.persist_assignment(sc.id, sta.load_assignment(sc.id))
     frozen_row = SectionInstructor.objects.get(scenario=sc, course_key=x)
+    teacher_rows = SectionInstructor.objects.filter(scenario=sc).order_by("pk")
     saved_rows, saved_names = (
-        _rows(sc),
+        list(teacher_rows.values()),
         sorted(
             TermSectionMeeting.objects.filter(term_section__scenario=sc).values_list(
                 "term_section__section", "day", "instructor"
@@ -197,7 +198,7 @@ def test_i10_restore_brings_back_the_engine_rows_and_leaves_a_frozen_row_alone(f
     TermSectionMeeting.objects.filter(term_section__course_key=y).update(instructor="Dr B")
     restore_scenario(sc.id, snapshot)
 
-    assert _rows(sc) == saved_rows
+    assert list(teacher_rows.values()) == saved_rows
     assert SectionInstructor.objects.get(scenario=sc, course_key=x).pk == frozen_row.pk
     assert (
         sorted(

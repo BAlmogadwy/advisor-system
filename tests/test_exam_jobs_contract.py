@@ -93,7 +93,7 @@ def test_the_planner_takes_the_same_slot(monkeypatch):
             seen.append("held")
 
     monkeypatch.setattr(planner_job_runner, "close_old_connections", lambda: None)
-    monkeypatch.setattr(planner_job_runner, "run_planner_job", probe)
+    monkeypatch.setattr(planner_job_runner, "_run_seeded_planner_job", probe)
     planner_job_runner._worker("x")
     assert seen == ["held"]
 
@@ -977,7 +977,7 @@ def test_a_planner_job_never_starts_during_a_shutdown(monkeypatch):
     started = []
     job = _job(_scenario(), PlannerJob.STATUS_QUEUED)
     monkeypatch.setattr(planner_job_runner, "close_old_connections", lambda: None)
-    monkeypatch.setattr(planner_job_runner, "run_planner_job", started.append)
+    monkeypatch.setattr(planner_job_runner, "_run_seeded_planner_job", started.append)
     monkeypatch.setattr(planner_job_runner, "shutting_down", lambda: True)
     planner_job_runner._worker(str(job.id))
     assert started == []
@@ -1048,7 +1048,7 @@ def test_a_planner_job_waiting_for_the_solver_gives_up_when_the_process_exits(mo
     monkeypatch.setattr(planner_job_runner, "close_old_connections", lambda: None)
     monkeypatch.setattr(
         planner_job_runner,
-        "run_planner_job",
+        "_run_seeded_planner_job",
         lambda job_id: done.is_set() or started.append(job_id),
     )
     monkeypatch.setattr(

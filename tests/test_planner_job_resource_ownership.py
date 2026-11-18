@@ -15,6 +15,7 @@ from core.models import (
     TermSectionProgram,
     TimetableScenario,
 )
+from core.services.job_runtime import HOLDER_EXAM_JOB, HOLDER_PLANNER, solver_holder, solver_slot
 from core.services.planner_job_runner import cancel_planner_job, run_planner_job, submit_planner_job
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.timetable_mutation_guard import ScenarioPlannerBusy
@@ -227,6 +228,32 @@ def test_full_reset_retains_lease_on_disconnected_global_section(http, monkeypat
     original.refresh_from_db()
     assert original.day == "SUN" and original.start_time == "09:00"
     assert not PlannerJob.objects.filter(scenario=other).exists()
+
+
+def test_busy_sync_requests_create_neither_job_nor_workspace(shared, http, monkeypatch):
+    owner, *_ = shared
+    starting_scenarios = TimetableScenario.objects.count()
+
+    def pipeline(*args, **kwargs):
+        assert solver_holder()["kind"] == HOLDER_PLANNER
+        return {"placements": 0}
+
+    monkeypatch.setattr("core.services.timetable_v2_runner.run_v2_optimisation_guarded", pipeline)
+    optimise = f"/ops/tw/scenarios/{owner.id}/optimise-v2/"
+    with solver_slot(holder=HOLDER_EXAM_JOB):
+        for response in (
+            post(http, optimise, {}),
+            post(
+                http, "/ops/tw/generate-workspace/", {"year": 1448, "semester": 2, "program": "AI"}
+            ),
+        ):
+            assert response.status_code == 503
+            assert response["Retry-After"] == "15"
+            assert response.json()["error"]["details"]["holder"]["kind"] == HOLDER_EXAM_JOB
+    assert TimetableScenario.objects.count() == starting_scenarios
+    assert not PlannerJob.objects.exists()
+    assert post(http, optimise, {}).status_code == 200
+    assert solver_holder() is None
 
 
 @pytest.mark.parametrize("async_enabled", [False, True])
