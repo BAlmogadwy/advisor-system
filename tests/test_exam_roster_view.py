@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 
 import pytest
 
-from core.models import Student, StudentTermSection
+from core.models import ExamTimetableRun, Student, StudentTermSection
 from core.services import exam_roster_view as rv
 from core.services import exam_student_export as export
 from core.services.exam_rosters import build_roster_model
@@ -1048,6 +1049,9 @@ def test_a_build_held_too_long_answers_busy_and_the_lock_is_released_after_error
 
 
 def test_the_real_cache_builds_through_the_phase_one_model(run, monkeypatch):
+    # Created a day before its last save, so "saved" can only come from saved_at.
+    ExamTimetableRun.objects.filter(pk=run.pk).update(created_at=run.saved_at - timedelta(days=1))
+    run.refresh_from_db()
     cache = rv.RosterViewCache()
     view, cached = cache.get(run)
     assert cached is False and view.model.saved.run_id == run.pk
@@ -1057,7 +1061,7 @@ def test_the_real_cache_builds_through_the_phase_one_model(run, monkeypatch):
         "run": {
             "id": run.pk,
             "label": run.label,
-            "saved_at": run.created_at.isoformat(),
+            "saved_at": run.saved_at.isoformat(),
             "academic_year": "1448",
             "term": "1",
         },
