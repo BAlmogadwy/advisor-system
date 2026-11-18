@@ -1,5 +1,6 @@
 """A checked manual placement is the same placement that Save and Excel publish."""
 
+import json
 from collections import Counter
 from copy import deepcopy
 from io import BytesIO
@@ -251,6 +252,7 @@ def test_check_save_export_agree_without_pinning_manual_moves(
     payload = {
         **initial,
         "previous_run_id": built["run_id"],
+        "run_revision": built["run_revision"],
         "base_schedule": changed,
         "programs": [],
         "sections": [],
@@ -312,7 +314,13 @@ def test_check_save_export_agree_without_pinning_manual_moves(
                 "expected_input_fingerprint": checked["input_fingerprint"],
             },
         )
-        assert ExamTimetableRun.objects.count() == count_before + 1
+        # Save rewrites the opened run in place rather than adding one.
+        assert ExamTimetableRun.objects.count() == count_before
+    assert saved["run_id"] == built["run_id"]
+    assert saved["run_revision"] == built["run_revision"] + 1
+    original_run.refresh_from_db()
+    assert original_run.result_json != original_json
+    assert json.loads(original_run.result_json)["schedule"] == saved["schedule"]
     assert saved["input_fingerprint"] == checked["input_fingerprint"]
     assert saved["schedule"] == checked["schedule"]
     assert _stable_qa(saved) == _stable_qa(checked)

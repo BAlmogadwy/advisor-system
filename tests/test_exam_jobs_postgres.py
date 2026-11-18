@@ -45,6 +45,8 @@ def _save_payload(built):
         **SCOPE,
         "mode": "save_loaded_changes",
         "previous_run_id": built["run_id"],
+        # The version of that run the page opened: Save changes rewrites it in place.
+        "run_revision": built["run_revision"],
         "base_schedule": built["schedule"],
         "expected_input_fingerprint": built["input_fingerprint"],
         "assign_rooms": True,
@@ -113,7 +115,11 @@ def test_progress_is_visible_to_the_page_while_the_job_is_mid_evaluation(
     status, body = exam_jobs.result(job_id, user=user)
     assert status == 200, body
     assert Job.objects.get(pk=job_id).result_run_id == body["run_id"]
-    assert ExamTimetableRun.objects.count() == runs_before + 1
+    # Save changes rewrote the opened run in place, from the job's own thread.
+    assert body["run_id"] == built["run_id"]
+    assert body["run_revision"] == 1
+    assert ExamTimetableRun.objects.get(pk=built["run_id"]).revision == 1
+    assert ExamTimetableRun.objects.count() == runs_before
 
 
 def test_two_submits_racing_each_other_start_exactly_one_job(

@@ -590,7 +590,7 @@ def _saved_run(run: ExamTimetableRun) -> SavedRun:
     return SavedRun(
         run_id=run.pk,
         label=run.label,
-        saved_at=run.created_at,
+        saved_at=run.saved_at,
         primary_status=str(data.get("primary_status") or ""),
         input_fingerprint=str(data.get("input_fingerprint") or ""),
         programs=list(scope["programs"]),

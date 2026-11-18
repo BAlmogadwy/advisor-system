@@ -51,6 +51,8 @@ def editor(client, django_user_model, monkeypatch):
     payload = {
         "label": "Manual changes",
         "previous_run_id": source["run_id"],
+        # A Save rewrites the opened run in place, guarded by its revision.
+        "run_revision": source["run_revision"],
         "base_schedule": deepcopy(source["schedule"]),
         "days": DAYS,
         "periods": PERIODS,
@@ -124,7 +126,10 @@ def test_check_and_save_never_schedule_and_calculate_all_changed_cards(editor, m
     assert result["primary_status"] == "requires_room_action"
     payload["expected_input_fingerprint"] = result["input_fingerprint"]
     saved = save(client, payload)
-    assert ExamTimetableRun.objects.count() == count + 1
+    # Save rewrites the opened run in place: no new run, same id, next revision.
+    assert ExamTimetableRun.objects.count() == count
+    assert saved["run_id"] == source["run_id"]
+    assert saved["run_revision"] == source["run_revision"] + 1
     assert placements(saved) == placements(result)
     assert saved["qa"]["rooms"] == result["qa"]["rooms"]
     assert saved["input_fingerprint"] == result["input_fingerprint"]
@@ -137,6 +142,7 @@ def test_room_assignment_disabled_is_inherited_and_never_silently_enabled(editor
     payload["expected_input_fingerprint"] = check(client, payload)["input_fingerprint"]
     saved = save(client, payload)
     payload["previous_run_id"] = saved["run_id"]
+    payload["run_revision"] = saved["run_revision"]
     del payload["assign_rooms"]
 
     def forbidden():
@@ -296,7 +302,10 @@ def test_build_and_check_share_captured_input_baseline_and_omission_cannot_bypas
     assert baseline["source_input_fingerprint"] == source["input_fingerprint"]
     assert baseline["source_inputs_changed"] is False
     # An omitted expected hash can safely use unchanged source provenance.
-    assert save(client, payload)["input_fingerprint"] == source["input_fingerprint"]
+    first = save(client, payload)
+    assert first["input_fingerprint"] == source["input_fingerprint"]
+    # The next Save is made on the version the first one wrote.
+    payload["run_revision"] = first["run_revision"]
     Student.objects.create(student_id=4, program="AI", section="F")
     StudentCourse.objects.create(
         student_id=4, course=Course.objects.get(course_code="CS101"), status="studying"

@@ -71,7 +71,8 @@ function savedRun() {
   };
   const slotOf = code => (code in placed ? { ...slots[placed[code]], slot_index: placed[code] } : { ...overflow, slot_index: overflow.index });
   return {
-    ok: true, run_id: 17, label: 'Final v3', created_at: '2026-09-23T21:10:00', primary_status: 'clean', status_flags: [],
+    // Saved in place after it was created: "saved" is the later time.
+    ok: true, run_id: 17, label: 'Final v3', created_at: '2026-09-20T08:00:00', saved_at: '2026-09-23T21:10:00', primary_status: 'clean', status_flags: [],
     input_fingerprint: 'reviewed-inputs', enrollment_source: 'scraper_timetable',
     courses: COURSES.map(course => course.course_code), courses_count: 6, students_count: 66,
     schedule: COURSES.map(course => ({ ...course, ...slotOf(course.course_code), rooms: rooms[course.course_code] })),

@@ -191,6 +191,7 @@ def test_check_save_and_loaded_optimize_capture_same_snapshot(population, export
     payload = {
         "label": "Operations lifecycle",
         "previous_run_id": source["run_id"],
+        "run_revision": source["run_revision"],
         "base_schedule": deepcopy(source["schedule"]),
         "days": DAYS,
         "periods": PERIODS,
@@ -206,7 +207,9 @@ def test_check_save_and_loaded_optimize_capture_same_snapshot(population, export
     checked = response.json()
     assert checked["operations_snapshot"] == source["operations_snapshot"]
     payload["expected_input_fingerprint"] = checked["input_fingerprint"]
-    for mode in ("save_loaded_changes", "optimize_loaded"):
+    # Optimise first: it adds a new run, while Save rewrites the source in place,
+    # so both modes still start from the (legacy) source row.
+    for mode in ("optimize_loaded", "save_loaded_changes"):
         response = export_client.post(
             reverse("exam_timetable_build"),
             {**payload, "mode": mode},
@@ -229,6 +232,7 @@ def test_instructor_source_change_invalidates_checked_save(population, export_cl
     payload = {
         "label": "Stale instructor",
         "previous_run_id": source["run_id"],
+        "run_revision": source["run_revision"],
         "base_schedule": source["schedule"],
         "days": DAYS,
         "periods": PERIODS,

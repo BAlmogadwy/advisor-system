@@ -43,11 +43,20 @@ from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import IntegrityError, close_old_connections, connection, transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from core.models import ExamTimetableJob, ExamTimetableRun
+from core.services.audit import audit_actor_for_user
 from core.services.exam_locks import settle_job_payload
 from core.services.exam_progress import ExamProgress, JobCancelled, reporting
+from core.services.exam_run_store import (
+    AuditActor,
+    Overwrite,
+    RunTarget,
+    audit_overwrite,
+    overwrite_run,
+)
 from core.services.job_runtime import HOLDER_EXAM_JOB, SolverBusy, solver_holder, solver_slot
 from core.services.job_runtime import shutting_down as _shutting_down
 
@@ -564,22 +573,37 @@ def _claim(job_id) -> bool:
     )
 
 
-def _commit_run(job_id, progress: JobProgress, label: str, result: dict) -> int:
+def _commit_run(
+    job_id,
+    progress: JobProgress,
+    label: str,
+    result: dict,
+    *,
+    replace: RunTarget | None = None,
+) -> int:
     """Save the run and finish the job together, or neither.
 
     Past this point a cancel is too late to honour partially: either the job
     is still wanted and both rows commit, or it is not and nothing does.
+
+    ``replace``: Save changes - rewrite the opened run in place instead of
+    saving a new one. A refused overwrite (saved again or deleted since)
+    raises before the job is touched, so it ends as that refusal.
     """
     progress.stage("save")
+    result_json = json.dumps(result, ensure_ascii=False)
+    record = None
     with transaction.atomic():
-        run = ExamTimetableRun.objects.create(
-            label=label, result_json=json.dumps(result, ensure_ascii=False)
-        )
+        if replace is None:
+            run_id = ExamTimetableRun.objects.create(label=label, result_json=result_json).id
+        else:
+            record = overwrite_run(replace, label=label, result_json=result_json)
+            run_id = record.run_id
         finished = Job.objects.filter(
             pk=job_id, status=Job.STATUS_RUNNING, cancel_requested=False
         ).update(
             status=Job.STATUS_SUCCEEDED,
-            result_run=run,
+            result_run_id=run_id,
             response_status=200,
             request_payload={},
             progress_json=progress.snapshot(finished=True),
@@ -589,7 +613,20 @@ def _commit_run(job_id, progress: JobProgress, label: str, result: dict) -> int:
         if not finished:
             raise JobCancelled
     progress.finish(completed=True)
-    return run.id
+    if record is not None:
+        _audit_overwrite(job_id, record)
+    return run_id
+
+
+def _audit_overwrite(job_id, record: Overwrite) -> None:
+    """Record a committed in-place Save as the user who submitted the job."""
+    submitter = Job.objects.filter(pk=job_id).select_related("submitted_by").first()
+    username, role = audit_actor_for_user(submitter.submitted_by if submitter else None)
+    # The job was asked for through the Build endpoint; the audit row says so.
+    actor = AuditActor(
+        username=username, role=role, endpoint=reverse("exam_timetable_build"), method="POST"
+    )
+    audit_overwrite(record, actor, job_id=str(job_id))
 
 
 def _finish(job_id, progress: JobProgress, status: int, body: dict) -> str:
@@ -741,6 +778,11 @@ def result(job_id, *, user) -> tuple[int, dict]:
         body["editor_revision"] = job.editor_revision
     body.update(json.loads(run.result_json))
     body["run_id"] = run.id
+    # The version the page now holds - a later Save changes names it - and when
+    # it was saved. A Save rewrites its run in place, so this is the run as it
+    # stands now: a colleague's later Save of it is what the page is shown.
+    body["run_revision"] = run.revision
+    body["saved_at"] = run.saved_at.isoformat()
     return 200, body
 
 

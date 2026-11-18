@@ -613,7 +613,10 @@ def comparable(result: dict) -> dict:
     result = json.loads(json.dumps(result, ensure_ascii=False, default=_plain))
     result.pop("schema_version", None)
     result.pop("linked_exams", None)
-    result.pop("run_id", None)
+    # Run identity, not content: which row holds the result, its revision and
+    # when it was last written.
+    for key in ("run_id", "run_revision", "saved_at"):
+        result.pop(key, None)
     snapshot = (result.get("qa") or {}).get("enrolment_snapshot")
     if isinstance(snapshot, dict):
         snapshot["snapshot_timestamp"] = ""

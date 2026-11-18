@@ -67,7 +67,7 @@ function lockReport(locks, schedule, slots, issues) {
   return { cells: list, locked_courses: list.reduce((count, cell) => count + cell.courses.length, 0), issues, issue_count: issues.length };
 }
 
-function savedRun({ locks = LOCKS, places = PLACES, assignRooms = true, issues = [], qa = {}, runId = 17, label = 'Locks fixture', rename = {} } = {}) {
+function savedRun({ locks = LOCKS, places = PLACES, assignRooms = true, issues = [], qa = {}, runId = 17, revision = 0, label = 'Locks fixture', rename = {} } = {}) {
   const slots = slotsOf();
   const schedule = courses.map(course => {
     const [day, period] = places[course.course_code];
@@ -76,7 +76,8 @@ function savedRun({ locks = LOCKS, places = PLACES, assignRooms = true, issues =
   });
   const report = lockReport(locks, schedule, slots, issues);
   return {
-    ok: true, run_id: runId, label, primary_status: 'clean', status_flags: [], input_fingerprint: fingerprint(locks),
+    // run_revision as the detail view sends it: a Save names it back.
+    ok: true, run_id: runId, run_revision: revision, label, primary_status: 'clean', status_flags: [], input_fingerprint: fingerprint(locks),
     enrollment_source: 'scraper_timetable', assign_rooms: assignRooms,
     courses: schedule.map(entry => entry.course_code), courses_count: schedule.length, students_count: 168,
     schedule, slots, enrollment_scope: SCOPE,
@@ -97,8 +98,10 @@ function evaluated(payload, original) {
   }));
   const { exam_locks: _report, ...qa } = original.qa;
   const report = lockReport(locks, schedule, slots, original.qa.exam_locks?.issues || []);
+  // A checked draft is no saved timetable: no run identity comes with it.
+  const { run_revision: _revision, saved_at: _savedAt, ...content } = original;
   const answer = {
-    ...original, run_id: undefined, editor_revision: payload.editor_revision, input_fingerprint: fingerprint(locks), slots, schedule,
+    ...content, run_id: undefined, editor_revision: payload.editor_revision, input_fingerprint: fingerprint(locks), slots, schedule,
     pinned: payload.pinned, courses_count: payload.base_schedule.length, linked_exams: payload.linked_exams, assign_rooms: payload.assign_rooms,
     qa: { ...qa, ...(report ? { exam_locks: report } : {}) },
   };
@@ -143,7 +146,8 @@ async function page(t, { run = null, onRequest = null, loadCourses = true, liveU
     // Opening the Move dialog asks for the other times, ranked: none here.
     if (url === '/ops/exam-timetable/move-options/') return reply(({ ok: true, course_code: body.course_code, course_identity: body.course_identity, editor_revision: body.editor_revision, members: [body.course_code], current: { day: 'OVERFLOW', period: null, levels: {} }, options: [], seats_counted: false }));
     if (url === '/ops/exam-timetable/build/' && body?.mode === 'save_loaded_changes') {
-      return reply({ ...evaluated(body, run || savedRun()), run_id: 18, label: body.label });
+      // Saved in place: the same timetable, one revision on.
+      return reply({ ...evaluated(body, run || savedRun()), run_id: body.previous_run_id, run_revision: body.run_revision + 1, label: body.label });
     }
     if (url === '/ops/exam-timetable/build/') return reply({ ok: false, error: 'Fixture ends at request validation' });
     if (String(url).split('?')[0] === '/ops/exam-timetable/jobs/active/') return reply({ ok: true, job: null });
@@ -507,11 +511,13 @@ test('a lock is editor state: it marks the board changed, and Check then Save ca
   assert.equal(save.mode, 'save_loaded_changes');
   assert.deepEqual(save.exam_locks, [{ day: 'Mon' }, { day: 'Tue', period: P2 }]);
   assert.equal(save.expected_input_fingerprint, fingerprint([{ day: 'Mon' }, { day: 'Tue', period: P2 }]));
-  // Saved: the new run's locks are the page's, and nothing is unsaved.
+  assert.equal(save.previous_run_id, 17);
+  assert.equal(save.run_revision, 0, 'The revision of the timetable it opened');
+  // Saved in place: the timetable's locks are the page's, and nothing is unsaved.
   assert.equal(ui.$('examLockLine').hidden, true);
   assert.equal(ui.$('saveLoadedBtn').disabled, true);
   assert.equal(lockButton(ui, 'Mon').getAttribute('aria-pressed'), 'true');
-  assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/18/export.xlsx');
+  assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/17/export.xlsx', 'Still the timetable it opened');
 });
 
 test('unlocking one period of a locked day keeps its other periods locked', async t => {
@@ -769,7 +775,8 @@ test('lock state stays with its day and period when a course code is renumbered'
     const body = options.body ? JSON.parse(options.body) : null;
     if (url === '/ops/exam-timetable/build/' && body?.mode === 'save_loaded_changes') {
       // The population changed: "CS111 (1)" is "CS111" now, the same exam.
-      saved = { ...savedRun({ locks: body.exam_locks, rename: { 'CS111 (1)': 'CS111', 'CS111 (2)': 'CS112' }, runId: 18 }), label: body.label };
+      // Saved in place: the same timetable, one revision on.
+      saved = { ...savedRun({ locks: body.exam_locks, rename: { 'CS111 (1)': 'CS111', 'CS111 (2)': 'CS112' }, runId: body.previous_run_id, revision: body.run_revision + 1 }), label: body.label };
       return reply(saved);
     }
     return undefined;
@@ -804,7 +811,7 @@ test('lock state stays with its day and period when a course code is renumbered'
   assert.ok(plain(ui.dialogs.at(-1).body).includes(AR
     ? 'يُبقي البناء 7 فترات مقفلة (تضم 4 اختبارات) ويعيد بناء كل ما عداها حولها.'
     : 'Build keeps 7 locked cells (4 exams) and rebuilds everything else around them.'), ui.dialogs.at(-1).body);
-  assert.equal(builds(ui).at(-1).previous_run_id, 18);
+  assert.equal(builds(ui).at(-1).previous_run_id, 17, 'The timetable the Save rewrote');
   // Pinning the renumbered exam out of its locked cell is refused by identity.
   ui.select('examPinCourse', 'CS111 (1)');
   ui.select('examPinDay', 'Mon');

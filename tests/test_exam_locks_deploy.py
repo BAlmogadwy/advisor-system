@@ -90,6 +90,9 @@ def test_normalising_runs_with_and_without_locks_changes_no_byte():
     before = {run.pk: run.result_json for run in runs}
     assert all(json.loads(text)["schema_version"] == 6 for text in before.values())
     assert "exam_locks" not in json.loads(before[built["run_id"]])
+    # Nor may a deploy make a run read as saved again: saved_at feeds the history
+    # order, rosters and caches, and revision guards Save changes.
+    written = {run.pk: (run.saved_at, run.revision) for run in runs}
 
     dry = io.StringIO()
     call_command("normalise_exam_runs", "--dry-run", stdout=dry)
@@ -100,6 +103,9 @@ def test_normalising_runs_with_and_without_locks_changes_no_byte():
     assert f"Skipped 2 row(s) already at v{EXAM_RUN_SCHEMA_VERSION}" in report.getvalue()
     after = {run.pk: run.result_json for run in ExamTimetableRun.objects.order_by("id")}
     assert after == before
+    assert {
+        run.pk: (run.saved_at, run.revision) for run in ExamTimetableRun.objects.order_by("id")
+    } == written
 
     # And reading them adds nothing: the run without locks gains no lock key.
     plain = load_normalised_run(ExamTimetableRun.objects.get(pk=built["run_id"]))

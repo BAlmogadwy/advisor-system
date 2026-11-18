@@ -421,7 +421,10 @@ def test_build_check_save_use_same_sections_and_reject_equal_count_section_drift
     }
     built = _post(export_client, "exam_timetable_build", payload)
     payload.update(
-        previous_run_id=built["run_id"], base_schedule=built["schedule"], editor_revision=4
+        previous_run_id=built["run_id"],
+        run_revision=built["run_revision"],
+        base_schedule=built["schedule"],
+        editor_revision=4,
     )
     count_before = ExamTimetableRun.objects.count()
 
@@ -466,6 +469,10 @@ def test_build_check_save_use_same_sections_and_reject_equal_count_section_drift
     assert saved["section_enrollment"] == checked["section_enrollment"]
     assert saved["schedule"] == checked["schedule"]
     assert saved["input_fingerprint"] == checked["input_fingerprint"]
+    # Save rewrote the opened run; the next Save is made on that version.
+    assert saved["run_id"] == built["run_id"]
+    payload["run_revision"] = saved["run_revision"]
+    saved_json = ExamTimetableRun.objects.get(pk=saved["run_id"]).result_json
     StudentTermSection.objects.filter(pk=links[0].pk).update(student_id=students[1].pk)
     StudentTermSection.objects.filter(pk=links[1].pk).update(student_id=students[0].pk)
     count_before_drift = ExamTimetableRun.objects.count()
@@ -481,6 +488,8 @@ def test_build_check_save_use_same_sections_and_reject_equal_count_section_drift
     assert rejected.status_code == 409
     assert rejected.json()["error_code"] == "inputs_changed"
     assert ExamTimetableRun.objects.count() == count_before_drift
+    stored = ExamTimetableRun.objects.get(pk=saved["run_id"])
+    assert (stored.revision, stored.result_json) == (saved["run_revision"], saved_json)
     refreshed = _post(export_client, "exam_timetable_draft_impact", payload)
     assert refreshed["input_fingerprint"] != checked["input_fingerprint"]
     assert _placements(refreshed) == _placements(checked)

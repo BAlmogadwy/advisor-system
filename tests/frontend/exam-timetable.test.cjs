@@ -31,7 +31,8 @@ function savedRun(periods = ['08:00-10:00', '10:30-12:30', '13:00-15:00']) {
     periods.map(period => ({ day, period })));
   slots.forEach((slot, index) => { slot.index = index; });
   return {
-    ok: true, run_id: 17, label: 'Saved regression fixture', primary_status: 'clean', status_flags: [], input_fingerprint: 'reviewed-inputs', enrollment_source: 'scraper_timetable',
+    // run_revision as the detail view sends it: a Save names it back.
+    ok: true, run_id: 17, run_revision: 0, label: 'Saved regression fixture', primary_status: 'clean', status_flags: [], input_fingerprint: 'reviewed-inputs', enrollment_source: 'scraper_timetable',
     courses: courses.map(course => course.course_code), courses_count: 2, students_count: 45,
     schedule: courses.map((course, index) => ({ ...course, ...slots[index], slot_index: index, rooms: [] })),
     slots, qa: { max_per_day: 2 }, enrollment_scope: { programs: ['AI', 'CS'], sections: ['F', 'M'] },
@@ -178,8 +179,11 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
 function evaluatedRun(payload, original = savedRun()) {
   const slots = payload.days.flatMap(day => payload.periods.map(period => ({ day, period })));
   slots.forEach((slot, index) => { slot.index = index; });
+  // A checked draft is no saved timetable: the server sends no run identity
+  // (run_id, run_revision, saved_at) with it.
+  const { run_revision: _revision, saved_at: _savedAt, ...content } = original;
   return {
-    ...original, run_id: undefined, editor_revision: payload.editor_revision,
+    ...content, run_id: undefined, editor_revision: payload.editor_revision,
     input_fingerprint: 'reviewed-inputs', slots,
     schedule: payload.base_schedule.map(entry => ({ ...entry, slot_index: slots.find(slot => slot.day === entry.day && slot.period === entry.period)?.index ?? slots.length, rooms: [] })),
     pinned: payload.pinned, courses_count: payload.base_schedule.length,
@@ -1282,6 +1286,17 @@ test('history is keyboard reachable and run labels remain literal in the row and
   assert.equal(body.querySelector('img, june'), null);
 });
 
+test('history rows show when each timetable was last saved, falling back to when it was made', async t => {
+  // Save changes rewrites a timetable in place, so its last save is the date that matters.
+  const ui = await page(t, { history: [
+    { id: 17, label: 'Saved again', created_at: '2026-09-20T10:00:00', saved_at: '2026-11-18T08:30:00' },
+    { id: 18, label: 'Older list row', created_at: '2026-09-21T09:15:00' },
+    { id: 19, label: 'Never stamped', created_at: '2026-09-22T11:45:00', saved_at: '' },
+  ] });
+  const dates = Array.from(ui.$('historyList').querySelectorAll('.et-history-item'), row => row.querySelector('.et-run-info small').textContent);
+  assert.deepEqual(dates, ['2026-11-18 08:30', '2026-09-21 09:15', '2026-09-22 11:45']);
+});
+
 test('KPI drilldowns support Enter and Space, announce expansion, and restore focus on close', async t => {
   const ui = await page(t);
   const cards = Array.from(ui.window.document.querySelectorAll('.kpi-click'));
@@ -2057,7 +2072,8 @@ test('Save checks an unchecked draft, submits reviewed inputs and saves exactly 
     onRequest: async (url, options) => {
       if (url !== '/ops/exam-timetable/build/') return undefined;
       const payload = JSON.parse(options.body);
-      return response({ ...evaluatedRun(payload), run_id: 19, rebuild_mode: 'loaded_schedule' });
+      // Saved in place: the same timetable, one revision on.
+      return response({ ...evaluatedRun(payload), run_id: payload.previous_run_id, run_revision: payload.run_revision + 1, rebuild_mode: 'loaded_schedule' });
     },
   });
   dropExam(ui, 'Thu');
@@ -2071,8 +2087,10 @@ test('Save checks an unchecked draft, submits reviewed inputs and saves exactly 
   assert.equal(payload.mode, 'save_loaded_changes');
   assert.equal(payload.expected_input_fingerprint, 'reviewed-inputs');
   assert.equal(payload.previous_run_id, 17);
+  assert.equal(payload.run_revision, 0, 'The revision of the timetable it opened');
   assert.equal(payload.base_schedule.find(entry => entry.course_identity === courses[1].course_identity).day, 'Thu');
-  assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/19/export.xlsx');
+  assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/17/export.xlsx', 'Still the timetable it opened, saved in place');
+  assert.equal(ui.$('etStatus').textContent, language === 'ar' ? 'حُفظت التغييرات في هذا الجدول.' : 'Changes saved to this timetable.');
   assert.deepEqual(placement(ui), ['Thu', '08:00-10:00']);
   assert.equal(ui.$('undoExamBtn').disabled, true);
 });
@@ -2096,6 +2114,83 @@ test('changed upstream inputs reject Save, preserve manual edits and require a f
   assert.equal(draftRequests(ui).length, 2);
   assert.equal(ui.$('etResults').dataset.calculationState, 'checked');
 });
+
+// Save rewrites the opened timetable in place, so it names the revision it
+// opened: the server refuses it if that timetable was saved again since.
+test('Save names the revision of the timetable it opened, then the revision it saved; no action sends update_run_id', async t => {
+  // Last saved by an Optimize: the page once told the server to overwrite such a run.
+  const run = { ...savedRun(), pinned: [], run_revision: 3, rebuild_mode: 'optimized_from_loaded' };
+  const sent = [];
+  const ui = await loadedEditor(t, {
+    run,
+    onRequest: async (url, options) => {
+      if (url !== '/ops/exam-timetable/build/') return undefined;
+      const payload = JSON.parse(options.body);
+      sent.push(payload);
+      if (payload.mode !== 'save_loaded_changes') return response({ ok: false, error: 'Fixture ends at request validation' });
+      // Saved in place: the same timetable, one revision on.
+      return response({ ...evaluatedRun(payload, run), run_id: payload.previous_run_id, run_revision: payload.run_revision + 1, rebuild_mode: 'loaded_schedule' });
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await settle();
+  ui.$('minChangeBtn').click();
+  await settle();
+  assert.deepEqual(sent.map(payload => payload.mode), ['optimize_loaded', 'minimum_change_repair']);
+  dropExam(ui, 'Mon');
+  ui.$('checkDraftBtn').click();
+  await settle();
+  assert.equal(ui.$('etResults').dataset.calculationState, 'checked');
+  ui.$('saveLoadedBtn').click();
+  await settle();
+  assert.equal(sent.length, 3);
+  assert.equal(sent[2].mode, 'save_loaded_changes');
+  assert.equal(sent[2].previous_run_id, 17);
+  assert.equal(sent[2].run_revision, 3, 'The revision of the loaded timetable, kept through the Check');
+  assert.equal(ui.$('etStatus').textContent, language === 'ar' ? 'حُفظت التغييرات في هذا الجدول.' : 'Changes saved to this timetable.');
+  assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/17/export.xlsx');
+  // A second Save of the same timetable names the revision the first one made.
+  dropExam(ui, 'Tue');
+  ui.$('checkDraftBtn').click();
+  await settle();
+  ui.$('saveLoadedBtn').click();
+  await settle();
+  assert.equal(sent.length, 4);
+  assert.equal(sent[3].mode, 'save_loaded_changes');
+  assert.equal(sent[3].previous_run_id, 17);
+  assert.equal(sent[3].run_revision, 4);
+  for (const payload of sent) assert.ok(!Object.hasOwn(payload, 'update_run_id'), `${payload.mode} sent update_run_id`);
+});
+
+for (const [code, status] of [['save_target_changed', 409], ['save_target_gone', 410]]) {
+  test(`a Save refused with ${code} says so in the page's own words and keeps the unsaved board`, async t => {
+    const ui = await loadedEditor(t, {
+      onRequest: async url => (url === '/ops/exam-timetable/build/'
+        ? { ...response({ ok: false, error_code: code, error: 'Raw server words' }), status } : undefined),
+    });
+    dropExam(ui, 'Mon');
+    ui.$('checkDraftBtn').click();
+    await settle();
+    ui.$('saveLoadedBtn').click();
+    await settle();
+    assert.equal(buildRequests(ui).length, 1);
+    const said = {
+      save_target_changed: language === 'ar'
+        ? 'حُفظ هذا الجدول مرة أخرى بعد أن فتحته، فلم تُحفظ تغييراتك فوقه. افتحه من «الجداول المحفوظة» لترى آخر نسخة، ثم أعد إجراء تغييراتك.'
+        : 'This timetable was saved again after you opened it, so your changes were not saved over it. Open it from Saved timetables to see the latest version, then make your changes again.',
+      save_target_gone: language === 'ar'
+        ? 'حُذف هذا الجدول من «الجداول المحفوظة» بعد أن فتحته، فلم يُحفظ شيء.'
+        : 'This timetable was deleted from Saved timetables after you opened it, so nothing was saved.',
+    }[code];
+    assert.equal(ui.$('examEditorRequestError').hidden, false);
+    assert.equal(ui.$('examEditorRequestError').textContent, said);
+    assert.ok(ui.$('etStatus').textContent.endsWith(said));
+    assert.doesNotMatch(ui.$('etStatus').textContent + ui.$('examEditorRequestError').textContent, /Raw server words/);
+    assert.deepEqual(placement(ui), ['Mon', '08:00-10:00'], 'The unsaved board is kept');
+    assert.equal(ui.$('saveLoadedBtn').disabled, false, 'Still unsaved');
+    assert.equal(ui.$('exportXlsx').getAttribute('href'), null);
+  });
+}
 
 test('Optimize is explicit and uses unsaved current positions, pins and enrollment scope', async t => {
   const ui = await loadedEditor(t);
@@ -2610,9 +2705,11 @@ for (const action of ['build', 'save_loaded_changes', 'optimize_loaded']) {
           if (url !== '/ops/exam-timetable/build/') return undefined;
           if (!succeeds) return response({ ok: false, error: 'Temporary failure; retry' });
           const payload = JSON.parse(request.body);
-          return response(action === 'build'
-            ? { ...savedRun(), run_id: 23, pinned: [] }
-            : { ...evaluatedRun(payload), run_id: 23, rebuild_mode: action === 'optimize_loaded' ? 'optimized_from_loaded' : 'loaded_schedule' });
+          if (action === 'build') return response({ ...savedRun(), run_id: 23, pinned: [] });
+          // Save rewrites the opened timetable in place; Optimize saves a new one.
+          return response(action === 'save_loaded_changes'
+            ? { ...evaluatedRun(payload), run_id: payload.previous_run_id, run_revision: payload.run_revision + 1, rebuild_mode: 'loaded_schedule' }
+            : { ...evaluatedRun(payload), run_id: 23, run_revision: 0, rebuild_mode: 'optimized_from_loaded' });
         },
       };
       const ui = action === 'build' ? await page(t, options) : await loadedEditor(t, options);
@@ -5122,6 +5219,51 @@ test("a colleague's job that saved a timetable says whose it is and offers to op
   assert.equal(seenPosts(ui), 0);
 });
 
+// A colleague's Save rewrites a timetable in place: no new timetable is made.
+// When it is the one open here, the board is older than it, so it is offered.
+for (const here of [true, false]) {
+  test(`a colleague's Save of ${here ? 'the timetable open here says the board is older' : 'another timetable says changes were saved to it'} and offers it`, async t => {
+    const target = here ? 17 : 93;
+    const frames = [
+      theirs('save_loaded_changes', 'running', { read_board: 'done', check_rules: 'running' }, 'check_rules'),
+      finishedFrame('save_loaded_changes', { mine: false, can_cancel: false, owner: 'Huda', result_run_id: target }),
+    ];
+    let index = 0;
+    let fetched = 0;
+    const ui = await loadedEditor(t, {
+      activeJob: { ok: true, job: frames[0] },
+      onRequest: async url => {
+        if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+        // The saved version, once the Save has finished.
+        if (index === 1 && url === `/ops/exam-timetable/${target}/`) {
+          fetched += 1;
+          return response({ ...savedRun(), pinned: [], run_id: target, run_revision: here ? 1 : 0, label: 'Saved by Huda' });
+        }
+        return undefined;
+      },
+    });
+    await until(() => !ui.$('examJobPanel').hidden);
+    assert.equal(ui.$('etLabel').value, savedRun().label);
+    index = 1;
+    await until(() => !ui.$('examJobOpen').hidden, 'Offered: the saved version is not what is on the board');
+    const detail = ui.$('examJobDetail').textContent;
+    if (here) {
+      assert.ok(detail.includes(language === 'ar'
+        ? 'حُفظت تغييرات على هذا الجدول بطلب من ⁨Huda⁩، فما يُعرض هنا أقدم منها. افتحه لترى آخر نسخة.'
+        : 'Changes were saved to this timetable by ⁨Huda⁩, so what is shown here is older. Open it to see the latest version.'), `Said: ${detail}`);
+    } else {
+      assert.ok(detail.includes(language === 'ar'
+        ? 'حُفظت تغييرات على جدول بطلب من ⁨Huda⁩، وهو غير مفتوح في هذه الصفحة.'
+        : 'Changes were saved to a timetable by ⁨Huda⁩. It is not open on this page.'), `Said: ${detail}`);
+    }
+    assert.doesNotMatch(detail, language === 'ar' ? /جدولاً جديداً/ : /new timetable/i, 'A Save makes no new timetable');
+    ui.$('examJobOpen').click();
+    await until(() => ui.$('examJobPanel').hidden);
+    assert.equal(fetched, 1, 'Open reads the saved version from the server');
+    assert.equal(ui.$('etLabel').value, 'Saved by Huda');
+  });
+}
+
 test("a page reopened during the registrar's own job can stop it, then offers the result", async t => {
   const frames = [
     jobFrame('build', 'running', { enrolments: 'done', conflicts: 'running' }, { key: 'conflicts', done: null, total: null }),
@@ -5168,7 +5310,10 @@ test('a Save of mine refused while the page was closed is shown once, with why',
   assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'لم تُحفظ التغييرات' : 'The changes were not saved');
   assert.match(ui.$('examJobDetail').textContent, /The course list changed\./);
   if (language === 'ar') assert.ok(ui.$('examJobDetail').textContent.includes('⁨The course list changed.⁩'), 'Isolated inside Arabic');
-  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /لم يُحفظ جدول جديد/ : /No new timetable was saved/);
+  // Save rewrites the opened timetable in place, so its refusal never speaks of
+  // a "new timetable": nothing was saved at all.
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /لم يُحفظ شيء: / : /Nothing was saved: /);
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, language === 'ar' ? /جدول جديد/ : /new timetable/i);
   assert.equal(results, 1, 'Its stored answer was read, which also marks it seen');
   assert.equal(ui.$('examJobOpen').hidden, true);
   assert.equal(ui.$('examJobClose').hidden, false);

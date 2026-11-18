@@ -273,7 +273,12 @@ def audited_transaction() -> Iterator[None]:
 
 def audit_actor(request: HttpRequest) -> tuple[str, str]:
     """The (username, role) an audit row records for this request's user."""
-    user = getattr(request, "user", None)
+    return audit_actor_for_user(getattr(request, "user", None))
+
+
+def audit_actor_for_user(user: Any) -> tuple[str, str]:
+    """The (username, role) an audit row records for ``user``: a background job
+    records the user who asked for the work."""
     if not user or not user.is_authenticated:
         return "", ""
     groups = list(user.groups.values_list("name", flat=True))

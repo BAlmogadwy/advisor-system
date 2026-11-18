@@ -4,7 +4,8 @@ from typing import Any
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F
-from django.db.models.functions import Cast, Concat, Trim, Upper
+from django.db.models.functions import Cast, Concat, Now, Trim, Upper
+from django.utils import timezone
 
 
 class Student(models.Model):
@@ -856,8 +857,22 @@ class AuditLog(models.Model):
 
 
 class ExamTimetableRun(models.Model):
+    """One saved exam timetable.
+
+    Build, Optimize, Fix, Add courses and Copy each save a NEW run. Save changes
+    rewrites the run that was opened, in place (owner, 2026-11-18): the history
+    holds one row per timetable, not one per save. ``core.services.exam_run_store``
+    is the only writer of an existing run's board.
+    """
+
     label = models.CharField(max_length=120)
     created_at = models.DateTimeField(auto_now_add=True)
+    #: When the board was last written: at creation, then at each Save changes.
+    #: What "saved" means everywhere - the history, rosters, exports, caches.
+    saved_at = models.DateTimeField(default=timezone.now, db_default=Now())
+    #: Bumped by each Save changes. A Save names the revision it was made on, so
+    #: one made on a board someone has saved since is refused, never lost.
+    revision = models.PositiveIntegerField(default=0, db_default=0)
     result_json = models.TextField(default="{}")
 
     class Meta:
@@ -934,6 +949,8 @@ class ExamTimetableJob(models.Model):
         blank=True,
         related_name="+",
     )
+    #: The run it saved. A Save changes job rewrites its opened run in place, so
+    #: several jobs can share one run, and each is answered with it as it stands.
     result_run = models.ForeignKey(
         ExamTimetableRun,
         on_delete=models.SET_NULL,

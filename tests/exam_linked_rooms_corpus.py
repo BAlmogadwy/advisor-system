@@ -248,11 +248,13 @@ def create_rooms_population(
 def save_fixed_run(models, result: dict):
     """Persist a build's result the way the build does, under a fixed id and time."""
     result = json.loads(json.dumps(result, ensure_ascii=False, default=_plain))
+    # Which run, and which version of it, are identity, not the saved board.
     result.pop("run_id", None)
+    result.pop("run_revision", None)
     run = models.ExamTimetableRun.objects.create(
         id=FIXED_RUN_ID, label="Rooms parity", result_json=json.dumps(result, ensure_ascii=False)
     )
-    models.ExamTimetableRun.objects.filter(pk=run.pk).update(created_at=FIXED_AT)
+    models.ExamTimetableRun.objects.filter(pk=run.pk).update(created_at=FIXED_AT, saved_at=FIXED_AT)
     run.refresh_from_db()
     return run
 

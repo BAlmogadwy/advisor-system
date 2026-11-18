@@ -161,7 +161,11 @@ def test_save_optimize_and_reload_retain_fixed_times(exam_client):
     data = response.json()
     for mode in ["save_loaded_changes", "optimize_loaded"]:
         response = _post(
-            exam_client, mode=mode, previous_run_id=data["run_id"], base_schedule=data["schedule"]
+            exam_client,
+            mode=mode,
+            previous_run_id=data["run_id"],
+            run_revision=data["run_revision"],
+            base_schedule=data["schedule"],
         )
         assert response.status_code == 200, response.content
         data = response.json()
@@ -177,6 +181,7 @@ def test_save_rejects_pin_that_disagrees_with_visible_schedule(exam_client):
         exam_client,
         mode="save_loaded_changes",
         previous_run_id=built["run_id"],
+        run_revision=built["run_revision"],
         base_schedule=built["schedule"],
         pinned=[{**PIN, "day": "Sun"}],
     )
@@ -192,6 +197,7 @@ def test_optimize_applies_a_new_fixed_time(exam_client):
         exam_client,
         mode="optimize_loaded",
         previous_run_id=built["run_id"],
+        run_revision=built["run_revision"],
         base_schedule=built["schedule"],
         pinned=changed,
     )
@@ -206,6 +212,7 @@ def test_loaded_actions_reject_invalid_pins_without_saving(exam_client, mode):
         exam_client,
         mode=mode,
         previous_run_id=built["run_id"],
+        run_revision=built["run_revision"],
         base_schedule=built["schedule"],
         pinned=[{**PIN, "course_code": "UNKNOWN"}],
     )
@@ -219,6 +226,7 @@ def test_explicitly_cleared_pins_stay_cleared_on_reload(exam_client):
         exam_client,
         mode="save_loaded_changes",
         previous_run_id=built["run_id"],
+        run_revision=built["run_revision"],
         base_schedule=built["schedule"],
         pinned=[],
     )

@@ -608,6 +608,7 @@ def run_multistart(
         )
         run_ids[seed] = run.id
         annotated["run_id"] = run.id
+        annotated["run_revision"] = run.revision
         annotated_payloads[seed] = annotated
 
     # Re-bind by_role to candidates with persisted run_ids + multistart

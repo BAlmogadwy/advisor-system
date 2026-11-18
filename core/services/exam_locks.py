@@ -372,7 +372,9 @@ def _roster_refusal(source: Mapping[str, Any]) -> str | None:
     # imports this module.
     from core.services.exam_rosters import ExportRefused, _saved_run
 
-    run: Any = SimpleNamespace(result_json=_dumps(dict(source)), pk=0, label="", created_at=None)
+    run: Any = SimpleNamespace(
+        result_json=_dumps(dict(source)), pk=0, label="", created_at=None, saved_at=None
+    )
     try:
         _saved_run(run)
     except ExportRefused as refused:
