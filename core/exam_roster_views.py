@@ -97,7 +97,7 @@ def _json_body(request: HttpRequest) -> dict:
 
 def _run(run_id: int) -> ExamTimetableRun:
     # The saved JSON (~1.4 MB) is read only when the cache has to build.
-    return ExamTimetableRun.objects.only("id", "label", "created_at").get(pk=run_id)
+    return ExamTimetableRun.objects.only("id", "label", "saved_at").get(pk=run_id)
 
 
 def _answer(body: dict) -> JsonResponse:
@@ -155,10 +155,10 @@ def exam_rosters_page(request: HttpRequest) -> HttpResponse:
     if deny:
         return deny
     raw = request.GET.get("run", "")
-    runs = ExamTimetableRun.objects.only("id", "label", "created_at")
+    runs = ExamTimetableRun.objects.only("id", "label", "saved_at")
     status, state, run = 200, "ready", None
     if not raw:
-        run = runs.order_by("-created_at", "-id").first()
+        run = runs.order_by("-saved_at", "-id").first()
         state = "ready" if run else "no_saved_run"
     elif _RUN_PARAM.fullmatch(raw):
         run = runs.filter(pk=int(raw)).first()

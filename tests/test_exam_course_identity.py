@@ -227,6 +227,7 @@ def test_build_draft_save_optimize_and_reload_keep_single_variant_and_scope(cour
                 **payload,
                 "mode": mode,
                 "previous_run_id": built["run_id"],
+                "run_revision": built["run_revision"],
                 "base_schedule": moved,
                 # Changed page filters must never broaden a loaded run.
                 "programs": [],

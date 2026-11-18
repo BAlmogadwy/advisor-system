@@ -48,7 +48,8 @@ function savedRun({ placements = { AI212: 0, AI225: 0, 'CS111 (1)': 3, 'CS111 (2
   const slots = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'].flatMap(day => PERIODS.map(period => ({ day, period })));
   slots.forEach((slot, index) => { slot.index = index; });
   return {
-    ok: true, run_id: 17, label: 'Linked fixture', primary_status: 'clean', status_flags: [], input_fingerprint: 'reviewed-inputs', enrollment_source: 'scraper_timetable',
+    // run_revision as the detail view sends it: a Save names it back.
+    ok: true, run_id: 17, run_revision: 0, label: 'Linked fixture', primary_status: 'clean', status_flags: [], input_fingerprint: 'reviewed-inputs', enrollment_source: 'scraper_timetable',
     courses: courses.map(course => course.course_code), courses_count: courses.length, students_count: 91,
     schedule: courses.map(course => ({ ...course, ...slots[placements[course.course_code]], slot_index: placements[course.course_code], rooms: [] })),
     slots, enrollment_scope: { programs: ['AI', 'AI2', 'CS', 'CS2'], sections: ['F', 'M'] },
@@ -64,8 +65,10 @@ function evaluated(payload, original) {
   slots.forEach((slot, index) => { slot.index = index; });
   const links = (payload.linked_exams || []).map(link => ({ members: link.members.map(({ course_identity, course_code }) => ({ course_identity, course_code })) }));
   const { linked_exams: _, ...qa } = original.qa;
+  // A checked draft is no saved timetable: no run identity comes with it.
+  const { run_revision: _revision, saved_at: _savedAt, ...content } = original;
   return {
-    ...original, run_id: undefined, editor_revision: payload.editor_revision, input_fingerprint: 'reviewed-inputs', slots,
+    ...content, run_id: undefined, editor_revision: payload.editor_revision, input_fingerprint: 'reviewed-inputs', slots,
     schedule: payload.base_schedule.map(entry => ({ ...original.schedule.find(item => item.course_identity === entry.course_identity), ...entry,
       slot_index: slots.find(slot => slot.day === entry.day && slot.period === entry.period)?.index ?? slots.length, rooms: [] })),
     pinned: payload.pinned, courses_count: payload.base_schedule.length, linked_exams: links,
@@ -526,6 +529,7 @@ test('a link edit needs a Check before Save, and Review changes lists it in its 
   assert.deepEqual(check.linked_exams, [], 'Save checked the unlinked board first');
   const save = bodies(ui, '/ops/exam-timetable/build/').at(-1);
   assert.equal(save.mode, 'save_loaded_changes');
+  assert.equal(save.run_revision, 0, 'The revision of the timetable it opened, kept through the Check');
   assert.deepEqual(save.linked_exams, []);
 });
 

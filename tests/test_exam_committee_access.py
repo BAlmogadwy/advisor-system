@@ -355,6 +355,7 @@ def test_committee_can_preview_build_check_and_save_a_shared_exam(committee_clie
     loaded = {
         **payload,
         "previous_run_id": result["run_id"],
+        "run_revision": result["run_revision"],
         "base_schedule": result["schedule"],
         "mode": "save_loaded_changes",
     }
@@ -367,7 +368,10 @@ def test_committee_can_preview_build_check_and_save_a_shared_exam(committee_clie
         reverse("exam_timetable_build"), loaded, content_type="application/json"
     )
     assert saved.status_code == 200, saved.content
-    assert saved.json()["run_id"] != result["run_id"]
+    # Save changes rewrites the opened run in place.
+    assert saved.json()["run_id"] == result["run_id"]
+    assert saved.json()["run_revision"] == 1
+    assert ExamTimetableRun.objects.get(pk=result["run_id"]).revision == 1
 
 
 def test_committee_has_own_profile_language_and_logout_only(

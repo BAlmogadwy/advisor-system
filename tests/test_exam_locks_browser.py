@@ -172,14 +172,24 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
             },
         )
         self.open_run = built["run_id"]
-        # The same run with a day and a period locked, saved as the page saves it.
+        # Save changes rewrites the run it was made on, so the locks are saved
+        # on a copy of it: the open run stays unlocked.
+        response = client.post(
+            reverse("exam_timetable_copy", args=[built["run_id"]]),
+            {},
+            content_type="application/json",
+        )
+        assert response.status_code == 201, response.content
+        copied = response.json()
+        # The same board with a day and a period locked, saved as the page saves it.
         loaded = {
             "label": "Locks browser",
             "days": DAYS,
             "periods": PERIODS,
             "max_per_day": 2,
             **SCOPE,
-            "previous_run_id": built["run_id"],
+            "previous_run_id": copied["run_id"],
+            "run_revision": copied["run_revision"],
             "base_schedule": built["schedule"],
             "pinned": [],
             "exam_locks": LOCKS,
@@ -194,6 +204,7 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
             },
         )
         assert saved["exam_locks"] == LOCKS, saved.get("exam_locks")
+        assert saved["run_id"] == copied["run_id"] != self.open_run
         self.locked_run = saved["run_id"]
 
     def _post(self, url: str, payload: dict) -> dict:
@@ -393,7 +404,9 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         page.keyboard.press("Enter")
         expect(page.locator("#examLockLine")).to_be_hidden()
         expect(page.locator("#saveLoadedBtn")).to_be_disabled()
-        run = models.ExamTimetableRun.objects.order_by("-id").first()
+        # Saved in place: the run that was open now holds the lock.
+        run = models.ExamTimetableRun.objects.get(pk=self.open_run)
+        self.assertEqual(run.revision, 1)
         self.assertEqual(
             json.loads(run.result_json)["exam_locks"], [{"day": "Sun", "period": PERIODS[1]}]
         )

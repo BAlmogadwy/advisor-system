@@ -19,6 +19,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -41,7 +42,7 @@ from core.authz import throttle
 from core.models import ExamTimetableRun, Student
 from core.services import exam_add_courses as adding
 from core.services import exam_jobs
-from core.services.audit import log_audit_event
+from core.services.audit import audit_actor, log_audit_event
 from core.services.exam_add_courses import AddCoursesError
 from core.services.exam_evaluation import (
     _build_loaded_course_enrollments,
@@ -76,6 +77,15 @@ from core.services.exam_room_allocation import normalized_rooms
 from core.services.exam_room_inventory import exam_room_inventory
 from core.services.exam_run_schema import (
     load_normalised_run,
+)
+from core.services.exam_run_store import (
+    AuditActor,
+    RunTarget,
+    SaveTargetChanged,
+    SaveTargetGone,
+    audit_overwrite,
+    overwrite_run,
+    save_target,
 )
 from core.services.exam_timetable import (
     ExamCoursesUnavailable,
@@ -358,15 +368,26 @@ _BUILD_MAX_CALLS = 20 if settings.DEBUG else 3
 # drag, Fix, drag, Fix, Save already spent three. This only stops abuse.
 _JOB_SUBMIT_MAX_CALLS = 20
 
-#: Persists a finished result as a run and returns its id.
-RunSaver = Callable[[str, dict], int]
+#: Persists a finished result and returns its run id: ``save(label, result)``
+#: saves a new run; ``save(label, result, replace=target)`` - Save changes only -
+#: rewrites the opened run in place (``exam_run_store``).
+RunSaver = Callable[..., int]
 
 
-def _save_run(label: str, result: dict) -> int:
-    return ExamTimetableRun.objects.create(
-        label=label,
-        result_json=json.dumps(result, ensure_ascii=False),
-    ).id
+def _save_run(
+    label: str,
+    result: dict,
+    *,
+    replace: RunTarget | None = None,
+    actor: AuditActor | None = None,
+) -> int:
+    result_json = json.dumps(result, ensure_ascii=False)
+    if replace is None:
+        return ExamTimetableRun.objects.create(label=label, result_json=result_json).id
+    with transaction.atomic():
+        record = overwrite_run(replace, label=label, result_json=result_json)
+    audit_overwrite(record, actor or AuditActor())
+    return record.run_id
 
 
 @require_POST
@@ -413,10 +434,20 @@ def _submit_exam_job(request: HttpRequest, payload: dict) -> JsonResponse:
     return JsonResponse(body, status=status)
 
 
+def _request_saver(request: HttpRequest) -> RunSaver:
+    """``_save_run`` that audits an in-place Save as this request's user."""
+    username, role = audit_actor(request)
+    actor = AuditActor(
+        username=username, role=role, endpoint=request.path, method=str(request.method)
+    )
+    return functools.partial(_save_run, actor=actor)
+
+
 @throttle(max_calls=_BUILD_MAX_CALLS, window_seconds=120)
 def _run_exam_action_now(request: HttpRequest, payload: dict) -> JsonResponse:
+    save = _request_saver(request)
     if not exam_jobs.jobs_enabled():
-        status, body = execute_exam_action(payload)
+        status, body = execute_exam_action(payload, save=save)
         return JsonResponse(body, status=status)
     # With jobs on, what runs here - multistart, or a client that did not ask
     # for a job - takes turns with them: it may not start while a job holds the
@@ -426,7 +457,7 @@ def _run_exam_action_now(request: HttpRequest, payload: dict) -> JsonResponse:
     holder = HOLDER_MULTISTART if exam_jobs.is_multistart(payload) else HOLDER_EXAM_SYNC
     try:
         with solver_slot(holder=holder, wait=False):
-            status, body = execute_exam_action(payload)
+            status, body = execute_exam_action(payload, save=save)
     except SolverBusy as busy:
         return _solver_busy_response(busy.holder)
     return JsonResponse(body, status=status)
@@ -578,6 +609,9 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
                 # clashes and all - and the page reported it as done.
                 raise ValueError(f"Unknown timetable action: {mode or 'none'}.")
             else:
+                # Save changes rewrites the opened run - refused before the
+                # evaluation when the page cannot say which version it changed.
+                target = save_target(payload)
                 reviewed_fingerprint = (
                     payload.get("expected_input_fingerprint") or source_fingerprint
                 )
@@ -589,6 +623,7 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
                 result = _rebuild_loaded_schedule(
                     label=label,
                     save=save,
+                    replace=target,
                     **context,
                     expected_input_fingerprint=reviewed_fingerprint,
                 )
@@ -597,6 +632,10 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
             return 409, {"ok": False, "error_code": "check_required", "error": str(exc)}
         except ExamInputsChanged as exc:
             return 409, {"ok": False, "error_code": "inputs_changed", "error": str(exc)}
+        except SaveTargetChanged as exc:
+            return 409, {"ok": False, "error_code": exc.code, "error": str(exc)}
+        except SaveTargetGone as exc:
+            return 410, {"ok": False, "error_code": exc.code, "error": str(exc)}
         except ValueError as exc:
             return _validation_error(exc)
         except JobCancelled:
@@ -694,6 +733,7 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
         if result.get("feasibility_error"):
             return 400, {"ok": False, **result}
         result["run_id"] = save(label, result)
+        result["run_revision"] = 0
         return 200, {"ok": True, **result}
     except ValueError as exc:
         return _validation_error(exc)
@@ -874,6 +914,7 @@ def _rebuild_loaded_schedule(
     extra: dict | None = None,
     described: Callable[[dict], dict] | None = None,
     save: RunSaver = _save_run,
+    replace: RunTarget | None = None,
     **kwargs,
 ) -> dict:
     """Persist the same complete evaluation used by a non-saving Check.
@@ -881,6 +922,9 @@ def _rebuild_loaded_schedule(
     ``rebalance_invigilators`` is off for Save, which must persist the exact
     board the registrar is looking at. Only Optimise turns it on, because only
     Optimise re-solves the placements and so owes them the build post-pass.
+
+    ``replace``: Save changes only - the opened run, rewritten in place. Every
+    other caller saves a new run.
     """
     result = evaluate_exam_schedule(**kwargs, rebalance_invigilators=rebalance_invigilators)
     if expected_input_fingerprint and expected_input_fingerprint != result["input_fingerprint"]:
@@ -896,7 +940,21 @@ def _rebuild_loaded_schedule(
     result.update(extra or {})
     if described is not None:
         result.update(described(result))
-    result["run_id"] = save(label, result)
+    if replace is None:
+        result["run_id"] = save(label, result)
+        result["run_revision"] = 0
+    else:
+        result["run_id"] = save(label, result, replace=replace)
+        result["run_revision"] = replace.revision + 1
+        # The page shows when the timetable it holds was saved: now, not when
+        # it was first created (the detail view gives the same).
+        saved_at = (
+            ExamTimetableRun.objects.filter(pk=result["run_id"])
+            .values_list("saved_at", flat=True)
+            .first()
+        )
+        if saved_at is not None:
+            result["saved_at"] = saved_at.isoformat()
     return result
 
 
@@ -2382,7 +2440,10 @@ def exam_timetable_list_view(request: HttpRequest) -> JsonResponse:
     except (ValueError, TypeError):
         page = 1
 
-    qs = ExamTimetableRun.objects.order_by("-created_at", "-id").values("id", "label", "created_at")
+    # Last saved first: Save changes rewrites a run in place and moves it up.
+    qs = ExamTimetableRun.objects.order_by("-saved_at", "-id").values(
+        "id", "label", "created_at", "saved_at"
+    )
     total = qs.count()
     total_pages = max(1, -(-total // PAGE_SIZE))  # ceil division
     page = min(page, total_pages)
@@ -2391,6 +2452,7 @@ def exam_timetable_list_view(request: HttpRequest) -> JsonResponse:
     runs = list(qs[start : start + PAGE_SIZE])
     for r in runs:
         r["created_at"] = r["created_at"].isoformat() if r["created_at"] else ""  # type: ignore[typeddict-item]
+        r["saved_at"] = r["saved_at"].isoformat() if r["saved_at"] else ""  # type: ignore[typeddict-item]
 
     return JsonResponse(
         {
@@ -2426,6 +2488,9 @@ def exam_timetable_detail_view(request: HttpRequest, run_id: int) -> JsonRespons
     result["run_id"] = run.id
     result["label"] = run.label
     result["created_at"] = run.created_at.isoformat() if run.created_at else ""
+    result["saved_at"] = run.saved_at.isoformat() if run.saved_at else ""
+    # Sent back with Save changes: the version these changes are made on.
+    result["run_revision"] = run.revision
 
     return JsonResponse({"ok": True, **result})
 
@@ -2496,6 +2561,8 @@ def exam_timetable_copy_view(request: HttpRequest, run_id: int) -> JsonResponse:
         run_id=copied.pk,
         label=copied.label,
         created_at=copied.created_at.isoformat(),
+        saved_at=copied.saved_at.isoformat(),
+        run_revision=copied.revision,
         source_run_id=source.pk,
     )
     return JsonResponse(result, status=201)

@@ -126,7 +126,7 @@
     ]));
 
     const source = $('examRosterDrawerSource');
-    source.replaceChildren(R.sourceLine({ id: context.runId, label: context.run.label, saved_at: context.run.created_at }));
+    source.replaceChildren(R.sourceLine({ id: context.runId, label: context.run.label, saved_at: context.run.saved_at || context.run.created_at }));
     if (answer) {
       // The whole run's check, from this answer's own build: a row's flags
       // follow every exam's lists, so "Lists match" is never this exam's alone.

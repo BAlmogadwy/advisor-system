@@ -63,6 +63,8 @@ def _loaded_payload(built, board, mode, **extra):
         **SCOPE,
         "mode": mode,
         "previous_run_id": built["run_id"],
+        # The version of that run the page opened: Save changes rewrites it in place.
+        "run_revision": built["run_revision"],
         "base_schedule": board,
         "pinned": [],
         "editor_revision": 7,
@@ -99,7 +101,10 @@ def _run_as_job(client, payload):
     return job_id, *_result(client, job_id)
 
 
-_WHEN = {"snapshot_timestamp", "created_at", "generated_at"}
+_WHEN = {"snapshot_timestamp", "created_at", "saved_at", "generated_at"}
+#: Which run, and which version of it: a Save changes rewrites the same run, so
+#: the job's save is one revision past the synchronous one.
+_WHICH = {"run_id", "run_revision"}
 
 
 def _without_run_identity(body):
@@ -112,7 +117,7 @@ def _without_run_identity(body):
             return [stable(item) for item in value]
         return value
 
-    return stable({key: value for key, value in body.items() if key != "run_id"})
+    return stable({key: value for key, value in body.items() if key not in _WHICH})
 
 
 def _states(job):
@@ -163,12 +168,23 @@ def test_a_loaded_action_run_as_a_job_answers_exactly_as_the_synchronous_view(
         else {}
     )
     synchronous = _post(export_client, _loaded_payload(built, board, mode, **extra), 200)
+    if mode == "save_loaded_changes":
+        # The synchronous Save rewrote the opened run: the job's Save is made on
+        # the version it left, as a page that had just saved would send.
+        extra["run_revision"] = synchronous["run_revision"]
     jobs.EXAM_JOBS_ENABLED = True
     _, status, body = _run_as_job(export_client, _loaded_payload(built, board, mode, **extra))
 
     assert status == 200
     assert body["editor_revision"] == 7
     assert _without_run_identity(body) == _without_run_identity(synchronous)
+    if mode == "save_loaded_changes":
+        # Both Saves rewrote the opened run in place, one revision each.
+        assert synchronous["run_id"] == body["run_id"] == built["run_id"]
+        assert (synchronous["run_revision"], body["run_revision"]) == (1, 2)
+        assert ExamTimetableRun.objects.get(pk=built["run_id"]).revision == 2
+    else:
+        assert body["run_id"] not in (built["run_id"], synchronous["run_id"])
 
 
 def test_a_validation_error_comes_back_with_the_status_the_view_gives_it(
@@ -472,6 +488,7 @@ def test_a_save_can_be_cancelled_mid_evaluation_too(
 
     monkeypatch.setattr(JobProgress, "stage", cancel_at_check)
     before = ExamTimetableRun.objects.count()
+    opened = ExamTimetableRun.objects.get(pk=built["run_id"])
     payload = _loaded_payload(
         built,
         built["schedule"],
@@ -483,6 +500,14 @@ def test_a_save_can_be_cancelled_mid_evaluation_too(
     job = _poll(export_client, submitted["job"]["id"])
     assert (job["status"], job["error_code"]) == ("cancelled", "cancelled")
     assert ExamTimetableRun.objects.count() == before
+    # A Save rewrites the opened run in place, so the count alone cannot show
+    # nothing was saved: the opened run is untouched too.
+    after = ExamTimetableRun.objects.get(pk=built["run_id"])
+    assert (after.revision, after.saved_at, after.result_json) == (
+        opened.revision,
+        opened.saved_at,
+        opened.result_json,
+    )
 
 
 def test_a_cancel_that_lands_after_an_unsaved_answer_is_still_a_cancel(

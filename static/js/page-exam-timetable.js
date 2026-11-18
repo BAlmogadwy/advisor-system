@@ -83,7 +83,7 @@ const T = {
   repaired:       IS_AR ? 'تم حفظ الجدول بعد الإصلاح.' : 'Repaired run saved.',
   optimizeNoBetter: IS_AR ? 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء.' : 'No better timetable was found, so nothing was saved.',
   repairUnchanged: IS_AR ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء.' : 'No exam was moved, so nothing was saved.',
-  savedChanges:   IS_AR ? 'تم حفظ التغييرات.' : 'Loaded-run changes saved.',
+  savedChanges:   IS_AR ? 'حُفظت التغييرات في هذا الجدول.' : 'Changes saved to this timetable.',
   addingCourses:  IS_AR ? 'جارٍ إضافة المقررات…' : 'Adding courses…',
   coursesAdded:   IS_AR ? 'أُضيفت المقررات وحُفظت النتيجة جدولاً جديداً.' : 'Courses added. Saved as a new timetable.',
   coursesSavedNotAll: IS_AR ? 'حُفظت النتيجة جدولاً جديداً، وبقي بعض المقررات المضافة دون موعد. راجع التقرير.' : 'Saved as a new timetable. Not every course could be placed: see the report.',
@@ -179,6 +179,8 @@ function examResponseError(data) {
     busy.examHolder = data.holder || null;
     return busy;
   }
+  if (code === 'save_target_changed') return new Error(JOB_TEXT.saveTargetChanged);
+  if (code === 'save_target_gone') return new Error(JOB_TEXT.saveTargetGone);
   if (code === 'job_not_started') return new Error(JOB_TEXT.notStarted);
   if (code === 'job_not_found') return new Error(JOB_TEXT.jobNotFound);
   if (code === 'run_deleted' || code === 'run_not_found') {
@@ -1122,9 +1124,9 @@ function collectLoadedRunPayload(mode, { label: named = null } = {}) {
     previous_run_id: _currentResultData?.run_id,
     // A run saved without rooms gets them once a lock is asked for.
     assign_rooms: _roomsForLocks ? true : (_currentResultData?.assign_rooms ?? true),
-    update_run_id: mode === 'optimize_loaded' && _currentResultData?.rebuild_mode === 'optimized_from_loaded'
-      ? _currentResultData.run_id
-      : undefined,
+    // Save rewrites the opened timetable in place: the server refuses it if
+    // the timetable was saved again since this version was opened.
+    ...(mode === 'save_loaded_changes' ? { run_revision: _currentResultData?.run_revision } : {}),
     mode,
     base_schedule: baseSchedule,
   };
@@ -1402,6 +1404,24 @@ const JOB_TEXT = {
   savedByOther: owner => IS_AR
     ? `حُفظت النتيجة جدولاً جديداً${owner ? ` بطلب من ${isolate(owner)}` : ''}، ولم تُفتح في هذه الصفحة.`
     : `Saved as a new timetable${owner ? ` by ${isolate(owner)}` : ''}. It is not open on this page.`,
+  // A colleague's Save rewrote a timetable in place: no new one was made.
+  changesSavedByOther: (owner, here) => {
+    if (here) {
+      return IS_AR
+        ? `حُفظت تغييرات على هذا الجدول${owner ? ` بطلب من ${isolate(owner)}` : ''}، فما يُعرض هنا أقدم منها. افتحه لترى آخر نسخة.`
+        : `Changes were saved to this timetable${owner ? ` by ${isolate(owner)}` : ''}, so what is shown here is older. Open it to see the latest version.`;
+    }
+    return IS_AR
+      ? `حُفظت تغييرات على جدول${owner ? ` بطلب من ${isolate(owner)}` : ''}، وهو غير مفتوح في هذه الصفحة.`
+      : `Changes were saved to a timetable${owner ? ` by ${isolate(owner)}` : ''}. It is not open on this page.`;
+  },
+  // A refused Save: it never makes a new timetable, so it says nothing was saved.
+  nothingSaved: reason => {
+    const end = reason && !/[.!?؟]$/.test(reason.replace(/[\u2066-\u2069]/g, '')) ? '.' : '';
+    return IS_AR
+      ? `لم يُحفظ شيء${reason ? `: ${reason}${end}` : '.'}`
+      : `Nothing was saved${reason ? `: ${reason}${end}` : '.'}`;
+  },
   othersRunning: (owner, started = true) => {
     if (!started) {
       return IS_AR
@@ -1439,6 +1459,14 @@ const JOB_TEXT = {
   notStarted: IS_AR ? 'تعذّر على الخادم بدء هذه العملية. لم يُحفظ شيء؛ أعد المحاولة.' : 'The server could not start this action. Nothing was saved; try again.',
   jobNotFound: IS_AR ? 'لم تعد هذه العملية متاحة.' : 'That timetable action is no longer available.',
   runDeleted: IS_AR ? 'حُذف هذا الجدول من «الجداول المحفوظة».' : 'That timetable was deleted from Saved timetables.',
+  // Save rewrites the opened timetable, so it is refused once that timetable
+  // was saved again or deleted after this page opened it.
+  saveTargetChanged: IS_AR
+    ? 'حُفظ هذا الجدول مرة أخرى بعد أن فتحته، فلم تُحفظ تغييراتك فوقه. افتحه من «الجداول المحفوظة» لترى آخر نسخة، ثم أعد إجراء تغييراتك.'
+    : 'This timetable was saved again after you opened it, so your changes were not saved over it. Open it from Saved timetables to see the latest version, then make your changes again.',
+  saveTargetGone: IS_AR
+    ? 'حُذف هذا الجدول من «الجداول المحفوظة» بعد أن فتحته، فلم يُحفظ شيء.'
+    : 'This timetable was deleted from Saved timetables after you opened it, so nothing was saved.',
   // Said where any load failed - beside the timetable on the board, too - so it
   // names the one that was asked for.
   openedGone: IS_AR ? 'الجدول الذي حاولت فتحه حُذف من «الجداول المحفوظة».' : 'The timetable you tried to open has been deleted from Saved timetables.',
@@ -1692,6 +1720,8 @@ function jobRefusalReason(data) {
   const code = data?.code || data?.error_code;
   if (code === 'inputs_changed') return JOB_TEXT.inputsChanged;
   if (code === 'check_required') return JOB_TEXT.checkRequired;
+  if (code === 'save_target_changed') return JOB_TEXT.saveTargetChanged;
+  if (code === 'save_target_gone') return JOB_TEXT.saveTargetGone;
   // Said as a reason, not as the live page's advice: the draft it would speak
   // of may be gone with the page that submitted it. (A job's result carries
   // these codes - execute_exam_action - a lock refusal, a feasibility report,
@@ -2240,7 +2270,9 @@ async function showJobEnding(job, follow) {
   const met = _jobsEndedHere.get(job.id);
   if (job.status === 'succeeded' && job.has_run) {
     // A saved timetable: open it here, or leave it in Saved timetables.
-    let message = JOB_TEXT.savedByOther(job.owner);
+    let message = job.kind === 'save_loaded_changes'
+      ? JOB_TEXT.changesSavedByOther(job.owner, String(job.result_run_id) === String(_currentRunId))
+      : JOB_TEXT.savedByOther(job.owner);
     if (mine) {
       message = follow || met
         ? JOB_TEXT.finishedSaved
@@ -2258,13 +2290,19 @@ async function showJobEnding(job, follow) {
     // Ended without a new timetable. The registrar's own is told why: its
     // stored answer (fetching it also marks it seen), and what to do next.
     const outcome = noRunOutcome(job);
-    let message = outcome === 'done' ? (job.kind === 'optimize_loaded' ? T.optimizeNoBetter : JOB_TEXT.movedNothing) : JOB_TEXT.notSaved('');
+    // Save never makes a new timetable, so its refusal is not "no new timetable";
+    // a refusal about the timetable it rewrites is a whole sentence already.
+    const notSaved = (reason, code = null) => {
+      if (['save_target_changed', 'save_target_gone'].includes(code)) return reason;
+      return job.kind === 'save_loaded_changes' ? JOB_TEXT.nothingSaved(reason) : JOB_TEXT.notSaved(reason);
+    };
+    let message = outcome === 'done' ? (job.kind === 'optimize_loaded' ? T.optimizeNoBetter : JOB_TEXT.movedNothing) : notSaved('');
     let next = '';
     if (mine) {
       const fetched = await fetchJobResult(job.id);
       if (fetched && !(fetched.res.ok && fetched.data?.ok)) {
-        message = JOB_TEXT.notSaved(jobRefusalReason(fetched.data));
         const code = fetched.data?.code || fetched.data?.error_code;
+        message = notSaved(jobRefusalReason(fetched.data), code);
         if (['inputs_changed', 'check_required'].includes(code)) next = JOB_TEXT.recheck[how];
       }
     } else {
@@ -2293,7 +2331,10 @@ function offerJobResult(job, message, follow = null) {
   // Its timetable already on the board - opened from Saved timetables before
   // this page heard the job had ended: nothing to offer, and "not open on this
   // page" would be untrue. The news has been taken up.
-  if (job.result_run_id != null && String(job.result_run_id) === String(_currentRunId)) {
+  // A Save from elsewhere rewrote that timetable in place: the board here is
+  // older than it, so it is offered, never taken as already shown.
+  const rewroteThisOne = job.kind === 'save_loaded_changes' && !(follow && follow.own);
+  if (!rewroteThisOne && job.result_run_id != null && String(job.result_run_id) === String(_currentRunId)) {
     if (job.mine) markJobSeen(job.id);
     if (follow && followIsCurrent(follow)) {
       const hadFocus = $('examJobPanel').contains(document.activeElement);
@@ -7973,7 +8014,8 @@ async function loadHistory(page) {
     }
 
     $('historyList').innerHTML = runs.map(r => {
-      const dt = fmtDate(r.created_at);
+      // Last saved: Save changes rewrites a timetable in place.
+      const dt = fmtDate(r.saved_at || r.created_at);
       return `<div class="et-history-item${String(r.id) === String(_currentRunId) ? ' active' : ''}" data-id="${escapeAttr(r.id)}">
         <button type="button" class="et-run-info" aria-label="${escapeAttr(`${IS_AR ? 'تحميل الجدول' : 'Load run'}: ${r.label}`)}">
           <strong>${escapeAttr(r.label)}</strong> <small class="text-secondary">${escapeAttr(dt)}</small>

@@ -161,6 +161,9 @@ def _loaded(client, built, board, *, mode=None, status=200, **changes):
         "max_per_day": 2,
         **SCOPE,
         "previous_run_id": built["run_id"],
+        # The revision of that run the board was made on: Save changes rewrites
+        # it in place, and refuses a board made on any other revision.
+        "run_revision": built["run_revision"],
         "base_schedule": board,
         "pinned": built["pinned"],
         **changes,
@@ -645,7 +648,12 @@ def test_copy_carries_the_links_and_its_actions_use_them(client_, population):
     assert detail["linked_exams"] == built["linked_exams"]
     day, period = _free_slot(built)
     split = _move(built["schedule"], "AI212", day, period)
-    body = _loaded(client_, {**built, "run_id": copied["run_id"]}, split, status=400)
+    body = _loaded(
+        client_,
+        {**built, "run_id": copied["run_id"], "run_revision": copied["run_revision"]},
+        split,
+        status=400,
+    )
     assert body["code"] == "linked_exams_split"
 
 

@@ -316,6 +316,7 @@ def test_manual_move_reallocates_both_periods_without_moving_other_exams_and_sav
         "label": "Saved source and destination",
         "mode": "save_loaded_changes",
         "previous_run_id": built["run_id"],
+        "run_revision": built["run_revision"],
         "base_schedule": moved,
         "selected_courses": built["courses"],
         "days": DAYS,
@@ -330,7 +331,10 @@ def test_manual_move_reallocates_both_periods_without_moving_other_exams_and_sav
     )
     assert response.status_code == 200, response.content
     saved = response.json()
-    assert ExamTimetableRun.objects.count() == 2
+    # Save rewrites the opened run in place; it adds no run.
+    assert ExamTimetableRun.objects.count() == 1
+    assert saved["run_id"] == built["run_id"]
+    assert saved["run_revision"] == built["run_revision"] + 1
     assert _placements(saved) == _placements(checked)
     assert _room_rows(saved) == _room_rows(checked)
     assert _report(saved) == _report(checked)

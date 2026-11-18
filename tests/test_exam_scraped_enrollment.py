@@ -205,6 +205,7 @@ def test_disappeared_scraped_course_never_falls_back_to_studying_or_saves(export
         label="Previously scraped", days=["Sun"], periods=["08:00-10:00"], assign_rooms=False
     )
     registration.delete()
+    stored = ExamTimetableRun.objects.get(pk=source["run_id"])
     payload = {
         "label": "Do not resurrect studying enrollment",
         "days": ["Sun"],
@@ -216,7 +217,11 @@ def test_disappeared_scraped_course_never_falls_back_to_studying_or_saves(export
         "selected_course_entries": source["schedule"],
     }
     if action != "build":
-        payload.update(previous_run_id=source["run_id"], base_schedule=source["schedule"])
+        payload.update(
+            previous_run_id=source["run_id"],
+            run_revision=source["run_revision"],
+            base_schedule=source["schedule"],
+        )
     if action in {"save", "optimize"}:
         payload["mode"] = "save_loaded_changes" if action == "save" else "optimize_loaded"
     response = export_client.post(
@@ -229,6 +234,13 @@ def test_disappeared_scraped_course_never_falls_back_to_studying_or_saves(export
     assert response.json()["code"] == "courses_unavailable"
     assert response.json()["unavailable_courses"] == ["CS101"]
     assert ExamTimetableRun.objects.count() == 1
+    # Save rewrites in place, so "saves nothing" also means the source row is untouched.
+    unchanged = ExamTimetableRun.objects.get(pk=source["run_id"])
+    assert (unchanged.revision, unchanged.saved_at, unchanged.result_json) == (
+        stored.revision,
+        stored.saved_at,
+        stored.result_json,
+    )
 
 
 def test_recorded_all_label_is_preserved_without_claiming_synthetic_fallback(export_client):  # noqa: F811

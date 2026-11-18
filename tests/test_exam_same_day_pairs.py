@@ -233,6 +233,7 @@ def test_check_save_and_reload_agree_with_build_and_moves_recount(board):
     payload = {
         "label": "Moved",
         "previous_run_id": built["run_id"],
+        "run_revision": built["run_revision"],
         "base_schedule": deepcopy(built["schedule"]),
         "days": DAYS,
         "periods": PERIODS,

@@ -87,6 +87,7 @@ def _header(**changes) -> dict:
 def _loaded(client, source, board, mode, *, jobs=False, **changes) -> dict:
     payload = _header(
         previous_run_id=source["run_id"],
+        run_revision=source["run_revision"],
         base_schedule=deepcopy(board),
         pinned=source["pinned"],
         **changes,

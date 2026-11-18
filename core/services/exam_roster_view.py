@@ -365,7 +365,7 @@ class RosterViewCache:
 
     @staticmethod
     def key(run: ExamTimetableRun) -> tuple[int, str]:
-        return (int(run.pk), run.created_at.isoformat() if run.created_at else "")
+        return (int(run.pk), run.saved_at.isoformat() if run.saved_at else "")
 
     def _expired(self, view: RosterView, now: float) -> bool:
         return now - view.built >= self.ttl

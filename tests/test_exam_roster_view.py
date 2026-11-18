@@ -916,7 +916,7 @@ def test_scope_audit_details_hold_the_scope_and_counts_never_a_student(run):
 @dataclass
 class _Run:
     pk: int
-    created_at: object = None
+    saved_at: object = None
 
 
 class _Clock:
@@ -994,13 +994,13 @@ def test_a_request_that_waited_for_a_build_rechecks_the_ttl():
 
 def test_a_run_is_keyed_by_its_id_and_saved_time():
     cache, _clock, builds = _cache()
-    cache.get(_Run(1, created_at=None))
+    cache.get(_Run(1, saved_at=None))
 
     class _Saved:
         def isoformat(self):
             return "2026-09-26T10:00:00+00:00"
 
-    cache.get(_Run(1, created_at=_Saved()))
+    cache.get(_Run(1, saved_at=_Saved()))
     assert len(builds.calls) == 2 and len(cache) == 2
 
 

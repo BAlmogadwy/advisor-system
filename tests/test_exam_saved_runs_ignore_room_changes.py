@@ -91,6 +91,8 @@ def _loaded_payload(run: ExamTimetableRun, label: str) -> dict:
     return {
         "label": label,
         "previous_run_id": run.pk,
+        # Save rewrites the opened run in place, guarded by its revision.
+        "run_revision": run.revision,
         "base_schedule": data["schedule"],
         "days": corpus.POPULATION_DAYS,
         "periods": corpus.POPULATION_PERIODS,
@@ -120,6 +122,12 @@ def _save(client, payload: dict, fingerprint: str, status: int = 200) -> dict:
     return response.json()
 
 
+def _copy(client, run: ExamTimetableRun) -> int:
+    response = _post_json(client, reverse("exam_timetable_copy", args=[run.pk]), {})
+    assert response.status_code == 201, response.content
+    return response.json()["run_id"]
+
+
 def _saved_runs(client) -> list[ExamTimetableRun]:
     """A build with rooms and the invigilator pass; its board checked and saved
     as Save saves it; a build with a linked exam sharing rooms; a copy."""
@@ -128,10 +136,14 @@ def _saved_runs(client) -> list[ExamTimetableRun]:
     api = SimpleNamespace(build_exam_timetable=build_exam_timetable)
     result, built = corpus.build_population_run(api, models)
 
-    payload = _loaded_payload(built, "Checked and saved")
+    # Save rewrites the run it was made on, so it is made on a copy of the
+    # build: the build itself stays a plain build among the saved runs.
+    target = ExamTimetableRun.objects.get(pk=_copy(client, built))
+    payload = _loaded_payload(target, "Checked and saved")
     check = _check(client, payload)
     assert check["source_inputs_changed"] is False
     saved = _save(client, payload, check["input_fingerprint"])
+    assert (saved["run_id"], saved["run_revision"]) == (target.pk, 1)
 
     linked = build_exam_timetable(
         "Linked",
@@ -156,9 +168,7 @@ def _saved_runs(client) -> list[ExamTimetableRun]:
     )
     assert linked["status"] == "ok", linked
 
-    copied = _post_json(client, reverse("exam_timetable_copy", args=[built.pk]), {})
-    assert copied.status_code == 201, copied.content
-    ids = [built.pk, saved["run_id"], linked["run_id"], copied.json()["run_id"]]
+    ids = [built.pk, saved["run_id"], linked["run_id"], _copy(client, built)]
     return list(ExamTimetableRun.objects.filter(pk__in=ids).order_by("pk"))
 
 
@@ -343,7 +353,9 @@ def _outputs(client, runs: list[ExamTimetableRun]) -> dict[str, object]:
         body = copy.json()
         copied = ExamTimetableRun.objects.get(pk=body.pop("run_id"))
         assert copied.result_json == run.result_json
+        # When the copy was made, not what it holds.
         body.pop("created_at")
+        body.pop("saved_at")
         out[f"{key}: copy"] = body
         copied.delete()
     return out
@@ -351,7 +363,7 @@ def _outputs(client, runs: list[ExamTimetableRun]) -> dict[str, object]:
 
 def _stored(runs: list[ExamTimetableRun]) -> dict[int, tuple]:
     return {
-        row.pk: (row.label, row.created_at, row.result_json)
+        row.pk: (row.label, row.created_at, row.saved_at, row.revision, row.result_json)
         for row in ExamTimetableRun.objects.filter(pk__in=[run.pk for run in runs])
     }
 
@@ -390,7 +402,7 @@ def test_changing_rooms_changes_no_saved_timetable(admin):
     assert _stored(runs) == stored
     assert all(
         json.loads(text)["schema_version"] == EXAM_RUN_SCHEMA_VERSION
-        for _label, _at, text in stored.values()
+        for *_identity, text in stored.values()
     )
 
 

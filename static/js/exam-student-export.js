@@ -914,7 +914,7 @@
     const source = $('examStudentExportSource');
     const label = document.createElement('bdi');
     label.textContent = run.label || '';
-    source.replaceChildren(copy('source', { id: ltr(context.runId), label, saved: ltr(savedAt(run.created_at)) }));
+    source.replaceChildren(copy('source', { id: ltr(context.runId), label, saved: ltr(savedAt(run.saved_at || run.created_at)) }));
     const term = Object.values(run.section_enrollment || {}).flat().find(row => row?.academic_year && row?.term)
       || (run.academic_year && run.term ? run : null);
     if (term) source.append(copy('source-term', { year: ltr(term.academic_year), term: ltr(term.term) }));

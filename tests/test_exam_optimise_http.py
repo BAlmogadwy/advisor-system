@@ -117,6 +117,7 @@ def _payload(built, board, *, days=DAYS, periods=PERIODS, **changes):
         "max_per_day": 2,
         **SCOPE,
         "previous_run_id": built["run_id"],
+        "run_revision": built["run_revision"],
         "base_schedule": board,
         "pinned": built.get("pinned", []),
         **changes,

@@ -41,7 +41,7 @@
     <section class="et-panel et-roster-head" id="examRostersApp" aria-labelledby="examRostersRun">
       <dl class="et-provenance">
         <dt>{% if LANGUAGE_CODE == 'ar' %}الجدول{% else %}Timetable{% endif %}</dt>
-        <dd id="examRostersRun">{% if LANGUAGE_CODE == 'ar' %}<bdi>{{ roster_run.label }}</bdi> · رقم <bdi dir="ltr">{{ roster_run.id }}</bdi> · حُفظ في <bdi dir="ltr">{{ roster_run.created_at|date:"Y-m-d H:i" }}</bdi>{% else %}<bdi>{{ roster_run.label }}</bdi> · #<bdi dir="ltr">{{ roster_run.id }}</bdi> · saved <bdi dir="ltr">{{ roster_run.created_at|date:"Y-m-d H:i" }}</bdi>{% endif %}</dd>
+        <dd id="examRostersRun">{% if LANGUAGE_CODE == 'ar' %}<bdi>{{ roster_run.label }}</bdi> · رقم <bdi dir="ltr">{{ roster_run.id }}</bdi> · حُفظ في <bdi dir="ltr">{{ roster_run.saved_at|date:"Y-m-d H:i" }}</bdi>{% else %}<bdi>{{ roster_run.label }}</bdi> · #<bdi dir="ltr">{{ roster_run.id }}</bdi> · saved <bdi dir="ltr">{{ roster_run.saved_at|date:"Y-m-d H:i" }}</bdi>{% endif %}</dd>
         <dt>{% if LANGUAGE_CODE == 'ar' %}قوائم الطلاب{% else %}Student lists{% endif %}</dt>
         <dd><span id="examRostersLists">{% if LANGUAGE_CODE == 'ar' %}الجداول الدراسية المستوردة للطلاب{% else %}Imported student timetables{% endif %}</span><span id="examRostersCheck"></span></dd>
         <dt>{% if LANGUAGE_CODE == 'ar' %}المطابقة{% else %}Checked{% endif %}</dt>
@@ -131,6 +131,6 @@
 {% if roster_state == 'ready' %}
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/page-exam-rosters.js' %}?v=2"></script>
-<script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
+<script src="{% static 'js/exam-student-export.js' %}?v=4"></script>
 {% endif %}
 {% endblock %}

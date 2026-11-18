@@ -132,7 +132,10 @@ def test_missing_inventory_is_a_room_problem_only_when_allocation_was_requested(
         if mode:
             assert result is not None
             payload.update(
-                mode=mode, previous_run_id=result["run_id"], base_schedule=result["schedule"]
+                mode=mode,
+                previous_run_id=result["run_id"],
+                run_revision=result["run_revision"],
+                base_schedule=result["schedule"],
             )
         response = export_client.post(
             reverse("exam_timetable_build"), payload, content_type="application/json"
@@ -206,6 +209,7 @@ def test_scope_and_selected_identity_snapshot_survives_build_save_optimize(
                 **payload,
                 "mode": mode,
                 "previous_run_id": result["run_id"],
+                "run_revision": result["run_revision"],
                 "base_schedule": result["schedule"],
                 "programs": [],
                 "sections": [],
@@ -289,7 +293,10 @@ def test_bucket_override_without_student_slot_clash_is_honest_through_saved_work
         if mode:
             assert result is not None
             payload.update(
-                mode=mode, previous_run_id=result["run_id"], base_schedule=result["schedule"]
+                mode=mode,
+                previous_run_id=result["run_id"],
+                run_revision=result["run_revision"],
+                base_schedule=result["schedule"],
             )
         response = export_client.post(
             reverse("exam_timetable_build"), payload, content_type="application/json"

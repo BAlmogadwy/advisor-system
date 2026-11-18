@@ -3138,6 +3138,7 @@ def build_exam_timetable(
             result_json=json.dumps(result, ensure_ascii=False),
         )
         result["run_id"] = run.id
+        result["run_revision"] = run.revision
 
     return result
 

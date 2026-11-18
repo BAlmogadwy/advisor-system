@@ -73,6 +73,7 @@ def _loaded(client, source, board=None, *, mode=None, status=200, **changes):
         "max_per_day": 2,
         **SCOPE,
         "previous_run_id": source["run_id"],
+        "run_revision": source["run_revision"],
         "base_schedule": deepcopy(source["schedule"] if board is None else board),
         "pinned": source["pinned"],
         **changes,
@@ -589,10 +590,12 @@ def test_a_build_from_a_saved_run_without_locks_keeps_masters_links_default(clie
 
 def test_a_build_with_locks_and_no_saved_run_is_refused(client_, locked):
     built, saved, locks = locked
+    # The Save rewrote the build's own run in place: deleting it leaves none.
+    assert saved["run_id"] == built["run_id"]
     ExamTimetableRun.objects.filter(pk=saved["run_id"]).delete()
     body = _build(client_, status=400, previous_run_id=saved["run_id"], exam_locks=locks)
     assert (body["code"], body["field"]) == ("exam_locks_source_required", "previous_run_id")
-    assert ExamTimetableRun.objects.filter(label="Locks").count() == 1  # the first build only
+    assert not ExamTimetableRun.objects.filter(label="Locks").exists()  # the refusal saved none
 
 
 def test_a_build_for_another_scope_is_refused_while_locked(client_, locked):
