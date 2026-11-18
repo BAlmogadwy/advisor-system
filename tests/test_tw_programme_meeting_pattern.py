@@ -773,7 +773,7 @@ def generate(http, monkeypatch):
     monkeypatch.setattr("core.services.planner_job_runner.submit_planner_job", submit)
     monkeypatch.setattr("core.services.planner_job_runner.dispatch_planner_job", Mock())
     run = Mock(return_value={"engine": "stub"})
-    monkeypatch.setattr("core.services.planner_job_runner.run_planner_job_synchronously", run)
+    monkeypatch.setattr("core.services.planner_job_runner._submit_and_run_planner_job", run)
 
     def post(*, engine: str, deferred: bool):
         monkeypatch.setattr(

@@ -191,7 +191,7 @@ test('split whole-section create, switch and removal history survives undo/redo 
   let rows = [], nextId = 101;
   const state = { scenarioId: 1, scenarioMeta: { status: 'draft' }, panes: [{ boardId: 10, boardData: { placements: [] } }], undoStack: [create, pattern, remove], redoStack: [] };
   const refresh = async () => { state.panes[0].boardData.placements = rows; };
-  const context = vm.createContext({ S: state, IS_AR: false, TimetableMeetingPolicy: h.policy, notify: { success: () => {}, warning: () => {}, error: () => {} },
+  const context = vm.createContext({ S: state, splitScenarioRevision: 0, IS_AR: false, TimetableMeetingPolicy: h.policy, notify: { success: () => {}, warning: () => {}, error: () => {} },
     findPlacement: id => { const placement = rows.find(row => row.id === id); return placement ? { placement, paneIdx: 0 } : null; },
     placementProtectionReasons: () => [], updateUndoRedoButtons: () => {}, paneCount: () => 1, loadAndRenderPane: refresh,
     refreshBoardsSummary: async () => {}, loadSidebarBudget: async () => {}, refreshEnglishSplit: refresh,
@@ -212,7 +212,7 @@ test('split whole-section create, switch and removal history survives undo/redo 
       await refresh(); return { placement: rows.find(row => row.id === id), placements: rows };
     },
   });
-  vm.runInContext(slice(split, 'async function switchEnglishSplitPattern(', 'async function chooseEnglishSplitCreate('), context);
+  vm.runInContext(slice(split, 'function englishPatternTarget(', 'async function chooseEnglishSplitCreate('), context);
   vm.runInContext(slice(split, 'async function apiCreateWithBackstop(', '/* ── Top-bar actions'), context);
   await context.doUndo(); await context.doUndo();
   assert.equal(rows[0].id, 101); assert.equal(rows[0].start_time, '09:00'); assert.equal(rows[3].room, 'R3');

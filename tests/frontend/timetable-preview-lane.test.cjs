@@ -74,6 +74,282 @@ async function splitHarness(t, intercept = () => undefined) {
   return { w, d, state, panel, requests, notices, delays, select, roomBox, roomRequests };
 }
 
+for (const nextBoardId of [2, 3]) {
+  test(`split pane keeps the newest load when board 2 replies after board ${nextBoardId}`, async t => {
+    const late = deferred();
+    let holdFirst = true;
+    let latestData;
+    const h = await splitHarness(t, url => {
+      if (url === '/ops/tw/boards/2/' && holdFirst) {
+        holdFirst = false;
+        return late.promise;
+      }
+      if (url === `/ops/tw/boards/${nextBoardId}/`) return latestData;
+    });
+    const previousData = h.state.panes[0].boardData;
+    const board = { ...previousData.board, id: nextBoardId, label: 'Latest selection' };
+    latestData = { ...previousData, board, placements: [] };
+    h.state.boards = [board];
+    const first = h.w.setPaneBoard(0, 2);
+    await h.w.setPaneBoard(0, nextBoardId);
+    late.resolve(previousData);
+    await first;
+    assert.equal(h.state.panes[0].boardData, latestData);
+    const pane = h.d.querySelector('.tws-pane[data-idx="0"]');
+    assert.match(pane.textContent, /Latest selection/);
+    assert.doesNotMatch(pane.textContent, /AI10/);
+  });
+}
+
+test('a superseded scenario detail cannot replace the selected scenario or its boards', async t => {
+  const late = deferred();
+  const lateBoard = deferred();
+  let holdBoard = true;
+  const h = await splitHarness(t, url => {
+    if (url === '/ops/tw/boards/2/' && holdBoard) {
+      holdBoard = false;
+      return lateBoard.promise;
+    }
+    if (url === '/ops/tw/scenarios/1/') return late.promise;
+    if (url === '/ops/tw/scenarios/2/') return { scenario: { id: 2, name: 'Latest', status: 'draft' } };
+  });
+  const picker = h.d.getElementById('twsScenario');
+  picker.innerHTML = '<option value="1">First</option><option value="2">Latest</option>';
+  const oldPane = h.w.loadSplitPane(0);
+  h.state.panes[1].boardId = 99;
+  picker.value = '1';
+  const first = h.w.onScenarioChange();
+  picker.value = '2';
+  await h.w.onScenarioChange();
+  late.resolve({ scenario: { id: 1, name: 'Previous', status: 'draft' } });
+  lateBoard.resolve({ board: { id: 2 }, placements: [] });
+  assert.equal(await oldPane, false);
+  await first;
+  assert.equal(h.state.scenarioId, 2);
+  assert.equal(h.state.panes[0].boardData.placements.length, 2);
+  assert.equal(h.state.panes[1].boardId, null);
+  assert.equal(h.requests.filter(({ url }) => url === '/ops/tw/boards/?scenario_id=1').length, 0);
+});
+
+test('a late summary cannot replace another scenario’s board picker or metrics', async t => {
+  const late = deferred();
+  const board = { id: 22, label: 'Second board', nominal_term: 1 };
+  const h = await splitHarness(t, url => {
+    if (url === '/ops/tw/boards/?scenario_id=1') return late.promise;
+    if (url === '/ops/tw/scenarios/2/') return { scenario: { id: 2, name: 'Second', status: 'draft' } };
+    if (url === '/ops/tw/boards/?scenario_id=2') return { boards: [board], scenario_summary: { unique_students: 17 } };
+    if (url === '/ops/tw/boards/22/') return { board, placements: [] };
+  });
+  const first = h.w.refreshBoardsSummary();
+  h.d.getElementById('twsScenario').innerHTML = '<option value="2">Second</option>';
+  assert.equal(await h.w.onScenarioChange(), true);
+  const remainingRequests = h.requests.length;
+  late.resolve({ boards: [{ id: 2, label: 'First board' }], scenario_summary: { unique_students: 50 } });
+  assert.equal(await first, false);
+  assert.equal(h.state.scenarioId, 2);
+  assert.equal(h.state.boards[0].id, 22);
+  assert.equal(h.state.panes[0].boardId, 22);
+  assert.equal(h.d.querySelector('[data-role="board-select"]').value, '22');
+  assert.equal(h.d.getElementById('twsStStudents').textContent, '17');
+  assert.equal(h.requests.length, remainingRequests);
+});
+
+test('two summaries for the same scenario keep the most recently requested result', async t => {
+  const late = deferred();
+  let calls = 0;
+  const h = await splitHarness(t, url => {
+    if (url === '/ops/tw/boards/?scenario_id=1') {
+      if (++calls === 1) return late.promise;
+      return { boards: [{ id: 2, label: 'Current' }], scenario_summary: { unique_students: 23 } };
+    }
+  });
+  const first = h.w.refreshBoardsSummary();
+  assert.equal(await h.w.refreshBoardsSummary(), true);
+  late.resolve({ boards: [{ id: 9, label: 'Outdated' }] });
+  assert.equal(await first, false);
+  assert.equal(h.d.querySelector('[data-role="board-select"]').value, '2');
+  assert.equal(h.d.getElementById('twsStStudents').textContent, '23');
+});
+
+for (const failedRequest of ['detail', 'boards']) {
+  test(`scenario switch clears the previous board and actions while ${failedRequest} loads and after failure`, async t => {
+    const late = deferred();
+    const h = await splitHarness(t, url => {
+      if (url === '/ops/tw/scenarios/2/') {
+        return failedRequest === 'detail' ? late.promise : { scenario: { id: 2, name: 'Second', status: 'draft' } };
+      }
+      if (url === '/ops/tw/boards/?scenario_id=2') return late.promise;
+    });
+    const picker = h.d.getElementById('twsScenario');
+    picker.innerHTML = '<option value="">Select</option><option value="2">Second</option>';
+    picker.value = '2';
+    h.d.getElementById('twsPublish').disabled = false;
+    const loading = h.w.onScenarioChange();
+    const pendingUrl = failedRequest === 'detail' ? '/ops/tw/scenarios/2/' : '/ops/tw/boards/?scenario_id=2';
+    await wait(() => h.requests.some(r => r.url === pendingUrl));
+    const assertCleared = () => {
+      assert.equal(h.state.scenarioId, null);
+      assert.equal(h.state.panes[0].boardData, null);
+      assert.equal(h.d.querySelector('[data-role="board-select"]'), null);
+      assert.doesNotMatch(h.d.querySelector('.tws-pane').textContent, /AI10/);
+      for (const id of ['twsPublish', 'twsOptimise', 'twsExport', 'twsNewBoard']) {
+        assert.equal(h.d.getElementById(id).disabled, true, id);
+      }
+    };
+    assertCleared();
+    late.resolve({ httpError: 500, error: { message: 'Load failed' } });
+    assert.equal(await loading, false);
+    assertCleared();
+    assert.equal(picker.value, '');
+    assert.equal(picker.disabled, false);
+  });
+}
+
+function secondScenario(url) {
+  const board = { id: 22, label: 'Second board', nominal_term: 1 };
+  if (url === '/ops/tw/scenarios/2/') return { scenario: { id: 2, name: 'Second', status: 'draft' } };
+  if (url === '/ops/tw/boards/?scenario_id=2') return { boards: [board] };
+  if (url === '/ops/tw/boards/22/') return { board, placements: [], slot_config: [{ start: '09:00', end: '10:15' }] };
+}
+
+test('a bundle finishing its board refresh cannot populate another scenario’s undo history', async t => {
+  const late = deferred();
+  const h = await splitHarness(t, url => url === '/ops/tw/boards/2/' ? late.promise : secondScenario(url));
+  const oldBoard = h.state.panes[0].boardData;
+  const moving = h.w.applyCandidateMove({
+    placementId: 10, targetPaneIdx: 0, sourcePaneIdx: 0, day: 'MON', start: '09:00', end: '10:15',
+    candidate: { day: 'MON', pair: { companion: oldBoard.placements[1], start: '10:30', end: '11:45' } },
+  });
+  await wait(() => h.requests.some(r => r.url === '/ops/tw/boards/2/'));
+  h.d.getElementById('twsScenario').innerHTML = '<option value="2">Second</option>';
+  await h.w.onScenarioChange();
+  late.resolve(oldBoard);
+  await moving;
+  assert.equal(h.state.undoStack.length, 0);
+  await h.w.doUndo();
+  assert.equal(h.requests.filter(r => r.url.endsWith('/move/')).length, 2);
+});
+
+for (const direction of ['Undo', 'Redo']) {
+  test(`English pattern ${direction} discards the previous scenario’s history after a late preview`, async t => {
+    const late = deferred();
+    const h = await splitHarness(t, url => url.endsWith('/slot-candidates/') ? late.promise : secondScenario(url));
+    h.state.panes[0].boardData.placements[0].course_code = 'ENG101';
+    h.state[direction.toLowerCase() + 'Stack'].push({
+      type: 'pattern', placement_id: 10, old_pattern_id: 'ENG_INTENSIVE_V1_AM',
+      new_pattern_id: 'ENG_INTENSIVE_V1_PM', before_placements: [], placements: [],
+    });
+    const replay = h.w['do' + direction]();
+    await wait(() => h.requests.some(r => r.url.endsWith('/slot-candidates/')));
+    h.d.getElementById('twsScenario').innerHTML = '<option value="2">Second</option>';
+    await h.w.onScenarioChange();
+    late.resolve({ section_policy: { current_pattern_id: 'ENG_INTENSIVE_V1_PM' }, candidates: [] });
+    await replay;
+    assert.equal(h.state.undoStack.length, 0);
+    assert.equal(h.state.redoStack.length, 0);
+    assert.equal(h.requests.some(r => r.url.endsWith('/switch-pattern/')), false);
+  });
+}
+
+for (const pauseAt of ['preview', 'choice']) {
+  test(`creating an English section cancels when its board changes during ${pauseAt}`, async t => {
+    const late = deferred();
+    const preview = { board: { id: 2, label: 'Original board' }, candidates: [] };
+    const h = await splitHarness(t, url => url.includes('/planned-slot-candidates/')
+      ? (pauseAt === 'preview' ? late.promise : preview) : secondScenario(url));
+    let choosing = false;
+    const choice = { ...h.w.TimetableMeetingPolicy.patterns[0], boardId: 2 };
+    h.w.TimetableMeetingPolicy.choose = async () => { choosing = true; return pauseAt === 'choice' ? late.promise : choice; };
+    const create = h.w.chooseEnglishSplitCreate({ course_code: 'ENG101', course_key: 'ENG101', section_label: 'S2' }, 0);
+    await wait(() => pauseAt === 'choice' ? choosing : h.requests.some(r => r.url.includes('/planned-slot-candidates/')));
+    await h.w.setPaneBoard(0, 22);
+    late.resolve(pauseAt === 'choice' ? choice : preview);
+    await create;
+    assert.equal(h.requests.some(r => r.url.endsWith('/create-planned/')), false);
+    assert.equal(h.state.undoStack.length, 0);
+  });
+}
+
+for (const navigation of ['scenario', 'board', 'hide pane']) {
+  test(`a section preview loses its placement targets after changing the ${navigation}`, async t => {
+    const late = deferred();
+    const h = await splitHarness(t, url => url.includes('/planned-slot-candidates/') ? late.promise : secondScenario(url));
+    h.w.beginCreateSectionAssist({ course_code: 'OLD001', course_key: 'OLD001', section_label: 'S1' });
+    await wait(() => h.requests.some(r => r.url.includes('/planned-slot-candidates/')));
+    if (navigation === 'scenario') {
+      h.d.getElementById('twsScenario').innerHTML = '<option value="2">Second</option>';
+      await h.w.onScenarioChange();
+    } else if (navigation === 'board') {
+      await h.w.setPaneBoard(0, 22);
+    } else {
+      await h.w.togglePaneOff(0);
+    }
+    late.resolve({ candidates: [{ kind: 'lect', day: 'MON', start: '09:00', end: '10:15' }] });
+    await settle();
+    assert.equal(h.state.createAssist.active, false);
+    assert.equal(h.state.createAssist.candidates.size, 0);
+    assert.equal(h.d.querySelector('.tws-create-target, [data-create-assist]'), null);
+    assert.equal(h.requests.find(r => r.url.includes('/planned-slot-candidates/')).options.signal.aborted, true);
+    assert.equal(h.requests.some(r => r.url.endsWith('/create-planned/')), false);
+  });
+}
+
+test('a move preview cannot highlight cells after its board changes', async t => {
+  const late = deferred();
+  const h = await splitHarness(t, url => url.includes('/student-outcome-candidates/') ? late.promise : secondScenario(url));
+  h.w.beginSlotAssist(0, 10);
+  await wait(() => h.requests.some(r => r.url.includes('/student-outcome-candidates/')));
+  await h.w.setPaneBoard(0, 22);
+  late.resolve({ candidates: [{ day: 'MON', start: '09:00', end: '10:15' }] });
+  await settle();
+  assert.equal(h.state.slotAssist.active, false);
+  assert.equal(h.d.querySelector('[data-slot-assist-key]'), null);
+  assert.equal(h.requests.find(r => r.url.includes('/student-outcome-candidates/')).options.signal.aborted, true);
+});
+
+for (const edit of ['blocked slot', 'planned section']) {
+  test(`the scenario picker waits for a ${edit} save and keeps its result on the original scenario`, async t => {
+    const late = deferred();
+    const h = await splitHarness(t, url => (url.endsWith('/blocked-slots/') || url.endsWith('/create-planned/')) ? late.promise : secondScenario(url));
+    const picker = h.d.getElementById('twsScenario');
+    picker.innerHTML = '<option value="1">First</option><option value="2">Second</option>';
+    const editing = edit === 'blocked slot'
+      ? h.w.doToggleBlockedSlot('MON', '09:00')
+      : h.w.createPlannedPlacementFromCell(0, h.d.querySelector('.cell[data-day="MON"][data-start="09:00"]'), { course_code: 'OLD001', section_label: 'S1' });
+    assert.equal(picker.disabled, true);
+    picker.value = '2';
+    assert.equal(await h.w.onScenarioChange(), false);
+    assert.equal(picker.value, '1');
+    assert.equal(h.requests.some(r => r.url === '/ops/tw/scenarios/2/'), false);
+    late.resolve(edit === 'blocked slot'
+      ? { blocked: true, blocked_slots: [{ day: 'MON', start: '09:00' }] }
+      : { placement: { id: 85, term_section_id: 185 }, validation: {} });
+    await editing;
+    assert.equal(picker.disabled, false);
+    if (edit === 'blocked slot') assert.equal(h.state.scenarioMeta.blocked_slots[0].day, 'MON');
+    else assert.equal(h.state.undoStack.at(-1).placement_id, 85);
+    picker.value = '2';
+    assert.equal(await h.w.onScenarioChange(), true);
+    assert.equal(h.state.scenarioId, 2);
+    assert.equal(h.state.scenarioMeta.blocked_slots, undefined);
+    assert.equal(h.state.undoStack.length, 0);
+    await h.w.doUndo();
+    assert.equal(h.requests.some(r => r.url.endsWith('/remove/')), false);
+  });
+}
+
+test('one builder-actions request supplies the Issues panel with publish readiness', async t => {
+  const readiness = { ready: true, blockers: [], warnings: [] };
+  const h = await splitHarness(t, url => {
+    if (url.includes('/builder-actions/')) return { readiness, actions: [] };
+  });
+  h.panel.tab = 'issues';
+  await h.w.refreshBuilderConsole(h.d.body);
+  assert.equal(h.panel.builder.readiness, readiness);
+  assert.equal(h.requests.filter(({ url }) => url.includes('/builder-actions/')).length, 1);
+  assert.equal(h.requests.filter(({ url }) => url.endsWith('/readiness/')).length, 0);
+});
+
 test('a busy room preview keeps its loading state and is retried after Retry-After', async t => {
   let calls = 0;
   const h = await splitHarness(t, url => (url.includes('/room-candidates/') && calls++ === 0 ? BUSY : undefined));

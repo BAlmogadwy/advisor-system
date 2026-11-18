@@ -193,9 +193,18 @@ def rows():
         PlannerJob.MODE_FULL_REBUILD,
     ],
 )
-@pytest.mark.parametrize("outcome", ["success", "error_result", "exception"])
-def test_running_cancel_restores_whole_scenario_for_every_engine(
-    baseline, monkeypatch, mode, outcome
+@pytest.mark.parametrize(
+    ("cancel", "outcome"),
+    [
+        (True, "success"),
+        (True, "error_result"),
+        (True, "exception"),
+        (False, "error_result"),
+        (False, "exception"),
+    ],
+)
+def test_cancel_or_failure_restores_whole_scenario_for_every_engine(
+    baseline, monkeypatch, mode, cancel, outcome
 ):
     scenario, board = baseline
     before = rows()
@@ -233,11 +242,12 @@ def test_running_cancel_restores_whole_scenario_for_every_engine(
         TermSectionProgram.objects.create(term_section=fresh, program="DS")
         BoardSectionVisibility.objects.create(board=board, term_section=fresh)
         TimetableScenario.objects.filter(pk=scenario.id).update(slot_config=[], lab_slot_config=[])
-        assert cancel_planner_job(job_id)
+        if cancel:
+            assert cancel_planner_job(job_id)
         if outcome == "exception":
-            raise RuntimeError("solver fault after cancel")
+            raise RuntimeError("solver fault after writing")
         if outcome == "error_result":
-            return {"error": "guarded solver failure after cancel"}
+            return {"error": "solver fault after writing", "stage": "persist"}
         return {"placements": 1}
 
     monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", pipeline)
@@ -245,11 +255,70 @@ def test_running_cancel_restores_whole_scenario_for_every_engine(
     monkeypatch.setattr("scheduler.bridge.build_into_scenario", pipeline)
     run_planner_job(job_id)
     job = PlannerJob.objects.get(pk=job_id)
-    assert job.status == "cancelled"
-    assert job.cancel_requested and job.finished_at is not None
-    assert job.result_json is None and job.error_message is None
+    assert job.finished_at is not None
+    assert job.cancel_requested == cancel
+    if cancel:
+        assert job.status == PlannerJob.STATUS_CANCELLED
+        assert job.result_json is None and job.error_message is None
+    else:
+        assert job.status == PlannerJob.STATUS_FAILED
+        assert "solver fault after writing" in job.error_message
+        if outcome == "error_result":
+            assert job.result_json["stage"] == "persist"
+            assert job.result_json["seed"] == job.params["seed"]
+        else:
+            assert job.result_json is None
     assert rows() == before
     assert not cancel_planner_job(job_id)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_full_rebuild_restores_saved_timetable_then_real_retry_succeeds(
+    admin_client, monkeypatch, settings
+):
+    from tests.one_teacher_support import place, section
+    from tests.pr7_fixture_loader import load_pr7_fixture
+
+    settings.TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = True
+    settings.TIMETABLE_ENFORCE_LOCKS = True
+    scenario, board, _ = load_pr7_fixture("pr7_async_happy_path.json")
+    locked = section(scenario, "CS101", "S1")
+    unlocked = section(scenario, "CS102", "S1")
+    place(board, locked, [("SUN", "08:00", "09:15")], locked=True, room="A101")
+    place(board, unlocked, [("MON", "08:00", "09:15")], room="A102", instructor_name="Dr Saved")
+    before = rows()
+    request = {"scenario_id": scenario.id, "mode": PlannerJob.MODE_FULL_REBUILD, "seed": 17}
+
+    def fail_after_reset(*args, **kwargs):
+        assert not SectionPlacement.objects.filter(term_section=unlocked).exists()
+        assert not TermSectionMeeting.objects.filter(term_section=unlocked).exists()
+        assert SectionPlacement.objects.filter(term_section=locked, is_locked=True).exists()
+        raise RuntimeError("solver failed after clearing the draft")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("core.services.timetable_autoplace.auto_place_scenario", fail_after_reset)
+        first = admin_client.post("/planner-jobs/", request, content_type="application/json")
+    assert first.status_code == 201
+    failed_id = first.json()["job_id"]
+    failed = admin_client.get(f"/planner-jobs/{failed_id}/").json()
+    assert failed["status"] == PlannerJob.STATUS_FAILED
+    assert "solver failed after clearing the draft" in failed["error_message"]
+    assert rows() == before
+
+    retry = admin_client.post("/planner-jobs/", request, content_type="application/json")
+    assert retry.status_code == 201
+    retry_id = retry.json()["job_id"]
+    assert retry_id != failed_id
+    assert (
+        admin_client.get(f"/planner-jobs/{retry_id}/").json()["status"]
+        == PlannerJob.STATUS_SUCCEEDED
+    )
+    assert admin_client.get(f"/planner-jobs/{retry_id}/result/").status_code == 200
+    assert SectionPlacement.objects.filter(term_section=locked, is_locked=True).exists()
+    assert SectionPlacement.objects.filter(board=board, term_section__course_code="CS102").exists()
+    assert TermSectionMeeting.objects.filter(
+        term_section__scenario=scenario, term_section__course_code="CS102"
+    ).exists()
 
 
 def test_scheduler_progress_boundary_stops_and_restores_changed_grid(baseline, monkeypatch):
@@ -268,6 +337,65 @@ def test_scheduler_progress_boundary_stops_and_restores_changed_grid(baseline, m
     run_planner_job(job_id)
     job = PlannerJob.objects.get(pk=job_id)
     assert job.status == "cancelled" and job.last_stage_seen == "snapshot"
+    assert rows() == before
+
+
+class _UnprintableDiagnostic:
+    def __str__(self):
+        raise ValueError("Cannot render engine diagnostic")
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"error": "persist failed", "details": {1}},
+        {"stage_telemetry": {"stage_ms": "invalid"}},
+        {"error": _UnprintableDiagnostic()},
+    ],
+    ids=["unserializable-error", "malformed-success", "unprintable-error"],
+)
+def test_failed_finalisation_restores_draft(baseline, monkeypatch, result):
+    scenario, board = baseline
+    before = rows()
+    job_id = submit_planner_job(scenario_id=scenario.pk, mode=PlannerJob.MODE_FULL_REBUILD)
+
+    def pipeline(*args, **kwargs):
+        SectionPlacement.objects.filter(board=board).update(room="PARTIAL")
+        return result
+
+    monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", pipeline)
+    run_planner_job(job_id)
+    job = PlannerJob.objects.get(pk=job_id)
+    assert job.status == PlannerJob.STATUS_FAILED
+    assert job.result_json is None
+    assert "finalisation failed" in job.error_message
+    if isinstance(result.get("error"), str):
+        assert result["error"] in job.error_message
+    if isinstance(result.get("error"), _UnprintableDiagnostic):
+        assert "Unprintable" in job.error_message
+    assert rows() == before
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_unencodable_solver_diagnostic_cannot_prevent_rollback(baseline, monkeypatch, raises):
+    scenario, board = baseline
+    before = rows()
+    job_id = submit_planner_job(scenario_id=scenario.pk, mode=PlannerJob.MODE_FULL_REBUILD)
+
+    def pipeline(*args, **kwargs):
+        SectionPlacement.objects.filter(board=board).update(room="PARTIAL")
+        message = "solver diagnostic: \ud800\x00"
+        if raises:
+            raise RuntimeError(message)
+        return {"error": message}
+
+    monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", pipeline)
+    run_planner_job(job_id)
+    job = PlannerJob.objects.get(pk=job_id)
+    assert job.status == PlannerJob.STATUS_FAILED
+    assert "solver diagnostic" in job.error_message
+    assert "\x00" not in job.error_message
+    assert job.error_message.encode("utf-8")
     assert rows() == before
 
 

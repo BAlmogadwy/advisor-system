@@ -3514,6 +3514,14 @@ def _room_choice_audit(
     }, audit
 
 
+def _room_minute_mask(start: str, end: str) -> int:
+    """Occupied minutes within one day, including the start and excluding the end."""
+    start_min, end_min = _to_minutes(start), _to_minutes(end)
+    if not 0 <= start_min < end_min <= 24 * 60:
+        return 0
+    return ((1 << (end_min - start_min)) - 1) << start_min
+
+
 def preview_placement_room_candidates(
     placement_id: int,
     *,
@@ -3648,10 +3656,12 @@ def preview_placement_room_candidates(
     )
     required_gender = _section_gender(term_section.section) or board_gender(board.id)
 
-    target_mask = _time_mask(target_day, target_start, target_end)
+    target_mask = _room_minute_mask(target_start, target_end)
     occupied_by_room: dict[str, list[dict]] = defaultdict(list)
     occupiers = (
-        SectionPlacement.objects.filter(board__scenario=board.scenario)
+        SectionPlacement.objects.filter(
+            board__scenario=board.scenario, day__istartswith=target_day[:3]
+        )
         .exclude(id=placement.id)
         .exclude(room="")
         .exclude(room="UNASSIGNED")
@@ -3671,7 +3681,7 @@ def preview_placement_room_candidates(
             continue
         if online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
             continue
-        other_mask = _time_mask(other.day, other.start_time, other.end_time)
+        other_mask = _room_minute_mask(other.start_time, other.end_time)
         if not (target_mask & other_mask):
             continue
         occupied_by_room[_room_key(other.room)].append(
@@ -3857,17 +3867,6 @@ def preview_placement_room_candidates(
     return result
 
 
-def _room_reservation_key(room_code: str, day: str, start: str, end: str) -> str:
-    return "|".join(
-        [
-            _room_key(room_code),
-            str(day or "").strip().upper(),
-            str(start or "").strip(),
-            str(end or "").strip(),
-        ]
-    )
-
-
 def _candidate_is_clean_room(room: dict) -> bool:
     return (
         bool(room.get("available"))
@@ -3881,11 +3880,12 @@ def _best_clean_room_candidate(
     preview: dict,
     *,
     current_room: str,
-    reserved: set[str],
+    reserved: Mapping[tuple[str, str], int],
     accept: Callable[[dict], bool] | None = None,
 ) -> dict | None:
     current = _room_key(current_room)
-    target = preview.get("target") or {}
+    target = preview["target"]
+    slot_mask = _room_minute_mask(target["start"], target["end"])
     for room in preview.get("candidates") or []:
         room_code = _room_key(room.get("room_code"))
         if not room_code or room_code == current:
@@ -3894,13 +3894,7 @@ def _best_clean_room_candidate(
             continue
         if accept is not None and not accept(room):
             continue
-        reservation = _room_reservation_key(
-            room_code,
-            str(target.get("day") or ""),
-            str(target.get("start") or ""),
-            str(target.get("end") or ""),
-        )
-        if reservation in reserved:
+        if reserved.get((room_code, target["day"][:3]), 0) & slot_mask:
             continue
         return room
     return None
@@ -3915,7 +3909,7 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
         .select_related("board", "term_section")
         .order_by("board__display_order", "board__label", "day", "start_time", "id")
     )
-    reserved: set[str] = set()
+    reserved: dict[tuple[str, str], int] = defaultdict(int)
     assignments: list[dict] = []
     skipped: list[dict] = []
     total_unassigned = 0
@@ -3997,14 +3991,10 @@ def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) ->
             )
             continue
 
-        target = preview.get("target") or {}
-        reservation = _room_reservation_key(
-            str(room.get("room_code") or ""),
-            str(target.get("day") or placement.day),
-            str(target.get("start") or placement.start_time),
-            str(target.get("end") or placement.end_time),
+        target = preview["target"]
+        reserved[_room_key(room["room_code"]), target["day"][:3]] |= _room_minute_mask(
+            target["start"], target["end"]
         )
-        reserved.add(reservation)
         decided[group_key] = None
         assignments.append(
             {
@@ -4122,7 +4112,7 @@ def apply_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> d
             room = _best_clean_room_candidate(
                 recheck,
                 current_room=placement.room,
-                reserved=set(),
+                reserved={},
                 accept=_shared_copy_room_filter(placement, rooms_by_code),
             )
             if not room or _room_key(room.get("room_code")) != _room_key(item["new_room"]):
@@ -4348,7 +4338,12 @@ def preview_placement_student_evidence(placement_id: int, *, limit: int = 40) ->
 
 def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict:
     """Rank the next practical actions a timetable builder should take."""
-    readiness = check_publish_readiness(scenario_id)
+    boards = list(DeliveryBoard.objects.filter(scenario_id=scenario_id))
+    conflicts_by_board = {board.id: detect_board_conflicts(board.id) for board in boards}
+    budget_rows = compute_scenario_budget(scenario_id)
+    readiness = check_publish_readiness(
+        scenario_id, boards=boards, conflicts_by_board=conflicts_by_board, budget_rows=budget_rows
+    )
     actions: list[dict] = []
     online_lookup = OnlineCourseLookup()
 
@@ -4396,9 +4391,8 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
             cta="Resolve before publishing",
         )
 
-    boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order", "id")
-    for board in boards:
-        conflicts = detect_board_conflicts(board.id)
+    for board in sorted(boards, key=lambda b: (b.display_order, b.id)):
+        conflicts = conflicts_by_board[board.id]
         for overlap in conflicts.get("overlaps", []):
             ids = [int(x) for x in overlap.get("ids", []) if x]
             add(
@@ -4465,7 +4459,7 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
                 cta="Open room mode",
             )
 
-    for item in compute_scenario_budget(scenario_id):
+    for item in budget_rows:
         remaining = int(item.get("remaining_sections", 0) or 0)
         if remaining <= 0:
             continue
@@ -4796,7 +4790,7 @@ def apply_bulk_safe_time_moves(
     }
 
 
-def compute_affected_students(board_id: int) -> dict:
+def compute_affected_students(board_id: int, *, conflicts: dict | None = None) -> dict:
     """Assess student impact of time-overlapping placements on a board.
 
     For every pair of overlapping placements (detected by
@@ -4820,8 +4814,8 @@ def compute_affected_students(board_id: int) -> dict:
         A dict with the shape::
 
             {
-                "affected_count":   int,  # total students across all overlaps
-                "blocked_count":    int,  # students with NO alternative section
+                "affected_count":   int,  # distinct students across all overlaps
+                "blocked_count":    int,  # distinct students blocked by at least one pair
                 "resolvable_count": int,  # affected - blocked
                 "overlap_details":  [
                     {
@@ -4839,7 +4833,8 @@ def compute_affected_students(board_id: int) -> dict:
         Same-course overlaps (two sections of ``CS101``) are skipped
         because a student only registers for one section of a course.
     """
-    conflicts = detect_board_conflicts(board_id)
+    if conflicts is None:
+        conflicts = detect_board_conflicts(board_id)
     # Two sections of one course are not a pair a student takes together.
     overlaps = [
         overlap for overlap in conflicts.get("overlaps", []) if not overlap.get("same_course")
@@ -4864,8 +4859,8 @@ def compute_affected_students(board_id: int) -> dict:
     except DeliveryBoard.DoesNotExist:
         course_students_map = {}
 
-    total_affected = 0
-    total_blocked = 0
+    affected_ids: set[int] = set()
+    blocked_ids: set[int] = set()
     overlap_details = []
 
     for overlap in overlaps:
@@ -4886,8 +4881,9 @@ def compute_affected_students(board_id: int) -> dict:
         affected_count = len(affected_students)
         blocked_count = 0 if resolvable else affected_count
 
-        total_affected += affected_count
-        total_blocked += blocked_count
+        affected_ids.update(affected_students)
+        if not resolvable:
+            blocked_ids.update(affected_students)
 
         overlap_details.append(
             {
@@ -4900,9 +4896,9 @@ def compute_affected_students(board_id: int) -> dict:
         )
 
     return {
-        "affected_count": total_affected,
-        "blocked_count": total_blocked,
-        "resolvable_count": total_affected - total_blocked,
+        "affected_count": len(affected_ids),
+        "blocked_count": len(blocked_ids),
+        "resolvable_count": len(affected_ids) - len(blocked_ids),
         "overlap_details": overlap_details,
     }
 
@@ -5803,7 +5799,13 @@ def _readiness_item(
     }
 
 
-def check_publish_readiness(scenario_id: int) -> dict:
+def check_publish_readiness(
+    scenario_id: int,
+    *,
+    boards: list[DeliveryBoard] | None = None,
+    conflicts_by_board: Mapping[int, dict] | None = None,
+    budget_rows: list[dict] | None = None,
+) -> dict:
     """Determine whether a scenario can be published (finalised).
 
     Blockers (prevent publish):
@@ -5940,7 +5942,11 @@ def check_publish_readiness(scenario_id: int) -> dict:
     from core.models import TimetableScenario
     from core.services.timetable_validation import blocked_slot_keys
 
-    board_list = list(DeliveryBoard.objects.filter(scenario_id=scenario_id))
+    board_list = (
+        boards
+        if boards is not None
+        else list(DeliveryBoard.objects.filter(scenario_id=scenario_id))
+    )
     blockers: list[str] = []
     warnings: list[str] = []
     blocker_items: list[dict] = []
@@ -5983,7 +5989,11 @@ def check_publish_readiness(scenario_id: int) -> dict:
             )
             continue
 
-        conflicts = detect_board_conflicts(board.id)
+        conflicts = (
+            conflicts_by_board[board.id]
+            if conflicts_by_board is not None
+            else detect_board_conflicts(board.id)
+        )
         if conflicts["summary"]["critical"] > 0:
             block(
                 f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts",
@@ -6062,7 +6072,8 @@ def check_publish_readiness(scenario_id: int) -> dict:
             ),
         )
 
-    budget_rows = compute_scenario_budget(scenario_id)
+    if budget_rows is None:
+        budget_rows = compute_scenario_budget(scenario_id)
     missing_sections = [item for item in budget_rows if item["remaining_sections"] > 0]
     for item in missing_sections:
         block(

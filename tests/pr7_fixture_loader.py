@@ -13,7 +13,7 @@ with "pr3" in its name. Same naming-discipline rationale as
 
 from __future__ import annotations
 
-from pr3_fixture_loader import load_pr3_fixture
+from tests.pr3_fixture_loader import load_pr3_fixture
 
 
 def load_pr7_fixture(

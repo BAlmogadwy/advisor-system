@@ -237,6 +237,15 @@ def _err(
     return JsonResponse(payload, status=status)
 
 
+def _solver_busy_response(busy: SolverBusy) -> JsonResponse:
+    kind = (busy.holder or {}).get("kind")
+    return server_busy_response(
+        "Another timetable action is using the solver. Retrying shortly.",
+        retry_after={HOLDER_PLANNER: 30, HOLDER_EXAM_JOB: 15}.get(kind, 5),
+        details={"holder": busy.holder},
+    )
+
+
 def _section_label_in_use(exc: SectionLabelInUse) -> JsonResponse:
     """409 ``SECTION_LABEL_IN_USE``: the label, its course and the first free label.
 
@@ -833,12 +842,14 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     # + compaction as an async planner job, so a multi-program build can't overrun
     # the request timeout (the failure mode that SIGKILLed sync generate). Falls
     # back to the synchronous build when async is unavailable.
-    from core.services.planner_job_runner import is_async_planner_enabled
+    from core.models import PlannerJob
+    from core.services.planner_job_runner import is_async_planner_enabled, synchronous_planner
 
     use_async_build = bool(payload.get("defer_build")) and is_async_planner_enabled()
 
     seed = resolve_run_seed(seed)
-    try:
+
+    def prepare_build() -> tuple[dict, dict]:
         result = generate_workspace_scenario(
             year=year_int,
             semester=semester_int,
@@ -854,34 +865,30 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             run_autoplace=False,
             **custom_slots,
         )
-    except Exception as exc:
-        logger.exception("Generate workspace failed")
-        return _err(str(exc), code="GENERATE_FAILED", details={"seed": seed}, status=500)
+        result["seed"] = seed
+        if scheduler_params is not None:
+            # Keep the budget's weekly meetings even if programme defaults change before dispatch.
+            return result, {
+                **scheduler_params,
+                "seed": seed,
+                "meeting_patterns": _budget_meeting_patterns(result),
+            }
+        return result, {"cpsat_time_limit": 60, "seed": seed}
 
-    result["seed"] = seed
-    if engine == "scheduler":
-        assert scheduler_params is not None
-        build_params = {
-            **scheduler_params,
-            "seed": seed,
-            # The weekly meetings Generate just stored for every course (from
-            # its programmes' defaults), "" included: the scheduler builds each
-            # course in its budget's shape, so a programme default saved while
-            # the job waits cannot make the two engines disagree.
-            "meeting_patterns": _budget_meeting_patterns(result),
-        }
-    else:
-        build_params = {"cpsat_time_limit": 60, "seed": seed}
-
+    job_mode = (
+        PlannerJob.MODE_SCHEDULER_BUILD
+        if engine == "scheduler"
+        else PlannerJob.MODE_OPTIMISE_V2_FULL
+    )
     if use_async_build:
-        from core.models import PlannerJob
         from core.services.planner_job_runner import dispatch_planner_job, submit_planner_job
 
         try:
-            if engine == "scheduler":
-                job_mode = PlannerJob.MODE_SCHEDULER_BUILD
-            else:
-                job_mode = PlannerJob.MODE_OPTIMISE_V2_FULL
+            result, build_params = prepare_build()
+        except Exception as exc:
+            logger.exception("Generate workspace failed")
+            return _err(str(exc), code="GENERATE_FAILED", details={"seed": seed}, status=500)
+        try:
             build_job_id = submit_planner_job(
                 scenario_id=result["scenario"]["id"],
                 mode=job_mode,
@@ -900,17 +907,14 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         # The same engine/policy runs when background execution is disabled.
         # Choosing scheduler must never silently build a classic timetable.
         try:
-            from core.models import PlannerJob
-            from core.services.planner_job_runner import run_planner_job_synchronously
-
-            build_summary = run_planner_job_synchronously(
-                scenario_id=result["scenario"]["id"],
-                mode=PlannerJob.MODE_SCHEDULER_BUILD
-                if engine == "scheduler"
-                else PlannerJob.MODE_OPTIMISE_V2_FULL,
-                user=request.user,
-                params=build_params,
-            )
+            with synchronous_planner() as run:
+                result, build_params = prepare_build()
+                build_summary = run(
+                    scenario_id=result["scenario"]["id"],
+                    mode=job_mode,
+                    user=request.user,
+                    params=build_params,
+                )
             if "error" in build_summary:
                 return _err(
                     str(build_summary["error"]),
@@ -924,8 +928,10 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             result["section_budget"] = compute_scenario_budget(
                 result["scenario"]["id"], department_for=built
             )
+        except SolverBusy as busy:
+            return _solver_busy_response(busy)
         except Exception as exc:
-            logger.exception("Synchronous build failed for scenario %s", result["scenario"]["id"])
+            logger.exception("Synchronous workspace generation failed")
             return _err(str(exc), code="GENERATE_FAILED", details={"seed": seed}, status=500)
 
     log_audit_event(
@@ -1630,6 +1636,7 @@ def tw_scenario_readiness_view(request: HttpRequest, scenario_id: int) -> JsonRe
 
 @login_required(login_url="login")
 @require_GET
+@_one_teacher_request
 def tw_scenario_builder_actions_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Return the ranked next actions for professional timetable building."""
     deny = _require_general_advisor(request)
@@ -2237,23 +2244,17 @@ def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse
     if deny:
         return deny
     try:
-        DeliveryBoard.objects.get(id=board_id)
+        board = DeliveryBoard.objects.only("scenario_id").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
 
     conflicts = detect_board_conflicts(board_id)
-    student_impact = compute_affected_students(board_id)
-
-    # Cross-board conflicts for this board's scenario
-    try:
-        board = DeliveryBoard.objects.get(id=board_id)
-        cross_board = detect_cross_board_conflicts(board.scenario_id)
-        # Filter to only cross-board conflicts involving this board
-        cross_board = [
-            c for c in cross_board if c["board_a_id"] == board_id or c["board_b_id"] == board_id
-        ]
-    except DeliveryBoard.DoesNotExist:
-        cross_board = []
+    student_impact = compute_affected_students(board_id, conflicts=conflicts)
+    cross_board = [
+        c
+        for c in detect_cross_board_conflicts(board.scenario_id)
+        if c["board_a_id"] == board_id or c["board_b_id"] == board_id
+    ]
 
     return _ok(
         {
@@ -2863,12 +2864,7 @@ def tw_repair_analyse_view(request: HttpRequest) -> JsonResponse:
                 active_plan_filter=str(payload.get("active_plan_filter") or "ALL"),
             )
     except SolverBusy as busy:
-        kind = (busy.holder or {}).get("kind")
-        return server_busy_response(
-            "Another timetable action is using the solver. Retrying shortly.",
-            retry_after={HOLDER_PLANNER: 30, HOLDER_EXAM_JOB: 15}.get(kind, 5),
-            details={"holder": busy.holder},
-        )
+        return _solver_busy_response(busy)
     except (TypeError, ValueError):
         return _err("placement_id must be an integer", code="VALIDATION_PLACEMENT", status=400)
     except SectionPlacement.DoesNotExist:
@@ -4139,6 +4135,8 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
                 "max_chain_iterations": payload.get("max_chain_iterations", 10),
             },
         )
+    except SolverBusy as busy:
+        return _solver_busy_response(busy)
     except ScenarioPlannerBusy as exc:
         return scenario_busy_response(exc.job)
     except ScenarioPublished:

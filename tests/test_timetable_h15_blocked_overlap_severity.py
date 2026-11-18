@@ -11,8 +11,11 @@ from ``detect_board_conflicts``.
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
+from core import timetable_workspace_views as views
 from core.models import (
     DeliveryBoard,
     ScenarioStudentCourseRequest,
@@ -21,6 +24,7 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
+from core.services import timetable_workspace as workspace
 from core.services.timetable_workspace import (
     build_scenario_builder_actions,
     check_publish_readiness,
@@ -127,8 +131,51 @@ def test_overlap_leaving_students_no_clash_free_pair_is_critical(sibling) -> Non
     assert f"Board 'Term 4': {len(overlaps)} critical conflicts" in readiness["blockers"]
     assert set(_clash_actions(board)) == {"block"}
     impact = compute_affected_students(board.id)
-    assert impact["blocked_count"] == 25 * len(overlaps)
+    assert impact["blocked_count"] == 25
     assert {d["resolvable"] for d in impact["overlap_details"]} == {False}
+
+
+@pytest.mark.parametrize("has_sibling", [False, True])
+def test_conflict_api_counts_people_once_and_scans_the_board_once(
+    admin_client, monkeypatch, has_sibling
+):
+    board = _board()
+    keys = (NETS, ALGEBRA, "CS301::SYSTEMS")
+    _need(board, keys, 25)
+    for key in keys:
+        _place(board, key, "S1", "SUN")
+    if has_sibling:
+        _place(board, keys[2], "S2", "MON")
+
+    scan = Mock(wraps=detect_board_conflicts)
+    monkeypatch.setattr(views, "detect_board_conflicts", scan)
+    monkeypatch.setattr(workspace, "detect_board_conflicts", scan)
+    response = admin_client.get(f"/ops/tw/boards/{board.id}/conflicts/")
+    assert response.status_code == 200
+    scan.assert_called_once_with(board.id)
+    impact = response.json()["student_impact"]
+    assert (impact["affected_count"], impact["blocked_count"], impact["resolvable_count"]) == (
+        25,
+        25,
+        0,
+    )
+    assert [row["affected"] for row in impact["overlap_details"]] == [25, 25, 25]
+    assert sum(row["resolvable"] for row in impact["overlap_details"]) == (2 if has_sibling else 0)
+
+
+def test_builder_actions_share_the_readiness_scan_and_budget(admin_client, monkeypatch):
+    board = _board()
+    _place(board, NETS, "S1", "SUN")
+    scan = Mock(wraps=detect_board_conflicts)
+    budget = Mock(wraps=workspace.compute_scenario_budget)
+    expected = check_publish_readiness(board.scenario_id)
+    monkeypatch.setattr(workspace, "detect_board_conflicts", scan)
+    monkeypatch.setattr(workspace, "compute_scenario_budget", budget)
+    response = admin_client.get(f"/ops/tw/scenarios/{board.scenario_id}/builder-actions/")
+    assert response.status_code == 200
+    assert response.json()["readiness"] == expected
+    scan.assert_called_once_with(board.id)
+    budget.assert_called_once_with(board.scenario_id)
 
 
 def test_blocked_overlap_below_the_threshold_stays_a_warning() -> None:

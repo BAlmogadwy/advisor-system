@@ -1,7 +1,7 @@
-"""Scenario-local cancellation baseline for every planner engine.
+"""Scenario-local rollback baseline for every planner engine.
 
 The canonical board snapshot preserves physical meeting identities and locks.
-Scheduler rebuilds also replace scenario-owned sections, so cancellation must
+Scheduler rebuilds also replace scenario-owned sections, so rollback must
 restore their dependants and the grid configuration as well. Global section
 records and registrar assignments remain intact; their physical meetings are
 captured when a board placement makes them part of this job's shared resource.
@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from django.db.models import Model, Q
+from django.db.models import Q
 
 from core.models import (
     BoardSectionVisibility,
@@ -28,6 +28,7 @@ from core.models import (
 )
 from core.services.timetable_board_persistence import (
     ScenarioSnapshot,
+    recreate_snapshot_rows,
     restore_scenario,
     snapshot_scenario,
 )
@@ -122,26 +123,8 @@ def snapshot_planner_job(scenario_id: int) -> PlannerJobSnapshot:
     )
 
 
-def _recreate(model: type[Model], rows: list[Mapping[str, Any]]) -> None:
-    if not rows:
-        return
-    objects = [model(**row) for row in rows]
-    model._default_manager.bulk_create(objects, batch_size=500)
-    # bulk_create stamps auto timestamps; restore the historical values too.
-    timestamps = [
-        field.attname
-        for field in model._meta.concrete_fields
-        if getattr(field, "auto_now", False) or getattr(field, "auto_now_add", False)
-    ]
-    if timestamps:
-        for obj, row in zip(objects, rows, strict=True):
-            for name in timestamps:
-                setattr(obj, name, row[name])
-        model._default_manager.bulk_update(objects, timestamps, batch_size=500)
-
-
 def restore_planner_job(snapshot: PlannerJobSnapshot) -> None:
-    """Called within the runner's atomic cancellation/terminal decision."""
+    """Restore the saved timetable within the runner's terminal transaction."""
     scenario_id = snapshot.board.scenario_id
     # Include original IDs if a job re-pointed an existing assignment; unrelated
     # imported/global assignments are never selected by this scope.
@@ -154,19 +137,19 @@ def restore_planner_job(snapshot: PlannerJobSnapshot) -> None:
     ).delete()
     TermSectionProgram.objects.filter(term_section__scenario_id=scenario_id).delete()
     TermSection.objects.filter(scenario_id=scenario_id).delete()
-    _recreate(TermSection, snapshot.sections)
+    recreate_snapshot_rows(TermSection, snapshot.sections)
     restore_scenario(scenario_id, snapshot.board)
-    _recreate(SectionPlacement, snapshot.external_placements)
+    recreate_snapshot_rows(SectionPlacement, snapshot.external_placements)
     # SA persists canonical meetings for every section shown on the board,
     # including imported/shared sections. Related scenario leases protect this
     # exact baseline, and deleting by section also removes newly created rows.
     TermSectionMeeting.objects.filter(
         term_section_id__in=snapshot.nonowned_meeting_section_ids
     ).delete()
-    _recreate(TermSectionMeeting, snapshot.nonowned_meetings)
-    _recreate(StudentTermSection, snapshot.students)
-    _recreate(TermSectionProgram, snapshot.programmes)
-    _recreate(BoardSectionVisibility, snapshot.visibility)
+    recreate_snapshot_rows(TermSectionMeeting, snapshot.nonowned_meetings)
+    recreate_snapshot_rows(StudentTermSection, snapshot.students)
+    recreate_snapshot_rows(TermSectionProgram, snapshot.programmes)
+    recreate_snapshot_rows(BoardSectionVisibility, snapshot.visibility)
     for row in snapshot.placement_timestamps:
         SectionPlacement.objects.filter(pk=row["id"]).update(
             created_at=row["created_at"],

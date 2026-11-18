@@ -157,7 +157,13 @@ def scenario_busy_response(job: PlannerJob) -> JsonResponse:
 
 
 def reject_active_planner_job(scenario_id: int) -> JsonResponse | None:
-    job = conflicting_planner_job(*scenario_resource_ids(scenario_id))
+    resources = scenario_resource_ids(scenario_id)
+    job = conflicting_planner_job(*resources)
+    if job:
+        from core.services.planner_job_runner import reconcile_stale_planner_jobs
+
+        if reconcile_stale_planner_jobs():
+            job = conflicting_planner_job(*resources)
     return scenario_busy_response(job) if job else None
 
 

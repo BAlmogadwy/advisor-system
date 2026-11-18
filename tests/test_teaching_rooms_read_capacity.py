@@ -72,6 +72,20 @@ def test_lecture_room_loaders_read_capacity_not_exam_seats():
     assert {code: row["capacity"] for code, row in rows_by_code.items()} == teaching
 
 
+@pytest.mark.django_db
+def test_best_fit_breaks_equal_capacity_ties_by_room_code_and_section():
+    for capacity, code, section in [(40, "B", "M"), (40, "A", "M"), (40, "A", "F"), (20, "Z", "M")]:
+        Room.objects.create(department="CS", capacity=capacity, room_code=code, section=section)
+
+    rooms = get_programme_rooms(["CS"])
+    assert [(row["room_code"], row["section"]) for row in rooms] == [
+        ("Z", "M"),
+        ("A", "F"),
+        ("A", "M"),
+        ("B", "M"),
+    ]
+
+
 def test_only_the_model_and_the_exam_inventory_name_exam_seats():
     naming = {relative for relative, text in _python_sources() if _names_exam_seats(text)}
     assert naming == READS_EXAM_SEATS

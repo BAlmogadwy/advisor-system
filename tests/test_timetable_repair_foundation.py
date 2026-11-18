@@ -3181,6 +3181,48 @@ def test_repair_approve_apply_and_rollback_restore_state() -> None:
     ).exists()
 
 
+def test_repair_apply_rejects_an_approved_run_without_a_target() -> None:
+    _scenario, placement = _fixture()
+    created = analyse_timetable_repair(
+        placement_id=placement.pk, blocked_student_ids=[1002], limits={"max_candidates": 1}
+    )
+    run_id = created["run"]["id"]
+    candidate_id = created["candidates"][0]["candidate_id"]
+    approve_repair_candidate(run_id, candidate_id)
+    approved = TimetableRepairApproval.objects.get(
+        run_id=run_id, status=TimetableRepairApproval.STATUS_APPROVED
+    )
+    TimetableRepairRun.objects.filter(pk=run_id).update(target_placement=None)
+
+    with pytest.raises(TimetableRepairOperationError) as caught:
+        apply_approved_repair_candidate(run_id, candidate_id)
+
+    assert (caught.value.code, caught.value.status) == ("REPAIR_TARGET_PLACEMENT_MISSING", 409)
+    approved.refresh_from_db()
+    assert approved.status == TimetableRepairApproval.STATUS_APPROVED
+
+
+def test_repair_rollback_rejects_latest_approval_with_deleted_candidate() -> None:
+    scenario, placement = _fixture()
+    run = TimetableRepairRun.objects.create(scenario=scenario, target_placement=placement)
+    for identifier in ("older", "latest"):
+        candidate = run.candidates.create(
+            candidate_id=identifier, day="SUN", start_time="09:00", end_time="10:00"
+        )
+        run.approvals.create(
+            candidate=candidate,
+            status=TimetableRepairApproval.STATUS_APPLIED,
+            decided_at=timezone.now(),
+        )
+    run.candidates.get(candidate_id="latest").delete()
+
+    with pytest.raises(TimetableRepairOperationError) as caught:
+        rollback_repair_run(run.pk)
+
+    assert (caught.value.code, caught.value.status) == ("REPAIR_NOT_APPLIED", 409)
+    assert run.approvals.filter(status=TimetableRepairApproval.STATUS_APPLIED).count() == 2
+
+
 def test_repair_rollback_readiness_detects_modified_repair_owned_assignment() -> None:
     _scenario, placement = _fixture()
     created = analyse_timetable_repair(

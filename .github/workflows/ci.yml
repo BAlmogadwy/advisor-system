@@ -178,12 +178,19 @@ jobs:
           pytest -q -p no:randomly \
             tests/test_planner_draft_lifecycle.py \
             tests/test_planner_draft_concurrency.py \
+            tests/test_planner_rebuild_crash.py \
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             tests/test_exam_jobs_postgres.py \
             tests/test_tw_write_guards_postgres.py \
             tests/test_programme_meeting_pattern_imports_postgres.py \
             tests/test_one_teacher_ownership.py \
+            tests/test_one_teacher_pipeline.py::test_i14_a_repair_apply_and_its_rollback_keep_the_rows \
+            tests/test_one_teacher_pipeline.py::test_i14_a_global_plan_apply_and_its_rollback_keep_the_rows \
+            tests/test_one_teacher_flag_parity.py::test_p3_flag_off_greedy_build_matches_the_recorded_golden \
+            tests/test_timetable_repair_foundation.py::test_repair_apply_rejects_an_approved_run_without_a_target \
+            tests/test_timetable_repair_foundation.py::test_repair_rollback_rejects_latest_approval_with_deleted_candidate \
+            tests/test_teaching_rooms_read_capacity.py::test_best_fit_breaks_equal_capacity_ties_by_room_code_and_section \
             tests/test_section_teacher_assignment.py \
             tests/test_timetable_feedback_models.py \
             tests/test_timetable_feedback_postgres.py \
@@ -194,11 +201,12 @@ jobs:
             tests/test_timetable_feedback_staff_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all thirty-eight
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all fifty
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
             tests/test_planner_draft_concurrency.py \
+            tests/test_planner_rebuild_crash.py \
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             tests/test_exam_jobs_postgres.py \
@@ -211,7 +219,7 @@ jobs:
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 38 || { echo "expected 38 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 50 || { echo "expected 50 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

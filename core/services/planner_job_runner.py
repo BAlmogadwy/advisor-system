@@ -17,13 +17,15 @@ import os
 import traceback
 import uuid
 from collections import Counter
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import timedelta
 from threading import Lock
 from typing import Any
 
 from django.conf import settings
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -48,6 +50,30 @@ _EXECUTING_JOBS: Counter[str] = Counter()
 _EXECUTING_JOBS_LOCK = Lock()
 
 
+def _try_worker_lock(cursor, job_id) -> bool:
+    # The UUID's low 64 bits identify this worker to other database sessions.
+    key = int.from_bytes(uuid.UUID(str(job_id)).bytes[-8:], "big", signed=True)
+    cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [key])
+    return cursor.fetchone()[0]
+
+
+@contextmanager
+def _worker_lease(job_id):
+    if connection.vendor != "postgresql":
+        yield True
+        return
+    # A separate transaction keeps the lease across the claim, solve and publish.
+    # PostgreSQL releases it on disconnect, including an abrupt process exit.
+    lease = connection.copy()
+    try:
+        lease.set_autocommit(False)
+        with lease.cursor() as cursor:
+            acquired = _try_worker_lock(cursor, job_id)
+        yield acquired
+    finally:
+        lease.close()
+
+
 def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
     """Mark orphaned planner jobs (RUNNING past the stale window, or QUEUED but
     never dispatched) as FAILED. PR7 jobs are process-local and not durable
@@ -65,11 +91,19 @@ def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
     with _EXECUTING_JOBS_LOCK:
         executing_ids = tuple(_EXECUTING_JOBS)
     stale = stale.exclude(pk__in=executing_ids)
-    updated = stale.update(
-        status=PlannerJob.STATUS_FAILED,
-        error_message="reconciled: the server stopped before the job finished (stale job swept)",
-        finished_at=timezone.now(),
-    )
+    fields = {
+        "status": PlannerJob.STATUS_FAILED,
+        "error_message": "reconciled: the server stopped before the job finished (stale job swept)",
+        "finished_at": timezone.now(),
+    }
+    if connection.vendor == "postgresql":
+        updated = 0
+        with transaction.atomic(), connection.cursor() as cursor:
+            for job_id in list(stale.values_list("pk", flat=True)):
+                if _try_worker_lock(cursor, job_id):
+                    updated += stale.filter(pk=job_id).update(**fields)
+    else:
+        updated = stale.update(**fields)
     if updated:
         logger.warning("Reconciled %d stale planner job(s) -> failed", updated)
     return updated
@@ -85,29 +119,36 @@ def _get_executor() -> ThreadPoolExecutor:
     return _EXECUTOR
 
 
+@contextmanager
+def _planner_slot(*, wait: bool) -> Iterator[None]:
+    with solver_slot(holder=HOLDER_PLANNER, wait=wait, give_up=shutting_down):
+        if shutting_down():
+            raise SolverBusy
+        yield
+
+
+def run_planner_job(job_id: uuid.UUID | str, *, wait: bool = False) -> None:
+    """Run a submitted job under the solver limit. Only background workers wait."""
+    try:
+        with _planner_slot(wait=wait):
+            _run_seeded_planner_job(job_id)
+    except SolverBusy:
+        _fail_unstarted(job_id)
+
+
 def _worker(job_id: str) -> None:
     close_old_connections()
     try:
-        # Its CP-SAT solves take turns with the exam jobs' and the exam Check's:
-        # two at once on this 0.5-CPU, 512 MB host split the CPU and can OOM it.
-        # A job still waiting when the process starts to exit must not start: a
-        # full rebuild clears the board first and would be killed half-way.
-        with solver_slot(holder=HOLDER_PLANNER, give_up=shutting_down):
-            if shutting_down():
-                raise SolverBusy
-            run_planner_job(job_id)
-    except SolverBusy:
-        _fail_unstarted(job_id)
+        run_planner_job(job_id, wait=True)
     finally:
         close_old_connections()
 
 
-def _fail_unstarted(job_id: str) -> None:
-    PlannerJob.objects.filter(
-        id=job_id, status__in=[PlannerJob.STATUS_QUEUED, PlannerJob.STATUS_RUNNING]
-    ).update(
+def _fail_unstarted(job_id: uuid.UUID | str) -> None:
+    reason = "the server restarted" if shutting_down() else "the solver was busy"
+    PlannerJob.objects.filter(id=job_id, status=PlannerJob.STATUS_QUEUED).update(
         status=PlannerJob.STATUS_FAILED,
-        error_message="the server restarted before the job could start; nothing was changed",
+        error_message=f"{reason} before the job could start; nothing was changed",
         finished_at=timezone.now(),
     )
 
@@ -229,9 +270,22 @@ def serialize_planner_job(job: PlannerJob) -> dict[str, Any]:
 def run_planner_job_synchronously(
     *, scenario_id: int, mode: str, user: Any | None = None, params: dict | None = None
 ) -> dict[str, Any]:
-    """Execute with a durable lease without requiring async polling endpoints."""
+    with synchronous_planner() as run:
+        return run(scenario_id=scenario_id, mode=mode, user=user, params=params)
+
+
+@contextmanager
+def synchronous_planner() -> Iterator[Callable[..., dict[str, Any]]]:
+    """Reserve capacity before a request creates a scenario or a planner job."""
+    with _planner_slot(wait=False):
+        yield _submit_and_run_planner_job
+
+
+def _submit_and_run_planner_job(
+    *, scenario_id: int, mode: str, user: Any | None = None, params: dict | None = None
+) -> dict[str, Any]:
     job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=user, params=params)
-    run_planner_job(job_id)
+    _run_seeded_planner_job(job_id)
     job = get_planner_job(job_id)
     if job is not None and isinstance(job.result_json, dict):
         return job.result_json
@@ -296,6 +350,16 @@ class _PlannerCancelled(Exception):
     """Cooperative boundary signal; finalisation owns the snapshot restore."""
 
 
+def _error_message(value: object) -> str:
+    """Keep even malformed engine diagnostics storable in a UTF-8 text column."""
+    try:
+        text = str(value)
+    except Exception:
+        text = f"Unprintable {type(value).__name__} diagnostic"
+    escaped = text[:4000].replace("\x00", r"\x00")
+    return escaped.encode("utf-8", errors="backslashreplace").decode("utf-8")[:4000]
+
+
 def _check_planner_cancel(job_id: uuid.UUID | str) -> None:
     # A lost claim must stop future phases too; finalisation deliberately leaves
     # that terminal job and any subsequent manual edits untouched.
@@ -305,7 +369,7 @@ def _check_planner_cancel(job_id: uuid.UUID | str) -> None:
         raise _PlannerCancelled
 
 
-def run_planner_job(job_id: uuid.UUID | str) -> None:
+def _run_seeded_planner_job(job_id: uuid.UUID | str) -> None:
     """Execute a queued ``PlannerJob`` synchronously in-process.
 
     Cancellation is cooperative: bounded solver calls finish, then all of this
@@ -318,8 +382,10 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
         job = get_planner_job(job_id)
         # Never draw here: retries and legacy persisted jobs must not acquire a
         # different starting point merely by entering this worker again.
-        with seeded_timetable_run((job.params or {}).get("seed") if job else None):
-            _run_planner_job(job_id)
+        with _worker_lease(job_id) as acquired:
+            if acquired and job:
+                with seeded_timetable_run((job.params or {}).get("seed")):
+                    _run_planner_job(job_id)
     finally:
         with _EXECUTING_JOBS_LOCK:
             _EXECUTING_JOBS[key] -= 1
@@ -327,9 +393,111 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
                 del _EXECUTING_JOBS[key]
 
 
+def _report_stage(job_id, stage: str, separate_connection: bool) -> None:
+    if separate_connection:
+        # Stage metadata must commit promptly so polling and cancellation can
+        # use the job row while the private solver transaction is in progress.
+        reporter = connection.copy()
+        try:
+            with reporter.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE planner_jobs SET last_stage_seen=%s WHERE id=%s AND status=%s AND NOT cancel_requested",
+                    [stage, job_id, PlannerJob.STATUS_RUNNING],
+                )
+                updated = cursor.rowcount
+        finally:
+            reporter.close()
+    else:
+        updated = PlannerJob.objects.filter(
+            pk=job_id, status=PlannerJob.STATUS_RUNNING, cancel_requested=False
+        ).update(last_stage_seen=stage)
+    if not updated:
+        raise _PlannerCancelled
+
+
+def _execute_engine(job, progress=None):
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    if job.mode in (
+        PlannerJob.MODE_OPTIMISE_V2_FULL,
+        PlannerJob.MODE_OPTIMISE_V2_CURRENT,
+    ):
+        # WS-E — run the V2 optimiser off the request thread, behind the
+        # shared snapshot → regression → rollback safety gate. This is the
+        # path that fixes the audit's P1 (a sync V2 run exceeding gunicorn's
+        # 120s timeout was SIGKILLed before the view-level rollback fired).
+        from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+        v2_mode = "full" if job.mode == PlannerJob.MODE_OPTIMISE_V2_FULL else "current"
+        # Replay the per-request tuning the synchronous view would have used,
+        # so async 'full' keeps its strategy sweep + CP-SAT budget (same
+        # kwargs/coercions as tw_optimise_v2_view's sync call).
+        p = job.params or {}
+        result = run_v2_optimisation_guarded(
+            job.scenario_id,
+            mode=v2_mode,
+            max_iterations=int(p.get("max_iterations", 50)),
+            run_chain=bool(p.get("run_chain_search", True)),
+            run_cpsat=bool(p.get("run_cpsat_polish", True)),
+            cpsat_limit=float(p.get("cpsat_time_limit", 60)),
+            strategies=p.get("strategies") or None,
+            max_chain_iterations=int(p.get("max_chain_iterations", 10)),
+            checkpoint=lambda: _check_planner_cancel(job.id),
+        )
+    elif job.mode == PlannerJob.MODE_SCHEDULER_BUILD:
+        # The alternative engine. Imported inside the branch so the original
+        # planner never carries the dependency: if the subsystem is broken or
+        # absent, every existing mode above still runs untouched, and this
+        # one fails as a failed job rather than as an import error.
+        from scheduler.bridge import build_into_scenario
+
+        p = job.params or {}
+
+        result = build_into_scenario(
+            job.scenario_id,
+            academic_year=str(p.get("academic_year", "")),
+            term=int(p.get("term", 1)),
+            programs=list(p.get("programs") or []),
+            gender=str(p.get("gender", "M")),
+            seconds=float(p.get("seconds", 120)),
+            runs=int(p.get("runs", 3)),
+            clash_tolerance=float(p.get("clash_tolerance", 0.20)),
+            default_capacity=int(p.get("default_capacity", 25)),
+            min_demand=int(p.get("min_demand", 5)),
+            confirmation_seconds=float(p.get("confirmation_seconds", 20)),
+            seed=p.get("seed"),
+            progress=progress,
+            # Generate's weekly meetings per course, copied when the job was
+            # submitted (absent on older jobs: the engine then decides).
+            meeting_patterns=p.get("meeting_patterns"),
+        )
+    elif job.mode == PlannerJob.MODE_FULL_REBUILD:
+        if is_one_teacher_active():
+            from core.services.section_teacher_assignment import run_placer
+
+            result = run_placer(
+                job.scenario_id,
+                lambda: auto_place_scenario(job.scenario_id, strategy="adaptive"),
+                rebuild=True,
+            )
+        else:
+            result = auto_place_scenario(job.scenario_id, strategy="adaptive")
+    elif is_one_teacher_active():
+        # Places only what is missing and keeps the board, so the teachers
+        # already there stay; only new sections get one.
+        from core.services.section_teacher_assignment import run_placer
+
+        result = run_placer(
+            job.scenario_id, lambda: auto_place_scenario(job.scenario_id), rebuild=False
+        )
+    else:
+        result = auto_place_scenario(job.scenario_id)
+    return result
+
+
 def _run_planner_job(job_id: uuid.UUID | str) -> None:
     from core.services.planner_job_snapshot import restore_planner_job, snapshot_planner_job
-    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.planner_rebuild_workspace import rebuild_workspace
 
     with transaction.atomic():
         job = PlannerJob.objects.select_for_update().filter(id=job_id).first()
@@ -345,105 +513,43 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
         job.save(update_fields=["status", "started_at"])
 
     baseline = None
+    proposal = None
+    engine_error = None
     result = None
     failure = None
     try:
-        # Capture before the legacy full rebuild clears anything, and before a
-        # scheduler replaces sections or adds grid columns.
-        baseline = snapshot_planner_job(job.scenario_id)
         _check_planner_cancel(job.id)
         if job.mode in (
+            PlannerJob.MODE_FULL_REBUILD,
             PlannerJob.MODE_OPTIMISE_V2_FULL,
-            PlannerJob.MODE_OPTIMISE_V2_CURRENT,
+            PlannerJob.MODE_SCHEDULER_BUILD,
         ):
-            # WS-E — run the V2 optimiser off the request thread, behind the
-            # shared snapshot → regression → rollback safety gate. This is the
-            # path that fixes the audit's P1 (a sync V2 run exceeding gunicorn's
-            # 120s timeout was SIGKILLed before the view-level rollback fired).
-            from core.services.timetable_v2_runner import run_v2_optimisation_guarded
-
-            v2_mode = "full" if job.mode == PlannerJob.MODE_OPTIMISE_V2_FULL else "current"
-            # Replay the per-request tuning the synchronous view would have used,
-            # so async 'full' keeps its strategy sweep + CP-SAT budget (same
-            # kwargs/coercions as tw_optimise_v2_view's sync call).
-            p = job.params or {}
-            result = run_v2_optimisation_guarded(
-                job.scenario_id,
-                mode=v2_mode,
-                max_iterations=int(p.get("max_iterations", 50)),
-                run_chain=bool(p.get("run_chain_search", True)),
-                run_cpsat=bool(p.get("run_cpsat_polish", True)),
-                cpsat_limit=float(p.get("cpsat_time_limit", 60)),
-                strategies=p.get("strategies") or None,
-                max_chain_iterations=int(p.get("max_chain_iterations", 10)),
-                checkpoint=lambda: _check_planner_cancel(job.id),
-            )
-        elif job.mode == PlannerJob.MODE_SCHEDULER_BUILD:
-            # The alternative engine. Imported inside the branch so the original
-            # planner never carries the dependency: if the subsystem is broken or
-            # absent, every existing mode above still runs untouched, and this
-            # one fails as a failed job rather than as an import error.
-            from scheduler.bridge import build_into_scenario
-
-            p = job.params or {}
-
-            def _stage(name: str) -> None:
-                _check_planner_cancel(job.id)
-                job.last_stage_seen = name
-                job.save(update_fields=["last_stage_seen"])
-
-            result = build_into_scenario(
-                job.scenario_id,
-                academic_year=str(p.get("academic_year", "")),
-                term=int(p.get("term", 1)),
-                programs=list(p.get("programs") or []),
-                gender=str(p.get("gender", "M")),
-                seconds=float(p.get("seconds", 120)),
-                runs=int(p.get("runs", 3)),
-                clash_tolerance=float(p.get("clash_tolerance", 0.20)),
-                default_capacity=int(p.get("default_capacity", 25)),
-                min_demand=int(p.get("min_demand", 5)),
-                confirmation_seconds=float(p.get("confirmation_seconds", 20)),
-                seed=p.get("seed"),
-                progress=_stage,
-                # Generate's weekly meetings per course, copied when the job was
-                # submitted (absent on older jobs: the engine then decides).
-                meeting_patterns=p.get("meeting_patterns"),
-            )
-        elif job.mode == PlannerJob.MODE_FULL_REBUILD:
-            _clear_scenario_placements(job.scenario_id)
-            if is_one_teacher_active():
-                from core.services.section_teacher_assignment import run_placer
-
-                result = run_placer(
-                    job.scenario_id,
-                    lambda: auto_place_scenario(job.scenario_id, strategy="adaptive"),
-                    rebuild=True,
-                )
-            else:
-                result = auto_place_scenario(job.scenario_id, strategy="adaptive")
-        elif is_one_teacher_active():
-            # Places only what is missing and keeps the board, so the teachers
-            # already there stay; only new sections get one.
-            from core.services.section_teacher_assignment import run_placer
-
-            result = run_placer(
-                job.scenario_id, lambda: auto_place_scenario(job.scenario_id), rebuild=False
-            )
+            separate_progress = connection.vendor == "postgresql" and not connection.in_atomic_block
+            with rebuild_workspace() as proposal:
+                # Keep an in-process cancellation request and last progress visible even
+                # when a solver raises. Only the proposal is discarded on failure.
+                try:
+                    if job.mode == PlannerJob.MODE_FULL_REBUILD:
+                        _clear_scenario_placements(job.scenario_id)
+                    result = _execute_engine(
+                        job, lambda stage: _report_stage(job.id, stage, separate_progress)
+                    )
+                    if not (isinstance(result, dict) and result.get("error")):
+                        proposal.capture()
+                except Exception as exc:
+                    engine_error = exc
+            if engine_error is not None:
+                raise engine_error
         else:
-            result = auto_place_scenario(job.scenario_id)
+            baseline = snapshot_planner_job(job.scenario_id)
+            result = _execute_engine(job)
     except _PlannerCancelled:
         pass
     except Exception as exc:
-        summary = f"{type(exc).__name__}: {exc}"
+        summary = f"{type(exc).__name__}: {_error_message(exc)}"
         tb_tail = "\n".join(traceback.format_exc().splitlines()[-6:])
-        failure = f"{summary}\n...\n{tb_tail}"[:4000]
+        failure = _error_message(f"{summary}\n...\n{tb_tail}")
 
-    # The V2 guarded runner catches optimiser failures internally and returns
-    # ``{"error": ...}`` after rolling back, rather than raising — so a non-empty
-    # ``error`` here is a real failure and must NOT be reported as succeeded (the
-    # sync view maps the same dict to HTTP 500). Persist the result either way so
-    # the payload/telemetry is inspectable.
     try:
         with transaction.atomic():
             # Read the authoritative flag while holding the row lock through
@@ -453,9 +559,13 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
             if terminal.status != PlannerJob.STATUS_RUNNING:
                 logger.warning("Planner %s lost running ownership; skipping finalisation", job.id)
                 return
+            # Some engines return an error after writing intermediate results.
+            error = result.get("error") if isinstance(result, dict) else None
+            if error:
+                failure = _error_message(error)
+            if baseline is not None and (terminal.cancel_requested or failure):
+                restore_planner_job(baseline)
             if terminal.cancel_requested:
-                if baseline is not None:
-                    restore_planner_job(baseline)
                 terminal.status = PlannerJob.STATUS_CANCELLED
                 terminal.result_json = None
                 terminal.error_message = None
@@ -465,11 +575,12 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
                     if isinstance(result, dict)
                     else result
                 )
-                error = result.get("error") if isinstance(result, dict) else None
-                if failure or error:
+                if failure:
                     terminal.status = PlannerJob.STATUS_FAILED
-                    terminal.error_message = failure or str(error)[:4000]
+                    terminal.error_message = failure
                 else:
+                    if proposal is not None:
+                        proposal.publish()
                     terminal.status = PlannerJob.STATUS_SUCCEEDED
                     terminal.last_stage_seen = _derive_last_stage(result)
             terminal.finished_at = timezone.now()
@@ -483,14 +594,29 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
                 ]
             )
     except Exception as exc:
-        # A failed restore rolls back atomically. It must never be called a
-        # successful cancellation while the modified timetable remains saved.
-        PlannerJob.objects.filter(pk=job.id, status=PlannerJob.STATUS_RUNNING).update(
-            status=PlannerJob.STATUS_FAILED,
-            result_json=None,
-            finished_at=timezone.now(),
-            error_message=f"Cancellation/finalisation failed: {type(exc).__name__}: {exc}"[:4000],
-        )
+        # A failed terminal save (for example, non-JSON solver telemetry) also
+        # rolled back any restoration above. Release ownership and restore in
+        # one transaction, using only fields we know can be persisted.
+        reason = f"Planner finalisation failed: {type(exc).__name__}: {_error_message(exc)}"
+        if failure:
+            reason += f"\nSolver error: {failure}"
+        running = PlannerJob.objects.filter(pk=job.id, status=PlannerJob.STATUS_RUNNING)
+        failed_fields = {
+            "status": PlannerJob.STATUS_FAILED,
+            "result_json": None,
+            "finished_at": timezone.now(),
+        }
+        try:
+            with transaction.atomic():
+                if (
+                    running.update(**failed_fields, error_message=_error_message(reason))
+                    and baseline is not None
+                ):
+                    restore_planner_job(baseline)
+        except Exception as restore_exc:
+            logger.exception("Could not restore timetable for planner job %s", job.id)
+            reason = f"Timetable restore failed: {type(restore_exc).__name__}: {_error_message(restore_exc)}\n{reason}"
+            running.update(**failed_fields, error_message=_error_message(reason))
 
 
 __all__ = [
@@ -503,4 +629,5 @@ __all__ = [
     "run_planner_job",
     "run_planner_job_synchronously",
     "submit_planner_job",
+    "synchronous_planner",
 ]
