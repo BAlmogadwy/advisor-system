@@ -3471,6 +3471,7 @@ function canBundleCandidate(candidate) {
 }
 
 async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, candidate, day, start, end, room, auto = false }) {
+  const scenarioHistory = S.undoStack;
   const located = findPlacement(placementId);
   if (!located) return null;
   if (globalThis.TimetableMeetingPolicy?.isEnglish(located.placement)) {
@@ -3552,6 +3553,8 @@ async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, c
       notify.error(IS_AR ? 'تعذر نقل الحزمة؛ تمت استعادة الشعبة الأولى.' : 'Bundle move failed; first section was restored.');
       return null;
     }
+    // Both writes have landed; the pane refresh may have outlasted the scenario.
+    if (S.undoStack !== scenarioHistory) return first;
     S.undoStack.push({ type: 'bundle_move', moves: [firstMove, secondMove], label: bundleLabel });
     S.redoStack = [];
     updateUndoRedoButtons();
@@ -8950,23 +8953,35 @@ async function refreshEnglishSplit() {
   await refreshBoardsSummary(); await loadSidebarBudget(); updateUndoRedoButtons();
   if (RP.open) renderRpanel();
 }
+function englishPatternTarget(idx) {
+  const pane = S.panes[idx];
+  const boardId = pane?.boardId;
+  const paneRevision = pane?.loadRevision;
+  const scenarioRevision = splitScenarioRevision;
+  return {
+    boardId, label: pane?.boardData?.board?.label,
+    isCurrent: () => Boolean(boardId) && idx < paneCount() && S.panes[idx] === pane
+      && pane.boardId === boardId && pane.loadRevision === paneRevision && splitScenarioRevision === scenarioRevision,
+  };
+}
+
 async function switchEnglishSplitPattern(placementId, patternId = null, replay = null, opts = {}) {
   const { room, refresh = true, clearAssist = true, notifyResult = true, recordUndo = true, reportBackstop = true, allowProtected = false } = opts;
   const located = findPlacement(placementId);
   if (!located || !globalThis.TimetableMeetingPolicy?.isEnglish(located.placement) || S.englishPicker) return null;
   if (S.scenarioMeta?.status === 'published') { notify.warning(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return null; }
   S.englishPicker = true;
-  const scenarioId = S.scenarioId;
+  const target = englishPatternTarget(located.paneIdx);
   try {
     const choices = await api(`/ops/tw/placements/${placementId}/slot-candidates/`, { _preview: true });
-    if (!choices) return null;
+    if (!choices || !target.isCurrent()) return null;
     const bundle = (S.panes[located.paneIdx].boardData?.placements || []).filter(row => row.term_section_id === located.placement.term_section_id);
     if (!replay && !allowProtected && bundle.some(row => placementProtectionReasons(row).length)) { notify.warning(IS_AR ? 'الشعبة محمية من النقل.' : 'The section is protected from moving.'); return null; }
     const current = choices.section_policy?.current_pattern_id || TimetableMeetingPolicy.identify(bundle);
     if (!current) { notify.warning(IS_AR ? 'هذا الجدول المحفوظ لا يستخدم نمط الإنجليزية الجديد.' : 'This saved section does not use the new English pattern.'); return null; }
     const selected = patternId ? TimetableMeetingPolicy.patterns.find(row => row.pattern_id === patternId)
       : await TimetableMeetingPolicy.choose(located.placement.course_code, { arabic: IS_AR, candidates: choices.candidates || [], currentPatternId: current });
-    if (!selected || (!replay && selected.pattern_id === current) || S.scenarioId !== scenarioId) return null;
+    if (!selected || (!replay && selected.pattern_id === current) || !target.isCurrent()) return null;
     const snapshots = replay || (room === undefined ? null : TimetableMeetingPolicy.snapshot(bundle).map(row => ({ ...row, room: row.id === placementId ? room : row.room })));
     const data = await api(`/ops/tw/placements/${placementId}/switch-pattern/`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8989,25 +9004,26 @@ async function switchEnglishSplitPattern(placementId, patternId = null, replay =
 async function chooseEnglishSplitCreate(payload, paneIdx = null) {
   if (S.englishPicker) return null;
   if (S.scenarioMeta?.status === 'published') { notify.warning(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return null; }
-  const targets = Number.isFinite(paneIdx) ? [{ idx: paneIdx, pane: S.panes[paneIdx] }] : createAssistTargetPanes(payload);
-  if (!targets[0]?.pane?.boardId) { notify.warning(IS_AR ? 'اختر لوحة أولاً.' : 'Select a board first.'); return null; }
+  const indices = Number.isFinite(paneIdx) ? [paneIdx] : createAssistTargetPanes(payload).map(({ idx }) => idx);
+  const targets = indices.map(englishPatternTarget).filter(target => target.isCurrent());
+  if (!targets.length) { notify.warning(IS_AR ? 'اختر لوحة أولاً.' : 'Select a board first.'); return null; }
   S.englishPicker = true;
-  const scenarioId = S.scenarioId;
   try {
     const boards = [];
     for (const target of targets) {
-      const data = await api(`/ops/tw/boards/${target.pane.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`, { _preview: true });
-      if (data) boards.push({ id: target.pane.boardId, label: data.board?.label || target.pane.boardData?.board?.label || `Board ${target.pane.boardId}`, candidates: data.candidates || [] });
+      const data = await api(`/ops/tw/boards/${target.boardId}/planned-slot-candidates/?${createAssistPreviewParams(payload)}`, { _preview: true });
+      if (!targets.every(row => row.isCurrent())) return null;
+      if (data) boards.push({ id: target.boardId, label: data.board?.label || target.label || `Board ${target.boardId}`, candidates: data.candidates || [] });
     }
     if (!boards.length) return null;
     const selected = await TimetableMeetingPolicy.choose(payload.course_code, { arabic: IS_AR, boards });
-    if (!selected || S.scenarioId !== scenarioId) return null;
-    const target = targets.find(row => row.pane.boardId === selected.boardId) || targets[0];
-    const result = await createPlannedPlacementFromMeetings(target.pane.boardId, payload, selected.meetings);
+    const target = targets.find(row => row.boardId === selected?.boardId);
+    if (!target?.isCurrent()) return null;
+    const result = await createPlannedPlacementFromMeetings(target.boardId, payload, selected.meetings);
     if (!result) return null;
     const rows = result.placements || [result.placement].filter(Boolean);
     S.undoStack.push({ type: 'bundle_create', english_pattern: true, placement_ids: rows.map(row => row.id),
-      board_id: target.pane.boardId, payload: { ...payload }, meetings: TimetableMeetingPolicy.snapshot(rows), label: createAssistLabel(payload) });
+      board_id: target.boardId, payload: { ...payload }, meetings: TimetableMeetingPolicy.snapshot(rows), label: createAssistLabel(payload) });
     S.redoStack = []; await refreshEnglishSplit(); return result;
   } finally { S.englishPicker = false; }
 }
@@ -9158,7 +9174,9 @@ async function doUndo() {
   const action = S.undoStack.pop();
   if (!action) return;
   if (action.type === 'pattern') {
+    const history = S.undoStack;
     const data = await switchEnglishSplitPattern(action.placement_id, action.old_pattern_id, action.before_placements);
+    if (S.undoStack !== history) return;
     if (!data) S.undoStack.push(action); else S.redoStack.push(action);
     updateUndoRedoButtons(); return;
   }
@@ -9202,7 +9220,9 @@ async function doRedo() {
   const action = S.redoStack.pop();
   if (!action) return;
   if (action.type === 'pattern') {
+    const history = S.redoStack;
     const data = await switchEnglishSplitPattern(action.placement_id, action.new_pattern_id, action.placements);
+    if (S.redoStack !== history) return;
     if (!data) S.redoStack.push(action); else S.undoStack.push(action);
     updateUndoRedoButtons(); return;
   }

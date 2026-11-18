@@ -212,6 +212,64 @@ function secondScenario(url) {
   if (url === '/ops/tw/boards/22/') return { board, placements: [], slot_config: [{ start: '09:00', end: '10:15' }] };
 }
 
+test('a bundle finishing its board refresh cannot populate another scenario’s undo history', async t => {
+  const late = deferred();
+  const h = await splitHarness(t, url => url === '/ops/tw/boards/2/' ? late.promise : secondScenario(url));
+  const oldBoard = h.state.panes[0].boardData;
+  const moving = h.w.applyCandidateMove({
+    placementId: 10, targetPaneIdx: 0, sourcePaneIdx: 0, day: 'MON', start: '09:00', end: '10:15',
+    candidate: { day: 'MON', pair: { companion: oldBoard.placements[1], start: '10:30', end: '11:45' } },
+  });
+  await wait(() => h.requests.some(r => r.url === '/ops/tw/boards/2/'));
+  h.d.getElementById('twsScenario').innerHTML = '<option value="2">Second</option>';
+  await h.w.onScenarioChange();
+  late.resolve(oldBoard);
+  await moving;
+  assert.equal(h.state.undoStack.length, 0);
+  await h.w.doUndo();
+  assert.equal(h.requests.filter(r => r.url.endsWith('/move/')).length, 2);
+});
+
+for (const direction of ['Undo', 'Redo']) {
+  test(`English pattern ${direction} discards the previous scenario’s history after a late preview`, async t => {
+    const late = deferred();
+    const h = await splitHarness(t, url => url.endsWith('/slot-candidates/') ? late.promise : secondScenario(url));
+    h.state.panes[0].boardData.placements[0].course_code = 'ENG101';
+    h.state[direction.toLowerCase() + 'Stack'].push({
+      type: 'pattern', placement_id: 10, old_pattern_id: 'ENG_INTENSIVE_V1_AM',
+      new_pattern_id: 'ENG_INTENSIVE_V1_PM', before_placements: [], placements: [],
+    });
+    const replay = h.w['do' + direction]();
+    await wait(() => h.requests.some(r => r.url.endsWith('/slot-candidates/')));
+    h.d.getElementById('twsScenario').innerHTML = '<option value="2">Second</option>';
+    await h.w.onScenarioChange();
+    late.resolve({ section_policy: { current_pattern_id: 'ENG_INTENSIVE_V1_PM' }, candidates: [] });
+    await replay;
+    assert.equal(h.state.undoStack.length, 0);
+    assert.equal(h.state.redoStack.length, 0);
+    assert.equal(h.requests.some(r => r.url.endsWith('/switch-pattern/')), false);
+  });
+}
+
+for (const pauseAt of ['preview', 'choice']) {
+  test(`creating an English section cancels when its board changes during ${pauseAt}`, async t => {
+    const late = deferred();
+    const preview = { board: { id: 2, label: 'Original board' }, candidates: [] };
+    const h = await splitHarness(t, url => url.includes('/planned-slot-candidates/')
+      ? (pauseAt === 'preview' ? late.promise : preview) : secondScenario(url));
+    let choosing = false;
+    const choice = { ...h.w.TimetableMeetingPolicy.patterns[0], boardId: 2 };
+    h.w.TimetableMeetingPolicy.choose = async () => { choosing = true; return pauseAt === 'choice' ? late.promise : choice; };
+    const create = h.w.chooseEnglishSplitCreate({ course_code: 'ENG101', course_key: 'ENG101', section_label: 'S2' }, 0);
+    await wait(() => pauseAt === 'choice' ? choosing : h.requests.some(r => r.url.includes('/planned-slot-candidates/')));
+    await h.w.setPaneBoard(0, 22);
+    late.resolve(pauseAt === 'choice' ? choice : preview);
+    await create;
+    assert.equal(h.requests.some(r => r.url.endsWith('/create-planned/')), false);
+    assert.equal(h.state.undoStack.length, 0);
+  });
+}
+
 for (const navigation of ['scenario', 'board', 'hide pane']) {
   test(`a section preview loses its placement targets after changing the ${navigation}`, async t => {
     const late = deferred();

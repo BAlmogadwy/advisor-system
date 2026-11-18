@@ -20,6 +20,8 @@ from core.models import (
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
+    TimetableRepairGlobalPlan,
+    TimetableRepairGlobalPlanItem,
     TimetableRepairRun,
     TimetableScenario,
 )
@@ -252,3 +254,69 @@ def test_unrelated_inserts_survive_successful_publication(board, monkeypatch):
     assert job.status == PlannerJob.STATUS_SUCCEEDED, job.error_message
     assert SectionPlacement.objects.get(board=board).room == "New"
     assert SectionPlacement.objects.get(pk=external_ids[0], board=other_board).room == "Unrelated"
+
+
+@pytest.mark.parametrize("new_analysis", [False, True], ids=["existing-approval", "new-analysis"])
+def test_rebuild_preserves_concurrent_repair_records(board, monkeypatch, new_analysis):
+    placement = SectionPlacement.objects.get(board=board)
+    section_id = placement.term_section_id
+    scenario_id = board.scenario_id
+    run = TimetableRepairRun.objects.create(
+        scenario_id=scenario_id, target_section_id=section_id, target_placement=placement
+    )
+    plan = TimetableRepairGlobalPlan.objects.create(scenario_id=scenario_id)
+    candidate = run.candidates.create(
+        candidate_id="original", day="MON", start_time="09:00", end_time="10:00"
+    )
+    item = plan.items.create(sequence=1, repair_run=run, candidate=candidate, placement=placement)
+
+    def record_repair():
+        try:
+            if new_analysis:
+                analysis = TimetableRepairRun.objects.create(
+                    scenario_id=scenario_id,
+                    target_section_id=section_id,
+                    target_placement_id=placement.pk,
+                    summary_json={"analysis": "new"},
+                )
+                new_candidate = analysis.candidates.create(
+                    candidate_id="new", day="TUE", start_time="09:00", end_time="10:00"
+                )
+                plan.items.create(
+                    sequence=2,
+                    repair_run=analysis,
+                    candidate=new_candidate,
+                    placement_id=placement.pk,
+                )
+                return analysis.pk
+            TimetableRepairRun.objects.filter(pk=run.pk).update(
+                summary_json={"analysis": "completed"}
+            )
+            plan.items.filter(pk=item.pk).update(
+                status=TimetableRepairGlobalPlanItem.STATUS_APPROVED
+            )
+            return run.pk
+        finally:
+            connections.close_all()
+
+    def solve(*args, **kwargs):
+        if new_analysis:
+            TermSection.objects.filter(pk=section_id).delete()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return {"analysis": str(pool.submit(record_repair).result(timeout=10))}
+
+    monkeypatch.setattr("core.services.timetable_autoplace.auto_place_scenario", solve)
+    job_id = submit_planner_job(scenario_id=scenario_id, mode=PlannerJob.MODE_FULL_REBUILD)
+    run_planner_job(job_id)
+    job = PlannerJob.objects.get(pk=job_id)
+    assert job.status == PlannerJob.STATUS_SUCCEEDED, job.error_message
+    audit = TimetableRepairRun.objects.get(pk=job.result_json["analysis"])
+    assert audit.target_placement_id is None
+    assert audit.target_section_id == (None if new_analysis else section_id)
+    assert audit.summary_json == {"analysis": "new" if new_analysis else "completed"}
+    assert not plan.items.filter(placement_id__isnull=False).exists()
+    if new_analysis:
+        assert plan.items.filter(sequence=2, repair_run=audit).exists()
+    else:
+        item.refresh_from_db()
+        assert item.status == TimetableRepairGlobalPlanItem.STATUS_APPROVED

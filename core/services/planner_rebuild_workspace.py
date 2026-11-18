@@ -27,9 +27,8 @@ from core.models import (
 )
 from core.services.timetable_board_persistence import recreate_snapshot_rows
 
-# Include Django's CASCADE and SET_NULL targets as well as the engine outputs.
 # Parents precede children for publication.
-_MODELS = (
+_TIMETABLE_MODELS = (
     TimetableScenario,
     TermSection,
     SectionInstructor,
@@ -38,9 +37,10 @@ _MODELS = (
     TermSectionProgram,
     StudentTermSection,
     BoardSectionVisibility,
-    TimetableRepairRun,
-    TimetableRepairGlobalPlanItem,
 )
+# Isolate Django's SET_NULL writes during candidate evaluation. Repair runs and
+# approvals have independent writers and own their live state throughout a rebuild.
+_WORKSPACE_MODELS = (*_TIMETABLE_MODELS, TimetableRepairRun, TimetableRepairGlobalPlanItem)
 _DIRTY = "planner_rebuild_changes"
 
 
@@ -58,7 +58,7 @@ class RebuildProposal:
     def capture(self):
         """Read only changed rows while the private tables are still visible."""
         with connection.cursor() as cursor:
-            for index, model in enumerate(_MODELS):
+            for index, model in enumerate(_TIMETABLE_MODELS):
                 cursor.execute(
                     "SELECT row_id, existed FROM planner_rebuild_changes WHERE model_id = %s",
                     [index],
@@ -80,16 +80,31 @@ class RebuildProposal:
 
     def publish(self):
         """Caller owns the running job row and the surrounding final transaction."""
-        # The ORM collector already applied cascades and SET_NULL to the private
-        # rows. Re-running it here would null valid references to retained IDs.
+        # The solver already collected timetable cascades. Repair links are
+        # resolved against live rows, including analyses created during solving.
         with connection.cursor() as cursor:
             for change in reversed(self.changes):
                 table = connection.ops.quote_name(change.model._meta.db_table)
+                retained_ids = {row["id"] for row in change.rows}
                 for start in range(0, len(change.original_ids), 500):
                     ids = change.original_ids[start : start + 500]
                     params = ", ".join(["%s"] * len(ids))
                     # The table is quoted model metadata. Every ID is bound.
                     cursor.execute(f"DELETE FROM {table} WHERE id IN ({params})", ids)  # nosec B608
+                    # DELETE holds the parent locks until commit. A completed
+                    # analysis is now visible, and a new FK cannot commit first.
+                    removed = [pk for pk in ids if pk not in retained_ids]
+                    if removed and change.model is SectionPlacement:
+                        TimetableRepairRun.objects.filter(target_placement_id__in=removed).update(
+                            target_placement=None
+                        )
+                        TimetableRepairGlobalPlanItem.objects.filter(
+                            placement_id__in=removed
+                        ).update(placement=None)
+                    elif removed and change.model is TermSection:
+                        TimetableRepairRun.objects.filter(target_section_id__in=removed).update(
+                            target_section=None
+                        )
         for change in self.changes:
             recreate_snapshot_rows(change.model, change.rows)
 
@@ -207,7 +222,7 @@ def rebuild_workspace():
                 """)
             else:
                 connection.connection.create_function("planner_next_id", 1, _sqlite_allocate_id)
-            for index, model in enumerate(_MODELS):
+            for index, model in enumerate(_WORKSPACE_MODELS):
                 create = _postgres_table if postgres else _sqlite_table
                 create(cursor, model._meta.db_table, index)
         try:
@@ -217,7 +232,7 @@ def rebuild_workspace():
             schema = "pg_temp" if postgres else "temp"
             if not connection.needs_rollback and not connection.closed_in_transaction:
                 with transaction.atomic(), connection.cursor() as cursor:
-                    for model in reversed(_MODELS):
+                    for model in reversed(_WORKSPACE_MODELS):
                         cursor.execute(
                             f"DROP TABLE {schema}.{connection.ops.quote_name(model._meta.db_table)}"
                         )
