@@ -228,6 +228,8 @@ services:
     branch: master
     autoDeployTrigger: checksPass
     buildCommand: chmod +x build.sh && ./build.sh
+    # Web applies migrations. Keep the previous worker serving until the new schema is ready.
+    preDeployCommand: timeout --kill-after=5s 10m sh -c 'until python manage.py migrate --check --noinput; do sleep 5; done'
     startCommand: python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3 --standby-when-disabled
     envVars:
       - key: DJANGO_SECRET_KEY
