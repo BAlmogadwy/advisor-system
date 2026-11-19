@@ -28,6 +28,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.planner_job_runner import (
+    _REBUILD_LEASE,
     _worker_lease,
     cancel_planner_job,
     reconcile_stale_planner_jobs,
@@ -176,10 +177,40 @@ def test_slow_worker_lease_survives_database_timeouts(require_postgres, board, m
     with _worker_lease(job_id) as acquired:
         assert acquired
         PlannerJob.objects.filter(pk=job_id).update(
-            status=PlannerJob.STATUS_RUNNING, started_at=timezone.now()
+            status=PlannerJob.STATUS_RUNNING,
+            started_at=timezone.now(),
+            params={_REBUILD_LEASE: True},
         )
         sleep(0.6)
         assert reconcile_stale_planner_jobs() == 0
+    assert reconcile_stale_planner_jobs() == 1
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        PlannerJob.MODE_FULL_REBUILD,
+        PlannerJob.MODE_OPTIMISE_CURRENT,
+        PlannerJob.MODE_OPTIMISE_V2_CURRENT,
+    ],
+)
+def test_in_place_and_older_workers_keep_the_grace_period(require_postgres, board, mode):
+    job_id = submit_planner_job(
+        scenario_id=board.scenario_id, mode=mode, params={_REBUILD_LEASE: True}
+    )
+    job = PlannerJob.objects.get(pk=job_id)
+    assert _REBUILD_LEASE not in job.params
+    # An older rebuild worker commits RUNNING without the new claim marker.
+    # In-place modes need the grace period even if a marker exists on the row.
+    if mode != PlannerJob.MODE_FULL_REBUILD:
+        job.params[_REBUILD_LEASE] = True
+    job.status = PlannerJob.STATUS_RUNNING
+    job.started_at = timezone.now()
+    job.save(update_fields=["params", "status", "started_at"])
+    assert reconcile_stale_planner_jobs() == 0
+    with pytest.raises(ScenarioPlannerBusy):
+        submit_planner_job(scenario_id=board.scenario_id, mode=mode)
+    PlannerJob.objects.filter(pk=job_id).update(started_at=timezone.now() - timedelta(hours=2))
     assert reconcile_stale_planner_jobs() == 1
 
 

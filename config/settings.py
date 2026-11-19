@@ -1122,8 +1122,8 @@ TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = os.getenv(
     "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 
-# Grace period for queued planner jobs and for running jobs on SQLite.
-# PostgreSQL checks the worker's lease on poll, submission and reconciliation.
+# Grace period for queued jobs, in-place optimisation, SQLite and older workers.
+# PostgreSQL rebuilds claimed with a protected lease are eligible as soon as it is lost.
 TIMETABLE_PLANNER_JOB_STALE_MINUTES = int(os.getenv("TIMETABLE_PLANNER_JOB_STALE_MINUTES", "45"))
 
 # TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED: single flag gating the PR8 async-job

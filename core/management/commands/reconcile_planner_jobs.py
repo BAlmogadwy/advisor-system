@@ -1,7 +1,7 @@
 """Reconcile orphaned async planner jobs.
 
-Mark running PostgreSQL jobs as failed once their worker lease is released.
-Queued jobs and running jobs on SQLite are eligible after the stale window.
+Mark PostgreSQL rebuilds claimed with a protected worker lease as failed once
+that lease is released. Other active jobs are eligible after the stale window.
 
 Usage::
 
@@ -24,7 +24,7 @@ class Command(BaseCommand):
             "--minutes",
             type=int,
             default=None,
-            help="Grace period for queued jobs and SQLite running jobs "
+            help="Grace period for jobs without a protected PostgreSQL rebuild lease "
             "(default: TIMETABLE_PLANNER_JOB_STALE_MINUTES).",
         )
 
