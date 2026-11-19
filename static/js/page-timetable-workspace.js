@@ -821,7 +821,7 @@ async function showSchedulerOutcome(jobId) {
   $('twSlotEdit').addEventListener('click', () => openSlotDialog());
 
   // Scenario picker and its scope
-  $('twScenario').addEventListener('change', onScenarioChange);
+  $('twScenario').addEventListener('change', () => onScenarioChange());
   ['twYear', 'twTerm'].forEach(id => $(id).addEventListener('change', loadScenarios));
 
   // Optimise: the main button improves the current timetable; Full rebuild
@@ -1282,10 +1282,7 @@ async function restoreWorkspaceContext() {
   const select = $('twScenario');
   if (![...select.options].some(option => option.value === scenarioId)) return;
   select.value = scenarioId;
-  await onScenarioChange();
-  const boardId = params.get('board');
-  const board = TW.boards.find(item => String(item.id) === boardId);
-  if (board && String(TW.scenarioId) === scenarioId) await selectBoard(board.id);
+  await onScenarioChange(params.get('board'));
 }
 
 /* ── Generate Workspace ── */
@@ -1505,7 +1502,7 @@ async function refreshScenarioOptions(selectedId) {
 }
 
 let scenarioLoadRevision = 0;
-async function onScenarioChange() {
+async function onScenarioChange(requestedBoardId = null) {
   scenarioListRevision++;
   const sid = $('twScenario').value;
   const revision = ++scenarioLoadRevision;
@@ -1519,7 +1516,7 @@ async function onScenarioChange() {
       return;
     }
     const sameScenario = String(TW.scenarioId) === String(sid);
-    const preferredBoard = sameScenario ? TW.boardId : null;
+    const preferredBoard = requestedBoardId ?? (sameScenario ? TW.boardId : null);
 
     resetPlanLens();
     const data = await twFetch(`/ops/tw/scenarios/${sid}/`);

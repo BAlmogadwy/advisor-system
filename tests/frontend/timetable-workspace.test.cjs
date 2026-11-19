@@ -385,15 +385,36 @@ test('manual sections beyond the initial page remain reachable and searchable', 
   assert.match(h.d.getElementById('twSectionList').textContent, /AI224/);
 });
 
-test('MRI, Graph and Split return URLs restore the selected saved scenario and board', async t => {
-  const h = await harness(t, url => url.startsWith('/ops/tw/boards/?') ? { boards: [board, { ...board, id: 3, label: 'Second board' }] } : undefined);
-  h.w.history.replaceState({}, '', '?scenario=1&board=3');
-  await h.w.restoreWorkspaceContext();
-  assert.equal(h.w.TW.scenarioId, 1); assert.equal(h.w.TW.boardId, 3);
-  assert.equal(new URL(h.w.location.href).searchParams.get('board'), '3');
-  assert.equal(h.d.getElementById('twScenario').value, '1');
-  assert.equal(h.d.getElementById('twGraphPage').getAttribute('href'), '/timetable-workspace/graph/?scenario=1');
-});
+for (const [name, query, expectedBoard] of [
+  ['default board', '?scenario=1&board=2', 2],
+  ['non-default board', '?scenario=1&board=3', 3],
+  ['unknown board', '?scenario=1&board=99', 2],
+  ['scenario only', '?scenario=1', 2],
+]) {
+  test(`saved workspace link (${name}) loads a single board`, async t => {
+    const h = await harness(t, url => {
+      if (url.startsWith('/ops/tw/boards/?')) {
+        return { boards: [board, { ...board, id: 3, label: 'Second board' }] };
+      }
+      if (url.endsWith('/budget/')) {
+        return { budget: [{ course_code: 'CS323', programme_term: 7, planned_sections: 1 }] };
+      }
+    });
+    h.w.history.replaceState({}, '', query);
+    await h.w.restoreWorkspaceContext();
+
+    const boardUrl = `/ops/tw/boards/${expectedBoard}/`;
+    const reads = h.requests.map(request => request.url)
+      .filter(url => /^\/ops\/tw\/boards\/\d+\//.test(url) || url.endsWith('/budget/'));
+    assert.deepEqual(reads.sort(), [
+      boardUrl, boardUrl + 'capacity/', boardUrl + 'conflicts/', '/ops/tw/scenarios/1/budget/',
+    ]);
+    assert.equal(h.d.querySelector('#twBoardTabs [aria-current="true"]').dataset.boardId, String(expectedBoard));
+    assert.equal(new URL(h.w.location.href).searchParams.get('board'), String(expectedBoard));
+    assert.equal(h.d.getElementById('twScenario').value, '1');
+    assert.equal(h.d.getElementById('twGraphPage').getAttribute('href'), '/timetable-workspace/graph/?scenario=1');
+  });
+}
 
 const LOCK_HELP = {
   en: "Keeps this section's days and times; its room can still change.",
