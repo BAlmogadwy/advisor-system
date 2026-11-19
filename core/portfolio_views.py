@@ -15,6 +15,7 @@ from django.views.decorators.http import require_GET
 
 from core.authz import role_required
 from core.models import ProgrammeRequirement, Student
+from core.services.academic_settings import load_defaults
 from core.services.advisor_graduation_optimization import (
     OPTIMIZED_CURRENT_OFFERINGS,
     OptimizedGraduationUnavailable,
@@ -32,7 +33,6 @@ from core.services.student_graduation import (
 )
 from core.services.student_helpers import is_elective_slot, normalize_code
 from core.services.student_sections import prefer_arabic_course_names_in_payload
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)

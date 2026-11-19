@@ -81,6 +81,7 @@ from core.models import (
     TimetableRepairRun,
     TimetableScenario,
 )
+from core.services.academic_settings import load_defaults
 from core.services.audit import log_audit_event
 from core.services.board_ownership import external_shared_section_ids
 from core.services.job_runtime import (
@@ -198,7 +199,6 @@ from core.services.timetable_workspace import (
     validate_budget_meeting_pattern,
     validate_placement,
 )
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)

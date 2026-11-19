@@ -6632,7 +6632,7 @@ def answer_student_advisor_v2(
     if not clean_question:
         raise ValueError("question is required")
 
-    from core.settings_views import load_defaults
+    from core.services.academic_settings import load_defaults
 
     defaults = load_defaults()
     if academic_year is None or term is None:

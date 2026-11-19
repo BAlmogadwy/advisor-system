@@ -1,58 +1,15 @@
-"""
-core/settings_views.py
-Global site defaults (academic year + term).
-Stored in site_defaults.json next to manage.py — no migrations needed.
-"""
+"""HTTP access to the shared academic year and term settings."""
 
 import json
-import os
-from pathlib import Path
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_http_methods
 
+from core.services.academic_settings import load_defaults, save_defaults
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
 
-# ── Storage ───────────────────────────────────────────────────
-_DEFAULTS_PATH = Path(
-    os.environ.get("SITE_DEFAULTS_PATH", "")
-    or Path(__file__).resolve().parent.parent / "site_defaults.json"
-)
 
-_BUILTIN_DEFAULTS: dict = {"academic_year": 1447, "term": 1, "currentYear": 1447, "currentTerm": 1}
-
-
-def load_defaults() -> dict:
-    """Return saved defaults. Falls back to built-ins if file missing or corrupt."""
-    try:
-        if _DEFAULTS_PATH.exists():
-            data = json.loads(_DEFAULTS_PATH.read_text(encoding="utf-8"))
-            return {
-                "academic_year": int(data.get("academic_year", _BUILTIN_DEFAULTS["academic_year"])),
-                "term": int(data.get("term", _BUILTIN_DEFAULTS["term"])),
-                "currentYear": int(data.get("currentYear", _BUILTIN_DEFAULTS["currentYear"])),
-                "currentTerm": int(data.get("currentTerm", _BUILTIN_DEFAULTS["currentTerm"])),
-            }
-    except (json.JSONDecodeError, ValueError, OSError):
-        pass
-    return dict(_BUILTIN_DEFAULTS)
-
-
-def save_defaults(academic_year: int, term: int, currentYear: int, currentTerm: int) -> None:
-    """Write defaults atomically (tmp-then-rename)."""
-    data = {
-        "academic_year": academic_year,
-        "term": term,
-        "currentYear": currentYear,
-        "currentTerm": currentTerm,
-    }
-    tmp = _DEFAULTS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(_DEFAULTS_PATH)
-
-
-# ── View ──────────────────────────────────────────────────────
 @login_required(login_url="login")
 @require_http_methods(["GET", "POST"])
 def defaults_settings_view(request: HttpRequest) -> JsonResponse:
@@ -75,9 +32,10 @@ def defaults_settings_view(request: HttpRequest) -> JsonResponse:
         body = json.loads(request.body)
         yr = int(body["academic_year"])
         tm = int(body["term"])
-        c_yr = int(body.get("currentYear", _BUILTIN_DEFAULTS["currentYear"]))
-        c_tm = int(body.get("currentTerm", _BUILTIN_DEFAULTS["currentTerm"]))
-    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        # Two-field clients use the original API defaults for the current term.
+        c_yr = int(body.get("currentYear", 1447))
+        c_tm = int(body.get("currentTerm", 1))
+    except (KeyError, TypeError, ValueError) as exc:
         return JsonResponse({"error": f"Invalid payload: {exc}"}, status=400)
 
     if not (1400 <= yr <= 1600):

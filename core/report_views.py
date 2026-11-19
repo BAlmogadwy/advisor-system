@@ -7,6 +7,7 @@ from django.views.decorators.http import require_GET
 
 from core.authz import role_required
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student
+from core.services.academic_settings import load_defaults
 from core.services.advisors import list_students_by_advisor, resolve_roster_scope
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
 from core.services.course_priority import program_downstream_importance_scores
@@ -30,7 +31,6 @@ from core.services.student_helpers import (
     get_student_program,
     normalize_code,
 )
-from core.settings_views import load_defaults
 
 
 def _safe_int(value: str | None, default: int) -> int:

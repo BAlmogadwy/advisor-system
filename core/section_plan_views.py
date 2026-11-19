@@ -25,6 +25,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
+from core.services.academic_settings import load_defaults
 from core.services.audit import audit_actor
 from core.services.programme_meeting_pattern_editor import (
     EditorActor,
@@ -52,7 +53,6 @@ from core.services.section_planning import (
 )
 from core.services.section_roster_export import export_course_rosters_xlsx
 from core.services.student_helpers import normalize_code
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)

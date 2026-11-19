@@ -26,6 +26,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from core.models import Course, Student, StudentTermSection
 from core.services import rate_limit
+from core.services.academic_settings import load_defaults
 from core.services.advisor_presentations import graduation_presentation_from_tool_results
 from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.recommender import recommend_next_courses
@@ -51,7 +52,6 @@ from core.services.student_term_timetable import (
     read_student_term_timetable,
 )
 from core.services.student_unlock import build_unlock_report
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 from core.student_timetable_feedback_views import home_feedback_entry
 

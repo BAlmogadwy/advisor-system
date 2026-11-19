@@ -9,9 +9,9 @@ from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 
 from core.models import AcademicAdvisor, Student
+from core.services.academic_settings import load_defaults
 from core.services.high_priority_missing import run_missing_high_priority_report
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
-from core.settings_views import load_defaults
 
 
 def normalize_arabic(text: str) -> str:

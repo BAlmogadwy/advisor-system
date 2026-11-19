@@ -291,6 +291,25 @@ def test_contract_pins_one_render_instance_for_long_running_services(
     assert any(service_name in error and "numInstances=1" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    "command", [None, "python manage.py migrate", "python manage.py migrate --check"]
+)
+def test_worker_deploy_requires_a_bounded_read_only_migration_check(
+    blueprint: Blueprint, command: str | None
+) -> None:
+    worker = _service(blueprint, WORKER_SERVICE_NAME)
+    if command is None:
+        del worker["preDeployCommand"]
+    else:
+        worker["preDeployCommand"] = command
+
+    errors = validate_blueprint(blueprint, project_root=PROJECT_ROOT)
+
+    assert any(
+        WORKER_SERVICE_NAME in error and "bounded read-only check" in error for error in errors
+    )
+
+
 def test_contract_requires_disabled_worker_standby(blueprint: Blueprint) -> None:
     changed = deepcopy(blueprint)
     worker = _service(changed, WORKER_SERVICE_NAME)

@@ -60,6 +60,10 @@ EXPECTED_WEB_START_COMMAND = (
     "--no-control-socket"
 )
 EXPECTED_PROCFILE_WEB_COMMAND = f"web: {EXPECTED_WEB_START_COMMAND}"
+EXPECTED_WORKER_PREDEPLOY_COMMAND = (
+    "timeout --kill-after=5s 10m sh -c "
+    "'until python manage.py migrate --check --noinput; do sleep 5; done'"
+)
 EXPECTED_WORKER_START_COMMAND = (
     "python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3 --standby-when-disabled"
 )
@@ -476,6 +480,10 @@ def validate_blueprint(
         if worker_env.get("ALLOW_NO_SMTP_PROCESS", {}).get("value") != "true":
             errors.append(
                 f"{WORKER_SERVICE_NAME} must explicitly opt out of web-only email validation."
+            )
+        if worker.get("preDeployCommand") != EXPECTED_WORKER_PREDEPLOY_COMMAND:
+            errors.append(
+                f"{WORKER_SERVICE_NAME} must wait for web migrations with the bounded read-only check."
             )
         if worker.get("startCommand") != EXPECTED_WORKER_START_COMMAND:
             errors.append(

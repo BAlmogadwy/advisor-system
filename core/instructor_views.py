@@ -19,6 +19,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required
 from core.models import CourseInstructor, Instructor, ProgrammeRequirement
+from core.services.academic_settings import load_defaults
 from core.services.audit import log_audit_event
 from core.services.course_instructor_assignment import (
     build_assignable_course_list,
@@ -27,7 +28,6 @@ from core.services.course_instructor_assignment import (
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.timetable_online import normalise_course_code
 from core.services.timetable_pr4_instructor import normalise_instructor
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 # The 12 real programmes (DBGPROG is a debug fixture, excluded from the picker).

@@ -9,6 +9,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from core.models import ProgrammeRequirement
+from core.services.academic_settings import load_defaults
 from core.services.dashboard_command_center import build_dashboard_command_center
 from core.services.policy import require_student_scope
 from core.services.rbac import (
@@ -24,7 +25,6 @@ from core.services.rbac import (
     set_user_scope,
 )
 from core.services.recommender import recommend_next_courses
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 
