@@ -27,6 +27,7 @@ one `document.activeElement` read. Nothing leaves the machine
 from __future__ import annotations
 
 import os
+from itertools import pairwise
 
 # Playwright's synchronous API runs through a greenlet; fixture creation is
 # synchronous ORM work while Django serves the page on its own thread.
@@ -121,12 +122,18 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
 
     # ── Harness ──────────────────────────────────────────────────────────
     def _context(
-        self, language: str = "en", theme: str = "light", height: int = 820, width: int = 1440
+        self,
+        language: str = "en",
+        theme: str = "light",
+        height: int = 820,
+        width: int = 1440,
+        *,
+        touch: bool = False,
     ):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             is_mobile=width <= 768,
-            has_touch=width <= 768,
+            has_touch=touch or width <= 768,
             extra_http_headers={"Accept-Language": language},
             viewport={"width": width, "height": height},
         )
@@ -606,6 +613,32 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#nav-grp-advising")).to_be_visible()
 
     # ── Section groups ───────────────────────────────────────────────────
+    def test_staff_heading_density_on_desktop_and_large_touchscreens(self) -> None:
+        for language, width, touch, height, tile, gap in (
+            ("en", 1440, False, 40, 24, 2),
+            ("ar", 900, False, 40, 24, 2),  # Longer section names wrap at this width.
+            ("en", 1440, True, 46, 28, 3),
+        ):
+            with self.subTest(language=language, width=width, touch=touch):
+                context = self._context(language=language, width=width, touch=touch)
+                page = self._open(context, path="/", language=language)
+                headings = page.locator("#menu .nav-lbl[aria-expanded=false]")
+                expect(headings).to_have_count(5)
+                rows = [heading.bounding_box() for heading in headings.all()]
+                self.assertEqual([row["height"] for row in rows], [height] * 5)
+                for above, below in pairwise(rows):
+                    self.assertEqual(below["y"] - above["y"] - above["height"], gap)
+                first = headings.first
+                icon = first.locator(".nav-section-icon").bounding_box()
+                self.assertEqual((icon["width"], icon["height"]), (tile, tile))
+                expect(first.locator(".nav-lbl-t")).to_have_css("font-size", "14px")
+
+                page.locator("#sbRailToggle").focus()
+                page.keyboard.press("Tab")
+                expect(first).to_be_focused()
+                expect(first).to_have_css("outline-width", "2px")
+                expect(first).to_have_css("outline-offset", "2px")
+
     def test_staff_desktop_opens_the_current_dashboard_section_on_load_and_reload(self) -> None:
         for lang in ("en", "ar"):
             page = self._open(self._context(language=lang), path="/#batch", language=lang)

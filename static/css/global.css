@@ -1537,9 +1537,9 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
 @media (min-width: 769px) {
   html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl {
     justify-content: start;
-    min-height: 46px;
-    margin-block: 3px;
-    padding: 6px 10px;
+    min-height: 40px;
+    margin-block: 0 2px;
+    padding: 1px 10px;
     gap: 10px;
     color: var(--t1);
     font-family: var(--font-body);
@@ -1556,8 +1556,8 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
   html:not([data-sidebar-rail]) [data-inline-sections] .nav-section-icon {
     display: inline-flex;
     box-sizing: border-box;
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border: 1px solid var(--line);
     border-radius: 7px;
     color: var(--t2);
@@ -1585,6 +1585,18 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
     padding: 6px 8px;
     gap: 7px;
     min-height: 32px;
+  }
+}
+/* A wide tablet or touchscreen laptop still needs the roomier headings. */
+@media (min-width: 769px) and (any-pointer: coarse) {
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl {
+    min-height: 46px;
+    margin-block: 3px;
+    padding-block: 6px;
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-section-icon {
+    width: 28px;
+    height: 28px;
   }
 }
 @media (min-width: 769px) and (max-width: 992px) {
