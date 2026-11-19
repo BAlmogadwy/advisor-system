@@ -4,6 +4,7 @@
 <html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}" data-portal="{% if request.path|slice:":9" == "/student/" %}student{% else %}staff{% endif %}">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script>
     /* Anti-flash: apply saved theme before any CSS paints */
     (function(){
@@ -18,15 +19,17 @@
       root.setAttribute('data-theme-storage-key', storageKey);
       root.setAttribute('data-theme', t);
     })();
-    /* Anti-flash, part two: the sidebar's icon rail and its collapsed section
-       groups. The stylesheet reads these two attributes, so a collapsed
-       sidebar is never painted open first and then snapped shut. The regex
-       keeps a tampered or stale store from putting anything but a group name
-       into an attribute value; static/js/sidebar-nav.js reads and writes the
-       same two keys and the same two attributes, and nothing else holds this
-       state. */
+    /* Set the rail and folded sections before CSS paints. Desktop staff pages
+       start folded. The drawer and role-specific menus use saved preferences. */
     (function(){
       var root = document.documentElement;
+      {% if role != "STUDENT" and role != "EXAM_COMMITTEE" %}
+      if (window.matchMedia('(min-width: 769px)').matches) {
+        root.setAttribute('data-sidebar-fold-on-load', '');
+        root.setAttribute('data-sidebar-collapsed', 'advising curriculum timetabling insights admin');
+        return;
+      }
+      {% endif %}
       try {
         if (localStorage.getItem('sidebar-rail') === '1') root.setAttribute('data-sidebar-rail', '1');
         var stored = JSON.parse(localStorage.getItem('sidebar-nav-collapsed') || '[]');
@@ -37,7 +40,6 @@
       } catch (e) {}
     })();
   </script>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="{% if LANGUAGE_CODE == 'ar' %}منصة الإرشاد الأكاديمي — جامعة طيبة{% else %}Academic Advisor Dashboard — Taibah University{% endif %}">
   <meta name="theme-color" content="#0A8E6E">
   <meta name="color-scheme" content="light dark">
@@ -47,7 +49,7 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=130" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=131" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}?v=6" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
@@ -98,7 +100,7 @@ the sidebar partial's own script, which is what marks the current page. Written
 as a comment TAG: Django's hash-brace comment is one line only, and a two-line
 one renders straight into the page.
 {% endcomment %}
-<script src="{% static 'js/sidebar-nav.js' %}?v=3"></script>
+<script src="{% static 'js/sidebar-nav.js' %}?v=4" onerror="document.documentElement.removeAttribute('data-sidebar-collapsed')"></script>
 <script>
 /* ── Back to top button ── */
 (function(){

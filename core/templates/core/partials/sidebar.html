@@ -2,7 +2,7 @@
 {% load i18n %}
 {% get_current_language as LANGUAGE_CODE %}
 
-<aside class="sidebar" id="appSidebar" aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
+<aside class="sidebar" id="appSidebar"{% if role != "STUDENT" and role != "EXAM_COMMITTEE" %} data-inline-sections{% endif %} aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
   <!-- Logo area -->
   <div class="logo-area">
     <div class="logo-mark">
@@ -73,6 +73,7 @@
     {# ── Advising — day-to-day student advising tools ── #}
     <div class="nav-grp" data-group="advising">
       <button type="button" class="nav-lbl" id="nav-lbl-advising" tabindex="0" aria-expanded="true" aria-controls="nav-grp-advising">
+        <span class="i nav-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
         <span class="nav-lbl-t">{% if LANGUAGE_CODE == 'ar' %}الإرشاد{% else %}Advising{% endif %}</span>
         <span class="i nav-lbl-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
       </button>
@@ -111,6 +112,7 @@
     {# ── Curriculum — programme & course reference ── #}
     <div class="nav-grp" data-group="curriculum">
       <button type="button" class="nav-lbl" id="nav-lbl-curriculum" tabindex="0" aria-expanded="true" aria-controls="nav-grp-curriculum">
+        <span class="i nav-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
         <span class="nav-lbl-t">{% if LANGUAGE_CODE == 'ar' %}الخطط والمقررات{% else %}Curriculum{% endif %}</span>
         <span class="i nav-lbl-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
       </button>
@@ -135,6 +137,7 @@
     {# ── Timetabling — build & analyse schedules ── #}
     <div class="nav-grp" data-group="timetabling">
       <button type="button" class="nav-lbl" id="nav-lbl-timetabling" tabindex="0" aria-expanded="true" aria-controls="nav-grp-timetabling">
+        <span class="i nav-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></span>
         <span class="nav-lbl-t">{% if LANGUAGE_CODE == 'ar' %}إعداد الجداول الدراسية{% else %}Timetabling{% endif %}</span>
         <span class="i nav-lbl-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
       </button>
@@ -190,6 +193,7 @@
     {% if can_view_portfolio or can_graduation_planning or can_db_admin %}
     <div class="nav-grp" data-group="insights">
       <button type="button" class="nav-lbl" id="nav-lbl-insights" tabindex="0" aria-expanded="true" aria-controls="nav-grp-insights">
+        <span class="i nav-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg></span>
         <span class="nav-lbl-t">{% if LANGUAGE_CODE == 'ar' %}التحليلات{% else %}Insights{% endif %}</span>
         <span class="i nav-lbl-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
       </button>
@@ -231,6 +235,7 @@
     {% if can_db_admin or can_admin_advisors %}
     <div class="nav-grp" data-group="admin">
       <button type="button" class="nav-lbl" id="nav-lbl-admin" tabindex="0" aria-expanded="true" aria-controls="nav-grp-admin">
+        <span class="i nav-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
         <span class="nav-lbl-t">{% if LANGUAGE_CODE == 'ar' %}الإدارة{% else %}Administration{% endif %}</span>
         <span class="i nav-lbl-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
       </button>
@@ -359,23 +364,37 @@
 <script>
 /* ── Sidebar active link — highlight current page ── */
 (function() {
-  const path = window.location.pathname;
+  const path = window.location.pathname.replace(/\/?$/, '/');
   // Skip dashboard pages (hash-panels handle their own active state)
-  if (path === '/' || path === '') return;
-  const links = document.querySelectorAll('.sidebar .nav-a[href]');
-  links.forEach(function(a) {
-    const href = a.getAttribute('href');
-    // Only match path-based links, skip hash links
-    if (!href || href.startsWith('/#')) return;
+  if (path === '/') return;
+  const sidebar = document.getElementById('appSidebar');
+  const staff = sidebar.hasAttribute('data-inline-sections');
+  let current = null;
+  let parentLength = 0;
+  for (const link of sidebar.querySelectorAll('.nav-a[href]')) {
+    const href = link.getAttribute('href');
+    if (href.startsWith('/#')) continue;
     const isStudentPlanner = path.startsWith('/student/planner/') && href === '/student/timetable/';
     const isStudentCoursesSubpage = (
       path === '/student/plan-map/' || path.startsWith('/student/courses/')
     ) && href === '/student/courses/';
-    const isAdminGraduation = path.startsWith('/graduation-planning/') && href === '/graduation-planning/';
-    if (path === href || path === href.replace(/\/$/, '') || isStudentPlanner || isStudentCoursesSubpage || isAdminGraduation) {
-      a.classList.add('active');
+    if (path === href || isStudentPlanner || isStudentCoursesSubpage) {
+      current = link;
+      break;
     }
-  });
+    // The closest rendered destination owns its detail pages. The trailing
+    // slash distinguishes route segments with a shared name prefix.
+    if (staff && href.endsWith('/') && path.startsWith(href) && href.length > parentLength) {
+      current = link;
+      parentLength = href.length;
+    }
+  }
+  if (current) {
+    current.classList.add('active');
+    if (!current.hasAttribute('aria-current')) {
+      current.setAttribute('aria-current', current.getAttribute('href') === path ? 'page' : 'location');
+    }
+  }
   // Also highlight the user card if on /profile/
   if (path === '/profile/' || path === '/profile') {
     const usr = document.querySelector('.s-usr');

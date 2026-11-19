@@ -1531,6 +1531,75 @@ html[data-theme="dark"] .system-footer {
 .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotate(-90deg); }
 html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotate(90deg); }
 
+/* Staff navigation uses inline section headers on desktop. The drawer and
+   the optional icon rail keep their own layout. */
+.nav-section-icon { display: none; }
+@media (min-width: 769px) {
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl {
+    justify-content: start;
+    min-height: 46px;
+    margin-block: 3px;
+    padding: 6px 10px;
+    gap: 10px;
+    color: var(--t1);
+    font-family: var(--font-body);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl-t {
+    font-size: max(14px, var(--text-base));
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl-chev {
+    margin-inline-start: auto;
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-section-icon {
+    display: inline-flex;
+    box-sizing: border-box;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--t2);
+  }
+  .nav-section-icon svg { width: 16px; height: 16px; }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl:hover {
+    background: var(--surface);
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .is-current-section > .nav-lbl {
+    color: var(--text-brand);
+    background: color-mix(in srgb, var(--teal) 12%, transparent);
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .is-current-section .nav-section-icon {
+    background: var(--text-brand);
+    border-color: var(--text-brand);
+    color: var(--card);
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-grp-items {
+    margin-block: 2px 8px;
+    margin-inline: 24px 4px;
+    border-inline-start: 1px solid var(--line);
+    padding-inline-start: 6px;
+  }
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-a {
+    padding: 6px 8px;
+    gap: 7px;
+    min-height: 32px;
+  }
+}
+@media (min-width: 769px) and (max-width: 992px) {
+  html:not([data-sidebar-rail]) [data-inline-sections] .nav-lbl {
+    padding-inline: 6px;
+    gap: 6px;
+  }
+}
+@media (min-width: 769px) and (forced-colors: active) {
+  [data-inline-sections] .is-current-section > .nav-lbl {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}
+
 /* ── Nav links ────────────────────────────────────────────── */
 .nav-a {
   display:         flex;
@@ -1769,8 +1838,7 @@ html[dir="rtl"] .sb-rail-toggle .i { transform: scaleX(-1); }
    anti-flash script in base.html, so a collapsed group is never painted open
    first. One selector per group: CSS cannot compare the attribute's value
    against the group's own name, and a loose match would collapse the wrong
-   group. The script keeps the group holding the current page out of the
-   attribute, so the page you are on is never hidden. */
+   group. */
 html[data-sidebar-collapsed~="exams"]       .nav-grp[data-group="exams"]       > .nav-grp-items,
 html[data-sidebar-collapsed~="advising"]    .nav-grp[data-group="advising"]    > .nav-grp-items,
 html[data-sidebar-collapsed~="curriculum"]  .nav-grp[data-group="curriculum"]  > .nav-grp-items,

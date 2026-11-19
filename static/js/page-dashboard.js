@@ -2645,8 +2645,9 @@ const IS_AR = document.documentElement.lang === 'ar';
   window.addEventListener('hashchange', () => {
     const raw = (window.location.hash || '').replace('#', '');
     if (standaloneRedirects[raw]) { window.location.href = standaloneRedirects[raw]; return; }
-    if (raw && document.getElementById(raw)) {
-      activatePanel(raw);
+    const target = raw || inferredPanel || 'overview';
+    if (document.getElementById(target)) {
+      activatePanel(target);
     }
   });
 
