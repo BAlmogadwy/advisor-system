@@ -36,10 +36,7 @@ from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed, s
 
 logger = logging.getLogger(__name__)
 
-# A planner job stuck in RUNNING/QUEUED past this window almost certainly belongs
-# to a server process that died mid-run (the in-process worker can't update its
-# own row once the process is gone). Generous default — the slowest observed real
-# build is ~12-15 min — so a legitimately long job is never swept by mistake.
+# Grace period for undispatched jobs and backends without a worker lease.
 PLANNER_JOB_STALE_SETTING = "TIMETABLE_PLANNER_JOB_STALE_MINUTES"
 PLANNER_JOB_STALE_DEFAULT_MIN = 45
 
@@ -68,6 +65,10 @@ def _worker_lease(job_id):
     try:
         lease.set_autocommit(False)
         with lease.cursor() as cursor:
+            # The solver works on another connection. Its lease is idle by design.
+            cursor.execute("SET LOCAL idle_in_transaction_session_timeout = 0")
+            if lease.pg_version >= 170000:
+                cursor.execute("SET LOCAL transaction_timeout = 0")
             acquired = _try_worker_lock(cursor, job_id)
         yield acquired
     finally:
@@ -75,19 +76,24 @@ def _worker_lease(job_id):
 
 
 def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
-    """Mark orphaned planner jobs (RUNNING past the stale window, or QUEUED but
-    never dispatched) as FAILED. PR7 jobs are process-local and not durable
-    across restarts, so a server stop/reap leaves rows stranded in RUNNING
-    forever — a polling UI would spin indefinitely. Idempotent; returns the count
-    reconciled."""
+    """Fail orphaned jobs and return the number newly reconciled.
+
+    PostgreSQL workers hold a lease from before claiming a job through its
+    terminal commit, so an unlocked running job can be retried immediately.
+    Queued jobs and jobs on other backends use the configured grace period.
+    """
     if stale_minutes is None:
         stale_minutes = int(
             getattr(settings, PLANNER_JOB_STALE_SETTING, PLANNER_JOB_STALE_DEFAULT_MIN)
         )
     cutoff = timezone.now() - timedelta(minutes=max(1, stale_minutes))
+    eligible = Q(started_at__lt=cutoff) | Q(started_at__isnull=True, submitted_at__lt=cutoff)
+    if connection.vendor == "postgresql":
+        eligible |= Q(status=PlannerJob.STATUS_RUNNING)
     stale = PlannerJob.objects.filter(
+        eligible,
         status__in=[PlannerJob.STATUS_RUNNING, PlannerJob.STATUS_QUEUED],
-    ).filter(Q(started_at__lt=cutoff) | Q(started_at__isnull=True, submitted_at__lt=cutoff))
+    )
     with _EXECUTING_JOBS_LOCK:
         executing_ids = tuple(_EXECUTING_JOBS)
     stale = stale.exclude(pk__in=executing_ids)

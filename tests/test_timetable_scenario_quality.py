@@ -448,6 +448,10 @@ def test_active_job_rejects_manual_mutations_and_second_submission_without_write
     status,
     monkeypatch,
 ):
+    from contextlib import nullcontext
+
+    from core.services.planner_job_runner import _worker_lease
+
     settings.TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = True
     placement = place(scenario, "AI101")
     other = TimetableScenario.objects.create(academic_year="1448", term="1", name="other")
@@ -496,12 +500,13 @@ def test_active_job_rejects_manual_mutations_and_second_submission_without_write
         (f"{prefix}/optimise-v2/", {"mode": "current", "async_run": True}),
         ("/planner-jobs/", {"scenario_id": scenario.id, "mode": "optimise_current"}),
     ]
-    for url, payload in writes:
-        response = http.post(url, data=json.dumps(payload), content_type="application/json")
-        assert response.status_code == 409, (url, response.content)
-        body = response.json()["error"]
-        assert body["code"] == "SCENARIO_BUSY"
-        assert body["details"]["active_job"]["job_id"] == str(job.id)
+    with _worker_lease(job.pk) if status == PlannerJob.STATUS_RUNNING else nullcontext():
+        for url, payload in writes:
+            response = http.post(url, data=json.dumps(payload), content_type="application/json")
+            assert response.status_code == 409, (url, response.content)
+            body = response.json()["error"]
+            assert body["code"] == "SCENARIO_BUSY"
+            assert body["details"]["active_job"]["job_id"] == str(job.id)
     placement.refresh_from_db()
     scenario.refresh_from_db()
     assert (placement.day, placement.start_time, placement.is_locked) == ("SUN", "09:00", False)

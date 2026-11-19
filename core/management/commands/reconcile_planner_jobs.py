@@ -1,9 +1,7 @@
 """Reconcile orphaned async planner jobs.
 
-PlannerJobs run in-process and are not durable across restarts, so a server
-stop/reap can leave a job stranded in ``running`` forever. This command marks
-such stale jobs (running past the stale window, or queued but never dispatched)
-as ``failed``. Safe to run repeatedly; ideal as a startup / pre-deploy step.
+Mark running PostgreSQL jobs as failed once their worker lease is released.
+Queued jobs and running jobs on SQLite are eligible after the stale window.
 
 Usage::
 
@@ -26,7 +24,8 @@ class Command(BaseCommand):
             "--minutes",
             type=int,
             default=None,
-            help="Stale window in minutes (default: TIMETABLE_PLANNER_JOB_STALE_MINUTES).",
+            help="Grace period for queued jobs and SQLite running jobs "
+            "(default: TIMETABLE_PLANNER_JOB_STALE_MINUTES).",
         )
 
     def handle(self, *args, **options) -> None:
