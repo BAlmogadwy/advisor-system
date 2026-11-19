@@ -176,6 +176,7 @@ jobs:
       - name: Planner lifecycle and concurrency tests
         run: |
           pytest -q -p no:randomly \
+            tests/test_academic_settings.py \
             tests/test_planner_draft_lifecycle.py \
             tests/test_planner_draft_concurrency.py \
             tests/test_planner_rebuild_crash.py \
@@ -201,10 +202,11 @@ jobs:
             tests/test_timetable_feedback_staff_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-          # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all 55
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all 56
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
+            tests/test_academic_settings.py::test_running_postgres_worker_observes_web_saves \
             tests/test_planner_draft_concurrency.py \
             tests/test_planner_rebuild_crash.py \
             tests/test_elective_mapping_concurrency.py \
@@ -219,7 +221,7 @@ jobs:
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 55 || { echo "expected 55 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 56 || { echo "expected 56 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

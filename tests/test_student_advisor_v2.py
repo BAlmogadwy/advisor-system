@@ -2463,7 +2463,7 @@ def test_plain_graduation_uses_literal_system_current_term_and_strips_model_scen
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "core.settings_views.load_defaults",
+        "core.services.academic_settings.load_defaults",
         lambda: {
             "academic_year": 1450,
             "term": 2,

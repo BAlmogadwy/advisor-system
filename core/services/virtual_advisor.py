@@ -2563,7 +2563,7 @@ def answer_virtual_advisor(
     # time-dependent capability errors with "academic_year and term
     # are required" outside the web UI.
     if academic_year is None or term is None:
-        from core.settings_views import load_defaults
+        from core.services.academic_settings import load_defaults
 
         defaults = load_defaults()
         academic_year = academic_year if academic_year is not None else defaults["academic_year"]

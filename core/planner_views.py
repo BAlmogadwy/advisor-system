@@ -20,6 +20,7 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.academic_settings import load_defaults
 from core.services.credit_policy import (
     RECOMMENDED_MAX_CREDITS,
     REGULATORY_MAX_CREDITS,
@@ -44,7 +45,6 @@ from core.services.student_sections import (
     student_gender_strict,
 )
 from core.services.timetable_snapshots import Snapshot, SnapshotClass
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)

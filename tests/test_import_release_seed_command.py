@@ -37,6 +37,7 @@ from core.management.commands.import_release_seed import (
     KILL_SWITCH_VALUE,
 )
 from core.models import (
+    AcademicSettings,
     AuditLog,
     Course,
     CourseInstructor,
@@ -380,12 +381,17 @@ def test_unknown_fixture_model_makes_no_writes(tmp_path, monkeypatch):
 
 def test_success_replaces_allowed_data_and_removes_runtime_rows(tmp_path, monkeypatch):
     source_student, _ = _source_records()
+    AcademicSettings.objects.update_or_create(
+        pk=1, defaults={"academic_year": 1448, "term": 1, "current_year": 1447, "current_term": 2}
+    )
     fixture, manifest = _export(tmp_path)
     target = _target_sentinel()
     monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
     migrations_before = set(MigrationRecorder.Migration.objects.values_list("app", "name"))
 
     with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        target_terms = {"academic_year": 1450, "term": 2, "current_year": 1449, "current_term": 3}
+        AcademicSettings.objects.using(alias).filter(pk=1).update(**target_terms)
         output = _replace(fixture, manifest, database=alias)
 
         assert "Imported" in output
@@ -395,6 +401,7 @@ def test_success_replaces_allowed_data_and_removes_runtime_rows(tmp_path, monkey
         assert Course.objects.using(alias).filter(course_code="AI101").exists()
         assert StudentCourse.objects.using(alias).filter(student_id=source_student.pk).exists()
         assert AuditLog.objects.using(alias).count() == 0
+        assert AcademicSettings.objects.using(alias).values(*target_terms).get(pk=1) == target_terms
         assert (
             set(MigrationRecorder.Migration.objects.using(alias).values_list("app", "name"))
             == migrations_before

@@ -1475,7 +1475,7 @@ def _fixture_state_hmac_sha256(
         ).encode("utf-8"),
     )
     if site_defaults is None:
-        from core.settings_views import load_defaults
+        from core.services.academic_settings import load_defaults
 
         site_defaults = load_defaults()
     update(

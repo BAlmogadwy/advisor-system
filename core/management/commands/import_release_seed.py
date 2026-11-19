@@ -40,7 +40,7 @@ from core.management.commands.export_release_seed import (
     canonical_content_sha256,
     validate_release_signing_key,
 )
-from core.models import Student, StudentTermSection, TermSection
+from core.models import AcademicSettings, Student, StudentTermSection, TermSection
 from core.services.timetable_meeting_shape import PROGRAMME_NOT_SET, PROGRAMME_STANDARD, SHAPES
 
 FORMAT_VERSION = 1
@@ -775,11 +775,12 @@ def _take_postgres_advisory_lock(using: str) -> None:
 
 def _flush_target_database(using: str) -> None:
     connection = connections[using]
-    migration_table = MigrationRecorder.Migration._meta.db_table
+    # Academic settings belong to the target installation and survive curriculum imports.
+    retained_tables = {MigrationRecorder.Migration._meta.db_table, AcademicSettings._meta.db_table}
     table_names = [
         table
         for table in connection.introspection.table_names(include_views=False)
-        if table != migration_table
+        if table not in retained_tables
     ]
     if any(SAFE_DATABASE_IDENTIFIER.fullmatch(table) is None for table in table_names):
         raise CommandError("Target database contains an unsupported table identifier.")
@@ -913,6 +914,7 @@ def _validate_loaded_database(
             model._meta.managed
             and label not in ALLOWED_MODELS
             and label not in REGENERATED_MODELS
+            and model is not AcademicSettings
             and model._default_manager.using(using).exists()
         ):
             raise CommandError("Excluded runtime data remained after replacement.")

@@ -8,13 +8,13 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
+from core.services.academic_settings import load_defaults
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.audit import log_audit_event
 from core.services.local_llm import LocalLLMError, check_local_llm_health
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_STUDENT, get_user_scope
 from core.services.virtual_advisor import answer_virtual_advisor, run_planned_tools
-from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 

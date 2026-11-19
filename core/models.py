@@ -8,6 +8,35 @@ from django.db.models.functions import Cast, Concat, Now, Trim, Upper
 from django.utils import timezone
 
 
+class AcademicSettings(models.Model):
+    """One installation-wide planning term and current term, shared by all workers."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    academic_year = models.PositiveSmallIntegerField(default=1448)
+    term = models.PositiveSmallIntegerField(default=1)
+    current_year = models.PositiveSmallIntegerField(default=1448)
+    current_term = models.PositiveSmallIntegerField(default=1)
+
+    class Meta:
+        db_table = "academic_settings"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(id=1), name="academic_settings_singleton"),
+            models.CheckConstraint(
+                condition=models.Q(
+                    academic_year__range=(1400, 1600), current_year__range=(1400, 1600)
+                ),
+                name="academic_settings_valid_years",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(term__lte=3, current_term__lte=3),
+                name="academic_settings_valid_terms",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Academic settings (planning {self.academic_year}/{self.term})"
+
+
 class Student(models.Model):
     student_id = models.IntegerField(primary_key=True)
     registration_no = models.TextField(blank=True, default="")
