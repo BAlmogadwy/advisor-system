@@ -104,7 +104,7 @@ from core.services.section_programmes import (
     filter_sections_for_delivery_board,
     section_is_available_to_delivery_board,
 )
-from core.services.timetable_demand import compute_board_capacity
+from core.services.timetable_demand import compute_board_capacity, demand_read_scope
 from core.services.timetable_flags import (
     is_one_teacher_active,
     is_section_programme_preference_enabled,
@@ -1606,6 +1606,7 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
 @login_required(login_url="login")
 @require_GET
 @_one_teacher_request
+@demand_read_scope()
 def tw_scenario_readiness_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Return publish readiness without mutating the scenario.
 
@@ -2074,6 +2075,7 @@ def tw_scenario_student_blockers_view(request: HttpRequest, scenario_id: int) ->
 @login_required(login_url="login")
 @require_GET
 @_one_teacher_request
+@demand_read_scope()
 def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
     """List all boards for a scenario with summary stats (``?scenario_id=``)."""
     deny = _require_general_advisor(request)
@@ -2234,6 +2236,7 @@ def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 @_one_teacher_request
+@demand_read_scope()
 def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return the full conflict analysis for a board.
 

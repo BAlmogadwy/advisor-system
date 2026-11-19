@@ -397,6 +397,48 @@ def test_readiness_endpoint_returns_the_items_with_the_strings(http):
     assert body["summary"] == {"ready": False, "blockers": 1, "warnings": 0}
 
 
+def test_workspace_reads_student_demand_once_per_request(http: Client) -> None:
+    scenario = _scenario()
+    first = _board(scenario, "Term 2", 2, 1)
+    second = _board(scenario, "Term 4", 4, 2)
+    _place(first, NETS, room="R1")
+    _place(second, ALGEBRA, room="R2")
+    _need(scenario, (NETS, ALGEBRA), HARD_OVERLAP_THRESHOLD)
+    # A student with only an unplaced course still counts in the scenario summary.
+    ScenarioStudentCourseRequest.objects.create(
+        scenario=scenario, student_id=100, course_key="AI203", course_code="AI203"
+    )
+
+    def read(url: str) -> dict:
+        with CaptureQueriesContext(connection) as queries:
+            response = http.get(url)
+        assert response.status_code == 200
+        demand_selects = [
+            q["sql"] for q in queries if 'FROM "scenario_student_course_requests"' in q["sql"]
+        ]
+        assert len(demand_selects) == 1
+        data = response.json()
+        assert isinstance(data, dict)
+        return data
+
+    boards = read(f"/ops/tw/boards/?scenario_id={scenario.id}")
+    assert boards["scenario_summary"]["unique_students"] == HARD_OVERLAP_THRESHOLD + 1
+    assert boards["cross_board_affected_students"] == HARD_OVERLAP_THRESHOLD
+    conflicts_url = f"/ops/tw/boards/{first.id}/conflicts/"
+    [conflict] = read(conflicts_url)["cross_board_conflicts"]
+    assert conflict["affected_student_ids"] == list(range(1, HARD_OVERLAP_THRESHOLD + 1))
+    readiness = read(f"/ops/tw/scenarios/{scenario.id}/readiness/")["readiness"]
+    assert readiness["warning_items"] == [
+        _item("cross_board_conflicts", count=1, threshold=HARD_OVERLAP_THRESHOLD)
+    ]
+
+    ScenarioStudentCourseRequest.objects.filter(
+        scenario=scenario, student_id=1, course_key=NETS
+    ).update(status=ScenarioStudentCourseRequest.STATUS_CANCELLED)
+    [conflict] = read(conflicts_url)["cross_board_conflicts"]
+    assert conflict["affected_student_ids"] == list(range(2, HARD_OVERLAP_THRESHOLD + 1))
+
+
 @pytest.mark.parametrize("blockers, noun", [(1, "blocker"), (2, "blockers")])
 def test_refused_publish_counts_its_blockers_and_carries_the_items(http, blockers, noun):
     scenario = _scenario()
