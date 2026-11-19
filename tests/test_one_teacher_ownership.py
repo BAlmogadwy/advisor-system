@@ -355,6 +355,8 @@ def test_i16_a_published_scenarios_rows_are_untouched(flags) -> None:
 
 @pytest.mark.django_db
 def test_i16_reconcile_refuses_busy_and_published_scenarios_and_writes_names_only(flags) -> None:
+    from core.services.planner_job_runner import _worker_lease
+
     sc, x, a, b = _persisted_pair()
     client = _admin_client()
     url = "/ops/instructors/course-assignments/reconcile/"
@@ -364,9 +366,10 @@ def test_i16_reconcile_refuses_busy_and_published_scenarios_and_writes_names_onl
     job = PlannerJob.objects.create(
         id=uuid.uuid4(), scenario=sc, mode=PlannerJob.MODE_OPTIMISE_V2_CURRENT, status="running"
     )
-    busy = client.post(
-        url, data=json.dumps({"scenario_id": sc.id}), content_type="application/json"
-    )
+    with _worker_lease(job.pk):
+        busy = client.post(
+            url, data=json.dumps({"scenario_id": sc.id}), content_type="application/json"
+        )
     assert busy.status_code == 409 and busy.json()["error"]["code"] == "SCENARIO_BUSY"
     job.status = "succeeded"
     job.save()

@@ -7,6 +7,8 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import timedelta
+from threading import Barrier
+from time import sleep
 
 import pytest
 from django.db import connection, connections
@@ -26,11 +28,14 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.planner_job_runner import (
+    _REBUILD_LEASE,
+    _worker_lease,
     cancel_planner_job,
     reconcile_stale_planner_jobs,
     run_planner_job,
     submit_planner_job,
 )
+from core.services.timetable_mutation_guard import ScenarioPlannerBusy
 from tests.planner_crash_worker import run_worker
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -111,8 +116,8 @@ def test_process_death_preserves_the_committed_board(require_postgres, board, mo
     with _worker(job_id, phase):
         assert _saved_rows(board) == before
     assert _saved_rows(board) == before
-    PlannerJob.objects.filter(pk=job_id).update(started_at=timezone.now() - timedelta(hours=2))
     assert reconcile_stale_planner_jobs() == 1
+    assert reconcile_stale_planner_jobs() == 0
     assert PlannerJob.objects.get(pk=job_id).status == PlannerJob.STATUS_FAILED
     assert _saved_rows(board) == before
 
@@ -126,17 +131,28 @@ def test_process_death_preserves_the_committed_board(require_postgres, board, mo
     assert TermSectionMeeting.objects.get(term_section__scenario=board.scenario).room == "NEW"
 
 
-def test_live_scheduler_cannot_be_swept_and_accepts_cancellation(require_postgres, board):
+def test_live_scheduler_cannot_be_swept_and_accepts_cancellation(
+    require_postgres, board, admin_client, settings
+):
+    settings.TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = True
     before = _saved_rows(board)
     job_id = submit_planner_job(scenario_id=board.scenario_id, mode=PlannerJob.MODE_SCHEDULER_BUILD)
     with _worker(job_id, "solve") as (proc, pipe):
         with connection.cursor() as cursor:
             cursor.execute("SET lock_timeout = '3s'")
         try:
+            assert reconcile_stale_planner_jobs() == 0
             PlannerJob.objects.filter(pk=job_id).update(
                 started_at=timezone.now() - timedelta(hours=2)
             )
             assert reconcile_stale_planner_jobs() == 0
+            busy = admin_client.post(
+                "/planner-jobs/",
+                {"scenario_id": board.scenario_id, "mode": "full_rebuild"},
+                content_type="application/json",
+            )
+            assert busy.status_code == 409
+            assert busy.json()["error"]["details"]["active_job"]["job_id"] == str(job_id)
             assert PlannerJob.objects.get(pk=job_id).last_stage_seen == "persist"
             assert cancel_planner_job(job_id)
         finally:
@@ -147,6 +163,85 @@ def test_live_scheduler_cannot_be_swept_and_accepts_cancellation(require_postgre
         assert proc.exitcode == 0
     assert PlannerJob.objects.get(pk=job_id).status == PlannerJob.STATUS_CANCELLED
     assert _saved_rows(board) == before
+
+
+def test_slow_worker_lease_survives_database_timeouts(require_postgres, board, monkeypatch):
+    job_id = submit_planner_job(scenario_id=board.scenario_id, mode=PlannerJob.MODE_FULL_REBUILD)
+    # Apply server defaults to new connections only. The observer is already connected.
+    options = connection.settings_dict["OPTIONS"].copy()
+    timeout_options = " -c idle_in_transaction_session_timeout=200ms"
+    if connection.pg_version >= 170000:
+        timeout_options += " -c transaction_timeout=300ms"
+    options["options"] = options.get("options", "") + timeout_options
+    monkeypatch.setitem(connection.settings_dict, "OPTIONS", options)
+    with _worker_lease(job_id) as acquired:
+        assert acquired
+        PlannerJob.objects.filter(pk=job_id).update(
+            status=PlannerJob.STATUS_RUNNING,
+            started_at=timezone.now(),
+            params={_REBUILD_LEASE: True},
+        )
+        sleep(0.6)
+        assert reconcile_stale_planner_jobs() == 0
+    assert reconcile_stale_planner_jobs() == 1
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        PlannerJob.MODE_FULL_REBUILD,
+        PlannerJob.MODE_OPTIMISE_CURRENT,
+        PlannerJob.MODE_OPTIMISE_V2_CURRENT,
+    ],
+)
+def test_in_place_and_older_workers_keep_the_grace_period(require_postgres, board, mode):
+    job_id = submit_planner_job(
+        scenario_id=board.scenario_id, mode=mode, params={_REBUILD_LEASE: True}
+    )
+    job = PlannerJob.objects.get(pk=job_id)
+    assert _REBUILD_LEASE not in job.params
+    # An older rebuild worker commits RUNNING without the new claim marker.
+    # In-place modes need the grace period even if a marker exists on the row.
+    if mode != PlannerJob.MODE_FULL_REBUILD:
+        job.params[_REBUILD_LEASE] = True
+    job.status = PlannerJob.STATUS_RUNNING
+    job.started_at = timezone.now()
+    job.save(update_fields=["params", "status", "started_at"])
+    assert reconcile_stale_planner_jobs() == 0
+    with pytest.raises(ScenarioPlannerBusy):
+        submit_planner_job(scenario_id=board.scenario_id, mode=mode)
+    PlannerJob.objects.filter(pk=job_id).update(started_at=timezone.now() - timedelta(hours=2))
+    assert reconcile_stale_planner_jobs() == 1
+
+
+def test_simultaneous_retries_after_crash_queue_one_replacement(require_postgres, board):
+    job_id = submit_planner_job(scenario_id=board.scenario_id, mode=PlannerJob.MODE_FULL_REBUILD)
+    with _worker(job_id, "solve"):
+        pass
+    start = Barrier(2)
+
+    def retry():
+        try:
+            start.wait(timeout=10)
+            new_job = submit_planner_job(
+                scenario_id=board.scenario_id, mode=PlannerJob.MODE_FULL_REBUILD
+            )
+            return "queued", new_job
+        except ScenarioPlannerBusy as exc:
+            return "busy", exc.job.pk
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        attempts = [pool.submit(retry) for _ in range(2)]
+        outcomes = dict(attempt.result(timeout=15) for attempt in attempts)
+    replacement = PlannerJob.objects.get(
+        scenario_id=board.scenario_id, status=PlannerJob.STATUS_QUEUED
+    )
+    assert outcomes["queued"] == replacement.pk
+    # A racing request can see the prior job until reconciliation commits.
+    assert outcomes["busy"] in (job_id, replacement.pk)
+    assert PlannerJob.objects.get(pk=job_id).status == PlannerJob.STATUS_FAILED
 
 
 def test_worker_that_lost_ownership_cannot_publish(require_postgres, board):
@@ -197,7 +292,6 @@ def test_real_v2_candidate_crash_and_retry_from_workspace(require_postgres, admi
     repair.refresh_from_db()
     assert repair.target_placement_id == placement.pk
 
-    PlannerJob.objects.filter(pk=job_id).update(started_at=timezone.now() - timedelta(hours=2))
     response = admin_client.post(
         f"/ops/tw/scenarios/{scenario.pk}/optimise-v2/",
         {**options, "mode": "full", "async_run": True},

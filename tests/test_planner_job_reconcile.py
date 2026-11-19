@@ -36,14 +36,16 @@ def _job(scenario, status, *, started_minutes_ago=None):
 @pytest.mark.django_db
 def test_stale_running_job_is_failed() -> None:
     from core.models import PlannerJob
-    from core.services.planner_job_runner import reconcile_stale_planner_jobs
+    from core.services.planner_job_runner import _worker_lease, reconcile_stale_planner_jobs
 
     scn = _scenario()
     stale = _job(scn, PlannerJob.STATUS_RUNNING, started_minutes_ago=90)
     fresh = _job(scn, PlannerJob.STATUS_RUNNING, started_minutes_ago=2)
     done = _job(scn, PlannerJob.STATUS_SUCCEEDED, started_minutes_ago=120)
 
-    n = reconcile_stale_planner_jobs()  # default 45-min window
+    with _worker_lease(fresh.pk) as acquired:
+        assert acquired
+        n = reconcile_stale_planner_jobs()
 
     assert n == 1
     stale.refresh_from_db()
@@ -52,7 +54,7 @@ def test_stale_running_job_is_failed() -> None:
     assert stale.status == PlannerJob.STATUS_FAILED
     assert stale.finished_at is not None
     assert "server stopped" in (stale.error_message or "")
-    assert fresh.status == PlannerJob.STATUS_RUNNING  # recent → untouched
+    assert fresh.status == PlannerJob.STATUS_RUNNING
     assert done.status == PlannerJob.STATUS_SUCCEEDED  # terminal → untouched
 
 
@@ -62,6 +64,7 @@ def test_stale_queued_never_dispatched_is_failed() -> None:
     from core.services.planner_job_runner import reconcile_stale_planner_jobs
 
     scn = _scenario()
+    waiting = _job(scn, PlannerJob.STATUS_QUEUED)
     queued = _job(scn, PlannerJob.STATUS_QUEUED)  # started_at = None
     # submitted_at is auto_now_add — backdate it past the window.
     PlannerJob.objects.filter(id=queued.id).update(
@@ -73,6 +76,8 @@ def test_stale_queued_never_dispatched_is_failed() -> None:
     assert n == 1
     queued.refresh_from_db()
     assert queued.status == PlannerJob.STATUS_FAILED
+    waiting.refresh_from_db()
+    assert waiting.status == PlannerJob.STATUS_QUEUED
 
 
 @pytest.mark.django_db
@@ -81,6 +86,6 @@ def test_reconcile_is_idempotent_and_noop_when_clean() -> None:
     from core.services.planner_job_runner import reconcile_stale_planner_jobs
 
     scn = _scenario()
-    _job(scn, PlannerJob.STATUS_RUNNING, started_minutes_ago=1)
+    _job(scn, PlannerJob.STATUS_QUEUED)
     assert reconcile_stale_planner_jobs() == 0
     assert reconcile_stale_planner_jobs() == 0

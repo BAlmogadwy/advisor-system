@@ -36,12 +36,15 @@ from core.services.timetable_run_seed import parse_run_seed, resolve_run_seed, s
 
 logger = logging.getLogger(__name__)
 
-# A planner job stuck in RUNNING/QUEUED past this window almost certainly belongs
-# to a server process that died mid-run (the in-process worker can't update its
-# own row once the process is gone). Generous default — the slowest observed real
-# build is ~12-15 min — so a legitimately long job is never swept by mistake.
+# Grace period for jobs without a confirmed, privately staged PostgreSQL rebuild.
 PLANNER_JOB_STALE_SETTING = "TIMETABLE_PLANNER_JOB_STALE_MINUTES"
 PLANNER_JOB_STALE_DEFAULT_MIN = 45
+_WORKSPACE_MODES = (
+    PlannerJob.MODE_FULL_REBUILD,
+    PlannerJob.MODE_OPTIMISE_V2_FULL,
+    PlannerJob.MODE_SCHEDULER_BUILD,
+)
+_REBUILD_LEASE = "claimed_with_rebuild_lease"
 
 # The planner is process-local. A live solver may exceed the orphan timeout;
 # polling must not relinquish its ownership while its worker can still persist.
@@ -68,6 +71,10 @@ def _worker_lease(job_id):
     try:
         lease.set_autocommit(False)
         with lease.cursor() as cursor:
+            # The solver works on another connection. Its lease is idle by design.
+            cursor.execute("SET LOCAL idle_in_transaction_session_timeout = 0")
+            if lease.pg_version >= 170000:
+                cursor.execute("SET LOCAL transaction_timeout = 0")
             acquired = _try_worker_lock(cursor, job_id)
         yield acquired
     finally:
@@ -75,19 +82,28 @@ def _worker_lease(job_id):
 
 
 def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
-    """Mark orphaned planner jobs (RUNNING past the stale window, or QUEUED but
-    never dispatched) as FAILED. PR7 jobs are process-local and not durable
-    across restarts, so a server stop/reap leaves rows stranded in RUNNING
-    forever — a polling UI would spin indefinitely. Idempotent; returns the count
-    reconciled."""
+    """Fail orphaned jobs and return the number newly reconciled.
+
+    A PostgreSQL rebuild claimed with a timeout-protected lease works on
+    private tables and checks ownership at publication. It can be retried as
+    soon as its lease is gone. Other jobs use the configured grace period.
+    """
     if stale_minutes is None:
         stale_minutes = int(
             getattr(settings, PLANNER_JOB_STALE_SETTING, PLANNER_JOB_STALE_DEFAULT_MIN)
         )
     cutoff = timezone.now() - timedelta(minutes=max(1, stale_minutes))
+    eligible = Q(started_at__lt=cutoff) | Q(started_at__isnull=True, submitted_at__lt=cutoff)
+    if connection.vendor == "postgresql":
+        eligible |= Q(
+            status=PlannerJob.STATUS_RUNNING,
+            mode__in=_WORKSPACE_MODES,
+            params__contains={_REBUILD_LEASE: True},
+        )
     stale = PlannerJob.objects.filter(
+        eligible,
         status__in=[PlannerJob.STATUS_RUNNING, PlannerJob.STATUS_QUEUED],
-    ).filter(Q(started_at__lt=cutoff) | Q(started_at__isnull=True, submitted_at__lt=cutoff))
+    )
     with _EXECUTING_JOBS_LOCK:
         executing_ids = tuple(_EXECUTING_JOBS)
     stale = stale.exclude(pk__in=executing_ids)
@@ -205,7 +221,9 @@ def submit_planner_job(
     synchronous path would have used.
     """
     # Validate before even orphan reconciliation, which can itself write rows.
-    supplied_seed = parse_run_seed((params or {}).get("seed"))
+    params = dict(params or {})
+    params.pop(_REBUILD_LEASE, None)  # Only the worker that actually claims a job can set this.
+    supplied_seed = parse_run_seed(params.get("seed"))
     # Self-heal: sweep any jobs stranded RUNNING by a prior server death before
     # queueing a new one, so the table never accumulates ghost "running" rows.
     reconcile_stale_planner_jobs()
@@ -237,7 +255,7 @@ def submit_planner_job(
             submitted_by=user if getattr(user, "is_authenticated", False) else None,
             request_signature=_compute_request_signature(scenario_id, mode),
             params={
-                **(params or {}),
+                **params,
                 "seed": resolve_run_seed(supplied_seed),
                 "owned_scenario_ids": sorted(owned_scenario_ids),
                 "owned_term_section_ids": sorted(owned_section_ids),
@@ -510,7 +528,13 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
             job.save(update_fields=["status", "started_at", "finished_at"])
             return
         job.status = PlannerJob.STATUS_RUNNING
-        job.save(update_fields=["status", "started_at"])
+        claim_fields = ["status", "started_at"]
+        if connection.vendor == "postgresql" and job.mode in _WORKSPACE_MODES:
+            # Older workers can lose their lease to an idle timeout during a
+            # healthy solve. Stamp the claim, since submission can precede a deploy.
+            job.params = {**(job.params or {}), _REBUILD_LEASE: True}
+            claim_fields.append("params")
+        job.save(update_fields=claim_fields)
 
     baseline = None
     proposal = None
@@ -519,11 +543,7 @@ def _run_planner_job(job_id: uuid.UUID | str) -> None:
     failure = None
     try:
         _check_planner_cancel(job.id)
-        if job.mode in (
-            PlannerJob.MODE_FULL_REBUILD,
-            PlannerJob.MODE_OPTIMISE_V2_FULL,
-            PlannerJob.MODE_SCHEDULER_BUILD,
-        ):
+        if job.mode in _WORKSPACE_MODES:
             separate_progress = connection.vendor == "postgresql" and not connection.in_atomic_block
             with rebuild_workspace() as proposal:
                 # Keep an in-process cancellation request and last progress visible even
