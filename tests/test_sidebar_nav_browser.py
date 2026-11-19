@@ -8,7 +8,7 @@ core/templates/core/partials/sidebar.html):
   fuzzy-matches every destination the server drew for this person, moves with
   the arrow keys, opens with Enter, closes with Escape and gives focus back;
 - an optional 64px icon rail with a tooltip and accessible name for each link;
-- desktop staff sections folded at page load, including the active section;
+- desktop staff sections folded at page load except for the current screen;
   the mobile drawer retains group preferences and reveals the current page.
 
 And the two contrast fixes: an inactive nav icon clears 3:1 (WCAG 1.4.11)
@@ -448,7 +448,8 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         again = self._open(context, path="/section-planning/")
         self.assertGreater(again.locator("#appSidebar").bounding_box()["width"], 200)
         expect(again.locator("#sbRailToggle")).to_have_attribute("aria-expanded", "true")
-        expect(again.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
+        expect(again.locator("#nav-lbl-timetabling")).to_have_attribute("aria-expanded", "true")
+        expect(again.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(4)
 
     def test_the_rail_keeps_every_link_named_and_shows_the_name_on_hover(self) -> None:
         context = self._context()
@@ -564,14 +565,14 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
     def test_staff_first_paint_is_full_width_even_with_an_old_saved_rail(self) -> None:
         page = self._before_the_module("localStorage.setItem('sidebar-rail', '1');")
         self.assertGreater(page.locator("#appSidebar").bounding_box()["width"], 200)
-        expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+        expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(1)
 
     def test_the_head_script_alone_draws_a_collapsed_group(self) -> None:
         page = self._before_the_module(
             "localStorage.setItem('sidebar-nav-collapsed', JSON.stringify(['advising']));"
         )
         expect(page.locator("#nav-grp-advising")).not_to_be_visible()
-        expect(page.locator("#nav-grp-timetabling")).to_be_hidden()
+        expect(page.locator('#nav-grp-timetabling a[href="/planner/"]')).to_be_visible()
 
     def test_navigation_links_are_available_if_the_sidebar_script_fails(self) -> None:
         context = self._context()
@@ -605,7 +606,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#nav-grp-advising")).to_be_visible()
 
     # ── Section groups ───────────────────────────────────────────────────
-    def test_staff_desktop_starts_full_width_with_every_section_folded(self) -> None:
+    def test_staff_desktop_opens_the_current_dashboard_section_on_load_and_reload(self) -> None:
         for lang in ("en", "ar"):
             page = self._open(self._context(language=lang), path="/#batch", language=lang)
             headers = page.locator("#menu .nav-lbl")
@@ -613,8 +614,8 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             expect(headers.locator('.nav-section-icon[aria-hidden="true"]:visible')).to_have_count(
                 5
             )
-            expect(page.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
-            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+            expect(page.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(4)
+            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(1)
             self.assertGreater(page.locator("#appSidebar").bounding_box()["width"], 200)
 
             current = page.locator("#menu .nav-grp.is-current-section")
@@ -622,28 +623,58 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             expect(current).to_have_attribute("data-group", "advising")
             advising = page.locator("#nav-lbl-advising")
             expect(advising).to_have_attribute("aria-current", "location")
+            expect(advising).to_have_attribute("aria-expanded", "true")
             advising.focus()
             page.keyboard.press("Enter")
-            expect(advising).to_have_attribute("aria-expanded", "true")
-            expect(page.locator("#nav-grp-advising")).to_be_visible()
-            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(1)
-            page.reload()
-            expect(page.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
+            expect(advising).to_have_attribute("aria-expanded", "false")
             expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+            page.reload()
+            expect(advising).to_have_attribute("aria-expanded", "true")
+            expect(page.locator("#menu .nav-a.active")).to_be_visible()
             expect(advising).to_have_attribute("aria-current", "location")
+
+    def test_navigation_between_standalone_pages_and_dashboard_panels_opens_the_group(self) -> None:
+        page = self._open(self._context(), path="/")
+        expect(page.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
+        page.locator("#nav-lbl-timetabling").click()
+        planner = page.locator('#menu a[href="/planner/"]')
+        planner.click()
+        expect(page).to_have_url(f"{self.live_server_url}/planner/")
+        expect(planner).to_be_visible()
+        expect(page.locator("#nav-lbl-timetabling")).to_have_attribute("aria-expanded", "true")
+        page.reload()
+        expect(planner).to_be_visible()
+
+        page.locator("#nav-lbl-timetabling").click()
+        expect(planner).to_be_hidden()
+        page.locator("#nav-lbl-curriculum").click()
+        plan = page.locator('#menu a[href="/#plan"]')
+        plan.click()
+        expect(page).to_have_url(f"{self.live_server_url}/#plan")
+        expect(plan).to_be_visible()
+        prereq = page.locator('#menu a[href="/#prereq"]')
+        prereq.click()
+        expect(page).to_have_url(f"{self.live_server_url}/#prereq")
+        expect(prereq).to_be_visible()
+        page.go_back()
+        expect(page).to_have_url(f"{self.live_server_url}/#plan")
+        expect(plan).to_be_visible()
+        page.go_back()
+        expect(page).to_have_url(f"{self.live_server_url}/planner/")
+        expect(planner).to_be_visible()
 
     def test_current_section_stays_highlighted_when_other_sections_open(self) -> None:
         for theme in ("light", "dark"):
             page = self._open(self._context(theme=theme))
             current = page.locator("#nav-lbl-timetabling")
             other = page.locator("#nav-lbl-insights")
-            expect(current).to_have_attribute("aria-expanded", "false")
+            expect(current).to_have_attribute("aria-expanded", "true")
             expect(current).to_have_attribute("aria-current", "location")
             background = "(button) => getComputedStyle(button).backgroundColor"
             self.assertNotEqual(current.evaluate(background), other.evaluate(background), theme)
             other.click()
             expect(other).to_have_attribute("aria-expanded", "true")
-            expect(current).to_have_attribute("aria-expanded", "false")
+            expect(current).to_have_attribute("aria-expanded", "true")
             expect(current).to_have_attribute("aria-current", "location")
             expect(page.locator("#menu .nav-lbl[aria-current]")).to_have_count(1)
 
@@ -657,10 +688,11 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             active = page.locator("#menu .nav-a.active")
             expect(active).to_have_count(1)
             expect(active).to_have_attribute("href", href)
+            expect(active).to_be_visible()
             expect(page.locator("#nav-lbl-timetabling")).to_have_attribute(
                 "aria-current", "location"
             )
-            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(1)
 
     def test_the_drawer_remembers_a_collapsed_group(self) -> None:
         context = self._context(width=390)
@@ -717,7 +749,8 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         silently, and a second, scripted shadow would have doubled it."""
         page = self._open(self._context(height=620), path="/planner/", still=False)
         for button in page.locator(".nav-lbl").all():
-            button.click()
+            if button.get_attribute("aria-expanded") == "false":
+                button.click()
         nav = page.locator("#menu")
         # The module brings the current page into view, which can leave the
         # list part-scrolled: settle that, then drive the scroller from the top.
