@@ -12,14 +12,14 @@
       point on the wide data tables and timetable grids. Each item's name is
       drawn as a tooltip on hover and on focus, and stays in the DOM clipped so
       it is still the link's accessible name.
-   3. Collapsible section groups, remembered per browser, and a shadow at
+   3. Collapsible section groups, and a shadow at
       whichever edge of the list still has more to scroll.
 
    Where the state lives. The rail and the collapsed groups are applied as
    attributes on <html> by the anti-flash script in base.html, before any CSS
    paints, and the stylesheet reads those attributes. This file changes the same
-   attributes and writes the choice to localStorage. One mechanism, one store:
-   nothing here keeps a second copy of the state.
+   attributes. Staff desktop pages start full width with folded sections.
+   Other layouts restore their navigation preferences from localStorage.
 
    Every user-visible string is written once, in both languages, in
    core/templates/core/partials/sidebar.html, and read from the search row's
@@ -52,6 +52,7 @@
   const railToggle = document.getElementById('sbRailToggle');
   const findBtn = document.getElementById('navFind');
   const groups = Array.from(sidebar.querySelectorAll('.nav-grp[data-group]'));
+  const foldOnLoad = root.hasAttribute('data-sidebar-fold-on-load');
 
   /* ── Where we are ──────────────────────────────────────────────────────
      `.active` is set server-side or by the sidebar partial's own script. The
@@ -74,10 +75,10 @@
     return stored.filter((id) => typeof id === 'string' && GROUP_ID.test(id));
   }
 
-  /* Of those, the ones this page actually draws. */
+  /* The head script chooses the initial state before paint. */
   function collapsedIds() {
     const known = new Set(groups.map((group) => group.dataset.group));
-    return storedIds().filter((id) => known.has(id));
+    return (root.getAttribute('data-sidebar-collapsed') || '').split(' ').filter((id) => known.has(id));
   }
 
   /* `ids` replaces what this page knows about and leaves every other role's
@@ -88,30 +89,33 @@
     store.set(GROUPS_KEY, JSON.stringify(theirs.concat(ids)));
   }
 
-  /* Writes the collapsed set to <html> for the stylesheet and mirrors it onto
-     each header's aria-expanded.
-
-     `protectHere` is for arriving at a page (and for moving between the
-     dashboard's panels): the group holding the current page is dropped from
-     the stored set, so the page you are on is never hidden behind a collapsed
-     header. It is NOT passed when the user presses a header, or pressing the
-     current group's own header would be a control that does nothing. */
-  function applyGroups(protectHere) {
-    let ids = collapsedIds();
-    if (protectHere) {
-      const here = whereWeAre();
-      const group = here ? here.closest('.nav-grp[data-group]') : null;
-      if (group && ids.indexOf(group.dataset.group) !== -1) {
-        ids = ids.filter((id) => id !== group.dataset.group);
-        saveCollapsed(ids);
-      }
-    }
+  function applyGroups(ids, remember) {
     if (ids.length) root.setAttribute('data-sidebar-collapsed', ids.join(' '));
     else root.removeAttribute('data-sidebar-collapsed');
     groups.forEach((group) => {
       const header = group.querySelector('.nav-lbl');
       if (header) header.setAttribute('aria-expanded', ids.indexOf(group.dataset.group) === -1 ? 'true' : 'false');
     });
+    if (remember && !foldOnLoad) saveCollapsed(ids);
+  }
+
+  function syncCurrentSection(reveal) {
+    const here = whereWeAre();
+    const group = here && here.closest('.nav-grp[data-group]');
+    if (sidebar.hasAttribute('data-inline-sections')) {
+      groups.forEach((section) => {
+        const isCurrent = section === group;
+        section.classList.toggle('is-current-section', isCurrent);
+        const heading = section.querySelector('.nav-lbl');
+        if (isCurrent) heading.setAttribute('aria-current', 'location');
+        else heading.removeAttribute('aria-current');
+      });
+    }
+    if (!reveal || !group) return;
+    const ids = collapsedIds();
+    if (ids.includes(group.dataset.group)) {
+      applyGroups(ids.filter((id) => id !== group.dataset.group), true);
+    }
   }
 
   groups.forEach((group) => {
@@ -123,8 +127,7 @@
       const at = ids.indexOf(id);
       if (at === -1) ids.push(id);
       else ids.splice(at, 1);
-      saveCollapsed(ids);
-      applyGroups(false);
+      applyGroups(ids, true);
     });
   });
 
@@ -154,10 +157,10 @@
     railToggle.addEventListener('click', () => {
       if (railIsOn()) {
         root.removeAttribute('data-sidebar-rail');
-        store.drop(RAIL_KEY);
+        if (!foldOnLoad) store.drop(RAIL_KEY);
       } else {
         root.setAttribute('data-sidebar-rail', '1');
-        store.set(RAIL_KEY, '1');
+        if (!foldOnLoad) store.set(RAIL_KEY, '1');
       }
       syncRail();
       hideTip();
@@ -696,7 +699,8 @@
 
   /* ── First run ────────────────────────────────────────────────────────── */
   syncRail();
-  applyGroups(true);
+  applyGroups(collapsedIds(), false);
+  syncCurrentSection(!foldOnLoad);
   revealHere();
   /* Once more after the first frame: it reads the laid-out box, and it is a
      no-op when the first reading was already right. */
@@ -706,13 +710,17 @@
      one every time the hash changes. Each of those is an arrival, so the group
      holding it is brought back into view. */
   if (navSec && typeof MutationObserver === 'function') {
+    let lastUrl = location.href;
     const marks = new MutationObserver((changes) => {
       /* Only a LINK's own class is an arrival. The dashboard also rewrites its
          sidebar badges' className after a fetch (_js_i18n.html), and those are
          nodes inside this nav: treating one as an arrival would re-open a group
          the user had just deliberately collapsed, and write that to the store. */
       if (!changes.some((change) => change.target.classList && change.target.classList.contains('nav-a'))) return;
-      applyGroups(true);
+      // Initial dashboard highlighting happens after this script. Only a real
+      // navigation within the document should open a freshly folded section.
+      syncCurrentSection(!foldOnLoad || location.href !== lastUrl);
+      lastUrl = location.href;
     });
     marks.observe(navSec, { subtree: true, attributes: true, attributeFilter: ['class', 'aria-current'] });
   }

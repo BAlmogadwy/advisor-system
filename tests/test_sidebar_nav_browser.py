@@ -7,11 +7,9 @@ core/templates/core/partials/sidebar.html):
 - a command palette on Ctrl/Cmd+K and on the nav's search row, which
   fuzzy-matches every destination the server drew for this person, moves with
   the arrow keys, opens with Enter, closes with Escape and gives focus back;
-- an icon rail at 64px, remembered across loads and APPLIED BY THE HEAD
-  SCRIPT, before the body is parsed, so a collapsed sidebar is never painted
-  open first; each item keeps its name, clipped, and shows it as a tooltip;
-- collapsible section groups, remembered per browser, except that arriving at
-  a page never leaves the group holding it collapsed.
+- an optional 64px icon rail with a tooltip and accessible name for each link;
+- desktop staff sections folded at page load, including the active section;
+  the mobile drawer retains group preferences and reveals the current page.
 
 And the two contrast fixes: an inactive nav icon clears 3:1 (WCAG 1.4.11)
 against the sidebar it sits on, in light and in dark, where it measured 1.84
@@ -122,11 +120,15 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         self.session = client.cookies[settings.SESSION_COOKIE_NAME].value
 
     # ── Harness ──────────────────────────────────────────────────────────
-    def _context(self, language: str = "en", theme: str = "light", height: int = 820):
+    def _context(
+        self, language: str = "en", theme: str = "light", height: int = 820, width: int = 1440
+    ):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
+            is_mobile=width <= 768,
+            has_touch=width <= 768,
             extra_http_headers={"Accept-Language": language},
-            viewport={"width": 1440, "height": height},
+            viewport={"width": width, "height": height},
         )
         self.addCleanup(context.close)
         context.add_cookies(
@@ -429,7 +431,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         self.assertTrue(badge_shown_at_full_width["en"], "the badge never shows")
 
     # ── The icon rail ────────────────────────────────────────────────────
-    def test_the_rail_is_remembered_and_applied_before_the_body_is_parsed(self) -> None:
+    def test_staff_can_use_the_rail_until_the_next_page_load(self) -> None:
         context = self._context()
         page = self._open(context)
         sidebar = page.locator("#appSidebar")
@@ -440,18 +442,13 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         toggle.click()
         self.assertEqual(toggle.get_attribute("aria-expanded"), "false")
         self.assertAlmostEqual(sidebar.bounding_box()["width"], 64, delta=2)
-        self.assertEqual(page.evaluate("localStorage.getItem('sidebar-rail')"), "1")
         # Its name says what pressing it does now, in the page's language.
         expect(toggle).to_have_accessible_name("Expand the menu")
 
-        again = self._open(context)
-        self.assertAlmostEqual(again.locator("#appSidebar").bounding_box()["width"], 64, delta=2)
-        expect(again.locator("#sbRailToggle")).to_have_accessible_name("Expand the menu")
-
-        # And it goes back.
-        again.locator("#sbRailToggle").click()
+        again = self._open(context, path="/section-planning/")
         self.assertGreater(again.locator("#appSidebar").bounding_box()["width"], 200)
-        self.assertIsNone(again.evaluate("localStorage.getItem('sidebar-rail')"))
+        expect(again.locator("#sbRailToggle")).to_have_attribute("aria-expanded", "true")
+        expect(again.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
 
     def test_the_rail_keeps_every_link_named_and_shows_the_name_on_hover(self) -> None:
         context = self._context()
@@ -482,7 +479,6 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         # hide its icons with nothing left to re-open it.
         context = self._context()
         page = self._open(context, path="/planner/")
-        page.locator('.nav-grp[data-group="insights"] .nav-lbl').click()
         expect(page.locator("#nav-grp-insights")).not_to_be_visible()
 
         page.locator("#sbRailToggle").click()
@@ -555,56 +551,121 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             self.assertAlmostEqual(box["x"] + box["width"] / 2, centre, delta=2, msg=name)
 
     # ── Applied before the first paint ───────────────────────────────────
-    def _without_the_module(self, stored: str):
-        """A context whose pages never load static/js/sidebar-nav.js. What the
-        sidebar then does is the anti-flash block in base.html's <head> and the
-        stylesheet, and a stylesheet applies before the first paint — so these
-        say the sidebar is never painted open and then snapped shut."""
-        context = self._context()
+    def _before_the_module(self, stored: str, width: int = 1440):
+        """Pause the script request and inspect the sidebar drawn by the head and CSS."""
+        context = self._context(width=width)
         context.add_init_script(f"try {{ {stored} }} catch (e) {{}}")
-        context.route("**/sidebar-nav.js*", lambda route: route.abort())
-        return context
+        context.route("**/sidebar-nav.js*", lambda route: None)
+        page = context.new_page()
+        page.goto(f"{self.live_server_url}/planner/", wait_until="commit")
+        page.locator("#sbRailToggle").wait_for(state="attached")
+        return page
 
-    def test_the_head_script_alone_draws_the_rail(self) -> None:
-        context = self._without_the_module("localStorage.setItem('sidebar-rail', '1');")
-        page = self._open(context, path="/planner/")
-        self.assertAlmostEqual(page.locator("#appSidebar").bounding_box()["width"], 64, delta=2)
+    def test_staff_first_paint_is_full_width_even_with_an_old_saved_rail(self) -> None:
+        page = self._before_the_module("localStorage.setItem('sidebar-rail', '1');")
+        self.assertGreater(page.locator("#appSidebar").bounding_box()["width"], 200)
+        expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
 
     def test_the_head_script_alone_draws_a_collapsed_group(self) -> None:
-        context = self._without_the_module(
+        page = self._before_the_module(
             "localStorage.setItem('sidebar-nav-collapsed', JSON.stringify(['advising']));"
         )
-        page = self._open(context, path="/planner/")
         expect(page.locator("#nav-grp-advising")).not_to_be_visible()
-        expect(page.locator("#nav-grp-timetabling")).to_be_visible()
+        expect(page.locator("#nav-grp-timetabling")).to_be_hidden()
+
+    def test_navigation_links_are_available_if_the_sidebar_script_fails(self) -> None:
+        context = self._context()
+        context.route("**/sidebar-nav.js*", lambda route: route.abort())
+        page = self._open(context, path="/planner/")
+        expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(5)
+        expect(page.locator('.sidebar .nav-a[href="/planner/"]')).to_be_visible()
 
     def test_a_tampered_store_cannot_put_anything_into_the_attribute(self) -> None:
         # Without the module, so this is the <head> block's own filter.
-        context = self._without_the_module(
+        page = self._before_the_module(
             "localStorage.setItem('sidebar-nav-collapsed',"
-            " JSON.stringify(['advising', 'x\" onload=\"1', 42, 'Insights']));"
+            " JSON.stringify(['advising', 'x\" onload=\"1', 42, 'Insights']));",
+            width=390,
         )
-        page = self._open(context, path="/planner/")
         self.assertEqual(
             page.evaluate("document.documentElement.getAttribute('data-sidebar-collapsed')"),
             "advising",
         )
 
     def test_a_store_that_is_not_a_list_is_simply_ignored(self) -> None:
-        context = self._context()
+        context = self._context(width=390)
         context.add_init_script(
             "try { localStorage.setItem('sidebar-nav-collapsed', 'not json at all'); } catch (e) {}"
         )
         page = self._open(context, path="/planner/")
+        page.locator(".sidebar-toggle").click()
         self.assertIsNone(
             page.evaluate("document.documentElement.getAttribute('data-sidebar-collapsed')")
         )
         expect(page.locator("#nav-grp-advising")).to_be_visible()
 
     # ── Section groups ───────────────────────────────────────────────────
-    def test_a_collapsed_group_is_remembered(self) -> None:
+    def test_staff_desktop_starts_full_width_with_every_section_folded(self) -> None:
+        for lang in ("en", "ar"):
+            page = self._open(self._context(language=lang), path="/#batch", language=lang)
+            headers = page.locator("#menu .nav-lbl")
+            expect(headers).to_have_count(5)
+            expect(headers.locator('.nav-section-icon[aria-hidden="true"]:visible')).to_have_count(
+                5
+            )
+            expect(page.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
+            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+            self.assertGreater(page.locator("#appSidebar").bounding_box()["width"], 200)
+
+            current = page.locator("#menu .nav-grp.is-current-section")
+            expect(current).to_have_count(1)
+            expect(current).to_have_attribute("data-group", "advising")
+            advising = page.locator("#nav-lbl-advising")
+            expect(advising).to_have_attribute("aria-current", "location")
+            advising.focus()
+            page.keyboard.press("Enter")
+            expect(advising).to_have_attribute("aria-expanded", "true")
+            expect(page.locator("#nav-grp-advising")).to_be_visible()
+            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(1)
+            page.reload()
+            expect(page.locator("#menu .nav-lbl[aria-expanded=false]")).to_have_count(5)
+            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+            expect(advising).to_have_attribute("aria-current", "location")
+
+    def test_current_section_stays_highlighted_when_other_sections_open(self) -> None:
+        for theme in ("light", "dark"):
+            page = self._open(self._context(theme=theme))
+            current = page.locator("#nav-lbl-timetabling")
+            other = page.locator("#nav-lbl-insights")
+            expect(current).to_have_attribute("aria-expanded", "false")
+            expect(current).to_have_attribute("aria-current", "location")
+            background = "(button) => getComputedStyle(button).backgroundColor"
+            self.assertNotEqual(current.evaluate(background), other.evaluate(background), theme)
+            other.click()
+            expect(other).to_have_attribute("aria-expanded", "true")
+            expect(current).to_have_attribute("aria-expanded", "false")
+            expect(current).to_have_attribute("aria-current", "location")
+            expect(page.locator("#menu .nav-lbl[aria-current]")).to_have_count(1)
+
+    def test_nested_staff_routes_highlight_the_closest_navigation_link(self) -> None:
         context = self._context()
+        for route, href in (
+            ("/exam-timetable/rosters/", "/exam-timetable/"),
+            ("/timetable-workspace/graph/", "/timetable-workspace/graph/"),
+        ):
+            page = self._open(context, path=route)
+            active = page.locator("#menu .nav-a.active")
+            expect(active).to_have_count(1)
+            expect(active).to_have_attribute("href", href)
+            expect(page.locator("#nav-lbl-timetabling")).to_have_attribute(
+                "aria-current", "location"
+            )
+            expect(page.locator("#menu .nav-grp-items:visible")).to_have_count(0)
+
+    def test_the_drawer_remembers_a_collapsed_group(self) -> None:
+        context = self._context(width=390)
         page = self._open(context, path="/planner/")
+        page.locator(".sidebar-toggle").click()
         header = page.locator('.nav-grp[data-group="advising"] .nav-lbl')
         self.assertEqual(header.get_attribute("aria-expanded"), "true")
 
@@ -616,6 +677,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         )
 
         again = self._open(context, path="/planner/")
+        again.locator(".sidebar-toggle").click()
         expect(again.locator("#nav-grp-advising")).not_to_be_visible()
         self.assertEqual(
             again.locator('.nav-grp[data-group="advising"] .nav-lbl').get_attribute(
@@ -624,9 +686,10 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
             "false",
         )
 
-    def test_arriving_at_a_page_never_leaves_its_own_group_collapsed(self) -> None:
-        context = self._context()
+    def test_the_drawer_opens_the_current_pages_group_on_arrival(self) -> None:
+        context = self._context(width=390)
         page = self._open(context, path="/planner/")
+        page.locator(".sidebar-toggle").click()
         # Two groups away from this page, and one that holds it.
         page.locator('.nav-grp[data-group="advising"] .nav-lbl').click()
         page.locator('.nav-grp[data-group="timetabling"] .nav-lbl').click()
@@ -638,6 +701,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         # /planner/ is in Timetabling: that group comes back, and stops being
         # remembered as collapsed, so the two never disagree.
         again = self._open(context, path="/planner/")
+        again.locator(".sidebar-toggle").click()
         expect(again.locator("#nav-grp-timetabling")).to_be_visible()
         expect(again.locator('.sidebar .nav-a.active[href="/planner/"]')).to_be_visible()
         expect(again.locator("#nav-grp-advising")).not_to_be_visible()
@@ -652,6 +716,8 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         there; wrapping or re-parenting the scroller would have killed it
         silently, and a second, scripted shadow would have doubled it."""
         page = self._open(self._context(height=620), path="/planner/", still=False)
+        for button in page.locator(".nav-lbl").all():
+            button.click()
         nav = page.locator("#menu")
         # The module brings the current page into view, which can leave the
         # list part-scrolled: settle that, then drive the scroller from the top.
@@ -795,12 +861,13 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         to be able to lose it — and every other test in this file runs as that
         super admin, so nothing else can see this.
         """
-        context = self._context()
+        context = self._context(width=390)
         context.add_init_script(
             "try { localStorage.setItem('sidebar-nav-collapsed',"
             " JSON.stringify(['exams'])); } catch (e) {}"
         )
         page = self._open(context, path="/planner/")
+        page.locator(".sidebar-toggle").click()
         expect(page.locator('.nav-grp[data-group="exams"]')).to_have_count(0)
 
         page.locator('.nav-grp[data-group="advising"] .nav-lbl').click()
@@ -822,26 +889,45 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         header.
         """
         page = self._open(self._context(), path="/")
+        current = page.locator("#menu .nav-grp.is-current-section")
+        expect(current).to_have_count(0)
         header = page.locator('.nav-grp[data-group="advising"] .nav-lbl')
-        header.click()
         self.assertEqual(header.get_attribute("aria-expanded"), "false")
         expect(page.locator("#nav-grp-advising")).not_to_be_visible()
 
         page.evaluate("location.hash = '#batch'")
         expect(page.locator("#nav-grp-advising")).to_be_visible()
         self.assertEqual(header.get_attribute("aria-expanded"), "true")
+        expect(current).to_have_attribute("data-group", "advising")
+        page.evaluate("location.hash = '#prereq'")
+        expect(current).to_have_attribute("data-group", "curriculum")
+        expect(page.locator("#menu .nav-lbl[aria-current=location]")).to_have_count(1)
+        page.go_back()
+        expect(current).to_have_attribute("data-group", "advising")
+        page.evaluate("location.hash = '#overview'")
+        expect(current).to_have_count(0)
+        expect(page.locator("#menu .nav-lbl[aria-current=location]")).to_have_count(0)
+
+    def test_back_to_the_bare_dashboard_restores_overview_and_clears_the_section(self) -> None:
+        page = self._open(self._context(), path="/")
+        expect(page.locator("#overview.active")).to_be_visible()
+        page.locator("#nav-lbl-advising").click()
+        page.locator('#menu a[href="/#batch"]').click()
+        expect(page).to_have_url(f"{self.live_server_url}/#batch")
+        expect(page.locator("#batch.active")).to_be_visible()
+        expect(page.locator("#nav-lbl-advising")).to_have_attribute("aria-current", "location")
+
+        page.go_back()
+        expect(page).to_have_url(f"{self.live_server_url}/")
+        expect(page.locator("#overview.active")).to_be_visible()
+        expect(page.locator("#menu .nav-grp.is-current-section")).to_have_count(0)
+        expect(page.locator("#menu .nav-lbl[aria-current=location]")).to_have_count(0)
 
     def test_a_badge_repaint_does_not_reopen_a_collapsed_group(self) -> None:
         """The dashboard rewrites its sidebar badges' className after a fetch.
 
-        That is not an arrival. Counting it as one would pull a group the user
-        has just collapsed back open — and write it to the store, so it would
-        not even stay collapsed on the next load.
-
-        The active link has to be INSIDE the collapsed group for this to say
-        anything: `applyGroups(true)` only ever rescues the group holding the
-        page you are on, so with the active link elsewhere a repaint treated
-        as an arrival would be harmless and the test would pass either way.
+        A badge repaint must leave the current section folded after the user
+        closes it. A real navigation would reopen that section.
         """
         page = self._open(self._context(), path="/")
         page.evaluate("location.hash = '#batch'")
@@ -867,9 +953,7 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
 
         expect(page.locator("#nav-grp-advising")).not_to_be_visible()
         self.assertEqual(header.get_attribute("aria-expanded"), "false")
-        self.assertEqual(
-            page.evaluate("localStorage.getItem('sidebar-nav-collapsed')"), '["advising"]'
-        )
+        self.assertIsNone(page.evaluate("localStorage.getItem('sidebar-nav-collapsed')"))
 
     def test_the_drawer_moves_focus_to_something_the_layout_renders(self) -> None:
         """The drawer calls itself a modal dialog, so it owes focus to its own
