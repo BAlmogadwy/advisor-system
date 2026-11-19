@@ -21,8 +21,12 @@ Both functions are called from the timetable workspace API layer
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any
 
 from core.models import (
     Course,
@@ -79,20 +83,32 @@ def _normalise_course_filter(course_keys: Iterable[str] | None) -> set[str]:
     return {normalize_code(course_key) for course_key in (course_keys or []) if course_key}
 
 
-def load_scenario_course_demands(
-    scenario_id: int,
-    *,
-    course_keys: Iterable[str] | None = None,
-    statuses: Iterable[str] | None = None,
-) -> list[StudentCourseDemand]:
-    """Load canonical per-student course demand for a scenario."""
+_DemandRows = Sequence[Mapping[str, Any]]
+_request_demand_rows: ContextVar[dict[tuple[int, frozenset[str]], _DemandRows] | None] = ContextVar(
+    "request_demand_rows", default=None
+)
 
-    course_filter = _normalise_course_filter(course_keys)
-    active_statuses = set(statuses or ACTIVE_DEMAND_STATUSES)
-    rows = (
+
+@contextmanager
+def demand_read_scope() -> Iterator[None]:
+    """Share demand rows across the board checks in one read-only request."""
+    token = _request_demand_rows.set({})
+    try:
+        yield
+    finally:
+        _request_demand_rows.reset(token)
+
+
+def _scenario_demand_rows(scenario_id: int, statuses: frozenset[str]) -> _DemandRows:
+    cache = _request_demand_rows.get()
+    key = (scenario_id, statuses)
+    if cache is not None and key in cache:
+        return cache[key]
+
+    rows = list(
         ScenarioStudentCourseRequest.objects.filter(
             scenario_id=scenario_id,
-            status__in=active_statuses,
+            status__in=statuses,
         )
         .order_by("student_id", "course_key")
         .values(
@@ -110,11 +126,29 @@ def load_scenario_course_demands(
             "source_payload",
         )
     )
+    if cache is not None:
+        cache[key] = rows
+    return rows
+
+
+def load_scenario_course_demands(
+    scenario_id: int,
+    *,
+    course_keys: Iterable[str] | None = None,
+    statuses: Iterable[str] | None = None,
+) -> list[StudentCourseDemand]:
+    """Load canonical per-student course demand for a scenario."""
+
+    course_filter = _normalise_course_filter(course_keys)
+    rows = _scenario_demand_rows(scenario_id, frozenset(statuses or ACTIVE_DEMAND_STATUSES))
+    shared_rows = _request_demand_rows.get() is not None
     out = []
     for row in rows:
         course_key = _course_key(row["course_key"])
         if course_filter and normalize_code(course_key) not in course_filter:
             continue
+        # Nested JSON belongs to the caller even when several checks share the source row.
+        payload = dict(row.get("source_payload") or {})
         out.append(
             StudentCourseDemand(
                 scenario_id=scenario_id,
@@ -129,7 +163,7 @@ def load_scenario_course_demands(
                 reason_blocked=str(row.get("reason_blocked") or ""),
                 reason_detail=str(row.get("reason_detail") or ""),
                 source=str(row.get("source") or "scenario_student_course_request"),
-                source_payload=dict(row.get("source_payload") or {}),
+                source_payload=deepcopy(payload) if shared_rows else payload,
             )
         )
     return out

@@ -5,6 +5,7 @@ Unit tests for the timetable overlap matrix module.
 from __future__ import annotations
 
 import pytest
+from pytest_django.fixtures import DjangoAssertNumQueries
 
 from core.models import (
     Course,
@@ -16,6 +17,7 @@ from core.models import (
 )
 from core.services.timetable_demand import (
     compute_scenario_course_demand,
+    demand_read_scope,
     load_scenario_course_demands,
 )
 from core.services.timetable_overlap import (
@@ -138,6 +140,61 @@ class TestBuildCourseStudentsMap:
         assert "OV_A" in cs_map
         assert "OV_B" not in cs_map
         assert "OV_C" not in cs_map
+
+
+def test_demand_scope_preserves_filters_and_independent_results(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    scenario = TimetableScenario.objects.create(name="Demand scope")
+    other = TimetableScenario.objects.create(name="Other demand scope")
+    for student_id, key, status in (
+        (2, "CS101::B", ScenarioStudentCourseRequest.STATUS_SERVED),
+        (1, "CS101::A", ScenarioStudentCourseRequest.STATUS_BLOCKED),
+        (3, "CS101::A", ScenarioStudentCourseRequest.STATUS_IGNORED),
+    ):
+        ScenarioStudentCourseRequest.objects.create(
+            scenario=scenario,
+            student_id=student_id,
+            course_key=key,
+            course_code="CS101",
+            status=status,
+            source_payload={"course": {"key": key}},
+        )
+
+    with demand_read_scope():
+        with django_assert_num_queries(1):
+            subset = load_scenario_course_demands(scenario.id, course_keys=[" cs 101::b "])
+            assert [row.student_id for row in subset] == [2]
+            course = subset.pop().source_payload["course"]
+            assert isinstance(course, dict)
+            course["key"] = "changed"
+            rows = load_scenario_course_demands(scenario.id)
+            assert [(row.student_id, row.course_key) for row in rows] == [
+                (1, "CS101::A"),
+                (2, "CS101::B"),
+            ]
+            assert rows[1].source_payload == {"course": {"key": "CS101::B"}}
+            assert load_scenario_course_demands(scenario.id, course_keys=["CS101"]) == []
+
+        inactive = [
+            ScenarioStudentCourseRequest.STATUS_IGNORED,
+            ScenarioStudentCourseRequest.STATUS_CANCELLED,
+        ]
+        with django_assert_num_queries(1):
+            ignored = load_scenario_course_demands(scenario.id, statuses=inactive)
+            assert [row.student_id for row in ignored] == [3]
+            assert load_scenario_course_demands(scenario.id, statuses=reversed(inactive)) == ignored
+
+        with django_assert_num_queries(1):
+            assert load_scenario_course_demands(other.id) == []
+            assert load_scenario_course_demands(other.id) == []
+            assert load_scenario_course_demands(scenario.id) == rows
+
+    ScenarioStudentCourseRequest.objects.filter(scenario=scenario, student_id=2).update(
+        status=ScenarioStudentCourseRequest.STATUS_CANCELLED
+    )
+    with django_assert_num_queries(1):
+        assert [row.student_id for row in load_scenario_course_demands(scenario.id)] == [1]
 
 
 class TestBuildOverlapMatrix:
