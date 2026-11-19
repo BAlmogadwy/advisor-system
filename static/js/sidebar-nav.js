@@ -18,7 +18,8 @@
    Where the state lives. The rail and the collapsed groups are applied as
    attributes on <html> by the anti-flash script in base.html, before any CSS
    paints, and the stylesheet reads those attributes. This file changes the same
-   attributes. Staff desktop pages start full width with folded sections.
+   attributes. Staff desktop pages start full width and reveal the current
+   page's section as soon as its link is marked.
    Other layouts restore their navigation preferences from localStorage.
 
    Every user-visible string is written once, in both languages, in
@@ -99,8 +100,7 @@
     if (remember && !foldOnLoad) saveCollapsed(ids);
   }
 
-  function syncCurrentSection(reveal) {
-    const here = whereWeAre();
+  function syncCurrentSection(here) {
     const group = here && here.closest('.nav-grp[data-group]');
     if (sidebar.hasAttribute('data-inline-sections')) {
       groups.forEach((section) => {
@@ -111,7 +111,7 @@
         else heading.removeAttribute('aria-current');
       });
     }
-    if (!reveal || !group) return;
+    if (!group) return;
     const ids = collapsedIds();
     if (ids.includes(group.dataset.group)) {
       applyGroups(ids.filter((id) => id !== group.dataset.group), true);
@@ -699,8 +699,10 @@
 
   /* ── First run ────────────────────────────────────────────────────────── */
   syncRail();
-  applyGroups(collapsedIds(), false);
-  syncCurrentSection(!foldOnLoad);
+  applyGroups(foldOnLoad ? groups.map((group) => group.dataset.group) : collapsedIds(), false);
+  let currentLink = whereWeAre();
+  syncCurrentSection(currentLink);
+  root.removeAttribute('data-sidebar-fold-on-load');
   revealHere();
   /* Once more after the first frame: it reads the laid-out box, and it is a
      no-op when the first reading was already right. */
@@ -710,18 +712,17 @@
      one every time the hash changes. Each of those is an arrival, so the group
      holding it is brought back into view. */
   if (navSec && typeof MutationObserver === 'function') {
-    let lastUrl = location.href;
     const marks = new MutationObserver((changes) => {
-      /* Only a LINK's own class is an arrival. The dashboard also rewrites its
-         sidebar badges' className after a fetch (_js_i18n.html), and those are
-         nodes inside this nav: treating one as an arrival would re-open a group
-         the user had just deliberately collapsed, and write that to the store. */
+      /* A badge or a repaint of the same link should leave manual folds alone. */
       if (!changes.some((change) => change.target.classList && change.target.classList.contains('nav-a'))) return;
-      // Initial dashboard highlighting happens after this script. Only a real
-      // navigation within the document should open a freshly folded section.
-      syncCurrentSection(!foldOnLoad || location.href !== lastUrl);
-      lastUrl = location.href;
+      const next = whereWeAre();
+      if (next === currentLink) return;
+      currentLink = next;
+      syncCurrentSection(currentLink);
     });
     marks.observe(navSec, { subtree: true, attributes: true, attributeFilter: ['class', 'aria-current'] });
   }
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) syncCurrentSection(whereWeAre());
+  });
 })();

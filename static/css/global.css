@@ -1834,6 +1834,11 @@ html[dir="rtl"] .sb-rail-toggle .i { transform: scaleX(-1); }
    "G16" block near the end of this file). Nothing here duplicates it. */
 
 /* ── Collapsed section groups ─────────────────────────────── */
+/* Before the sidebar module loads, leave the current screen's group visible. */
+html[data-sidebar-fold-on-load] .nav-grp:not(:has(.nav-a.active)) > .nav-grp-items {
+  display: none;
+}
+
 /* Which groups are collapsed is applied as an attribute on <html> by the
    anti-flash script in base.html, so a collapsed group is never painted open
    first. One selector per group: CSS cannot compare the attribute's value

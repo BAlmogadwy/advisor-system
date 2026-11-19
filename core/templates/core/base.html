@@ -20,13 +20,13 @@
       root.setAttribute('data-theme', t);
     })();
     /* Set the rail and folded sections before CSS paints. Desktop staff pages
-       start folded. The drawer and role-specific menus use saved preferences. */
+       fold the sections without an active link. The drawer and role-specific
+       menus use saved preferences. */
     (function(){
       var root = document.documentElement;
       {% if role != "STUDENT" and role != "EXAM_COMMITTEE" %}
       if (window.matchMedia('(min-width: 769px)').matches) {
         root.setAttribute('data-sidebar-fold-on-load', '');
-        root.setAttribute('data-sidebar-collapsed', 'advising curriculum timetabling insights admin');
         return;
       }
       {% endif %}
@@ -49,7 +49,7 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=131" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=132" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}?v=6" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
@@ -100,7 +100,7 @@ the sidebar partial's own script, which is what marks the current page. Written
 as a comment TAG: Django's hash-brace comment is one line only, and a two-line
 one renders straight into the page.
 {% endcomment %}
-<script src="{% static 'js/sidebar-nav.js' %}?v=4" onerror="document.documentElement.removeAttribute('data-sidebar-collapsed')"></script>
+<script src="{% static 'js/sidebar-nav.js' %}?v=5" onerror="document.documentElement.removeAttribute('data-sidebar-fold-on-load'); document.documentElement.removeAttribute('data-sidebar-collapsed')"></script>
 <script>
 /* ── Back to top button ── */
 (function(){
