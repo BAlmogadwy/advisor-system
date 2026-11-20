@@ -47,7 +47,9 @@ Key models used:
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -373,8 +375,8 @@ class PlacementInfo:
 def _load_board_placements(board_id: int) -> list[PlacementInfo]:
     """Batch-load every placement on a board into ``PlacementInfo`` structs.
 
-    Uses ``select_related`` + ``prefetch_related`` so the entire board
-    is fetched in two queries regardless of how many sections are placed.
+    Loads the board's online course codes, joins placements to their
+    sections, and prefetches the sections' meetings in one batch.
 
     Parameters:
         board_id: PK of the ``DeliveryBoard``.
@@ -417,6 +419,30 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
             )
         )
     return result
+
+
+_request_board_placements: ContextVar[dict[int, list[PlacementInfo]] | None] = ContextVar(
+    "request_board_placements", default=None
+)
+
+
+@contextmanager
+def board_placement_read_scope() -> Iterator[None]:
+    """Share placements between single-board and cross-board checks in one read-only request."""
+    token = _request_board_placements.set({})
+    try:
+        yield
+    finally:
+        _request_board_placements.reset(token)
+
+
+def _placements_for_conflict_checks(board_id: int) -> list[PlacementInfo]:
+    by_board = _request_board_placements.get()
+    if by_board is None:
+        return _load_board_placements(board_id)
+    if board_id not in by_board:
+        by_board[board_id] = _load_board_placements(board_id)
+    return by_board[board_id]
 
 
 def _placed_section_masks(scenario_id: int, course_keys: set[str]) -> dict[str, list[int]]:
@@ -570,7 +596,7 @@ def detect_board_conflicts(board_id: int) -> dict:
         of students left with no clash-free pair of sections (``None`` for a
         same-course overlap); :func:`compute_affected_students` reports it.
     """
-    items = _load_board_placements(board_id)
+    items = _placements_for_conflict_checks(board_id)
 
     overlaps: list[dict] = []
     instructor_clashes: list[dict] = []
@@ -5676,7 +5702,7 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
     # Load all placements per board
     board_placements: dict[int, list[PlacementInfo]] = {}
     for b in boards:
-        board_placements[b.id] = _load_board_placements(b.id)
+        board_placements[b.id] = _placements_for_conflict_checks(b.id)
 
     # Build an inverted index: planner course key -> set of student IDs that
     # need that course from canonical scenario course requests.

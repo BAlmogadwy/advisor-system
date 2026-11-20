@@ -10,6 +10,8 @@ list is asserted, not "contains".
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from django.contrib.auth.models import Group, User
 from django.db import connection
@@ -26,6 +28,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services import section_teacher_assignment as sta
+from core.services import timetable_workspace as workspace
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
 from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
 from core.services.timetable_section_policy import create_policy_section_bundle
@@ -437,6 +440,45 @@ def test_workspace_reads_student_demand_once_per_request(http: Client) -> None:
     ).update(status=ScenarioStudentCourseRequest.STATUS_CANCELLED)
     [conflict] = read(conflicts_url)["cross_board_conflicts"]
     assert conflict["affected_student_ids"] == list(range(2, HARD_OVERLAP_THRESHOLD + 1))
+
+
+def test_workspace_loads_each_boards_placements_once_per_request(http: Client) -> None:
+    scenario = _scenario()
+    first = _board(scenario, "Term 2", 2, 1)
+    second = _board(scenario, "Term 4", 4, 2)
+    empty = _board(scenario, "Term 6", 6, 3)
+    _place(first, NETS, room="R1")
+    moving = _place(second, ALGEBRA, room="R2")
+    _need(scenario, (NETS, ALGEBRA), HARD_OVERLAP_THRESHOLD)
+
+    def read(url: str) -> dict:
+        with patch.object(
+            workspace, "_load_board_placements", wraps=workspace._load_board_placements
+        ) as load:
+            response = http.get(url)
+        assert response.status_code == 200
+        assert sorted(call.args[0] for call in load.call_args_list) == sorted(
+            [first.id, second.id, empty.id]
+        )
+        data = response.json()
+        assert isinstance(data, dict)
+        return data
+
+    def assert_conflict_count(expected: int) -> None:
+        boards = read(f"/ops/tw/boards/?scenario_id={scenario.id}")
+        assert boards["cross_board_clashes"] == expected
+        conflicts = read(f"/ops/tw/boards/{first.id}/conflicts/")
+        assert len(conflicts["cross_board_conflicts"]) == expected
+        readiness = read(f"/ops/tw/scenarios/{scenario.id}/readiness/")["readiness"]
+        warnings = [
+            item for item in readiness["warning_items"] if item["code"] == "cross_board_conflicts"
+        ]
+        assert sum(item["count"] for item in warnings) == expected
+
+    assert_conflict_count(1)
+    moving.day = "MON"
+    moving.save(update_fields=["day"])
+    assert_conflict_count(0)
 
 
 @pytest.mark.parametrize("blockers, noun", [(1, "blocker"), (2, "blockers")])

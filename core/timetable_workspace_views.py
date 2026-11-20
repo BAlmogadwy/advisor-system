@@ -178,6 +178,7 @@ from core.services.timetable_workspace import (
     apply_bulk_safe_time_moves,
     assert_section_label_free,
     assign_physical_meeting_room,
+    board_placement_read_scope,
     build_scenario_builder_actions,
     check_publish_readiness,
     compute_affected_students,
@@ -1607,6 +1608,7 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
 @require_GET
 @_one_teacher_request
 @demand_read_scope()
+@board_placement_read_scope()
 def tw_scenario_readiness_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Return publish readiness without mutating the scenario.
 
@@ -2076,6 +2078,7 @@ def tw_scenario_student_blockers_view(request: HttpRequest, scenario_id: int) ->
 @require_GET
 @_one_teacher_request
 @demand_read_scope()
+@board_placement_read_scope()
 def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
     """List all boards for a scenario with summary stats (``?scenario_id=``)."""
     deny = _require_general_advisor(request)
@@ -2237,6 +2240,7 @@ def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @require_GET
 @_one_teacher_request
 @demand_read_scope()
+@board_placement_read_scope()
 def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return the full conflict analysis for a board.
 
