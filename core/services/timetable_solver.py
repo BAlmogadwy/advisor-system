@@ -38,6 +38,7 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     _board_seed_scope,
     _time_mask,
+    availability_section_options,
     free_section_labels,
     get_meeting_pattern,
     placeable_slots,
@@ -50,6 +51,15 @@ from core.services.timetable_course_policy import (
 from core.services.timetable_flags import (
     get_section_day_spread_weight,
     is_section_day_spread_enabled,
+)
+from core.services.timetable_instructor_availability import (
+    availability_for,
+    fixed_section_keys,
+    meetings_blocked,
+    online_everywhere,
+    option_blocked,
+    placed_online_by_section,
+    rule_ids,
 )
 from core.services.timetable_meeting_shape import shape_for
 from core.services.timetable_online import (
@@ -319,6 +329,88 @@ def _option_end_min(option: tuple) -> int:
     return option[7] if len(option) > 7 else _to_min(option[4])
 
 
+def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_config):
+    """Teaching-time rules (``TIMETABLE_INSTRUCTOR_AVAILABILITY``) as CP-SAT domains,
+    pruned BEFORE any variable exists (fewer model elements, never an
+    ``assign == 0`` per forbidden option; not inside ``_add_instructor_constraints``,
+    whose clash-or-cap early return would drop it).
+
+    Returns ``(availability, restrict)``: ``restrict[i]`` holds the ruled teachers
+    whose forbidden cells leave section ``i``'s meeting domains. A meeting-policy
+    section's ``bundles`` are replaced (in ``sections``, never the budget's shared
+    list) by the bundles its teacher may teach. Exempt: a section online on this
+    board and on every board it already sits on. A FIXED teacher (pin or
+    teacher-frozen) with no legal week is not pruned: the section is still placed
+    (rank-last in the greedy; reported by the persisted-board report). An engine
+    section left no option makes the model infeasible, and the caller keeps the
+    greedy board, as for any infeasible board.
+    """
+    availability = availability_for(scenario.id)
+    restrict: dict[int, tuple[int, ...]] = {}
+    if not availability:
+        return availability, restrict
+    from core.services.section_teacher_assignment import load_assignment
+
+    assignment = load_assignment(scenario.id)  # pinned inside runs
+    charged, fixed = assignment.pr4_map(), fixed_section_keys(assignment)
+    budgets_by_code = {b.course_key or b.course_code: b for b in budgets}
+    placed_online = None
+    for i, sec in enumerate(sections):
+        key = f"{sec['code']}|{sec['label']}"
+        ids = rule_ids(availability, charged.get(key, ()))
+        if not ids:
+            continue
+        if sec["is_online"]:
+            if placed_online is None:
+                placed_online = placed_online_by_section(scenario.id)
+            if online_everywhere((True, *placed_online.get((sec["code"], sec["label"]), ()))):
+                continue
+        if sec["meeting_policy"] is not None:
+            legal = [b for b in sec["bundles"] or [] if not option_blocked(availability, ids, b)]
+            if legal or key not in fixed:
+                sections[i] = {**sec, "bundles": legal}
+        elif key not in fixed or _has_legal_week(
+            availability,
+            ids,
+            sec,
+            budgets_by_code.get(sec["code"]),
+            scenario,
+            slot_config,
+            lab_slot_config,
+        ):
+            restrict[i] = ids
+    return availability, restrict
+
+
+def _has_legal_week(availability, ids, sec, budget, scenario, slot_config, lab_slot_config) -> bool:
+    """A weekly option exists that none of ``ids`` is forbidden to teach: the
+    placer's per-teacher option source on this builder's grids (an online-window
+    section: enough distinct days with a window cell they may teach)."""
+    if sec.get("online_windows"):
+        days = {
+            cell[0]
+            for cell in sec["online_windows"]
+            if not meetings_blocked(availability, ids, [(cell[0], cell[6], _option_end_min(cell))])
+        }
+        return len(days) >= len(sec["pattern"])
+    if budget is None:
+        return True
+    return bool(
+        availability_section_options(
+            availability,
+            ids,
+            sec["display_code"],
+            budget.credit_hours or 3,
+            slot_config,
+            lab_slot_config,
+            scenario.blocked_slots or [],
+            course_key=sec["code"],
+            meeting_pattern=budget.meeting_pattern,
+            course_options=[],
+        )
+    )
+
+
 def _same_course_option_penalty(option_a: tuple, option_b: tuple) -> int:
     if option_a[0] != option_b[0]:
         return SAME_COURSE_DIFFERENT_DAY_PENALTY
@@ -550,6 +642,10 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     if not sections:
         return {"status": "optimal", "placed": 0, "placements": [], "objective": 0}
 
+    availability, restrict = _availability_domains(
+        scenario, sections, budgets, slot_config, lab_slot_config
+    )
+
     num_slots = len(slot_config)
 
     # ── Build CP-SAT model ───────────────────────────────────────
@@ -565,6 +661,14 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         sec_opts = []
         for m_idx, duration in enumerate(sec["pattern"]):
             options = _scoped_meeting_options(sec, m_idx, get_options(duration))
+            if i in restrict:
+                options = [
+                    o
+                    for o in options
+                    if not meetings_blocked(
+                        availability, restrict[i], [(o[0], o[6], _option_end_min(o))]
+                    )
+                ]
             if not options:
                 # A fully-blocked grid for this duration leaves no feasible
                 # slot — report infeasible rather than build an unsatisfiable
@@ -1171,6 +1275,10 @@ def solve_board_with_hints(
             "improved": False,
         }
 
+    availability, restrict = _availability_domains(
+        scenario, sections, budgets, slot_config, lab_slot_config
+    )
+
     num_slots = len(slot_config)
     model = BudgetedCpModel()
 
@@ -1181,6 +1289,14 @@ def solve_board_with_hints(
         sec_opts = []
         for m_idx, duration in enumerate(sec["pattern"]):
             options = _scoped_meeting_options(sec, m_idx, get_options(duration))
+            if i in restrict:
+                options = [
+                    o
+                    for o in options
+                    if not meetings_blocked(
+                        availability, restrict[i], [(o[0], o[6], _option_end_min(o))]
+                    )
+                ]
             if not options:
                 return {
                     "status": "infeasible",

@@ -1733,3 +1733,153 @@ def test_a_place_missing_run_reads_the_rules_once(av_on) -> None:
 
     assert len(rule_queries(ctx.captured_queries)) == 1
     assert not _blocked(_placed_meetings(sc, key), a, _rules_of(a))
+
+
+# ── C.4: both board CP-SAT builders ────────────────────────────────────
+
+CPSAT_BUILDERS = ("solve_board", "solve_board_with_hints")
+
+
+class _Captured(Exception):
+    pass
+
+
+def _solve(builder: str, board) -> dict:
+    from core.services import timetable_solver
+
+    if builder == "solve_board":
+        return timetable_solver.solve_board(board.id, time_limit_seconds=10)
+    return timetable_solver.solve_board_with_hints(board.id, [], time_limit_seconds=10)
+
+
+def _domain_sizes(monkeypatch, builder: str, board) -> list[int]:
+    """Options per meeting of the board's first section in the model ``builder``
+    builds (the solve is stopped before it starts)."""
+    from ortools.sat.python import cp_model
+
+    seen: list = []
+
+    def spy(self, model, *args, **kwargs):
+        seen.append(model)
+        raise _Captured
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cp_model.CpSolver, "solve", spy)
+        with pytest.raises(_Captured):
+            _solve(builder, board)
+    sizes: dict[int, int] = {}
+    for variable in seen[-1].proto.variables:
+        match = re.fullmatch(r"a_0_(\d+)_(\d+)", variable.name)
+        if match:
+            sizes[int(match.group(1))] = sizes.get(int(match.group(1)), 0) + 1
+    return [sizes[m] for m in sorted(sizes)]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_cpsat_option_domains_leave_out_a_ruled_teachers_forbidden_cells(
+    av_on, monkeypatch, builder, flag
+) -> None:
+    """T-C1: "no mornings" leaves each meeting the afternoon lecture periods only
+    (13:00, 14:30, 14:45, 16:00 on five days = 20 of 40); flag off, all 40."""
+    from core.services.timetable_autoplace import DEFAULT_SLOTS, placeable_slots
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, board, _key, (a,) = _greedy_scenario(f"t-c1 {builder}")
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+    every = 5 * len(placeable_slots(DEFAULT_SLOTS))
+    afternoon = 5 * sum(slot["start"] >= "13:00" for slot in placeable_slots(DEFAULT_SLOTS))
+
+    assert _domain_sizes(monkeypatch, builder, board) == [afternoon if flag else every] * 2
+    assert afternoon < every
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_a_cpsat_board_places_a_ruled_section_legally(av_on, builder, flag) -> None:
+    """T-C2: the teacher may teach only SUN and TUE 16:00-17:15, one legal week;
+    the solver places the section there (control: flag off, it does not)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, board, _key, (a,) = _greedy_scenario(f"t-c2 {builder}")
+    rule(a, KIND_AVAILABLE_ONLY, ("SUN", "TUE"), "16:00", "17:15")
+
+    result = _solve(builder, board)
+
+    assert result["status"] in ("optimal", "feasible") and result["placed"] == 1
+    meetings = [(m["day"], m["start"], m["end"]) for m in result["placements"][0]["meetings"]]
+    assert bool(_blocked(meetings, a, _rules_of(a))) is not flag, meetings
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_a_cpsat_english_section_keeps_only_the_bundle_its_teacher_may_teach(
+    av_on, monkeypatch, builder, flag
+) -> None:
+    """T-C3: a "no mornings" teacher's ENG section keeps the PM bundle only (one
+    option per meeting instead of two), and is placed in it."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, board, _key, (a,) = _greedy_scenario(f"t-c3 {builder}", code="ENG101")
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    sizes = _domain_sizes(monkeypatch, builder, board)
+    result = _solve(builder, board)
+
+    assert set(sizes) == ({1} if flag else {2})
+    starts = {m["start"] for m in result["placements"][0]["meetings"]}
+    if flag:
+        assert min(starts) >= "13:00", starts
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+def test_a_cpsat_board_still_places_a_fixed_teacher_without_a_legal_week(av_on, builder) -> None:
+    """T-C5: a pinned "only Thursday" teacher has no 2 x 75 week; his section's
+    domains are not pruned (pruned, both meetings would need Thursday and the
+    board would come back infeasible), so the board solves and places it."""
+    sc, board, _key, (a,) = _greedy_scenario(f"t-c5 {builder}", pin=True)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    result = _solve(builder, board)
+
+    assert result["status"] in ("optimal", "feasible"), result["status"]
+    assert result["placed"] == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+def test_a_cpsat_engine_section_without_a_legal_week_makes_the_board_infeasible(
+    av_on, builder
+) -> None:
+    """T-C5's other side: the same teacher charged as an ENGINE pick is pruned to
+    no week, so the builder answers infeasible and its caller keeps the greedy
+    board: the rule is never broken by CP-SAT."""
+    sc, board, key, (a,) = _greedy_scenario(f"t-c5 engine {builder}")
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+        result = _solve(builder, board)
+
+    assert result["status"] == "infeasible" and result["placed"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+def test_cpsat_does_not_prune_an_online_section_unless_it_is_campus_elsewhere(
+    av_on, monkeypatch, builder, elsewhere
+) -> None:
+    """H7 in the CP-SAT builders: an online section of a "no mornings" teacher
+    keeps all 40 cells a meeting; once it also sits on a board where it is a
+    campus course, its rules bind it and the mornings go."""
+    from core.services.timetable_autoplace import DEFAULT_SLOTS, placeable_slots
+
+    sc, ai_board, _key, _a = _online_here(elsewhere=elsewhere)
+    every = 5 * len(placeable_slots(DEFAULT_SLOTS))
+    afternoon = 5 * sum(slot["start"] >= "13:00" for slot in placeable_slots(DEFAULT_SLOTS))
+
+    sizes = _domain_sizes(monkeypatch, builder, ai_board)
+
+    assert sizes == [afternoon if elsewhere else every] * 2
