@@ -647,3 +647,587 @@ def test_flag_on_optimise_current_run_matches_flag_off(day_spread_golden_flags, 
 
     assert on_board == off_board
     assert on_keys == off_keys
+
+
+# ── C.1: the generator with a teacher's rules (the per-teacher option source) ──
+
+#: Teacher 7 may teach only SUN 13:00-17:15 and TUE 10:30-12:05: no single
+#: period is open on two days, so only a mixed-period week fits a 2 x 75 course.
+SUN_PM_AND_TUE_LATE_MORNING = _av(
+    (7, KIND_AVAILABLE_ONLY, ("SUN",), 13 * 60, 17 * 60 + 15),
+    (7, KIND_AVAILABLE_ONLY, ("TUE",), 10 * 60 + 30, 12 * 60 + 5),
+)
+MIXED_WEEK = (("SUN", "13:00", "14:15"), ("TUE", "10:30", "11:45"))
+
+
+def _weeks(options) -> set[tuple]:
+    return {tuple((m["day"], m["start"], m["end"]) for m in option) for option in options}
+
+
+def test_the_generator_builds_mixed_period_weeks_inside_a_teachers_rules() -> None:
+    from core.services.timetable_autoplace import (
+        DEFAULT_LAB_SLOTS,
+        DEFAULT_SLOTS,
+        _generate_meeting_options,
+    )
+
+    blocked = helper.cell_predicate(SUN_PM_AND_TUE_LATE_MORNING, (7,))
+    options = _generate_meeting_options(
+        [75, 75], DEFAULT_SLOTS, DEFAULT_LAB_SLOTS, [], cell_blocked=blocked
+    )
+
+    assert MIXED_WEEK in _weeks(options)
+    assert all(not helper.option_blocked(SUN_PM_AND_TUE_LATE_MORNING, (7,), o) for o in options)
+    # Control: without the rules every week keeps one period, so no mixed week.
+    plain = _generate_meeting_options([75, 75], DEFAULT_SLOTS, DEFAULT_LAB_SLOTS, [])
+    assert MIXED_WEEK not in _weeks(plain)
+    assert any(helper.option_blocked(SUN_PM_AND_TUE_LATE_MORNING, (7,), o) for o in plain)
+
+
+def test_the_per_teacher_option_source_follows_the_course_shape() -> None:
+    from core.services.timetable_autoplace import (
+        availability_section_options,
+        generate_course_meeting_options,
+    )
+
+    def options_for(availability, ids, code: str, credit: int, course_options):
+        return availability_section_options(
+            availability,
+            ids,
+            code,
+            credit,
+            [],
+            [],
+            [],
+            course_key=code,
+            meeting_pattern="",
+            course_options=course_options,
+        )
+
+    # A meeting-policy (ENG intensive) course keeps its legal WHOLE bundles.
+    eng = generate_course_meeting_options(
+        "ENG101", 0, [], [], [], course_key="ENG101", meeting_pattern=""
+    )
+    assert len(eng) == 2
+    legal = options_for(NO_MORNINGS, (7,), "ENG101", 0, eng)
+    assert len(legal) == 1 and legal[0][0]["start"] == "13:00"
+    assert options_for(NO_MORNINGS, (9,), "ENG101", 0, eng) == eng  # control: no rule
+    # An ordinary course runs the generator with the rules.
+    plain = generate_course_meeting_options(
+        "CS101", 3, [], [], [], course_key="CS101", meeting_pattern=""
+    )
+    assert MIXED_WEEK in _weeks(options_for(SUN_PM_AND_TUE_LATE_MORNING, (7,), "CS101", 3, plain))
+    assert options_for(EMPTY_AVAILABILITY, (7,), "CS101", 3, plain) == plain
+
+
+# ── C.15: the teacher choice, on slots carrying the rules ─────────────
+
+from dataclasses import replace  # noqa: E402
+
+from core.services import section_teacher_assignment as sta  # noqa: E402
+
+AM_SUN = (SUN, 9 * 60, 10 * 60 + 15)
+OPT_SUN = (AM_SUN,)
+OPT_MON = ((MON, 9 * 60, 10 * 60 + 15),)
+
+
+@pytest.fixture
+def pure(settings):
+    """Clash, the daily cap and one teacher per section, as the ledger reads them."""
+    for name, value in ots.FLAG_ON.items():
+        setattr(settings, name, value)
+    return settings
+
+
+def _placed(course: str = "C101", eligible=(1, 2), **extra) -> sta.Slot:
+    return replace(ots.course(course, [{"meetings": [AM_SUN]}], eligible=eligible)[0], **extra)
+
+
+def _pending(course: str, options, eligible=(1,), **extra) -> sta.Slot:
+    return replace(ots.course(course, [{"options": options}], eligible=eligible)[0], **extra)
+
+
+@pytest.mark.parametrize("solver", ["greedy", "exact"])
+def test_a_teacher_is_never_newly_picked_for_a_placed_section_his_rules_forbid(
+    pure, solver
+) -> None:
+    pick = sta.greedy_assign if solver == "greedy" else sta.solve_layout_aware
+    plain = _placed()
+    ruled = _placed(blocked_teachers=(1,))
+
+    assert pick([plain]).teacher[plain.key] == 1  # control: the lower id wins
+    assert pick([ruled]).teacher[ruled.key] == 2
+    assert sta._Ledger().blocker(ruled, 1) == sta.AVAILABILITY_REASON
+
+
+@pytest.mark.parametrize("solver", ["greedy", "exact"])
+def test_a_section_only_a_blocked_teacher_could_take_is_tbd_for_availability(pure, solver) -> None:
+    pick = sta.greedy_assign if solver == "greedy" else sta.solve_layout_aware
+    alone = _placed(eligible=(1,), blocked_teachers=(1,))
+
+    a = pick([alone])
+
+    assert a.status[alone.key] == sta.STATUS_TBD
+    assert a.tbd_reason[alone.key] == sta.AVAILABILITY_REASON
+    # Control: without the rule he takes it.
+    assert pick([_placed(eligible=(1,))]).teacher[alone.key] == 1
+
+
+def test_a_section_not_placed_yet_keeps_a_legal_option_free(pure) -> None:
+    pending = _pending("P101", [OPT_SUN, OPT_MON])
+    legal_monday = replace(pending, teacher_options=((1, (OPT_MON,)),))
+    ledger = sta._Ledger()
+    ledger.add(ots.pinned_load(1, 1, meetings=[OPT_MON[0]]), 1)  # teacher 1 busy on MON 09:00
+
+    assert ledger.free_option(pending, 1) is None  # control: SUN 09:00 is still free
+    assert ledger.free_option(legal_monday, 1) == "clash"
+    assert (
+        ledger.free_option(replace(pending, teacher_options=((1, ()),)), 1)
+        == sta.AVAILABILITY_REASON
+    )
+    # Another teacher is not bound by teacher 1's rules.
+    assert legal_monday.options_for(2) == pending.options
+
+
+@pytest.mark.parametrize("clash_and_cap", [True, False])
+@pytest.mark.parametrize("solver", ["greedy", "exact"])
+def test_a_teacher_left_no_legal_option_is_not_given_a_missing_section(
+    pure, solver, clash_and_cap
+) -> None:
+    pure.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = clash_and_cap
+    pure.TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = clash_and_cap
+    pick = sta.greedy_assign if solver == "greedy" else sta.solve_layout_aware
+    no_week = _pending("P101", [OPT_SUN, OPT_MON], eligible=(1, 2), teacher_options=((1, ()),))
+    alone = replace(no_week, eligible=(1,))
+
+    assert pick([no_week]).teacher[no_week.key] == 2
+    assert pick([replace(no_week, teacher_options=())]).teacher[no_week.key] == 1  # control
+    assert pick([alone]).tbd_reason[alone.key] == sta.AVAILABILITY_REASON
+
+
+def test_the_kept_rule_keeps_a_charged_violator_with_a_legal_week(pure) -> None:
+    plain = _placed()
+    violating = _placed(blocked_teachers=(1,))
+    no_week = _placed(blocked_teachers=(1,), teacher_options=((1, ()),))
+
+    assert sta._violating_keys([violating], {violating.key: 1}) == {violating.key}
+    assert sta._violating_keys([plain], {plain.key: 1}) == set()  # control
+    assert sta._violating_keys([no_week], {no_week.key: 1}) == set()
+    kept = sta._violating_keys([violating], {violating.key: 1})
+    assert (
+        sta.solve_layout_aware([violating], current={violating.key: 1}, kept=kept).teacher[
+            violating.key
+        ]
+        == 1
+    )
+    released = sta._violating_keys([no_week], {no_week.key: 1})
+    assert (
+        sta.solve_layout_aware([no_week], current={no_week.key: 1}, kept=released).teacher[
+            no_week.key
+        ]
+        == 2
+    )
+
+
+def test_a_missing_section_whose_teacher_has_no_legal_option_is_released(pure) -> None:
+    busy = ots.pinned_load(1, 1, meetings=[AM_SUN])
+    pending = _pending("P101", [OPT_SUN], eligible=(1, 2))
+
+    # Control: left no option by a clash, the section is kept with its teacher.
+    assert sta._unplaceable_keys([busy, pending], {pending.key: 1}) == {pending.key}
+    no_week = replace(pending, teacher_options=((1, ()),))
+    assert sta._unplaceable_keys([busy, no_week], {no_week.key: 1}) == set()
+
+
+def test_only_an_engine_read_releases_a_stored_teacher_without_a_legal_week(pure) -> None:
+    slot = _placed()
+    info = {"engine_rows": {slot.key: 1}}
+    no_week = replace(slot, blocked_teachers=(1,), teacher_options=((1, ()),))
+    violating = replace(slot, blocked_teachers=(1,))
+
+    assert sta._validated_rows([no_week], info, release_unteachable=True)[0] == {}
+    assert sta._validated_rows([no_week], info)[0] == {slot.key: 1}  # a display read keeps it
+    assert sta._validated_rows([violating], info, release_unteachable=True)[0] == {slot.key: 1}
+    assert sta._unteachable_rows([no_week], info) == {slot.key}
+    assert sta._unteachable_rows([violating], info) == frozenset()
+
+
+def _guard_board(*, teacher_options=()):
+    """Teacher 1 holds a missing section P (options SUN or MON 09:00) and K."""
+    p = _pending("P101", [OPT_SUN, OPT_MON], teacher_options=teacher_options)
+    k = _pending("K101", [OPT_MON])
+    return sta.greedy_assign([p, k]), p, k
+
+
+def _option(day: str, start: str, end: str) -> list[dict]:
+    return [{"day": day, "start": start, "end": end}]
+
+
+def test_the_placer_guard_keeps_a_pending_section_a_legal_option(pure) -> None:
+    ruled, p, k = _guard_board(teacher_options=((1, (OPT_MON,)),))
+    assert ruled.teacher[p.key] == ruled.teacher[k.key] == 1
+    monday = _option("MON", "09:00", "10:15")
+
+    check = sta.PlacerGuard(ruled).check(k.pr4_key, {1}, {})
+    assert check(monday) is True  # P's only legal option would go
+    assert check(_option("TUE", "09:00", "10:15")) is False
+    # Control: without the rule P could still use Sunday.
+    plain, _p, _k = _guard_board()
+    assert sta.PlacerGuard(plain).check(k.pr4_key, {1}, {})(monday) is False
+
+
+@pytest.mark.parametrize("clash_and_cap", [True, False])
+def test_the_placer_guard_ranks_last_a_time_no_open_teacher_may_teach(pure, clash_and_cap) -> None:
+    pure.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = clash_and_cap
+    pure.TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = clash_and_cap
+    tbd = _placed("T101", eligible=(7,), blocked_teachers=(7,))
+    a = sta.greedy_assign([tbd])
+    assert a.status[tbd.key] == sta.STATUS_TBD
+    morning, afternoon = _option("SUN", "09:00", "10:15"), _option("SUN", "13:00", "14:15")
+
+    check = sta.PlacerGuard(a, NO_MORNINGS).check(tbd.pr4_key, set(), {})
+    assert check(morning) is True
+    assert check(afternoon) is False
+    # Controls: no availability (nothing at stake without clash and cap), or an
+    # online section.
+    plain = sta.PlacerGuard(a).check(tbd.pr4_key, set(), {})
+    assert plain is None if not clash_and_cap else plain(morning) is False
+    exempt = sta.PlacerGuard(a, NO_MORNINGS).check(tbd.pr4_key, set(), {}, availability_exempt=True)
+    assert exempt(morning) is False
+
+
+def _charged(slot: sta.Slot, teacher: int) -> sta.TeacherAssignment:
+    return sta.TeacherAssignment(
+        teacher={slot.key: teacher},
+        status={slot.key: sta.STATUS_ENGINE},
+        tbd_reason={},
+        kept=frozenset(),
+        universe=frozenset({1, 2}),
+        slots=(slot,),
+    )
+
+
+def test_a_re_pick_that_charges_a_blocked_teacher_adds_a_violation(pure) -> None:
+    ruled = _placed(blocked_teachers=(1,))
+
+    assert sta.violations(_charged(ruled, 1))["availability"] == 1
+    assert sta.adds_violations(_charged(ruled, 1), _charged(ruled, 2))
+    assert not sta.adds_violations(_charged(ruled, 2), _charged(ruled, 1))
+    plain = _placed()  # control: no rule, no key, nothing added
+    assert "availability" not in sta.violations(_charged(plain, 1))
+    assert not sta.adds_violations(_charged(plain, 1), _charged(plain, 2))
+
+
+def test_the_availability_reason_key_appears_only_while_rules_bind_a_slot(pure) -> None:
+    ruled = sta.coverage_of(sta.greedy_assign([_placed(eligible=(1,), blocked_teachers=(1,))]))
+    plain = sta.coverage_of(sta.greedy_assign([_placed(eligible=(1,))]))
+
+    assert ruled["tbd_reasons"][sta.AVAILABILITY_REASON] == 1
+    assert ruled["violations"]["availability"] == 0
+    assert list(plain["tbd_reasons"]) == ["d10", "weekly_ceiling", "clash", "daily_cap", "bound"]
+    assert "availability" not in plain["violations"]
+
+
+# ── C.15 end to end: _collect writes each ruled teacher's rules into the slots ──
+
+
+def _ruled_board(
+    *, eligible=("Dr A", "Dr B"), online: bool = False, planned: int = 1, placed: bool = True
+):
+    sc, board = ots.scenario("rules", programs=("AI",))
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="CS101",
+        course_name="INTRO",
+        programme_term=2,
+        credit_hours=3,
+        is_online=online,
+    )
+    from core.services.course_identity import planner_course_key
+
+    key = planner_course_key("CS101", "INTRO")
+    ots.budget(sc, key, planned)
+    people = [ots.instructor(name) for name in eligible]
+    for index, person in enumerate(people):  # one primary link per programme
+        ots.link("AI", "CS101", person, role="co" if index else "primary")
+    ts = None
+    if placed:
+        ts = ots.section(sc, key, "S1")
+        ots.place(board, ts, [("SUN", "09:00", "10:15"), ("TUE", "09:00", "10:15")])
+    return sc, board, key, ts, people
+
+
+def _engine_row(sc, key: str, label: str, person) -> None:
+    from core.models import SectionInstructor
+
+    SectionInstructor.objects.create(
+        scenario=sc,
+        course_key=key,
+        section=label,
+        instructor=person,
+        role=sta.ROLE_PRIMARY,
+        source=sta.SOURCE_ENGINE,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False])
+def test_the_closure_never_picks_a_teacher_at_a_time_his_rules_forbid(av_on, flag) -> None:
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, ts, (a, b) = _ruled_board()
+    rule(a, KIND_UNAVAILABLE, end="13:00")  # Dr A: no mornings
+
+    shown = sta.section_teacher_display(sc.id)[ts.pk]
+    engine = sta.load_assignment(sc.id)
+
+    assert shown["id"] == (b.pk if flag else a.pk)
+    assert engine.teacher[f"{key}_S1"] == (b.pk if flag else a.pk)
+    assert engine.slot(f"{key}_S1").blocked_teachers == ((a.pk,) if flag else ())
+
+
+@pytest.mark.django_db
+def test_a_section_only_a_blocked_teacher_may_teach_reads_tbd_for_availability(av_on) -> None:
+    sc, _board, key, ts, (a,) = _ruled_board(eligible=("Dr A",))
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    shown = sta.section_teacher_display(sc.id)[ts.pk]
+    coverage = sta.coverage_of(sta.load_assignment(sc.id))
+
+    assert (shown["status"], shown["reason"]) == (sta.STATUS_TBD, sta.AVAILABILITY_REASON)
+    assert coverage["tbd_reasons"][sta.AVAILABILITY_REASON] == 1
+
+
+@pytest.mark.django_db
+def test_an_online_section_is_not_bound_by_its_teachers_rules(av_on) -> None:
+    sc, _board, _key, ts, (a, _b) = _ruled_board(online=True)
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+
+
+@pytest.mark.django_db
+def test_a_stored_violating_teacher_with_a_legal_week_is_kept(av_on) -> None:
+    sc, _board, key, ts, (a, _b) = _ruled_board()
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_UNAVAILABLE, end="13:00")  # the afternoons are still legal
+
+    assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == a.pk
+    assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+
+
+@pytest.mark.django_db
+def test_a_stored_teacher_without_a_legal_week_is_released_on_engine_reads_only(av_on) -> None:
+    sc, _board, key, ts, (a, b) = _ruled_board()
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))  # one day: no 2 x 75 week at all
+
+    assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == b.pk
+    assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+    # Inside one request scope both reads keep their own answer.
+    with sta.assignment_scope(sc.id):
+        assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+        assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == b.pk
+        assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+
+
+@pytest.mark.django_db
+def test_a_manual_create_leaves_every_other_stored_teacher_row_as_it_was(av_on) -> None:
+    from core.models import SectionInstructor
+
+    sc, board, key, _ts, (a, b) = _ruled_board(planned=2)
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    def rows():
+        return sorted(
+            SectionInstructor.objects.filter(scenario=sc).values_list(
+                "pk", "course_key", "section", "instructor_id", "role", "source"
+            )
+        )
+
+    before = rows()
+    new = ots.section(sc, key, "S2")
+    ots.place(board, new, [("MON", "13:00", "14:15"), ("WED", "13:00", "14:15")])
+    sta.name_new_section(sc.id, new, board)
+
+    after = rows()
+    assert [row for row in after if row[2] == "S1"] == before
+    assert [row[3] for row in after if row[2] == "S2"] == [b.pk]  # A has no legal week
+    # Control: an engine ensure (a place-missing run) does release the row.
+    sta.prepare_section_teachers(sc.id, phase="ensure", release_unteachable=True)
+    assert [row[3] for row in rows() if row[2] == "S1"] != [a.pk]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False])
+def test_a_missing_section_gets_a_teacher_with_a_legal_week_without_clash_or_cap(
+    av_on, flag
+) -> None:
+    """Neither clash nor the daily cap would give a missing section options;
+    the rules still do, so its teacher is one who can teach it."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    av_on.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = False
+    av_on.TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = False
+    sc, _board, key, _ts, (a, b) = _ruled_board(placed=False)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    engine = sta.load_assignment(sc.id)
+    missing = engine.slot(f"{key}_S1")
+
+    assert not missing.placed
+    assert engine.teacher[f"{key}_S1"] == (b.pk if flag else a.pk)
+    assert bool(missing.options) is flag
+
+
+# ── T-P2: nothing reads the rules unless the flag AND one teacher are on ──
+
+
+def _p1_steps(scenario):
+    from core.models import SectionPlacement
+    from core.services.course_instructor_assignment import (
+        apply_primary_instructor,
+        reconcile_scenario_instructors,
+    )
+    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_board_persistence import restore_scenario, snapshot_scenario
+    from core.services.timetable_export import export_scenario_xlsx
+    from core.services.timetable_graph_twin import build_scenario_graph_payload
+    from core.services.timetable_instructor_backstop import scenario_instructor_clash_report
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+    from core.services.timetable_scenario_quality import build_scenario_quality
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from core.services.timetable_workspace import (
+        compute_scenario_safety_summary,
+        detect_board_conflicts,
+        preview_placement_slot_candidates,
+        validate_placement,
+    )
+    from core.timetable_workspace_views import _placement_to_dict
+
+    board = DeliveryBoard.objects.get(scenario=scenario, label="Term 2")
+
+    def placement():
+        return (
+            SectionPlacement.objects.filter(board=board)
+            .select_related("term_section")
+            .order_by("id")
+            .first()
+        )
+
+    return {
+        "auto_place_scenario": lambda: auto_place_scenario(scenario.id, strategy="compact"),
+        "reinstate": lambda: reinstate_missing_required_sections(scenario.id),
+        "apply_primary_instructor": lambda: apply_primary_instructor(
+            placement().term_section, scenario, board, placement().term_section.course_code
+        ),
+        "reconcile": lambda: reconcile_scenario_instructors(scenario),
+        "snapshot_restore": lambda: restore_scenario(scenario.id, snapshot_scenario(scenario.id)),
+        "safety_summary": lambda: compute_scenario_safety_summary(scenario.id),
+        "detect_board_conflicts": lambda: detect_board_conflicts(board.id),
+        "quality": lambda: build_scenario_quality(scenario.id),
+        "backstop": lambda: scenario_instructor_clash_report(scenario.id),
+        "placement_to_dict": lambda: _placement_to_dict(placement()),
+        "validate_placement": lambda: validate_placement(
+            board.id,
+            "SUN",
+            "08:00",
+            "09:15",
+            "",
+            placement().term_section_id,
+            exclude_placement_id=placement().id,
+        ),
+        "preview_placement": lambda: preview_placement_slot_candidates(placement().id),
+        "graph_twin": lambda: build_scenario_graph_payload(scenario.id),
+        "export": lambda: export_scenario_xlsx(scenario.id),
+        "runner_current": lambda: run_v2_optimisation_guarded(
+            scenario.id, mode="current", max_iterations=2, run_chain=False, run_cpsat=False
+        ),
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("flag", "one_teacher"), [(True, False), (False, True), (True, True)], ids=str
+)
+def test_the_rules_are_read_only_with_the_flag_and_one_teacher_on(av_on, flag, one_teacher) -> None:
+    from tests.test_one_teacher_flag_parity import LINKS, build_corpus
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    av_on.TIMETABLE_ONE_TEACHER_PER_SECTION = one_teacher
+    scenario = build_corpus()
+    for person in Instructor.objects.filter(full_name__in=set(LINKS.values())):
+        rule(person, KIND_UNAVAILABLE, ("THU",), "16:00", "17:00")
+
+    reads = {}
+    for name, step in _p1_steps(scenario).items():
+        with CaptureQueriesContext(connection) as ctx:
+            step()
+        reads[name] = len(rule_queries(ctx.captured_queries))
+
+    if flag and one_teacher:  # control: the rules ARE read on these paths
+        assert reads["auto_place_scenario"] >= 1 and reads["runner_current"] >= 1
+    else:
+        assert reads == {name: 0 for name in reads}
+
+
+def test_a_teacher_without_a_legal_week_is_not_an_open_teacher_of_the_guard(pure) -> None:
+    no_week = _placed("T101", eligible=(7,), blocked_teachers=(7,), teacher_options=((7, ()),))
+    legal_week = _placed("T101", eligible=(7,), blocked_teachers=(7,))
+
+    assert no_week.pr4_key not in sta.PlacerGuard(sta.greedy_assign([no_week])).open
+    assert sta.PlacerGuard(sta.greedy_assign([legal_week])).open == {legal_week.pr4_key: (7,)}
+
+
+@pytest.mark.django_db
+def test_a_place_missing_run_stores_the_map_it_placed_under(av_on) -> None:
+    from core.models import SectionInstructor
+
+    sc, _board, key, _ts, (a, b) = _ruled_board()
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    sta.run_placer(sc.id, dict, rebuild=False)
+
+    stored = SectionInstructor.objects.filter(scenario=sc, course_key=key, section="S1")
+    assert list(stored.values_list("instructor_id", flat=True)) == [b.pk]
+
+
+@pytest.mark.django_db
+def test_one_request_reads_the_rules_once(av_on) -> None:
+    sc, _board, _key, ts, (a, _b) = _ruled_board()
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    from core.models import SectionPlacement
+
+    def read_drag_read() -> None:
+        """Two collects: the drag changes the layout between the reads."""
+        sta.section_teacher_display(sc.id)
+        moved = SectionPlacement.objects.filter(term_section=ts, day="TUE")
+        start = "13:00" if moved.filter(start_time="09:00").exists() else "09:00"
+        moved.update(start_time=start, end_time="14:15" if start == "13:00" else "10:15")
+        sta.load_assignment(sc.id)
+
+    for scope in (sta.request_scope, lambda: sta.assignment_scope(sc.id)):
+        with CaptureQueriesContext(connection) as ctx:
+            with scope():
+                read_drag_read()
+        assert len(rule_queries(ctx.captured_queries)) == 1
+    # Control: unscoped, each collect loads.
+    with CaptureQueriesContext(connection) as ctx:
+        read_drag_read()
+    assert len(rule_queries(ctx.captured_queries)) == 2
+    assert sta.section_teacher_display(sc.id)[ts.pk]["id"] != a.pk
+
+
+def test_fixed_section_keys_are_the_pinned_and_frozen_sections(pure) -> None:
+    pinned = ots.course("PIN101", [{"meetings": [AM_SUN], "fixed": 1}], eligible=(1,))[0]
+    frozen = replace(
+        ots.course("FRZ101", [{"meetings": [AM_SUN], "fixed": 2}], eligible=(2,))[0],
+        fixed_kind=sta.STATUS_FROZEN,
+    )
+    choice = _placed("CHO101", eligible=(3,))
+
+    a = sta.greedy_assign([pinned, frozen, choice])
+
+    assert a.status[choice.key] == sta.STATUS_ENGINE
+    assert helper.fixed_section_keys(a) == {pinned.pr4_key, frozen.pr4_key}

@@ -65,6 +65,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import nullcontext
 from itertools import combinations
 
@@ -222,6 +223,7 @@ def generate_course_meeting_options(
     *,
     course_key: str = "",
     meeting_pattern: str,
+    cell_blocked: Callable[[str, str, str], bool] | None = None,
 ) -> list[list[dict]]:
     """Complete course-scoped patterns; ordinary slot domains stay unchanged.
 
@@ -229,6 +231,10 @@ def generate_course_meeting_options(
     :func:`get_meeting_pattern`); it is required for the same reason. It is
     the one door every greedy campus option and the one-teacher guard's copy
     of those options go through, so both follow the scenario's shape together.
+
+    ``cell_blocked`` (a section's teacher's teaching-time rules, see
+    :func:`availability_section_options`) reaches the generator of an
+    ordinary course only; a meeting-policy course keeps its own bundles.
     """
     policy = get_course_meeting_policy(course_code, course_key)
     if policy:
@@ -243,6 +249,54 @@ def generate_course_meeting_options(
         slot_config or [],
         lab_slot_config,
         blocked_slots,
+        cell_blocked=cell_blocked,
+    )
+
+
+def availability_section_options(
+    availability,
+    instructor_ids,
+    display_code: str,
+    credit_hours: int,
+    slot_config: list[dict] | None,
+    lab_slot_config: list[dict] | None,
+    blocked_slots: list[dict] | None,
+    *,
+    course_key: str,
+    meeting_pattern: str,
+    course_options: list[list[dict]],
+) -> list[list[dict]]:
+    """The weekly options of one section whose teacher has teaching-time rules
+    (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): only the options none of
+    ``instructor_ids`` is forbidden to teach.
+
+    An ordinary course runs the generator with the rules as blocked cells, so a
+    meeting that cannot keep the first meeting's period falls back to the first
+    period its teacher may teach that day: mixed-period weeks are generated,
+    and an option exists iff each meeting can go on its own day in a period of
+    its grid the teacher may teach. A meeting-policy course keeps the legal
+    whole bundles of ``course_options`` (its own list). The arguments are the
+    ones the caller passes :func:`generate_course_meeting_options`, so the
+    greedy placer, the CP-SAT builders and the one-teacher assignment, which
+    all ask here, agree on every option. ``[]``: no legal week.
+    """
+    from core.services.timetable_instructor_availability import cell_predicate, option_blocked
+
+    if get_course_meeting_policy(display_code, course_key):
+        return [
+            option
+            for option in course_options
+            if not option_blocked(availability, instructor_ids, option)
+        ]
+    return generate_course_meeting_options(
+        display_code,
+        credit_hours,
+        slot_config,
+        lab_slot_config,
+        blocked_slots,
+        course_key=course_key,
+        meeting_pattern=meeting_pattern,
+        cell_blocked=cell_predicate(availability, instructor_ids),
     )
 
 
@@ -350,6 +404,8 @@ def _generate_meeting_options(
     slot_config: list[dict],
     lab_slot_config: list[dict] | None = None,
     blocked_slots: list[dict] | None = None,
+    *,
+    cell_blocked: Callable[[str, str, str], bool] | None = None,
 ) -> list[list[dict]]:
     """Generate every valid way to schedule a course's weekly meetings.
 
@@ -367,6 +423,10 @@ def _generate_meeting_options(
         Lecture slot definitions from the scenario, or ``DEFAULT_SLOTS``.
     lab_slot_config : list[dict] | None
         Lab (100-min) slot definitions. If ``None``, uses ``DEFAULT_LAB_SLOTS``.
+    cell_blocked : callable | None
+        ``(day, start, end) -> bool``: a cell the section's teacher may not
+        teach (teaching-time rules), closed like a blocked slot. ``None`` keeps
+        the generator exactly as without rules.
 
     Returns
     -------
@@ -424,6 +484,13 @@ def _generate_meeting_options(
     # positions are feasible. Every slot in the grid is a feasible cell; the
     # only exclusions applied here are the user's blocked_slots.
     lecture_positions = [(i, s["start"], s["end"]) for i, s in enumerate(slots)]
+
+    def _open(day: str, pos: tuple) -> bool:
+        """A blocked slot never; with rules, nor a cell the teacher may not teach."""
+        return (day, pos[1]) not in _blocked_set and (
+            cell_blocked is None or not cell_blocked(day, pos[1], pos[2])
+        )
+
     lab_positions = [(i, s["start"], s["end"]) for i, s in enumerate(lab_slots)]
 
     # Generate all unique permutations of the pattern so the lab can be
@@ -462,7 +529,7 @@ def _generate_meeting_options(
 
                     found = False
                     for pos in positions:
-                        if pos[0] == target_slot_idx and (day, pos[1]) not in _blocked_set:
+                        if pos[0] == target_slot_idx and _open(day, pos):
                             option.append(
                                 {"day": day, "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
                             )
@@ -472,7 +539,7 @@ def _generate_meeting_options(
                     if not found:
                         fallback_found = False
                         for pos in positions:
-                            if (day, pos[1]) not in _blocked_set:
+                            if _open(day, pos):
                                 option.append(
                                     {"day": day, "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
                                 )
