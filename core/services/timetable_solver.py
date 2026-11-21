@@ -56,9 +56,8 @@ from core.services.timetable_instructor_availability import (
     availability_for,
     fixed_section_keys,
     meetings_blocked,
-    online_everywhere,
+    online_exemption,
     option_blocked,
-    placed_online_by_section,
     rule_ids,
 )
 from core.services.timetable_meeting_shape import shape_for
@@ -338,8 +337,9 @@ def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_con
     Returns ``(availability, restrict)``: ``restrict[i]`` holds the ruled teachers
     whose forbidden cells leave section ``i``'s meeting domains. A meeting-policy
     section's ``bundles`` are replaced (in ``sections``, never the budget's shared
-    list) by the bundles its teacher may teach. Exempt: a section online on this
-    board and on every board it already sits on. A FIXED teacher (pin or
+    list) by the bundles its teacher may teach. Exempt (fix plan D-A,
+    ``section_online_exempt``): a section online on this board, on every board
+    it already sits on and on every board of its course's term. A FIXED teacher (pin or
     teacher-frozen) with no legal week is not pruned: the section is still placed
     (rank-last in the greedy; reported by the persisted-board report). An engine
     section left no option makes the model infeasible, and the caller keeps the
@@ -354,16 +354,18 @@ def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_con
     assignment = load_assignment(scenario.id)  # pinned inside runs
     charged, fixed = assignment.pr4_map(), fixed_section_keys(assignment)
     budgets_by_code = {b.course_key or b.course_code: b for b in budgets}
-    placed_online = None
+    exemption = placed_online = None
     for i, sec in enumerate(sections):
         key = f"{sec['code']}|{sec['label']}"
         ids = rule_ids(availability, charged.get(key, ()))
         if not ids:
             continue
         if sec["is_online"]:
-            if placed_online is None:
-                placed_online = placed_online_by_section(scenario.id)
-            if online_everywhere((True, *placed_online.get((sec["code"], sec["label"]), ()))):
+            if exemption is None or placed_online is None:
+                exemption = online_exemption(scenario.id)
+                placed_online = exemption.placed_by_section()
+            here_and_placed = (True, *placed_online.get((sec["code"], sec["label"]), ()))
+            if exemption.exempt(sec["code"], here_and_placed):
                 continue
         if sec["meeting_policy"] is not None:
             legal = [b for b in sec["bundles"] or [] if not option_blocked(availability, ids, b)]

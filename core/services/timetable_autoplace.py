@@ -112,10 +112,9 @@ from core.services.timetable_instructor_availability import (
     availability_for,
     availability_scope,
     fixed_section_keys,
-    online_everywhere,
+    online_exemption,
     option_blocked,
     option_meetings,
-    placed_online_by_section,
     rule_ids,
     rules_enabled,
 )
@@ -1695,6 +1694,7 @@ def auto_place_board(
     av_charged: dict[str, tuple[int, ...]] = {}
     av_fixed: frozenset[str] = frozenset()
     av_legal_cache: dict[tuple[str, tuple[int, ...]], list] = {}
+    av_exemption = None  # the scope's OnlineExemption, asked on first need
     av_placed_online: dict[tuple[str, str], tuple[bool, ...]] | None = None
     availability_ranked_last: list[dict] = []
     availability_unplaced: list[dict] = []
@@ -1978,11 +1978,15 @@ def auto_place_board(
 
     def _av_online_everywhere(code: str, sec_label: str) -> bool:
         """The section, about to be placed on this board where its course is
-        online, is online on every board it is placed on (the rules' exemption)."""
-        nonlocal av_placed_online
-        if av_placed_online is None:
-            av_placed_online = placed_online_by_section(scenario.id)
-        return online_everywhere((True, *av_placed_online.get((code, sec_label), ())))
+        online, is exempt from its teachers' rules (fix plan D-A,
+        ``section_online_exempt``): online here, on every board it already sits
+        on (one scan per board) and on every board of its course's term, so a
+        section a later board places on campus is bound on this board too."""
+        nonlocal av_exemption, av_placed_online
+        if av_exemption is None or av_placed_online is None:
+            av_exemption = online_exemption(scenario.id)
+            av_placed_online = av_exemption.placed_by_section()
+        return av_exemption.exempt(code, (True, *av_placed_online.get((code, sec_label), ())))
 
     # ── 5. Round-robin placement: all S1s, then all S2s, ... ──────────
     # By placing all sections of the same group index together, we ensure

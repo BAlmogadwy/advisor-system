@@ -1010,6 +1010,165 @@ def test_an_online_section_is_not_bound_by_its_teachers_rules(av_on) -> None:
     assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
 
 
+def _two_boards(name: str, *, ds_online: bool, budgeted: bool = True):
+    """GS101 (2 x 75) on two term-2 boards: online on the AI board, online on the
+    DS board too or a campus course there (``ds_online``); one planned section when
+    ``budgeted``. Dr A and Dr B may teach it on both programmes."""
+    from core.services.course_identity import planner_course_key
+
+    sc, ai_board = ots.scenario(name, programs=("AI", "DS"), board_program="AI")
+    ds_board = DeliveryBoard.objects.create(
+        scenario=sc, label="Term 2 DS", nominal_term=2, program="DS"
+    )
+    for program, online in (("AI", True), ("DS", ds_online)):
+        ProgrammeRequirement.objects.create(
+            program=program,
+            course_code="GS101",
+            course_name="INTRO",
+            programme_term=2,
+            credit_hours=3,
+            is_online=online,
+        )
+    key = planner_course_key("GS101", "INTRO")
+    if budgeted:
+        ots.budget(sc, key, 1, code="GS101")
+    people = [_person("Dr A"), _person("Dr B")]
+    for program in ("AI", "DS"):
+        for index, person in enumerate(people):
+            ots.link(program, "GS101", person, role="co" if index else "primary")
+    return sc, ai_board, ds_board, key, people
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("budgeted", [True, False], ids=["budgeted", "own-section"])
+@pytest.mark.parametrize("ai_only", [False, True], ids=["placed-on-both", "placed-on-ai-only"])
+@pytest.mark.parametrize("ds_online", [True, False], ids=["online-everywhere", "campus-on-ds"])
+def test_the_teacher_choice_judges_the_online_exemption_on_every_board(
+    av_on, budgeted, ai_only, ds_online
+) -> None:
+    """D-A in the teacher choice (identity:F3, foundation:F1): a placed section is
+    exempt iff every placed copy is online AND, when its course is budgeted, the
+    course is online on every board of its term. Dr A may not teach mornings and
+    the section meets SUN/TUE 09:00, so a bound section goes to Dr B (and Dr A is
+    blocked); an exempt one keeps the lower id, Dr A. An own section (no budget)
+    is judged by its placed copies alone."""
+    sc, ai_board, ds_board, key, (a, b) = _two_boards(
+        f"exempt {budgeted} {ai_only} {ds_online}", ds_online=ds_online, budgeted=budgeted
+    )
+    ts = ots.section(sc, key, "S1")
+    for board in (ai_board,) if ai_only else (ai_board, ds_board):
+        ots.place(board, ts, [("SUN", "09:00", "10:15"), ("TUE", "09:00", "10:15")])
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    engine = sta.load_assignment(sc.id, incomplete="collect")
+    slot = engine.slot(f"{key}_S1")
+
+    exempt = ds_online or (ai_only and not budgeted)
+    assert engine.teacher[f"{key}_S1"] == (a.pk if exempt else b.pk)
+    assert slot.blocked_teachers == (() if exempt else (a.pk,))
+    assert ((key, "S1") in helper.online_exempt_sections(sc.id)) is exempt
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("windows", [True, False], ids=["windows", "no-windows"])
+@pytest.mark.parametrize("ds_online", [True, False], ids=["online-everywhere", "campus-on-ds"])
+def test_a_missing_section_is_exempt_only_when_online_on_every_board_of_its_term(
+    av_on, windows, ds_online
+) -> None:
+    """D-A for a section not placed yet: exempt iff its course is online on every
+    board of its term. Dr A may teach only after 17:40, so he has no campus week:
+    bound, the section goes to Dr B and Dr A's legal options are none (with the
+    evening windows on they are NOT legal for him: legality is judged on the
+    daytime options, foundation:F1). Exempt, Dr A keeps it (the lower id)."""
+    av_on.TIMETABLE_ONLINE_EVENING_WINDOWS = windows
+    sc, _ai, _ds, key, (a, b) = _two_boards(f"missing {windows} {ds_online}", ds_online=ds_online)
+    rule(a, KIND_UNAVAILABLE, end="17:40")
+
+    engine = sta.load_assignment(sc.id, incomplete="collect")
+    slot = engine.slot(f"{key}_S1")
+
+    assert not slot.placed
+    assert engine.teacher[f"{key}_S1"] == (a.pk if ds_online else b.pk)
+    assert dict(slot.teacher_options).get(a.pk) == (None if ds_online else ())
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("windows", [True, False], ids=["windows", "no-windows"])
+@pytest.mark.parametrize("runner", ["run_placer", "plain"])
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_a_partly_online_course_is_placed_on_every_board_by_a_teacher_who_may_teach_it(
+    av_on, windows, runner, ruled
+) -> None:
+    """foundation:F1: GS101 is online on the AI board and a campus course on the
+    DS board; Dr A may teach only after 17:40 (no campus week). The section is
+    placed on BOTH boards and taught by Dr B, with nothing left unplaced (it used
+    to be charged to Dr A and left off the DS board). Control: without the rule
+    Dr A (the lower id) teaches it, on both boards."""
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    av_on.TIMETABLE_ONLINE_EVENING_WINDOWS = windows
+    sc, ai_board, ds_board, key, (a, b) = _two_boards(
+        f"f1 {windows} {runner} {ruled}", ds_online=False
+    )
+    if ruled:
+        rule(a, KIND_UNAVAILABLE, end="17:40")
+
+    def place():
+        return auto_place_scenario(sc.id, strategy="compact")
+
+    result = sta.run_placer(sc.id, place, rebuild=True) if runner == "run_placer" else place()
+
+    for board in (ai_board, ds_board):
+        assert len(_placed_meetings(sc, key, board=board)) == 2, board.program
+    teacher = sta.load_assignment(sc.id, incomplete="collect").teacher[f"{key}_S1"]
+    assert teacher == (b.pk if ruled else a.pk)
+    for board_result in result["boards"].values():
+        assert not (board_result.get("instructor_availability") or {}).get("unplaced")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("placed", [True, False], ids=["placed", "not-placed"])
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_a_pinned_teacher_outside_the_links_is_bound_by_his_rules(av_on, placed, ruled) -> None:
+    """foundation:F4 (M27, M28, M33): a department pin of Dr P, who is not linked
+    to the course, is in the rule universe and among the section's candidates:
+    his "no mornings" blocks the placed SUN/TUE 09:00 section (counted as a
+    violation of the pinned map) or leaves the missing section only his afternoon
+    options. Control: no rule, nothing written."""
+    sc, _board, key, _ts, (_a,) = _ruled_board(eligible=("Dr A",), placed=placed)
+    p = ots.instructor("Dr P")
+    _pin(sc, key, "S1", p)
+    if ruled:
+        rule(p, KIND_UNAVAILABLE, end="13:00")
+
+    engine = sta.load_assignment(sc.id, incomplete="collect")
+    slot = engine.slot(f"{key}_S1")
+
+    assert slot.fixed == p.pk and p.pk not in slot.eligible
+    if placed:
+        assert slot.blocked_teachers == ((p.pk,) if ruled else ())
+        assert sta.violations(engine).get("availability") == (1 if ruled else None)
+    else:
+        legal = dict(slot.teacher_options).get(p.pk)
+        if ruled:
+            assert legal and all(start >= 13 * 60 for option in legal for _d, start, _e in option)
+        else:
+            assert legal is None
+
+
+def test_the_exact_solve_keeps_a_pinned_teachers_last_legal_option_free(pure) -> None:
+    """foundation:F4 (M31): teacher 1 is pinned to a missing section whose only
+    LEGAL option is MON 09:00; the placed choice section K at MON 09:00 would take
+    it, so the exact solve gives K to teacher 2. Control: without the rule SUN
+    stays free for the pinned section and K keeps the lower id."""
+    pinned = ots.course("P101", [{"options": [OPT_SUN, OPT_MON], "fixed": 1}], eligible=(1,))[0]
+    k = ots.course("K101", [{"meetings": [OPT_MON[0]]}], eligible=(1, 2))[0]
+    ruled = replace(pinned, teacher_options=((1, (OPT_MON,)),))
+
+    assert sta.solve_layout_aware([pinned, k]).teacher[k.key] == 1
+    assert sta.solve_layout_aware([ruled, k]).teacher[k.key] == 2
+
+
 @pytest.mark.django_db
 def test_a_stored_violating_teacher_with_a_legal_week_is_kept(av_on) -> None:
     sc, _board, key, ts, (a, _b) = _ruled_board()
@@ -1543,17 +1702,24 @@ def test_a_warm_start_baseline_at_a_forbidden_time_is_not_retained(av_on, flag) 
     assert bool(_blocked(meetings, a, _rules_of(a))) is not flag, meetings
 
 
-def _online_here(*, elsewhere: bool):
-    """GS101 is online on the AI board; ``elsewhere``: its S1 already sits on the DS
-    board, where it is a campus course, at a time its teacher may teach."""
+def _online_here(*, elsewhere: bool, ds_online: bool = False):
+    """GS101 is online on the AI board and carried by the DS board of the same term
+    too (``ds_online``: online there as well, else a campus course there);
+    ``elsewhere``: its S1 already sits on the DS board, at a time its teacher may
+    teach. Its one teacher Dr A may not teach mornings."""
     sc, ai_board, key, (a,) = _greedy_scenario(
-        f"t-g8 {elsewhere}", code="GS101", online=True, programs=("AI", "DS")
+        f"t-g8 {elsewhere} {ds_online}", code="GS101", online=True, programs=("AI", "DS")
     )
     ds_board = DeliveryBoard.objects.create(
         scenario=sc, label="Term 2 DS", nominal_term=2, program="DS"
     )
     ProgrammeRequirement.objects.create(
-        program="DS", course_code="GS101", course_name="INTRO", programme_term=2, credit_hours=3
+        program="DS",
+        course_code="GS101",
+        course_name="INTRO",
+        programme_term=2,
+        credit_hours=3,
+        is_online=ds_online,
     )
     if elsewhere:
         ts = ots.section(sc, key, "S1")
@@ -1562,22 +1728,44 @@ def _online_here(*, elsewhere: bool):
     return sc, ai_board, key, a
 
 
+#: The one online exemption (fix plan D-A): a section is exempt iff it is online on
+#: EVERY board it sits on AND on every board it would be placed on (the boards of
+#: its course's term). Only the first case is exempt.
+ONLINE_CASES = pytest.mark.parametrize(
+    ("elsewhere", "ds_online"),
+    [(False, True), (False, False), (True, False)],
+    ids=["online-everywhere", "campus-on-its-other-board", "campus-elsewhere"],
+)
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+@ONLINE_CASES
 def test_an_online_section_is_not_bound_by_its_teachers_rules_in_the_greedy(
-    av_on, elsewhere
+    av_on, elsewhere, ds_online
 ) -> None:
-    """T-G8 (H7): the "morning" strategy puts an online section of a "no mornings"
-    teacher in the morning (rules do not bind it); the same section already on a
-    board where it is a campus course is bound, so it goes to the afternoon."""
-    sc, ai_board, key, a = _online_here(elsewhere=elsewhere)
+    """T-G8 (H7, D-A), judged on the WHOLE scenario: the "morning" strategy puts a
+    section online on every board in the morning (rules do not bind it). A section
+    whose course is a campus course on the DS board is bound on BOTH boards, also
+    while the AI board is placed before the DS board places its campus copy
+    (construction:CON-1: it used to land in a forbidden morning on the AI board)."""
+    from core.models import SectionPlacement
+
+    sc, ai_board, key, a = _online_here(elsewhere=elsewhere, ds_online=ds_online)
     assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == a.pk
 
     _greedy(sc, "morning")
 
-    meetings = _placed_meetings(sc, key, board=ai_board)
-    assert len(meetings) == 2
-    assert bool(_blocked(meetings, a, _rules_of(a))) is not elsewhere, meetings
+    assert len(_placed_meetings(sc, key, board=ai_board)) == 2
+    boards = set(
+        SectionPlacement.objects.filter(
+            board__scenario=sc, term_section__course_key=key
+        ).values_list("board__program", flat=True)
+    )
+    assert boards == {"AI", "DS"}
+    meetings = _placed_meetings(sc, key)  # every board
+    assert bool(_blocked(meetings, a, _rules_of(a))) is ds_online, meetings
+    exempt = helper.online_exempt_sections(sc.id)
+    assert ((key, "S1") in exempt) is ds_online
 
 
 @pytest.mark.django_db
@@ -1873,22 +2061,23 @@ def test_a_cpsat_engine_section_without_a_legal_week_makes_the_board_infeasible(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("builder", CPSAT_BUILDERS)
-@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+@ONLINE_CASES
 def test_cpsat_does_not_prune_an_online_section_unless_it_is_campus_elsewhere(
-    av_on, monkeypatch, builder, elsewhere
+    av_on, monkeypatch, builder, elsewhere, ds_online
 ) -> None:
-    """H7 in the CP-SAT builders: an online section of a "no mornings" teacher
-    keeps all 40 cells a meeting; once it also sits on a board where it is a
-    campus course, its rules bind it and the mornings go."""
+    """H7 (D-A) in the CP-SAT builders: a section online on every board of its
+    term keeps all 40 cells a meeting; once its course is a campus course on
+    another board of its term (placed there or not yet), its rules bind it and
+    the mornings go."""
     from core.services.timetable_autoplace import DEFAULT_SLOTS, placeable_slots
 
-    sc, ai_board, _key, _a = _online_here(elsewhere=elsewhere)
+    sc, ai_board, _key, _a = _online_here(elsewhere=elsewhere, ds_online=ds_online)
     every = 5 * len(placeable_slots(DEFAULT_SLOTS))
     afternoon = 5 * sum(slot["start"] >= "13:00" for slot in placeable_slots(DEFAULT_SLOTS))
 
     sizes = _domain_sizes(monkeypatch, builder, ai_board)
 
-    assert sizes == [afternoon if elsewhere else every] * 2
+    assert sizes == [every if ds_online else afternoon] * 2
 
 
 # ── C.5 / C.6: annealing, the load balancer and their persist guard ────
@@ -2039,16 +2228,16 @@ def test_an_english_section_moves_only_into_a_bundle_its_teacher_may_teach(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+@ONLINE_CASES
 def test_relocate_domains_spare_a_section_online_on_every_board(
-    av_on, monkeypatch, elsewhere
+    av_on, monkeypatch, elsewhere, ds_online
 ) -> None:
-    """H7 in the movers: an online section of a "no mornings" teacher keeps its
-    whole domain; the same section also on a board where it is a campus course
-    loses the mornings."""
+    """H7 (D-A) in the movers: a section online on every board of its term keeps
+    its whole domain; the same section of a course that is a campus course on
+    another board of its term (placed there or not) loses the mornings."""
     from core.models import TermSection
 
-    sc, ai_board, key, a = _online_here(elsewhere=elsewhere)
+    sc, ai_board, key, a = _online_here(elsewhere=elsewhere, ds_online=ds_online)
     ts = TermSection.objects.filter(scenario=sc, course_key=key, section="S1").first()
     ots.place(ai_board, ts or ots.section(sc, key, "S1"), AFTERNOON)
     rules = _rules_of(a)
@@ -2058,7 +2247,7 @@ def test_relocate_domains_spare_a_section_online_on_every_board(
     for mover in ("sa", "lb"):
         cells = [cell for meeting in domains[mover][f"{key}|S1"]["domain"] for cell in meeting]
         assert cells
-        assert any(_cell_blocked(a, rules, cell) for cell in cells) is not elsewhere
+        assert any(_cell_blocked(a, rules, cell) for cell in cells) is ds_online
 
 
 @pytest.mark.django_db
@@ -2094,26 +2283,36 @@ def test_the_persist_guard_rolls_back_a_pass_that_adds_a_violation(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("ds_online", [True, False], ids=["online-everywhere", "campus-control"])
 def test_the_persist_guard_does_not_count_a_section_online_on_every_board(
-    av_on, monkeypatch
+    av_on, monkeypatch, ds_online
 ) -> None:
-    """The guard's count skips a section online on every board (H7): the pass that
-    moves an online section of a "no mornings" teacher to SUN 09:00 persists."""
+    """The guard's count skips a section online on every board of its term (H7,
+    D-A): the pass that moves it to SUN 09:00 persists. Control: its course is a
+    campus course on the DS board, so the same pass adds a violation and is
+    rolled back (the annealing prune taken out, so the pass makes the move)."""
     from core.models import SectionPlacement, TermSection
     from core.services import timetable_local_search as sa
 
-    sc, ai_board, key, a = _online_here(elsewhere=False)
+    sc, ai_board, key, a = _online_here(elsewhere=False, ds_online=ds_online)
     ots.place(ai_board, ots.section(sc, key, "S1"), AFTERNOON)
+    _engine_row(sc, key, "S1", a)  # stays charged after the move (the kept rule)
     assert TermSection.objects.filter(scenario=sc).count() == 1
+    monkeypatch.setattr(sa, "prune_relocate_domains", lambda *args, **kwargs: None)
     monkeypatch.setattr(sa, "_compute_cost", _reward_sunday_morning)
 
     result = sa.optimize_and_persist_board(ai_board.id, max_seconds=1.5)
 
-    assert not result.get("persist_rolled_back"), result.get("rollback_reasons")
     persisted = SectionPlacement.objects.filter(board=ai_board).values_list(
         "day", "start_time", "end_time"
     )
-    assert ("SUN", "09:00", "10:15") in set(persisted)
+    if ds_online:
+        assert not result.get("persist_rolled_back"), result.get("rollback_reasons")
+        assert ("SUN", "09:00", "10:15") in set(persisted)
+    else:
+        assert result.get("persist_rolled_back") is True
+        assert result["rollback_reasons"] == ["instructor availability violations increased"]
+        assert sorted(persisted) == sorted(AFTERNOON)
 
 
 # ── C.7-C.10: the improvement stages (catalogue, LS-v2, chain-2, polisher) ──
@@ -3252,6 +3451,100 @@ def test_the_repair_guard_spares_only_a_meeting_online_on_every_board() -> None:
     assert one_board(here, "SUN", "09:00", "10:15")
     assert not one_board(here, "SUN", "13:00", "14:15")
     assert _availability_guard(EMPTY_AVAILABILITY, Lookup(set()), copies, teachers) is None
+    # D-A: online on both boards it sits on, but its course is a campus course on
+    # a board of its term it is not placed on yet: bound. Online on every board of
+    # its term too: exempt. Asked by the section's planner course key.
+    asked: list[str] = []
+
+    def course_online(online: bool):
+        def ask(course_key: str) -> bool:
+            asked.append(course_key)
+            return online
+
+        return ask
+
+    campus_term = _availability_guard(
+        NO_MORNINGS, Lookup({"AI", "DS"}), copies, teachers, course_online=course_online(False)
+    )
+    assert campus_term(here, "SUN", "09:00", "10:15")
+    online_term = _availability_guard(
+        NO_MORNINGS, Lookup({"AI", "DS"}), copies, teachers, course_online=course_online(True)
+    )
+    assert not online_term(here, "SUN", "09:00", "10:15")
+    assert asked == ["GS101", "GS101"]
+
+
+def _reads(ctx, table: str) -> int:
+    return sum(1 for q in ctx.captured_queries if f'FROM "{table}"' in q["sql"])
+
+
+@pytest.mark.django_db
+def test_the_online_exemption_reads_its_static_half_once_per_scope(av_on) -> None:
+    """identity:F6: inside one scope the boards, the budgets and the per-programme
+    online lookups are read once; each call re-reads only the placements (one
+    query). Control: unscoped, every call builds them again."""
+    sc, ai_board, ds_board, key, _people = _two_boards("cost", ds_online=False)
+    ts = ots.section(sc, key, "S1")
+    for board in (ai_board, ds_board):
+        ots.place(board, ts, AFTERNOON)
+
+    def three_calls() -> None:
+        assert helper.online_exempt_sections(sc.id) == frozenset()
+        assert helper.placed_online_flags(sc.id) == {ts.pk: (False, True)}
+        assert helper.online_exempt_sections(sc.id) == frozenset()
+
+    with CaptureQueriesContext(connection) as scoped:
+        with helper.availability_scope(sc.id):
+            three_calls()
+    with CaptureQueriesContext(connection) as unscoped:
+        three_calls()
+
+    static = ("programme_requirements", "delivery_boards", "scenario_section_budgets")
+    assert _reads(scoped, "section_placements") == 3
+    assert {table: _reads(scoped, table) for table in static} == {
+        "programme_requirements": 2,  # one per programme list (AI, DS)
+        "delivery_boards": 1,
+        "scenario_section_budgets": 1,
+    }
+    assert {table: _reads(unscoped, table) for table in static} == {
+        "programme_requirements": 6,
+        "delivery_boards": 2,
+        "scenario_section_budgets": 2,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "repair", ["repair_instructor_daily_overloads", "repair_instructor_clashes"]
+)
+@pytest.mark.parametrize("ds_online", [True, False], ids=["online-everywhere", "campus-on-ds"])
+def test_the_cap_and_clash_repairs_ask_the_one_online_exemption(
+    av_on, monkeypatch, repair, ds_online
+) -> None:
+    """D-A wiring: GS101 S1 sits only on the AI board, where it is online; the
+    repairs' guard binds it unless its course is online on the DS board of its
+    term too (the scope's ``online_exemption`` is handed in)."""
+    from core.models import SectionPlacement
+    from core.services import timetable_instructor_cap_repair as cap_repair
+
+    sc, ai_board, key, a = _online_here(elsewhere=False, ds_online=ds_online)
+    ots.place(ai_board, ots.section(sc, key, "S1"), AFTERNOON)
+    _engine_row(sc, key, "S1", a)
+    real, guards = cap_repair._availability_guard, []
+
+    def spy(*args, **kwargs):
+        guards.append(real(*args, **kwargs))
+        return guards[-1]
+
+    monkeypatch.setattr(cap_repair, "_availability_guard", spy)
+    getattr(cap_repair, repair)(sc.id)
+
+    (guard,) = guards
+    placement = SectionPlacement.objects.select_related("board", "term_section").filter(
+        board=ai_board
+    )[0]
+    assert guard(placement, "SUN", "09:00", "10:15") is not ds_online
+    assert guard(placement, "SUN", "13:00", "14:15") is False
 
 
 # ── T-O1: a whole Generate run ────────────────────────────────────────
@@ -3469,14 +3762,16 @@ def test_an_english_switch_is_checked_on_every_meeting_of_its_new_bundle(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
-def test_the_rule_checker_spares_only_a_section_online_on_every_board(av_on, elsewhere) -> None:
-    """H7 for the writers: GS101 S1 is online on the AI board; with no other board
-    its teacher's "no mornings" never binds it (control: placed on campus on the
-    DS board too, it does)."""
+@ONLINE_CASES
+def test_the_rule_checker_spares_only_a_section_online_on_every_board(
+    av_on, elsewhere, ds_online
+) -> None:
+    """H7 (D-A) for the writers: GS101 S1 is online on the AI board; online on the
+    DS board of its term too, its teacher's "no mornings" never binds it. A campus
+    course on the DS board, placed there or not yet, it does."""
     from core.models import TermSection
 
-    sc, ai_board, key, a = _online_here(elsewhere=elsewhere)
+    sc, ai_board, key, a = _online_here(elsewhere=elsewhere, ds_online=ds_online)
     ts = TermSection.objects.filter(scenario=sc, course_key=key, section="S1").first()
     ts = ts or ots.section(sc, key, "S1")
     ots.place(ai_board, ts, [("SUN", "18:00", "19:15")])
@@ -3487,7 +3782,7 @@ def test_the_rule_checker_spares_only_a_section_online_on_every_board(av_on, els
 
     blocked = helper.section_rule_checker(sc.id).blocked(placement, "MON", "09:00", "10:15")
 
-    assert blocked == ((a.pk,) if elsewhere else ())
+    assert blocked == (() if ds_online else (a.pk,))
 
 
 def _move_set(placement, day: str, start: str, end: str) -> list[dict]:

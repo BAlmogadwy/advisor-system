@@ -59,8 +59,9 @@ from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_instructor_availability import (
     availability_for,
     meetings_blocked,
-    online_everywhere,
+    online_exemption,
     rule_ids,
+    section_online_exempt,
 )
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_online_windows import active_online_windows
@@ -133,13 +134,17 @@ def _repair_slot_domain(
     )
 
 
-def _availability_guard(availability, online_lookup, copies_by_id, instr_ids):
+def _availability_guard(availability, online_lookup, copies_by_id, instr_ids, course_online=None):
     """``(placement, day, start, end) -> True`` when moving ``placement`` there
     would put it in a cell its charged teacher may not teach
     (``TIMETABLE_INSTRUCTOR_AVAILABILITY``); None while no rule binds.
 
-    A meeting online on every board it sits on is never bound. The ruled ids of
-    a placement are worked out once (its teachers do not change in a repair).
+    The one online exemption (fix plan D-A, ``section_online_exempt``): a
+    meeting online on every board it sits on AND, for a budgeted course, on
+    every board of its term (``course_online``: planner course key -> bool, None
+    without a budget; the scope's ``online_exemption(...).course_online_everywhere``)
+    is never bound. The ruled ids of a placement are worked out once (its
+    teachers do not change in a repair).
     """
     if not availability:
         return None
@@ -149,11 +154,17 @@ def _availability_guard(availability, online_lookup, copies_by_id, instr_ids):
         key = placement.pk
         if key not in ruled_by_pk:
             copies = copies_by_id.get(placement.pk) or [placement]
-            exempt = online_everywhere(
-                online_lookup.is_online_course_for_board(
-                    copy.board, _display_code(copy.term_section)
-                )
-                for copy in copies
+            section = placement.term_section
+            exempt = section_online_exempt(
+                [
+                    online_lookup.is_online_course_for_board(
+                        copy.board, _display_code(copy.term_section)
+                    )
+                    for copy in copies
+                ],
+                course_online(section.course_key or section.course_code)
+                if course_online is not None
+                else None,
             )
             ruled_by_pk[key] = () if exempt else rule_ids(availability, instr_ids(placement))
         return ruled_by_pk[key]
@@ -358,7 +369,11 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     # Teaching-time rules: never relocate a session INTO a cell its teacher may
     # not teach, and never unplace one because of a rule (owner decision G.2).
     into_blocked = _availability_guard(
-        availability_for(scenario_id), online_lookup, copies_by_id, _instr_ids
+        availability_for(scenario_id),
+        online_lookup,
+        copies_by_id,
+        _instr_ids,
+        course_online=online_exemption(scenario_id).course_online_everywhere,
     )
 
     # ── Scenario-wide occupancy, kept in sync as we apply moves ──
@@ -692,7 +707,11 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     # may not teach; a mover left without a target stays a reported clash
     # (owner decision G.3).
     into_blocked = _availability_guard(
-        availability_for(scenario_id), online_lookup, copies_by_id, _instr_ids
+        availability_for(scenario_id),
+        online_lookup,
+        copies_by_id,
+        _instr_ids,
+        course_online=online_exemption(scenario_id).course_online_everywhere,
     )
 
     locked_physical = {_physical_key(p) for p in placements if p.is_locked}

@@ -83,15 +83,14 @@ from django.db import transaction
 
 from core.services.instructor_availability import EMPTY_AVAILABILITY
 from core.services.timetable_instructor_availability import (
+    OnlineExemption,
     availability_for,
     availability_scope,
     meetings_blocked,
-    placed_online_flags,
+    online_exemption,
     rule_ids,
     rules_enabled,
-)
-from core.services.timetable_instructor_availability import (
-    online_everywhere as _online_everywhere,
+    section_online_exempt,
 )
 
 logger = logging.getLogger(__name__)
@@ -449,20 +448,16 @@ class _Static:
     grids: tuple[list, list, list] = ([], [], [])
     resolved: dict[tuple[str, str], tuple[int, ...]] = field(default_factory=dict)
     placer_options: dict[str, tuple] = field(default_factory=dict)
-    # nominal term -> the programme list of each board placed at that term (the
-    # boards a budget of that term is built on), and one online-course lookup
-    # shared by every course; read on first need, only with
-    # TIMETABLE_ONLINE_EVENING_WINDOWS on.
-    board_programmes: dict[int, list[list[str]]] | None = None
-    online_lookup: Any = None
     # The daytime option dicts per course (the generator's own output), and, with
     # teaching-time rules, one ruled teacher's legal options per (course,
-    # teacher) for the availability object they were computed with, and whether
-    # a course is online on every board of its term.
+    # teacher) for the availability object they were computed with.
     daytime_options: dict[str, list] = field(default_factory=dict)
     teacher_placer_options: dict[tuple[str, int], tuple] = field(default_factory=dict)
     teacher_av: Any = None
-    online_cache: dict[str, bool] = field(default_factory=dict)
+    daytime_option_cells: dict[str, tuple] = field(default_factory=dict)
+    # Whether a course is online on each board of its term (the one online
+    # exemption's static half, ``timetable_instructor_availability``).
+    online: OnlineExemption | None = None
 
     def eligible(self, course_key: str, display_code: str) -> tuple[int, ...]:
         cache_key = (course_key, display_code)
@@ -510,11 +505,17 @@ class _Static:
         return self.daytime_options[course_key]
 
     def teacher_options(self, course_key: str, budget, teacher: int, availability) -> tuple:
-        """:meth:`options` as ``teacher``'s teaching-time rules leave them: the
-        placer's own per-teacher option source
+        """The DAYTIME options of :meth:`options` as ``teacher``'s teaching-time
+        rules leave them: the placer's own per-teacher option source
         (``timetable_autoplace.availability_section_options``, the same
-        arguments as :meth:`options`); the online-window options are kept as
-        they are (online meetings are exempt). ``()``: no legal week."""
+        arguments as :meth:`options`). ``()``: no legal week.
+
+        Only a section the rules bind asks (``_with_availability``). The evening
+        online-window options are every teacher's only for a section online on
+        every board it sits on and would be placed on (fix plan D-A), and such a
+        section never asks; a bound section meets on campus somewhere, so its
+        teacher's legality is judged on the daytime options alone (a teacher who
+        may teach only the evening windows has no legal week, foundation:F1)."""
         if availability is not self.teacher_av:
             self.teacher_av = availability
             self.teacher_placer_options = {}
@@ -527,36 +528,43 @@ class _Static:
             )
 
             slot_config, lab_slot_config, blocked = self.grids
-            online_everywhere, window_options = self._online_window_options(
-                budget, slot_config, lab_slot_config, blocked
+            daytime = availability_section_options(
+                availability,
+                (teacher,),
+                budget.course_code,
+                budget.credit_hours or 3,
+                slot_config or DEFAULT_SLOTS,
+                lab_slot_config or DEFAULT_LAB_SLOTS,
+                blocked or [],
+                course_key=course_key,
+                meeting_pattern=budget.meeting_pattern,
+                course_options=self._daytime(course_key, budget),
             )
-            daytime = (
-                []
-                if online_everywhere
-                else availability_section_options(
-                    availability,
-                    (teacher,),
-                    budget.course_code,
-                    budget.credit_hours or 3,
-                    slot_config or DEFAULT_SLOTS,
-                    lab_slot_config or DEFAULT_LAB_SLOTS,
-                    blocked or [],
-                    course_key=course_key,
-                    meeting_pattern=budget.meeting_pattern,
-                    course_options=self._daytime(course_key, budget),
-                )
-            )
-            self.teacher_placer_options[cache_key] = _option_cells([*daytime, *window_options])
+            self.teacher_placer_options[cache_key] = _option_cells(daytime)
         return self.teacher_placer_options[cache_key]
+
+    def daytime_cells(self, course_key: str, budget) -> tuple:
+        """Every daytime option of the course as :func:`_option_cells` (what a
+        teacher no rule restricts may take: :meth:`teacher_options`' baseline)."""
+        if course_key not in self.daytime_option_cells:
+            self.daytime_option_cells[course_key] = _option_cells(self._daytime(course_key, budget))
+        return self.daytime_option_cells[course_key]
 
     def online_everywhere(self, budget) -> bool:
         """The budget's course is online on every board of its term (the boards
         :meth:`_online_window_options` judges), whatever the windows flag says:
-        the teaching-time rules' exemption of a section not placed yet."""
-        key = budget.course_key or budget.course_code
-        if key not in self.online_cache:
-            self.online_cache[key] = _online_everywhere(self._board_online_flags(budget))
-        return self.online_cache[key]
+        the one online exemption's view of a section not placed yet
+        (``OnlineExemption.course_online_everywhere``)."""
+        return bool(
+            self._exemption().course_online_everywhere(budget.course_key or budget.course_code)
+        )
+
+    def _exemption(self) -> OnlineExemption:
+        """This read's :class:`OnlineExemption`, built on its own budgets (no
+        query until a course is asked, the very reads the windows always made)."""
+        if self.online is None:
+            self.online = OnlineExemption(self.scenario_id, budgets=self.budgets)
+        return self.online
 
     def _online_window_options(
         self, budget, slot_config: list, lab_slot_config: list, blocked: list
@@ -595,34 +603,9 @@ class _Static:
         )
 
     def _board_online_flags(self, budget) -> list[bool]:
-        """Whether the budget's course is online on each board of its term."""
-        from core.services.timetable_online import normalise_course_code
-
-        if self.board_programmes is None:
-            from core.models import DeliveryBoard
-            from core.services.timetable_online import OnlineCourseLookup, programmes_for_board
-
-            self.board_programmes = {}
-            for board in DeliveryBoard.objects.filter(scenario_id=self.scenario_id).order_by(
-                "display_order", "pk"
-            ):
-                if board.nominal_term is not None:
-                    self.board_programmes.setdefault(board.nominal_term, []).append(
-                        programmes_for_board(board)
-                    )
-            self.online_lookup = OnlineCourseLookup()
-        # Known residual: a budget whose term HAS boards but which step 1b picks
-        # up on another term's board is still judged by its own term's boards
-        # (the flag-on golden pins the term rule for courses not online there).
-        boards = self.board_programmes.get(budget.programme_term) or [
-            programmes
-            for term_boards in self.board_programmes.values()
-            for programmes in term_boards
-        ]
-        code = normalise_course_code(budget.course_code)
-        return [
-            code in self.online_lookup.codes_for_programmes(programmes) for programmes in boards
-        ]
+        """Whether the budget's course is online on each board of its term (the
+        flag-on golden pins the term rule for courses not online there)."""
+        return self._exemption().board_flags(budget.course_code, budget.programme_term)
 
 
 def _option_cells(options) -> tuple:
@@ -1018,7 +1001,11 @@ def _with_availability(static: _Static, slots: list[Slot], availability, scenari
     """The slots with the teaching-time rules of their candidate teachers
     written in (``Slot.blocked_teachers`` / ``Slot.teacher_options``). A slot
     no ruled candidate touches is returned as it is. Exempt: an unknown
-    section, and a section online on every board it is (or would be) placed on.
+    section, and a section online on every board it sits on and on every board
+    it would be placed on (``section_online_exempt``, fix plan D-A: the placed
+    copies from the scope's ``online_exemption``, the boards of the course's
+    term from this read's own budgets). A bound section's teachers are judged
+    on the DAYTIME options (``_Static.teacher_options``).
     A section not placed yet that a rule touches gets its placer options even
     when neither clash nor the daily cap would need them, so its teacher must
     keep a LEGAL one."""
@@ -1033,15 +1020,17 @@ def _with_availability(static: _Static, slots: list[Slot], availability, scenari
             continue
         budget = static.budgets.get(slot.course_key)
         if online_flags is None:
-            online_flags = placed_online_flags(scenario_id)
-        flags = online_flags.get(slot.term_section_id) if slot.placed else None
-        if flags:
-            exempt = _online_everywhere(flags)
-        elif budget is not None:
-            exempt = static.online_everywhere(budget)
-        else:
-            exempt = not slot.campus
-        if exempt:
+            online_flags = {
+                ts_id: flags for ts_id, _key, flags in online_exemption(scenario_id).placed_rows()
+            }
+        placed_flags: tuple[bool, ...] = ()
+        if slot.placed:
+            # A section placed only in memory (``sections`` given) is judged by
+            # the board its state reads.
+            placed_flags = online_flags.get(slot.term_section_id) or (not slot.campus,)
+        if section_online_exempt(
+            placed_flags, static.online_everywhere(budget) if budget is not None else None
+        ):
             out.append(slot)
             continue
         blocked: tuple[int, ...] = ()
@@ -1052,16 +1041,16 @@ def _with_availability(static: _Static, slots: list[Slot], availability, scenari
         per_teacher: list[tuple[int, tuple]] = []
         options = slot.options
         if budget is not None:
-            course = static.options(slot.course_key, budget)
+            unrestricted = static.daytime_cells(slot.course_key, budget)
             for teacher in candidates:
                 legal = static.teacher_options(slot.course_key, budget, teacher, availability)
                 if slot.placed:
                     if not legal:
                         per_teacher.append((teacher, ()))
-                elif legal != course:
+                elif legal != unrestricted:
                     per_teacher.append((teacher, legal))
             if not slot.placed and per_teacher:
-                options = course
+                options = static.options(slot.course_key, budget)
         if not blocked and not per_teacher:
             out.append(slot)
             continue

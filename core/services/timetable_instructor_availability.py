@@ -15,9 +15,9 @@ import too. This module is the classic engine's ONE door to them:
   byte-identical.
 * the predicates (:func:`rule_ids`, :func:`meetings_blocked`,
   :func:`option_blocked`, :func:`cell_predicate`) are what the stages test with;
-  :func:`online_everywhere` / :func:`online_exempt_sections` are the one online
-  exemption (a section the rules do not bind is online on EVERY board it is
-  placed on).
+  :func:`section_online_exempt` is the one online exemption (a section the
+  rules do not bind is online on EVERY board it sits on and on every board it
+  would be placed on), asked through the scope's :func:`online_exemption`.
 
 Manual moves, validation and the slot previews never call anything here.
 """
@@ -34,7 +34,10 @@ from core.services.instructor_availability import (
     DAY_CODES,
     EMPTY_AVAILABILITY,
     InstructorAvailability,
+    TimeRule,
+    compile_rules,
     load_instructor_availability,
+    load_time_rules,
     to_minutes,
 )
 from core.services.timetable_flags import (
@@ -56,18 +59,37 @@ def rules_enabled() -> bool:
 
 
 class _Holder:
-    """The availability one scope loaded for one scenario (at most one load)."""
+    """What one scope loaded for one scenario: the availability (one rule query,
+    plus one more only when the teacher universe grows, fix plan D-G), the
+    writers' :class:`RuleChecker` and the :class:`OnlineExemption`'s static half.
 
-    __slots__ = ("checker", "loaded", "value")
+    ``universe``: the teacher ids whose rules are loaded; ``everyone``: the rule
+    table held no row at all when it was read, so every universe is covered."""
+
+    __slots__ = ("checker", "everyone", "loaded", "online", "pending_rules", "universe", "value")
 
     def __init__(self) -> None:
         self.loaded = False
         self.value: InstructorAvailability = EMPTY_AVAILABILITY
+        self.universe: frozenset[int] = frozenset()
+        self.everyone = False
         self.checker: RuleChecker | None = None
+        self.online: OnlineExemption | None = None
+        # Every stored rule, read by the universe-less path while its collect
+        # works out the universe (so that collect needs no second rule query).
+        self.pending_rules: list[TimeRule] | None = None
 
-    def store(self, value: InstructorAvailability) -> None:
+    def store(
+        self, value: InstructorAvailability, universe: Iterable[int], *, everyone: bool = False
+    ) -> None:
         self.loaded = True
         self.value = value
+        self.universe = frozenset(universe)
+        self.everyone = everyone
+        self.checker = None  # built from the previous availability
+
+    def covers(self, universe: Iterable[int]) -> bool:
+        return self.everyone or self.universe.issuperset(universe)
 
 
 #: ``None`` = "every scenario this request touches" (a holder per scenario id is
@@ -119,30 +141,64 @@ def availability_for(
     :func:`availability_scope` the first call loads and every later one returns
     the same object; outside one each call loads. ``universe`` is the teacher
     universe to load for (``TeacherAssignment.universe``: every eligible or
-    fixed teacher of every slot); without it the scenario's map is read first,
-    and that read's own collect loads the rules, so a call costs one rule query.
-    Rules of instructors outside the universe never arrive, so they cannot make
-    the availability non-empty.
+    fixed teacher of every slot). A scope that loaded a smaller universe loads
+    the rules of the whole union once more when a later read brings ids outside
+    it (fix plan D-G: an own section placed by a manual create enters the
+    universe inside the request), so no teacher is ever unchecked.
+
+    Without ``universe`` one query reads every stored rule: none at all costs
+    that one query and nothing else (the clash-off greedy's first question, D-L);
+    otherwise the scenario's map is read (``incomplete="collect"``: it never
+    raises) to learn the universe, and its collect compiles from the rows already
+    read. Rules of instructors outside the universe never make the availability
+    non-empty.
     """
     if not rules_enabled():
         return EMPTY_AVAILABILITY
     holder = _holder(scenario_id)
     if holder is not None and holder.loaded:
-        return holder.value
+        if universe is None:
+            return holder.value
+        wanted = frozenset(universe)
+        if holder.covers(wanted):
+            return holder.value
+        grown = holder.universe | wanted
+        value = load_instructor_availability(sorted(grown), scenario=scenario_id)
+        holder.store(value, grown)
+        return value
     if universe is None:
-        from core.services.section_teacher_assignment import load_assignment
-
-        with availability_scope(scenario_id):
-            assignment = load_assignment(scenario_id, incomplete="collect")
-            inner = _holder(scenario_id)
-            value = inner.value if inner is not None and inner.loaded else None
-        if value is None:
-            value = load_instructor_availability(sorted(assignment.universe), scenario=scenario_id)
+        return _availability_of_the_scenario(scenario_id)
+    ids = frozenset(universe)
+    if holder is not None and holder.pending_rules is not None:
+        value = compile_rules(r for r in holder.pending_rules if r.instructor_id in ids)
     else:
-        value = load_instructor_availability(sorted(universe), scenario=scenario_id)
+        value = load_instructor_availability(sorted(ids), scenario=scenario_id)
     if holder is not None:
-        holder.store(value)
+        holder.store(value, ids)
     return value
+
+
+def _availability_of_the_scenario(scenario_id: int) -> InstructorAvailability:
+    """:func:`availability_for` without a universe (one rule query in all)."""
+    from core.services.section_teacher_assignment import load_assignment
+
+    with availability_scope(scenario_id):
+        holder = _holder(scenario_id)
+        assert holder is not None  # the scope above made it
+        if not holder.loaded:
+            rules = load_time_rules()
+            if not rules:
+                holder.store(EMPTY_AVAILABILITY, (), everyone=True)
+            else:
+                holder.pending_rules = rules
+                try:
+                    assignment = load_assignment(scenario_id, incomplete="collect")
+                finally:
+                    holder.pending_rules = None
+                if not holder.loaded:  # the collect saw no slot (no gender, say)
+                    ids = frozenset(assignment.universe)
+                    holder.store(compile_rules(r for r in rules if r.instructor_id in ids), ids)
+        return holder.value
 
 
 def bound_availability(scenario_id: int | None = None) -> InstructorAvailability:
@@ -372,65 +428,198 @@ def fixed_section_keys(assignment: Any) -> frozenset[str]:
 
 
 def online_everywhere(flags: Iterable[bool]) -> bool:
-    """The one online exemption: a section the rules do not bind is online on
-    EVERY board it is placed on (``flags``: one per board); a section on no
-    board, or online on some boards only, is bound."""
+    """Online on EVERY one of ``flags`` (one per board); no board at all is not."""
     flags = list(flags)
     return bool(flags) and all(flags)
 
 
+def section_online_exempt(placed: Iterable[bool] | None, course_online: bool | None) -> bool:
+    """THE online exemption (fix plan D-A), the one implementation every stage
+    uses: the rules do not bind a section that is online on EVERY board it sits
+    on AND on every board it WOULD be placed on.
+
+    ``placed``: one flag per board the section sits on (a placer about to put it
+    on one more board includes that board's flag); ``course_online``: whether its
+    course is online on every board of its term (the boards it would be placed
+    on, :meth:`OnlineExemption.course_online_everywhere`), None when the course
+    has no budget (an own section is placed only where it already is). So:
+
+    * placed, budgeted: every placed copy online AND the course online everywhere;
+    * placed, no budget: every placed copy online;
+    * not placed yet: the course online everywhere (no budget: never exempt).
+
+    A section online on board A and campus on board B is bound while board A is
+    being placed, whatever the board order (construction:CON-1)."""
+    flags = tuple(placed or ())
+    if flags and not all(flags):
+        return False
+    if course_online is None:
+        return bool(flags)
+    return course_online
+
+
+class OnlineExemption:
+    """:func:`section_online_exempt` for one scenario's sections.
+
+    The static half (the boards of each term, the budgets, one online-course
+    lookup per programme list) is read once per object, and the scope's holder
+    keeps the object (:func:`online_exemption`), so a run reads it once (fix plan
+    D-A / identity:F6). Only the placed-copies scan (:meth:`placed_rows`) runs
+    again on each call, one query.
+    """
+
+    def __init__(self, scenario_id: int, *, budgets: Mapping[str, Any] | None = None) -> None:
+        self.scenario_id = scenario_id
+        # planner course key -> its budget (``course_code``, ``programme_term``)
+        self._budgets: dict[str, Any] | None = dict(budgets) if budgets is not None else None
+        self._term_boards: dict[int, list[list[str]]] | None = None
+        self._lookup: Any = None
+        self._course_online: dict[str, bool | None] = {}
+
+    def board_flags(self, course_code: str, programme_term: int | None) -> list[bool]:
+        """Whether ``course_code`` is online on each board of ``programme_term``.
+
+        A term without a board (FE2 at term 10, say) is placed by the greedy's
+        cross-term step (1b) on a board of another term, so every board of the
+        scenario is asked for it. Known residual: a budget whose term HAS boards
+        but which step 1b places on another term's board is judged by its own
+        term's boards (the placer adds the board it is placing on, see
+        :func:`section_online_exempt`)."""
+        from core.services.timetable_online import normalise_course_code
+
+        if self._term_boards is None:
+            from core.models import DeliveryBoard
+            from core.services.timetable_online import programmes_for_board
+
+            self._term_boards = {}
+            for board in DeliveryBoard.objects.filter(scenario_id=self.scenario_id).order_by(
+                "display_order", "pk"
+            ):
+                if board.nominal_term is not None:
+                    self._term_boards.setdefault(board.nominal_term, []).append(
+                        programmes_for_board(board)
+                    )
+        lookup = self.lookup()
+        own = self._term_boards.get(programme_term) if programme_term is not None else None
+        boards = own or [
+            programmes for term_boards in self._term_boards.values() for programmes in term_boards
+        ]
+        code = normalise_course_code(course_code)
+        return [code in lookup.codes_for_programmes(programmes) for programmes in boards]
+
+    def lookup(self) -> Any:
+        """The one ``OnlineCourseLookup`` (cached per programme list) of this object."""
+        if self._lookup is None:
+            from core.services.timetable_online import OnlineCourseLookup
+
+            self._lookup = OnlineCourseLookup()
+        return self._lookup
+
+    def course_online_everywhere(self, course_key: str) -> bool | None:
+        """The budgeted course ``course_key`` (planner key) is online on every
+        board of its term; None when it has no budget."""
+        if course_key not in self._course_online:
+            budget = self._budget(course_key)
+            self._course_online[course_key] = (
+                None
+                if budget is None
+                else online_everywhere(self.board_flags(budget.course_code, budget.programme_term))
+            )
+        return self._course_online[course_key]
+
+    def _budget(self, course_key: str) -> Any:
+        if self._budgets is None:
+            from core.models import ScenarioSectionBudget
+
+            self._budgets = {
+                (course_key or code): SimpleNamespace(course_code=code, programme_term=term)
+                for course_key, code, term in ScenarioSectionBudget.objects.filter(
+                    scenario_id=self.scenario_id
+                )
+                .order_by("pk")
+                .values_list("course_key", "course_code", "programme_term")
+            }
+        return self._budgets.get(course_key)
+
+    def exempt(self, course_key: str, placed: Iterable[bool] | None) -> bool:
+        """:func:`section_online_exempt` of a section of ``course_key`` sitting on
+        boards with these online ``placed`` flags."""
+        return section_online_exempt(placed, self.course_online_everywhere(course_key))
+
+    def placed_rows(self) -> list[tuple[int, tuple[str, str], tuple[bool, ...]]]:
+        """``(term_section_id, (course_key, label), online flags)`` of every placed
+        section: one flag per distinct board programme list, judged like every
+        other online consumer (``OnlineCourseLookup``, per board). One query."""
+        from core.models import SectionPlacement
+        from core.services.course_identity import course_display_code
+
+        lookup = self.lookup()
+        flags: dict[int, set[bool]] = {}
+        keys: dict[int, tuple[str, str]] = {}
+        for ts_id, course_key, code, number, label, program in (
+            SectionPlacement.objects.filter(board__scenario_id=self.scenario_id)
+            .values_list(
+                "term_section_id",
+                "term_section__course_key",
+                "term_section__course_code",
+                "term_section__course_number",
+                "term_section__section",
+                "board__program",
+            )
+            .distinct()
+            .order_by("term_section_id", "board__program")
+        ):
+            keys[ts_id] = (course_key or code, label)
+            board = SimpleNamespace(program=program)  # the lookup reads only ``program``
+            flags.setdefault(ts_id, set()).add(
+                lookup.is_online_course_for_board(
+                    board, course_display_code(course_key, code, number)
+                )
+            )
+        return [(ts_id, keys[ts_id], tuple(sorted(flags[ts_id]))) for ts_id in sorted(flags)]
+
+    def placed_by_section(self) -> dict[tuple[str, str], tuple[bool, ...]]:
+        """:meth:`placed_rows` by planner key ``(course_key, label)``."""
+        out: dict[tuple[str, str], set[bool]] = {}
+        for _ts_id, key, flags in self.placed_rows():
+            out.setdefault(key, set()).update(flags)
+        return {key: tuple(sorted(flags)) for key, flags in out.items()}
+
+    def exempt_sections(self) -> frozenset[tuple[str, str]]:
+        """``(course_key, label)`` of the PLACED sections the rules do not bind."""
+        return frozenset(
+            key for _ts_id, key, flags in self.placed_rows() if self.exempt(key[0], flags)
+        )
+
+
+def online_exemption(scenario_id: int) -> OnlineExemption:
+    """The scenario's :class:`OnlineExemption`: the scope's one object (its static
+    half read once per run, job or request), or a fresh one outside any scope.
+    Building it costs no query."""
+    holder = _holder(scenario_id)
+    if holder is None:
+        return OnlineExemption(scenario_id)
+    if holder.online is None:
+        holder.online = OnlineExemption(scenario_id)
+    return holder.online
+
+
 def placed_online_flags(scenario_id: int) -> dict[int, tuple[bool, ...]]:
-    """``term_section_id -> (online on board, ...)`` for every section placed on
-    the scenario's boards, one flag per distinct board programme list, judged
-    like every other online consumer (``OnlineCourseLookup``, per board)."""
-    return {ts_id: flags for ts_id, _key, flags in _placed_online_rows(scenario_id)}
+    """``term_section_id -> (online on board, ...)`` for every placed section."""
+    return {ts_id: flags for ts_id, _key, flags in online_exemption(scenario_id).placed_rows()}
 
 
 def placed_online_by_section(scenario_id: int) -> dict[tuple[str, str], tuple[bool, ...]]:
-    """``(course_key, label) -> (online on board, ...)`` for every placed section,
-    for a stage that knows a section by its planner key (a placer about to add
-    it to one more board: it is exempt iff online there AND on all of these)."""
-    out: dict[tuple[str, str], set[bool]] = {}
-    for _ts_id, key, flags in _placed_online_rows(scenario_id):
-        out.setdefault(key, set()).update(flags)
-    return {key: tuple(sorted(flags)) for key, flags in out.items()}
+    """``(course_key, label) -> (online on board, ...)`` for every placed section."""
+    return online_exemption(scenario_id).placed_by_section()
 
 
 def online_exempt_sections(scenario_id: int) -> frozenset[tuple[str, str]]:
-    """``(course_key, label)`` of the placed sections online on every board
-    (``course_key`` is the planner identity, ``course_key or course_code``)."""
-    return frozenset(
-        key for _ts_id, key, flags in _placed_online_rows(scenario_id) if online_everywhere(flags)
-    )
-
-
-def _placed_online_rows(scenario_id: int) -> list[tuple[int, tuple[str, str], tuple[bool, ...]]]:
-    from core.models import SectionPlacement
-    from core.services.course_identity import course_display_code
-    from core.services.timetable_online import OnlineCourseLookup
-
-    lookup = OnlineCourseLookup()
-    flags: dict[int, set[bool]] = {}
-    keys: dict[int, tuple[str, str]] = {}
-    for ts_id, course_key, code, number, label, program in (
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
-        .values_list(
-            "term_section_id",
-            "term_section__course_key",
-            "term_section__course_code",
-            "term_section__course_number",
-            "term_section__section",
-            "board__program",
-        )
-        .distinct()
-        .order_by("term_section_id", "board__program")
-    ):
-        keys[ts_id] = (course_key or code, label)
-        board = SimpleNamespace(program=program)  # the lookup reads only ``program``
-        flags.setdefault(ts_id, set()).add(
-            lookup.is_online_course_for_board(board, course_display_code(course_key, code, number))
-        )
-    return [(ts_id, keys[ts_id], tuple(sorted(flags[ts_id]))) for ts_id in sorted(flags)]
+    """``(course_key, label)`` of the placed sections the rules do not bind
+    (:func:`section_online_exempt`; ``course_key`` is the planner identity,
+    ``course_key or course_code``): what the annealing and load-balancer prunes,
+    the persist guard, the recovery runner and :class:`RuleChecker` skip."""
+    return online_exemption(scenario_id).exempt_sections()
 
 
 __all__ = [
@@ -442,6 +631,8 @@ __all__ = [
     "meetings_blocked",
     "online_everywhere",
     "online_exempt_sections",
+    "online_exemption",
+    "OnlineExemption",
     "option_blocked",
     "option_meetings",
     "placed_online_by_section",
@@ -450,5 +641,6 @@ __all__ = [
     "RuleChecker",
     "rule_ids",
     "rules_enabled",
+    "section_online_exempt",
     "section_rule_checker",
 ]
