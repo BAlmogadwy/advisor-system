@@ -335,6 +335,15 @@
   /* the serif masthead / hero headline, and the serif display numeral */
   --text-display:   max(24px, 1.75rem);
   --text-numeral:   max(28px, 2.25rem);
+  /* running text: the body copy every page inherits (15px desktop, 14px phone) */
+  --text-body:      max(14px, 0.9375rem);
+  /* THE ROOT, not a step: html's own size, which every rem on the page is a
+     multiple of. Fluid, 14px at 375px wide to 16px at 1440px and up. It is a
+     token so that no sweep can fold it into the scale again: the premium
+     review's codemod (#250) rewrote this clamp as var(--text-md), which fixed
+     the root at 16px at every width and moved the MRI page, the classic MRI
+     tab and split view (owner: unchanged) at every width under 1440px. */
+  --text-root:      clamp(0.875rem, 0.831rem + 0.19vw, 1rem);
 
   /* ── control sizes — ONE height ladder for buttons, fields, selects and
      segmented controls, so a toolbar row lines up. Height is a MINIMUM: a
@@ -412,6 +421,89 @@ html[dir="rtl"] {
   :root {
     --control-h-sm: 40px;
     --control-h:    44px;
+    --field-fs:     var(--text-md);
+    --field-fs-sm:  var(--text-md);
+  }
+}
+
+/* ── The Arabic type scale ────────────────────────────────────────────────────
+   Noto Kufi Arabic draws its letters smaller than Inter at the same size. In
+   Chrome at 100px, Inter's x-height is 55px and the Kufi letter body 48-50px,
+   so 12px Arabic reads like 10.4px Latin; 72% of the Arabic text measured 12px
+   on desktop and 78% on phones (Arabic review, 2026-11). Each step is about 15%
+   larger in Arabic, so a page reads at the same size in both languages.
+   Not every step: --text-display is the serif masthead, and DM Serif Display's
+   x-height (48px at 100px) already equals the Kufi letter body, so 28px Arabic
+   matches it; --text-xl and --text-numeral are KPI numerals in Latin digits.
+   The controls stop one step short of the text: 15/14px keeps every filter bar
+   on its line, and the 16px touch field text (no iOS zoom) is restated below,
+   because the :root touch block above is less specific than this one.
+   On <html>, the element :root names, so the aliases computed there (--text-2xs,
+   --fs-sm) follow the new steps. Not on the MRI page or split view (owner:
+   unchanged): their body class keeps the whole block off their <html>, and they
+   keep the 12px Arabic micro step below. */
+html[dir="rtl"]:not(:has(> body.twm-root, > body.tws-root)) {
+  --fs-floor:       13px;
+  --text-micro:     max(13px, 0.8125rem);
+  --text-xs:        max(14px, 0.875rem);
+  --text-sm:        max(15px, 0.9375rem);
+  --text-base:      max(16px, 1rem);
+  --text-md:        max(18px, 1.125rem);
+  --text-lg:        max(20px, 1.25rem);
+  --text-body:      max(16px, 1.0625rem);
+  --control-fs-sm:  max(14px, 0.875rem);
+  --control-fs:     max(15px, 0.9375rem);
+  --field-fs-sm:    max(14px, 0.875rem);
+  --field-fs:       max(15px, 0.9375rem);
+}
+@media (max-width: 768px), (pointer: coarse) {
+  html[dir="rtl"]:not(:has(> body.twm-root, > body.tws-root)) {
+    --field-fs:     max(16px, 1rem);
+    --field-fs-sm:  max(16px, 1rem);
+  }
+}
+/* What keeps the Arabic sizes it has today:
+   - the owner's sidebar, its command palette, its phone toggle and the icon
+     rail's tooltip (which is appended to <body>): its labels are fitted to the
+     252/210/195px rail, and tests pin the Arabic section headings at 14px and
+     the search row's label uncut at every step;
+   - the dense tool surfaces whose geometry is measured: the Timetable
+     Workspace's chrome above its panes (at most 170px, and already 170px in
+     Arabic at 1536px), its inspector's four tabs (a 296-320px pane) and its
+     board grid (a 96px slot, a 56px day column), and the exam builder's
+     schedule grid, its edit toolbar and its fixed-height scope chips. Their
+     side panels and panel bodies, which scroll, take the scale;
+   - Latin data: the audit log's table (roles, actions, endpoints, hashes; its
+     Arabic headers and dates take the scale again below), and the Timetable
+     Graph page, which has no Arabic text at all.
+   A token computed on <html> arrives here as a finished value, so every alias
+   is restated too; tests/test_design_type_scale.py checks that these are the
+   first :root block's values (12px micro aside). :where() keeps the list at
+   zero specificity, so a component can still adjust a step inside it. */
+html[dir="rtl"] :where(.sidebar, .sbp, .sidebar-toggle, .sb-tip,
+    .tw-header, .tw-cmd-bar, .tw-stats, .tw-panel-tabs, .tw-grid-table, main:has(#twWorkspace) .page-header,
+    main.exam-builder-page :is(#schedGrid, .et-edit-controls, #progList, #secList),
+    .audit-table, .tg-shell) {
+  --fs-floor:       12px;
+  --text-micro:     max(12px, 0.75rem);
+  --text-2xs:       var(--text-micro);
+  --fs-sm:          var(--text-micro);
+  --text-xs:        max(12px, 0.75rem);
+  --text-sm:        max(13px, 0.8125rem);
+  --text-base:      max(14px, 0.875rem);
+  --text-md:        max(16px, 1rem);
+  --text-lg:        max(18px, 1.125rem);
+  --text-body:      max(14px, 0.9375rem);
+  --control-fs-sm:  var(--text-sm);
+  --control-fs:     var(--text-base);
+  --field-fs-sm:    var(--text-sm);
+  --field-fs:       var(--text-base);
+}
+@media (max-width: 768px), (pointer: coarse) {
+  html[dir="rtl"] :where(.sidebar, .sbp, .sidebar-toggle, .sb-tip,
+      .tw-header, .tw-cmd-bar, .tw-stats, .tw-panel-tabs, .tw-grid-table, main:has(#twWorkspace) .page-header,
+      main.exam-builder-page :is(#schedGrid, .et-edit-controls, #progList, #secList),
+      .audit-table, .tg-shell) {
     --field-fs:     var(--text-md);
     --field-fs-sm:  var(--text-md);
   }
@@ -617,7 +709,9 @@ html[data-theme="dark"] {
 html[data-theme="light"] { color-scheme: light; }
 
 /* Arabic is read at a larger size than Latin to be as legible: the micro-label
-   floor is 12px, not 11px, wherever --text-micro is used. */
+   floor is 12px, not 11px, wherever --text-micro is used. This is what the MRI
+   page and split view keep; every other page takes the Arabic type scale near
+   the top of this sheet, whose selector outranks this one. */
 html[dir="rtl"] { --text-micro: max(12px, 0.75rem); }
 
 /* ── Dark body background ──
@@ -1253,8 +1347,8 @@ html {
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Fluid root: 14px @ 375  →  16px @ 1440 */
-  font-size: var(--text-md);
+  /* Fluid root: 14px @ 375  →  16px @ 1440 (see --text-root) */
+  font-size: var(--text-root);
   /* DM Serif Display is loaded at its one real weight (400). Without this, a
      heading or stat numeral asked for 700 is thickened by the browser, which
      blurs the serif's hairlines. Inter, JetBrains Mono and Noto Kufi Arabic are
@@ -1282,7 +1376,7 @@ body {
    relative to a root that is itself 14px on a phone, so running text was
    11.4px at 390px wide. MRI and split view keep the clamp (owner: out of
    scope); their body classes are set before anything paints. */
-body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }
+body:not(.twm-root):not(.tws-root) { font-size: var(--text-body); }
 /* The sidebar and its command palette keep the size they were designed and
    measured at (their labels are fitted to the rail's 210/195px steps). */
 .sidebar, .sbp { font-size: clamp(0.8125rem, 0.742rem + 0.19vw, 0.9375rem); }
@@ -2382,8 +2476,16 @@ main.p-0 .page-header {
     font-size: var(--text-display);
     line-height: 1.2;
   }
+  /* Arabic: DM Serif Display has no Arabic, so the title fell back to Noto Kufi
+     at the serif's one weight (400) and its tight 1.2 leading — thin, with the
+     marks of a second line touching the first. Its size already matches the
+     English (the serif's x-height equals the Kufi letter body), so it keeps
+     28px and takes the body face at 600 with room for the marks. */
   html[dir="rtl"] main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-module {
     letter-spacing: 0;
+    font-family: var(--font-body);
+    font-weight: 600;
+    line-height: 1.4;
   }
   main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-right {
     padding-top: 0.2rem;
@@ -2454,6 +2556,11 @@ main.p-0 .page-header {
 .empty-state {
   text-align: center; padding: 2.5rem 1.5rem;
   color: var(--t4); display: flex; flex-direction: column; align-items: center;
+}
+@media (max-width: 768px) {
+  /* In a table wider than the phone the empty state was centred on the
+     table, off screen; it stays in the visible part of its scroller. */
+  td > .empty-state { position: sticky; inset-inline-start: 0; max-width: calc(100vw - 2.5rem); }
 }
 .empty-state .i { display: inline-flex; align-items: center; justify-content: center; opacity: 0.45; }
 .empty-icon { display: block; font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.6; }
@@ -2560,6 +2667,9 @@ main.p-0 .page-header {
   margin-bottom:   0.3rem;
   display:         block;
 }
+/* A field's help line sits under its label, not above it: it had no rule and
+   took the 15px body text (17px in Arabic) in full ink, over a 12px label. */
+.form-text { font-size: var(--text-xs); line-height: 1.5; color: var(--t3); }
 
 .form-control,
 .form-select {
@@ -9037,6 +9147,9 @@ html[data-theme="dark"] .dcc-kpi:hover { border-color: var(--teal); }
 
 .fb-search-full { max-width: none; }
 .fb-w-110 { max-width: 110px; }
+/* a floor, so a field that no longer fits beside its neighbour wraps instead
+   of being crushed (the scrape form's programme field: 28px on an Arabic phone) */
+.fb-search.fb-w-110 { min-width: 64px; }
 /* `padding: 8px 14px` indented the controls 14px while the bar's rule still
    spanned the full width, so a small bar read as misaligned against every
    other one on the page. */
@@ -15462,7 +15575,9 @@ html.sa-overlay-open { overflow: hidden; }
   }
   .sa-workspace-head { padding: .65rem .7rem; }
   .sa-workspace-kicker { display: none; }
-  .sa-workspace-head h2 { max-width: 34vw; font-size: var(--text-sm); }
+  /* 34vw (132px at 390) was fitted to 13px: the Arabic title was cut beside
+     150px of empty header */
+  .sa-workspace-head h2 { max-width: 56vw; font-size: var(--text-sm); }
   .sa-workspace-actions { gap: .35rem; }
   .sa-workspace-actions .btn { padding-inline: .55rem; }
   .sa-history-toggle span:last-child,
@@ -15529,7 +15644,9 @@ html.sa-overlay-open { overflow: hidden; }
   border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
 }
 .sp-kpi-card span { color: var(--t2); font-size: var(--text-xs); }
-.sp-kpi-card strong { color: var(--text-brand); font-size: var(--text-lg); font-variant-numeric: tabular-nums; }
+/* margin-block-start: the values of a row share a line when one label wraps
+   and its neighbour does not */
+.sp-kpi-card strong { color: var(--text-brand); font-size: var(--text-lg); font-variant-numeric: tabular-nums; margin-block-start: auto; }
 
 .sp-section-head {
   display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;
@@ -16644,6 +16761,9 @@ html[data-theme="dark"] .student-timetable-calendar :is(.wg-h, .wg-cid, .wg-meta
 .student-grad-record-note > summary,
 .student-grad-map-details > summary {
   width: max-content;
+  /* never wider than its card: the Arabic summary ran out of it on a phone */
+  max-width: 100%;
+  overflow-wrap: anywhere;
   cursor: pointer;
   color: var(--text-brand);
   font-weight: 700;
@@ -16949,6 +17069,10 @@ html[dir="rtl"] .ap-grad-term-table th,
 html[dir="rtl"] .ai-cases thead th {
   text-transform: none;
   letter-spacing: 0;
+  /* the header is told from the body by weight alone, and 700 Kufi closes up
+     at 14px; a header that wraps (narrow columns do) needs the Arabic leading */
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 /* G7 — no Latin typography on Arabic. Letter-spacing pulls apart letters that
@@ -16967,6 +17091,108 @@ html[dir="rtl"] :is(.empty-note, .um-time-never, .ap-grad-wait-text, .sa-status-
 }
 /* a rule with three classes outranks the universal one above */
 html[dir="rtl"] .student-timetable-calendar .wg-blocks .wg-h { letter-spacing: 0; }
+/* Nor a Latin face. JetBrains Mono has no Arabic, so an Arabic label set in it
+   is drawn in Noto Kufi, but its spaces stay the mono's: 0.6em against Kufi's
+   0.34em, so the words of a kicker stood almost twice as far apart. Labels
+   take the body face; codes, fields and Latin islands keep the mono. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is([class*="kicker"], [class*="eyebrow"],
+    .dcc-kpi-label, .audit-filter-label, .audit-count, .audit-view-btn, .audit-page-info,
+    .audit-page-current, .scrape-term-toggle, .scrape-term-empty, .section-badge,
+    .si-dropzone-file, .si-dropzone-copy small,
+    .admin-grad-lookup-head > div > span):not(code, kbd, samp, pre, input, textarea, select,
+    [dir="ltr"] *, .tw-mri *, .sidebar *, .sbp *) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+}
+/* The prerequisite graph is a left-to-right island (its tiers run left to
+   right in both languages), so the rule above skips it: its Arabic band
+   labels, legend and mode buttons are named here. */
+html[dir="rtl"] :is(.pg-band-lbl, .pg-legend, .pg-legend *, .pg-mode, .pg-info) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+}
+/* the audit log's times stay in step down the column without the mono */
+html[dir="rtl"] .audit-ts { font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+/* Small Arabic labels at 700 close their counters up; Latin small labels are
+   700 for the capitals Arabic does not have. Headings keep 700. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is([class*="kicker"], [class*="eyebrow"],
+    .badge, .section-badge, .dcc-kpi-label, .audit-filter-label, .pf-label, .ph-chip,
+    .kpi .k):not(.tw-mri *, .sidebar *, .sbp *) {
+  font-weight: 600;
+}
+
+/* G18 — Arabic leading. Noto Kufi's letters reach higher (alef, hamza) and
+   lower (descenders, kasra) than Inter's, so the Latin 1.0-1.3 leading crowds
+   or crops them wherever a line wraps, is clamped, or sits on a background.
+   These are the places the Arabic probe measured under 1.4 that do. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) .badge:not(.tw-mri *, .sidebar *, .sbp *) {
+  line-height: 1.5;
+  padding-block: 0;  /* the pill keeps its height: 0.25em + 1 + 0.25em before */
+}
+html[dir="rtl"] :is(.ux-toast-title, .dba-nav-name, .admin-grad-journey strong, .admin-grad-eyebrow,
+    .student-timetable-comparison-scope, .student-timetable-state, .student-timetable-block-name) {
+  line-height: 1.5;
+}
+html[dir="rtl"] :is(.dcc-triage-row small, .admin-grad-journey small) { line-height: 1.6; }
+html[dir="rtl"] .admin-grad-search .admin-grad-landing-copy h2 { line-height: 1.3; }
+/* the sign-in title and the overview greeting: no Arabic in DM Serif Display,
+   so the body face at 600 rather than Kufi at the serif's one weight */
+html[dir="rtl"] .login-title { font-family: var(--font-body); font-weight: 600; line-height: 1.4; }
+html[dir="rtl"] .ov-greeting { font-family: var(--font-body); font-weight: 600; }
+/* The exam builder's course card: the Arabic name is a two-line clamp whose cap
+   was 2.6em, two lines at 1.3; at 1.5 it is 3em. In the dense grid it takes one
+   step (13px) and the Latin code stays at 12px. */
+html[dir="rtl"] main.exam-builder-page .et-course-card .et-course-short-name {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  max-height: 3em;
+}
+html[dir="rtl"] main.exam-builder-page .et-quick-metric { line-height: 1.5; }
+@media (min-width: 769px) {
+  /* the edit toolbar's buttons take one step on a desktop (12 to 13px); the
+     phone's six-column grid has no width to give */
+  html[dir="rtl"] main.exam-builder-page .et-edit-controls { --text-xs: max(13px, 0.8125rem); }
+}
+/* Wrapped card and section headings take the Arabic leading too. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is(.advisor-block h3, .zone-title, .um-panel-title,
+    .cp-t, .dba-section-title, .pf-card-title, .pane-title, .ap-drawer-section-title,
+    .student-section-title):not(.tw-mri *, .sidebar *, .sbp *) {
+  line-height: 1.5;
+  text-wrap: balance;
+}
+/* the intro's heading does not take its paragraph's 1.75 */
+html[dir="rtl"] .page-intro h2 { line-height: 1.4; }
+html[dir="rtl"] :is(.page-intro p, .panel-sub, .empty-hint) { text-wrap: pretty; }
+/* An Arabic placeholder is prose: the body face, even in a mono field (the
+   graduation lookup's "مثال: 4504484" was JetBrains Mono at 700). */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is(input, textarea):not(.tw-mri *, .sidebar *, .sbp *)::placeholder {
+  font-family: var(--font-body);
+  font-weight: 400;
+}
+
+/* G19 — Arabic fits. What the larger Arabic steps no longer fitted where they
+   were (measured, before and after, in Chrome and in the fit tests' wide font). */
+/* The audit log's table holds Latin data at the Latin step (held above); its
+   Arabic headers and its Arabic dates take the Arabic one. */
+html[dir="rtl"] .audit-table thead,
+html[dir="rtl"] .audit-table .audit-ts { --text-xs: max(14px, 0.875rem); }
+/* The exam rosters' lookup: its fixed period column held "08:00-10:00" at
+   13px; at 15px it broke the time at the hyphen. */
+html[dir="rtl"] main.exam-rosters-page .et-lookup-table th.et-col-period { width: 128px; }
+@media (max-width: 760px) {
+  /* Group availability: three equal tabs that may wrap, not a strip that cut
+     its third ("اليوم الكامل (10 د)") */
+  html[dir="rtl"] .ga-tab {
+    flex: 1 1 0; min-width: 0;
+    padding-inline: 0.4rem;
+    white-space: normal; line-height: 1.4; text-align: center;
+  }
+}
+@media (max-width: 480px) {
+  /* The advisor portfolio's three export buttons share one phone line at the
+     Latin button step: any one that wrapped would be left alone on its line. */
+  html[dir="rtl"] .fb-fit .fb-actions:has(> #apCsvLink) { --control-fs-sm: max(13px, 0.8125rem); }
+}
 
 /* G11 — DM Serif Display has ONE weight (400). Every element set in it says so,
    so nothing is asked for a bold that the browser would have to fake. */
@@ -17097,20 +17323,14 @@ html[dir="rtl"] .audit-endpoint {
   .nav-sec { animation-duration: auto !important; }
 }
 
-/* G5 (Arabic) — Arabic at 11px is not legible; the shared micro-labels that sit
-   between 11 and 12px in Latin are 12px in Arabic. The workspace sheets are not
-   touched: their cards and slots are sized to a 96px slot and pinned by tests. */
-html[dir="rtl"] :is(.nav-lbl, .logo-sub, .u-rl, .ph-chip, .um-time, .um-time-never,
-    .pf-hint, .pf-pw-hint, .audit-ts, .chip-legend-item, .fs-11, .pane-sub,
-    .card-heading, .wg-h, .pf-label, .fb-dd, .metric .k, .kpi .k,
-    #umUserCount, #imInstructorCount, #apAdvisorChip, #apCountChip, #fetchState,
-    #trustStrip, #pfRoleBadge, .dlg-input-row label,
-    .dcc-mini-stats, .dcc-scenario-meta, .dcc-activity-time,
-    .student-timetable-room, .student-timetable-block-name,
-    .student-timetable-table th) {
+/* G5 (Arabic) — Arabic at 11px is not legible; the sidebar's micro-labels that
+   sit between 11 and 12px in Latin are 12px in Arabic (the owner's sidebar keeps
+   the sizes it was fitted at). Everything else this list used to hold at 12px
+   follows the Arabic type scale near the top of this sheet. */
+html[dir="rtl"] :is(.nav-lbl, .logo-sub, .u-rl) {
   font-size: max(12px, 0.75rem);
 }
-html[dir="rtl"] .form-label { font-size: var(--text-xs) !important; }
+html[dir="rtl"] .form-label { font-size: var(--text-xs) !important; font-weight: 600 !important; }
 /* (not the viewport-filling tool pages: their footer is one pinned 11px line) */
 html[dir="rtl"] main:not([data-fill="viewport"]) .system-footer { font-size: var(--text-xs); }
 

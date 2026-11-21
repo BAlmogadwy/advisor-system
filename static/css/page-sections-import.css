@@ -30,7 +30,9 @@
 .sections-import-page .si-table-heading h2 {
   margin: 0;
   color: var(--t1);
-  font-size: clamp(1rem, 1.8vw, 1.22rem);
+  /* never under the md step: on the fluid root's 14px a bare 1rem was 14px
+     on a phone, under the 15px labels it heads in Arabic */
+  font-size: max(var(--text-md), clamp(1rem, 1.8vw, 1.22rem));
   line-height: 1.35;
 }
 
