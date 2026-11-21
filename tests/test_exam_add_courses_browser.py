@@ -279,9 +279,21 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
                 page.keyboard.press("Tab")
                 self._in_view(page, "examAddCoursesShow", where, focused=True)
                 # Mouse or finger: a wheel over the dialog's text scrolls it to the name.
-                text = page.locator("#examAddCoursesHelp").bounding_box()
-                assert text is not None
-                page.mouse.move(text["x"] + text["width"] / 2, text["y"] + text["height"] / 2)
+                # The pointer goes to the middle of the part of the help line the body
+                # still shows: the focused search has already scrolled the body, and
+                # with Arabic's larger type the line's own centre sat at the body's
+                # top edge, where the wheel lands on the dialog's padding instead.
+                spot = page.evaluate(
+                    "() => { const t = document.getElementById('examAddCoursesHelp')"
+                    ".getBoundingClientRect(); const b = document.querySelector("
+                    "'#examAddCoursesDialog .et-add-body').getBoundingClientRect();"
+                    " const top = Math.max(t.top, b.top), bottom = Math.min(t.bottom, b.bottom);"
+                    " return { x: t.left + t.width / 2, y: (top + bottom) / 2, seen: bottom - top }; }"
+                )
+                self.assertGreater(
+                    spot["seen"], 4, f"{where}: the help line is out of sight: {spot}"
+                )
+                page.mouse.move(spot["x"], spot["y"])
                 page.mouse.wheel(0, 2000)
                 try:
                     page.wait_for_function(
