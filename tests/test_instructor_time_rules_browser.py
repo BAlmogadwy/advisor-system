@@ -40,7 +40,10 @@ FIT = """() => {
   const box = dialog.getBoundingClientRect();
   return { page: root.scrollWidth - root.clientWidth, left: box.left, right: box.right,
            width: window.innerWidth, body: body.scrollWidth - body.clientWidth,
-           modal: dialog.matches(':modal') };
+           modal: dialog.matches(':modal'),
+           dialogX: dialog.scrollWidth - dialog.clientWidth,
+           dialogY: dialog.scrollHeight - dialog.clientHeight,
+           dialogTop: dialog.scrollTop, dialogLeft: dialog.scrollLeft };
 }"""
 
 
@@ -175,6 +178,13 @@ class InstructorTimeRulesBrowserTests(TimeRulesBrowserMixin, StaticLiveServerTes
                 self.assertGreaterEqual(fit["left"], 0, fit)
                 self.assertLessEqual(fit["right"], fit["width"], fit)
                 self.assertLessEqual(fit["body"], 1, fit)
+                # The dialog itself (overflow hidden) never scrolls: the grids'
+                # visually hidden labels stay inside their scroll box, so the
+                # title and the close button never leave the screen.
+                self.assertLessEqual(fit["dialogX"], 0, fit)
+                self.assertLessEqual(fit["dialogY"], 0, fit)
+                self.assertEqual(fit["dialogTop"], 0, fit)
+                self.assertEqual(fit["dialogLeft"], 0, fit)
                 page.keyboard.press("Escape")
                 expect(dialog).to_be_hidden()
                 page.context.close()

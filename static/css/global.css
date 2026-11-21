@@ -14558,7 +14558,7 @@ html[data-theme="dark"] .im-assignment-notice {
 /* A period table scrolls inside its own frame, under its title; the page
    never does. */
 .im-grid-block { display: grid; gap: 4px; min-width: 0; }
-.im-grid-scroll { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.im-grid-scroll { position: relative; min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
 .im-grid-scroll:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .im-grid { width: 100%; border-collapse: collapse; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .im-grid th,
