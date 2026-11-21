@@ -224,7 +224,7 @@
 </dialog>
 
 <!-- ─── Teaching times: one instructor's time rules (static/js/instructor-time-rules.js) ─── -->
-<dialog id="imRulesDialog" class="ux-dialog ux-dialog-scroll ux-dialog-wide" aria-labelledby="imRulesTitle" aria-describedby="imRulesHelp">
+<dialog id="imRulesDialog" class="ux-dialog ux-dialog-scroll ux-dialog-wide" aria-labelledby="imRulesTitle" aria-describedby="imRulesHelp" data-rules-enforced="{{ time_rules_enforced|yesno:'1,0' }}">
   <form method="dialog" id="imRulesForm" novalidate>
     <div class="ux-dialog-head">
       <div>

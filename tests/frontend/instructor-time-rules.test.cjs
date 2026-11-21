@@ -279,6 +279,19 @@ test('the row button opens the dialog with the saved rules read fresh; Escape an
   assert.equal(h.w.InstructorTimeRules.hasDraft(2), false, 'no change, no draft');
 });
 
+test('the help line tells the truth: it promises the builder only where the builder applies the rules', async t => {
+  const enforced = "The timetable builder keeps this instructor's classes inside these times. Moves you make by hand are always allowed and are flagged.";
+  const pending = 'The timetable builder does not apply these rules yet. They are saved here and take effect once teaching-time rules are switched on for the builder.';
+  const pendingAr = 'لا يطبّق منشئ الجدول هذه القواعد بعد. تُحفظ هنا، ويبدأ العمل بها عند تفعيل قواعد أوقات التدريس في المنشئ.';
+  for (const [flag, arabic, expected] of [['0', false, pending], ['0', true, pendingAr], ['1', false, enforced], ['', false, enforced]]) {
+    const h = await page(t, { arabic });
+    h.dialog.dataset.rulesEnforced = flag;
+    await h.open(1);
+    assert.equal(h.$('imRulesHelp').textContent, expected, `data-rules-enforced="${flag}"${arabic ? ' in Arabic' : ''}`);
+    assert.equal(h.dialog.getAttribute('aria-describedby'), 'imRulesHelp');
+  }
+});
+
 test('each quick add appends one filled, editable rule and puts the keyboard on what is left to choose', async t => {
   const h = await page(t);
   await h.open(1);

@@ -127,8 +127,27 @@ def instructor_management_page(request: HttpRequest) -> HttpResponse:
         **get_sidebar_context(request),
         "default_year": defaults["academic_year"],
         "default_term": defaults["term"],
+        "time_rules_enforced": _time_rules_enforced(),
     }
     return render(request, "core/instructor_management.html", ctx)
+
+
+def _time_rules_enforced() -> bool:
+    """Whether the timetable builder applies the teaching-time rules today.
+
+    The rules editor tells staff the truth either way: the builder honours a
+    rule only when its setting is on and one teacher per section is active (a
+    rule binds the one teacher a section is charged to). The setting is
+    declared by the engine change that reads it; until then it reads as off.
+    """
+    from django.conf import settings
+
+    from core.services.timetable_flags import is_one_teacher_active
+
+    return (
+        bool(getattr(settings, "TIMETABLE_INSTRUCTOR_AVAILABILITY", False))
+        and is_one_teacher_active()
+    )
 
 
 # ── Roster CRUD ──────────────────────────────────────────────────

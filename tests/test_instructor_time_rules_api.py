@@ -794,3 +794,42 @@ def test_the_list_summary_costs_one_query_however_many_instructors():
         "none",
         "any",
     )
+
+
+# -- The editor's help line is truthful about the builder ----------------------
+
+
+def _page_flag(client: Client) -> str:
+    response = client.get("/instructor-management/")
+    assert response.status_code == 200
+    html = response.content.decode()
+    marker = 'data-rules-enforced="'
+    assert html.count(marker) == 1
+    return html.split(marker, 1)[1].split('"', 1)[0]
+
+
+def test_the_page_does_not_promise_the_builder_while_its_setting_is_absent(settings):
+    # The engine change declares TIMETABLE_INSTRUCTOR_AVAILABILITY; before it
+    # exists the editor must not promise what the builder does not do.
+    assert not hasattr(settings, "TIMETABLE_INSTRUCTOR_AVAILABILITY")
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = True
+    settings.TIMETABLE_ONE_TEACHER_PER_SECTION = True
+    assert _page_flag(_client()) == "0"
+
+
+@pytest.mark.parametrize(
+    ("availability", "links", "one_teacher", "expected"),
+    [
+        (True, True, True, "1"),
+        (False, True, True, "0"),
+        (True, True, False, "0"),  # a rule binds the ONE teacher of a section
+        (True, False, True, "0"),  # one teacher per section needs the links
+    ],
+)
+def test_the_page_promises_the_builder_only_when_it_applies_the_rules(
+    settings, availability, links, one_teacher, expected
+):
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = availability
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = links
+    settings.TIMETABLE_ONE_TEACHER_PER_SECTION = one_teacher
+    assert _page_flag(_client()) == expected

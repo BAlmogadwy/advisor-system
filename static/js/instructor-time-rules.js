@@ -276,6 +276,11 @@
     : `${n} ${n === 1 ? 'rule' : 'rules'}`);
   const W = {
     title: pick('Teaching times', 'أوقات التدريس'),
+    // Said in place of the template's sentence while the builder does not apply
+    // the rules yet (the dialog carries data-rules-enforced="0").
+    helpPending: pick(
+      'The timetable builder does not apply these rules yet. They are saved here and take effect once teaching-time rules are switched on for the builder.',
+      'لا يطبّق منشئ الجدول هذه القواعد بعد. تُحفظ هنا، ويبدأ العمل بها عند تفعيل قواعد أوقات التدريس في المنشئ.'),
     ruleN: n => pick(`Rule ${n}`, `القاعدة ${n}`),
     kindOf: n => pick(`What rule ${n} does`, `نوع القاعدة ${n}`),
     daysOf: n => pick(`Days of rule ${n}`, `أيام القاعدة ${n}`),
@@ -914,6 +919,7 @@
     const box = dialog();
     if (!box || !instructor || S.busy || window.UXControls.dialog.isOpen(box)) return false;
     wire();
+    if (box.dataset.rulesEnforced === '0') el('imRulesHelp').textContent = W.helpPending;
     if (Array.isArray(dayNames) && dayNames.length === DAY_CODES.length) S.dayNames = dayNames.slice();
     S.busy = true;
     const res = await request(`${API_GET}?instructor_id=${encodeURIComponent(instructor.id)}`);
