@@ -679,9 +679,11 @@ def _clean_rules(raw: object) -> tuple[list[dict[str, Any]], list[dict[str, obje
     """A replace-all rule list -> storable rows, and EVERY error in the list."""
     if not isinstance(raw, list):
         return [], [_rule_error(-1, "rules", "rules_not_list")]
-    errors: list[dict[str, object]] = []
     if len(raw) > MAX_RULES_PER_INSTRUCTOR:
-        errors.append(_rule_error(-1, "rules", "too_many"))
+        # One error and nothing else: per-item errors of an over-long list
+        # would let one small request build an unbounded response.
+        return [], [_rule_error(-1, "rules", "too_many")]
+    errors: list[dict[str, object]] = []
     clean: list[dict[str, Any]] = []
     seen: set[tuple[object, ...]] = set()
     for index, item in enumerate(raw):

@@ -622,6 +622,15 @@ def test_list_level_problems_use_index_minus_one():
     assert _bad(too_many[:-1], instructor=instructor).status_code == 200
 
 
+def test_an_over_long_rule_list_is_one_error_and_no_item_is_validated():
+    # Per-item errors of a huge list would make one small request build a huge
+    # response (10,000 empty objects would be 40,001 errors).
+    response = _bad([{}] * 10_000)
+    assert _codes(response) == [(-1, "rules", "too_many")]
+    assert len(response.content) < 1_000
+    assert not InstructorTimeRule.objects.exists()
+
+
 def test_duplicates_are_the_same_kind_days_and_window_whatever_the_order_or_note():
     response = _bad(
         [
@@ -697,14 +706,12 @@ def test_every_problem_of_a_request_is_reported_at_once():
                 7,
                 _wire(start="12:00", end="11:00", note="y" * 201),
                 _wire(),
-            ]
-            + [_wire(start=f"13:{i:02d}", end="20:00") for i in range(16)],
+            ],
         },
     )
     assert _codes(response) == [
         (-1, "instructor_id", "instructor_id_invalid"),
         (-1, "expected_revision", "revision_required"),
-        (-1, "rules", "too_many"),
         (1, "kind", "kind_invalid"),
         (1, "days", "days_invalid"),
         (1, "start", "start_invalid"),
