@@ -508,6 +508,17 @@ html[dir="rtl"] :where(.sidebar, .sbp, .sidebar-toggle, .sb-tip,
     --field-fs-sm:  var(--text-md);
   }
 }
+/* ...and a held zone's own unsized text keeps the size it inherited: the tokens
+   are restated inside, but a size inherited from outside the zone arrives
+   finished (the graph's node labels grew from 15 to 17px with the body). Zero
+   specificity, so any size a component gives the zone itself still wins. */
+:where(html[dir="rtl"]) :where(.tw-header, .tw-cmd-bar, .tw-stats, .tw-panel-tabs, .tw-grid-table,
+    main:has(#twWorkspace) .page-header, .tg-shell) {
+  font-size: var(--text-body);
+}
+:where(html[dir="rtl"]) :where(main.exam-builder-page :is(#schedGrid, .et-edit-controls, #progList, #secList)) {
+  font-size: var(--text-base);
+}
 
 /* ── MRI stays exactly as it was (owner, 2026-10-23) ─────────────────────────
    The MRI page itself needs nothing here: `page-timetable-mri.js` puts
@@ -17100,7 +17111,7 @@ html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is([class*="kicker"], [class
     .audit-page-current, .scrape-term-toggle, .scrape-term-empty, .section-badge,
     .si-dropzone-file, .si-dropzone-copy small,
     .admin-grad-lookup-head > div > span):not(code, kbd, samp, pre, input, textarea, select,
-    [dir="ltr"] *, .tw-mri *, .sidebar *, .sbp *) {
+    [dir="ltr"] *, .tw-mri *, .sidebar *, .sbp *, .tg-shell *) {
   font-family: var(--font-body);
   letter-spacing: normal;
 }
@@ -17117,7 +17128,7 @@ html[dir="rtl"] .audit-ts { font-family: var(--font-body); font-variant-numeric:
    700 for the capitals Arabic does not have. Headings keep 700. */
 html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is([class*="kicker"], [class*="eyebrow"],
     .badge, .section-badge, .dcc-kpi-label, .audit-filter-label, .pf-label, .ph-chip,
-    .kpi .k):not(.tw-mri *, .sidebar *, .sbp *) {
+    .kpi .k):not(.tw-mri *, .sidebar *, .sbp *, .tg-shell *) {
   font-weight: 600;
 }
 

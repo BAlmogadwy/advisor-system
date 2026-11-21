@@ -344,6 +344,23 @@ def test_the_held_zones_keep_todays_arabic_sizes() -> None:
         assert held[alias] == f"var({step})" == root[alias], alias
     touch = _tokens(GLOBAL[GLOBAL.index(TOUCH + HELD) :].split("}", 1)[0])
     assert touch == {"--field-fs": "var(--text-md)", "--field-fs-sm": "var(--text-md)"}, touch
+    # A size inherited from outside a zone arrives finished, so each zone that
+    # inherits its text gets the size it inherited before, at zero specificity
+    # (any size a component gives the zone itself still wins).
+    inherited = {
+        "var(--text-body)": (".tw-header", ".tw-stats", ".tw-grid-table", ".tg-shell"),
+        "var(--text-base)": ("#schedGrid", ".et-edit-controls", "#progList", "#secList"),
+    }
+    for size, zones in inherited.items():
+        rule = re.search(
+            r':where\(html\[dir="rtl"\]\) :where\(([^{]*)\) \{\s*font-size: '
+            + re.escape(size)
+            + r";\s*\}",
+            GLOBAL,
+        )
+        assert rule, f"the zones that inherit {size}"
+        for zone in zones:
+            assert zone in rule.group(1), (size, zone)
 
 
 def test_the_arabic_type_rules_never_reach_mri_split_or_the_sidebar() -> None:
