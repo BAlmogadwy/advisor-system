@@ -1683,11 +1683,14 @@ def auto_place_board(
             section_instructors.setdefault(section_full, set()).update(ids)
 
     # The rules bind the section's own teacher whatever the clash flag says: with
-    # it off the map is read here instead (only when the rules are on at all).
-    if not instructor_clash_on and rules_enabled():
+    # it off the map is read here instead, and only once a rule is known to bind
+    # a teacher of the scenario (fix plan D-L: with no rule row this costs the
+    # one rule query and never reads the map, so it cannot raise where the
+    # flag-off greedy did not read it).
+    if not instructor_clash_on and rules_enabled() and availability_for(scenario.id):
         from core.services.section_teacher_assignment import load_assignment
 
-        _av_assignment = load_assignment(scenario.id)
+        _av_assignment = load_assignment(scenario.id, release_unteachable=True)
         availability = availability_for(scenario.id, universe=_av_assignment.universe)
     # placer key -> the section's ruled charged teachers; the keys of the sections
     # whose teacher is fixed (rank-last instead of a filter).

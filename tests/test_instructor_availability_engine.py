@@ -2068,6 +2068,57 @@ def test_the_greedy_honours_the_rules_with_the_clash_flag_off(av_on, flag) -> No
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("rules", [False, True], ids=["zero-rules", "rule-control"])
+def test_with_the_clash_flag_off_the_greedy_reads_the_map_only_when_a_rule_exists(
+    av_on, monkeypatch, rules
+) -> None:
+    """D-L (construction:CON-5, identity:F5): with the clash flag off the greedy
+    asks ``availability_for`` first and reads the teacher map (an engine read,
+    ``"raise"``) only when a rule binds: with no rule row it makes no engine read
+    at all, so it cannot raise where the flag-off greedy did not read the map.
+    Either way the rules are read once."""
+    import sys
+
+    av_on.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = False
+    sc, _board, _key, (a,) = _greedy_scenario(f"clash off {rules}")
+    if rules:
+        rule(a, KIND_UNAVAILABLE, end="13:00")
+    real, engine_reads = sta.load_assignment, []
+
+    def spy(*args, **kwargs):
+        caller = sys._getframe(1).f_code.co_name
+        if kwargs.get("incomplete", "raise") == "raise" and caller == "auto_place_board":
+            engine_reads.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sta, "load_assignment", spy)
+    with CaptureQueriesContext(connection) as ctx:
+        _greedy(sc, "morning")
+
+    assert len(engine_reads) == (1 if rules else 0)
+    assert len(rule_queries(ctx.captured_queries)) == 1
+
+
+@pytest.mark.django_db
+def test_with_the_clash_flag_off_a_zero_rule_greedy_costs_one_query(av_on) -> None:
+    """D-L (construction:CON-5): clash flag off, one teacher on, no rule row: the
+    greedy costs exactly the flag-off queries plus the one rule query."""
+    av_on.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = False
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    _greedy(_greedy_scenario("warm-up", code="CS100")[0], "compact")  # process-wide caches
+
+    counts = {}
+    for flag, code in ((False, "CS101"), (True, "CS102")):
+        av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+        sc = _greedy_scenario(f"cost {flag}", code=code)[0]
+        with CaptureQueriesContext(connection) as ctx:
+            _greedy(sc, "compact")
+        counts[flag] = len(ctx.captured_queries)
+
+    assert counts[True] == counts[False] + 1, counts
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("online", [True, False], ids=["online", "campus"])
 def test_the_greedy_hands_the_placer_guard_its_rules_and_the_online_exemption(
     av_on, monkeypatch, online
