@@ -588,6 +588,71 @@ class SectionInstructor(models.Model):
         super().save(*args, **kwargs)
 
 
+class InstructorTimeRule(models.Model):
+    """One weekly teaching-time rule of a global ``Instructor``.
+
+    ``unavailable`` means "cannot teach" on the chosen days during
+    ``[start_minute, end_minute)``; ``available_only`` means "can teach only"
+    then.  How a set of rules combines into the instructor's forbidden time is
+    defined once, in :mod:`core.services.instructor_availability`.
+
+    Days are a bit mask over SUN..THU (SUN=1, MON=2, TUE=4, WED=8, THU=16) and
+    times are minutes from midnight, half-open, so a whole day is ``[0, 1440)``.
+    Rules are global (every term and scenario) and stored as intervals, never as
+    grid cells: lecture and lab columns differ, and a scenario may redefine both.
+
+    Every invariant is a database constraint because ``bulk_create`` and
+    ``QuerySet.update`` never call ``save()``.  The rows travel in the signed
+    release seed (``ALLOWED_MODELS``): the import truncates every table it does
+    not reload, so a model left out would be emptied on each production rebuild.
+    """
+
+    instructor = models.ForeignKey(
+        Instructor,
+        on_delete=models.CASCADE,
+        related_name="time_rules",
+    )
+    KIND_CHOICES = (("unavailable", "Cannot teach"), ("available_only", "Can teach only"))
+
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+    day_mask = models.PositiveSmallIntegerField()  # bit i = day i, SUN=1 .. THU=16
+    start_minute = models.PositiveSmallIntegerField()  # 0..1439
+    end_minute = models.PositiveSmallIntegerField()  # 1..1440, exclusive
+    note = models.TextField(blank=True, default="")  # <= 200 chars, enforced by the API
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "instructor_time_rules"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(kind__in=("unavailable", "available_only")),
+                name="ck_itr_kind_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(day_mask__gte=1, day_mask__lte=31),
+                name="ck_itr_day_mask_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(start_minute__lt=F("end_minute"), end_minute__lte=1440),
+                name="ck_itr_window_valid",
+            ),
+            models.UniqueConstraint(
+                fields=["instructor", "kind", "day_mask", "start_minute", "end_minute"],
+                name="ux_itr_rule_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["instructor"], name="idx_itr_instructor"),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"InstructorTimeRule({self.instructor_id}/{self.kind}/{self.day_mask}/"
+            f"{self.start_minute}-{self.end_minute})"
+        )
+
+
 class TermSection(models.Model):
     # Scenario FK: scopes auto-generated sections to a specific scenario
     # so two scenarios can both have CS211/S1 independently.

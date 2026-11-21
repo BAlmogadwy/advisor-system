@@ -357,7 +357,7 @@ class LayoutPrimitivesBrowserTests(WorkspaceBrowserMixin, StaticLiveServerTestCa
             page, errors = self._page(language, "/instructor-management/")
             page.wait_for_selector("#imInstructorDialog", state="attached")
             found = page.evaluate(DIALOG_EDGE)
-            self.assertEqual([d["id"] for d in found], ["imInstructorDialog"])
+            self.assertEqual([d["id"] for d in found], ["imInstructorDialog", "imRulesDialog"])
             bad = [d for d in found if d["gap"] > 24 or not d["inHead"]]
             if bad or errors:
                 problems[f"{language} instructors"] = [*bad, *errors]

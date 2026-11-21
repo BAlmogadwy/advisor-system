@@ -55,6 +55,7 @@ ALLOWED_MODELS = (
     "core.electivecourse",
     "core.electivetermmapping",
     "core.instructor",
+    "core.instructortimerule",
     "core.prerequisite",
     "core.programmerequirement",
     "core.room",

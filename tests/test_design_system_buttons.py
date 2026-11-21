@@ -132,11 +132,27 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/timetable_workspace.html", "twSlotBack"),
     ("static/js/page-timetable-workspace.js", "slot:${key}:${kind}"),
     # Instructor management: the roster's Refresh, the dialog's ×, and each
-    # row's Edit and Deactivate/Activate (built by the page script).
+    # row's Edit, Times and Deactivate/Activate (built by the page script).
     ("core/templates/core/instructor_management.html", "imRefresh"),
     ("core/templates/core/instructor_management.html", "data-dialog-close"),
     ("static/js/page-instructor-management.js", "data-im-edit"),
+    ("static/js/page-instructor-management.js", "data-im-rules"),
     ("static/js/page-instructor-management.js", "data-im-active"),
+    # Teaching times (#imRulesDialog): the quick adds, the restored draft's
+    # Discard, the stale save's two answers and Cancel (its × is the
+    # template's data-dialog-close), and each rule's Remove (built by
+    # instructor-time-rules.js).
+    ("core/templates/core/instructor_management.html", "imRulesAddNoMornings"),
+    ("core/templates/core/instructor_management.html", "imRulesAddNoAfternoons"),
+    ("core/templates/core/instructor_management.html", "imRulesAddDayOff"),
+    ("core/templates/core/instructor_management.html", "imRulesAddOnlyDays"),
+    ("core/templates/core/instructor_management.html", "imRulesAddOnlyBetween"),
+    ("core/templates/core/instructor_management.html", "imRulesAddRule"),
+    ("core/templates/core/instructor_management.html", "imRulesDiscard"),
+    ("core/templates/core/instructor_management.html", "imRulesLoadTheirs"),
+    ("core/templates/core/instructor_management.html", "imRulesSaveMine"),
+    ("core/templates/core/instructor_management.html", "imRulesCancel"),
+    ("static/js/instructor-time-rules.js", "itr-remove"),
 }
 
 #: The one that styles itself inline. It was never `ButtonFace`, and the neutral
@@ -183,7 +199,7 @@ def _identify(path: pathlib.Path, tag: str) -> tuple[str, str]:
         r"(data-dialog-close)",
         r'class="[^"]*\b(tw-readiness-go)\b',
         r'data-focus-key="([^"]+)"',
-        r"(data-im-(?:edit|active))=",
+        r"(data-im-(?:edit|active|rules))=",
     ):
         found = re.search(probe, tag)
         if found:
