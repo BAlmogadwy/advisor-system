@@ -36,6 +36,8 @@ code and left empty otherwise):
   course code), ``same_course``, and the overlapped booking's
   ``existing_day`` / ``existing_start`` / ``existing_end``.
 - ``STUDENT_CONFLICT``: ``clashing_section``, ``shared_student_count``.
+- ``INSTRUCTOR_UNAVAILABLE``: ``instructor_id`` (the teacher whose rule forbids
+  it), and the first forbidden meeting's ``day`` / ``start`` / ``end``.
 - ``LOCK_RESPECT``: ``locked_section``.
 - ``NO_ROOM_CAPACITY`` / ``NO_ROOM_GENDER`` / ``NO_ROOM_TYPE``: no extra
   keys — the candidate slot itself carries the day/time/room tried.
@@ -78,6 +80,12 @@ SAME_COURSE_INSTRUCTOR_CLASH = "SAME_COURSE_INSTRUCTOR_CLASH"
 # candidate option is rejected because it would push one of the section's
 # instructors past that daily limit.
 INSTRUCTOR_DAILY_CAP = "INSTRUCTOR_DAILY_CAP"
+
+# Hard: the section's own teacher (one teacher per section) has a teaching-time
+# rule that forbids a meeting of the candidate option
+# (``TIMETABLE_INSTRUCTOR_AVAILABILITY``). Emitted when an automatic stage
+# rejects an option for that reason; manual moves are never refused for it.
+INSTRUCTOR_UNAVAILABLE = "INSTRUCTOR_UNAVAILABLE"
 
 
 @dataclass(frozen=True)

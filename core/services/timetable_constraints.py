@@ -423,17 +423,142 @@ def before_meetings_of(snapshots: Iterable[Any]) -> dict[str, list[Any]]:
     return before
 
 
+# ── Instructor teaching-time rules (TIMETABLE_INSTRUCTOR_AVAILABILITY) ────
+# A meeting violates when it overlaps a forbidden window of a teacher charged to
+# its section (``core.services.instructor_availability``: half-open, touching is
+# not overlap). Counted per DISTINCT meeting ``(day, start, end)``, so a shared
+# section's board copies count once. ``availability`` is duck-typed (``blocks``
+# and truthiness); the callers read the flag and pass an empty availability when
+# it is off, so manual moves and validation never reach a rule. ``exempt`` names
+# the sections the rules do not bind (online on every board they are placed on,
+# ``timetable_instructor_availability.online_exempt_sections``): online-ness is
+# per board, so nothing here guesses it from a ``SectionState``.
+
+
+def _distinct_meetings(meetings: Iterable[Any]) -> list[tuple[int, int, int]]:
+    return sorted({(m.day, m.start_min, m.end_min) for m in meetings})
+
+
+def _blocked_meeting_count(
+    meetings: Iterable[Any], instructor_ids: Iterable[Any], availability: Any
+) -> int:
+    ids = tuple(instructor_ids or ())
+    if not ids:
+        return 0
+    return sum(
+        1
+        for day, start, end in _distinct_meetings(meetings)
+        if any(availability.blocks(iid, day, start, end) for iid in ids)
+    )
+
+
+def section_availability_violations(
+    section: Any, instructor_ids: Iterable[Any], availability: Any
+) -> int:
+    """Distinct meetings of ``section`` that break a rule of any of ``instructor_ids``."""
+    if section is None or not availability:
+        return 0
+    return _blocked_meeting_count(section.meetings, instructor_ids, availability)
+
+
+def count_instructor_availability_violations(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[Any]],
+    availability: Any,
+    *,
+    exempt: Iterable[str] = (),
+) -> int:
+    """Whole board: blocked distinct meetings over every charged, non-exempt section."""
+    if not availability:
+        return 0
+    skip = set(exempt)
+    return sum(
+        section_availability_violations(sections_by_id.get(section_id), ids, availability)
+        for section_id, ids in section_instructor_ids.items()
+        if section_id not in skip
+    )
+
+
+def list_instructor_availability_violations(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[Any]],
+    availability: Any,
+    *,
+    exempt: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """Whole board, one row per (distinct meeting, teacher whose rule it breaks):
+    ``section_id``, ``instructor_id``, ``day``, ``start_min``, ``end_min``, sorted."""
+    if not availability:
+        return []
+    skip = set(exempt)
+    rows: list[dict[str, Any]] = []
+    for section_id in sorted(section_instructor_ids):
+        sec = sections_by_id.get(section_id)
+        if sec is None or section_id in skip:
+            continue
+        ids = sorted(section_instructor_ids[section_id] or (), key=str)
+        for day, start, end in _distinct_meetings(sec.meetings):
+            for iid in ids:
+                if availability.blocks(iid, day, start, end):
+                    rows.append(
+                        {
+                            "section_id": section_id,
+                            "instructor_id": iid,
+                            "day": day,
+                            "start_min": start,
+                            "end_min": end,
+                        }
+                    )
+    return rows
+
+
+def move_adds_availability_violation(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[Any]],
+    availability: Any,
+    before_meetings_by_id: Mapping[str, Iterable[Any]],
+    *,
+    exempt: Iterable[str] = (),
+) -> bool:
+    """Delta form: True iff a moved section now holds MORE blocked meetings than
+    it did before the move.
+
+    ``before_meetings_by_id`` maps each moved section id to its meetings BEFORE
+    the move (:func:`before_meetings_of`); ``sections_by_id`` holds the moved
+    board. A section that already broke a rule may keep doing so, or move to a
+    time that breaks it no more often: a pre-existing violation never blocks an
+    unrelated move (the repair pass, not every move, removes it).
+    """
+    if not availability:
+        return False
+    skip = set(exempt)
+    for section_id, before in before_meetings_by_id.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None or section_id in skip:
+            continue
+        ids = section_instructor_ids.get(section_id) or ()
+        if _blocked_meeting_count(sec.meetings, ids, availability) > _blocked_meeting_count(
+            before, ids, availability
+        ):
+            return True
+    return False
+
+
 __all__ = [
     "before_meetings_of",
+    "count_instructor_availability_violations",
     "count_instructor_clashes",
     "count_instructor_daily_overloads",
     "days_form_day_run",
     "exceeds_instructor_daily_cap",
     "has_instructor_clash",
     "has_same_course_overlap",
+    "list_instructor_availability_violations",
     "list_instructor_clashes",
+    "move_adds_availability_violation",
     "move_exceeds_instructor_daily_cap",
     "move_introduces_day_run",
     "move_introduces_instructor_clash",
     "move_introduces_same_course_overlap",
+    "section_availability_violations",
 ]
