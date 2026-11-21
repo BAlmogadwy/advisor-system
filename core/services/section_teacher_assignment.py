@@ -2760,19 +2760,24 @@ def run_placer(scenario_id: int, place, *, rebuild: bool):
     it produced, stable against that map. Otherwise (place what is missing and
     keep the rest): the closure is stored before and after ``place()``, which
     runs under the map in force — existing teachers stay.
+
+    The whole build is one teaching-time rule scope (``availability_scope``):
+    the rules are read once, and every stage of it (greedy, CP-SAT, annealing)
+    sees the same availability.
     """
-    if rebuild:
-        prepared = prepare_section_teachers(scenario_id, phase="rebuild")
-        with pinned_assignment(scenario_id, prepared["assignment"]):
-            result = place()
-        final = prepare_section_teachers(scenario_id, phase="layout")["assignment"]
-    else:
-        prepare_section_teachers(scenario_id, phase="ensure")
-        with pinned_assignment(scenario_id, load_assignment(scenario_id)):
-            result = place()
-        final = prepare_section_teachers(scenario_id, phase="ensure", release_unteachable=True)[
-            "assignment"
-        ]
+    with availability_scope(scenario_id):
+        if rebuild:
+            prepared = prepare_section_teachers(scenario_id, phase="rebuild")
+            with pinned_assignment(scenario_id, prepared["assignment"]):
+                result = place()
+            final = prepare_section_teachers(scenario_id, phase="layout")["assignment"]
+        else:
+            prepare_section_teachers(scenario_id, phase="ensure")
+            with pinned_assignment(scenario_id, load_assignment(scenario_id)):
+                result = place()
+            final = prepare_section_teachers(scenario_id, phase="ensure", release_unteachable=True)[
+                "assignment"
+            ]
     if isinstance(result, dict):
         result["section_teachers"] = {"enabled": True, "final": stage_report(final)}
     return result

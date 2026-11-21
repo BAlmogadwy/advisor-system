@@ -295,6 +295,16 @@ def placed_online_flags(scenario_id: int) -> dict[int, tuple[bool, ...]]:
     return {ts_id: flags for ts_id, _key, flags in _placed_online_rows(scenario_id)}
 
 
+def placed_online_by_section(scenario_id: int) -> dict[tuple[str, str], tuple[bool, ...]]:
+    """``(course_key, label) -> (online on board, ...)`` for every placed section,
+    for a stage that knows a section by its planner key (a placer about to add
+    it to one more board: it is exempt iff online there AND on all of these)."""
+    out: dict[tuple[str, str], set[bool]] = {}
+    for _ts_id, key, flags in _placed_online_rows(scenario_id):
+        out.setdefault(key, set()).update(flags)
+    return {key: tuple(sorted(flags)) for key, flags in out.items()}
+
+
 def online_exempt_sections(scenario_id: int) -> frozenset[tuple[str, str]]:
     """``(course_key, label)`` of the placed sections online on every board
     (``course_key`` is the planner identity, ``course_key or course_code``)."""
@@ -343,6 +353,7 @@ __all__ = [
     "online_exempt_sections",
     "option_blocked",
     "option_meetings",
+    "placed_online_by_section",
     "placed_online_flags",
     "prune_relocate_domains",
     "rule_ids",

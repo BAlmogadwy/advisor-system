@@ -12,7 +12,10 @@ bind the teacher one-teacher-per-section charges to a section. This module pins:
 - byte-identity: flag ON with no rule, or with rules only for instructors the
   scenario cannot charge, reproduces the recorded goldens;
 - the teacher choice (``section_teacher_assignment``): a teacher is never newly
-  picked for a section at a time his rules forbid; a charged violator is kept.
+  picked for a section at a time his rules forbid; a charged violator is kept;
+- the greedy placer (``timetable_autoplace``): per-teacher options feed it, an
+  engine teacher's forbidden option is filtered (``INSTRUCTOR_UNAVAILABLE``), a
+  fixed teacher's ranks last (placed, reported), online sections are exempt.
 
 Every behavioural test has a control (flag off, an empty availability, or the
 guard taken out) proving the guard is what makes it pass.
@@ -1231,3 +1234,502 @@ def test_fixed_section_keys_are_the_pinned_and_frozen_sections(pure) -> None:
 
     assert a.status[choice.key] == sta.STATUS_ENGINE
     assert helper.fixed_section_keys(a) == {pinned.pr4_key, frozen.pr4_key}
+
+
+# ── C.2 / C.3: the greedy placer (feed, filter, fixed rank-last, report) ──
+#
+# One budgeted 3-credit course (2 x 75) on one board; the teacher's rules decide
+# where its section may go. Controls: the flag off, the feed taken out, or an
+# ENGINE map pinned where the closure would otherwise not charge the teacher.
+
+GREEDY_STRATEGIES = ("compact", "morning", "balanced")
+GREEDY_SEEDS = (3, 11, 29, None)
+
+
+def _person(name: str) -> Instructor:
+    return Instructor.objects.filter(full_name=name).first() or ots.instructor(name)
+
+
+def _greedy_scenario(
+    name: str,
+    *,
+    teachers=("Dr A",),
+    code: str = "CS101",
+    credit: int = 3,
+    online: bool = False,
+    pin: bool = False,
+    programs=("AI",),
+):
+    """``(scenario, board, course_key, people)``: one budgeted section S1, not
+    placed, of a course every teacher in ``teachers`` may teach (``pin``: the
+    first one is the section's pinned teacher)."""
+    from core.services.course_identity import planner_course_key
+
+    sc, board = ots.scenario(name, programs=programs, board_program=programs[0])
+    ProgrammeRequirement.objects.create(
+        program=programs[0],
+        course_code=code,
+        course_name="INTRO",
+        programme_term=2,
+        credit_hours=credit,
+        is_online=online,
+    )
+    key = planner_course_key(code, "INTRO")
+    ots.budget(sc, key, 1, code=code, credit=credit)
+    people = [_person(full_name) for full_name in teachers]
+    for index, person in enumerate(people):
+        ots.link(programs[0], code, person, role="co" if index else "primary")
+    if pin:
+        _pin(sc, key, "S1", people[0])
+    return sc, board, key, people
+
+
+def _pin(sc, key: str, label: str, person) -> None:
+    from core.models import SectionInstructor
+
+    SectionInstructor.objects.create(
+        scenario=sc,
+        course_key=key,
+        section=label,
+        instructor=person,
+        role=sta.ROLE_PRIMARY,
+        source=sta.SOURCE_DEPARTMENT,
+    )
+
+
+def _greedy(sc, strategy: str = "compact", seed: int | None = None, **kwargs) -> dict:
+    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_run_seed import seeded_timetable_run
+
+    with seeded_timetable_run(seed):
+        return auto_place_scenario(sc.id, strategy=strategy, **kwargs)
+
+
+def _placed_meetings(sc, key: str, label: str = "S1", board=None) -> list[tuple[str, str, str]]:
+    from core.models import SectionPlacement
+
+    rows = SectionPlacement.objects.filter(
+        board__scenario=sc, term_section__course_key=key, term_section__section=label
+    )
+    if board is not None:
+        rows = rows.filter(board=board)
+    return sorted(rows.values_list("day", "start_time", "end_time"))
+
+
+def _blocked(meetings, person, av_rules) -> list[tuple[str, str, str]]:
+    """The meetings ``person``'s rules (``av_rules``, compiled) forbid."""
+    return [
+        meeting
+        for meeting in meetings
+        if helper.option_blocked(
+            av_rules, (person.pk,), [{"day": meeting[0], "start": meeting[1], "end": meeting[2]}]
+        )
+    ]
+
+
+def _rules_of(person):
+    from core.services.instructor_availability import load_instructor_availability
+
+    return load_instructor_availability([person.pk])
+
+
+def _board_result(result: dict) -> dict:
+    boards = result.get("boards") or {}
+    assert len(boards) == 1, boards
+    return next(iter(boards.values()))
+
+
+def _engine_map(sc, key: str, person):
+    """The scenario's map with ``key`` charged to ``person`` as an ENGINE pick: a
+    run that pinned it (``pinned_assignment``) places under exactly this map."""
+    current = sta.load_assignment(sc.id)
+    v2 = f"{key}_S1"
+    return replace(
+        current,
+        teacher={**current.teacher, v2: person.pk},
+        status={**current.status, v2: sta.STATUS_ENGINE},
+        tbd_reason={k: v for k, v in current.tbd_reason.items() if k != v2},
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_the_greedy_never_places_an_engine_teachers_section_in_a_forbidden_cell(
+    av_on, flag
+) -> None:
+    """T-G4: every strategy and seed keeps a "no mornings" teacher's section in the
+    afternoon; with the flag off the same board lands in a morning for some run."""
+    from core.services.timetable_board_persistence import reset_scenario
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, (a,) = _greedy_scenario("t-g4")
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+    rules = _rules_of(a)
+
+    blocked = []
+    for strategy in GREEDY_STRATEGIES:
+        for seed in GREEDY_SEEDS:
+            reset_scenario(sc.id, keep_locked=False)
+            _greedy(sc, strategy, seed)
+            meetings = _placed_meetings(sc, key)
+            assert len(meetings) == 2, (strategy, seed, meetings)
+            blocked += _blocked(meetings, a, rules)
+    assert bool(blocked) is not flag, blocked
+
+
+def _mixed_only(person) -> None:
+    """``person`` may teach only SUN 13:00-17:15 and TUE 09:00-12:05: no lecture
+    period is open on both days, so every week of the course list breaks the
+    rule and only a mixed-period week (the feed's) is legal."""
+    rule(person, KIND_AVAILABLE_ONLY, ("SUN",), "13:00", "17:15")
+    rule(person, KIND_AVAILABLE_ONLY, ("TUE",), "09:00", "12:05")
+
+
+@pytest.mark.django_db
+def test_the_greedy_feed_places_an_engine_teachers_section_in_a_mixed_period_week(
+    av_on,
+) -> None:
+    """T-G2: the feed generates the teacher's mixed-period weeks, so the section
+    is placed legally (one meeting SUN afternoon, one TUE morning)."""
+    sc, _board, key, (a,) = _greedy_scenario("t-g2")
+    _mixed_only(a)
+
+    result = _greedy(sc)
+
+    meetings = _placed_meetings(sc, key)
+    assert [day for day, _s, _e in meetings] == ["SUN", "TUE"], meetings
+    assert not _blocked(meetings, a, _rules_of(a))
+    assert _board_result(result)["instructor_availability"] == {"ranked_last": [], "unplaced": []}
+
+
+@pytest.mark.django_db
+def test_without_the_feed_the_same_section_is_left_unplaced_by_the_rule(av_on, monkeypatch) -> None:
+    """T-G2's control: the same engine map, with the greedy's feed reduced to the
+    course list, leaves the section unplaced with ``INSTRUCTOR_UNAVAILABLE``."""
+    from core.services import timetable_autoplace as autoplace
+    from core.services.timetable_decision_trace import INSTRUCTOR_UNAVAILABLE
+
+    sc, _board, key, (a,) = _greedy_scenario("t-g2 control")
+    _mixed_only(a)
+    engine = sta.load_assignment(sc.id)
+    assert engine.teacher[f"{key}_S1"] == a.pk  # a legal (mixed) week exists for him
+    monkeypatch.setattr(
+        autoplace,
+        "availability_section_options",
+        lambda *args, course_options, **kwargs: course_options,
+    )
+
+    with sta.pinned_assignment(sc.id, engine):
+        result = _greedy(sc)
+
+    assert _placed_meetings(sc, key) == []
+    board = _board_result(result)
+    (failure,) = board["room_failures"]
+    assert failure["reason"] == INSTRUCTOR_UNAVAILABLE
+    assert failure["context"]["instructor_id"] == a.pk
+    assert board["instructor_availability"]["unplaced"] == [
+        {"section": f"{key}|S1", "instructor_ids": [a.pk], "binding": True}
+    ]
+
+
+@pytest.mark.django_db
+def test_the_placer_guard_and_the_greedy_ask_for_the_same_legal_options(av_on, monkeypatch) -> None:
+    """T-G3: the one-teacher guard (``_Static.teacher_options``) and the greedy get
+    a ruled teacher's options from the same source with the same arguments."""
+    import sys
+
+    from core.services import timetable_autoplace as autoplace
+
+    sc, _board, key, (a,) = _greedy_scenario("t-g3")
+    _mixed_only(a)
+    real = autoplace.availability_section_options
+    seen: dict[str, list] = {}
+
+    def spy(*args, **kwargs):
+        out = real(*args, **kwargs)
+        seen.setdefault(sys._getframe(1).f_code.co_name, []).append(out)
+        return out
+
+    monkeypatch.setattr(autoplace, "availability_section_options", spy)
+    _greedy(sc)
+
+    (greedy,) = seen["auto_place_board"]
+    static = sta._load_static(sc.id)
+    guard = static.teacher_options(key, static.budgets[key], a.pk, helper.availability_for(sc.id))
+    assert greedy and sta._option_cells(greedy) == guard
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("pinned", [True, False], ids=["fixed", "engine-control"])
+def test_a_fixed_teacher_without_a_legal_week_is_placed_and_reported(av_on, pinned) -> None:
+    """T-G5: "only Thursday" leaves a 2 x 75 course no week. A pinned teacher's
+    section is placed anyway at its best option and reported; the same teacher
+    charged as an ENGINE pick (pinned map) leaves it unplaced."""
+    from core.services.timetable_decision_trace import INSTRUCTOR_UNAVAILABLE
+
+    sc, _board, key, (a,) = _greedy_scenario("t-g5", pin=pinned)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    if pinned:
+        result = _greedy(sc)
+    else:
+        with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+            result = _greedy(sc)
+
+    report = _board_result(result)["instructor_availability"]
+    meetings = _placed_meetings(sc, key)
+    if pinned:
+        assert len(meetings) == 2
+        assert report == {
+            "ranked_last": [
+                {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
+            ],
+            "unplaced": [],
+        }
+    else:
+        assert meetings == []
+        assert _board_result(result)["room_failures"][0]["reason"] == INSTRUCTOR_UNAVAILABLE
+        assert report["ranked_last"] == []
+        assert [row["section"] for row in report["unplaced"]] == [f"{key}|S1"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_a_fixed_teacher_takes_a_legal_option_over_a_better_scored_forbidden_one(
+    av_on, flag
+) -> None:
+    """T-G6: the "morning" strategy scores the mornings best; a pinned "no
+    mornings" teacher's section still goes to the afternoon (control: flag off,
+    the morning wins)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, (a,) = _greedy_scenario("t-g6", pin=True)
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    _greedy(sc, "morning")
+
+    meetings = _placed_meetings(sc, key)
+    assert len(meetings) == 2
+    assert bool(_blocked(meetings, a, _rules_of(a))) is not flag, meetings
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_a_warm_start_baseline_at_a_forbidden_time_is_not_retained(av_on, flag) -> None:
+    """T-G7: decision trace and warm start on; the baseline (SUN 09:00) is free
+    and scored, but its pinned teacher may not teach mornings, so it is not
+    retained (control: flag off, the baseline is kept)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    av_on.TIMETABLE_PR3_WARM_START_ENABLED = True
+    av_on.TIMETABLE_PR3_DECISION_TRACE_ENABLED = True
+    sc, _board, key, (a,) = _greedy_scenario("t-g7", pin=True)
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    _greedy(
+        sc,
+        "compact",
+        baseline_placements={
+            f"{key}|S1": {"day": "SUN", "start_time": "09:00", "end_time": "10:15"}
+        },
+    )
+
+    meetings = _placed_meetings(sc, key)
+    assert (("SUN", "09:00", "10:15") in meetings) is not flag, meetings
+    assert bool(_blocked(meetings, a, _rules_of(a))) is not flag, meetings
+
+
+def _online_here(*, elsewhere: bool):
+    """GS101 is online on the AI board; ``elsewhere``: its S1 already sits on the DS
+    board, where it is a campus course, at a time its teacher may teach."""
+    sc, ai_board, key, (a,) = _greedy_scenario(
+        f"t-g8 {elsewhere}", code="GS101", online=True, programs=("AI", "DS")
+    )
+    ds_board = DeliveryBoard.objects.create(
+        scenario=sc, label="Term 2 DS", nominal_term=2, program="DS"
+    )
+    ProgrammeRequirement.objects.create(
+        program="DS", course_code="GS101", course_name="INTRO", programme_term=2, credit_hours=3
+    )
+    if elsewhere:
+        ts = ots.section(sc, key, "S1")
+        ots.place(ds_board, ts, [("MON", "13:00", "14:15"), ("WED", "13:00", "14:15")])
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+    return sc, ai_board, key, a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+def test_an_online_section_is_not_bound_by_its_teachers_rules_in_the_greedy(
+    av_on, elsewhere
+) -> None:
+    """T-G8 (H7): the "morning" strategy puts an online section of a "no mornings"
+    teacher in the morning (rules do not bind it); the same section already on a
+    board where it is a campus course is bound, so it goes to the afternoon."""
+    sc, ai_board, key, a = _online_here(elsewhere=elsewhere)
+    assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == a.pk
+
+    _greedy(sc, "morning")
+
+    meetings = _placed_meetings(sc, key, board=ai_board)
+    assert len(meetings) == 2
+    assert bool(_blocked(meetings, a, _rules_of(a))) is not elsewhere, meetings
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_an_english_section_of_a_no_mornings_teacher_gets_the_afternoon_bundle(av_on, flag) -> None:
+    """T-G9: a meeting-policy (ENG) course moves only as a whole bundle; a "no
+    mornings" teacher's section takes the PM bundle (control: flag off, AM)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, (a,) = _greedy_scenario("t-g9", code="ENG101")
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    _greedy(sc, "morning")
+
+    meetings = _placed_meetings(sc, key)
+    assert meetings, "the ENG section was not placed"
+    starts = {start for _day, start, _end in meetings}
+    assert (min(starts) >= "13:00") is flag, meetings
+
+
+def _clash_taken(name: str, *, pinned: bool):
+    """The teacher may teach only SUN and TUE 13:00-14:15, so the course's one
+    legal week is SUN 13:00 + TUE 13:00; his pinned CS200 S1 already holds SUN
+    13:00, so a clash takes that week."""
+    from core.services.course_identity import planner_course_key
+
+    sc, board, key, (a,) = _greedy_scenario(name, pin=pinned)
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="CS200", course_name="OTHER", programme_term=2, credit_hours=3
+    )
+    other = planner_course_key("CS200", "OTHER")
+    ots.budget(sc, other, 1, code="CS200")
+    ots.link("AI", "CS200", a)
+    ts = ots.section(sc, other, "S1")
+    ots.place(board, ts, [("SUN", "13:00", "14:15"), ("TUE", "14:30", "15:45")])
+    _pin(sc, other, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("SUN", "TUE"), "13:00", "14:15")
+    return sc, key, a
+
+
+@pytest.mark.django_db
+def test_a_fixed_teacher_whose_legal_weeks_are_all_taken_is_still_placed(av_on) -> None:
+    """T-G10 (H1): the legal week clashes, so the pinned section falls back to its
+    best forbidden option (the feed keeps them after the legal ones) and is
+    reported; it is never left unplaced because of a rule."""
+    sc, key, a = _clash_taken("t-g10", pinned=True)
+
+    result = _greedy(sc)
+
+    meetings = _placed_meetings(sc, key)
+    assert len(meetings) == 2 and _blocked(meetings, a, _rules_of(a)), meetings
+    assert _board_result(result)["instructor_availability"]["ranked_last"] == [
+        {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
+    ]
+
+
+@pytest.mark.django_db
+def test_an_engine_teacher_whose_legal_weeks_are_all_taken_is_reported_binding(av_on) -> None:
+    """T-G11 (H1): as an ENGINE pick the same section is left unplaced; the options
+    the feed left out pass clash, cap and same-course, so the rule was binding:
+    listed, and counted under ``INSTRUCTOR_UNAVAILABLE`` beside the clash."""
+    from core.services.timetable_decision_trace import INSTRUCTOR_CLASH, INSTRUCTOR_UNAVAILABLE
+
+    sc, key, a = _clash_taken("t-g11", pinned=False)
+
+    with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+        result = _greedy(sc)
+
+    assert _placed_meetings(sc, key) == []
+    board = _board_result(result)
+    (failure,) = board["room_failures"]
+    assert failure["context"]["rejected_by"][INSTRUCTOR_CLASH] >= 1
+    assert failure["context"]["rejected_by"][INSTRUCTOR_UNAVAILABLE] >= 1
+    assert board["instructor_availability"] == {
+        "ranked_last": [],
+        "unplaced": [{"section": f"{key}|S1", "instructor_ids": [a.pk], "binding": True}],
+    }
+
+
+@pytest.mark.django_db
+def test_a_reinstated_section_of_a_pinned_teacher_without_a_legal_week_is_listed(av_on) -> None:
+    """T-W5 (C.21): the required-section reinstatement carries the placer's
+    report, so the section placed against its pinned teacher's rule is listed."""
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, _board, key, (a,) = _greedy_scenario("t-w5", pin=True)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    report = reinstate_missing_required_sections(sc.id)
+
+    assert report["after_missing"] == []
+    assert report["instructor_availability"] == {
+        "ranked_last": [
+            {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
+        ],
+        "unplaced": [],
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_the_greedy_honours_the_rules_with_the_clash_flag_off(av_on, flag) -> None:
+    """T-G4 without ``TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED``: the greedy reads the
+    teacher map itself, so the "morning" strategy still cannot put a "no
+    mornings" teacher's section in a morning (control: flag off, it does)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    av_on.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = False
+    sc, _board, key, (a,) = _greedy_scenario("t-g4 clash off")
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    result = _greedy(sc, "morning")
+
+    meetings = _placed_meetings(sc, key)
+    assert len(meetings) == 2
+    assert bool(_blocked(meetings, a, _rules_of(a))) is not flag, meetings
+    assert "teacher_guard" not in _board_result(result)  # no clash: no guard either
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("online", [True, False], ids=["online", "campus"])
+def test_the_greedy_hands_the_placer_guard_its_rules_and_the_online_exemption(
+    av_on, monkeypatch, online
+) -> None:
+    """The guard ranks a to-be-decided section's options by its open teachers'
+    rules (``PlacerGuard(..., availability)``) unless the section is online on
+    every board (``availability_exempt``)."""
+    real = sta.PlacerGuard
+    seen: dict = {"checks": []}
+
+    class Spy(real):
+        def __init__(self, assignment, availability=EMPTY_AVAILABILITY) -> None:
+            super().__init__(assignment, availability)
+            seen["availability"] = availability
+
+        def check(self, key, teachers, schedule, *, availability_exempt=False):
+            seen["checks"].append((key, availability_exempt))
+            return super().check(key, teachers, schedule, availability_exempt=availability_exempt)
+
+    monkeypatch.setattr(sta, "PlacerGuard", Spy)
+    sc, _board, key, (a,) = _greedy_scenario(f"guard {online}", online=online)
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    _greedy(sc)
+
+    assert seen["availability"].instructor_ids == {a.pk}
+    assert seen["checks"] == [(f"{key}|S1", online)]
+
+
+@pytest.mark.django_db
+def test_a_place_missing_run_reads_the_rules_once(av_on) -> None:
+    """``run_placer`` is one rule scope: its map reads, every board's greedy and
+    the final ensure share one rule query."""
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    sc, _board, key, (a,) = _greedy_scenario("one scope")
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+
+    with CaptureQueriesContext(connection) as ctx:
+        sta.run_placer(sc.id, lambda: auto_place_scenario(sc.id), rebuild=False)
+
+    assert len(rule_queries(ctx.captured_queries)) == 1
+    assert not _blocked(_placed_meetings(sc, key), a, _rules_of(a))

@@ -176,6 +176,20 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
     ]
     if ranked_last:
         report["teacher_guard_ranked_last"] = ranked_last
+    # Teaching-time rules (only while a teacher the scenario can charge has one):
+    # the placer's own report — sections of a fixed teacher placed at a time he
+    # may not teach, and sections the rule (not clash, cap or same-course) kept
+    # off the board — carried for the run's gates and its final report.
+    availability = [
+        board["instructor_availability"]
+        for board in (boards or {}).values()
+        if isinstance(board, dict) and isinstance(board.get("instructor_availability"), dict)
+    ]
+    if availability:
+        report["instructor_availability"] = {
+            part: [row for board in availability for row in board.get(part, [])]
+            for part in ("ranked_last", "unplaced")
+        }
     return report
 
 
