@@ -52,7 +52,7 @@
 
   <!-- Capacity toggle -->
   <div class="mt-2">
-    <button id="spToggleCaps" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spCapsWrap"><svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
+    <button id="spToggleCaps" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spCapsWrap"><svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}إعدادات الطاقة{% else %}Capacity settings{% endif %}</button>
   </div>
 
   <!-- Collapsible capacity settings -->
@@ -75,7 +75,7 @@
   <!-- Advanced per-course button -->
   <div class="mt-2">
     <button id="spToggleAdv" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spAdvPanel">
-      <svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}📋 إعدادات متقدمة لكل مقرر{% else %}📋 Advanced: Per-course limits{% endif %}
+      <svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}إعدادات متقدمة لكل مقرر{% else %}Advanced: Per-course limits{% endif %}
       <span id="spAdvBadge" class="sp-adv-badge d-none">0</span>
     </button>
   </div>
@@ -119,7 +119,7 @@
   {# A programme's weekly meetings for its 3-credit courses: saved on the study plan, read by Generate. Loaded only when opened. #}
   <div class="mt-2">
     <button id="spToggleMeet" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spMeetPanel">
-      <svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}🗓 إعدادات متقدمة: اللقاءات الأسبوعية{% else %}🗓 Advanced: Weekly meetings{% endif %}
+      <svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}إعدادات متقدمة: اللقاءات الأسبوعية{% else %}Advanced: Weekly meetings{% endif %}
       <span id="spMeetBadge" class="sp-adv-badge d-none">0</span>
     </button>
   </div>

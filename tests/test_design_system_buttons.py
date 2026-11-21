@@ -810,26 +810,31 @@ class ButtonSurfaceTests(StaticLiveServerTestCase):
         )
 
     def test_disabled_buttons_keep_their_boundary_in_both_themes(self):
+        # The outline variants draw their edge as an inset ring, which the
+        # disabled rule's shadow used to replace: a disabled "Insert sections"
+        # was borderless red text beside a solid button (UI review 3).
         page = self._page()
         for theme in ("light", "dark"):
             states = page.evaluate(
                 """theme => {
                   document.documentElement.setAttribute('data-theme', theme);
-                  return [false, true].map(byClass => {
-                    const b = document.createElement('button');
-                    b.className = 'btn btn-neutral' + (byClass ? ' disabled' : '');
-                    b.disabled = !byClass;
-                    b.textContent = 'disabled';
-                    document.body.appendChild(b);
-                    const resting = getComputedStyle(b).boxShadow;
-                    b.focus();
-                    const focused = getComputedStyle(b).boxShadow;
-                    b.remove();
-                    return {byClass, resting, focused};
-                  });
+                  return ['btn-neutral', 'btn-outline-primary', 'btn-outline-danger'].flatMap(variant =>
+                    [false, true].map(byClass => {
+                      const b = document.createElement('button');
+                      b.className = 'btn ' + variant + (byClass ? ' disabled' : '');
+                      b.disabled = !byClass;
+                      b.textContent = 'disabled';
+                      document.body.appendChild(b);
+                      const resting = getComputedStyle(b).boxShadow;
+                      b.focus();
+                      const focused = getComputedStyle(b).boxShadow;
+                      b.remove();
+                      return {variant, byClass, resting, focused};
+                    }));
                 }""",
                 theme,
             )
+            assert len(states) == 6, states
             for state in states:
                 assert _has_boundary(state["resting"]), (theme, state)
                 assert state["focused"] == state["resting"], (theme, state)

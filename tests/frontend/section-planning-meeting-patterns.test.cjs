@@ -236,7 +236,7 @@ test('Save is a primary button outside the scope form, described by the panel\'s
 
 test('the panel says what a value does, in the page\'s language, with the engine\'s minutes', async t => {
   const ui = await page(t, { open: false });
-  assert.equal(ui.text('spToggleMeet'), say('🗓 Advanced: Weekly meetings 0', '🗓 إعدادات متقدمة: اللقاءات الأسبوعية 0'));
+  assert.equal(ui.text('spToggleMeet'), say('Advanced: Weekly meetings 0', 'إعدادات متقدمة: اللقاءات الأسبوعية 0'));
   const note = ui.text('spMeetNote');
   assert.match(note, AR ? /للطلاب والطالبات على السواء/ : /Applies to timetables generated from now on, Male and Female alike\./);
   assert.match(note, AR ? /تحتفظ السيناريوهات المحفوظة بلقاءاتها الأسبوعية/ : /Saved scenarios keep their own weekly meetings\./);

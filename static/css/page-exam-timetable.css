@@ -621,7 +621,10 @@ main.exam-builder-page .et-schedule-heading { display: flex; align-items: center
 main.exam-builder-page .et-schedule-heading > div { min-width: 0; }
 main.exam-builder-page .et-schedule-heading h2 { margin: 0; font-size: var(--text-md); font-weight: 700; }
 main.exam-builder-page .et-schedule-heading #schedFilter { flex: 0 1 300px; min-width: 200px; min-height: var(--control-h-sm); }
-main.exam-builder-page .et-edit-toolbar { position: static; padding: 0 0 10px; margin: 0 0 10px; border-bottom: 1px solid var(--et-border); background: var(--et-surface); }
+/* The page's own ground, not a white band: nothing else on the page sits on a
+   fill, and the band ran to its controls' edges with no gutter. Opaque, so the
+   sticky state below still covers the rows it scrolls over. */
+main.exam-builder-page .et-edit-toolbar { position: static; padding: 0 0 10px; margin: 0 0 10px; border-bottom: 1px solid var(--et-border); background: var(--et-bg); }
 main.exam-builder-page .et-edit-toolbar.et-toolbar-sticky { position: sticky; top: var(--exam-toolbar-top, 0px); z-index: 20; box-shadow: 0 4px 6px -5px var(--et-field-border); }
 main.exam-builder-page .et-run-summary { margin: 2px 0 0; color: var(--et-muted); font-size: var(--text-xs); line-height: 1.4; overflow-wrap: anywhere; }
 main.exam-builder-page .et-change-count { color: var(--et-muted); font-size: var(--text-micro); }
@@ -788,7 +791,9 @@ html[dir="rtl"] main.exam-builder-page #schedGrid .et-grid tbody th { box-shadow
 main.exam-builder-page .et-slot-courses { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; gap: 4px; }
 main.exam-builder-page .et-course-card { display: grid; position: relative; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 5px; min-width: 0; margin: 0; border-radius: var(--radius-xs); padding: 6px; text-align: start; font-size: var(--text-sm); font-weight: 600; }
 main.exam-builder-page .et-course-card .et-course-code { grid-column: 1; gap: 3px; margin: 0; min-width: 0; color: var(--et-text); font-size: var(--text-xs); line-height: 1.3; }
-main.exam-builder-page .et-course-card .et-course-short-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; grid-column: 1 / -1; grid-row: 2; min-width: 0; max-height: 2.6em; overflow: hidden; white-space: normal; overflow-wrap: anywhere; color: var(--et-muted); font-size: var(--text-xs); font-weight: 400; line-height: 1.3; }
+main.exam-builder-page .et-course-card .et-course-short-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; grid-column: 1 / -1; grid-row: 2; min-width: 0; max-height: 2.6em; overflow: hidden; white-space: normal; overflow-wrap: anywhere; color: var(--et-muted); font-size: var(--text-xs); font-weight: 400; line-height: 1.3; unicode-bidi: plaintext; text-align: match-parent; }
+/* (plaintext: a Latin name on the Arabic page runs left to right, so its "..."
+   and its punctuation stay at its own end, not at the start of the line) */
 main.exam-builder-page .et-course-card :is(.et-pin-lock, .et-course-online) { display: inline-flex; flex: 0 0 auto; }
 main.exam-builder-page .et-course-card :is(.et-pin-lock, .et-course-online) svg { width: 12px; height: 12px; }
 main.exam-builder-page .et-course-card .et-course-online { color: var(--et-accent-text); }
