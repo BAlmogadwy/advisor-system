@@ -4298,28 +4298,63 @@ def test_every_time_choosing_module_references_the_rules() -> None:
     assert missing == []
 
 
-def _functions_asking(path: str) -> set[str]:
-    """The names of the top-level functions in ``path`` that ask for the rules."""
+#: Every door to the rules: asking for them, the switch, the hot-path read and
+#: the loaders (identity:F8).
+RULE_DOORS = frozenset(
+    {
+        "availability_for",
+        "section_rule_checker",
+        "rules_enabled",
+        "bound_availability",
+        "load_instructor_availability",
+        "load_time_rules",
+    }
+)
+
+
+def _functions_asking(path: str, doors: frozenset[str] = RULE_DOORS) -> set[str]:
+    """Where ``path`` opens one of ``doors``: the top-level functions, the class
+    methods (``"Class.method"``), a class body (``"Class"``) or the module body
+    (``"<module>"``) holding a call to it, by name (``availability_for(...)``) or
+    as an attribute (``_tia.availability_for(...)``)."""
     import ast
 
     tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
-    askers = set()
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
+    askers: set[str] = set()
+
+    def scan(node: ast.AST, name: str) -> None:
         for inner in ast.walk(node):
-            if (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Name)
-                and inner.func.id in {"availability_for", "section_rule_checker"}
-            ):
-                askers.add(node.name)
+            if not isinstance(inner, ast.Call):
+                continue
+            func = inner.func
+            called = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if called in doors:
+                askers.add(name)
+
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            scan(node, node.name)
+        elif isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
+                    scan(item, f"{node.name}.{item.name}")
+                else:
+                    scan(item, node.name)
+        else:
+            scan(node, "<module>")
     return askers
 
 
 def test_the_workspace_and_the_repair_ask_only_in_their_semi_automatic_writers() -> None:
     """I6: the manual move/create paths, validation and the previews that share
-    these modules never ask for the rules."""
+    these modules never open a door to the rules, whether they call it by name
+    or as a module attribute, in a function or in a class method."""
     assert _functions_asking("core/services/timetable_workspace.py") == {
         "preview_bulk_safe_time_moves",
         "apply_bulk_safe_time_moves",
@@ -4328,3 +4363,39 @@ def test_the_workspace_and_the_repair_ask_only_in_their_semi_automatic_writers()
         "_repair_state_fingerprint",
         "_move_set_rule_checker",
     }
+
+
+#: Who may open the doors that are not a stage's ask (identity:F8): the switch,
+#: the evaluator's no-load read and the loaders. The helper module and the
+#: rules module itself are left out.
+DOOR_CALLERS = {
+    "rules_enabled": {
+        "core/instructor_views.py::_time_rules_enforced",
+        "core/services/section_teacher_assignment.py::_collect",
+        "core/services/timetable_autoplace.py::auto_place_board",
+        "core/services/timetable_repair.py::_move_set_rule_checker",
+    },
+    "bound_availability": {
+        "core/services/timetable_candidate_eval.py::evaluate_generated_timetable_candidate",
+    },
+    "load_instructor_availability": set(),
+    "load_time_rules": {"core/instructor_views.py::_time_rule_summaries"},  # the rules editor
+}
+
+
+def test_the_switch_the_hot_path_read_and_the_loaders_are_opened_only_where_pinned() -> None:
+    own = {
+        "core/services/timetable_instructor_availability.py",
+        "core/services/instructor_availability.py",
+    }
+    found: dict[str, set[str]] = {door: set() for door in DOOR_CALLERS}
+    for root in ("config", "core", "scheduler"):
+        for path in (REPO / root).rglob("*.py"):
+            rel = path.relative_to(REPO).as_posix()
+            if "migrations" in path.parts or rel in own:
+                continue
+            for door in DOOR_CALLERS:
+                found[door] |= {
+                    f"{rel}::{name}" for name in _functions_asking(rel, frozenset({door}))
+                }
+    assert found == DOOR_CALLERS
