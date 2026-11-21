@@ -360,6 +360,7 @@
     roleRequired: pick('You do not have permission to change these rules.', 'لا تملك صلاحية تعديل هذه القواعد.'),
     notFound: pick('This instructor no longer exists. Reload the page.', 'لم يعد عضو هيئة التدريس هذا موجوداً. أعد تحميل الصفحة.'),
     saveFailed: pick('Could not save the rules. Check your connection and try again.', 'تعذّر حفظ القواعد. تحقّق من الاتصال ثم حاول مجدداً.'),
+    stillSaving: pick('Still saving the previous changes. Try again in a moment.', 'لا يزال حفظ التعديلات السابقة جارياً. حاول مجدداً بعد لحظات.'),
     loadFailed: pick('Could not load the teaching times', 'تعذّر تحميل أوقات التدريس'),
     saved: name => pick(`Teaching times saved for ${name}`, `حُفظت أوقات تدريس ${name}`),
     restored: pick('Unsaved changes restored.', 'استُعيدت التعديلات غير المحفوظة.'),
@@ -414,6 +415,7 @@
     stale: null,
     restored: false,
     closingSaved: false,
+    saving: false,
     onSaved: null,
     dayNames: DAY_CODES.slice(),
   };
@@ -791,11 +793,13 @@
     clearErrors();
     showStale(null);
     setBusy(true);
+    S.saving = true;
     const instructor = S.instructor;
     const res = await request(API_SET, {
       method: 'POST',
       body: JSON.stringify({ instructor_id: instructor.id, expected_revision: S.revision, rules }),
     });
+    S.saving = false;
     setBusy(false);
     if (S.instructor !== instructor) return;
     if (res.ok) {
@@ -806,7 +810,9 @@
       // The roster is drawn again first, so the row's Times button the dialog
       // gives the keyboard back to is the new one.
       if (typeof S.onSaved === 'function') S.onSaved(instructor.id, timeRules);
-      S.closingSaved = true;
+      // Only an open dialog fires its close event: one the user already
+      // closed while the save was in flight must not swallow the NEXT close.
+      if (window.UXControls.dialog.isOpen(dialog())) S.closingSaved = true;
       window.UXControls.dialog.close(dialog());
       notify.success(W.saved(instructorName(instructor)));
       return;
@@ -917,7 +923,13 @@
      `dayNames` are the page's own day words, Sun..Thu. */
   async function open(instructor, { returnFocus, onSaved, dayNames } = {}) {
     const box = dialog();
-    if (!box || !instructor || S.busy || window.UXControls.dialog.isOpen(box)) return false;
+    if (!box || !instructor) return false;
+    if (S.saving) {
+      // The dialog was closed with its save still in flight: say why nothing opens.
+      notify.info(W.stillSaving);
+      return false;
+    }
+    if (S.busy || window.UXControls.dialog.isOpen(box)) return false;
     wire();
     if (box.dataset.rulesEnforced === '0') el('imRulesHelp').textContent = W.helpPending;
     if (Array.isArray(dayNames) && dayNames.length === DAY_CODES.length) S.dayNames = dayNames.slice();
@@ -931,6 +943,7 @@
     S.instructor = { ...instructor, ...(res.data.instructor || {}), id: instructor.id };
     S.grid = res.data.grid;
     S.onSaved = onSaved;
+    S.closingSaved = false;
     useSaved(res.data);
     const draft = drafts.get(instructor.id);
     S.restored = Boolean(draft);

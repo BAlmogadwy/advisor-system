@@ -648,6 +648,81 @@ test('closing never loses work: the draft comes back with a notice, and Discard 
   assert.equal(h.posts.at(-1).body.expected_revision, 'rev2a');
 });
 
+test('a successful save clears the kept draft: the next open shows the saved rules and saves against the new revision', async t => {
+  const h = await page(t);
+  await h.open(1);
+  await h.quick('no_mornings');
+  await h.escape();
+  assert.equal(h.w.InstructorTimeRules.hasDraft(1), true);
+  await h.open(1);
+  assert.equal(h.$('imRulesRestored').hidden, false, 'the draft is restored');
+  await h.save();
+  assert.equal(h.isOpen(), false);
+  assert.equal(h.posts[0].body.expected_revision, 'rev1a');
+  assert.equal(h.w.InstructorTimeRules.hasDraft(1), false);
+  await h.open(1);
+  assert.equal(h.$('imRulesRestored').hidden, true, 'nothing to restore after the save');
+  assert.equal(h.rules().length, 1);
+  await h.quick('no_afternoons');
+  await h.save();
+  assert.equal(h.posts[1].body.expected_revision, 'rev1-1', 'the saved revision, not the old draft\'s');
+});
+
+/* The page with its set-rules POST held until `release()` is called. */
+async function heldSave(t, options) {
+  const h = await page(t, options);
+  const serve = h.w.fetch;
+  h.release = null;
+  h.w.fetch = async (url, opts = {}) => {
+    if (url === '/ops/instructors/time-rules/set/') await new Promise(resolve => { h.release = resolve; });
+    return serve(url, opts);
+  };
+  return h;
+}
+
+test('a dialog closed while its save is in flight: Times says so, and the next draft closed with Escape is still kept', async t => {
+  const h = await heldSave(t);
+  await h.open(1);
+  await h.quick('no_mornings');
+  await h.save();
+  assert.equal(typeof h.release, 'function', 'the save is in flight');
+  assert.equal(h.isOpen(), true);
+  await h.escape();
+  assert.equal(h.isOpen(), false);
+  // A Times button while the save is pending is not silently ignored.
+  await h.open(2);
+  assert.equal(h.isOpen(), false);
+  assert.deepEqual(h.notices, [{ type: 'info', text: 'Still saving the previous changes. Try again in a moment.' }]);
+  // The save lands: saved, no draft left behind for it.
+  h.release();
+  await settle();
+  assert.equal(h.server.saves, 1);
+  assert.equal(h.notices.at(-1).type, 'success');
+  assert.equal(h.w.InstructorTimeRules.hasDraft(1), false);
+  assert.equal(h.pill(1).dataset.state, 'limited');
+  // Another instructor: a draft closed with Escape is kept and comes back.
+  await h.open(2);
+  assert.equal(h.isOpen(), true);
+  await h.quick('no_afternoons');
+  await h.escape();
+  assert.equal(h.isOpen(), false);
+  assert.equal(h.w.InstructorTimeRules.hasDraft(2), true, 'closing never loses work');
+  await h.open(2);
+  assert.equal(h.$('imRulesRestored').hidden, false);
+  assert.equal(h.rules().length, 2);
+  assert.equal(h.field(1, 'start').value, '13:00');
+
+  const ar = await heldSave(t, { arabic: true });
+  await ar.open(1);
+  await ar.quick('no_mornings');
+  await ar.save();
+  await ar.escape();
+  await ar.open(2);
+  assert.deepEqual(ar.notices, [{ type: 'info', text: 'لا يزال حفظ التعديلات السابقة جارياً. حاول مجدداً بعد لحظات.' }]);
+  ar.release();
+  await settle();
+});
+
 test('the roster pill says what the rules leave, in words as well as tone', async t => {
   const h = await page(t);
   const read = id => {
