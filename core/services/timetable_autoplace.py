@@ -110,6 +110,7 @@ from core.services.timetable_flags import (
 )
 from core.services.timetable_instructor_availability import (
     availability_for,
+    availability_scope,
     fixed_section_keys,
     online_everywhere,
     option_blocked,
@@ -3156,7 +3157,9 @@ def auto_place_scenario(
         if current_run_seed() is not None
         else nullcontext()
     )
-    with context:
+    # One teaching-time rule read for the whole placement (every board, solve and
+    # pass below); re-entrant under a run's own scope.
+    with context, availability_scope(scenario_id):
         return _auto_place_scenario(
             scenario_id,
             strategy=strategy,

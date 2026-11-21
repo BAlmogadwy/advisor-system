@@ -618,7 +618,7 @@ def _key_paths(value, prefix: str = "") -> set[str]:
     return paths
 
 
-def _current_run(settings, flag: bool, rules) -> tuple[dict, set[str]]:
+def _current_run(settings, flag: bool, rules, *, after_corpus=None) -> tuple[dict, set[str]]:
     from core.services.timetable_autoplace import auto_place_scenario
     from core.services.timetable_v2_runner import run_v2_optimisation_guarded
     from tests.test_one_teacher_flag_parity import build_corpus, capture_board
@@ -629,6 +629,8 @@ def _current_run(settings, flag: bool, rules) -> tuple[dict, set[str]]:
         with transaction.atomic():
             rules()
             scenario = build_corpus(11)
+            if after_corpus is not None:
+                after_corpus()
             auto_place_scenario(scenario.id, strategy="compact")
             result = run_v2_optimisation_guarded(
                 scenario.id, mode="current", max_iterations=2, run_chain=False, run_cpsat=False
@@ -3571,3 +3573,228 @@ def test_a_rule_edit_changes_the_repair_analysis_fingerprint(av_on, flag) -> Non
 
     assert before == off
     assert (after != before) is flag
+
+
+# ── D + H10: a rule on a teacher the run never charges ────────────────
+
+
+def _uncharged_rule() -> None:
+    """Dr Fahd may teach AI124 (AI2) but the corpus charges Dr Amal with every
+    AI124 section: a rule for him binds no charged section (H10)."""
+    rule(Instructor.objects.get(full_name="Dr Fahd"), KIND_UNAVAILABLE)
+
+
+@pytest.mark.django_db
+def test_a_rule_on_a_never_charged_teacher_leaves_the_board_and_the_catalogue_alone(
+    day_spread_golden_flags,
+) -> None:
+    """H10 / D.1: Optimise Current persists the very board of the flag-off run, and
+    the catalogue built for the run's map is the plain one (additive report keys
+    may appear: the rule binds a teacher of the universe)."""
+    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_optimizer_v2 import (
+        _build_pattern_catalog_for_scenario,
+        _catalog_rules,
+    )
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    off_board, _keys = _current_run(
+        day_spread_golden_flags, False, _no_rules, after_corpus=_uncharged_rule
+    )
+    on_board, _keys = _current_run(
+        day_spread_golden_flags, True, _no_rules, after_corpus=_uncharged_rule
+    )
+    assert on_board == off_board
+
+    scenario = build_corpus(11)
+    _uncharged_rule()
+    auto_place_scenario(scenario.id, strategy="compact")
+    charged = sta.load_assignment(scenario.id, incomplete="collect").v2_map()
+    availability = helper.availability_for(scenario.id)
+    assert availability  # the rule IS loaded: Dr Fahd is in the teacher universe
+    assert _build_pattern_catalog_for_scenario(
+        scenario.id, **_catalog_rules(availability, charged)
+    ) == _build_pattern_catalog_for_scenario(scenario.id)
+
+
+# ── T-P3 / T-P5: one rule read per scope; the universe never grows ─────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("rows", [False, True], ids=["zero-rows", "rules"])
+def test_every_p1_path_reads_the_rules_at_most_once_per_scope(av_on, rows) -> None:
+    """T-P3: inside one request scope every P1 path issues at most one rule query,
+    and the run entry points (the placer, the guarded runner) open their own."""
+    from tests.test_one_teacher_flag_parity import LINKS, build_corpus
+
+    scenario = build_corpus()
+    if rows:
+        for person in Instructor.objects.filter(full_name__in=set(LINKS.values())):
+            rule(person, KIND_UNAVAILABLE, ("THU",), "16:00", "17:00")
+
+    scoped, unscoped = {}, {}
+    for name, step in _p1_steps(scenario).items():
+        with CaptureQueriesContext(connection) as ctx, sta.request_scope():
+            step()
+        scoped[name] = len(rule_queries(ctx.captured_queries))
+    for name in ("auto_place_scenario", "runner_current"):
+        with CaptureQueriesContext(connection) as ctx:
+            _p1_steps(scenario)[name]()
+        unscoped[name] = len(rule_queries(ctx.captured_queries))
+
+    assert max(scoped.values()) <= 1, scoped
+    assert unscoped == {"auto_place_scenario": 1, "runner_current": 1}
+
+
+@pytest.mark.django_db
+def test_the_teacher_universe_never_grows_inside_a_run(av_on) -> None:
+    """T-P5 (B.4): the rules are loaded for the universe of the first read in a
+    scope; at the end of a Generate and an Optimise Current run the universe is a
+    subset of it, so no teacher appears unchecked mid-run."""
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    scenario = build_corpus(11)
+    first = sta.load_assignment(scenario.id, incomplete="collect").universe
+    assert first
+
+    for mode in ("full", "current"):
+        result = run_v2_optimisation_guarded(
+            scenario.id,
+            mode=mode,
+            strategies=["compact"],
+            max_iterations=1,
+            run_chain=False,
+            run_cpsat=False,
+        )
+        assert "error" not in result, result.get("error")
+        assert sta.load_assignment(scenario.id, incomplete="collect").universe <= first
+
+
+# ── Structural allow-lists ─────────────────────────────────────────────
+
+AV_FLAG_READS = re.compile(
+    r"is_instructor_availability_enabled|INSTRUCTOR_AVAILABILITY_SETTING"
+    r"|settings\.TIMETABLE_INSTRUCTOR_AVAILABILITY|[\"']TIMETABLE_INSTRUCTOR_AVAILABILITY[\"']"
+)
+ASKS = re.compile(r"\bavailability_for\(|\bsection_rule_checker\(")
+KERNELS = re.compile(r"\bmove_adds_availability_violation\(")
+HELPER_REFERENCE = re.compile(rf"{ASKS.pattern}|{KERNELS.pattern}|\binstructor_availability\b")
+
+
+def _av_sources_matching(pattern: re.Pattern) -> set[str]:
+    found = set()
+    for root in ("config", "core", "scheduler"):
+        for path in (REPO / root).rglob("*.py"):
+            if "migrations" in path.parts:
+                continue
+            if pattern.search(path.read_text(encoding="utf-8", errors="replace")):
+                found.add(path.relative_to(REPO).as_posix())
+    return found
+
+
+def test_only_the_flags_module_and_the_helper_read_the_flag() -> None:
+    """Every stage asks the helper (``rules_enabled`` / ``availability_for``),
+    never the flag; docs and comments may name it."""
+    assert _av_sources_matching(AV_FLAG_READS) == {
+        "config/settings.py",
+        "core/services/timetable_flags.py",
+        "core/services/timetable_instructor_availability.py",
+    }
+
+
+def test_only_the_automatic_stages_and_the_semi_automatic_writers_ask_for_the_rules() -> None:
+    """Manual moves, validation, the previews, the views, exports and the
+    scheduler package never ask (B2 adds the runner and the backstop)."""
+    assert _av_sources_matching(ASKS) == {
+        "core/services/timetable_instructor_availability.py",
+        "core/services/timetable_autoplace.py",
+        "core/services/timetable_solver.py",
+        "core/services/timetable_local_search.py",
+        "core/services/timetable_load_balanced.py",
+        "core/services/timetable_optimizer_v2.py",
+        "core/services/timetable_secondary_recovery_runner.py",
+        "core/services/timetable_instructor_cap_repair.py",
+        "core/services/timetable_instructor_compaction.py",
+        "core/services/timetable_fixed_pattern_search.py",
+        "core/services/section_teacher_assignment.py",
+        "core/services/timetable_workspace.py",
+        "core/services/timetable_repair.py",
+    }
+
+
+def test_only_the_in_memory_searches_use_the_move_delta() -> None:
+    assert _av_sources_matching(KERNELS) == {
+        "core/services/timetable_constraints.py",
+        "core/services/timetable_local_search_v2.py",
+        "core/services/timetable_local_search_chains.py",
+        "core/services/timetable_secondary_recovery.py",
+    }
+
+
+#: The day-spread rule's readers (every stage that chooses or moves a meeting's
+#: time, ``tests/test_section_day_spread.py``) without the settings and flags
+#: modules, plus the teacher choice and the whole-bundle search.
+TIME_CHOOSERS = {
+    "core/services/timetable_autoplace.py",
+    "core/services/timetable_solver.py",
+    "core/services/timetable_local_search.py",
+    "core/services/timetable_local_search_v2.py",
+    "core/services/timetable_local_search_chains.py",
+    "core/services/timetable_load_balanced.py",
+    "core/services/timetable_cpsat_polisher.py",
+    "core/services/timetable_secondary_recovery.py",
+    "core/services/timetable_instructor_cap_repair.py",
+    "core/services/timetable_instructor_compaction.py",
+    "core/services/section_teacher_assignment.py",
+    "core/services/timetable_fixed_pattern_search.py",
+}
+
+
+def test_every_time_choosing_module_references_the_rules() -> None:
+    """A module that chooses or moves a meeting's time must ask the helper (or
+    take the run's availability); a new one turns this red until it does. The
+    set is the day-spread rule's readers, so a stage added there is added here."""
+    from tests.test_section_day_spread import ALLOWED_READERS
+
+    assert ALLOWED_READERS - {"config/settings.py", "core/services/timetable_flags.py"} <= (
+        TIME_CHOOSERS
+    )
+    missing = sorted(
+        path
+        for path in TIME_CHOOSERS
+        if not HELPER_REFERENCE.search((REPO / path).read_text(encoding="utf-8"))
+    )
+    assert missing == []
+
+
+def _functions_asking(path: str) -> set[str]:
+    """The names of the top-level functions in ``path`` that ask for the rules."""
+    import ast
+
+    tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
+    askers = set()
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id in {"availability_for", "section_rule_checker"}
+            ):
+                askers.add(node.name)
+    return askers
+
+
+def test_the_workspace_and_the_repair_ask_only_in_their_semi_automatic_writers() -> None:
+    """I6: the manual move/create paths, validation and the previews that share
+    these modules never ask for the rules."""
+    assert _functions_asking("core/services/timetable_workspace.py") == {
+        "preview_bulk_safe_time_moves",
+        "apply_bulk_safe_time_moves",
+    }
+    assert _functions_asking("core/services/timetable_repair.py") == {
+        "_repair_state_fingerprint",
+        "_move_set_rule_checker",
+    }
