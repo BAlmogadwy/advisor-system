@@ -1283,6 +1283,9 @@ body {
    11.4px at 390px wide. MRI and split view keep the clamp (owner: out of
    scope); their body classes are set before anything paints. */
 body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }
+/* The sidebar and its command palette keep the size they were designed and
+   measured at (their labels are fitted to the rail's 210/195px steps). */
+.sidebar, .sbp { font-size: clamp(0.8125rem, 0.742rem + 0.19vw, 0.9375rem); }
 
 /* Box model: a padded or bordered box is the size it says. Nothing reset
    box-sizing, so an <a class="btn"> (content-box) grew by its padding — 52-56px
@@ -1292,10 +1295,11 @@ body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }
    classic inspector's MRI tab (owner: unchanged), nor split view, which has
    its own reset (body.tws-root *), nor the classic Timetable Workspace, whose
    board geometry (slot, cell and card heights) was measured in content-box and
-   is pinned by its frame tests. */
-:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *)),
-:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *))::before,
-:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *))::after {
+   is pinned by its frame tests; nor the sidebar, its command palette and its
+   phone menu button (the owner's design, sized against measured label fits). */
+:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *, .sidebar, .sidebar *, .sbp, .sbp *, .sidebar-toggle, .sidebar-toggle *)),
+:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *, .sidebar, .sidebar *, .sbp, .sbp *, .sidebar-toggle, .sidebar-toggle *))::before,
+:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *, .sidebar, .sidebar *, .sbp, .sbp *, .sidebar-toggle, .sidebar-toggle *))::after {
   box-sizing: border-box;
 }
 
@@ -1313,8 +1317,8 @@ textarea {
    back to the browser's 13.33px (the Virtual Advisor fields and example
    buttons). Zero specificity: every component's own size still wins. Not on
    the MRI page, split view or inside the classic inspector's MRI tab. */
-:where(body:not(.twm-root):not(.tws-root)) :where(input, select, textarea):where(:not(.tw-mri *)) { font-size: var(--field-fs); }
-:where(body:not(.twm-root):not(.tws-root)) :where(button):where(:not(.tw-mri *)) { font-size: var(--control-fs); }
+:where(body:not(.twm-root):not(.tws-root)) :where(input, select, textarea):where(:not(.tw-mri *, .sidebar *, .sbp *)) { font-size: var(--field-fs); }
+:where(body:not(.twm-root):not(.tws-root)) :where(button):where(:not(.tw-mri *, .sidebar *, .sbp *)) { font-size: var(--control-fs); }
 
 /* A plain link in running text is the brand's link, not the browser's blue and
    visited violet (the student course page showed both). Zero specificity, and
@@ -1906,7 +1910,7 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
   background-color: var(--glass-bg) !important;
   border-color:     var(--control-edge) !important;
   color:            var(--t2) !important;
-  font-size:        var(--text-xs);
+  /* (its size is set with the field ladder below, where it can win) */
   font-family:      var(--font-body);
   border-radius:    var(--radius-sm);
 }
@@ -2629,6 +2633,14 @@ main.p-0 .page-header {
 .form-select.form-select-sm {
   min-height: var(--control-h-sm);
   font-size:  var(--field-fs-sm) !important;
+}
+/* The sidebar's language select keeps exactly the size it was designed at (the
+   sidebar is the owner's design; the field ladder above does not reach it). */
+.sidebar .form-select {
+  font-size:   clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important;
+  line-height: 1.5;
+  min-height:  0;
+  padding:     0.45rem 1rem !important;
 }
 
 /* Textareas keep rounded-rectangle */

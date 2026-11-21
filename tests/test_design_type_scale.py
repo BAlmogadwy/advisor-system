@@ -45,7 +45,7 @@ SHEETS = (
 EXEMPT = re.compile(
     r"\.(twm-|tw-mri|tws-)|\.logo-|\.sidebar|#appSidebar|"
     r"\.nav-(a|link|lb|lbl|grp|sec|find|section|tip)|\.s-usr|\.s-foot|\.s-lang|"
-    r"\.sb-|\.sbp-|\.theme-toggle|\.u-rl|\.u-nm|\.avatar"
+    r"\.sb-|\.sbp\b|\.sbp-|\.theme-toggle|\.u-rl|\.u-nm|\.avatar"
 )
 
 
@@ -86,7 +86,10 @@ def _counted():
         for selector, at_rules, prop, value in _declarations(
             (CSS_DIR / name).read_text(encoding="utf-8")
         ):
-            if EXEMPT.search(selector) or any("print" in a for a in at_rules):
+            # Exempt only when EVERY selector in the list is: a list that mixes a
+            # sidebar selector with an app one is still counted.
+            exempt = all(EXEMPT.search(s) for s in _top_level(selector))
+            if exempt or any("print" in a for a in at_rules):
                 continue
             yield name, selector, prop, value.replace("!important", "").strip()
 
@@ -193,7 +196,11 @@ def test_literal_radii_only_ever_get_fewer() -> None:
         if p.endswith("radius")
         and "var(" not in v
         and "calc(" not in v
-        and any(float(x) > 3.5 for x, _ in re.findall(r"(\d+(?:\.\d+)?)(px|rem)", v))
+        # in px: a 0.5rem radius is 8px, not 0.5
+        and any(
+            float(x) * (16 if unit == "rem" else 1) > 3.5
+            for x, unit in re.findall(r"(\d+(?:\.\d+)?)(px|rem)", v)
+        )
     ]
     assert len(literal) == 0, "a new literal radius: use a --radius-* token\n" + "\n".join(literal)
 
@@ -211,6 +218,10 @@ def test_the_global_resets_never_reach_mri_split_or_the_workspace_board() -> Non
             ":not(.tws-root)",
             ":not(:has(#twWorkspace))",
             ".tw-mri *",
+            # the sidebar, its palette and its phone menu button: owner design
+            ".sidebar *",
+            ".sbp *",
+            ".sidebar-toggle *",
         ):
             assert excluded in selector, f"{selector!r} must exclude {excluded}"
         assert selector.count(":where(") >= 2, (
@@ -227,5 +238,11 @@ def test_the_global_resets_never_reach_mri_split_or_the_workspace_board() -> Non
         line = next(text for text in GLOBAL.splitlines() if marker in text)
         assert ":where(body:not(.twm-root):not(.tws-root))" in line, line
         assert ".tw-mri *" in line, line
-    # MRI's body keeps the old fluid clamp: the 15px body is scoped away from it.
+    # The control-font defaults also leave the sidebar and its palette alone.
+    for marker in (":where(input, select, textarea)", ":where(button)"):
+        line = next(text for text in GLOBAL.splitlines() if marker in text and "font-size" in text)
+        assert ".sidebar *" in line and ".sbp *" in line, line
+    # MRI's body keeps the old fluid clamp: the 15px body is scoped away from it,
+    # and the sidebar and its palette keep the size they were measured at.
     assert "body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }" in GLOBAL
+    assert ".sidebar, .sbp { font-size: clamp(0.8125rem, 0.742rem + 0.19vw, 0.9375rem); }" in GLOBAL
