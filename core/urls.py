@@ -101,6 +101,8 @@ from .instructor_views import (
     instructor_advisors_view,
     instructor_load_report_view,
     instructor_management_page,
+    instructor_time_rules_set_view,
+    instructor_time_rules_view,
     instructors_create_view,
     instructors_list_view,
     instructors_set_active_view,
@@ -1266,6 +1268,16 @@ urlpatterns = [
     path("ops/instructors/create/", instructors_create_view, name="instructors_create"),
     path("ops/instructors/update/", instructors_update_view, name="instructors_update"),
     path("ops/instructors/set-active/", instructors_set_active_view, name="instructors_set_active"),
+    path(
+        "ops/instructors/time-rules/",
+        instructor_time_rules_view,
+        name="instructor_time_rules",
+    ),
+    path(
+        "ops/instructors/time-rules/set/",
+        instructor_time_rules_set_view,
+        name="instructor_time_rules_set",
+    ),
     path(
         "ops/instructors/course-assignments/",
         course_assignments_view,

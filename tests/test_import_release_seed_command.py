@@ -42,6 +42,7 @@ from core.models import (
     Course,
     CourseInstructor,
     Instructor,
+    InstructorTimeRule,
     Student,
     StudentCourse,
     UserScope,
@@ -395,7 +396,7 @@ def test_success_replaces_allowed_data_and_removes_runtime_rows(tmp_path, monkey
         output = _replace(fixture, manifest, database=alias)
 
         assert "Imported" in output
-        assert "across 19 models" in output
+        assert "across 20 models" in output
         assert Student.objects.using(alias).filter(pk=source_student.pk, program="AI").exists()
         assert not Student.objects.using(alias).filter(pk=target.pk).exists()
         assert Course.objects.using(alias).filter(course_code="AI101").exists()
@@ -433,12 +434,44 @@ def test_success_round_trips_timestamp_microseconds_exactly(tmp_path, monkeypatc
         assert loaded.updated_at == stamp
 
 
+def test_instructor_time_rules_are_replaced_from_the_seed_not_dropped(tmp_path, monkeypatch):
+    _source_records()
+    instructor = Instructor.objects.create(full_name="Rule Holder", normalised_name="rule holder")
+    rule = InstructorTimeRule.objects.create(
+        instructor=instructor,
+        kind="unavailable",
+        day_mask=31,
+        start_minute=0,
+        end_minute=780,
+        note="No mornings",
+    )
+    fixture, manifest = _export(tmp_path)
+
+    # The target holds a different rule; the import must leave exactly the seed's.
+    _target_sentinel()
+    InstructorTimeRule.objects.all().delete()
+    InstructorTimeRule.objects.create(
+        instructor=instructor, kind="available_only", day_mask=16, start_minute=0, end_minute=1440
+    )
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        _replace(fixture, manifest, database=alias)
+        rows = list(
+            InstructorTimeRule.objects.using(alias).values_list(
+                "pk", "instructor_id", "kind", "day_mask", "start_minute", "end_minute", "note"
+            )
+        )
+    assert rows == [(rule.pk, instructor.pk, "unavailable", 31, 0, 780, "No mornings")]
+
+
 def test_postgres_model_load_order_is_fk_topological_and_fixture_order_independent():
     order = import_release_seed._model_load_order()
     positions = {label: index for index, label in enumerate(order)}
 
     assert set(order) == set(import_release_seed.ALLOWED_MODELS)
     assert positions["core.instructor"] < positions["core.courseinstructor"]
+    assert positions["core.instructor"] < positions["core.instructortimerule"]
     assert positions["core.electivecourse"] < positions["core.electivetermmapping"]
     assert positions["core.student"] < positions["core.studentcourse"]
     assert positions["core.course"] < positions["core.studentcourse"]

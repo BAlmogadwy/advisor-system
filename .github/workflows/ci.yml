@@ -323,6 +323,7 @@ jobs:
               ElectiveCourse,
               ElectiveTermMapping,
               Instructor,
+              InstructorTimeRule,
               Prerequisite,
               ProgrammeRequirement,
               Room,
@@ -442,6 +443,15 @@ jobs:
               instructor=instructor,
               role="primary",
               source="registrar",
+          )
+          # A teaching-time rule must survive the release seed (no mornings, Sun-Thu).
+          InstructorTimeRule.objects.create(
+              instructor=instructor,
+              kind="unavailable",
+              day_mask=31,
+              start_minute=0,
+              end_minute=780,
+              note="Release rehearsal",
           )
           section = TermSection.objects.create(
               source_tag="release-rehearsal",
@@ -732,7 +742,7 @@ jobs:
             --confirm-connection-fence FENCE_NEW_CONNECTIONS_AND_RESTORE_AFTER_IMPORT \
             --allow-nonproduction-postgres-rehearsal \
             | tee /tmp/advisor-release-import.log
-          grep -Fq 'across 19 models.' /tmp/advisor-release-import.log
+          grep -Fq 'across 20 models.' /tmp/advisor-release-import.log
       - name: Verify replacement content, relations, and runtime purge
         run: |
           python - <<'PY'
@@ -757,6 +767,7 @@ jobs:
               AuditLog,
               Course,
               CourseInstructor,
+              InstructorTimeRule,
               SectionInstructor,
               Student,
               StudentCourse,
@@ -817,6 +828,11 @@ jobs:
           )
           assert section_instructor.scenario_id is None
           assert section_instructor.instructor.normalised_name == "release rehearsal instructor"
+          # The instructor's teaching-time rule must survive the flush+reload too.
+          time_rule = InstructorTimeRule.objects.select_related("instructor").get()
+          assert time_rule.instructor.normalised_name == "release rehearsal instructor"
+          assert (time_rule.kind, time_rule.day_mask) == ("unavailable", 31), time_rule
+          assert (time_rule.start_minute, time_rule.end_minute) == (0, 780), time_rule
 
           records, counts = _serialise_records("default")
           assert canonical_content_sha256(records) == manifest["fixture"]["canonical_content_sha256"]

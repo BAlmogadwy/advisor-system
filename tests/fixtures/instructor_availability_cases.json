@@ -1,0 +1,236 @@
+{
+  "about": "Shared cases for the instructor teaching-time rule semantics. core/services/instructor_availability.py and static/js/instructor-time-rules.js must both pass every probe and open count. 'open' counts default lecture/lab periods (7 lecture and 5 lab columns, Sun-Thu) not blocked by the rules. Rules are in the editor's wire format.",
+  "cases": [
+    {
+      "name": "no rules",
+      "rules": [],
+      "probes": [
+        {"day": "SUN", "start": "09:00", "end": "10:15", "blocked": false},
+        {"day": "THU", "start": "00:00", "end": "24:00", "blocked": false}
+      ],
+      "open": {"lecture": 35, "lab": 25}
+    },
+    {
+      "name": "single unavailable window",
+      "rules": [
+        {"kind": "unavailable", "days": ["SUN"], "start": "09:00", "end": "10:15", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "09:00", "end": "10:15", "blocked": true},
+        {"day": "SUN", "start": "10:00", "end": "10:40", "blocked": true},
+        {"day": "SUN", "start": "10:30", "end": "11:45", "blocked": false},
+        {"day": "MON", "start": "09:00", "end": "10:15", "blocked": false}
+      ],
+      "open": {"lecture": 34, "lab": 24}
+    },
+    {
+      "name": "whole day off",
+      "rules": [
+        {"kind": "unavailable", "days": ["WED"], "start": "00:00", "end": "24:00", "note": "Day off"}
+      ],
+      "probes": [
+        {"day": "WED", "start": "00:00", "end": "00:01", "blocked": true},
+        {"day": "WED", "start": "16:00", "end": "17:15", "blocked": true},
+        {"day": "TUE", "start": "16:00", "end": "17:15", "blocked": false}
+      ],
+      "open": {"lecture": 28, "lab": 20}
+    },
+    {
+      "name": "touching boundaries are not overlap",
+      "rules": [
+        {"kind": "unavailable", "days": ["MON"], "start": "10:15", "end": "10:30", "note": ""}
+      ],
+      "probes": [
+        {"day": "MON", "start": "09:00", "end": "10:15", "blocked": false},
+        {"day": "MON", "start": "10:30", "end": "11:45", "blocked": false},
+        {"day": "MON", "start": "10:14", "end": "10:16", "blocked": true},
+        {"day": "MON", "start": "10:29", "end": "10:31", "blocked": true},
+        {"day": "MON", "start": "10:15", "end": "10:30", "blocked": true},
+        {"day": "MON", "start": "09:00", "end": "10:40", "blocked": true}
+      ],
+      "open": {"lecture": 35, "lab": 24}
+    },
+    {
+      "name": "two overlapping unavailable windows merge",
+      "rules": [
+        {"kind": "unavailable", "days": ["TUE"], "start": "09:00", "end": "11:00", "note": ""},
+        {"kind": "unavailable", "days": ["TUE"], "start": "10:30", "end": "12:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "TUE", "start": "10:45", "end": "10:50", "blocked": true},
+        {"day": "TUE", "start": "11:59", "end": "12:01", "blocked": true},
+        {"day": "TUE", "start": "12:00", "end": "13:00", "blocked": false},
+        {"day": "TUE", "start": "08:00", "end": "09:00", "blocked": false}
+      ],
+      "open": {"lecture": 32, "lab": 23}
+    },
+    {
+      "name": "available only one window, every day",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "08:00", "end": "12:30", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "08:00", "end": "12:30", "blocked": false},
+        {"day": "MON", "start": "10:45", "end": "12:25", "blocked": false},
+        {"day": "MON", "start": "12:00", "end": "12:31", "blocked": true},
+        {"day": "THU", "start": "07:59", "end": "08:30", "blocked": true},
+        {"day": "WED", "start": "13:00", "end": "14:15", "blocked": true}
+      ],
+      "open": {"lecture": 15, "lab": 10}
+    },
+    {
+      "name": "available only on some days blocks the other days whole",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "TUE"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "09:00", "end": "10:15", "blocked": false},
+        {"day": "TUE", "start": "16:30", "end": "18:10", "blocked": false},
+        {"day": "MON", "start": "09:00", "end": "10:15", "blocked": true},
+        {"day": "THU", "start": "13:00", "end": "14:15", "blocked": true}
+      ],
+      "open": {"lecture": 14, "lab": 10}
+    },
+    {
+      "name": "two available only windows on one day",
+      "rules": [
+        {"kind": "available_only", "days": ["MON"], "start": "09:00", "end": "10:15", "note": ""},
+        {"kind": "available_only", "days": ["MON"], "start": "13:00", "end": "14:15", "note": ""}
+      ],
+      "probes": [
+        {"day": "MON", "start": "09:00", "end": "10:15", "blocked": false},
+        {"day": "MON", "start": "13:00", "end": "14:15", "blocked": false},
+        {"day": "MON", "start": "10:15", "end": "13:00", "blocked": true},
+        {"day": "MON", "start": "12:00", "end": "12:30", "blocked": true},
+        {"day": "MON", "start": "09:00", "end": "10:40", "blocked": true},
+        {"day": "THU", "start": "09:00", "end": "10:15", "blocked": true}
+      ],
+      "open": {"lecture": 2, "lab": 0}
+    },
+    {
+      "name": "available only with an unavailable carve-out",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "09:00", "end": "16:00", "note": ""},
+        {"kind": "unavailable", "days": ["WED"], "start": "13:00", "end": "14:00", "note": "Council"}
+      ],
+      "probes": [
+        {"day": "WED", "start": "13:00", "end": "14:15", "blocked": true},
+        {"day": "WED", "start": "14:00", "end": "15:00", "blocked": false},
+        {"day": "TUE", "start": "13:00", "end": "14:15", "blocked": false},
+        {"day": "SUN", "start": "14:45", "end": "16:00", "blocked": false},
+        {"day": "SUN", "start": "16:00", "end": "17:15", "blocked": true}
+      ],
+      "open": {"lecture": 29, "lab": 14}
+    },
+    {
+      "name": "owner example: no mornings",
+      "rules": [
+        {"kind": "unavailable", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "00:00", "end": "13:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "10:50", "end": "12:05", "blocked": true},
+        {"day": "MON", "start": "13:00", "end": "14:15", "blocked": false},
+        {"day": "THU", "start": "12:59", "end": "13:01", "blocked": true}
+      ],
+      "open": {"lecture": 20, "lab": 15}
+    },
+    {
+      "name": "owner example: only between 11:00 and 13:00 leaves nothing",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "11:00", "end": "13:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "11:00", "end": "13:00", "blocked": false},
+        {"day": "SUN", "start": "10:50", "end": "12:05", "blocked": true},
+        {"day": "SUN", "start": "10:45", "end": "12:25", "blocked": true},
+        {"day": "MON", "start": "13:00", "end": "14:15", "blocked": true}
+      ],
+      "open": {"lecture": 0, "lab": 0}
+    },
+    {
+      "name": "owner example: only Thursday",
+      "rules": [
+        {"kind": "available_only", "days": ["THU"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "THU", "start": "09:00", "end": "10:15", "blocked": false},
+        {"day": "WED", "start": "09:00", "end": "10:15", "blocked": true},
+        {"day": "SUN", "start": "16:00", "end": "17:15", "blocked": true}
+      ],
+      "open": {"lecture": 7, "lab": 5}
+    },
+    {
+      "name": "owner example: never Thursday",
+      "rules": [
+        {"kind": "unavailable", "days": ["THU"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "THU", "start": "09:00", "end": "10:15", "blocked": true},
+        {"day": "WED", "start": "09:00", "end": "10:15", "blocked": false}
+      ],
+      "open": {"lecture": 28, "lab": 20}
+    },
+    {
+      "name": "unavailable to the end of the day (24:00)",
+      "rules": [
+        {"kind": "unavailable", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "16:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "23:00", "end": "24:00", "blocked": true},
+        {"day": "SUN", "start": "14:45", "end": "16:00", "blocked": false},
+        {"day": "MON", "start": "14:45", "end": "16:25", "blocked": true}
+      ],
+      "open": {"lecture": 30, "lab": 15}
+    },
+    {
+      "name": "available only to the end of the day (24:00)",
+      "rules": [
+        {"kind": "available_only", "days": ["THU"], "start": "16:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "THU", "start": "16:00", "end": "17:15", "blocked": false},
+        {"day": "THU", "start": "16:30", "end": "18:10", "blocked": false},
+        {"day": "THU", "start": "23:59", "end": "24:00", "blocked": false},
+        {"day": "THU", "start": "14:45", "end": "16:25", "blocked": true},
+        {"day": "SUN", "start": "16:00", "end": "17:15", "blocked": true}
+      ],
+      "open": {"lecture": 1, "lab": 1}
+    },
+    {
+      "name": "quick add: no afternoons",
+      "rules": [
+        {"kind": "unavailable", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "13:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "10:45", "end": "12:25", "blocked": false},
+        {"day": "SUN", "start": "12:00", "end": "13:01", "blocked": true}
+      ],
+      "open": {"lecture": 15, "lab": 10}
+    },
+    {
+      "name": "available only on one day plus an unavailable rule on another day",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN"], "start": "09:00", "end": "12:30", "note": ""},
+        {"kind": "unavailable", "days": ["MON"], "start": "09:00", "end": "10:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "10:30", "end": "11:45", "blocked": false},
+        {"day": "MON", "start": "14:30", "end": "15:45", "blocked": true},
+        {"day": "SUN", "start": "13:00", "end": "14:15", "blocked": true}
+      ],
+      "open": {"lecture": 3, "lab": 2}
+    },
+    {
+      "name": "zero-length meeting never blocks",
+      "rules": [
+        {"kind": "unavailable", "days": ["SUN"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "10:00", "end": "10:00", "blocked": false},
+        {"day": "SUN", "start": "10:00", "end": "09:00", "blocked": false},
+        {"day": "SUN", "start": "10:00", "end": "10:01", "blocked": true}
+      ],
+      "open": {"lecture": 28, "lab": 20}
+    }
+  ]
+}
