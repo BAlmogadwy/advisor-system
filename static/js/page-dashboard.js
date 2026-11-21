@@ -1494,7 +1494,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     const logEl = q('scrapeOut');
     const rawLog = data.log_tail || '';
     if (!rawLog) {
-      logEl.innerHTML = `<span style="color:#a0aec0">${T.noLogsYet}</span>`;
+      logEl.innerHTML = `<span class="scrape-term-empty">${T.noLogsYet}</span>`;
     } else {
       /* esc() from shared-utils.js handles HTML entities */
       logEl.innerHTML = rawLog.split('\n').map(line => {

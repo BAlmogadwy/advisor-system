@@ -26,7 +26,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 18px 20px;
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 
 .tg-topbar h2,
@@ -36,14 +36,14 @@
 }
 
 .tg-topbar h2 {
-  font-size: 1.35rem;
+  font-size: var(--text-xl);
 }
 
 .tg-topbar p {
   max-width: 780px;
   margin: 8px 0 0;
   color: var(--text-muted);
-  font-size: .92rem;
+  font-size: var(--text-base);
 }
 
 .tg-kicker {
@@ -61,7 +61,7 @@
 .tg-console {
   margin-top: 12px;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 
 .tg-console label {
@@ -71,16 +71,19 @@
 
 .tg-console label span {
   color: var(--text-muted);
-  font-size: max(var(--fs-floor), .7rem);
+  font-size: var(--text-micro);
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .tg-console input,
 .tg-console select {
-  min-height: 36px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  /* the app's field: the control ladder and the control edge (the hairline
+     --line measured 1.2-1.4:1, under the 3:1 a field boundary needs) */
+  min-height: var(--control-h);
+  font-size: var(--field-fs);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--control-radius);
   background: var(--card);
   color: var(--text);
   padding: 0 10px;
@@ -100,13 +103,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  min-height: var(--control-h);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--control-radius);
   background: var(--card);
   color: var(--text);
   padding: 0 13px;
-  font-size: .84rem;
+  font-size: var(--text-sm);
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
@@ -118,7 +121,8 @@
 }
 
 .tg-btn-primary {
-  background: linear-gradient(135deg, var(--btn-primary-bg), var(--btn-primary-hover));
+  /* the app's flat primary fill (a gradient here only) */
+  background: var(--btn-primary-bg);
   border-color: transparent;
   color: var(--btn-primary-ink);
 }
@@ -156,7 +160,7 @@
 }
 
 .tg-card {
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 14px;
 }
 
@@ -169,7 +173,7 @@
 }
 
 .tg-card h3 {
-  font-size: 1rem;
+  font-size: var(--text-md);
 }
 
 .tg-pill {
@@ -177,11 +181,11 @@
   align-items: center;
   min-height: 24px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
   padding: 0 9px;
-  font-size: max(var(--fs-floor), .7rem);
-  font-weight: 800;
+  font-size: var(--text-micro);
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -200,7 +204,7 @@
 .tg-status-card p {
   margin: 0 0 12px;
   color: var(--text-muted);
-  font-size: .86rem;
+  font-size: var(--text-base);
 }
 
 .tg-kv {
@@ -219,7 +223,7 @@
 
 .tg-kv dt {
   color: var(--text-muted);
-  font-size: .76rem;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -228,8 +232,8 @@
   max-width: 64%;
   overflow-wrap: anywhere;
   text-align: end;
-  font-size: .78rem;
-  font-weight: 800;
+  font-size: var(--text-sm);
+  font-weight: 700;
 }
 
 .tg-contract,
@@ -248,10 +252,10 @@
 .tg-contract strong,
 .tg-contract span {
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 7px 8px;
   text-align: center;
-  font-size: max(var(--fs-floor), .72rem);
+  font-size: var(--text-xs);
 }
 
 .tg-contract strong {
@@ -261,14 +265,14 @@
 .tg-contract span {
   /* the info severity ink: #2672d9 was 3.7:1 in dark, 4.4:1 in light */
   color: var(--sev-info);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .tg-path {
   margin: 0;
   padding-inline-start: 20px;
   color: var(--text-muted);
-  font-size: .84rem;
+  font-size: var(--text-sm);
 }
 
 .tg-metric-grid {
@@ -280,7 +284,7 @@
 .tg-metric,
 .tg-count {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   padding: 10px;
 }
@@ -289,15 +293,15 @@
 .tg-count span {
   display: block;
   color: var(--text-muted);
-  font-size: max(var(--fs-floor), .72rem);
-  font-weight: 800;
+  font-size: var(--text-micro);
+  font-weight: 700;
   text-transform: uppercase;
 }
 
 .tg-metric strong {
   display: block;
   margin-top: 4px;
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
 }
 
 .tg-mini-graph {
@@ -306,7 +310,7 @@
   margin-top: 14px;
   overflow: hidden;
   border: 1px solid rgba(125, 139, 255, .22);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background:
     radial-gradient(circle at 50% 48%, rgba(59, 130, 246, .14), transparent 36%),
     linear-gradient(rgba(148, 163, 184, .035) 1px, transparent 1px),
@@ -325,7 +329,7 @@
   border: 5px solid rgba(255, 255, 255, .26);
   border-radius: 50%;
   color: white;
-  font-weight: 850;
+  font-weight: 700;
   text-align: center;
   box-shadow: 0 18px 48px rgba(0, 0, 0, .28);
   z-index: 2;
@@ -360,7 +364,7 @@
   position: absolute;
   height: 3px;
   transform-origin: left center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(83, 103, 255, .62);
   box-shadow: 0 0 18px rgba(83, 103, 255, .28);
   z-index: 1;
@@ -373,11 +377,11 @@
   transform: translate(-50%, -50%);
   padding: 2px 6px;
   border: 1px solid rgba(125, 139, 255, .24);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(8, 17, 31, .9);
   color: #dbeafe;
   font-size: var(--text-micro);
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0;
   white-space: nowrap;
 }
@@ -442,12 +446,12 @@
 .tg-mode-switch button {
   min-height: 30px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   color: var(--text-muted);
   padding: 0 10px;
-  font-size: max(var(--fs-floor), .74rem);
-  font-weight: 800;
+  font-size: var(--text-xs);
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -464,7 +468,7 @@
   gap: 8px;
   margin: -2px 0 12px;
   border: 1px solid var(--tg-hair);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   padding: 10px;
 }
@@ -481,7 +485,7 @@
 .tg-plan-controls label span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
@@ -489,7 +493,7 @@
   min-height: 34px;
   min-width: 126px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--text);
   padding: 0 9px;
@@ -501,7 +505,7 @@
   align-items: center;
   min-height: 34px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   padding: 0 9px;
 }
@@ -516,8 +520,8 @@
   align-items: center;
   flex: 1 1 280px;
   color: var(--text-muted);
-  font-size: .78rem;
-  font-weight: 750;
+  font-size: var(--text-sm);
+  font-weight: 700;
 }
 
 .tg-graph-tools {
@@ -527,7 +531,7 @@
   gap: 8px;
   margin: -2px 0 12px;
   border: 1px solid rgba(45, 212, 191, .14);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(135deg, rgba(45, 212, 191, .07), rgba(38, 114, 217, .04));
   padding: 10px;
 }
@@ -542,14 +546,14 @@
 .tg-graph-tools label span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
 .tg-graph-tools input {
   min-height: 34px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--text);
   padding: 0 10px;
@@ -565,14 +569,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  /* the compact tier of the control ladder, with the control edge */
+  min-height: var(--control-h-sm);
+  border: 1px solid var(--control-edge);
+  border-radius: var(--control-radius);
   background: var(--tg-wash);
   color: var(--text);
-  padding: 0 10px;
-  font-size: max(var(--fs-floor), .74rem);
-  font-weight: 850;
+  padding: 0 var(--control-px-sm);
+  font-size: var(--control-fs-sm);
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -592,8 +597,8 @@
   align-items: center;
   flex: 1 1 260px;
   color: var(--text-muted);
-  font-size: .76rem;
-  font-weight: 750;
+  font-size: var(--text-xs);
+  font-weight: 700;
 }
 
 .tg-tool-status[data-tone="good"] {
@@ -615,7 +620,7 @@
   min-height: 560px;
   overflow: hidden;
   border: 1px solid rgba(125, 139, 255, .22);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background:
     radial-gradient(circle at 48% 42%, rgba(59, 130, 246, .16), transparent 34%),
     radial-gradient(circle at 68% 68%, rgba(45, 212, 191, .1), transparent 30%),
@@ -670,7 +675,7 @@
 
 .tg-explorer-detail {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--tg-wash);
   padding: 12px;
   max-height: 560px;
@@ -682,14 +687,14 @@
 
 .tg-explorer-detail h4 {
   margin: 4px 0 6px;
-  font-size: .95rem;
+  font-size: var(--text-md);
   letter-spacing: 0;
 }
 
 .tg-explorer-detail p {
   margin: 0;
   color: var(--text-muted);
-  font-size: .8rem;
+  font-size: var(--text-sm);
 }
 
 .tg-explorer-detail dl {
@@ -706,15 +711,15 @@
 .tg-explorer-detail dt {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
 .tg-explorer-detail dd {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: .78rem;
-  font-weight: 800;
+  font-size: var(--text-sm);
+  font-weight: 700;
 }
 
 .tg-detail-actions {
@@ -731,12 +736,12 @@
   justify-content: center;
   min-height: 28px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   color: var(--text);
   padding: 0 8px;
   font-size: var(--text-micro);
-  font-weight: 850;
+  font-weight: 700;
   text-decoration: none;
   cursor: pointer;
 }
@@ -759,7 +764,7 @@
 .tg-detail-title {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 900;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
@@ -768,7 +773,7 @@
   gap: 2px;
   width: 100%;
   border: 1px solid var(--tg-hair);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   color: var(--text);
   padding: 7px 8px;
@@ -779,7 +784,7 @@
 .tg-detail-row span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 850;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
@@ -787,7 +792,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: .76rem;
+  font-size: var(--text-xs);
 }
 
 .tg-detail-command {
@@ -799,27 +804,27 @@
   display: grid;
   gap: 3px;
   border: 1px solid var(--tg-hair);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   padding: 8px;
 }
 
 .tg-section-current strong {
   color: var(--text);
-  font-size: .78rem;
+  font-size: var(--text-sm);
 }
 
 .tg-section-current span {
   color: var(--text-muted);
-  font-size: max(var(--fs-floor), .72rem);
-  font-weight: 750;
+  font-size: var(--text-xs);
+  font-weight: 700;
 }
 
 .tg-candidate-row {
   display: grid;
   gap: 7px;
   border: 1px solid var(--tg-hair);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--tg-wash);
   padding: 8px;
 }
@@ -858,23 +863,23 @@
 
 .tg-candidate-row strong {
   color: var(--text);
-  font-size: .78rem;
+  font-size: var(--text-sm);
 }
 
 .tg-candidate-row span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 850;
+  font-weight: 700;
 }
 
 .tg-candidate-head button {
   border: 1px solid rgba(45, 212, 191, .22);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: rgba(45, 212, 191, .075);
   color: var(--text);
   padding: 4px 7px;
   font-size: var(--text-micro);
-  font-weight: 900;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -894,29 +899,29 @@
   display: grid;
   gap: 1px;
   border: 1px solid var(--tg-hair);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 5px;
 }
 
 .tg-candidate-row dt {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 850;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
 .tg-candidate-row dd {
   margin: 0;
   color: var(--text);
-  font-size: max(var(--fs-floor), .72rem);
-  font-weight: 900;
+  font-size: var(--text-xs);
+  font-weight: 700;
 }
 
 .tg-move-preview {
   display: grid;
   gap: 8px;
   border: 1px solid rgba(45, 212, 191, .22);
-  border-radius: 9px;
+  border-radius: var(--radius);
   background: rgba(45, 212, 191, .055);
   padding: 9px;
 }
@@ -939,13 +944,13 @@
 
 .tg-move-preview-head strong {
   color: var(--text);
-  font-size: .82rem;
+  font-size: var(--text-sm);
 }
 
 .tg-move-preview-head span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 850;
+  font-weight: 700;
 }
 
 .tg-before-after {
@@ -958,20 +963,20 @@
   display: grid;
   gap: 2px;
   border: 1px solid var(--tg-hair);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 7px;
 }
 
 .tg-before-after span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 900;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
 .tg-before-after strong {
   color: var(--text);
-  font-size: max(var(--fs-floor), .72rem);
+  font-size: var(--text-xs);
 }
 
 .tg-preview-evidence {
@@ -991,19 +996,19 @@
 
 .tg-preview-evidence strong {
   color: var(--text);
-  font-size: max(var(--fs-floor), .72rem);
+  font-size: var(--text-xs);
 }
 
 .tg-preview-evidence span {
   color: var(--text-muted);
   font-size: var(--text-micro);
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .tg-detail-more {
   color: var(--text-muted);
-  font-size: max(var(--fs-floor), .72rem);
-  font-weight: 750;
+  font-size: var(--text-xs);
+  font-weight: 700;
   padding: 2px 1px;
 }
 
@@ -1072,8 +1077,8 @@
 
 .tg-svg-node text {
   fill: var(--text);
-  font-size: 11px;
-  font-weight: 850;
+  font-size: var(--text-xs);
+  font-weight: 700;
   paint-order: stroke;
   pointer-events: none;
   stroke: rgba(8, 12, 22, .82);
@@ -1100,7 +1105,7 @@
 }
 
 .tg-count strong {
-  font-size: .98rem;
+  font-size: var(--text-md);
 }
 
 .tg-samples {
@@ -1114,9 +1119,9 @@
   align-items: center;
   gap: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 8px;
-  font-size: .76rem;
+  font-size: var(--text-xs);
 }
 
 .tg-sample-row span {
@@ -1134,18 +1139,18 @@
 
 .tg-sample-row strong {
   color: var(--text-brand);
-  font-size: max(var(--fs-floor), .7rem);
+  font-size: var(--text-xs);
 }
 
 .tg-sample-row em {
   color: #c78308;
   font-style: normal;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .tg-empty {
   border: 1px dashed var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   padding: 16px;
   text-align: center;
@@ -1153,7 +1158,7 @@
 
 .tg-empty.small {
   padding: 10px;
-  font-size: .78rem;
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 1120px) {
@@ -1200,6 +1205,6 @@
   .tg-node {
     width: 72px;
     height: 72px;
-    font-size: .8rem;
+    font-size: var(--text-sm);
   }
 }

@@ -57,7 +57,7 @@
             <span id="scrapeTermToggleLabel">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Expand{% endif %}</span>
           </button>
         </div>
-        <div id="scrapeOut" class="scrape-term-body" aria-live="polite" aria-atomic="false" role="log"><span style="color:#a0aec0">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات بعد.{% else %}No logs yet.{% endif %}</span></div>
+        <div id="scrapeOut" class="scrape-term-body" aria-live="polite" aria-atomic="false" role="log"><span class="scrape-term-empty">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات بعد.{% else %}No logs yet.{% endif %}</span></div>
       </div>
       <div class="tbl-section mb-14">
         <div class="tbl-header">
