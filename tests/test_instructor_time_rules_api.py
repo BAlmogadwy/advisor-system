@@ -815,10 +815,10 @@ def _page_flag(client: Client) -> str:
     return html.split(marker, 1)[1].split('"', 1)[0]
 
 
-def test_the_page_does_not_promise_the_builder_while_its_setting_is_absent(settings):
-    # The engine change declares TIMETABLE_INSTRUCTOR_AVAILABILITY; before it
-    # exists the editor must not promise what the builder does not do.
-    assert not hasattr(settings, "TIMETABLE_INSTRUCTOR_AVAILABILITY")
+def test_the_page_does_not_promise_the_builder_while_its_setting_is_off(settings):
+    # TIMETABLE_INSTRUCTOR_AVAILABILITY ships declared and OFF: with everything
+    # else on, the editor must still not promise what the builder does not do.
+    assert settings.TIMETABLE_INSTRUCTOR_AVAILABILITY is False
     settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = True
     settings.TIMETABLE_ONE_TEACHER_PER_SECTION = True
     assert _page_flag(_client()) == "0"
