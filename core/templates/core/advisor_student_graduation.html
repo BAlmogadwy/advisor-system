@@ -332,7 +332,7 @@
       <h3 id="agSummaryTitle">{% if LANGUAGE_CODE == 'ar' %}ملخص التقدم{% else %}Progress summary{% endif %}</h3>
       <div class="ap-grad-summary-grid">
         <div class="ap-grad-metric"><span>{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</span><strong>{{ grad.program|default:'—' }}</strong></div>
-        <div class="ap-grad-metric"><span>{% if LANGUAGE_CODE == 'ar' %}مقررات الخطة المجتازة{% else %}Plan courses completed{% endif %}</span><strong>{{ grad.plan_courses_passed|default:'—' }} / {{ grad.plan_courses_total|default:'—' }}</strong><small>{{ grad.percent_courses|default:0 }}%</small></div>
+        <div class="ap-grad-metric"><span>{% if LANGUAGE_CODE == 'ar' %}مقررات الخطة المجتازة{% else %}Plan courses completed{% endif %}</span><strong><bdi dir="ltr">{{ grad.plan_courses_passed|default:'—' }} / {{ grad.plan_courses_total|default:'—' }}</bdi></strong><small>{{ grad.percent_courses|default:0 }}%</small></div>
         <div class="ap-grad-metric"><span>{% if LANGUAGE_CODE == 'ar' %}المقررات المتبقية{% else %}Courses remaining{% endif %}</span><strong>{{ grad.remaining_courses|default:'—' }}</strong></div>
         <div class="ap-grad-metric"><span>{% if LANGUAGE_CODE == 'ar' %}الساعات المتبقية{% else %}Credits remaining{% endif %}</span><strong>{{ grad.remaining_credits|default:'—' }}</strong></div>
         <div class="ap-grad-metric ap-grad-metric-emphasis">
