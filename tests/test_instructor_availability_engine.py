@@ -3320,3 +3320,254 @@ def test_a_generate_run_leaves_no_forbidden_meeting_on_the_persisted_board(av_on
     assert control >= 1
     ruled, _ = _generate(av_on, True, busiest)
     assert ruled == 0
+
+
+# ── C.19 / C.20: the server-side semi-automatic writers ───────────────
+
+FLAG_OR_OFF = pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+
+
+def _candidate(day: str, start: str, end: str) -> dict:
+    """A clean, improving slot candidate as the slot preview reports one."""
+    return {
+        "day": day,
+        "start": start,
+        "end": end,
+        "tone": "clean",
+        "critical_count": 0,
+        "warning_count": 0,
+        "impact_improvement": 1,
+    }
+
+
+def _bulk_feed(monkeypatch, placement, candidates) -> None:
+    """The bulk fixer is offered ``placement`` (from a student clash action) and,
+    for it, exactly ``candidates``."""
+    from core.services import timetable_workspace as ws
+
+    monkeypatch.setattr(
+        ws,
+        "build_scenario_builder_actions",
+        lambda *_a, **_k: {
+            "actions": [
+                {
+                    "kind": "student_time_clash",
+                    "board_id": placement.board_id,
+                    "placement_ids": [placement.id],
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        ws, "preview_placement_slot_candidates", lambda *_a, **_k: {"candidates": candidates}
+    )
+
+
+def _sunday(sc, key: str):
+    from core.models import SectionPlacement
+
+    return SectionPlacement.objects.select_related("board", "term_section").get(
+        board__scenario=sc, term_section__course_key=key, day="SUN"
+    )
+
+
+@pytest.mark.django_db
+@FLAG_OR_OFF
+def test_the_bulk_fixer_never_proposes_a_slot_the_teacher_may_not_teach(
+    av_on, monkeypatch, flag
+) -> None:
+    """T-W1 (preview): of two clean candidates the first, MON 09:00, is a morning
+    Dr A may not teach; the fixer proposes MON 14:30 (control: flag off, 09:00)."""
+    from core.services.timetable_workspace import preview_bulk_safe_time_moves
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, _a = _placed_ruled_board(f"t-w1 {flag}")
+    _bulk_feed(
+        monkeypatch,
+        _sunday(sc, key),
+        [_candidate("MON", "09:00", "10:15"), _candidate("MON", "14:30", "15:45")],
+    )
+
+    preview = preview_bulk_safe_time_moves(sc.id)
+
+    assert [(m["new_day"], m["new_start"]) for m in preview["moves"]] == [
+        ("MON", "14:30" if flag else "09:00")
+    ]
+
+
+@pytest.mark.django_db
+@FLAG_OR_OFF
+def test_the_bulk_fixer_re_checks_the_rules_when_it_applies(av_on, monkeypatch, flag) -> None:
+    """T-W1 (apply): a previewed move into MON 09:00 (the preview stubbed, as if
+    the rule arrived after it) is skipped as "instructor_unavailable"
+    (control: flag off, it is applied)."""
+    from core.services import timetable_workspace as ws
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, _a = _placed_ruled_board(f"t-w1 apply {flag}")
+    sunday = _sunday(sc, key)
+    _bulk_feed(monkeypatch, sunday, [_candidate("MON", "09:00", "10:15")])
+    move = {
+        "placement_id": sunday.id,
+        "board_id": sunday.board_id,
+        "label": "CS101-S1",
+        "new_day": "MON",
+        "new_start": "09:00",
+        "new_end": "10:15",
+    }
+    monkeypatch.setattr(
+        ws, "preview_bulk_safe_time_moves", lambda *_a, **_k: {"moves": [move], "skipped": []}
+    )
+
+    result = ws.apply_bulk_safe_time_moves(sc.id)
+
+    sunday_after = _placed_meetings(sc, key)
+    if flag:
+        assert result["applied_count"] == 0
+        assert [row["reason"] for row in result["skipped"]] == ["instructor_unavailable"]
+        assert ("SUN", "13:00", "14:15") in sunday_after
+    else:
+        assert result["applied_count"] == 1
+        assert ("MON", "09:00", "10:15") in sunday_after
+
+
+def _english_board(name: str):
+    """ENG101 S1 on the morning bundle (SUN, MON, WED, THU 09:00-12:00), its engine
+    teacher Dr A may not teach THU afternoons."""
+    sc, board, key, (a,) = _greedy_scenario(name, code="ENG101")
+    ts = ots.section(sc, key, "S1")
+    ots.place(board, ts, [(day, "09:00", "12:00") for day in ("SUN", "MON", "WED", "THU")])
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_UNAVAILABLE, ("THU",), "13:00", "16:00")
+    return sc, key, a
+
+
+@pytest.mark.django_db
+@FLAG_OR_OFF
+def test_an_english_switch_is_checked_on_every_meeting_of_its_new_bundle(
+    av_on, monkeypatch, flag
+) -> None:
+    """T-W2: the SUN anchor's afternoon candidate is legal, but the afternoon
+    bundle also moves THU, which Dr A may not teach: skipped (control: flag off,
+    proposed)."""
+    from core.services.timetable_workspace import preview_bulk_safe_time_moves
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, key, a = _english_board(f"t-w2 {flag}")
+    sunday = _sunday(sc, key)
+    _bulk_feed(monkeypatch, sunday, [_candidate("SUN", "13:00", "16:00")])
+
+    preview = preview_bulk_safe_time_moves(sc.id)
+
+    assert len(preview["moves"]) == (0 if flag else 1)
+    if flag:
+        checker = helper.section_rule_checker(sc.id)
+        assert checker.blocked(sunday, "SUN", "13:00", "16:00") == (a.pk,)
+        assert checker.blocked(sunday, "SUN", "09:00", "12:00") == ()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+def test_the_rule_checker_spares_only_a_section_online_on_every_board(av_on, elsewhere) -> None:
+    """H7 for the writers: GS101 S1 is online on the AI board; with no other board
+    its teacher's "no mornings" never binds it (control: placed on campus on the
+    DS board too, it does)."""
+    from core.models import TermSection
+
+    sc, ai_board, key, a = _online_here(elsewhere=elsewhere)
+    ts = TermSection.objects.filter(scenario=sc, course_key=key, section="S1").first()
+    ts = ts or ots.section(sc, key, "S1")
+    ots.place(ai_board, ts, [("SUN", "18:00", "19:15")])
+    _engine_row(sc, key, "S1", a)
+    placement = SectionPlacement.objects.select_related("board", "term_section").get(
+        board=ai_board, term_section=ts
+    )
+
+    blocked = helper.section_rule_checker(sc.id).blocked(placement, "MON", "09:00", "10:15")
+
+    assert blocked == ((a.pk,) if elsewhere else ())
+
+
+def _move_set(placement, day: str, start: str, end: str) -> list[dict]:
+    from core.services.timetable_repair import _hard_feasibility_rejections_for_move_set
+
+    return _hard_feasibility_rejections_for_move_set(
+        placements_by_id={placement.id: placement},
+        moves=[
+            {
+                "placement_id": placement.id,
+                "day": day,
+                "start": start,
+                "end": end,
+                "room": "",
+                "room_reasons": [],
+            }
+        ],
+        planning_scope=None,
+    )
+
+
+@pytest.mark.django_db
+@FLAG_OR_OFF
+def test_registration_repair_rejects_a_destination_the_teacher_may_not_teach(av_on, flag) -> None:
+    """T-W3: the repair's hard feasibility check rejects MON 09:00 for a "no
+    mornings" teacher with its own code, never folded into the critical count,
+    and lets MON 14:30 through (control: flag off, no such rejection)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, a = _placed_ruled_board(f"t-w3 {flag}")
+    sunday = _sunday(sc, key)
+
+    morning = _move_set(sunday, "MON", "09:00", "10:15")
+    afternoon = _move_set(sunday, "MON", "14:30", "15:45")
+
+    codes = [reason["code"] for reason in morning]
+    assert ("INSTRUCTOR_UNAVAILABLE" in codes) is flag
+    assert "TIME_OR_INSTRUCTOR_CONFLICT" not in codes
+    if flag:
+        (reason,) = [r for r in morning if r["code"] == "INSTRUCTOR_UNAVAILABLE"]
+        assert reason["details"]["instructor_ids"] == [a.pk]
+        assert reason["details"]["placement_id"] == sunday.id
+    assert "INSTRUCTOR_UNAVAILABLE" not in [reason["code"] for reason in afternoon]
+
+
+@pytest.mark.django_db
+def test_apply_time_re_validation_sees_a_rule_added_after_the_analysis(av_on) -> None:
+    """T-W4: the move set accepted under the teacher's rules at analysis time (he
+    may not teach THU) is refused once a "no mornings" rule is saved: each
+    apply-time check reads the rules afresh."""
+    sc, board, key, (a,) = _greedy_scenario("t-w4")
+    ots.place(board, ots.section(sc, key, "S1"), AFTERNOON)
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_UNAVAILABLE, ("THU",))
+    sunday = _sunday(sc, key)
+
+    assert "INSTRUCTOR_UNAVAILABLE" not in [
+        r["code"] for r in _move_set(sunday, "MON", "09:00", "10:15")
+    ]
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+    assert "INSTRUCTOR_UNAVAILABLE" in [
+        r["code"] for r in _move_set(sunday, "MON", "09:00", "10:15")
+    ]
+
+
+@pytest.mark.django_db
+@FLAG_OR_OFF
+def test_a_rule_edit_changes_the_repair_analysis_fingerprint(av_on, flag) -> None:
+    """T-W7 (H5): a saved rule for the section's teacher invalidates cached repair
+    analyses (control: flag off, the fingerprint ignores the rules; with no rule it
+    is the flag-off fingerprint either way)."""
+    from core.services.timetable_repair import _repair_state_fingerprint
+
+    sc, board, key, (a,) = _greedy_scenario(f"t-w7 {flag}")
+    ots.place(board, ots.section(sc, key, "S1"), AFTERNOON)
+    _engine_row(sc, key, "S1", a)
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    off = _repair_state_fingerprint(sc.id, [])
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    before = _repair_state_fingerprint(sc.id, [])
+
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+    after = _repair_state_fingerprint(sc.id, [])
+
+    assert before == off
+    assert (after != before) is flag

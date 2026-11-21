@@ -4566,8 +4566,30 @@ def preview_bulk_safe_time_moves(
     board_id: int | None = None,
     limit: int = 3,
 ) -> dict:
-    """Return clean time moves that can be applied as a small server-side batch."""
+    """Return clean time moves that can be applied as a small server-side batch.
 
+    With teaching-time rules (``TIMETABLE_INSTRUCTOR_AVAILABILITY``) a candidate
+    its section's teacher may not teach is passed over (an English section: any
+    meeting of the bundle it would switch to); validation itself is unchanged.
+    """
+    from core.services.timetable_instructor_availability import (
+        availability_scope,
+        section_rule_checker,
+    )
+
+    with availability_scope(scenario_id):
+        return _preview_bulk_safe_time_moves(
+            scenario_id, board_id=board_id, limit=limit, checker=section_rule_checker(scenario_id)
+        )
+
+
+def _preview_bulk_safe_time_moves(
+    scenario_id: int,
+    *,
+    board_id: int | None,
+    limit: int,
+    checker,
+) -> dict:
     scenario = TimetableScenario.objects.get(id=scenario_id)
     max_items = max(1, min(12, int(limit or 3)))
     actions = build_scenario_builder_actions(scenario_id, limit=120).get("actions") or []
@@ -4622,6 +4644,13 @@ def preview_bulk_safe_time_moves(
                 str(candidate.get("start") or ""),
             )
             if target_key in reserved_targets:
+                continue
+            if checker and checker.blocked(
+                placement,
+                str(candidate.get("day") or ""),
+                str(candidate.get("start") or ""),
+                str(candidate.get("end") or ""),
+            ):
                 continue
             occupied = (
                 SectionPlacement.objects.filter(
@@ -4680,8 +4709,43 @@ def apply_bulk_safe_time_moves(
     board_id: int | None = None,
     limit: int = 3,
 ) -> dict:
-    """Apply conservative clean time moves after re-validating inside a transaction."""
+    """Apply conservative clean time moves after re-validating inside a transaction.
 
+    With teaching-time rules the apply re-checks each move like the preview: a
+    move its section's teacher may not teach is skipped ("instructor_unavailable").
+    """
+    from core.services.timetable_instructor_availability import (
+        availability_scope,
+        section_rule_checker,
+    )
+
+    with availability_scope(scenario_id):
+        result = _apply_bulk_safe_time_moves(
+            scenario_id, board_id=board_id, limit=limit, checker=section_rule_checker(scenario_id)
+        )
+
+    # This path re-validates with preview_placement_slot_candidates /
+    # validate_placement, both board-scoped and keyed on the free-text
+    # meeting.instructor — structurally unable to see a cross-board clash. That
+    # matters more here than on a deliberate drag: the candidates are drawn from
+    # builder actions of kind "instructor_clash", so this bulk fixer relocates
+    # precisely the instructors most likely to hold sessions on another board,
+    # and the registrar never sees the target slot.
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
+    result["instructor_clash_backstop"] = verify_persisted_scenario(
+        result["scenario_id"], context="bulk_safe_time_moves"
+    )
+    return result
+
+
+def _apply_bulk_safe_time_moves(
+    scenario_id: int,
+    *,
+    board_id: int | None,
+    limit: int,
+    checker,
+) -> dict:
     scenario = TimetableScenario.objects.get(id=scenario_id)
     if scenario.status == "published":
         raise ValueError("Cannot modify published scenario")
@@ -4709,6 +4773,11 @@ def apply_bulk_safe_time_moves(
                 continue
             if placement.term_section_id in external_ids:
                 skipped.append({**item, "reason": "externally_owned_after_preview"})
+                continue
+            if checker and checker.blocked(
+                placement, str(item["new_day"]), str(item["new_start"]), str(item["new_end"])
+            ):
+                skipped.append({**item, "reason": "instructor_unavailable"})
                 continue
 
             fresh_preview = preview_placement_slot_candidates(placement.id)
@@ -4793,15 +4862,6 @@ def apply_bulk_safe_time_moves(
                 }
             )
 
-    # This path re-validates with preview_placement_slot_candidates /
-    # validate_placement, both board-scoped and keyed on the free-text
-    # meeting.instructor — structurally unable to see a cross-board clash. That
-    # matters more here than on a deliberate drag: the candidates are drawn from
-    # builder actions of kind "instructor_clash", so this bulk fixer relocates
-    # precisely the instructors most likely to hold sessions on another board,
-    # and the registrar never sees the target slot.
-    from core.services.timetable_instructor_backstop import verify_persisted_scenario
-
     return {
         "scenario_id": scenario.id,
         "board_id": board_id,
@@ -4810,9 +4870,6 @@ def apply_bulk_safe_time_moves(
         "skipped_count": len(skipped),
         "applied": applied,
         "skipped": skipped[:80],
-        "instructor_clash_backstop": verify_persisted_scenario(
-            scenario.id, context="bulk_safe_time_moves"
-        ),
     }
 
 

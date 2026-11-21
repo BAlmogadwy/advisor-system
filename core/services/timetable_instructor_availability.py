@@ -58,11 +58,12 @@ def rules_enabled() -> bool:
 class _Holder:
     """The availability one scope loaded for one scenario (at most one load)."""
 
-    __slots__ = ("loaded", "value")
+    __slots__ = ("checker", "loaded", "value")
 
     def __init__(self) -> None:
         self.loaded = False
         self.value: InstructorAvailability = EMPTY_AVAILABILITY
+        self.checker: RuleChecker | None = None
 
     def store(self, value: InstructorAvailability) -> None:
         self.loaded = True
@@ -264,6 +265,96 @@ def prune_relocate_domains(
             ]
 
 
+# ── Semi-automatic writers (bulk safe moves, registration repair) ────────
+
+
+class RuleChecker:
+    """The rules as a semi-automatic writer asks them: may this placement's
+    section move to ``(day, start, end)`` without a forbidden meeting?
+
+    Built once per call (cached on the scope) from the scope's availability, the
+    map in force (``load_assignment(..., incomplete="collect").v2_map()``) and the
+    online exemption (a section online on every board it is placed on is never
+    bound). Validation and the manual paths never build one.
+    """
+
+    def __init__(
+        self,
+        availability: InstructorAvailability,
+        charged: Mapping[str, Iterable[object]],
+        exempt: Collection[tuple[str, str]],
+    ) -> None:
+        self.availability = availability
+        self.charged = charged
+        self.exempt = exempt
+
+    def fingerprint(self) -> str:
+        """The rules and the ruled teachers the map charges, for caches of an
+        analysis made under them (a rule edit or a re-pick invalidates it)."""
+        ruled = sorted((sid, rule_ids(self.availability, ids)) for sid, ids in self.charged.items())
+        return repr((self.availability.fingerprint(), [row for row in ruled if row[1]]))
+
+    def blocked(self, placement: Any, day: str, start: str, end: str) -> tuple[int, ...]:
+        """The charged teachers of ``placement``'s section whose rules the move to
+        ``(day, start, end)`` breaks, sorted; ``()`` when it breaks none. A
+        meeting-policy (English) section moves as a whole bundle, so EVERY meeting
+        of the target pattern is checked (the pattern ``switch_policy_section_bundle``
+        selects: the one holding the anchor's new meeting)."""
+        from core.services.timetable_course_policy import meeting_signature
+        from core.services.timetable_section_policy import section_policy
+
+        section = placement.term_section
+        key = (section.course_key or section.course_code, section.section)
+        if key in self.exempt:
+            return ()
+        ids = rule_ids(self.availability, self.charged.get(f"{key[0]}_{key[1]}"))
+        if not ids:
+            return ()
+        meetings = option_meetings([{"day": day, "start": start, "end": end}])
+        policy = section_policy(section)
+        if policy is not None:
+            target = meeting_signature({"day": day, "start_time": start, "end_time": end})
+            pattern = next(
+                (
+                    p
+                    for p in policy.patterns
+                    if any(meeting_signature(m) == target for m in p.meetings)
+                ),
+                None,
+            )
+            if pattern is not None:
+                meetings = option_meetings(m.to_dict() for m in pattern.meetings)
+        return tuple(
+            iid
+            for iid in ids
+            if any(self.availability.blocks(iid, d, s, e) for d, s, e in meetings)
+        )
+
+
+def section_rule_checker(scenario_id: int) -> RuleChecker | None:
+    """The scenario's :class:`RuleChecker`, or None while no rule binds a teacher
+    of the scenario (then no query beyond :func:`availability_for`'s). Inside an
+    :func:`availability_scope` it is built once and reused."""
+    if not rules_enabled():
+        return None
+    availability = availability_for(scenario_id)
+    if not availability:
+        return None
+    holder = _holder(scenario_id)
+    if holder is not None and holder.checker is not None:
+        return holder.checker
+    from core.services.section_teacher_assignment import load_assignment
+
+    checker = RuleChecker(
+        availability,
+        load_assignment(scenario_id, incomplete="collect").v2_map(),
+        online_exempt_sections(scenario_id),
+    )
+    if holder is not None:
+        holder.checker = checker
+    return checker
+
+
 def fixed_section_keys(assignment: Any) -> frozenset[str]:
     """Placer keys (``"course|label"``) of the sections whose teacher the engine
     may not change (a pin or a teacher-frozen section): a rule never leaves them
@@ -356,6 +447,8 @@ __all__ = [
     "placed_online_by_section",
     "placed_online_flags",
     "prune_relocate_domains",
+    "RuleChecker",
     "rule_ids",
     "rules_enabled",
+    "section_rule_checker",
 ]
