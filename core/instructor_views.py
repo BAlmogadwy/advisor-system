@@ -37,11 +37,11 @@ from core.services.instructor_availability import (
     days_from_mask,
     default_period_grid,
     load_time_rules,
-    mask_from_days,
     open_summary,
     rules_revision,
     to_hhmm,
-    to_minutes,
+    wire_day_index,
+    wire_minutes,
 )
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.timetable_online import normalise_course_code
@@ -513,15 +513,22 @@ def course_assignment_reconcile_view(request: HttpRequest) -> JsonResponse:
 _RULE_FIELDS = ("kind", "day_mask", "start_minute", "end_minute", "note")
 
 
-def _instructor_id(value: object) -> int | None:
-    """An instructor id from a query string or JSON body: an int or an ASCII digit
-    string, within the database's integer range (a longer one would not query)."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit():
-        value = int(value.strip())
-    if isinstance(value, int) and 0 <= value < 2**63:
-        return value
+def _positive_id(value: int) -> int | None:
+    """Within the database's integer range (a longer one would not query)."""
+    return value if 0 < value < 2**63 else None
+
+
+def _query_instructor_id(value: object) -> int | None:
+    """An instructor id from the query string: ASCII digits only, nothing else."""
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        return _positive_id(int(value))
+    return None
+
+
+def _body_instructor_id(value: object) -> int | None:
+    """An instructor id from a JSON body: a positive int, never a bool or a string."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return _positive_id(value)
     return None
 
 
@@ -564,7 +571,7 @@ def _rule_to_audit(rule: dict[str, Any]) -> str:
     return f"{rule['kind']}|{days}|{window}"
 
 
-def _open_for(instructor_id: int, rules: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+def _open_for(instructor_id: int, rules: list[dict[str, Any]]) -> dict[str, Any]:
     availability = compile_rules(
         TimeRule(
             instructor_id, rule["kind"], rule["day_mask"], rule["start_minute"], rule["end_minute"]
@@ -584,7 +591,8 @@ def _rules_payload(instructor: Instructor, rules: list[dict[str, Any]]) -> dict[
 
 
 def _time_rule_summaries(instructor_ids: list[int]) -> dict[int, dict[str, object]]:
-    """Per instructor: rule count and open default periods — one query for all."""
+    """Per instructor: rule count and the feasibility summary of the default
+    periods (``instructor_availability.feasibility_summary``) — one query for all."""
     rules = load_time_rules(instructor_ids)
     counts: dict[int, int] = {}
     for rule in rules:
@@ -602,7 +610,11 @@ def _rule_error(index: int, field: str, code: str) -> dict[str, object]:
 
 
 def _clean_rule(index: int, item: object) -> tuple[dict[str, Any] | None, list[dict[str, object]]]:
-    """One wire rule -> a storable row, or every problem it has."""
+    """One wire rule -> a storable row, or every problem it has.
+
+    The wire is strings only and is never coerced: days are SUN..THU codes,
+    times ASCII "HH:MM" ("24:00" only as an end), a note is a string.
+    """
     if not isinstance(item, dict):
         return None, [_rule_error(index, "rule", "rule_not_object")]
     errors: list[dict[str, object]] = []
@@ -616,21 +628,28 @@ def _clean_rule(index: int, item: object) -> tuple[dict[str, Any] | None, list[d
     elif not isinstance(days, list):
         errors.append(_rule_error(index, "days", "days_invalid"))
     else:
-        try:
-            mask = mask_from_days(days)
-        except ValueError:
+        indexes = [wire_day_index(day) for day in days]
+        if None in indexes:
             errors.append(_rule_error(index, "days", "days_invalid"))
-    start = to_minutes(item.get("start"))
-    if start is None or start >= MINUTES_PER_DAY:
+        else:
+            # A repeated day is the same day: the mask dedupes it.
+            mask = sum({1 << day for day in indexes if day is not None})
+    start = wire_minutes(item.get("start"), end=False)
+    if start is None:
         errors.append(_rule_error(index, "start", "start_invalid"))
-    end = to_minutes(item.get("end"))
+    end = wire_minutes(item.get("end"), end=True)
     if end is None:
         errors.append(_rule_error(index, "end", "end_invalid"))
-    elif start is not None and start < MINUTES_PER_DAY and end <= start:
+    elif start is not None and end <= start:
         errors.append(_rule_error(index, "end", "end_not_after_start"))
-    note = _text(item.get("note"))
-    if len(note) > MAX_NOTE_LENGTH:
-        errors.append(_rule_error(index, "note", "note_too_long"))
+    raw_note = item.get("note", "")
+    note = ""
+    if not isinstance(raw_note, str):
+        errors.append(_rule_error(index, "note", "note_invalid"))
+    else:
+        note = raw_note.strip()
+        if len(note) > MAX_NOTE_LENGTH:
+            errors.append(_rule_error(index, "note", "note_too_long"))
     if errors:
         return None, errors
     rule = {"kind": kind, "day_mask": mask, "start_minute": start, "end_minute": end, "note": note}
@@ -668,7 +687,7 @@ def _rule_set(rules: list[dict[str, Any]]) -> set[tuple[object, ...]]:
 def instructor_time_rules_view(request: HttpRequest) -> JsonResponse:
     """One instructor's teaching-time rules, their revision, and the default
     teaching periods they leave open (``grid`` lets the editor preview edits)."""
-    instructor_id = _instructor_id(request.GET.get("instructor_id"))
+    instructor_id = _query_instructor_id(request.GET.get("instructor_id"))
     if instructor_id is None:
         return _err("instructor_id must be an integer", code="VALIDATION", status=400)
     instructor = Instructor.objects.filter(pk=instructor_id).first()
@@ -693,7 +712,7 @@ def instructor_time_rules_set_view(request: HttpRequest) -> JsonResponse:
     if err:
         return err
     errors: list[dict[str, object]] = []
-    instructor_id = _instructor_id(payload.get("instructor_id"))
+    instructor_id = _body_instructor_id(payload.get("instructor_id"))
     if instructor_id is None:
         errors.append(_rule_error(-1, "instructor_id", "instructor_id_invalid"))
     expected = payload.get("expected_revision")
@@ -732,17 +751,32 @@ def instructor_time_rules_set_view(request: HttpRequest) -> JsonResponse:
         )
         after = _stored_rules(instructor)
 
-    log_audit_event(
-        request,
-        action="instructor_time_rules_set",
-        status="success",
-        details={
-            "id": instructor.pk,
-            "before": [_rule_to_audit(rule) for rule in before],
-            "after": [_rule_to_audit(rule) for rule in after],
-        },
-    )
+    details: dict[str, object] = {
+        "id": instructor.pk,
+        "before": [_rule_to_audit(rule) for rule in before],
+        "after": [_rule_to_audit(rule) for rule in after],
+    }
+    if _notes_changed(before, after):
+        details["notes_changed"] = True
+    log_audit_event(request, action="instructor_time_rules_set", status="success", details=details)
     return _ok(_rules_payload(instructor, after))
+
+
+def _notes_changed(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> bool:
+    """Whether a save changed any note (the audit records only THAT, never the text).
+
+    True when the notes written differ (one added, removed or edited), or when
+    the rules themselves are the same -- a save that went through and changed
+    no rule changed a note (one moved to another rule, say).
+    """
+
+    def notes(rules: list[dict[str, Any]]) -> list[str]:
+        return sorted(rule["note"] for rule in rules if rule["note"])
+
+    def windows(rules: list[dict[str, Any]]) -> list[str]:
+        return sorted(_rule_to_audit(rule) for rule in rules)
+
+    return notes(before) != notes(after) or windows(before) == windows(after)
 
 
 # ── Load report ──────────────────────────────────────────────────

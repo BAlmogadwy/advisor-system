@@ -1,5 +1,5 @@
 {
-  "about": "Shared cases for the instructor teaching-time rule semantics. core/services/instructor_availability.py and static/js/instructor-time-rules.js must both pass every probe and open count. 'open' counts default lecture/lab periods (7 lecture and 5 lab columns, Sun-Thu) not blocked by the rules. Rules are in the editor's wire format.",
+  "about": "Shared cases for the instructor teaching-time rule semantics. core/services/instructor_availability.py and static/js/instructor-time-rules.js must both pass every probe, open count and summary. 'open' counts default lecture/lab periods (7 lecture and 5 lab columns, Sun-Thu) not blocked by the rules. 'summary' is the API's 'open' object for the rule set on the default grid, derived BY HAND from the grid (lecture 09:00-10:15, 10:30-11:45, 10:50-12:05, 13:00-14:15, 14:30-15:45, 14:45-16:00, 16:00-17:15; lab 09:00-10:40, 10:45-12:25, 13:00-14:40, 14:45-16:25, 16:30-18:10): days.lecture/days.lab[d] = day d has an open period of that grid; a shape is feasible iff its meetings fit on distinct days each with an open period of its grid (75 min -> lecture, 100 min -> lab); no_teaching_days = no open lecture AND no open lab period; state any (every period open) / none (no period open) / narrow (some shape infeasible) / limited. Never record these from the code. Rules are in the editor's wire format.",
   "cases": [
     {
       "name": "no rules",
@@ -8,7 +8,14 @@
         {"day": "SUN", "start": "09:00", "end": "10:15", "blocked": false},
         {"day": "THU", "start": "00:00", "end": "24:00", "blocked": false}
       ],
-      "open": {"lecture": 35, "lab": 25}
+      "open": {"lecture": 35, "lab": 25},
+      "summary": {
+        "lecture": {"open": 35, "total": 35}, "lab": {"open": 25, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "any"
+      }
     },
     {
       "name": "single unavailable window",
@@ -21,7 +28,14 @@
         {"day": "SUN", "start": "10:30", "end": "11:45", "blocked": false},
         {"day": "MON", "start": "09:00", "end": "10:15", "blocked": false}
       ],
-      "open": {"lecture": 34, "lab": 24}
+      "open": {"lecture": 34, "lab": 24},
+      "summary": {
+        "lecture": {"open": 34, "total": 35}, "lab": {"open": 24, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "whole day off",
@@ -33,7 +47,14 @@
         {"day": "WED", "start": "16:00", "end": "17:15", "blocked": true},
         {"day": "TUE", "start": "16:00", "end": "17:15", "blocked": false}
       ],
-      "open": {"lecture": 28, "lab": 20}
+      "open": {"lecture": 28, "lab": 20},
+      "summary": {
+        "lecture": {"open": 28, "total": 35}, "lab": {"open": 20, "total": 25},
+        "days": {"lecture": [true, true, true, false, true], "lab": [true, true, true, false, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": ["WED"],
+        "state": "limited"
+      }
     },
     {
       "name": "touching boundaries are not overlap",
@@ -48,7 +69,14 @@
         {"day": "MON", "start": "10:15", "end": "10:30", "blocked": true},
         {"day": "MON", "start": "09:00", "end": "10:40", "blocked": true}
       ],
-      "open": {"lecture": 35, "lab": 24}
+      "open": {"lecture": 35, "lab": 24},
+      "summary": {
+        "lecture": {"open": 35, "total": 35}, "lab": {"open": 24, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "two overlapping unavailable windows merge",
@@ -62,7 +90,14 @@
         {"day": "TUE", "start": "12:00", "end": "13:00", "blocked": false},
         {"day": "TUE", "start": "08:00", "end": "09:00", "blocked": false}
       ],
-      "open": {"lecture": 32, "lab": 23}
+      "open": {"lecture": 32, "lab": 23},
+      "summary": {
+        "lecture": {"open": 32, "total": 35}, "lab": {"open": 23, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "available only one window, every day",
@@ -76,7 +111,14 @@
         {"day": "THU", "start": "07:59", "end": "08:30", "blocked": true},
         {"day": "WED", "start": "13:00", "end": "14:15", "blocked": true}
       ],
-      "open": {"lecture": 15, "lab": 10}
+      "open": {"lecture": 15, "lab": 10},
+      "summary": {
+        "lecture": {"open": 15, "total": 35}, "lab": {"open": 10, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "available only on some days blocks the other days whole",
@@ -89,7 +131,14 @@
         {"day": "MON", "start": "09:00", "end": "10:15", "blocked": true},
         {"day": "THU", "start": "13:00", "end": "14:15", "blocked": true}
       ],
-      "open": {"lecture": 14, "lab": 10}
+      "open": {"lecture": 14, "lab": 10},
+      "summary": {
+        "lecture": {"open": 14, "total": 35}, "lab": {"open": 10, "total": 25},
+        "days": {"lecture": [true, false, true, false, false], "lab": [true, false, true, false, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["MON", "WED", "THU"],
+        "state": "narrow"
+      }
     },
     {
       "name": "two available only windows on one day",
@@ -105,7 +154,14 @@
         {"day": "MON", "start": "09:00", "end": "10:40", "blocked": true},
         {"day": "THU", "start": "09:00", "end": "10:15", "blocked": true}
       ],
-      "open": {"lecture": 2, "lab": 0}
+      "open": {"lecture": 2, "lab": 0},
+      "summary": {
+        "lecture": {"open": 2, "total": 35}, "lab": {"open": 0, "total": 25},
+        "days": {"lecture": [false, true, false, false, false], "lab": [false, false, false, false, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": false}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["SUN", "TUE", "WED", "THU"],
+        "state": "narrow"
+      }
     },
     {
       "name": "available only with an unavailable carve-out",
@@ -120,7 +176,14 @@
         {"day": "SUN", "start": "14:45", "end": "16:00", "blocked": false},
         {"day": "SUN", "start": "16:00", "end": "17:15", "blocked": true}
       ],
-      "open": {"lecture": 29, "lab": 14}
+      "open": {"lecture": 29, "lab": 14},
+      "summary": {
+        "lecture": {"open": 29, "total": 35}, "lab": {"open": 14, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "owner example: no mornings",
@@ -132,7 +195,14 @@
         {"day": "MON", "start": "13:00", "end": "14:15", "blocked": false},
         {"day": "THU", "start": "12:59", "end": "13:01", "blocked": true}
       ],
-      "open": {"lecture": 20, "lab": 15}
+      "open": {"lecture": 20, "lab": 15},
+      "summary": {
+        "lecture": {"open": 20, "total": 35}, "lab": {"open": 15, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "owner example: only between 11:00 and 13:00 leaves nothing",
@@ -145,7 +215,14 @@
         {"day": "SUN", "start": "10:45", "end": "12:25", "blocked": true},
         {"day": "MON", "start": "13:00", "end": "14:15", "blocked": true}
       ],
-      "open": {"lecture": 0, "lab": 0}
+      "open": {"lecture": 0, "lab": 0},
+      "summary": {
+        "lecture": {"open": 0, "total": 35}, "lab": {"open": 0, "total": 25},
+        "days": {"lecture": [false, false, false, false, false], "lab": [false, false, false, false, false]},
+        "shapes": [{"key": "1x75", "feasible": false}, {"key": "1x100", "feasible": false}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["SUN", "MON", "TUE", "WED", "THU"],
+        "state": "none"
+      }
     },
     {
       "name": "owner example: only Thursday",
@@ -157,7 +234,14 @@
         {"day": "WED", "start": "09:00", "end": "10:15", "blocked": true},
         {"day": "SUN", "start": "16:00", "end": "17:15", "blocked": true}
       ],
-      "open": {"lecture": 7, "lab": 5}
+      "open": {"lecture": 7, "lab": 5},
+      "summary": {
+        "lecture": {"open": 7, "total": 35}, "lab": {"open": 5, "total": 25},
+        "days": {"lecture": [false, false, false, false, true], "lab": [false, false, false, false, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["SUN", "MON", "TUE", "WED"],
+        "state": "narrow"
+      }
     },
     {
       "name": "owner example: never Thursday",
@@ -168,7 +252,14 @@
         {"day": "THU", "start": "09:00", "end": "10:15", "blocked": true},
         {"day": "WED", "start": "09:00", "end": "10:15", "blocked": false}
       ],
-      "open": {"lecture": 28, "lab": 20}
+      "open": {"lecture": 28, "lab": 20},
+      "summary": {
+        "lecture": {"open": 28, "total": 35}, "lab": {"open": 20, "total": 25},
+        "days": {"lecture": [true, true, true, true, false], "lab": [true, true, true, true, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": ["THU"],
+        "state": "limited"
+      }
     },
     {
       "name": "unavailable to the end of the day (24:00)",
@@ -180,7 +271,14 @@
         {"day": "SUN", "start": "14:45", "end": "16:00", "blocked": false},
         {"day": "MON", "start": "14:45", "end": "16:25", "blocked": true}
       ],
-      "open": {"lecture": 30, "lab": 15}
+      "open": {"lecture": 30, "lab": 15},
+      "summary": {
+        "lecture": {"open": 30, "total": 35}, "lab": {"open": 15, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "available only to the end of the day (24:00)",
@@ -194,7 +292,14 @@
         {"day": "THU", "start": "14:45", "end": "16:25", "blocked": true},
         {"day": "SUN", "start": "16:00", "end": "17:15", "blocked": true}
       ],
-      "open": {"lecture": 1, "lab": 1}
+      "open": {"lecture": 1, "lab": 1},
+      "summary": {
+        "lecture": {"open": 1, "total": 35}, "lab": {"open": 1, "total": 25},
+        "days": {"lecture": [false, false, false, false, true], "lab": [false, false, false, false, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["SUN", "MON", "TUE", "WED"],
+        "state": "narrow"
+      }
     },
     {
       "name": "quick add: no afternoons",
@@ -205,7 +310,14 @@
         {"day": "SUN", "start": "10:45", "end": "12:25", "blocked": false},
         {"day": "SUN", "start": "12:00", "end": "13:01", "blocked": true}
       ],
-      "open": {"lecture": 15, "lab": 10}
+      "open": {"lecture": 15, "lab": 10},
+      "summary": {
+        "lecture": {"open": 15, "total": 35}, "lab": {"open": 10, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "limited"
+      }
     },
     {
       "name": "available only on one day plus an unavailable rule on another day",
@@ -218,7 +330,14 @@
         {"day": "MON", "start": "14:30", "end": "15:45", "blocked": true},
         {"day": "SUN", "start": "13:00", "end": "14:15", "blocked": true}
       ],
-      "open": {"lecture": 3, "lab": 2}
+      "open": {"lecture": 3, "lab": 2},
+      "summary": {
+        "lecture": {"open": 3, "total": 35}, "lab": {"open": 2, "total": 25},
+        "days": {"lecture": [true, false, false, false, false], "lab": [true, false, false, false, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["MON", "TUE", "WED", "THU"],
+        "state": "narrow"
+      }
     },
     {
       "name": "zero-length meeting never blocks",
@@ -230,7 +349,153 @@
         {"day": "SUN", "start": "10:00", "end": "09:00", "blocked": false},
         {"day": "SUN", "start": "10:00", "end": "10:01", "blocked": true}
       ],
-      "open": {"lecture": 28, "lab": 20}
+      "open": {"lecture": 28, "lab": 20},
+      "summary": {
+        "lecture": {"open": 28, "total": 35}, "lab": {"open": 20, "total": 25},
+        "days": {"lecture": [false, true, true, true, true], "lab": [false, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": ["SUN"],
+        "state": "limited"
+      }
+    },
+    {
+      "name": "lecture open but lab closed",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "10:30", "end": "12:05", "note": ""}
+      ],
+      "probes": [
+        {"day": "MON", "start": "10:30", "end": "11:45", "blocked": false},
+        {"day": "TUE", "start": "10:50", "end": "12:05", "blocked": false},
+        {"day": "MON", "start": "10:45", "end": "12:25", "blocked": true},
+        {"day": "SUN", "start": "09:00", "end": "10:15", "blocked": true},
+        {"day": "WED", "start": "10:29", "end": "10:31", "blocked": true}
+      ],
+      "open": {"lecture": 10, "lab": 0},
+      "summary": {
+        "lecture": {"open": 10, "total": 35}, "lab": {"open": 0, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [false, false, false, false, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": false}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": [],
+        "state": "narrow"
+      }
+    },
+    {
+      "name": "lab open but lecture closed",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "16:30", "end": "18:10", "note": ""}
+      ],
+      "probes": [
+        {"day": "THU", "start": "16:30", "end": "18:10", "blocked": false},
+        {"day": "THU", "start": "16:00", "end": "17:15", "blocked": true},
+        {"day": "MON", "start": "18:00", "end": "18:11", "blocked": true}
+      ],
+      "open": {"lecture": 0, "lab": 5},
+      "summary": {
+        "lecture": {"open": 0, "total": 35}, "lab": {"open": 5, "total": 25},
+        "days": {"lecture": [false, false, false, false, false], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": false}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": [],
+        "state": "narrow"
+      }
+    },
+    {
+      "name": "three days open: a four-credit course still fits",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "TUE", "THU"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "TUE", "start": "09:00", "end": "10:15", "blocked": false},
+        {"day": "THU", "start": "16:30", "end": "18:10", "blocked": false},
+        {"day": "WED", "start": "09:00", "end": "10:15", "blocked": true}
+      ],
+      "open": {"lecture": 21, "lab": 15},
+      "summary": {
+        "lecture": {"open": 21, "total": 35}, "lab": {"open": 15, "total": 25},
+        "days": {"lecture": [true, false, true, false, true], "lab": [true, false, true, false, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": ["MON", "WED"],
+        "state": "limited"
+      }
+    },
+    {
+      "name": "two days open: a three-credit course fits, a four-credit one does not",
+      "rules": [
+        {"kind": "available_only", "days": ["MON", "WED"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "MON", "start": "13:00", "end": "14:15", "blocked": false},
+        {"day": "WED", "start": "16:30", "end": "18:10", "blocked": false},
+        {"day": "TUE", "start": "13:00", "end": "14:15", "blocked": true}
+      ],
+      "open": {"lecture": 14, "lab": 10},
+      "summary": {
+        "lecture": {"open": 14, "total": 35}, "lab": {"open": 10, "total": 25},
+        "days": {"lecture": [false, true, false, true, false], "lab": [false, true, false, true, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["SUN", "TUE", "THU"],
+        "state": "narrow"
+      }
+    },
+    {
+      "name": "three lecture days with a lab period on only one of them",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN", "MON"], "start": "10:30", "end": "12:05", "note": ""},
+        {"kind": "available_only", "days": ["TUE"], "start": "09:00", "end": "10:40", "note": ""}
+      ],
+      "probes": [
+        {"day": "TUE", "start": "09:00", "end": "10:40", "blocked": false},
+        {"day": "MON", "start": "10:50", "end": "12:05", "blocked": false},
+        {"day": "SUN", "start": "09:00", "end": "10:40", "blocked": true},
+        {"day": "TUE", "start": "10:30", "end": "11:45", "blocked": true}
+      ],
+      "open": {"lecture": 5, "lab": 1},
+      "summary": {
+        "lecture": {"open": 5, "total": 35}, "lab": {"open": 1, "total": 25},
+        "days": {"lecture": [true, true, true, false, false], "lab": [false, false, true, false, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": ["WED", "THU"],
+        "state": "narrow"
+      }
+    },
+    {
+      "name": "available only on Sunday afternoon plus a whole-day unavailable Wednesday",
+      "rules": [
+        {"kind": "available_only", "days": ["SUN"], "start": "13:00", "end": "24:00", "note": ""},
+        {"kind": "unavailable", "days": ["WED"], "start": "00:00", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "13:00", "end": "14:15", "blocked": false},
+        {"day": "SUN", "start": "10:50", "end": "12:05", "blocked": true},
+        {"day": "WED", "start": "13:00", "end": "14:15", "blocked": true},
+        {"day": "MON", "start": "13:00", "end": "14:15", "blocked": true}
+      ],
+      "open": {"lecture": 4, "lab": 3},
+      "summary": {
+        "lecture": {"open": 4, "total": 35}, "lab": {"open": 3, "total": 25},
+        "days": {"lecture": [true, false, false, false, false], "lab": [true, false, false, false, false]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": false}, {"key": "2x100", "feasible": false}, {"key": "2x75+100", "feasible": false}],
+        "no_teaching_days": ["MON", "TUE", "WED", "THU"],
+        "state": "narrow"
+      }
+    },
+    {
+      "name": "a rule outside every teaching period leaves any time",
+      "rules": [
+        {"kind": "unavailable", "days": ["SUN", "MON", "TUE", "WED", "THU"], "start": "18:10", "end": "24:00", "note": ""}
+      ],
+      "probes": [
+        {"day": "SUN", "start": "16:30", "end": "18:10", "blocked": false},
+        {"day": "SUN", "start": "18:00", "end": "18:11", "blocked": true},
+        {"day": "THU", "start": "23:00", "end": "24:00", "blocked": true}
+      ],
+      "open": {"lecture": 35, "lab": 25},
+      "summary": {
+        "lecture": {"open": 35, "total": 35}, "lab": {"open": 25, "total": 25},
+        "days": {"lecture": [true, true, true, true, true], "lab": [true, true, true, true, true]},
+        "shapes": [{"key": "1x75", "feasible": true}, {"key": "1x100", "feasible": true}, {"key": "2x75", "feasible": true}, {"key": "2x100", "feasible": true}, {"key": "2x75+100", "feasible": true}],
+        "no_teaching_days": [],
+        "state": "any"
+      }
     }
   ]
 }

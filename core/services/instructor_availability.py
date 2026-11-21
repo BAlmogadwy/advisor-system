@@ -46,6 +46,7 @@ from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import permutations
 from typing import Any
 
 DAY_CODES = ("SUN", "MON", "TUE", "WED", "THU")
@@ -64,6 +65,9 @@ MAX_NOTE_LENGTH = 200
 # like ``timetable_slot_config._TIME``; plus "24:00", the end of a whole day.
 _TIME = re.compile(r"^([01]?[0-9]|2[0-3]):([0-5][0-9])(?::[0-5][0-9])?$")
 _END_OF_DAY = re.compile(r"^24:00(?::00)?$")
+# The staff API's stricter wire form: "H:MM" / "HH:MM", ASCII digits only (an
+# explicit class: Python's \d would also match Arabic-Indic digits), no seconds.
+_WIRE_TIME = re.compile(r"([0-9]{1,2}):([0-9]{2})")
 
 Interval = tuple[int, int]
 
@@ -111,6 +115,39 @@ def to_minutes(value: object) -> int | None:
     if not match:
         return None
     return int(match.group(1)) * 60 + int(match.group(2))
+
+
+def wire_day_index(value: object) -> int | None:
+    """The index 0..4 of a day as the staff API accepts it, or ``None``.
+
+    Strict: only a ``str`` day code (SUN..THU, any case, surrounding spaces
+    ignored). Ints, bools and full day names are refused; :func:`day_index`
+    stays lenient for engine callers.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip().upper()
+    return DAY_CODES.index(text) if text in DAY_CODES else None
+
+
+def wire_minutes(value: object, *, end: bool) -> int | None:
+    """Minutes from midnight of a time as the staff API accepts it, or ``None``.
+
+    Strict: only a ``str`` "H:MM" / "HH:MM" of ASCII digits (surrounding spaces
+    ignored), hours 0..23 and minutes 0..59; "24:00" is accepted only as an
+    ``end``. No seconds, no numbers, no bools.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _WIRE_TIME.fullmatch(value.strip())
+    if not match:
+        return None
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if end and (hours, minutes) == (24, 0):
+        return MINUTES_PER_DAY
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
 
 
 def to_hhmm(minutes: int) -> str:
@@ -343,7 +380,9 @@ def rules_revision(rules: Iterable[Mapping[str, Any]]) -> str:
 
     Each mapping carries ``kind``, ``day_mask``, ``start_minute``,
     ``end_minute`` and ``note``. Two writers holding the same token saw the
-    same rules.
+    same rules. The empty set has a fixed, NON-empty token too, so the first
+    save of an instructor without rules carries a real ``expected_revision``
+    (the API refuses an empty one).
     """
     canonical = sorted(
         [
@@ -379,18 +418,89 @@ def open_periods(
     ]
 
 
-def open_summary(
-    availability: InstructorAvailability, instructor_id: int, grid: Mapping[str, Any]
-) -> dict[str, dict[str, int]]:
-    """``{"lecture": {"open", "total"}, "lab": {...}}`` over a period grid."""
-    summary: dict[str, dict[str, int]] = {}
-    for kind in ("lecture", "lab"):
-        table = open_periods(availability, instructor_id, grid[kind])
-        summary[kind] = {
+# The weekly meeting patterns a course can need, in minutes per meeting. A
+# 75-minute meeting takes a lecture period, a longer one a 100-minute (lab)
+# period, and the meetings of one course fall on distinct days -- exactly what
+# ``timetable_autoplace._generate_meeting_options`` generates options for.
+LECTURE_MEETING_MINUTES = 75
+SHAPES: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("1x75", (75,)),
+    ("1x100", (100,)),
+    ("2x75", (75, 75)),
+    ("2x100", (100, 100)),
+    ("2x75+100", (75, 75, 100)),
+)
+
+STATE_ANY = "any"  # every default period is open
+STATE_LIMITED = "limited"  # some period is blocked, every shape still fits
+STATE_NARROW = "narrow"  # something is open, but some shape no longer fits
+STATE_NONE = "none"  # no default period is open
+
+
+def shape_feasible(
+    meetings: Sequence[int], lecture_days: Sequence[bool], lab_days: Sequence[bool]
+) -> bool:
+    """Whether a weekly pattern fits: each meeting on its own day, and that day
+    has an open period of the meeting's grid (lecture for 75 minutes, lab for
+    longer). A brute force over the five days; at most 60 orderings."""
+    for days in permutations(range(len(DAY_CODES)), len(meetings)):
+        if all(
+            (lecture_days if minutes <= LECTURE_MEETING_MINUTES else lab_days)[day]
+            for minutes, day in zip(meetings, days, strict=True)
+        ):
+            return True
+    return False
+
+
+def feasibility_summary(lecture: Sequence[Sequence[bool]], lab: Sequence[Sequence[bool]]) -> dict:
+    """The editor's and roster's summary of two ``[day][period]`` open tables.
+
+    ``{"lecture": {"open", "total"}, "lab": {...}, "days": {"lecture": [5 bools],
+    "lab": [...]}, "shapes": [{"key", "feasible"}], "no_teaching_days": [codes],
+    "state": "any" | "limited" | "narrow" | "none"}``.
+    """
+    counts = {
+        name: {
             "open": sum(cell for row in table for cell in row),
             "total": sum(len(row) for row in table),
         }
-    return summary
+        for name, table in (("lecture", lecture), ("lab", lab))
+    }
+    lecture_days = [any(row) for row in lecture]
+    lab_days = [any(row) for row in lab]
+    shapes = [
+        {"key": key, "feasible": shape_feasible(meetings, lecture_days, lab_days)}
+        for key, meetings in SHAPES
+    ]
+    if all(c["open"] == c["total"] for c in counts.values()):
+        state = STATE_ANY
+    elif not any(c["open"] for c in counts.values()):
+        state = STATE_NONE
+    elif not all(shape["feasible"] for shape in shapes):
+        state = STATE_NARROW
+    else:
+        state = STATE_LIMITED
+    return {
+        **counts,
+        "days": {"lecture": lecture_days, "lab": lab_days},
+        "shapes": shapes,
+        "no_teaching_days": [
+            code
+            for code, has_lecture, has_lab in zip(DAY_CODES, lecture_days, lab_days, strict=True)
+            if not has_lecture and not has_lab
+        ],
+        "state": state,
+    }
+
+
+def open_summary(
+    availability: InstructorAvailability, instructor_id: int, grid: Mapping[str, Any]
+) -> dict[str, Any]:
+    """:func:`feasibility_summary` of one instructor over a period grid."""
+    return feasibility_summary(
+        open_periods(availability, instructor_id, grid["lecture"]),
+        open_periods(availability, instructor_id, grid["lab"]),
+    )
 
 
 def default_period_grid() -> dict[str, Any]:
@@ -426,21 +536,31 @@ __all__ = [
     "KINDS",
     "KIND_AVAILABLE_ONLY",
     "KIND_UNAVAILABLE",
+    "LECTURE_MEETING_MINUTES",
     "MAX_NOTE_LENGTH",
     "MAX_RULES_PER_INSTRUCTOR",
     "MINUTES_PER_DAY",
+    "SHAPES",
+    "STATE_ANY",
+    "STATE_LIMITED",
+    "STATE_NARROW",
+    "STATE_NONE",
     "InstructorAvailability",
     "TimeRule",
     "compile_rules",
     "day_index",
     "days_from_mask",
     "default_period_grid",
+    "feasibility_summary",
     "load_instructor_availability",
     "load_time_rules",
     "mask_from_days",
     "open_periods",
     "open_summary",
     "rules_revision",
+    "shape_feasible",
     "to_hhmm",
     "to_minutes",
+    "wire_day_index",
+    "wire_minutes",
 ]

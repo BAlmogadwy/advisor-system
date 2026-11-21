@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import random
+from itertools import combinations
 from pathlib import Path
 
 import pytest
@@ -24,19 +25,24 @@ from core.services.instructor_availability import (
     KIND_AVAILABLE_ONLY,
     KIND_UNAVAILABLE,
     MINUTES_PER_DAY,
+    SHAPES,
     TimeRule,
     compile_rules,
     day_index,
     days_from_mask,
     default_period_grid,
+    feasibility_summary,
     load_instructor_availability,
     load_time_rules,
     mask_from_days,
     open_periods,
     open_summary,
     rules_revision,
+    shape_feasible,
     to_hhmm,
     to_minutes,
+    wire_day_index,
+    wire_minutes,
 )
 
 CASES = Path(__file__).resolve().parent / "fixtures" / "instructor_availability_cases.json"
@@ -110,6 +116,57 @@ def test_day_index_reads_codes_names_and_indexes(value, expected):
 )
 def test_to_minutes_reads_ascii_times_and_the_end_of_day(value, expected):
     assert to_minutes(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("SUN", 0),
+        (" thu ", 4),
+        ("Wed", 3),
+        ("Sunday", None),
+        ("FRI", None),
+        (0, None),
+        (True, None),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_wire_day_index_reads_day_codes_only(value, expected):
+    assert wire_day_index(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "end", "expected"),
+    [
+        ("00:00", False, 0),
+        ("9:05", False, 545),
+        (" 13:30 ", True, 810),
+        ("23:59", False, 1439),
+        ("24:00", True, 1440),
+        ("24:00", False, None),  # the end of the day is never a start
+        ("24:00:00", True, None),
+        ("10:15:00", False, None),  # no seconds on the wire
+        ("24:01", True, None),
+        ("25:00", True, None),
+        ("12:60", False, None),
+        ("123:00", False, None),
+        ("9:5", False, None),
+        ("0900", False, None),
+        ("", False, None),
+        (540, False, None),
+        (1440, True, None),
+        (True, False, None),
+        (9.0, False, None),
+        (None, True, None),
+        (chr(0x660) + chr(0x669) + ":30", False, None),  # Arabic-Indic
+        (chr(0x6F0) + chr(0x6F9) + ":30", False, None),  # extended Arabic-Indic
+        ("09:3" + chr(0x660), False, None),
+        ("09:00\n", False, 540),  # surrounding whitespace only
+    ],
+)
+def test_wire_minutes_reads_strict_ascii_hh_mm(value, end, expected):
+    assert wire_minutes(value, end=end) == expected
 
 
 def test_to_hhmm_formats_both_ends_of_the_day():
@@ -335,6 +392,8 @@ def test_rules_revision_is_short_stable_order_independent_and_sees_every_field()
     assert rules_revision(list(reversed(rows))) == token
     assert rules_revision([]) == rules_revision([])
     assert rules_revision([]) != token
+    # The empty set's token is fixed and NON-empty: the API refuses an empty one.
+    assert len(rules_revision([])) == 16 and rules_revision(()) == rules_revision([])
     for changed in (
         _row(kind=KIND_AVAILABLE_ONLY),
         _row(mask=2),
@@ -380,6 +439,116 @@ def test_open_periods_marks_each_day_and_slot():
         open_periods(availability, 1, [{"start": "9h", "end": "10:15"}])
 
 
+# ── Feasibility summary ──────────────────────────────────────────
+
+
+def test_the_shapes_are_the_spec_patterns():
+    assert SHAPES == (
+        ("1x75", (75,)),
+        ("1x100", (100,)),
+        ("2x75", (75, 75)),
+        ("2x100", (100, 100)),
+        ("2x75+100", (75, 75, 100)),
+    )
+
+
+def _hall_oracle(meetings, lecture_days, lab_days) -> bool:
+    """Independent truth: a system of distinct days exists iff Hall's condition
+    holds -- every k meetings can use at least k distinct days between them."""
+    allowed = [
+        {d for d in range(5) if (lab_days if minutes > 75 else lecture_days)[d]}
+        for minutes in meetings
+    ]
+    for size in range(1, len(meetings) + 1):
+        for subset in combinations(range(len(meetings)), size):
+            if len(set().union(*(allowed[i] for i in subset))) < size:
+                return False
+    return True
+
+
+def test_shape_feasibility_matches_halls_condition_on_every_open_day_pattern():
+    patterns = [[bool(bits >> d & 1) for d in range(5)] for bits in range(32)]
+    checked = 0
+    for lecture_days in patterns:
+        for lab_days in patterns:
+            for _, meetings in SHAPES:
+                assert shape_feasible(meetings, lecture_days, lab_days) == _hall_oracle(
+                    meetings, lecture_days, lab_days
+                ), (meetings, lecture_days, lab_days)
+                checked += 1
+    assert checked == 32 * 32 * len(SHAPES)
+
+
+def test_a_four_credit_course_needs_three_distinct_days_and_a_lab_day():
+    def days(*codes):
+        return [code in codes for code in DAY_CODES]
+
+    four = (75, 75, 100)
+    # Two lecture days and a lab day, all distinct.
+    assert shape_feasible(four, days("SUN", "MON"), days("TUE"))
+    # The lab day is one of the only two days with anything open.
+    assert not shape_feasible(four, days("SUN", "MON"), days("MON"))
+    # Lecture on one day only, however many lab days.
+    assert not shape_feasible(four, days("SUN"), days("MON", "TUE", "WED"))
+    # No lab period anywhere.
+    assert not shape_feasible(four, days(*DAY_CODES), days())
+    # Two 75-minute meetings need two different lecture days, not two periods.
+    assert not shape_feasible((75, 75), days("THU"), days(*DAY_CODES))
+    assert shape_feasible((75, 75), days("SUN", "THU"), days())
+    # A 100-minute meeting uses the lab grid, a 75-minute one the lecture grid.
+    assert shape_feasible((100,), days(), days("WED"))
+    assert not shape_feasible((75,), days(), days("WED"))
+
+
+def _table(open_cells: set[tuple[int, int]], periods: int) -> list[list[bool]]:
+    return [[(day, p) in open_cells for p in range(periods)] for day in range(5)]
+
+
+def _everything(periods: int) -> set[tuple[int, int]]:
+    return {(d, p) for d in range(5) for p in range(periods)}
+
+
+@pytest.mark.parametrize(
+    ("lecture_open", "lab_open", "state"),
+    [
+        # Every period open.
+        (_everything(2), _everything(1), "any"),
+        # One lab period short, every shape still fits.
+        (_everything(2), _everything(1) - {(0, 0)}, "limited"),
+        # A single lecture period blocked.
+        (_everything(2) - {(4, 1)}, _everything(1), "limited"),
+        # Three days with both grids open: a four-credit course fits.
+        ({(0, 0), (2, 0), (4, 0)}, {(0, 0), (2, 0), (4, 0)}, "limited"),
+        # Two days only: the four-credit shape does not fit.
+        ({(0, 0), (2, 0)}, {(0, 0), (2, 0)}, "narrow"),
+        # One lecture period open, nothing else.
+        ({(3, 1)}, set(), "narrow"),
+        # One lab period open, nothing else.
+        (set(), {(1, 0)}, "narrow"),
+        # Nothing open.
+        (set(), set(), "none"),
+    ],
+)
+def test_state_boundaries(lecture_open, lab_open, state):
+    summary = feasibility_summary(_table(lecture_open, 2), _table(lab_open, 1))
+    assert summary["state"] == state
+    assert summary["lecture"] == {"open": len(lecture_open), "total": 10}
+    assert summary["lab"] == {"open": len(lab_open), "total": 5}
+
+
+def test_days_and_no_teaching_days_need_neither_grid_open():
+    # Sun: lecture only. Mon: lab only. Tue: both. Wed, Thu: nothing.
+    summary = feasibility_summary(_table({(0, 1), (2, 0)}, 2), _table({(1, 0), (2, 0)}, 1))
+    assert summary["days"] == {
+        "lecture": [True, False, True, False, False],
+        "lab": [False, True, True, False, False],
+    }
+    assert summary["no_teaching_days"] == ["WED", "THU"]
+    assert [shape["key"] for shape in summary["shapes"]] == [key for key, _ in SHAPES]
+    assert summary["shapes"][4] == {"key": "2x75+100", "feasible": True}  # Sun, Tue + Mon lab
+    assert summary["shapes"][3] == {"key": "2x100", "feasible": True}  # Mon, Tue labs
+
+
 def _wire_to_rules(wire: list[dict], instructor_id: int = 1) -> list[TimeRule]:
     return [
         TimeRule(
@@ -410,6 +579,23 @@ def test_every_shared_parity_case_holds():
             "name"
         ]
         assert (summary["lecture"]["total"], summary["lab"]["total"]) == (35, 25)
+        # The full feasibility summary, hand-derived in the fixture.
+        assert summary == case["summary"], case["name"]
+        assert {k: case["summary"][k]["open"] for k in ("lecture", "lab")} == case["open"]
+        json.dumps(summary)  # served as JSON as is
+
+
+def test_the_parity_fixture_covers_every_state_and_every_shape_outcome():
+    cases = json.loads(CASES.read_text(encoding="utf-8"))["cases"]
+    assert {case["summary"]["state"] for case in cases} == {"any", "limited", "narrow", "none"}
+    for key, _ in SHAPES:
+        outcomes = {
+            shape["feasible"]
+            for case in cases
+            for shape in case["summary"]["shapes"]
+            if shape["key"] == key
+        }
+        assert outcomes == {True, False}, key
 
 
 # ── Loader ───────────────────────────────────────────────────────

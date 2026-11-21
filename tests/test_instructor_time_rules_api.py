@@ -32,8 +32,29 @@ GET_URL = "/ops/instructors/time-rules/"
 SET_URL = "/ops/instructors/time-rules/set/"
 LIST_URL = "/ops/instructors/list/"
 EMPTY_REVISION = rules_revision([])
-FULL_OPEN = {"lecture": {"open": 35, "total": 35}, "lab": {"open": 25, "total": 25}}
 EVERY_DAY = ["SUN", "MON", "TUE", "WED", "THU"]
+SHAPE_KEYS = ("1x75", "1x100", "2x75", "2x100", "2x75+100")
+
+
+def _summary(lecture, lab, *, days, lab_days=None, infeasible=(), state):
+    """The API's ``open`` object on the default grid (35 lecture, 25 lab periods),
+    from hand-derived counts, open days, infeasible shapes and state."""
+    lab_days = days if lab_days is None else lab_days
+    return {
+        "lecture": {"open": lecture, "total": 35},
+        "lab": {"open": lab, "total": 25},
+        "days": {
+            "lecture": [code in days for code in EVERY_DAY],
+            "lab": [code in lab_days for code in EVERY_DAY],
+        },
+        "shapes": [{"key": key, "feasible": key not in infeasible} for key in SHAPE_KEYS],
+        "no_teaching_days": [c for c in EVERY_DAY if c not in days and c not in lab_days],
+        "state": state,
+    }
+
+
+FULL_OPEN = _summary(35, 25, days=EVERY_DAY, state="any")
+NOTHING_OPEN = _summary(0, 0, days=[], infeasible=SHAPE_KEYS, state="none")
 
 
 def _client(role: str = ROLE_SUPER_ADMIN) -> Client:
@@ -214,11 +235,9 @@ def test_get_returns_rules_sorted_with_revision_grid_and_open_counts():
     assert body["grid"]["days"] == EVERY_DAY
     assert len(body["grid"]["lecture"]) == 7 and len(body["grid"]["lab"]) == 5
     # Available 08:00-16:00 keeps six lecture and three lab periods a day. Thursday is
-    # off; the carve-outs leave Sun 5/2, Mon 3/1, Tue 3/1 and Wed 6/3.
-    assert body["open"] == {
-        "lecture": {"open": 17, "total": 35},
-        "lab": {"open": 7, "total": 25},
-    }
+    # off; the carve-outs leave Sun 5/2, Mon 3/1, Tue 3/1 and Wed 6/3. Four days
+    # with both kinds of period: every course shape still fits.
+    assert body["open"] == _summary(17, 7, days=["SUN", "MON", "TUE", "WED"], state="limited")
 
 
 def test_get_without_rules_is_fully_open_with_the_empty_revision():
@@ -291,8 +310,11 @@ def test_save_replaces_the_whole_set_and_returns_the_new_state():
         body["revision"] == client.get(GET_URL, {"instructor_id": instructor.pk}).json()["revision"]
     )
     assert body["revision"] != EMPTY_REVISION
-    # Only Sun and Thu are open at all, and only from 13:00.
-    assert body["open"] == {"lecture": {"open": 8, "total": 35}, "lab": {"open": 6, "total": 25}}
+    # Only Sun and Thu are open at all, and only from 13:00 (4 lecture, 3 lab
+    # periods each): two days cannot hold a three-meeting course.
+    assert body["open"] == _summary(
+        8, 6, days=["SUN", "THU"], infeasible=("2x75+100",), state="narrow"
+    )
     assert body["instructor"]["id"] == instructor.pk
 
     response = _save(client, instructor, [_wire()], revision=body["revision"])
@@ -313,10 +335,7 @@ def test_owner_only_between_11_and_13_saves_and_reports_no_open_period():
         revision=EMPTY_REVISION,
     )
     assert response.status_code == 200
-    assert response.json()["open"] == {
-        "lecture": {"open": 0, "total": 35},
-        "lab": {"open": 0, "total": 25},
-    }
+    assert response.json()["open"] == NOTHING_OPEN
 
 
 def test_a_stale_revision_is_refused_and_loses_nothing():
@@ -382,6 +401,8 @@ def test_save_audits_before_and_after_without_notes(monkeypatch):
                     "available_only|THU|00:00-24:00",
                     "unavailable|SUN,MON|09:00-10:15",
                 ],
+                # A note was written; its text stays out of the audit.
+                "notes_changed": True,
             },
         )
     ]
@@ -393,8 +414,63 @@ def test_save_audits_before_and_after_without_notes(monkeypatch):
             "id": instructor.pk,
             "before": ["available_only|THU|00:00-24:00", "unavailable|SUN,MON|09:00-10:15"],
             "after": ["unavailable|TUE|09:00-12:00"],
+            "notes_changed": True,  # the "secret" note went with its rule
         },
     )
+    assert "secret" not in json.dumps(seen)
+
+
+def _audited_save(monkeypatch, client, instructor, rules, revision):
+    from core import instructor_views
+
+    seen = []
+    monkeypatch.setattr(instructor_views, "log_audit_event", lambda request, **kw: seen.append(kw))
+    response = _save(client, instructor, rules, revision=revision)
+    assert response.status_code == 200, response.content
+    assert len(seen) == 1
+    return seen[0]["details"], response.json()["revision"]
+
+
+def test_the_audit_flags_a_note_change_only_when_a_note_changed(monkeypatch):
+    instructor = _instructor()
+    client = _client()
+    noted = _wire(days=["SUN"], note="Council")
+    plain = _wire(days=["MON"])
+    # Rules without notes: no flag.
+    details, revision = _audited_save(monkeypatch, client, instructor, [plain], EMPTY_REVISION)
+    assert "notes_changed" not in details
+    # A rule with a note added.
+    details, revision = _audited_save(monkeypatch, client, instructor, [plain, noted], revision)
+    assert details["notes_changed"] is True
+    # The noted rule's window moves, its note stays: no note changed.
+    moved = {**noted, "end": "11:00"}
+    details, revision = _audited_save(monkeypatch, client, instructor, [plain, moved], revision)
+    assert "notes_changed" not in details
+    assert details["before"] != details["after"]
+    # Another rule without a note is added: still no note changed.
+    extra = _wire(days=["TUE"])
+    details, revision = _audited_save(
+        monkeypatch, client, instructor, [plain, moved, extra], revision
+    )
+    assert "notes_changed" not in details
+    # Only a note's text edited: the rules read the same, the flag says why it saved.
+    edited = {**moved, "note": "Department council"}
+    details, revision = _audited_save(
+        monkeypatch, client, instructor, [plain, edited, extra], revision
+    )
+    assert details["before"] == details["after"]
+    assert details["notes_changed"] is True
+    # The same note moved to another rule.
+    details, revision = _audited_save(
+        monkeypatch,
+        client,
+        instructor,
+        [{**plain, "note": "Department council"}, {**edited, "note": ""}, extra],
+        revision,
+    )
+    assert details["before"] == details["after"]
+    assert details["notes_changed"] is True
+    assert "Department council" not in json.dumps(details)
 
 
 def test_saving_the_stored_set_again_rewrites_nothing_and_audits_nothing(monkeypatch):
@@ -455,6 +531,81 @@ def test_each_rule_problem_has_its_own_code(rule, expected):
     assert not InstructorTimeRule.objects.filter(instructor=instructor).exists()
 
 
+ARABIC_INDIC_NINE = chr(0x660) + chr(0x669) + ":" + chr(0x660) + chr(0x660)  # "09:00"
+EXTENDED_ARABIC_INDIC_NINE = chr(0x6F0) + chr(0x6F9) + ":" + chr(0x6F0) + chr(0x6F0)
+
+
+@pytest.mark.parametrize(
+    ("rule", "expected"),
+    [
+        # days: strings equal to a day code, nothing else.
+        ({**_wire(), "days": [0]}, [(0, "days", "days_invalid")]),
+        ({**_wire(), "days": [True]}, [(0, "days", "days_invalid")]),
+        ({**_wire(), "days": ["Sunday"]}, [(0, "days", "days_invalid")]),
+        ({**_wire(), "days": ["SUN", 4]}, [(0, "days", "days_invalid")]),
+        ({**_wire(), "days": [None]}, [(0, "days", "days_invalid")]),
+        ({**_wire(), "days": {"SUN": True}}, [(0, "days", "days_invalid")]),
+        # start / end: an ASCII "H:MM" string; never a number, a bool or seconds.
+        (_wire(start=540), [(0, "start", "start_invalid")]),
+        (_wire(start=True), [(0, "start", "start_invalid")]),
+        (_wire(start=9.0), [(0, "start", "start_invalid")]),
+        (_wire(start="09:00:00"), [(0, "start", "start_invalid")]),
+        (_wire(start=ARABIC_INDIC_NINE), [(0, "start", "start_invalid")]),
+        (_wire(start=EXTENDED_ARABIC_INDIC_NINE), [(0, "start", "start_invalid")]),
+        (_wire(start="900"), [(0, "start", "start_invalid")]),
+        (_wire(start="009:00"), [(0, "start", "start_invalid")]),
+        (_wire(start="09:0"), [(0, "start", "start_invalid")]),
+        (_wire(start="24:00", end="24:00"), [(0, "start", "start_invalid")]),
+        (_wire(start="00:00", end=1440), [(0, "end", "end_invalid")]),
+        (_wire(end=False), [(0, "end", "end_invalid")]),
+        (_wire(end="24:00:00"), [(0, "end", "end_invalid")]),
+        (_wire(end="10:15:00"), [(0, "end", "end_invalid")]),
+        (_wire(end="24:01"), [(0, "end", "end_invalid")]),
+        (_wire(end="10:60"), [(0, "end", "end_invalid")]),
+        (_wire(end=ARABIC_INDIC_NINE), [(0, "end", "end_invalid")]),
+        # note: a string when present.
+        (_wire(note=None), [(0, "note", "note_invalid")]),
+        (_wire(note=5), [(0, "note", "note_invalid")]),
+        (_wire(note=["a"]), [(0, "note", "note_invalid")]),
+    ],
+)
+def test_the_wire_is_strings_only_and_nothing_is_coerced(rule, expected):
+    instructor = _instructor()
+    assert _codes(_bad([rule], instructor=instructor)) == expected
+    assert not InstructorTimeRule.objects.filter(instructor=instructor).exists()
+
+
+def test_the_strict_wire_still_reads_every_canonical_form():
+    instructor = _instructor()
+    response = _bad(
+        [
+            {**_wire(days=[" sun", "Sun", "SUN", "thu "], start=" 9:05 ", end="24:00")},
+            {
+                k: v
+                for k, v in _wire(KIND_AVAILABLE_ONLY, ["MON"], "00:00", "23:59").items()
+                if k != "note"
+            },
+        ],
+        instructor=instructor,
+    )
+    assert response.status_code == 200, response.content
+    # Repeats of one day are one day; a missing note is an empty one.
+    assert _stored(instructor) == {
+        (KIND_UNAVAILABLE, 1 | 16, 545, 1440, ""),
+        (KIND_AVAILABLE_ONLY, 2, 0, 1439, ""),
+    }
+
+
+def test_all_wire_problems_of_one_rule_are_reported_together():
+    rule = {"kind": "unavailable", "days": [1], "start": 540, "end": "24:00:00", "note": 0}
+    assert _codes(_bad([rule])) == [
+        (0, "days", "days_invalid"),
+        (0, "start", "start_invalid"),
+        (0, "end", "end_invalid"),
+        (0, "note", "note_invalid"),
+    ]
+
+
 def test_a_note_of_the_maximum_length_is_accepted():
     instructor = _instructor()
     response = _bad([_wire(note="x" * MAX_NOTE_LENGTH)], instructor=instructor)
@@ -486,9 +637,49 @@ def test_duplicates_are_the_same_kind_days_and_window_whatever_the_order_or_note
     assert _codes(response) == [(1, "rule", "duplicate"), (6, "rule", "duplicate")]
 
 
+@pytest.mark.parametrize("value", ["1", True, 1.0, 0, -1, None, [1], 2**63])
+def test_the_body_instructor_id_is_a_positive_int_never_a_string_or_bool(value):
+    # Instructor 1 exists, so "1", True and 1.0 would each find it if coerced.
+    Instructor.objects.create(pk=1, full_name="Dr One", normalised_name="dr one")
+    payload = {"expected_revision": EMPTY_REVISION, "rules": [_wire()]}
+    if value is not None:
+        payload["instructor_id"] = value
+    assert _codes(_set(_client(), payload)) == [(-1, "instructor_id", "instructor_id_invalid")]
+    assert not InstructorTimeRule.objects.exists()
+
+
+def test_the_body_instructor_id_as_an_int_saves():
+    instructor = _instructor()
+    response = _set(
+        _client(),
+        {"instructor_id": instructor.pk, "expected_revision": EMPTY_REVISION, "rules": [_wire()]},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("template", [" {pk}", "{pk} ", "+{pk}", "{pk}.0", "0", "00"])
+def test_the_query_instructor_id_is_ascii_digits_only(template):
+    instructor = _instructor()
+    client = _client()
+    assert client.get(GET_URL, {"instructor_id": str(instructor.pk)}).status_code == 200
+    response = client.get(GET_URL, {"instructor_id": template.format(pk=instructor.pk)})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "VALIDATION"
+
+
+def test_the_empty_rule_set_has_a_fixed_non_empty_revision_the_first_save_uses():
+    assert isinstance(EMPTY_REVISION, str) and len(EMPTY_REVISION) == 16
+    assert EMPTY_REVISION == rules_revision([]) == rules_revision(())
+    instructor = _instructor()
+    client = _client()
+    loaded = client.get(GET_URL, {"instructor_id": instructor.pk}).json()["revision"]
+    assert loaded == EMPTY_REVISION
+    assert _save(client, instructor, [_wire()], revision=loaded).status_code == 200
+
+
 def test_the_revision_is_required():
     instructor = _instructor()
-    for revision in (None, "", 7):
+    for revision in (None, "", 7, ["x"], {"r": 1}, True):
         payload = {"instructor_id": instructor.pk, "rules": []}
         if revision is not None:
             payload["expected_revision"] = revision
@@ -566,12 +757,9 @@ def test_the_list_carries_each_instructors_rule_count_and_open_periods():
     assert rows[free.pk]["time_rules"] == {"count": 0, "open": FULL_OPEN}
     assert rows[mornings.pk]["time_rules"] == {
         "count": 1,
-        "open": {"lecture": {"open": 20, "total": 35}, "lab": {"open": 15, "total": 25}},
+        "open": _summary(20, 15, days=EVERY_DAY, state="limited"),
     }
-    assert rows[stuck.pk]["time_rules"] == {
-        "count": 2,
-        "open": {"lecture": {"open": 0, "total": 35}, "lab": {"open": 0, "total": 25}},
-    }
+    assert rows[stuck.pk]["time_rules"] == {"count": 2, "open": NOTHING_OPEN}
     # The roster row keeps every field it had.
     assert rows[free.pk]["full_name"] == "Dr Free" and "max_weekly_hours" in rows[free.pk]
 
@@ -590,6 +778,19 @@ def test_the_list_summary_costs_one_query_however_many_instructors():
     for n in range(6):
         extra = _instructor(f"Dr Extra {n}")
         _save(client, extra, [_wire(days=["MON"]), _wire(days=["TUE"])], EMPTY_REVISION)
+    # Every state of the feasibility summary is in the list, still for one query.
+    narrow = _instructor("Dr Narrow")
+    _save(client, narrow, [_wire(KIND_AVAILABLE_ONLY, ["THU"], "00:00", "24:00")], EMPTY_REVISION)
+    none = _instructor("Dr None")
+    _save(client, none, [_wire(KIND_AVAILABLE_ONLY, EVERY_DAY, "11:00", "13:00")], EMPTY_REVISION)
+    free = _instructor("Dr Free")
     many = _list_queries(client)
     assert len(many) == len(one)
     assert sum("instructor_time_rules" in sql for sql in many) == 1
+    states = {pk: row["time_rules"]["open"]["state"] for pk, row in _list(client).items()}
+    assert (states[first.pk], states[narrow.pk], states[none.pk], states[free.pk]) == (
+        "limited",
+        "narrow",
+        "none",
+        "any",
+    )
