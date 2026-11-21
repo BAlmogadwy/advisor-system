@@ -510,6 +510,8 @@
   color: var(--t1);
   font-family: var(--font-serif);
   font-size: var(--text-xl);
+  /* DM Serif Display has one weight: <strong>'s bold was synthesised (G11) */
+  font-weight: 400;
   line-height: 1;
 }
 
