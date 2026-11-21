@@ -1910,7 +1910,7 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
   background-color: var(--glass-bg) !important;
   border-color:     var(--control-edge) !important;
   color:            var(--t2) !important;
-  /* (its size is set with the field ladder below, where it can win) */
+  font-size:        var(--text-xs);
   font-family:      var(--font-body);
   border-radius:    var(--radius-sm);
 }
@@ -2634,9 +2634,10 @@ main.p-0 .page-header {
   min-height: var(--control-h-sm);
   font-size:  var(--field-fs-sm) !important;
 }
-/* The sidebar's language select keeps exactly the size it was designed at (the
-   sidebar is the owner's design; the field ladder above does not reach it). */
-.sidebar .form-select {
+/* The sidebar's language select keeps exactly the size it renders at on master
+   (the sidebar is the owner's design; the field ladder above does not reach it).
+   Its own wrapper selector, so the sidebar rule above keeps its declared token. */
+.s-lang .form-select {
   font-size:   clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important;
   line-height: 1.5;
   min-height:  0;
