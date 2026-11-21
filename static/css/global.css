@@ -302,7 +302,7 @@
      floor written in rem alone renders under itself on smaller screens: the two
      smallest steps carry a px floor. 11px is the least any text may be (micro
      labels: chips, kickers, counts); 12px is the least DATA may be. */
-  --fs-sm:          0.72rem;   /* legacy alias: .pill (unchanged size) */
+  --fs-sm:          var(--text-micro);   /* legacy alias: .pill */
   /* The floor for the micro-labels that used to sit at 8-10.9px (badges, kickers,
      counts, matrix cells). 11px in Latin; 12px in Arabic, set below under
      html[dir="rtl"], because Arabic at 11px is not legible. */
@@ -313,11 +313,43 @@
      at 11px in Arabic. An alias cannot drift out of step again. */
   --text-2xs:       var(--text-micro);
   --text-xs:        max(12px, 0.75rem);
-  --text-sm:        max(12.5px, 0.8125rem);
-  --text-base:      0.875rem;
-  --text-md:        1rem;
-  --text-lg:        1.15rem;
-  --text-xl:        1.4rem;
+  /* Every step carries a px floor, not only the two smallest. The root is 14px
+     on a phone, so a bare rem step rendered UNDER its own design size there:
+     .875rem body copy was 12.25px, and the raw .72-.78rem literals this scale
+     replaced measured 9.8-10.9px on a 390px screen (premium review, 2026-11).
+     A floor keeps the desktop size (the rem term wins at >=1440px) and stops
+     the phone from shrinking type below it. One scale, nine steps:
+       micro 11 · xs 12 · sm 13 · base 14 · md 16 · lg 18 · xl 22 · display 28 · numeral 36
+     (desktop px; Arabic micro is 12, see html[dir="rtl"] below). */
+  --text-sm:        max(13px, 0.8125rem);
+  --text-base:      max(14px, 0.875rem);
+  --text-md:        max(16px, 1rem);
+  --text-lg:        max(18px, 1.125rem);
+  --text-xl:        max(20px, 1.375rem);
+  /* the serif masthead / hero headline, and the serif display numeral */
+  --text-display:   max(24px, 1.75rem);
+  --text-numeral:   max(28px, 2.25rem);
+
+  /* ── control sizes — ONE height ladder for buttons, fields, selects and
+     segmented controls, so a toolbar row lines up. Height is a MINIMUM: a
+     wrapped label and the WCAG 1.4.12 text-spacing overrides still grow the
+     control. The line-height is explicit because the Arabic face's `normal`
+     line box is about twice the font size, which made every padded control
+     ~10px taller in Arabic than in English. Phones and coarse pointers get the
+     touch sizes by redefining these tokens once (see the 768px block), not by
+     per-component media rules. */
+  --control-h-xs:   24px;
+  --control-h-sm:   32px;
+  --control-h:      38px;
+  --control-h-lg:   44px;
+  --control-px-sm:  12px;
+  --control-px:     16px;
+  --control-fs-sm:  var(--text-sm);
+  --control-fs:     var(--text-base);
+  --field-fs:       var(--text-base);
+  --field-fs-sm:    var(--text-sm);
+  --control-lh:     1.3;
+  --control-radius: var(--radius-sm);
 
   /* z-index layering scale — single source of stacking truth */
   --z-base:         0;
@@ -355,11 +387,29 @@
   --sb-tip-ink:      #ffffff;
   --sb-tip-edge:     transparent;
 
-  /* the smallest an Arabic page lets running text be: 12px. Latin keeps the sizes
-     it was designed at (0 = no floor); a rule writes max(var(--fs-floor), 0.72rem). */
-  --fs-floor:       0px;
+  /* the smallest any running text may be: 11px in Latin, 12px in Arabic (below).
+     It was 0px in Latin, which made every max(var(--fs-floor), …) a no-op on a
+     phone's 14px root. */
+  --fs-floor:       11px;
 }
-html[dir="rtl"] { --fs-floor: 12px; }
+html[dir="rtl"] {
+  --fs-floor: 12px;
+  /* Noto Kufi Arabic needs room above and below for its marks (tashkeel): at
+     1.3 they touch the control's edge. 1.5 x 14px still fits the 32px tier. */
+  --control-lh: 1.5;
+}
+/* Touch sizes: a phone, or any device whose primary pointer is a finger, gets
+   44px controls (40px for the compact tier) and 16px field text, which also
+   stops iOS zooming into a focused field. One redefinition instead of the old
+   per-component 768px and 480px rules, which disagreed (44px vs 34px). */
+@media (max-width: 768px), (pointer: coarse) {
+  :root {
+    --control-h-sm: 40px;
+    --control-h:    44px;
+    --field-fs:     var(--text-md);
+    --field-fs-sm:  var(--text-md);
+  }
+}
 
 /* ── MRI stays exactly as it was (owner, 2026-10-23) ─────────────────────────
    The MRI page itself needs nothing here: `page-timetable-mri.js` puts
@@ -554,10 +604,14 @@ html[data-theme="light"] { color-scheme: light; }
    floor is 12px, not 11px, wherever --text-micro is used. */
 html[dir="rtl"] { --text-micro: max(12px, 0.75rem); }
 
-/* ── Dark body background ── */
+/* ── Dark body background ──
+   The body ink is --t0. It said --t2, but an unscoped `html[data-theme="dark"]
+   body` rule in the LOGIN block (same specificity, later) painted every dark
+   page #e2e4ec — which is --t0 — so --t0 is what dark pages have always shown.
+   That login rule is now scoped to the login page; this states the real value. */
 html[data-theme="dark"] body {
   background: var(--bg) !important;
-  color: var(--t2) !important;
+  color: var(--t0) !important;
 }
 
 /* ── Dark sidebar ── */
@@ -1207,6 +1261,24 @@ body {
   line-height:         1.5;
   margin:              0;
 }
+/* Body copy: 15px on a desktop and never under 14px. The clamp above is
+   relative to a root that is itself 14px on a phone, so running text was
+   11.4px at 390px wide. MRI and split view keep the clamp (owner: out of
+   scope); their body classes are set before anything paints. */
+body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }
+
+/* Box model: a padded or bordered box is the size it says. Nothing reset
+   box-sizing, so an <a class="btn"> (content-box) grew by its padding — 52-56px
+   beside a 38px <button> — and a `width:100%` box with padding ran off a phone
+   (the Arabic login scrolled sideways by 15px). Zero specificity, so any
+   component that wants content-box still says so. Not on the MRI page or the
+   classic inspector's MRI tab (owner: unchanged), nor split view, which has
+   its own reset (body.tws-root *). */
+:where(body:not(.twm-root):not(.tws-root)) :where(*:not(.tw-mri, .tw-mri *)),
+:where(body:not(.twm-root):not(.tws-root)) :where(*:not(.tw-mri, .tw-mri *))::before,
+:where(body:not(.twm-root):not(.tws-root)) :where(*:not(.tw-mri, .tw-mri *))::after {
+  box-sizing: border-box;
+}
 
 /* Form controls do not inherit the page font: the browser draws a button, an
    input, a select and a textarea in the system face (Arial) unless told
@@ -1218,6 +1290,11 @@ select,
 textarea {
   font-family: inherit;
 }
+/* …and they do not inherit its SIZE either: a control no component sizes falls
+   back to the browser's 13.33px (the Virtual Advisor fields and example
+   buttons). Zero specificity: every component's own size still wins. */
+:where(body:not(.twm-root):not(.tws-root)) :where(input, select, textarea) { font-size: var(--field-fs); }
+:where(body:not(.twm-root):not(.tws-root)) :where(button) { font-size: var(--control-fs); }
 
 /* ── Placeholder text ────────────────────────────────────────
    A placeholder is text, so it clears 4.5:1 like any other: --t4 does on every
@@ -2189,7 +2266,7 @@ main.p-0 .page-header {
   padding: 0.5rem 1rem;
 }
 .page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
-.page-header-module { font-weight: 700; font-size: clamp(0.875rem, 0.831rem + 0.19vw, 1rem); /* 14px → 16px */ color: var(--navy); letter-spacing: -0.01em; }
+.page-header-module { font-weight: 700; font-size: var(--text-md); color: var(--navy); letter-spacing: -0.01em; }
 .page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
 /* A page without chips (or with only a hidden one a script fills later) must not
    keep their row's gap under its title. */
@@ -2234,7 +2311,7 @@ main.p-0 .page-header {
     margin: 0;
     font-family: var(--font-serif);
     font-weight: 400;                  /* G11: DM Serif Display has one weight */
-    font-size: clamp(1.5rem, 1.25rem + 0.6vw, 1.875rem);   /* 24px → 30px */
+    font-size: var(--text-display);
     line-height: 1.2;
   }
   html[dir="rtl"] main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-module {
@@ -2369,11 +2446,11 @@ main.p-0 .page-header {
 /* The page's title is the header's h1. An intro heading, where a page has one,
    names the view inside the page (Exam Timetable: "Student lists"; a student's
    name on their graduation plan), so it reads as a subtitle, not a second title. */
-.page-intro h2 { font-family: var(--font-body); font-weight: 600; font-size: clamp(1rem, 0.95rem + 0.2vw, 1.125rem); /* 16px → 18px */ color: var(--t1); margin: 0 0 4px; }
+.page-intro h2 { font-family: var(--font-body); font-weight: 600; font-size: var(--text-lg); color: var(--t1); margin: 0 0 4px; }
 
 .panel-sub {
   color:         var(--t3);
-  font-size:     clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem); /* ~12.8px → 14px */
+  font-size:     var(--text-base);
   margin-bottom: 1.25rem;
   max-width:     80ch;
   line-height:   1.5;
@@ -2405,7 +2482,7 @@ main.p-0 .page-header {
    ============================================================ */
 .form-label {
   font-family:     var(--font-body) !important;
-  font-size:       clamp(0.6875rem, 0.663rem + 0.07vw, 0.75rem) !important; /* 11px → 12px */
+  font-size:       var(--text-xs) !important;
   font-weight:     700 !important;
   color:           var(--ink-2) !important;
   letter-spacing:  0.04em;
@@ -2417,15 +2494,19 @@ main.p-0 .page-header {
 .form-control,
 .form-select {
   font-family:      var(--font-body) !important;
-  font-size:        clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important; /* ~12.8px → 14px */
+  /* The control ladder (see :root): the same height as a .btn beside it, and a
+     line-height of its own so an Arabic field is not 10px taller than English. */
+  font-size:        var(--field-fs) !important;
+  line-height:      var(--control-lh);
+  min-height:       var(--control-h);
   color:            var(--ink) !important;
   border:           1px solid var(--control-edge) !important;
   /* 14px was the soft-era radius and never matched the system's own --radius
      (10px) or --radius-sm (7px); beside a 1px rule it reads as a different
      design language. Controls take --radius-sm. */
-  border-radius:    var(--radius-sm) !important;
+  border-radius:    var(--control-radius) !important;
   background-color: transparent !important;
-  padding:          0.45rem 1rem !important;
+  padding:          0 var(--control-px-sm) !important;
   box-sizing:       border-box !important;
   max-width:        100% !important;
   box-shadow:       var(--shadow-neu-inset) !important;
@@ -2472,10 +2553,23 @@ main.p-0 .page-header {
 .form-control::-ms-clear,
 .form-control::-webkit-credentials-auto-fill-button { display: none !important; }
 
+/* A select keeps room for its chevron on the side the chevron is drawn (the
+   shorthand above, !important, had taken bootstrap-compat's 2.25rem reserve
+   away, so a long option ran under the arrow — in both directions). */
+.form-select { padding-inline-end: 2.25rem !important; }
+/* The small field is the compact tier, the height of a .btn-sm beside it (the
+   -sm classes changed nothing: the rule above outranked their padding). */
+.form-control.form-control-sm,
+.form-select.form-select-sm {
+  min-height: var(--control-h-sm);
+  font-size:  var(--field-fs-sm) !important;
+}
+
 /* Textareas keep rounded-rectangle */
 textarea.form-control {
-  border-radius: var(--radius-sm) !important;
-  padding:       0.45rem 1rem !important;
+  border-radius: var(--control-radius) !important;
+  padding:       var(--space-4) var(--control-px-sm) !important;
+  line-height:   1.5;
 }
 
 /* ============================================================
@@ -2485,11 +2579,13 @@ textarea.form-control {
 html body .btn {
   font-family:     var(--font-body) !important;
   font-weight:     600 !important;
-  font-size:       clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important; /* ~12.8px → 14px */
-  border-radius:   var(--radius-sm) !important;
+  /* the default tier of the control ladder (see :root) */
+  font-size:       var(--control-fs) !important;
+  line-height:     var(--control-lh);
+  border-radius:   var(--control-radius) !important;
   border:          none !important;
-  min-height:      38px;
-  padding:         0.45rem 1.25rem !important;
+  min-height:      var(--control-h);
+  padding:         var(--space-2) var(--control-px) !important;
   display:         inline-flex;
   align-items:     center;
   justify-content: center;
@@ -2692,11 +2788,13 @@ html body .btn-outline-dark:hover {
    and the WCAG 1.4.12 text-spacing overrides still grow the button. */
 html body .btn-sm,
 html body .btn.btn-sm {
-  font-size:    clamp(0.72rem, 0.696rem + 0.09vw, 0.8rem) !important; /* ~11.5px → 12.8px */
-  line-height:  1.25;
-  min-height:   32px;
-  padding:      0.3rem 0.85rem !important;
-  border-radius: 10px !important;
+  /* the compact tier of the control ladder (see :root): 32px, 40px on touch */
+  font-size:    var(--control-fs-sm) !important;
+  line-height:  var(--control-lh);
+  min-height:   var(--control-h-sm);
+  padding:      var(--space-1) var(--control-px-sm) !important;
+  /* 10px made a small button rounder than the 7px button and field beside it */
+  border-radius: var(--control-radius) !important;
 }
 
 /* ── the neutral button ──────────────────────────────────────
@@ -2845,18 +2943,14 @@ html body .btn-neutral:focus-visible {
 }
 
 /* ── Compact controls ────────────────────────────────────────
-   .btn-sm is the toolbar size (32px). Its text never goes under 12px: the clamp
-   alone reached 10px on a 14px root. */
-html body .btn-sm,
-html body .btn.btn-sm {
-  font-size: max(12px, clamp(0.72rem, 0.696rem + 0.09vw, 0.8rem)) !important;
-}
+   .btn-sm is the toolbar size (--control-h-sm, set with the button rules). */
 /* A square icon button. A size modifier only: it carries no surface, so it is
    always paired with a surface variant (btn-neutral, btn-primary …). */
 html body .btn.btn-icon {
-  width: 32px; min-width: 32px; height: 32px; min-height: 32px;
+  width: var(--control-h-sm); min-width: var(--control-h-sm);
+  height: var(--control-h-sm); min-height: var(--control-h-sm);
   padding: 0 !important;
-  border-radius: 10px !important;
+  border-radius: var(--control-radius) !important;
 }
 html body .btn.btn-icon svg,
 html body .btn.btn-icon .i { width: 16px; height: 16px; flex: none; }
@@ -4179,9 +4273,13 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
 .drawer .filter-bar,
 .dlg-box .filter-bar,
 .matrix-fullscreen .filter-bar { background: var(--card); }
+/* A field capsule (icon + input/select) is a default-tier control: the height
+   comes from the ladder, not from the input's padding and line box (it was 37px
+   beside a 38px button, 46px in Arabic and 31px on a phone). */
 .fb-search {
   display:flex; align-items:center; gap:8px; flex:1; max-width:320px;
-  padding:0 1rem; border-radius:var(--radius-sm);
+  min-height:var(--control-h);
+  padding:0 var(--control-px-sm); border-radius:var(--control-radius);
   background:transparent; border:none;
   box-shadow:inset 0 0 0 1px var(--control-edge), var(--shadow-neu-inset);
   transition:box-shadow .25s var(--ease);
@@ -4195,8 +4293,11 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
 .fb-search .i { color:var(--t4); }
 .fb-search input {
   flex:1; background:transparent; border:none; outline:none;
-  box-shadow:none; color:var(--t1); font-size:0.95rem; font-family:inherit;
-  padding:0.55rem 0;
+  box-shadow:none; color:var(--t1); font-size:var(--field-fs); font-family:inherit;
+  line-height:var(--control-lh);
+  padding:0;
+  /* the whole capsule height is the field's hit area */
+  align-self:stretch;
 }
 .fb-search input:focus,
 .fb-search input:focus-visible {
@@ -4224,8 +4325,9 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
 .fb-search select {
   flex:1; min-width:0; width:100%;
   background:transparent; border:none; outline:none;
-  box-shadow:none; color:var(--t1); font-size:0.95rem; font-family:inherit;
-  padding:0.55rem 0; cursor:pointer;
+  box-shadow:none; color:var(--t1); font-size:var(--field-fs); font-family:inherit;
+  line-height:var(--control-lh);
+  padding:0; cursor:pointer; align-self:stretch;
   -webkit-appearance:none; -moz-appearance:none; appearance:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239aa5b4'/%3E%3C/svg%3E");
   background-repeat:no-repeat;
@@ -4252,9 +4354,11 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
    not grow by 2px and re-wrap every bar it sits in. */
 .fb-dd {
   display:flex; align-items:center; gap:6px;
-  padding:7px 14px; border-radius:10px;
+  /* a default-tier control, the height of the capsules and buttons beside it */
+  min-height:var(--control-h); line-height:var(--control-lh);
+  padding:0 var(--control-px-sm); border-radius:var(--control-radius);
   background:var(--btn-neutral-bg); border:none;
-  font-size:clamp(0.6875rem, 0.664rem + 0.09vw, 0.75rem); /* 11px → 12px */ font-weight:600; color:var(--t2);
+  font-size:var(--control-fs-sm); font-weight:600; color:var(--t2);
   cursor:pointer; transition:all .18s var(--ease);
   box-shadow:inset 0 0 0 1px var(--btn-neutral-border);
   backdrop-filter:none;
@@ -4335,8 +4439,8 @@ html[dir="rtl"] .fb-fit .fb-search select { background-position: left 0.4rem cen
    TOOL-PAGE COMPONENTS); the label is the small secondary text. The .fb-fit focus
    ring above still applies. */
 .fb-search.fb-sm {
-  min-height: 32px; padding: 0 0.6rem; gap: 6px;
-  border-radius: 10px;
+  min-height: var(--control-h-sm); padding: 0 0.6rem; gap: 6px;
+  border-radius: var(--control-radius);
   background: var(--btn-neutral-bg);
   box-shadow: inset 0 0 0 1px var(--btn-neutral-border);
 }
@@ -4344,7 +4448,13 @@ html[data-theme="dark"] .fb-search.fb-sm { box-shadow: inset 0 0 0 1px var(--btn
 /* An explicit line-height, as .btn-sm's: with `normal` the Arabic face's line
    box made the field, and its toolbar row, 34.6px instead of 32px (L30). */
 .fb-search.fb-sm input,
-.fb-search.fb-sm select { padding: 0.3rem 0; font-size: var(--text-sm); line-height: 1.5; }
+.fb-search.fb-sm select { padding: 0; font-size: var(--field-fs-sm); line-height: var(--control-lh); }
+/* ONE height tier per bar. A filter bar of default capsules lines its buttons
+   and dropdown chips up at the default height (a dashboard bar measured
+   37/36/38/32px side by side); a bar that carries compact capsules, or says it
+   is compact, takes the compact tier for all of them. */
+.filter-bar:not(.filter-bar-sm):not(:has(.fb-sm)) :is(.btn:not(.btn-icon), .fb-dd) { min-height: var(--control-h); }
+:is(.filter-bar-sm, .filter-bar:has(.fb-sm)) :is(.btn:not(.btn-icon), .fb-dd, .fb-search) { min-height: var(--control-h-sm); }
 .fb-search.fb-sm select { padding-inline-end: 1.3rem; background-position: right 0.15rem center; }
 html[dir="rtl"] .fb-search.fb-sm select { background-position: left 0.15rem center; }
 /* A field's name stays visible next to its value: a capsule that opens holding
@@ -5061,7 +5171,11 @@ pre, .pre-output {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    /* the title is the largest line of the phone's bar (it was 12.4px, under the
+       14.7px subtitle below it) */
+    font-size: var(--text-lg);
   }
+  .page-intro h2 { font-size: var(--text-md); }
   .page-header-chips {
     overflow: hidden;
     flex-wrap: nowrap;
@@ -5077,18 +5191,8 @@ pre, .pre-output {
     padding: 1rem !important;
   }
 
-  /* Touch targets — minimum 44px (Apple HIG / WCAG 2.5.5) */
-  .btn:not(.btn-sm):not(.btn-xs) {
-    min-height: 44px;
-    padding-top:    0.5rem;
-    padding-bottom: 0.5rem;
-  }
-
-  .form-control,
-  .form-select {
-    min-height:  44px;
-    font-size:   1rem; /* prevent iOS auto-zoom (needs ≥16px) */
-  }
+  /* Touch targets (44px buttons and fields, 16px field text against iOS zoom)
+     come from the control tokens, redefined once for touch near :root. */
 
   /* Metric cards: 2-column grid on tablet */
   .row.g-2 > [class*="col-md-3"] {
@@ -5234,11 +5338,12 @@ pre, .pre-output {
   /* ── Mobile density: tighter padding for admin screens ── */
   .soft-card { padding: 0.75rem; margin-bottom: 0.5rem; }
   .filter-bar { padding: 8px 12px; gap: 6px; margin-bottom: 12px; }
-  html body .btn { min-height: 34px; padding: 0.35rem 0.9rem !important; font-size: 0.78rem !important; }
-  .form-control, .form-select { padding: 0.35rem 0.75rem !important; }
+  /* Buttons and fields keep the touch tier here too: this block used to shrink
+     them to 34px with 10.9px labels, undoing the 44px rule above it. */
+  html body .btn { padding-inline: var(--control-px-sm) !important; }
   .form-label { margin-bottom: 0.15rem; }
-  .page-intro h2 { font-size: 1.05rem !important; margin-bottom: 2px; }
-  .panel-sub, .page-intro .panel-sub { font-size: 0.72rem; margin-bottom: 0.5rem; }
+  .page-intro h2 { margin-bottom: 2px; }
+  .panel-sub, .page-intro .panel-sub { margin-bottom: 0.5rem; }
 
   /* ── Mobile Cards — table-to-card transform ──────────────── */
   .mobile-cards thead { display: none; }
@@ -6124,18 +6229,10 @@ html body .btn-export {
   /* --teal-border is rgba(10,142,110,0.16): about 1.2:1, a tint rather than an
      edge. A control boundary needs the real one. */
   box-shadow: inset 0 0 0 1px var(--control-edge) !important;
-  /* Nothing in the app resets box-sizing, so an <a class="btn"> is content-box
-     while a <button> is border-box: the same `min-height: 38px` then grew the
-     link by its padding — 52px beside a 40px Run button. Half of the export
-     controls are links. The browser's own <button> face also sets
-     `line-height: normal` where a link inherits 1.5; take the button's, or a
-     link stops 2px short of the Run button beside it. (`.btn-sm` sets its own.) */
-  box-sizing: border-box;
-  line-height: normal;
+  /* Its box and line box come from the global reset and the .btn ladder now:
+     an <a> and a <button> export control are the same height (they were 52px
+     and 40px before the reset). */
 }
-/* In a filter bar an export button sits among .fb-dd chips (36px tall); the
-   small size would stop 2px short of them. */
-html body .filter-bar .btn-export.btn-sm { min-height: 36px; }
 /* On a phone the label carries the meaning and the icon is the first thing to
    give up its room. The portfolio's actions (CSV, Copy IDs, Copy Risk IDs) are
    one group that may not wrap apart; in Arabic they need 390px of a 338px bar
@@ -12003,6 +12100,13 @@ body:has(.login-wrap) {
   .login-wrap {
     width: 100%; max-width: 420px; padding: 1.5rem;
     animation: login-fade-up 0.5s var(--ease) both;
+    /* Its own layer above the fixed .color-mesh (z-index 0, an opaque gradient
+       in dark). The page replaces the shell, which is what lifts every other
+       page above the mesh; until now only the fade-in's leftover transform did
+       it here, so with animations off the dark card, title and fields painted
+       UNDER the mesh and the page showed an avatar and a button on black. */
+    position: relative; z-index: 1;
+    min-width: 0;
   }
   .telegram-link-wrap {
     max-width: 720px;
@@ -12359,7 +12463,9 @@ body:has(.login-wrap) {
   /* ============================================================
      DARK MODE — Login page overrides
      ============================================================ */
-  html[data-theme="dark"] body {
+  /* Scoped to the login page: unscoped, this painted the body of EVERY dark page
+     (the dark body rule near the top now states the same --t0 ink itself). */
+  html[data-theme="dark"] body:has(.login-wrap) {
     background: #0d0f1a !important;
     color: #e2e4ec !important;
   }
