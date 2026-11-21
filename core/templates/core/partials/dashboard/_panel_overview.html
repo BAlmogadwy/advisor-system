@@ -58,7 +58,7 @@
                 {% if command_center.audit.ok %}
                   <small>{% if LANGUAGE_CODE == 'ar' %}السلسلة سليمة · سجلات HMAC: {{ command_center.audit.hmac_count }} · سجلات قديمة: {{ command_center.audit.legacy_count }}{% else %}Healthy chain, {{ command_center.audit.hmac_count }} HMAC rows and {{ command_center.audit.legacy_count }} legacy rows validated.{% endif %}</small>
                 {% else %}
-                  <small title="{{ command_center.audit.invalid_ids|join:', ' }}">{% if LANGUAGE_CODE == 'ar' %}السلسلة معطوبة. عيّنة من السجلات غير الصالحة: {{ command_center.audit.invalid_ids|join:"، " }}{% else %}Broken chain. Invalid row sample: {{ command_center.audit.invalid_ids|join:", " }}{% endif %}</small>
+                  <small class="dcc-triage-ids" title="{{ command_center.audit.invalid_ids|join:', ' }}">{% if LANGUAGE_CODE == 'ar' %}السلسلة معطوبة. عيّنة من السجلات غير الصالحة: {{ command_center.audit.invalid_ids|join:"، " }}{% else %}Broken chain. Invalid row sample: {{ command_center.audit.invalid_ids|join:", " }}{% endif %}</small>
                 {% endif %}
               </span>
             </a>

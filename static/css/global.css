@@ -8842,18 +8842,21 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   color: var(--ink);
   font-size: var(--text-base);
 }
-/* Two lines at most: a broken audit chain listed about a hundred row ids here,
-   five lines at 1440 and fourteen on a phone. The row links to the audit log,
-   and the full list is the line's title. */
 .dcc-triage-row small {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  display: block;
   margin-top: 0.12rem;
   color: var(--t3);
   font-size: var(--text-xs);
   line-height: 1.35;
+}
+/* Two lines at most for a list of ids: a broken audit chain listed about a
+   hundred row ids, five lines at 1440 and fourteen on a phone. The row links
+   to the audit log, and the full list is the line's title. */
+.dcc-triage-row small.dcc-triage-ids {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 /* Severity was a coloured dot and nothing else. A dot alone tells a reader who
    cannot separate the hues nothing at all, and tells everyone else nothing
@@ -17425,8 +17428,12 @@ html[dir="rtl"] .audit-endpoint {
    share column were cut at the frame's edge with no sign of more (UI review 3).
    The menu's cue (G16), across: the far edge fades while there is more that
    way, the near edge once you have scrolled. A table that fits does not
-   scroll, so no fade is drawn. The direction is the frame's own, so an Arabic
-   table fades its left edge first. */
+   scroll, so no fade is drawn; an Arabic table fades its left edge first.
+   Only where scrollbars are overlays, on a touch screen: there the fade is the
+   only cue, while a mouse desktop already draws the scrollbar, which a mask
+   would fade with the table. And not while the frame has keyboard focus: a
+   mask also clips what is drawn outside the box, which is where its focus
+   ring is (the audit log's table is a tab stop). */
 @property --tbl-fade-s { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --tbl-fade-e { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @keyframes tbl-scroll-cue {
@@ -17436,23 +17443,33 @@ html[dir="rtl"] .audit-endpoint {
   100% { --tbl-fade-s: 24px; --tbl-fade-e: 0px; }
 }
 @supports (animation-timeline: scroll()) {
-  :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
-    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tbl-fade-s),
-                        #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
-    mask-image: linear-gradient(to right, transparent 0, #000 var(--tbl-fade-s),
-                #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
-    animation: tbl-scroll-cue linear both;
-    animation-timeline: scroll(self inline);
+  @media (pointer: coarse) {
+    :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
+      -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tbl-fade-s),
+                          #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+      mask-image: linear-gradient(to right, transparent 0, #000 var(--tbl-fade-s),
+                  #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+      animation: tbl-scroll-cue linear both;
+      animation-timeline: scroll(self inline);
+    }
+    :where(html[dir="rtl"] body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
+      -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--tbl-fade-s),
+                          #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+      mask-image: linear-gradient(to left, transparent 0, #000 var(--tbl-fade-s),
+                  #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+    }
+    :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)):focus-visible {
+      -webkit-mask-image: none;
+      mask-image: none;
+    }
   }
-  :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)):dir(rtl) {
-    -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--tbl-fade-s),
-                        #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
-    mask-image: linear-gradient(to left, transparent 0, #000 var(--tbl-fade-s),
-                #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+  @media (pointer: coarse) and (prefers-reduced-motion: reduce) {
+    /* the reduced-motion rule shortens every animation to 0.01ms; a scroll
+       timeline has no duration, and a fade is not motion */
+    :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
+      animation-duration: auto !important;
+    }
   }
-}
-@media (prefers-reduced-motion: reduce) {
-  :where(.table-wrap, .audit-table-wrap) { animation-duration: auto !important; }
 }
 
 /* G5 (Arabic) — Arabic at 11px is not legible; the sidebar's micro-labels that
