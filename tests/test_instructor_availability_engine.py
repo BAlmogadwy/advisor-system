@@ -198,6 +198,25 @@ def test_scopes_are_re_entrant(av_on) -> None:
 
 
 @pytest.mark.django_db
+def test_a_scenario_scope_opened_inside_a_request_scope_shares_its_holder(av_on) -> None:
+    """foundation:F6 (M37): a run's ``availability_scope(sid)`` opened inside a
+    request's ``availability_scope(None)`` BEFORE anything is loaded reuses the
+    request's holder, so a read after the run, in the same request, is not a
+    second rule query."""
+    sc, people = _course_scenario("nested first", {"Dr A": "AI"})
+    rule(people["Dr A"], KIND_UNAVAILABLE)
+    universe = {people["Dr A"].pk}
+
+    with CaptureQueriesContext(connection) as ctx:
+        with helper.availability_scope(None):
+            with helper.availability_scope(sc.id):
+                during = helper.availability_for(sc.id, universe=universe)
+            after = helper.availability_for(sc.id, universe=universe)
+    assert during is after
+    assert len(rule_queries(ctx.captured_queries)) == 1
+
+
+@pytest.mark.django_db
 def test_rules_are_loaded_only_for_the_teacher_universe(av_on) -> None:
     sc, people = _course_scenario("universe", {"Dr A": "AI"})
     outsider = ots.instructor("Dr Zed")
@@ -229,6 +248,71 @@ def test_without_a_universe_the_scenario_map_gives_it_in_one_rule_query(av_on) -
                 av = helper.availability_for(sc.id)
         assert av.instructor_ids == {people["Dr A"].pk}
         assert len(rule_queries(ctx.captured_queries)) == 1, scoped
+
+
+@pytest.mark.django_db
+def test_a_universe_that_grows_inside_a_scope_loads_the_new_teachers_rules(av_on) -> None:
+    """D-G (foundation:F2): the scope remembers the universe it loaded. A later
+    read with ids outside it loads the rules of the union once more (one query);
+    a read inside what is loaded costs nothing. Unscoped there is nothing to
+    grow: each read loads its own universe."""
+    sc, people = _course_scenario("grows", {"Dr A": "AI"})
+    late = ots.instructor("Dr Late")
+    rule(people["Dr A"], KIND_UNAVAILABLE, ("SUN",))
+    rule(late, KIND_UNAVAILABLE, ("MON",))
+    a, t = people["Dr A"].pk, late.pk
+
+    with CaptureQueriesContext(connection) as ctx:
+        with helper.availability_scope(sc.id):
+            first = helper.availability_for(sc.id, universe={a})
+            checker = helper.section_rule_checker(sc.id)
+            grown = helper.availability_for(sc.id, universe={t})
+            again = helper.availability_for(sc.id, universe={a, t})
+            plain = helper.availability_for(sc.id)
+            rebuilt = helper.section_rule_checker(sc.id)
+
+    assert first.instructor_ids == {a}
+    assert grown.instructor_ids == {a, t}  # the union, not the new ids alone
+    assert again is grown and plain is grown
+    # The writers' checker was built from the smaller availability: rebuilt.
+    assert checker.availability is first and rebuilt.availability is grown
+    assert len(rule_queries(ctx.captured_queries)) == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("read_first", [True, False], ids=["read-before-create", "control"])
+def test_a_manual_create_checks_a_teacher_who_enters_the_universe_mid_request(
+    av_on, read_first
+) -> None:
+    """D-G (foundation:F2): an own CS300 section (no budget) is not in the teacher
+    universe until it is placed. A read earlier in the same request loads the
+    rules for the universe WITHOUT its only teacher Dr T; the manual create's
+    closure must still see his "no Sundays" and leave the section TBD instead of
+    storing him at a forbidden SUN 09:00. Control: no earlier read."""
+    from core.models import SectionInstructor
+    from core.services.course_identity import planner_course_key
+    from core.services.timetable_workspace import validate_placement
+
+    sc, board, _key, _ts, (_a,) = _ruled_board(eligible=("Dr A",))
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="CS300", course_name="OTHER", programme_term=2, credit_hours=3
+    )
+    teacher = ots.instructor("Dr T")
+    ots.link("AI", "CS300", teacher)
+    other = planner_course_key("CS300", "OTHER")
+    ts = ots.section(sc, other, "S1")
+    rule(teacher, KIND_UNAVAILABLE, ("SUN",))
+
+    with CaptureQueriesContext(connection) as ctx, sta.request_scope():
+        if read_first:
+            validate_placement(board.id, "SUN", "09:00", "10:15", "", ts.pk)
+            assert len(rule_queries(ctx.captured_queries)) == 1  # the universe without Dr T
+        ots.place(board, ts, [("SUN", "09:00", "10:15"), ("TUE", "09:00", "10:15")])
+        sta.name_new_section(sc.id, ts, board)
+
+    stored = SectionInstructor.objects.filter(scenario=sc, course_key=other, section="S1")
+    assert list(stored.values_list("instructor_id", flat=True)) == []
+    assert len(rule_queries(ctx.captured_queries)) == (2 if read_first else 1)
 
 
 @pytest.mark.django_db
