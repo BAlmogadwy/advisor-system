@@ -437,6 +437,42 @@ class SidebarNavBrowserTests(StaticLiveServerTestCase):
         # A badge that simply never showed would pass everything above.
         self.assertTrue(badge_shown_at_full_width["en"], "the badge never shows")
 
+    def test_the_arabic_sidebar_reads_at_the_pages_scale(self) -> None:
+        """Arabic draws smaller than Inter at the same size, and the page took an
+        Arabic type scale; the full-width rail follows it one step (links 13 to
+        14px, the search row and the user's lines 12 to 13px). The product name
+        is the body face at 600 with room for its marks, not the serif's thin
+        400 at 1.1, and no Arabic label is set in the mono face. The narrower
+        rails keep their fitted sizes; English is as it was."""
+        probe = """() => {
+          const style = selector => getComputedStyle(document.querySelector(selector));
+          const title = style('.logo-title');
+          return {
+            link: style('.nav-a').fontSize,
+            search: style('#navFind .nav-find-t').fontSize,
+            role: [style('.u-rl').fontSize, style('.u-rl').fontFamily.split(',')[0].trim()],
+            title: [title.fontWeight, parseFloat(title.lineHeight) / parseFloat(title.fontSize),
+                    title.fontFamily.split(',')[0].replace(/["']/g, '').trim()],
+          };
+        }"""
+        for language, width, link, search in (
+            ("ar", 1440, "14px", "13px"),
+            ("ar", 1100, "13px", "12px"),
+            ("en", 1440, "13px", "12px"),
+        ):
+            with self.subTest(language=language, width=width):
+                page = self._open(self._context(language=language, width=width), language=language)
+                seen = page.evaluate(probe)
+                self.assertEqual((seen["link"], seen["search"]), (link, search), seen)
+                if language == "ar":
+                    self.assertEqual(seen["title"][0], "600", seen)
+                    self.assertGreaterEqual(seen["title"][1], 1.35, seen)
+                    self.assertNotIn("Mono", seen["role"][1], seen)
+                    self.assertNotIn("Serif", seen["title"][2], seen)
+                else:
+                    self.assertEqual(seen["title"][2], "DM Serif Display", seen)
+                page.context.close()
+
     # ── The icon rail ────────────────────────────────────────────────────
     def test_staff_can_use_the_rail_until_the_next_page_load(self) -> None:
         context = self._context()

@@ -17,7 +17,7 @@
 
 {% block content %}
 <div class="student-map-toolbar mb-3">
-  <a class="btn btn-outline-secondary" href="{% url 'student_courses' %}"><span aria-hidden="true">←</span> {% if LANGUAGE_CODE == 'ar' %}العودة إلى المقررات{% else %}Back to course guidance{% endif %}</a>
+  <a class="btn btn-outline-secondary" href="{% url 'student_courses' %}"><span aria-hidden="true">{% if LANGUAGE_CODE == 'ar' %}→{% else %}←{% endif %}</span> {% if LANGUAGE_CODE == 'ar' %}العودة إلى المقررات{% else %}Back to course guidance{% endif %}</a>
   {% if report %}
     <div class="student-map-counts" aria-label="{% if LANGUAGE_CODE == 'ar' %}ملخص حالة المقررات{% else %}Course status summary{% endif %}">
       <span><i class="student-map-dot is-passed" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المقررات المجتازة: {{ report.counts.passed }}{% else %}{{ report.counts.passed }} passed{% endif %}</span>
