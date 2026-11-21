@@ -36,7 +36,8 @@ main.exam-builder-page,
   --et-selected-border: #81b9ae;
   --et-danger: #b42332;
   --et-danger-soft: #fff3f3;
-  --et-focus: #2368bf;
+  /* The app's one keyboard-focus colour (it was a blue of its own, #2368bf). */
+  --et-focus: var(--teal);
   --et-warning: #85530a;
   --et-warning-soft: #fff8e6;
   --et-related: #3f719d;
@@ -73,7 +74,7 @@ html[data-theme="dark"] #matrixPanel {
   --et-selected-border: #477f72;
   --et-danger: #ffabb5;
   --et-danger-soft: #3b2029;
-  --et-focus: #8fbeff;
+  --et-focus: var(--teal);
   --et-warning: #f5cf85;
   --et-warning-soft: #372c18;
   --et-related: #9bbfe1;
