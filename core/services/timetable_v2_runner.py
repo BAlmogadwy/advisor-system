@@ -526,6 +526,39 @@ def run_v2_optimisation_guarded(
     max_chain_iterations: int = 10,
     checkpoint: Callable[[], None] | None = None,
 ) -> dict:
+    """Run the V2 optimiser behind the snapshot → regression → rollback gate
+    (:func:`_run_v2_optimisation_guarded`), inside one teaching-time rule scope:
+    the pre-step reinstatement, every phase and both pipelines read the rules
+    once (``TIMETABLE_INSTRUCTOR_AVAILABILITY``; nothing loads while it is off).
+    """
+    from core.services.timetable_instructor_availability import availability_scope
+
+    with availability_scope(scenario_id):
+        return _run_v2_optimisation_guarded(
+            scenario_id,
+            mode=mode,
+            max_iterations=max_iterations,
+            run_chain=run_chain,
+            run_cpsat=run_cpsat,
+            cpsat_limit=cpsat_limit,
+            strategies=strategies,
+            max_chain_iterations=max_chain_iterations,
+            checkpoint=checkpoint,
+        )
+
+
+def _run_v2_optimisation_guarded(
+    scenario_id: int,
+    *,
+    mode: str = "current",
+    max_iterations: int = 50,
+    run_chain: bool = True,
+    run_cpsat: bool = True,
+    cpsat_limit: float = 60.0,
+    strategies: list[str] | None = None,
+    max_chain_iterations: int = 10,
+    checkpoint: Callable[[], None] | None = None,
+) -> dict:
     """Run the V2 optimiser behind the snapshot → regression → rollback gate.
 
     ``mode`` is ``"full"`` (regenerate from scratch) or ``"current"`` (improve

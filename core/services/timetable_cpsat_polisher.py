@@ -24,6 +24,7 @@ from ortools.sat.python import cp_model
 
 from core.models import DeliveryBoard
 from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
+from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.timetable_assignment_models import (
     SectionMeeting,
     SectionState,
@@ -45,6 +46,11 @@ from core.services.timetable_course_policy import (
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_flags import is_section_day_spread_enabled
+from core.services.timetable_instructor_availability import (
+    meetings_blocked,
+    option_blocked,
+    rule_ids,
+)
 from core.services.timetable_optimisation_policy import evaluation_is_better
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
@@ -116,6 +122,36 @@ def _not_run_when_model_too_large(fn):
     return inner
 
 
+def _has_legal_option(
+    availability: InstructorAvailability,
+    ids: tuple[int, ...],
+    sec: SectionState,
+    get_options,
+    scenario_obj,
+    slot_config: list[dict],
+    lab_slot_config: list[dict],
+) -> bool:
+    """Every meeting of a ruled section has an option on the polisher's grid its
+    teacher may teach (an English section: some bundle he may teach)."""
+    policy = get_course_meeting_policy(sec.course_code)
+    if policy:
+        return any(
+            not option_blocked(availability, ids, bundle)
+            for bundle in meeting_options_for_policy(
+                policy,
+                blocked_slots=scenario_obj.blocked_slots or [],
+                slots=slot_config + lab_slot_config,
+            )
+        )
+    return all(
+        any(
+            not meetings_blocked(availability, ids, [(opt[0], opt[6], opt[7])])
+            for opt in get_options(meeting.end_min - meeting.start_min)
+        )
+        for meeting in sec.meetings
+    )
+
+
 @_not_run_when_model_too_large
 def polish_scenario_with_cpsat(
     scenario_id: int,
@@ -129,8 +165,17 @@ def polish_scenario_with_cpsat(
     locked_section_ids: set[str] | None = None,
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
     course_tiers: dict[str, str] | None = None,
+    *,
+    instructor_availability: InstructorAvailability = EMPTY_AVAILABILITY,
 ) -> dict | None:
     """Run a global CP-SAT pass as a polisher on the current best timetable.
+
+    ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a meeting
+    of a section whose charged teacher has a rule may stay where it is or move
+    only to a cell he may teach (an English section: a whole bundle he may
+    teach). A ruled section with a meeting that has no option on the grid he
+    may teach is held fixed, like a locked one, and the rest of the board is
+    polished.
 
     Parameters
     ----------
@@ -244,6 +289,36 @@ def polish_scenario_with_cpsat(
         # contact time rather than substitute a longer or shorter session.
         slots = slots_75 if duration <= 75 else slots_lab
         return [opt for opt in slots if opt[7] - opt[6] == duration]
+
+    # Teaching-time rules (H6): a ruled section with a meeting that has no option
+    # on the grid its teacher may teach is held fixed (as a locked section is)
+    # instead of being polished, so an off-grid forbidden meeting can never empty
+    # a domain and abort the pass; it could not move legally anyway. The others
+    # are polished with their forbidden cells closed below (the current slot
+    # stays allowed, so an existing violation may stay, never grow).
+    av_ids: dict[str, tuple[int, ...]] = {}
+    if instructor_availability and section_instructor_ids:
+        polishable: list[SectionState] = []
+        for sec in sections_to_polish:
+            ids = rule_ids(instructor_availability, section_instructor_ids.get(sec.section_id, ()))
+            if ids and not _has_legal_option(
+                instructor_availability,
+                ids,
+                sec,
+                get_options,
+                scenario_obj,
+                slot_config,
+                lab_slot_config,
+            ):
+                fixed_sections.append(sec)
+                continue
+            if ids:
+                av_ids[sec.section_id] = ids
+            polishable.append(sec)
+        sections_to_polish = polishable
+        if not sections_to_polish:
+            logger.info("CP-SAT polisher: no sections to polish under the teaching-time rules")
+            return None
 
     # ── Build CP-SAT model ───────────────────────────────────────
     model = BudgetedCpModel()
@@ -463,6 +538,23 @@ def polish_scenario_with_cpsat(
                 for var_a, day_a, s_a, e_a, _sec_a in opts:
                     if day_a == f_day and s_a < f_e and f_s < e_a:
                         model.add(var_a == 0)
+
+    # ── Hard: teaching-time rules (never INTO a cell the teacher may not teach) ─
+    # Its own block, not under the clash flag. Each meeting keeps its current
+    # slot; every other option its teacher may not teach is closed. An English
+    # section's meetings are linked to one bundle above, so closing a meeting
+    # closes that whole bundle.
+    for i, sec in enumerate(sections_to_polish):
+        ids = av_ids.get(sec.section_id)
+        if not ids:
+            continue
+        for m_idx, opts in enumerate(sec_options[i]):
+            meeting = sec.meetings[m_idx]
+            current_cell = (meeting.day, meeting.start_min, meeting.end_min)
+            for o_idx, opt in enumerate(opts):
+                cell = (opt[0], opt[6], opt[7])
+                if cell != current_cell and meetings_blocked(instructor_availability, ids, [cell]):
+                    model.add(assign[i][m_idx][o_idx] == 0)
 
     # ── Soft: cross-course student overlap penalty ───────────────
     penalties = []

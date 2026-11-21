@@ -33,6 +33,7 @@ from core.models import (
 )
 from core.services.course_classifier import FAILING_LETTER_GRADES
 from core.services.course_identity import course_display_code
+from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.section_programme_preference import normalise_programme
 from core.services.student_helpers import normalize_code
 from core.services.timetable_assignment_models import (
@@ -65,6 +66,12 @@ from core.services.timetable_flags import (
     is_online_gap_exclusion_enabled,
     is_section_programme_preference_enabled,
     is_tiered_objective_enabled,
+)
+from core.services.timetable_instructor_availability import (
+    availability_for,
+    availability_scope,
+    cell_predicate,
+    rule_ids,
 )
 from core.services.timetable_meeting_shape import shape_for
 from core.services.timetable_online import OnlineCourseLookup
@@ -1133,8 +1140,46 @@ def _generate_candidates_for_scenario(
     return candidates
 
 
-def _build_pattern_catalog_for_scenario(scenario_id: int) -> dict[str, list]:
-    """Build canonical pattern catalog from scenario budget data."""
+def _kernel_rules(availability: InstructorAvailability) -> dict:
+    """The teaching-time keyword an improvement kernel receives, only while a
+    rule binds a teacher of the run: with none every call is exactly as before."""
+    return {"instructor_availability": availability} if availability else {}
+
+
+def _catalog_rules(
+    availability: InstructorAvailability,
+    section_instructor_ids: dict[str, frozenset[int]] | None,
+) -> dict:
+    """The catalogue's teaching-time keywords, only while a rule binds (see
+    :func:`_kernel_rules`)."""
+    if not availability:
+        return {}
+    return {"availability": availability, "section_instructor_ids": section_instructor_ids}
+
+
+def _catalog_cell_predicates(
+    availability: InstructorAvailability,
+    section_instructor_ids: dict[str, frozenset[int]] | None,
+) -> list:
+    """One cell predicate per ruled teacher the run's map CHARGES (sorted ids):
+    a rule on an eligible teacher nobody charges leaves the catalog unchanged."""
+    if not availability or not section_instructor_ids:
+        return []
+    charged = {iid for ids in section_instructor_ids.values() for iid in ids or ()}
+    return [cell_predicate(availability, (iid,)) for iid in rule_ids(availability, charged)]
+
+
+def _build_pattern_catalog_for_scenario(
+    scenario_id: int,
+    *,
+    availability: InstructorAvailability = EMPTY_AVAILABILITY,
+    section_instructor_ids: dict[str, frozenset[int]] | None = None,
+) -> dict[str, list]:
+    """Build canonical pattern catalog from scenario budget data.
+
+    With teaching-time rules (``availability``) the catalog also holds the
+    mixed-period weeks each ruled teacher of ``section_instructor_ids`` may
+    teach (:func:`_catalog_cell_predicates`)."""
     from core.services.timetable_autoplace import get_meeting_pattern
     from core.services.timetable_pattern_catalog import build_canonical_pattern_catalog
 
@@ -1163,6 +1208,7 @@ def _build_pattern_catalog_for_scenario(scenario_id: int) -> dict[str, list]:
         slot_config=scenario.slot_config or None,
         lab_slot_config=scenario.lab_slot_config or None,
         blocked_slots=scenario.blocked_slots or None,
+        cell_predicates=_catalog_cell_predicates(availability, section_instructor_ids),
     )
 
 
@@ -1457,6 +1503,8 @@ def optimise_scenario_timetable_v2(
         "checkpoint": checkpoint,
     }
     with ExitStack() as stack:
+        # Teaching-time rules: one load for the whole run (re-entrant under the runner).
+        stack.enter_context(availability_scope(scenario_id))
         result = _optimise_scenario_timetable_v2(
             scenario_id,
             teachers=_FullRunTeachers(scenario_id, stack) if is_one_teacher_active() else None,
@@ -1574,8 +1622,14 @@ def _optimise_scenario_timetable_v2(
 
     locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
 
+    # Teaching-time rules, read once (after G1, so under the run's own map):
+    # EMPTY unless a rule binds a teacher of this scenario (every hook is
+    # ``if availability``). The searches and the polisher receive it.
+    availability = availability_for(scenario_id)
+
     # Priority uses current instructor links independently of the legacy idle
-    # score flag. The latter still controls public score shape/values.
+    # score flag. The latter still controls public score shape/values. The
+    # rules bind the charged teacher, so they need the map too.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
         if (
@@ -1583,6 +1637,7 @@ def _optimise_scenario_timetable_v2(
             or is_instructor_gap_penalty_enabled()
             or is_instructor_daily_cap_enabled()
             or is_instructor_clash_enabled()
+            or bool(availability)
         )
         else None
     )
@@ -1715,7 +1770,13 @@ def _optimise_scenario_timetable_v2(
 
     best_sections = next((c["sections"] for c in candidates if c["id"] == best.candidate_id), None)
     sections_by_id = ssa.build_sections_by_id(best_sections) if best_sections else {}
-    pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id) if best_sections else {}
+    pattern_catalog = (
+        _build_pattern_catalog_for_scenario(
+            scenario_id, **_catalog_rules(availability, section_instructor_ids)
+        )
+        if best_sections
+        else {}
+    )
 
     # ── Step 4: Local search on the best candidate ──
     if checkpoint:
@@ -1733,7 +1794,9 @@ def _optimise_scenario_timetable_v2(
 
         if best_sections:
             sections_by_id = ssa.build_sections_by_id(best_sections)
-            pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
+            pattern_catalog = _build_pattern_catalog_for_scenario(
+                scenario_id, **_catalog_rules(availability, section_instructor_ids)
+            )
 
             # Room repair is DISABLED in the optimizer. The auto-placer
             # handles per-meeting room types correctly (75min→lecture,
@@ -1752,6 +1815,7 @@ def _optimise_scenario_timetable_v2(
                 max_iterations=max_search_iterations,
                 locked_section_ids=locked_section_ids,
                 section_instructor_ids=section_instructor_ids,
+                **_kernel_rules(availability),
                 course_tiers=course_tiers,
             )
 
@@ -1797,7 +1861,9 @@ def _optimise_scenario_timetable_v2(
                     break
             if best_sections:
                 sections_by_id = ssa.build_sections_by_id(best_sections)
-                pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
+                pattern_catalog = _build_pattern_catalog_for_scenario(
+                    scenario_id, **_catalog_rules(availability, section_instructor_ids)
+                )
 
         if "sections_by_id" in dir() and sections_by_id:
             from core.services.timetable_local_search_chains import chain_local_search
@@ -1829,6 +1895,7 @@ def _optimise_scenario_timetable_v2(
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
                 section_instructor_ids=section_instructor_ids,
+                **_kernel_rules(availability),
                 course_tiers=course_tiers,
                 chain_time_limit_seconds=(
                     chain_time_limit_seconds
@@ -1900,6 +1967,7 @@ def _optimise_scenario_timetable_v2(
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
                 section_instructor_ids=section_instructor_ids,
+                **_kernel_rules(availability),
                 course_tiers=course_tiers,
             )
 
@@ -2255,6 +2323,8 @@ def optimise_current_timetable(
     the post passes and returns the new map when it changed who teaches what.
     """
     with ExitStack() as scope:
+        # Teaching-time rules: one load for the whole run (re-entrant under the runner).
+        scope.enter_context(availability_scope(scenario_id))
         result = _optimise_current_timetable(
             scenario_id,
             max_search_iterations=max_search_iterations,
@@ -2350,8 +2420,13 @@ def _optimise_current_timetable(
 
     locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
 
+    # Teaching-time rules, read once: EMPTY unless a rule binds a teacher of
+    # this scenario (every hook is ``if availability``).
+    availability = availability_for(scenario_id)
+
     # Resolve current links for instructor priority even with the old gap-score
     # flag off; every stage receives the same map and unchanged score layout.
+    # The rules bind the charged teacher, so they need the map too.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
         if (
@@ -2359,6 +2434,7 @@ def _optimise_current_timetable(
             or is_instructor_gap_penalty_enabled()
             or is_instructor_daily_cap_enabled()
             or is_instructor_clash_enabled()
+            or bool(availability)
         )
         else None
     )
@@ -2459,7 +2535,9 @@ def _optimise_current_timetable(
     # ── Step 3: Local search on current state ──
     if checkpoint:
         checkpoint()
-    pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
+    pattern_catalog = _build_pattern_catalog_for_scenario(
+        scenario_id, **_catalog_rules(availability, section_instructor_ids)
+    )
 
     if run_local_search:
         # Room repair is DISABLED — the auto-placer handles per-meeting room
@@ -2484,6 +2562,7 @@ def _optimise_current_timetable(
             max_iterations=max_search_iterations,
             locked_section_ids=locked_section_ids,
             section_instructor_ids=section_instructor_ids,
+            **_kernel_rules(availability),
             course_tiers=course_tiers,
         )
 
@@ -2530,6 +2609,7 @@ def _optimise_current_timetable(
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
             section_instructor_ids=section_instructor_ids,
+            **_kernel_rules(availability),
             course_tiers=course_tiers,
             chain_time_limit_seconds=(
                 chain_time_limit_seconds
@@ -2570,6 +2650,7 @@ def _optimise_current_timetable(
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
             section_instructor_ids=section_instructor_ids,
+            **_kernel_rules(availability),
             course_tiers=course_tiers,
         )
         if cpsat_result is not None:

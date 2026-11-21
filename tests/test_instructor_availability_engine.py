@@ -2112,3 +2112,622 @@ def test_the_persist_guard_does_not_count_a_section_online_on_every_board(
         "day", "start_time", "end_time"
     )
     assert ("SUN", "09:00", "10:15") in set(persisted)
+
+
+# ── C.7-C.10: the improvement stages (catalogue, LS-v2, chain-2, polisher) ──
+
+from core.services import timetable_local_search_chains as chains  # noqa: E402
+from core.services import timetable_local_search_v2 as local_search  # noqa: E402
+from core.services.timetable_assignment_models import (  # noqa: E402
+    CanonicalPattern,
+    RiskTier,
+    StudentProfile,
+    TimetableMove,
+)
+from core.services.timetable_candidate_eval import (  # noqa: E402
+    evaluate_generated_timetable_candidate,
+)
+
+#: Section A is taught by teacher 7 (the run's map).
+A_MAP = {"A": frozenset({7})}
+#: Rules on (teacher 7) or the empty-availability control.
+RULES_OR_EMPTY = pytest.mark.parametrize(
+    "rules", [True, False], ids=["rules", "empty-availability-control"]
+)
+
+
+def _pat(name: str, cells, family: str = "fam") -> CanonicalPattern:
+    """A canonical pattern of ``(day, (start, end))`` cells."""
+    meetings = [SectionMeeting(day, start, end) for day, (start, end) in cells]
+    return CanonicalPattern(
+        pattern_id=name,
+        signature=name,
+        meetings=meetings,
+        pattern_family=family,
+        duration_permutation="_".join(str(m.end_min - m.start_min) for m in meetings),
+        is_lab_mixed=False,
+        meeting_count=len(meetings),
+        days_used=frozenset(m.day for m in meetings),
+        slot_fingerprint=name,
+    )
+
+
+def _sec(sid: str, pattern: CanonicalPattern) -> SectionState:
+    return SectionState(
+        section_id=sid,
+        course_code=sid,
+        meetings=list(pattern.meetings),
+        max_capacity=30,
+        reserve_capacity=0,
+        pattern_id=pattern.pattern_id,
+        pattern_family=pattern.pattern_family,
+    )
+
+
+A_PM = _pat("a_pm", [(SUN, PM), (TUE, PM)])
+A_AM = _pat("a_am", [(SUN, AM), (TUE, AM)])
+A_AM_PM = _pat("a_am_pm", [(SUN, AM), (TUE, PM)])  # one forbidden meeting
+A_AM_PM_WED = _pat("a_am_pm_wed", [(SUN, AM), (WED, PM)])  # one forbidden meeting
+B_SUN_PM = _pat("b_sun_pm", [(SUN, PM)], family="b")
+B_TUE_PM = _pat("b_tue_pm", [(TUE, PM)], family="b")
+
+
+def _search_board(start: CanonicalPattern, blocker: CanonicalPattern, catalog_a, extra=()):
+    """A (teacher 7) clashes with the locked B for the one student taking both."""
+    sections = {"A": _sec("A", start), "B": _sec("B", blocker)}
+    catalog = {start.pattern_family: list(catalog_a), "b": [blocker]}
+    for sid, pattern, alternatives in extra:
+        sections[sid] = _sec(sid, pattern)
+        catalog[pattern.pattern_family] = list(alternatives)
+    profiles = {"s": StudentProfile("s", "AI", sorted(sections), RiskTier.C, 0)}
+    baseline = evaluate_generated_timetable_candidate(
+        "baseline", list(sections.values()), profiles, {}, A_MAP
+    )
+    return sections, catalog, profiles, baseline
+
+
+def _local_search(availability, sections, catalog, profiles, baseline):
+    return local_search.diagnostic_driven_local_search(
+        baseline,
+        sections,
+        catalog,
+        profiles,
+        {},
+        locked_section_ids={"B"},
+        max_iterations=1,
+        section_instructor_ids=A_MAP,
+        instructor_availability=availability,
+    )
+
+
+@RULES_OR_EMPTY
+def test_local_search_v2_never_moves_a_section_into_a_forbidden_pattern(rules) -> None:
+    """T-V2: the only clash-free pattern is in the mornings teacher 7 may not teach
+    (control: an empty availability takes it)."""
+    sections, catalog, profiles, baseline = _search_board(A_PM, B_SUN_PM, [A_PM, A_AM])
+
+    result = _local_search(
+        NO_MORNINGS if rules else EMPTY_AVAILABILITY, sections, catalog, profiles, baseline
+    )
+
+    if rules:
+        assert result is baseline
+        assert sections["A"].pattern_id == "a_pm"
+    else:
+        assert result is not baseline
+        assert sections["A"].pattern_id == "a_am"
+
+
+def test_local_search_v2_lets_a_section_keep_a_violation_it_already_had() -> None:
+    """T-V3 (delta): A already has one forbidden meeting and may move to another
+    pattern with one forbidden meeting (the repair, not every move, removes it)."""
+    sections, catalog, profiles, baseline = _search_board(A_AM_PM, B_TUE_PM, [A_AM_PM, A_AM_PM_WED])
+
+    result = _local_search(NO_MORNINGS, sections, catalog, profiles, baseline)
+
+    assert result is not baseline
+    assert sections["A"].pattern_id == "a_am_pm_wed"
+
+
+def _catalog(*predicates) -> list[CanonicalPattern]:
+    from core.services.timetable_pattern_catalog import build_canonical_pattern_catalog
+
+    catalog = build_canonical_pattern_catalog(
+        [{"durations": [75, 75], "course_code": "A", "course_key": "A", "credit_hours": 3}],
+        cell_predicates=predicates,
+    )
+    return catalog["ONCAMPUS_LEC_75_75"]
+
+
+def _legal(pattern, availability=SUN_PM_AND_TUE_LATE_MORNING) -> bool:
+    cells = [(m.day, m.start_min, m.end_min) for m in pattern.meetings]
+    return not helper.meetings_blocked(availability, (7,), cells)
+
+
+#: SUN 13:00 + TUE 10:30: a mixed-period week teacher 7 may teach.
+MIXED_CELLS = [(SUN, 13 * 60, 14 * 60 + 15), (TUE, 10 * 60 + 30, 11 * 60 + 45)]
+
+
+def test_the_pattern_catalogue_gains_the_mixed_weeks_a_ruled_teacher_may_teach() -> None:
+    """T-V1 (catalogue): the same-period patterns first, unchanged; then the
+    mixed-period weeks teacher 7 may teach (control: no predicate, none)."""
+    plain = _catalog()
+    ruled = _catalog(helper.cell_predicate(SUN_PM_AND_TUE_LATE_MORNING, (7,)))
+
+    assert ruled[: len(plain)] == plain
+    assert not any(_legal(p) for p in plain)
+    extra = ruled[len(plain) :]
+    assert extra and all(_legal(p) for p in extra)
+    assert MIXED_CELLS in [
+        sorted((m.day, m.start_min, m.end_min) for m in p.meetings) for p in extra
+    ]
+
+
+@pytest.mark.parametrize("mixed", [True, False], ids=["mixed-weeks", "same-period-control"])
+def test_local_search_v2_moves_a_ruled_section_onto_a_mixed_period_week(mixed) -> None:
+    """T-V1 (search): A sits in a legal mixed week clashing with B; only the
+    catalogue's mixed weeks let it leave without breaking teacher 7's rules
+    (control: the same-period catalogue offers no legal pattern, so it stays)."""
+    rules = SUN_PM_AND_TUE_LATE_MORNING
+    patterns = _catalog(helper.cell_predicate(rules, (7,))) if mixed else _catalog()
+    now = _pat("a_now", [(SUN, (870, 945)), (TUE, (650, 725))], family="ONCAMPUS_LEC_75_75")
+    blocker = _pat("b_now", [(SUN, (870, 945))], family="b")
+    assert _legal(now)
+    sections, catalog, profiles, baseline = _search_board(now, blocker, [now, *patterns])
+
+    result = _local_search(rules, sections, catalog, profiles, baseline)
+
+    if mixed:
+        assert result is not baseline
+        assert sections["A"].pattern_id != "a_now" and _legal(sections["A"])
+    else:
+        assert result is baseline
+        assert sections["A"].pattern_id == "a_now"
+
+
+C_NOW = _pat("c_now", [(MON, (900, 975))], family="c")
+C_ALT = _pat("c_alt", [(MON, (960, 1035))], family="c")
+
+
+def _chain_search(monkeypatch, availability, board, chain_list):
+    """Chain search on exactly ``chain_list`` (the loop under test is the real one)."""
+    sections, catalog, profiles, baseline = board
+    monkeypatch.setattr(chains, "generate_chain_2_moves", lambda *a, **k: list(chain_list))
+    return chains.chain_local_search(
+        baseline,
+        sections,
+        catalog,
+        profiles,
+        {},
+        locked_section_ids={"B"},
+        max_iterations=1,
+        section_instructor_ids=A_MAP,
+        instructor_availability=availability,
+    )
+
+
+@RULES_OR_EMPTY
+def test_chain_search_rejects_a_chain_that_moves_a_section_into_a_forbidden_pattern(
+    monkeypatch, rules
+) -> None:
+    """T-V4: (A -> mornings, C -> elsewhere) resolves the clash but breaks teacher
+    7's rules; rolled back whole (control: an empty availability takes it)."""
+    board = _search_board(A_PM, B_SUN_PM, [A_PM, A_AM], extra=[("C", C_NOW, [C_NOW, C_ALT])])
+    chain = chains.ChainMove(
+        TimetableMove("repattern", "A", "a_pm", "a_am"),
+        TimetableMove("repattern", "C", "c_now", "c_alt"),
+    )
+    availability = NO_MORNINGS if rules else EMPTY_AVAILABILITY
+
+    result = _chain_search(monkeypatch, availability, board, [chain])
+
+    sections, _catalog_, _profiles, baseline = board
+    if rules:
+        assert result is baseline
+        assert sections["A"].pattern_id == "a_pm" and sections["C"].pattern_id == "c_now"
+    else:
+        assert result is not baseline
+        assert sections["A"].pattern_id == "a_am"
+
+
+@RULES_OR_EMPTY
+def test_a_chain_moving_one_section_twice_is_judged_from_its_first_snapshot(
+    monkeypatch, rules
+) -> None:
+    """T-V5: legal -> one forbidden meeting -> one forbidden meeting is a new
+    violation (the second leg alone adds none). Control: an empty availability."""
+    board = _search_board(A_PM, B_SUN_PM, [A_PM, A_AM_PM, A_AM_PM_WED])
+    chain = chains.ChainMove(
+        TimetableMove("repattern", "A", "a_pm", "a_am_pm"),
+        TimetableMove("repattern", "A", "a_am_pm", "a_am_pm_wed"),
+    )
+    availability = NO_MORNINGS if rules else EMPTY_AVAILABILITY
+
+    result = _chain_search(monkeypatch, availability, board, [chain])
+
+    sections, _catalog_, _profiles, baseline = board
+    if rules:
+        assert result is baseline
+        assert sections["A"].pattern_id == "a_pm"
+    else:
+        assert result is not baseline
+        assert sections["A"].pattern_id == "a_am_pm_wed"
+
+
+# ── C.10 + H6: the CP-SAT polisher ────────────────────────────────────
+
+SUN_AM_CELL = (SUN, 9 * 60, 10 * 60 + 15)
+MON_AM_CELL = (MON, 9 * 60, 10 * 60 + 15)
+SUN_PM_CELL = (SUN, 13 * 60, 14 * 60 + 15)
+MON_PM_CELL = (MON, 14 * 60 + 30, 15 * 60 + 45)
+
+
+def _polish_case(
+    monkeypatch,
+    movable: dict[str, list[tuple[int, int, int]]],
+    fixed: dict[str, list[tuple[int, int, int]]],
+    *,
+    open_cells=(SUN_AM_CELL, SUN_PM_CELL, MON_PM_CELL),
+    overlap=None,
+    takes=(),
+    section_ids=None,
+    availability=EMPTY_AVAILABILITY,
+):
+    """One polisher pass. Lecture cells outside ``open_cells`` are blocked for the
+    scenario (``None``: nothing blocked); ``overlap`` replaces the cross-board
+    student overlap the objective reads; the one student takes ``takes``.
+    Returns ``(result, {section id: polished cells})``."""
+    from core.models import TimetableScenario
+    from core.services import timetable_cpsat_polisher as polisher
+    from core.services.timetable_autoplace import DEFAULT_SLOTS, placeable_slots
+
+    names = ("SUN", "MON", "TUE", "WED", "THU")
+    scenario = TimetableScenario.objects.create(academic_year="1448", term="2", name="polish av")
+    DeliveryBoard.objects.create(scenario=scenario, label="Term 1", nominal_term=1)
+    if open_cells is not None:
+        keep = {(names[d], f"{s // 60:02d}:{s % 60:02d}") for d, s, _e in open_cells}
+        scenario.blocked_slots = [
+            {"day": day, "start": slot["start"]}
+            for day in names
+            for slot in placeable_slots(DEFAULT_SLOTS)
+            if (day, slot["start"]) not in keep
+        ]
+        scenario.save(update_fields=["blocked_slots"])
+    monkeypatch.setattr(polisher, "build_cross_board_overlap_matrix", lambda _sid: overlap or {})
+
+    def state(sid, cells):
+        return SectionState(
+            sid,
+            sid,
+            [SectionMeeting(*cell) for cell in cells],
+            30,
+            0,
+            pattern_family="fam",
+            pattern_id=f"{sid}_now",
+        )
+
+    sections = [state(sid, cells) for sid, cells in {**movable, **fixed}.items()]
+    profiles = {"s": StudentProfile("s", "AI", list(takes), RiskTier.C, 0)}
+    baseline = evaluate_generated_timetable_candidate(
+        "current", sections, profiles, {}, section_ids
+    )
+    result = polisher.polish_scenario_with_cpsat(
+        scenario.id,
+        sections,
+        profiles,
+        {},
+        baseline,
+        time_limit_seconds=5,
+        locked_section_ids=set(fixed),
+        section_instructor_ids=section_ids,
+        instructor_availability=availability,
+    )
+    polished = {
+        s.section_id: sorted((m.day, m.start_min, m.end_min) for m in s.meetings)
+        for s in (result["improved_sections"] if result else [])
+    }
+    return result, polished
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_the_polisher_moves_a_ruled_section_only_into_cells_its_teacher_may_teach(
+    monkeypatch, rules
+) -> None:
+    """T-V6: A clashes with B; the objective prefers SUN 09:00 (no overlap) to
+    MON 14:30 (a smaller overlap with C). Teacher 7 may not teach mornings, so A
+    goes to MON 14:30 (control: an empty availability takes SUN 09:00)."""
+    result, polished = _polish_case(
+        monkeypatch,
+        {"A": [SUN_PM_CELL]},
+        {"B": [SUN_PM_CELL], "C": [MON_PM_CELL]},
+        overlap={("A", "B"): 2, ("A", "C"): 1},
+        takes=("A", "B"),
+        section_ids=A_MAP,
+        availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )
+
+    assert result is not None
+    assert polished["A"] == [MON_PM_CELL if rules else SUN_AM_CELL]
+
+
+@pytest.mark.django_db
+def test_the_polisher_lets_a_meeting_stay_in_its_forbidden_current_slot(monkeypatch) -> None:
+    """C.10 current-slot exemption: R already teaches at SUN 09:00 (forbidden) and
+    its only legal cell overlaps C; X's move carries the pass and R stays."""
+    result, polished = _polish_case(
+        monkeypatch,
+        {"R": [SUN_AM_CELL], "X": [SUN_PM_CELL]},
+        {"B": [SUN_PM_CELL], "C": [MON_PM_CELL]},
+        overlap={("C", "R"): 1},
+        takes=("B", "X"),
+        section_ids={"R": frozenset({7})},
+        availability=NO_MORNINGS,
+    )
+
+    assert result is not None
+    assert polished["R"] == [SUN_AM_CELL]
+    assert polished["X"] != [SUN_PM_CELL]
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_a_ruled_section_with_no_legal_cell_is_held_fixed_and_the_rest_polished(
+    monkeypatch, rules
+) -> None:
+    """H6: R sits off the grid (SUN 08:00) and every open cell is a morning its
+    teacher may not teach: R is held fixed like a locked section, and X is still
+    polished (otherwise R's empty domain would abort the whole pass). Control: an
+    empty availability polishes R too."""
+    off_grid = (SUN, 8 * 60, 9 * 60 + 15)
+    result, polished = _polish_case(
+        monkeypatch,
+        {"R": [off_grid], "X": [SUN_AM_CELL]},
+        {"B": [SUN_AM_CELL]},
+        open_cells=(SUN_AM_CELL, MON_AM_CELL),
+        overlap={("B", "X"): 2},
+        takes=("B", "X"),
+        section_ids={"R": frozenset({7})},
+        availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )
+
+    assert result is not None
+    assert polished["X"] == [MON_AM_CELL]
+    assert ("R" in polished) is not rules  # held fixed: never re-timed
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_the_polisher_never_switches_an_english_section_into_a_forbidden_bundle(
+    monkeypatch, rules
+) -> None:
+    """T-V7 (H5): ENG101 teaches the afternoon bundle and clashes with B on SUN;
+    the morning bundle would resolve it, but teacher 7 may not teach mornings, so
+    the whole morning bundle is closed (control: an empty availability switches)."""
+    afternoon = [(day, 13 * 60, 16 * 60) for day in (SUN, MON, WED, THU)]
+    morning = [(day, 9 * 60, 12 * 60) for day in (SUN, MON, WED, THU)]
+    result, polished = _polish_case(
+        monkeypatch,
+        {"ENG101": afternoon},
+        {"B": [SUN_PM_CELL]},
+        open_cells=None,
+        overlap={("B", "ENG101"): 2},
+        takes=("B", "ENG101"),
+        section_ids={"ENG101": frozenset({7})},
+        availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )
+
+    if rules:
+        assert result is None or polished["ENG101"] == afternoon
+    else:
+        assert result is not None
+        assert polished["ENG101"] == morning
+
+
+# ── C.14: the evaluator side-band and the veto net ────────────────────
+
+
+def _side_band(evaluation, violations: int):
+    evaluation.quality_score["instructor_availability"] = {"violations": violations}
+    return evaluation
+
+
+@pytest.mark.parametrize("violations", [1, 0], ids=["rise", "no-rise-control"])
+def test_every_overload_veto_also_vetoes_a_rise_in_rule_violations(settings, violations) -> None:
+    """T-E1: a candidate better in every other respect is refused by
+    ``evaluation_is_better``, ``DayOffPolicy.core`` / ``step`` and the recovery's
+    ``_student_safety_ok`` when its side-band count rises (control: no rise)."""
+    from core.services.timetable_optimisation_policy import evaluation_is_better
+    from core.services.timetable_secondary_recovery import _student_safety_ok
+    from tests.test_instructor_day_off_policy import board, policy_at, student
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = False
+    days = {"7": 2}
+    incumbent = _side_band(board(days), 0)
+    candidate = _side_band(board(days, score=student(gap=-10)), violations)
+    policy = policy_at(days)
+    accepted = violations == 0
+
+    assert evaluation_is_better(candidate, incumbent) is accepted
+    assert policy.core(candidate, incumbent) is accepted
+    assert policy.step(candidate, incumbent, base=incumbent) is accepted
+    assert _student_safety_ok(candidate, incumbent) is accepted
+
+
+@pytest.mark.django_db
+def test_the_evaluator_side_band_exists_only_inside_a_scope_that_loaded_rules(av_on) -> None:
+    """T-E2: with the rules loaded by the run's scope the evaluator counts the
+    forbidden meetings of charged sections (online ones left out); outside a scope,
+    or with no rule, there is no key at all."""
+    sc, people = _course_scenario("t-e2", {"Dr Seven": "AI"})
+    person = people["Dr Seven"]
+    sections = [
+        SectionState("CS101_S1", "CS101", [SectionMeeting(SUN, *AM)], 30, 0),
+        SectionState("GS101_S1", "GS101", [SectionMeeting(SUN, *AM)], 30, 0, is_online=True),
+    ]
+    ids = {"CS101_S1": frozenset({person.pk}), "GS101_S1": frozenset({person.pk})}
+
+    def side_band():
+        result = evaluate_generated_timetable_candidate("x", sections, {}, {}, ids)
+        return result.quality_score.get("instructor_availability")
+
+    with helper.availability_scope(sc.id):
+        assert not helper.availability_for(sc.id)
+        assert side_band() is None  # flag on, no rule
+    rule(person, KIND_UNAVAILABLE, end="13:00")
+    with helper.availability_scope(sc.id):
+        assert helper.availability_for(sc.id)
+        assert side_band() == {"violations": 1}
+    assert side_band() is None  # unbound: the evaluator never loads
+
+
+# ── C.18 + H10: the optimiser wiring ──────────────────────────────────
+
+
+def test_the_catalogue_predicates_follow_only_the_teachers_the_map_charges() -> None:
+    """H10: one predicate per ruled teacher the run's map CHARGES. A rule on a
+    teacher nobody is charged with (8) adds no pattern, so LS-v2 stays as without
+    rules; teacher 9 is charged but has no rule."""
+    from core.services.timetable_optimizer_v2 import _catalog_cell_predicates
+
+    rules = _av(
+        (7, KIND_UNAVAILABLE, ("SUN", "MON", "TUE", "WED", "THU"), 0, 13 * 60),
+        (8, KIND_UNAVAILABLE, ("SUN",), 0, 24 * 60),
+    )
+
+    (predicate,) = _catalog_cell_predicates(rules, {"A": frozenset({7}), "B": frozenset({9})})
+    assert predicate("SUN", "09:00", "10:15") and not predicate("SUN", "13:00", "14:15")
+    assert _catalog_cell_predicates(rules, {"B": frozenset({9})}) == []
+    assert _catalog_cell_predicates(EMPTY_AVAILABILITY, {"A": frozenset({7})}) == []
+    assert _catalog_cell_predicates(rules, None) == []
+
+
+@pytest.mark.django_db
+def test_the_scenario_catalogue_holds_a_charged_ruled_teachers_mixed_weeks(av_on) -> None:
+    """C.7 at the scenario: the catalogue built for a run with a charged ruled
+    teacher keeps every same-period pattern first and adds his mixed weeks
+    (control: the same call without the map, or without rules, is unchanged)."""
+    from core.services.timetable_optimizer_v2 import _build_pattern_catalog_for_scenario
+
+    sc, _board, _key, (a,) = _greedy_scenario("c7 scenario")
+    plain = _build_pattern_catalog_for_scenario(sc.id)
+    rules = _av(
+        (a.pk, KIND_AVAILABLE_ONLY, ("SUN",), 13 * 60, 17 * 60 + 15),
+        (a.pk, KIND_AVAILABLE_ONLY, ("TUE",), 10 * 60 + 30, 12 * 60 + 5),
+    )
+    charged = {"X_S1": frozenset({a.pk})}
+
+    ruled = _build_pattern_catalog_for_scenario(
+        sc.id, availability=rules, section_instructor_ids=charged
+    )
+
+    assert set(ruled) == set(plain)
+    family = next(iter(plain))
+    assert ruled[family][: len(plain[family])] == plain[family]
+    assert len(ruled[family]) > len(plain[family])
+    assert _build_pattern_catalog_for_scenario(sc.id, availability=rules) == plain
+    assert (
+        _build_pattern_catalog_for_scenario(
+            sc.id, availability=EMPTY_AVAILABILITY, section_instructor_ids=charged
+        )
+        == plain
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("mode", ["current", "full"])
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_optimise_current_hands_the_runs_rules_to_the_searches_and_the_polisher(
+    av_on, monkeypatch, flag, mode
+) -> None:
+    """C.18 (Optimise Current and Generate): with priority, the idle gap, the cap and the clash rule all off, the
+    rules alone make the run build its teacher map; LS-v2, chain-2 and the polisher
+    each receive that map and the run's ONE availability object, and the catalogue
+    is built for them (control: flag off, no map, an empty availability)."""
+    from core.services import timetable_cpsat_polisher as polisher
+    from core.services import timetable_optimizer_v2 as v2
+
+    for name in (
+        "TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED",
+        "TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED",
+        "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED",
+        "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED",
+    ):
+        setattr(av_on, name, False)
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, a = _placed_ruled_board(f"c18 {flag}")
+    profile = StudentProfile("s", "AI", [key], RiskTier.C, 0)
+    monkeypatch.setattr(v2, "build_student_profiles_for_scenario", lambda *a, **k: {"s": profile})
+    seen: dict[str, tuple] = {}
+
+    def spy(name, module, attr):
+        real = getattr(module, attr)
+
+        def inner(*args, **kwargs):
+            seen[name] = (
+                kwargs.get("instructor_availability", kwargs.get("availability")),
+                kwargs.get("section_instructor_ids"),
+            )
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, attr, inner)
+
+    spy("local_search", local_search, "diagnostic_driven_local_search")
+    spy("chain", chains, "chain_local_search")
+    spy("polisher", polisher, "polish_scenario_with_cpsat")
+    spy("catalogue", v2, "_build_pattern_catalog_for_scenario")
+
+    with CaptureQueriesContext(connection) as captured:
+        if mode == "current":
+            v2.optimise_current_timetable(
+                sc.id, max_search_iterations=1, max_chain_iterations=1, cpsat_time_limit=1
+            )
+        else:
+            v2.optimise_scenario_timetable_v2(
+                sc.id,
+                strategies=["compact"],
+                max_search_iterations=1,
+                max_chain_iterations=1,
+                cpsat_time_limit=1,
+            )
+
+    # Each public entry point is one scope: one rule query (none with the flag off).
+    assert len(rule_queries(captured.captured_queries)) == (1 if flag else 0)
+    assert set(seen) == {"local_search", "chain", "polisher", "catalogue"}
+    objects = {id(availability) for availability, _ids in seen.values()}
+    assert len(objects) == 1
+    for availability, ids in seen.values():
+        assert bool(availability) is flag
+        assert (ids is not None) is flag
+    if flag:
+        availability, ids = seen["polisher"]
+        assert availability.instructor_ids == {a.pk}
+        assert ids == {f"{key}_S1": frozenset({a.pk})}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("mode", ["current", "full"])
+def test_a_guarded_optimiser_run_reads_the_rules_once(av_on, monkeypatch, mode) -> None:
+    """T-P3 (B.4) for the runner: ``run_v2_optimisation_guarded`` is one scope, so
+    its pre-step, every phase and the pipeline issue ONE rule query (control:
+    the same run without the runner's scope reads them more than once)."""
+    from core.services import timetable_optimizer_v2 as v2
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    sc, _board, key, _a = _placed_ruled_board(f"t-p3 runner {mode}")
+    profile = StudentProfile("s", "AI", [key], RiskTier.C, 0)
+    monkeypatch.setattr(v2, "build_student_profiles_for_scenario", lambda *a, **k: {"s": profile})
+
+    with CaptureQueriesContext(connection) as captured:
+        result = run_v2_optimisation_guarded(
+            sc.id,
+            mode=mode,
+            max_iterations=1,
+            run_chain=False,
+            run_cpsat=False,
+            strategies=["compact"],
+        )
+
+    assert "error" not in result, result.get("error")
+    assert len(rule_queries(captured.captured_queries)) == 1

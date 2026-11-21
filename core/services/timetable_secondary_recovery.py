@@ -40,6 +40,7 @@ from core.services.timetable_local_search_v2 import (
     generate_swap_moves,
 )
 from core.services.timetable_optimisation_policy import (
+    availability_violation_count,
     instructor_schedule_metrics,
     instructor_schedule_regressions,
     schedule_metrics_of,
@@ -68,6 +69,7 @@ def _student_safety_ok(
         len(old) == len(new)
         and all(a <= b for a, b in zip(new[:4], old[:4], strict=True))
         and candidate.instructor_overload_count <= incumbent.instructor_overload_count
+        and availability_violation_count(candidate) <= availability_violation_count(incumbent)
     )
 
 

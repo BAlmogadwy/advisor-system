@@ -11,10 +11,12 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     TimetableEvaluationResult,
 )
+from core.services.timetable_constraints import count_instructor_availability_violations
 from core.services.timetable_flags import (
     is_gap_regular_students_only_enabled,
     is_tiered_objective_enabled,
 )
+from core.services.timetable_instructor_availability import bound_availability
 from core.services.timetable_optimisation_policy import (
     evaluation_order_key,
     instructor_schedule_metrics,
@@ -101,6 +103,25 @@ def evaluate_generated_timetable_candidate(
         overload_count = count_instructor_daily_overloads(
             sections_by_id, section_instructor_ids, get_instructor_daily_cap()
         )
+    # Side-band only (``TIMETABLE_INSTRUCTOR_AVAILABILITY``, inside a run's scope):
+    # meetings a charged teacher may not teach, which every acceptance relation
+    # that vetoes a rise in overloads also vetoes. The sections each improvement
+    # stage locks as online never move there, so they are left out. Absent when
+    # no rule binds a teacher of the run (no key, no cost).
+    availability = bound_availability() if section_instructor_ids else None
+    if availability:
+        quality_score["instructor_availability"] = {
+            "violations": count_instructor_availability_violations(
+                sections_by_id,
+                section_instructor_ids,
+                availability,
+                exempt=[
+                    sid
+                    for sid, section in sections_by_id.items()
+                    if section.is_online or section.delivery_is_online
+                ],
+            )
+        }
     return TimetableEvaluationResult(
         candidate_id=candidate_id,
         lexicographic_score=score,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 from core.services.timetable_assignment_models import CanonicalPattern, SectionMeeting
 from core.services.timetable_autoplace import (
@@ -46,7 +46,17 @@ def build_canonical_pattern_catalog(
     slot_config: list[dict] | None = None,
     lab_slot_config: list[dict] | None = None,
     blocked_slots: list[dict] | None = None,
+    cell_predicates: Sequence[Callable[[str, str, str], bool]] = (),
 ) -> dict[str, list[CanonicalPattern]]:
+    """The canonical weekly patterns of every course family.
+
+    ``cell_predicates`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): one cell
+    predicate per ruled teacher the run charges. After an ordinary family's
+    same-period patterns, each predicate in turn reruns the generator with that
+    teacher's forbidden cells closed and appends the patterns not seen yet (the
+    mixed-period weeks he may teach), so the improvement stages can move his
+    sections onto them. With ``()`` the catalog is exactly as without rules.
+    """
     catalog: dict[str, list[CanonicalPattern]] = {}
     for req in course_requirements:
         policy = get_course_meeting_policy(req.get("course_code", ""), req.get("course_key", ""))
@@ -96,13 +106,17 @@ def build_canonical_pattern_catalog(
         unique_perms = get_unique_permutations(
             req["durations"], req.get("allow_permutations", False)
         )
-        for perm in unique_perms:
+        runs = [(perm, None) for perm in unique_perms] + [
+            (perm, predicate) for predicate in cell_predicates for perm in unique_perms
+        ]
+        for perm, predicate in runs:
             perm_str = "_".join(map(str, perm))
             valid_meeting_options = _generate_meeting_options(
                 pattern=list(perm),
                 slot_config=slot_config or [],
                 lab_slot_config=lab_slot_config or [],
                 blocked_slots=blocked_slots or [],
+                cell_blocked=predicate,
             )
             for option_meetings in valid_meeting_options:
                 sec_meetings = [

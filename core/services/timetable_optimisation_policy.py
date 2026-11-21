@@ -253,6 +253,14 @@ def instructor_schedule_regressions(before: Mapping, after: Mapping) -> list[dic
     ) + instructor_idle_regressions(before, after)
 
 
+def availability_violation_count(evaluation: TimetableEvaluationResult) -> int:
+    """The evaluator's teaching-time side-band (``quality_score``), 0 when absent:
+    meetings a charged teacher may not teach. Every relation that vetoes a rise
+    in instructor overloads vetoes a rise in this too."""
+    side_band = (evaluation.quality_score or {}).get("instructor_availability") or {}
+    return int(side_band.get("violations", 0))
+
+
 def evaluation_is_better(
     candidate: TimetableEvaluationResult,
     incumbent: TimetableEvaluationResult,
@@ -287,6 +295,8 @@ def evaluation_is_better(
     if any(new > old for old, new in zip(old_score[:4], new_score[:4], strict=True)):
         return False
     if candidate.instructor_overload_count > feasibility.instructor_overload_count:
+        return False
+    if availability_violation_count(candidate) > availability_violation_count(feasibility):
         return False
     candidate_metrics = schedule_metrics_of(candidate)
     incumbent_metrics = schedule_metrics_of(incumbent)
@@ -664,6 +674,8 @@ class DayOffPolicy:
             return False
         if out.instructor_overload_count > inp.instructor_overload_count:
             return False
+        if availability_violation_count(out) > availability_violation_count(inp):
+            return False
         after = self.measure(schedule_metrics_of(out), new)
         before = self.measure(schedule_metrics_of(inp), old)
         if after is None or before is None:
@@ -687,6 +699,8 @@ class DayOffPolicy:
         if not _hard_no_worse(new, here):
             return False
         if candidate.instructor_overload_count > base.instructor_overload_count:
+            return False
+        if availability_violation_count(candidate) > availability_violation_count(base):
             return False
         after = self.measure(schedule_metrics_of(candidate), new)
         before = self.measure(schedule_metrics_of(base), here)
