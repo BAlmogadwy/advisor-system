@@ -64,6 +64,11 @@ from core.services.timetable_course_policy import (
 )
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_flags import is_section_day_spread_enabled
+from core.services.timetable_instructor_availability import (
+    availability_for,
+    online_exempt_sections,
+    prune_relocate_domains,
+)
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_online_windows import (
     active_online_windows,
@@ -512,6 +517,7 @@ def _capture_persist_guard(board):
     """Read the scenario baseline before a writer opens its pass-local changes."""
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_constraints import (
+        count_instructor_availability_violations,
         count_instructor_clashes,
         count_instructor_daily_overloads,
     )
@@ -564,7 +570,23 @@ def _capture_persist_guard(board):
         placed_meetings[section_id].add((day, start, end))
     from core.services.timetable_board_persistence import external_shared_snapshot
 
+    # Teaching-time rules: the blocked meetings of every charged, non-exempt
+    # section, only while a rule binds a teacher of the scenario (no key else).
+    availability = availability_for(scenario_id)
+    rules = (
+        {
+            "availability": count_instructor_availability_violations(
+                state_map,
+                ids,
+                availability,
+                exempt={f"{key}_{label}" for key, label in online_exempt_sections(scenario_id)},
+            )
+        }
+        if availability
+        else {}
+    )
     return {
+        **rules,
         "external_shared": external_shared_snapshot(scenario_id),
         "teachers": instructor_schedule_metrics(states, ids),
         "clashes": count_instructor_clashes(state_map, ids),
@@ -612,6 +634,8 @@ def _persist_guard_rejections(board, before, *, preserve_teacher_quality=True):
         reasons.append("instructor clashes increased")
     if after["overloads"] > before["overloads"]:
         reasons.append("instructor daily overloads increased")
+    if "availability" in before and after.get("availability", 0) > before["availability"]:
+        reasons.append("instructor availability violations increased")
     if (
         preserve_teacher_quality
         and is_instructor_priority_enabled()
@@ -870,6 +894,24 @@ def optimize_board(
                         )
             sec_opts.append(options)
         valid_options[i] = sec_opts
+
+    # Teaching-time rules (TIMETABLE_INSTRUCTOR_AVAILABILITY): a ruled charged
+    # teacher's meetings lose the cells he may not teach, a meeting-policy
+    # section the bundles; before the first draw, so every other section keeps
+    # its very list (and the random stream). A meeting already in a forbidden
+    # cell may leave it, never enter another; nothing is checked absolutely
+    # (a board that already breaks a rule is not frozen).
+    availability = availability_for(scenario.id)
+    if availability:
+        from core.services.section_teacher_assignment import load_assignment
+
+        prune_relocate_domains(
+            availability,
+            sections,
+            valid_options,
+            load_assignment(scenario.id).pr4_map(),
+            exempt=online_exempt_sections(scenario.id),
+        )
 
     # ── Simulated Annealing ──────────────────────────────────────
 

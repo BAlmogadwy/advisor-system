@@ -788,7 +788,9 @@ DAY_RUN_GUARD_RANK = 10**6
 # or a teacher-frozen section) is forbidden to teach, under
 # ``TIMETABLE_INSTRUCTOR_AVAILABILITY``: above the teacher guard (1e9), so such an
 # option is chosen only when every other option is gone, and the section is placed
-# (reported "rule cannot be met") rather than left unplaced. An ENGINE teacher's
+# (reported "rule cannot be met") rather than left unplaced. It is added once per
+# forbidden meeting, so the fallback breaks the rule as few times as it can (the
+# persist guard and the run gates compare that count). An ENGINE teacher's
 # forbidden option is filtered out instead (``INSTRUCTOR_UNAVAILABLE``).
 AVAILABILITY_GUARD_RANK = 10**12
 
@@ -812,6 +814,15 @@ def _availability_context(availability, instructor_ids, option) -> dict:
                         "end": meeting["end"],
                     }
     return {}
+
+
+def _forbidden_meetings(availability, instructor_ids, option) -> int:
+    """How many meetings of ``option`` some teacher of ``instructor_ids`` may not teach."""
+    return sum(
+        1
+        for day, start, end in option_meetings(option)
+        if any(availability.blocks(iid, day, start, end) for iid in instructor_ids)
+    )
 
 
 def _meeting_signature(option) -> tuple:
@@ -2174,7 +2185,9 @@ def auto_place_board(
                 av_rank = 0
                 if av_ids and option_blocked(availability, av_ids, option):
                     if av_is_fixed:
-                        av_rank = AVAILABILITY_GUARD_RANK
+                        av_rank = AVAILABILITY_GUARD_RANK * _forbidden_meetings(
+                            availability, av_ids, option
+                        )
                     else:
                         _count_filter_rejection(
                             filter_rejections,

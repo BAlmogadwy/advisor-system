@@ -1463,7 +1463,8 @@ def test_the_placer_guard_and_the_greedy_ask_for_the_same_legal_options(av_on, m
 @pytest.mark.parametrize("pinned", [True, False], ids=["fixed", "engine-control"])
 def test_a_fixed_teacher_without_a_legal_week_is_placed_and_reported(av_on, pinned) -> None:
     """T-G5: "only Thursday" leaves a 2 x 75 course no week. A pinned teacher's
-    section is placed anyway at its best option and reported; the same teacher
+    section is placed anyway, at an option with as few forbidden meetings as
+    possible, and reported; the same teacher
     charged as an ENGINE pick (pinned map) leaves it unplaced."""
     from core.services.timetable_decision_trace import INSTRUCTOR_UNAVAILABLE
 
@@ -1479,7 +1480,10 @@ def test_a_fixed_teacher_without_a_legal_week_is_placed_and_reported(av_on, pinn
     report = _board_result(result)["instructor_availability"]
     meetings = _placed_meetings(sc, key)
     if pinned:
+        # Placed at the best option that breaks the rule the fewest times: one
+        # meeting on Thursday, one not (any 2 x 75 week needs two days).
         assert len(meetings) == 2
+        assert len(_blocked(meetings, a, _rules_of(a))) == 1, meetings
         assert report == {
             "ranked_last": [
                 {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
@@ -1883,3 +1887,228 @@ def test_cpsat_does_not_prune_an_online_section_unless_it_is_campus_elsewhere(
     sizes = _domain_sizes(monkeypatch, builder, ai_board)
 
     assert sizes == [afternoon if elsewhere else every] * 2
+
+
+# ── C.5 / C.6: annealing, the load balancer and their persist guard ────
+
+MOVERS = ("annealing", "balancer")
+AFTERNOON = [("SUN", "13:00", "14:15"), ("TUE", "13:00", "14:15")]
+
+
+def _placed_ruled_board(name: str, *, code: str = "CS101", meetings=AFTERNOON):
+    """CS101 S1 placed (default SUN and TUE 13:00), its stored engine teacher Dr A
+    may not teach mornings."""
+    sc, board, key, (a,) = _greedy_scenario(name, code=code)
+    ts = ots.section(sc, key, "S1")
+    ots.place(board, ts, meetings)
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_UNAVAILABLE, end="13:00")
+    return sc, board, key, a
+
+
+def _reward_sunday_morning(schedule, sections, *args, **kwargs) -> float:
+    """The stage's own cost prefers SUN 09:00 (same day: the teacher's days and
+    idle time do not change), so only the rules can keep the meeting away."""
+    for meetings in schedule.values():
+        if any((m["day"], m["start"]) == ("SUN", "09:00") for m in meetings):
+            return -1000.0
+    return 0.0
+
+
+def _run_mover(monkeypatch, mover: str, board) -> dict:
+    from core.services import timetable_load_balanced as balancer
+    from core.services import timetable_local_search as sa
+
+    if mover == "annealing":
+        monkeypatch.setattr(sa, "_compute_cost", _reward_sunday_morning)
+        return sa.optimize_board(board.id, max_seconds=1.5)
+    monkeypatch.setattr(balancer, "_compute_balance_score", _reward_sunday_morning)
+    return balancer.rebalance_board(board.id, max_seconds=1.5)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("mover", MOVERS)
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_a_relocating_mover_never_moves_a_meeting_into_a_forbidden_cell(
+    av_on, monkeypatch, mover, flag
+) -> None:
+    """T-S1 (annealing) / T-S2 (load balancer): the cost rewards SUN 09:00, the
+    teacher may not teach mornings; the meeting stays in the afternoon
+    (control: flag off, it moves to SUN 09:00)."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    _sc, board, _key, a = _placed_ruled_board(f"t-s {mover}")
+
+    result = _run_mover(monkeypatch, mover, board)
+
+    assert result["status"] == "optimized"
+    final = [(m["day"], m["start"], m["end"]) for ms in result["schedule"].values() for m in ms]
+    assert bool(_blocked(final, a, _rules_of(a))) is not flag, final
+
+
+def _relocate_domains(monkeypatch, board) -> dict:
+    from tests._online_windows_fixture import capture_relocate_domains
+
+    return capture_relocate_domains(monkeypatch, board)
+
+
+def _cell_blocked(person, rules, cell) -> bool:
+    return helper.option_blocked(
+        rules, (person.pk,), [{"day": cell[0], "start": cell[1], "end": cell[2]}]
+    )
+
+
+@pytest.mark.django_db
+def test_relocate_domains_lose_exactly_a_ruled_teachers_forbidden_cells(av_on, monkeypatch) -> None:
+    """T-S3: for both movers the ruled section's domains are the flag-off domains
+    minus exactly its teacher's forbidden cells; an unruled section's are equal."""
+    from core.services.course_identity import planner_course_key
+
+    sc, board, key, a = _placed_ruled_board("t-s3")
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="CS102", course_name="OTHER", programme_term=2, credit_hours=3
+    )
+    other = planner_course_key("CS102", "OTHER")
+    ots.budget(sc, other, 1, code="CS102")
+    ots.link("AI", "CS102", _person("Dr B"))
+    ots.place(
+        board, ots.section(sc, other, "S1"), [("MON", "09:00", "10:15"), ("WED", "09:00", "10:15")]
+    )
+    rules = _rules_of(a)
+
+    on = _relocate_domains(monkeypatch, board)
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    off = _relocate_domains(monkeypatch, board)
+
+    for mover in ("sa", "lb"):
+        ruled, plain = on[mover][f"{key}|S1"], on[mover][f"{other}|S1"]
+        expected = [
+            [cell for cell in meeting if not _cell_blocked(a, rules, cell)]
+            for meeting in off[mover][f"{key}|S1"]["domain"]
+        ]
+        assert ruled["domain"] == expected
+        assert all(
+            len(m) < len(o)
+            for m, o in zip(expected, off[mover][f"{key}|S1"]["domain"], strict=True)
+        )
+        assert plain == off[mover][f"{other}|S1"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("mover", MOVERS)
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_an_english_section_moves_only_into_a_bundle_its_teacher_may_teach(
+    av_on, monkeypatch, mover, flag
+) -> None:
+    """T-S4: an ENG section of a "no mornings" teacher, placed in the AM bundle,
+    keeps only the PM bundle in the mover's whole-bundle domain (control: both)."""
+    from core.services import timetable_load_balanced as balancer
+    from core.services import timetable_local_search as sa
+    from core.services.timetable_autoplace import generate_course_meeting_options
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    am, pm = sorted(
+        generate_course_meeting_options(
+            "ENG101", 0, [], [], [], course_key="ENG101", meeting_pattern=""
+        ),
+        key=lambda bundle: bundle[0]["start"],
+    )
+    _sc, board, _key, _a = _placed_ruled_board(
+        f"t-s4 {mover}", code="ENG101", meetings=[(m["day"], m["start"], m["end"]) for m in am]
+    )
+    seen: dict = {}
+
+    def spy(schedule, sections, valid_options, rng, locked_idx=None):
+        seen["bundles"] = [
+            [(m["day"], m["start"]) for m in bundle] for bundle in sections[0].get("bundles") or []
+        ]
+        raise _Captured
+
+    module, run = (
+        (sa, sa.optimize_board) if mover == "annealing" else (balancer, balancer.rebalance_board)
+    )
+    monkeypatch.setattr(module, "_generate_relocate_move", spy)
+    with pytest.raises(_Captured):
+        run(board.id, max_seconds=1)
+
+    expected = [pm] if flag else [am, pm]
+    assert sorted(seen["bundles"]) == sorted(
+        [(m["day"], m["start"]) for m in bundle] for bundle in expected
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("elsewhere", [False, True], ids=["online-everywhere", "campus-elsewhere"])
+def test_relocate_domains_spare_a_section_online_on_every_board(
+    av_on, monkeypatch, elsewhere
+) -> None:
+    """H7 in the movers: an online section of a "no mornings" teacher keeps its
+    whole domain; the same section also on a board where it is a campus course
+    loses the mornings."""
+    from core.models import TermSection
+
+    sc, ai_board, key, a = _online_here(elsewhere=elsewhere)
+    ts = TermSection.objects.filter(scenario=sc, course_key=key, section="S1").first()
+    ots.place(ai_board, ts or ots.section(sc, key, "S1"), AFTERNOON)
+    rules = _rules_of(a)
+
+    domains = _relocate_domains(monkeypatch, ai_board)
+
+    for mover in ("sa", "lb"):
+        cells = [cell for meeting in domains[mover][f"{key}|S1"]["domain"] for cell in meeting]
+        assert cells
+        assert any(_cell_blocked(a, rules, cell) for cell in cells) is not elsewhere
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("guarded", [True, False], ids=["guard", "guard-off-control"])
+def test_the_persist_guard_rolls_back_a_pass_that_adds_a_violation(
+    av_on, monkeypatch, guarded
+) -> None:
+    """T-C4: with the annealing domain prune taken out and the cost rewarding SUN
+    09:00, the pass moves the meeting there; the persist guard counts one more
+    forbidden meeting and rolls the pass back (control: the guard without the
+    rules lets the same pass persist)."""
+    from core.models import SectionPlacement
+    from core.services import timetable_local_search as sa
+
+    sc, board, key, a = _placed_ruled_board(f"t-c4 {guarded}")
+    monkeypatch.setattr(sa, "prune_relocate_domains", lambda *args, **kwargs: None)
+    monkeypatch.setattr(sa, "_compute_cost", _reward_sunday_morning)
+    if not guarded:
+        monkeypatch.setattr(sa, "availability_for", lambda *args, **kwargs: EMPTY_AVAILABILITY)
+
+    result = sa.optimize_and_persist_board(board.id, max_seconds=1.5)
+
+    persisted = sorted(
+        SectionPlacement.objects.filter(board=board).values_list("day", "start_time", "end_time")
+    )
+    if guarded:
+        assert result.get("persist_rolled_back") is True
+        assert result["rollback_reasons"] == ["instructor availability violations increased"]
+        assert persisted == sorted(AFTERNOON)
+    else:
+        assert not result.get("persist_rolled_back"), result.get("rollback_reasons")
+        assert ("SUN", "09:00", "10:15") in persisted
+
+
+@pytest.mark.django_db
+def test_the_persist_guard_does_not_count_a_section_online_on_every_board(
+    av_on, monkeypatch
+) -> None:
+    """The guard's count skips a section online on every board (H7): the pass that
+    moves an online section of a "no mornings" teacher to SUN 09:00 persists."""
+    from core.models import SectionPlacement, TermSection
+    from core.services import timetable_local_search as sa
+
+    sc, ai_board, key, a = _online_here(elsewhere=False)
+    ots.place(ai_board, ots.section(sc, key, "S1"), AFTERNOON)
+    assert TermSection.objects.filter(scenario=sc).count() == 1
+    monkeypatch.setattr(sa, "_compute_cost", _reward_sunday_morning)
+
+    result = sa.optimize_and_persist_board(ai_board.id, max_seconds=1.5)
+
+    assert not result.get("persist_rolled_back"), result.get("rollback_reasons")
+    persisted = SectionPlacement.objects.filter(board=ai_board).values_list(
+        "day", "start_time", "end_time"
+    )
+    assert ("SUN", "09:00", "10:15") in set(persisted)
