@@ -1018,10 +1018,9 @@ html[data-theme="dark"] .ux-toast-icon {
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.2) !important;
 }
 
-/* ── Dark: cpanel header ─── */
-html[data-theme="dark"] .cp-h {
-  background: rgba(255,255,255,0.06) !important;
-}
+/* ── Dark: cpanel header ───
+   (No fill: the panel header is a ruled line on the sheet in both themes. Dark
+   used to paint a 6% grey band that light had already removed.) */
 /* ── Dark: conflict matrix ─── */
 html[data-theme="dark"] .cm-table th,html[data-theme="dark"] .cm-table td{border-color:rgba(255,255,255,0.06)}
 html[data-theme="dark"] .cm-corner{background:linear-gradient(135deg,rgba(10,142,110,0.12),rgba(64,86,227,0.12))}
@@ -1291,10 +1290,12 @@ body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }
    (the Arabic login scrolled sideways by 15px). Zero specificity, so any
    component that wants content-box still says so. Not on the MRI page or the
    classic inspector's MRI tab (owner: unchanged), nor split view, which has
-   its own reset (body.tws-root *). */
-:where(body:not(.twm-root):not(.tws-root)) :where(*:not(.tw-mri, .tw-mri *)),
-:where(body:not(.twm-root):not(.tws-root)) :where(*:not(.tw-mri, .tw-mri *))::before,
-:where(body:not(.twm-root):not(.tws-root)) :where(*:not(.tw-mri, .tw-mri *))::after {
+   its own reset (body.tws-root *), nor the classic Timetable Workspace, whose
+   board geometry (slot, cell and card heights) was measured in content-box and
+   is pinned by its frame tests. */
+:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *)),
+:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *))::before,
+:where(body:not(.twm-root):not(.tws-root):not(:has(#twWorkspace))) :where(*:not(.tw-mri, .tw-mri *))::after {
   box-sizing: border-box;
 }
 
@@ -1318,6 +1319,13 @@ textarea {
 /* A plain link in running text is the brand's link, not the browser's blue and
    visited violet (the student course page showed both). Zero specificity, and
    only links without a class: every component's own link style still wins. */
+/* Bold is one weight: `strong` and `b` default to "bolder", which inside a 700
+   parent asked for 900 (audit explorer). Zero specificity. */
+:where(body:not(.twm-root):not(.tws-root)) :where(b, strong):where(:not(.tw-mri *)) { font-weight: 700; }
+/* The prerequisite graph's node labels are drawn by script with weight 750
+   (rendered as 800); the type scale's bold is 700. */
+.prereq-svg text[font-weight="750"] { font-weight: 700; }
+
 :where(body:not(.twm-root):not(.tws-root)) :where(a:not([class])):where(:not(.tw-mri *)) {
   color: var(--text-brand);
   text-decoration-thickness: 1px;
@@ -4481,8 +4489,11 @@ html[data-theme="dark"] .ux-toolbar .pill-status { box-shadow:none !important; }
    than a small button left alone. */
 @media (max-width: 480px) {
   .fb-fit .fb-tail { gap: 6px; }
-  .fb-fit .fb-tail > .fb-actions { flex: 1 0 auto; }
-  .fb-fit .fb-tail > .fb-actions > .btn { flex: 1 1 auto; }
+  /* Every fit bar's action group, tail or not: once a phone's 16px field text
+     widens the capsules, a button that wraps spans its line (an action row)
+     instead of sitting alone at one end of it. */
+  .fb-fit .fb-actions { flex: 1 0 auto; }
+  .fb-fit .fb-actions > .btn { flex: 1 1 auto; }
 }
 /* .sticky-cta's accent line is a 0-wide flex item in a bar: it never draws,
    but it took a gap and started the bar's first line 10px in from the rest. */
@@ -4548,9 +4559,9 @@ html[data-theme="dark"] .fb-fit .fb-search.fb-sm:focus-within { box-shadow: inse
   font-family:var(--font-mono); font-size:var(--text-micro); font-weight:700;
   padding:2px 8px; border-radius:var(--radius-pill);
   background:var(--teal-dim); color:var(--text-brand); border:1px solid var(--teal-border);
-  animation:livePulse 3s var(--ease) infinite;
+  /* (no perpetual pulse: a badge that never stops moving pulls the eye from the
+     data it labels) */
 }
-@keyframes livePulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
 .cp-b { padding:16px 20px; }
 
 /* ============================================================
@@ -5239,9 +5250,11 @@ pre, .pre-output {
     font-size: var(--text-lg);
   }
   .page-intro h2 { font-size: var(--text-md); }
+  /* Chips wrap to a second line rather than being cut mid-word ("Student: ..."
+     and "1448/1" were clipped at the screen edge). */
   .page-header-chips {
-    overflow: hidden;
-    flex-wrap: nowrap;
+    overflow: visible;
+    flex-wrap: wrap;
   }
   /* A page's own actions take a row under the title: the menu button, a title
      and two text buttons ("Export this scenario", "Search another student") do
@@ -5823,8 +5836,9 @@ pre, .pre-output {
 
 .ux-toast-close {
   flex-shrink: 0;
-  width:       22px;
-  height:      22px;
+  /* a real target (it was 22px) */
+  width:       var(--control-h-sm);
+  height:      var(--control-h-sm);
   border:      none;
   background:  none;
   color:       var(--muted);
@@ -7461,6 +7475,9 @@ html[data-theme="dark"] .sp-adv-wrap {
   overflow:         hidden;
   text-overflow:    ellipsis;
 }
+/* In dark the block tints are deep course hues: --t3 was 3.6:1 on them, --t1 is
+   5.8:1 on the darkest. */
+html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 /* status markers: planned = dashed accent; conflict = red outline + corner dot */
 .wg-blocks .wg-filled.wg-planned { border-inline-start-style: dashed; }
 .wg-blocks .wg-filled.wg-clash {
@@ -7561,6 +7578,17 @@ html[data-theme="dark"] .sp-adv-wrap {
 
 /* Sticky control bar */
 .sticky-head { position: static; padding-block: 10px; }
+/* The Timetable Builder's session bar reads as two lines on a desktop: who and
+   when (student, year, semester, registration mode), then how and the action
+   (eligibility, swaps, Fetch). A zero-height line-break item between them keeps
+   Fetch with its options whatever the font measures, instead of wrapping alone
+   when the fields above happen to fit one line. Visual order = DOM order. */
+@media (min-width: 769px) {
+  .command-bar .filter-bar.fb-fit > * { order: 1; }
+  .command-bar .filter-bar.fb-fit > .fb-search:has(> #eligibilityMode),
+  .command-bar .filter-bar.fb-fit > .fb-search:has(> #eligibilityMode) ~ * { order: 3; }
+  .command-bar .filter-bar.fb-fit::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+}
 .command-bar {
   padding:                 14px 18px;
   border:                  var(--border-mid);
@@ -8576,16 +8604,22 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
-  padding: 0.42rem 0.68rem;
-  border-radius: var(--radius-sm);
+  /* the compact tier of the control ladder */
+  min-height: var(--control-h-sm);
+  padding: 0 var(--control-px-sm);
+  border-radius: var(--control-radius);
   border: 1px solid color-mix(in srgb, var(--teal) 25%, transparent);
   color: var(--text-brand);
   background: color-mix(in srgb, var(--teal) 8%, transparent);
   text-decoration: none;
-  font-size: var(--text-sm);
-  font-weight: 700;
+  font-size: var(--control-fs-sm);
+  line-height: var(--control-lh);
+  font-weight: 600;
 }
+/* A panel's header link is a 32px button beside its title, not a tile
+   stretched to the height of the kicker and title (it measured 46px). */
+.dcc-link,
+.dcc-panel-actions a { align-self: center; }
 .dcc-link:hover,
 .dcc-panel-actions a:hover,
 .dcc-launcher a:hover {
@@ -8695,7 +8729,12 @@ html[dir="rtl"] .dcc-triage-dot { letter-spacing: 0; text-transform: none; }
   white-space: nowrap;
   font-weight: 700;
   color: var(--ink);
+  /* A scenario name runs in its own direction: on an Arabic page a Latin name
+     was laid out right-to-left, so the ellipsis ate its START ("…hand-made
+     timetable 1448-2"). It still sits at the right edge of an Arabic card. */
+  unicode-bidi: plaintext;
 }
+html[dir="rtl"] .dcc-scenario-name { text-align: right; }
 .dcc-scenario-meta {
   margin-top: 0.2rem;
   color: var(--t3);
@@ -8997,10 +9036,10 @@ html[data-theme="dark"] .dcc-kpi:hover { border-color: var(--teal); }
 .filter-pad { padding: 8px 0; }
 
 .step-circle    { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--teal-dim); border: 1px solid var(--teal-border); color: var(--text-brand); font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; }
-.step-label { font-size: var(--text-xs); color: var(--t3); font-weight: 600; }
+.step-label { font-size: var(--text-xs); color: var(--t3); font-weight: 600; white-space: nowrap; }
 .step-arrow { stroke: var(--t5); fill: none; stroke-width: 2; stroke-linecap: round; }
 
-.section-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.section-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
 .section-heading h3 { font-family: var(--font-body); font-weight: 700; font-size: var(--text-md); color: var(--navy); margin: 0; }
 .section-badge  { font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill); background: var(--teal-dim); color: var(--text-brand); border: 1px solid var(--teal-border); }
 
@@ -11267,7 +11306,7 @@ main[data-page="advisor-student-graduation"] > .content-wrap {
   outline: 0;
   background: var(--glass-bg-data);
   color: var(--navy);
-  font: 750 .88rem/1.2 var(--font-mono);
+  font: 700 var(--text-base)/1.2 var(--font-mono);
   direction: ltr;
 }
 .admin-grad-search-controls input:focus {
@@ -11361,7 +11400,7 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--teal) 8%, transparent);
   color: var(--text-brand);
-  font: 800 var(--text-micro)/1.2 var(--font-mono);
+  font: 700 var(--text-micro)/1.2 var(--font-mono);
   letter-spacing: .07em;
   text-transform: uppercase;
 }
@@ -11419,7 +11458,7 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
   place-items: center;
   background: color-mix(in srgb, var(--teal) 12%, transparent);
   color: var(--text-brand);
-  font: 800 var(--text-micro)/1 var(--font-mono);
+  font: 700 var(--text-micro)/1 var(--font-mono);
 }
 .admin-grad-journey li > div {
   display: grid;
@@ -11469,7 +11508,7 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
 }
 .admin-grad-lookup-head > div > span {
   color: var(--text-brand);
-  font: 800 var(--text-micro)/1.2 var(--font-mono);
+  font: 700 var(--text-micro)/1.2 var(--font-mono);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -11543,7 +11582,7 @@ main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][
   outline: 0;
   background: var(--glass-bg-data);
   color: var(--navy);
-  font: 800 1rem/1.2 var(--font-mono);
+  font: 700 var(--text-md)/1.2 var(--font-mono);
   direction: ltr;
   transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
 }
@@ -11871,7 +11910,7 @@ html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) tran
   text-align: end;
 }
 .admin-grad-impact strong { color: var(--text-brand); }
-.admin-grad-term-comparison { color: var(--navy); font: 800 .72rem/1.4 var(--font-mono); }
+.admin-grad-term-comparison { color: var(--navy); font: 700 var(--text-xs)/1.4 var(--font-mono); }
 .admin-grad-scenario-groups { display: grid; gap: .4rem; }
 .admin-grad-scenario-groups > div { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
 .admin-grad-scenario-groups > div > span:first-child { min-width: 185px; color: var(--muted); font-weight: 700; }
@@ -15734,14 +15773,16 @@ html body .btn.sp-requested-remove {
   display: inline-flex;
   align-items: center;
   gap: .3rem;
-  min-height: 34px;
-  padding: .38rem .75rem;
+  /* compact chips on the control ladder (32px; 40px on touch) */
+  min-height: var(--control-h-sm);
+  padding: 0 var(--control-px-sm);
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
-  background: var(--glass-bg);
+  background: var(--card);
   color: var(--t2);
-  font-size: var(--text-sm);
-  font-weight: 700;
+  font-size: var(--control-fs-sm);
+  line-height: var(--control-lh);
+  font-weight: 600;
   text-decoration: none;
   transition: border-color .15s, color .15s, background .15s;
 }
@@ -15782,7 +15823,8 @@ html body .btn.sp-requested-remove {
 .student-home-intro {
   display: flex;
   align-items: baseline;
-  justify-content: center;
+  /* start-aligned under the start-aligned title, like every other page intro */
+  justify-content: flex-start;
   gap: .25rem .4rem;
   flex-wrap: wrap;
 }
@@ -16491,7 +16533,6 @@ html[data-theme="dark"] .student-timetable-calendar :is(.wg-h, .wg-cid, .wg-meta
   .sp-week .student-timetable-agenda { margin-top: .1rem; }
   .sp-scroll-hint { display: none; }
   .student-course-jumps { gap: .35rem; }
-  .student-course-jumps a { min-height: 44px; padding: .4rem .62rem; font-size: var(--text-xs); }
   .student-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .student-kpi-grid .kpi { padding: .55rem; }
   .student-next-step { align-items: flex-start; flex-direction: column; gap: .25rem; }
@@ -16515,14 +16556,24 @@ html[data-theme="dark"] .student-timetable-calendar :is(.wg-h, .wg-cid, .wg-meta
   .student-map-device-note { line-height: 1.5; }
 }
 
+/* On a phone the section links are ONE row you swipe, not a grid of two-line
+   pill blobs with an orphan on the last line. It bleeds to the screen edges
+   (main pads 1rem) so the next chip peeks in as the cue that the row runs on. */
 @media (max-width: 480px) {
   .student-course-jumps {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    margin-inline: -1rem;
+    padding-inline: 1rem;
+    padding-block: 2px;
   }
+  .student-course-jumps::-webkit-scrollbar { display: none; }
   .student-course-jumps a {
-    justify-content: center;
-    text-align: center;
+    flex: none;
+    white-space: nowrap;
+    scroll-snap-align: start;
   }
   .student-course-jumps .student-course-jumps-map { margin-inline-start: 0; }
 }

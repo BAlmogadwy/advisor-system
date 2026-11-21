@@ -26,8 +26,10 @@ main.exam-builder-page,
      it measures 2.74:1, and on --et-subtle 2.63:1: a failure on every input,
      select and button on this screen. #71808f measures 3.68 / 3.52 / 4.05 on
      paper, subtle and white, so it clears the bar on all three with room, in
-     the same spirit as --btn-neutral-border's computed alpha. */
-  --et-field-border: #71808f;
+     the same spirit as --btn-neutral-border's computed alpha. It is now the
+     app's own --control-edge (3.4-3.9:1 on the same surfaces), so this page's
+     fields share one edge with every other field. */
+  --et-field-border: var(--control-edge);
   --et-accent: #087f72;
   --et-accent-hover: #06685e;
   /* Accent as small text: 4.5:1 on every card fill the review colours use. */
@@ -66,7 +68,7 @@ html[data-theme="dark"] #matrixPanel {
   --et-muted: #adbed2;
   --et-icon: #8b9aaf;
   --et-border: #354759;
-  --et-field-border: #6c8197;
+  --et-field-border: var(--control-edge);
   --et-accent: #63d1bf;
   --et-accent-hover: #8ee5d6;
   --et-accent-text: #63d1bf;
@@ -109,15 +111,16 @@ main.exam-builder-page .form-label {
   margin-bottom: .375rem;
 }
 main.exam-builder-page :is(.form-control, .form-select) {
-  min-height: 40px;
+  /* the app's control ladder (it was a 40px system of its own) */
+  min-height: var(--control-h);
   width: 100%;
   max-width: 100% !important;
-  padding: .5rem .75rem !important;
+  padding: 0 var(--control-px-sm) !important;
   border: 1px solid var(--et-field-border) !important;
   border-radius: var(--radius-sm) !important;
   background-color: var(--et-surface) !important;
   color: var(--et-text) !important;
-  font-size: var(--text-base) !important;
+  font-size: var(--field-fs) !important;
   box-shadow: none !important;
   transition: border-color .15s ease, outline-color .15s ease;
 }
@@ -139,8 +142,8 @@ main.exam-builder-page .form-control.is-invalid {
 }
 main.exam-builder-page input[type="checkbox"] { accent-color: var(--et-accent); cursor: pointer; }
 main.exam-builder-page .form-check-input {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   border: 1px solid var(--et-field-border);
   border-radius: 3px;
   box-shadow: none;
@@ -151,8 +154,8 @@ main.exam-builder-page .et-field-help { margin: .5rem 0 0; color: var(--et-muted
 main.exam-builder-page .et-field-error { color: var(--et-danger); }
 main.exam-builder-page .btn,
 main.exam-builder-page .btn.btn-sm {
-  min-height: 40px;
-  padding: .5rem .875rem !important;
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--control-px) !important;
   border: 1px solid var(--et-field-border) !important;
   border-radius: var(--radius-sm) !important;
   background: var(--et-surface) !important;
@@ -254,7 +257,7 @@ main.exam-builder-page #etPeriodsRepeater .et-period-row { display: grid !import
 main.exam-builder-page .et-period-number { color: var(--et-muted); text-align: center; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 main.exam-builder-page :is(.et-period-start, .et-period-end) { width: 100%; max-width: 100% !important; text-align: center; font-variant-numeric: tabular-nums; }
 main.exam-builder-page .et-period-sep { color: var(--et-muted); text-align: center; }
-main.exam-builder-page .et-period-remove { width: 36px; min-height: 36px; padding: .375rem !important; font-size: var(--text-lg) !important; border-color: transparent !important; color: var(--et-muted) !important; }
+main.exam-builder-page .et-period-remove { width: var(--control-h); min-height: var(--control-h); padding: .375rem !important; font-size: var(--text-lg) !important; border-color: transparent !important; color: var(--et-muted) !important; }
 main.exam-builder-page .et-period-remove:hover { color: var(--et-danger) !important; border-color: var(--et-danger) !important; background: var(--et-danger-soft) !important; }
 main.exam-builder-page #etPeriodsFeedback { padding: .6rem .75rem; border-inline-start: 3px solid var(--et-danger); border-radius: 3px; background: var(--et-danger-soft); font-size: var(--text-sm); }
 main.exam-builder-page #etCalendarDetails { margin-top: 8px; color: var(--et-muted); font-size: var(--text-sm); }
@@ -271,8 +274,8 @@ main.exam-builder-page #secList { display: flex !important; flex-wrap: wrap; }
 main.exam-builder-page :is(#progList, #secList) .et-chip {
   display: flex;
   min-width: 0;
-  min-height: 38px;
-  height: 38px;
+  min-height: var(--control-h);
+  height: var(--control-h);
   box-sizing: border-box;
   gap: 8px;
   padding: 8px 10px;
@@ -318,7 +321,7 @@ main.exam-builder-page #courseEmptyState p { max-width: 58ch; margin: .375rem au
 main.exam-builder-page .et-course-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .35fr); gap: 12px; align-items: end; margin-bottom: 12px; }
 main.exam-builder-page .et-course-toolbar > * { min-width: 0; }
 main.exam-builder-page .et-course-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-main.exam-builder-page .et-course-actions .btn { min-height: 34px; padding: .375rem .65rem !important; font-size: var(--text-xs) !important; }
+main.exam-builder-page .et-course-actions .btn { min-height: var(--control-h-sm); padding: .375rem .65rem !important; font-size: var(--text-xs) !important; }
 main.exam-builder-page #courseSearchCount { margin-inline-end: auto; color: var(--et-muted); font-size: var(--text-sm); }
 main.exam-builder-page .et-selection-menu { position: relative; }
 main.exam-builder-page .et-selection-menu > summary { padding: 7px 10px; border: 1px solid var(--et-field-border); border-radius: var(--radius-sm); color: var(--et-text); background: var(--et-surface); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
@@ -523,7 +526,7 @@ main.exam-builder-page .et-lock-refusal-close:focus-visible { outline: 2px solid
 main.exam-builder-page .et-lock-bar { flex-wrap: wrap; }
 main.exam-builder-page .et-lock-bar-icon { display: inline-flex; color: var(--et-lock); }
 main.exam-builder-page .et-lock-bar-issues { color: var(--et-muted); overflow-wrap: anywhere; }
-main.exam-builder-page #lockBarReview { min-height: 32px; padding: 4px 9px !important; font-size: var(--text-xs) !important; }
+main.exam-builder-page #lockBarReview { min-height: var(--control-h-sm); padding: 4px 9px !important; font-size: var(--text-xs) !important; }
 main.exam-builder-page .et-row-lock { display: inline-flex; vertical-align: middle; margin-inline-end: 5px; color: var(--et-lock); }
 main.exam-builder-page .et-lock-kind { display: inline-block; padding: 1px 7px; border: 1px solid var(--et-lock-border); border-radius: var(--radius-xs); color: var(--et-lock); font-size: var(--text-xs); font-weight: 600; line-height: 1.5; }
 main.exam-builder-page .et-lock-issue td { overflow-wrap: anywhere; }
@@ -617,7 +620,7 @@ main.exam-builder-page .et-schedule-workspace { padding: 16px !important; }
 main.exam-builder-page .et-schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
 main.exam-builder-page .et-schedule-heading > div { min-width: 0; }
 main.exam-builder-page .et-schedule-heading h2 { margin: 0; font-size: var(--text-md); font-weight: 700; }
-main.exam-builder-page .et-schedule-heading #schedFilter { flex: 0 1 300px; min-width: 200px; min-height: 36px; }
+main.exam-builder-page .et-schedule-heading #schedFilter { flex: 0 1 300px; min-width: 200px; min-height: var(--control-h-sm); }
 main.exam-builder-page .et-edit-toolbar { position: static; padding: 0 0 10px; margin: 0 0 10px; border-bottom: 1px solid var(--et-border); background: var(--et-surface); }
 main.exam-builder-page .et-edit-toolbar.et-toolbar-sticky { position: sticky; top: var(--exam-toolbar-top, 0px); z-index: 20; box-shadow: 0 4px 6px -5px var(--et-field-border); }
 main.exam-builder-page .et-run-summary { margin: 2px 0 0; color: var(--et-muted); font-size: var(--text-xs); line-height: 1.4; overflow-wrap: anywhere; }
@@ -677,8 +680,8 @@ main.exam-builder-page .et-repair-report p { margin: 4px 0 0; }
 main.exam-builder-page .et-edit-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 8px; }
 main.exam-builder-page :is(.et-check-controls, .et-undo-controls, .et-save-controls) { display: flex; align-items: center; gap: 6px; }
 main.exam-builder-page .et-save-controls { margin-inline-start: auto; }
-main.exam-builder-page .et-edit-controls .btn { min-height: 34px; padding: 6px 9px !important; font-size: var(--text-xs) !important; line-height: 1.35; white-space: nowrap; }
-main.exam-builder-page .et-live-control { display: flex; align-items: center; gap: 7px; margin: 0; min-height: 34px; font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+main.exam-builder-page .et-edit-controls .btn { min-height: var(--control-h-sm); padding: 6px 9px !important; font-size: var(--text-xs) !important; line-height: 1.35; white-space: nowrap; }
+main.exam-builder-page .et-live-control { display: flex; align-items: center; gap: 7px; margin: 0; min-height: var(--control-h-sm); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
 main.exam-builder-page #examLiveUpdate { width: 17px; height: 17px; accent-color: var(--et-accent); margin: 0; }
 main.exam-builder-page .et-edit-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; }
 main.exam-builder-page .et-edit-help { margin-inline-start: auto; color: var(--et-muted); font-size: var(--text-micro); }
@@ -713,7 +716,7 @@ main.exam-builder-page .et-change-course strong { display: inline-block; directi
 main.exam-builder-page .et-change-course .et-course-name { display: block; margin-top: 2px; color: var(--et-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 main.exam-builder-page .et-change-times { color: var(--et-muted); font-size: var(--text-sm); line-height: 1.6; overflow-wrap: anywhere; }
 main.exam-builder-page .et-drill-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-main.exam-builder-page .et-drill-actions:not(.et-course-card-actions) .btn { min-height: 34px; padding: 5px 9px !important; font-size: var(--text-xs) !important; white-space: nowrap; }
+main.exam-builder-page .et-drill-actions:not(.et-course-card-actions) .btn { min-height: var(--control-h-sm); padding: 5px 9px !important; font-size: var(--text-xs) !important; white-space: nowrap; }
 main.exam-builder-page .et-drill-action-note { flex-basis: 100%; color: var(--et-muted); font-size: var(--text-micro); line-height: 1.5; }
 main.exam-builder-page .et-drill-action-note:empty { display: none; }
 main.exam-builder-page .et-drill-course-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); align-items: start; gap: 8px; min-width: 190px; white-space: normal; }
@@ -728,7 +731,7 @@ main.exam-builder-page .et-section-mapping-notice { display: flex; align-items: 
 main.exam-builder-page .et-section-mapping-notice > div { flex: 1 1 280px; min-width: 0; }
 main.exam-builder-page .et-section-mapping-notice h3 { margin: 0 0 4px; font-size: var(--text-base); font-weight: 600; color: inherit; }
 main.exam-builder-page .et-section-mapping-notice p { margin: 0; font-size: var(--text-sm); line-height: 1.5; }
-main.exam-builder-page .et-section-mapping-notice .btn { min-height: 40px; white-space: normal; }
+main.exam-builder-page .et-section-mapping-notice .btn { min-height: var(--control-h); white-space: normal; }
 main.exam-builder-page .et-section-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; white-space: normal; overflow-wrap: anywhere; }
 main.exam-builder-page .et-section-detail + .et-section-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--et-border); }
 main.exam-builder-page .et-section-detail small,
@@ -805,7 +808,7 @@ main.exam-builder-page .et-review-controls { display: flex; flex-wrap: wrap; ali
 main.exam-builder-page .et-review-field { flex: 0 1 190px; min-width: 150px; }
 main.exam-builder-page .et-review-plan { flex-basis: 200px; }
 main.exam-builder-page .et-review-field > label { display: block; margin: 0 0 3px; color: var(--et-muted); font-size: var(--text-micro); font-weight: 600; }
-main.exam-builder-page .et-review-field > select { width: 100%; min-height: 36px; font-size: var(--text-sm); }
+main.exam-builder-page .et-review-field > select { width: 100%; min-height: var(--control-h-sm); font-size: var(--text-sm); }
 main.exam-builder-page .et-review-help { flex: 1 1 240px; max-width: 64ch; margin: 0; padding-block-end: 5px; color: var(--et-muted); font-size: var(--text-xs); line-height: 1.45; }
 main.exam-builder-page .et-review-status { margin: 7px 0 0; color: var(--et-muted); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
 main.exam-builder-page .et-review-status:empty { display: none; }

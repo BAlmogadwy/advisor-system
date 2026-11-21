@@ -44,11 +44,15 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--line);
+  /* the app's field: the control edge (the hairline --line was 1.2:1) and the
+     control ladder's height, radius and text size */
+  border: 1px solid var(--control-edge);
   background: var(--surface);
   color: var(--t1);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.7rem;
+  border-radius: var(--control-radius);
+  min-height: var(--control-h);
+  font-size: var(--field-fs);
+  padding: 0.5rem var(--control-px-sm);
   outline: none;
   font-family: inherit;
 }
