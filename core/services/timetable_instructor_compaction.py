@@ -49,6 +49,7 @@ from core.services.timetable_board_persistence import external_shared_section_id
 from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_flags import is_section_day_spread_enabled
+from core.services.timetable_instructor_availability import availability_for, rule_ids
 from core.services.timetable_optimisation_policy import (
     MAX_WORKING_DAYS,
     current_day_off_policy,
@@ -132,6 +133,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     cfg = get_instructor_compaction_config()
     cap = get_instructor_daily_cap()
     day_spread_on = is_section_day_spread_enabled()
+    # Teaching-time rules (read once): no relocation, single or a vacated day's
+    # leaf, ever lands in a cell the session's teacher may not teach. Online
+    # sections are locked below, so the rules never reach them.
+    availability = availability_for(scenario_id)
     instructor_priority = is_instructor_priority_enabled()
     # Bounded student-gap-for-instructor-day trade. Only meaningful under the
     # instructor-first policy (days are a ranked quantity there); default OFF.
@@ -362,6 +367,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         # section already had may stay).
         current_days = [m.day for m in sbi[sid].meetings]
         was_day_run = day_spread_on and days_form_day_run(current_days)
+        ruled = rule_ids(availability, iids) if availability else ()
         for day2 in range(len(WEEKDAYS)):
             same_day = day2 == meeting.day
             if not same_day and day2 in others:
@@ -384,6 +390,8 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 if same_day and s2 == meeting.start_min:
                     continue
                 if (WEEKDAYS[day2], s2) in blocked:
+                    continue
+                if ruled and any(availability.blocks(iid, day2, s2, e2) for iid in ruled):
                     continue
                 if any(_interval_busy(instr_slots[iid], day2, s2, e2) for iid in iids):
                     continue

@@ -19,7 +19,9 @@ def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = Fa
     from core.services.timetable_constraints import (
         count_instructor_clashes,
         count_instructor_daily_overloads,
+        section_availability_violations,
     )
+    from core.services.timetable_instructor_availability import availability_for
     from core.services.timetable_optimisation_policy import (
         evaluation_is_better,
         instructor_schedule_regressions,
@@ -54,6 +56,15 @@ def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = Fa
     profiles = build_student_profiles_for_scenario(scenario_id)
     rigidity = build_course_rigidity_for_scenario(scenario_id)
     tiers = build_course_tier_map_for_scenario(scenario_id)
+    # Teaching-time rules: a whole-bundle switch never leaves a section with more
+    # meetings its teacher may not teach. (Only meeting-policy courses are searched
+    # here, and those are never online: OnlineCourseLookup leaves them out.)
+    availability = availability_for(scenario_id)
+
+    def blocked_meetings(section) -> int:
+        return section_availability_violations(
+            section, teachers.get(section.section_id, ()), availability
+        )
 
     def evaluate() -> TimetableEvaluationResult:
         return evaluate_generated_timetable_candidate(
@@ -80,6 +91,7 @@ def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = Fa
             old_overloads = count_instructor_daily_overloads(
                 sections, teachers, get_instructor_daily_cap()
             )
+            old_blocked = blocked_meetings(section)
             for option in meeting_options_for_policy(
                 policy,
                 blocked_slots=scenario.blocked_slots or [],
@@ -105,6 +117,8 @@ def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = Fa
                         sections, teachers, get_instructor_daily_cap()
                     )
                     if clashes > old_clashes or overloads > old_overloads:
+                        continue
+                    if availability and blocked_meetings(section) > old_blocked:
                         continue
                     evaluated = evaluate()
                     if instructor_schedule_regressions(ceilings, schedule_metrics_of(evaluated)):

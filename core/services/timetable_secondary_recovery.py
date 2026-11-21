@@ -15,6 +15,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
+from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.timetable_assignment_models import (
     CanonicalPattern,
     SectionState,
@@ -25,6 +26,7 @@ from core.services.timetable_assignment_models import (
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
     before_meetings_of,
+    move_adds_availability_violation,
     move_exceeds_instructor_daily_cap,
     move_introduces_day_run,
     move_introduces_instructor_clash,
@@ -152,8 +154,13 @@ def recover_secondary_quality(
     first_improvement: bool = True,
     max_polish_iterations: int = 4,
     room_shortage_target: int | None = None,
+    instructor_availability: InstructorAvailability = EMPTY_AVAILABILITY,
 ) -> dict[str, Any]:
     """Return a Pareto improvement in soft seats and physical room shortages.
+
+    ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a move
+    that leaves a moved section with more meetings its charged teacher may not
+    teach is a structural rejection (a pre-existing violation may stay).
 
     Input sections and the database remain unchanged. Every committed move
     ratchets both secondary counts and each teacher's days/idle. The deadline is
@@ -293,6 +300,15 @@ def recover_secondary_quality(
                         and is_instructor_daily_cap_enabled()
                         and move_exceeds_instructor_daily_cap(
                             sections, section_instructor_ids, get_instructor_daily_cap(), moved
+                        )
+                    )
+                    or (
+                        instructor_availability
+                        and move_adds_availability_violation(
+                            sections,
+                            section_instructor_ids or {},
+                            instructor_availability,
+                            before_meetings_of(snapshot.snapshots),
                         )
                     )
                 ):

@@ -2731,3 +2731,592 @@ def test_a_guarded_optimiser_run_reads_the_rules_once(av_on, monkeypatch, mode) 
 
     assert "error" not in result, result.get("error")
     assert len(rule_queries(captured.captured_queries)) == 1
+
+
+# ── C.11-C.13, C.16: repairs, compaction, fixed patterns, recovery ─────
+# These stages read the rules through ``availability_for`` like every other; the
+# boards below are the day-run precedent's one-instructor boards, so the tests
+# hand the stage its availability directly (the read and its gating are pinned
+# above) and the control hands it an empty one.
+
+from core.models import SectionPlacement  # noqa: E402
+from tests.test_section_day_run import (  # noqa: E402
+    _clash_scenario,
+    _compaction_scenario,
+    _course_days,
+    _instructor_board,
+    _overload_scenario,
+    _safe_search_scenario,
+)
+
+
+def _inject(monkeypatch, availability) -> None:
+    """Every repair-stage read of the rules returns ``availability``."""
+    from core.services import timetable_instructor_cap_repair as cap_repair
+    from core.services import timetable_instructor_compaction as compaction
+
+    def read(_scenario_id, **_kwargs):
+        return availability
+
+    for module in (helper, cap_repair, compaction):
+        monkeypatch.setattr(module, "availability_for", read)
+
+
+def _dr(name: str = "Dr Run") -> int:
+    return Instructor.objects.get(full_name=name).pk
+
+
+def _unavailable(person: int, *days: str):
+    return _av(*((person, KIND_UNAVAILABLE, (day,), 0, 24 * 60) for day in days))
+
+
+REPAIR_FLAGS = {
+    "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED": True,
+    "TIMETABLE_INSTRUCTOR_LINKS_ENABLED": True,
+    "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED": True,
+    "TIMETABLE_INSTRUCTOR_DAILY_CAP": 3,
+    "TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED": False,
+    "TIMETABLE_SECTION_DAY_SPREAD": False,
+}
+
+
+@pytest.fixture
+def repair_flags(settings):
+    for name, value in REPAIR_FLAGS.items():
+        setattr(settings, name, value)
+    return settings
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_cap_repair_relocates_to_a_day_its_teacher_may_teach(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """T-R1: THU holds four sessions (cap 3); C1's THU session may go to MON or WED
+    and MON comes first. Dr Run may not teach on MON, so it goes to WED (control:
+    an empty availability takes MON)."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_daily_overloads
+
+    scenario = _overload_scenario(f"t-r1 {rules}")
+    _inject(monkeypatch, _unavailable(_dr(), "MON") if rules else EMPTY_AVAILABILITY)
+
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["remaining_violations"] == 0 and report["unplaced"] == []
+    assert _course_days(scenario, "C1") == (
+        ["SUN", "TUE", "WED"] if rules else ["SUN", "MON", "TUE"]
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_cap_repair_leaves_the_overload_rather_than_break_a_rule_or_unplace(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """T-R2 (owner decision G.2): Dr Run may teach on THU only, so every
+    cap-relieving relocation of every THU session is a day he may not teach: the
+    over-cap THU stays, reported, and nothing is unplaced (control: an empty
+    availability relocates)."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_daily_overloads
+
+    scenario = _overload_scenario(f"t-r2 {rules}")
+    only_thu = _unavailable(_dr(), "SUN", "MON", "TUE", "WED")
+    _inject(monkeypatch, only_thu if rules else EMPTY_AVAILABILITY)
+
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["unplaced"] == []
+    if rules:
+        assert report["repaired"] == []
+        assert report["remaining_violations"] == 1
+        assert report["locked_blocked"][0]["reason"] == "instructor_unavailable_elsewhere"
+        assert {row["section"] for row in report["availability_blocked"]} == {
+            "C1 S1",
+            "C2 S1",
+            "C3 S1",
+            "C4 S1",
+        }
+        assert "THU" in _course_days(scenario, "C1")
+    else:
+        assert report["remaining_violations"] == 0
+        assert "availability_blocked" not in report
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_cap_repair_with_no_relocation_at_all_still_unplaces_as_before(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """T-R3: MON and WED are closed for the scenario, so no relocation exists even
+    ignoring the rules: the documented last resort (unplace) is unchanged by them."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_daily_overloads
+    from tests.test_section_day_run import _SLOTS
+
+    scenario = _overload_scenario(
+        f"t-r3 {rules}", blocked=[(day, s) for day in ("MON", "WED") for s in _SLOTS]
+    )
+    _inject(monkeypatch, _unavailable(_dr(), "MON") if rules else EMPTY_AVAILABILITY)
+
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert [row["section"] for row in report["unplaced"]] == ["C1 S1"]
+    assert "availability_blocked" not in report
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_clash_repair_never_moves_a_session_into_a_forbidden_day(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """T-R4 (single move): C1's clashing THU session goes to WED, not MON, which
+    Dr Run may not teach (control: an empty availability takes MON)."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
+
+    scenario = _clash_scenario(f"t-r4 {rules}")
+    _inject(monkeypatch, _unavailable(_dr(), "MON") if rules else EMPTY_AVAILABILITY)
+
+    report = repair_instructor_clashes(scenario.id)
+
+    assert report["remaining_clashes"] == 0
+    assert _course_days(scenario, "C1") == (
+        ["SUN", "TUE", "WED"] if rules else ["SUN", "MON", "TUE"]
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_clash_repair_leaves_a_clash_rather_than_break_a_rule(repair_flags, monkeypatch) -> None:
+    """Owner decision G.3: with MON and WED both forbidden the clash stays,
+    reported as before, and nothing is unplaced."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
+
+    scenario = _clash_scenario("t-r4 left")
+    _inject(monkeypatch, _unavailable(_dr(), "MON", "WED"))
+
+    report = repair_instructor_clashes(scenario.id)
+
+    assert report["remaining_clashes"] == 1 and report["unplaced"] == []
+    assert report["locked_blocked"][-1]["reason"] == "no_clash_free_slot_preserving_duration"
+    assert _course_days(scenario, "C1") == ["SUN", "TUE", "THU"]
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_the_instructor_first_safe_search_never_picks_a_forbidden_day(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """T-R5: the coordinated safe search (priority on) has two zero-cost moves for
+    C1's THU session, MON and WED; Dr Run may not teach on MON (control: an empty
+    availability takes MON)."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
+
+    repair_flags.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    scenario = _safe_search_scenario(f"t-r5 {rules}")
+    _inject(monkeypatch, _unavailable(_dr(), "MON") if rules else EMPTY_AVAILABILITY)
+
+    report = repair_instructor_clashes(scenario.id)
+
+    assert [r["instructor_safe"] for r in report["repaired"]] == [True]
+    assert _course_days(scenario, "C1") == (
+        ["SUN", "TUE", "WED"] if rules else ["SUN", "MON", "TUE"]
+    )
+
+
+@pytest.fixture
+def compaction_flags(repair_flags):
+    repair_flags.TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED = True
+    repair_flags.TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS = 4
+    repair_flags.TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = 0
+    return repair_flags
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_compaction_never_relocates_a_session_into_a_forbidden_day(
+    compaction_flags, monkeypatch, rules
+) -> None:
+    """T-R6: closing C1's THU hole, compaction takes WED instead of MON, which
+    Dr Run may not teach (control: an empty availability takes MON)."""
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+    scenario = _compaction_scenario(f"t-r6 {rules}")
+    _inject(monkeypatch, _unavailable(_dr(), "MON") if rules else EMPTY_AVAILABILITY)
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["search"]["moves_accepted"] >= 1
+    days = _course_days(scenario, "C1")
+    assert "THU" not in days
+    assert ("WED" if rules else "MON") in days and ("MON" in days) is not rules
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_a_vacated_days_sessions_never_land_in_forbidden_cells(
+    settings, monkeypatch, rules
+) -> None:
+    """T-R7: the day trade empties a two-session day by moving both sessions to the
+    other days' afternoons; Dr Days may not teach afternoons, so no day is vacated
+    (control: an empty availability vacates one)."""
+    from core.services.timetable_instructor_compaction import compact_instructor_schedules
+    from tests.test_instructor_day_trade import _THREE_DAYS, _board, _trade_on
+
+    for name, value in {
+        "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED": True,
+        "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED": True,
+        "TIMETABLE_INSTRUCTOR_LINKS_ENABLED": True,
+        "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED": True,
+        "TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED": True,
+        "TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS": 6,
+        "TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS": 0,
+    }.items():
+        setattr(settings, name, value)
+    _trade_on(settings)
+    scenario = _board(_THREE_DAYS)
+    afternoons = _av(
+        (_dr("Dr Days"), KIND_UNAVAILABLE, ("SUN", "MON", "TUE", "WED", "THU"), 13 * 60, 24 * 60)
+    )
+    _inject(monkeypatch, afternoons if rules else EMPTY_AVAILABILITY)
+
+    report = compact_instructor_schedules(scenario.id)
+
+    assert report["instructor_impact"]["working_days_after"] == (3 if rules else 2)
+    starts = set(
+        SectionPlacement.objects.filter(board__scenario=scenario).values_list(
+            "start_time", flat=True
+        )
+    )
+    assert (starts <= {"09:00", "10:30"}) is rules
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_a_clash_repairing_bundle_switch_into_forbidden_mornings_is_refused(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """T-F1: ENG101's afternoon bundle clashes with C2 for Dr Run; the morning
+    bundle would repair it, but he may not teach mornings (control: an empty
+    availability switches)."""
+    from core.services.timetable_fixed_pattern_search import improve_fixed_course_patterns
+
+    pm = ("13:00", "16:00")
+    scenario = _instructor_board(
+        f"t-f1 {rules}",
+        [
+            ("C2", "S1", [("SUN", "12:00", "13:15")]),  # right after the morning bundle
+            ("ENG101", "S1", [(day, *pm) for day in ("SUN", "MON", "WED", "THU")]),
+        ],
+    )
+    _inject(monkeypatch, _no_mornings_for(_dr()) if rules else EMPTY_AVAILABILITY)
+
+    report = improve_fixed_course_patterns(scenario.id, repair_clashes=True)
+
+    starts = set(
+        SectionPlacement.objects.filter(
+            board__scenario=scenario, term_section__course_code="ENG101"
+        ).values_list("start_time", flat=True)
+    )
+    assert report["evaluated"] >= 1
+    assert starts == ({"13:00"} if rules else {"09:00"})
+    assert report["accepted"] == (0 if rules else 1)
+
+
+def _no_mornings_for(person: int):
+    return _av((person, KIND_UNAVAILABLE, ("SUN", "MON", "TUE", "WED", "THU"), 0, 13 * 60))
+
+
+# ── C.13: secondary recovery (kernel) and its persisted guard ────────
+
+CORE_PM = _pat("core_pm", [(SUN, PM)])
+SOFT_PM = _pat("soft_pm", [(SUN, PM)])
+SOFT_AM = _pat("soft_am", [(SUN, AM)])
+
+
+@RULES_OR_EMPTY
+def test_secondary_recovery_never_moves_a_section_into_a_forbidden_pattern(settings, rules) -> None:
+    """T-R8: SOFT clashes with the locked CORE; the only pattern that frees it is a
+    morning teacher 7 may not teach (control: an empty availability takes it)."""
+    from core.services.timetable_secondary_recovery import recover_secondary_quality
+
+    settings.TIMETABLE_TIERED_OBJECTIVE_ENABLED = True
+    sections = {"CORE": _sec("CORE", CORE_PM), "SOFT": _sec("SOFT", SOFT_PM)}
+    profiles = {"s": StudentProfile("s", "CS", ["CORE", "SOFT"], RiskTier.C, 0)}
+    tiers = {"CORE": "T1", "SOFT": "T3"}
+    ids = {"SOFT": frozenset({7})}
+    baseline = evaluate_generated_timetable_candidate(
+        "before", list(sections.values()), profiles, {}, ids, tiers
+    )
+
+    report = recover_secondary_quality(
+        current_eval=baseline,
+        sections_by_id=sections,
+        pattern_catalog={"fam": [SOFT_PM, SOFT_AM]},
+        student_profiles=profiles,
+        course_rigidity={},
+        room_evaluator=lambda states: {
+            "unassigned_count": 0,
+            "unassigned_section_ids": [],
+            "proven_optimal": True,
+        },
+        section_instructor_ids=ids,
+        course_tiers=tiers,
+        locked_section_ids={"CORE"},
+        time_limit_seconds=10,
+        max_iterations=3,
+        instructor_availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )["report"]
+
+    assert bool(report["applied"]) is not rules
+    if rules:
+        assert report["structural_rejections"] > 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("rules", [True, False], ids=["rules", "no-rule-control"])
+def test_the_recovery_runner_rolls_back_a_persisted_board_with_a_new_violation(
+    settings, monkeypatch, rules
+) -> None:
+    """T-R9: with the search's own reject taken out, it moves SOFT from SUN 09:00
+    (clashing with the locked CORE) to SUN 10:30, which teacher 7 may not teach;
+    the persisted guard rolls the pass back (control: without the rule it is kept)."""
+    from core.services import timetable_secondary_recovery as recovery
+    from core.services import timetable_secondary_recovery_runner as runner
+
+    scenario, soft = _recovery_scenario(settings, monkeypatch)
+    late_morning = _av((7, KIND_UNAVAILABLE, ("SUN",), 10 * 60 + 30, 12 * 60))
+    _inject(monkeypatch, late_morning if rules else EMPTY_AVAILABILITY)
+    monkeypatch.setattr(recovery, "move_adds_availability_violation", lambda *a, **k: False)
+    profiles = {"s": StudentProfile("s", "CS", ["CORE", "SOFT"], RiskTier.C, 0)}
+
+    report = runner.run_secondary_recovery_for_scenario(
+        scenario.id,
+        {},
+        profiles,
+        {},
+        {"SOFT_M1": frozenset({7})},
+        {"CORE": "T1", "SOFT": "T3"},
+    )
+
+    soft.refresh_from_db()
+    if rules:
+        assert not report["applied"]
+        assert report["stop_reason"] == "persistence_guard_rejected"
+        assert [f["metric"] for f in report["regressions"]] == [
+            "instructor_availability_violations"
+        ]
+        assert soft.start_time == "09:00"
+    else:
+        assert report["applied"]
+        assert soft.start_time == "10:30"
+
+
+@pytest.mark.django_db
+def test_the_recovery_runner_hands_the_search_the_rules(settings, monkeypatch) -> None:
+    """C.13 wiring: with the search's own reject in place the runner's rules reach
+    it, so SOFT is never moved into SUN 10:30 and the guard has nothing to roll
+    back (the same board with the reject taken out is rolled back, above); the
+    catalogue is built with the rules and the map too."""
+    from core.services import timetable_optimizer_v2 as v2
+    from core.services import timetable_secondary_recovery_runner as runner
+
+    scenario, soft = _recovery_scenario(settings, monkeypatch)
+    rules = _av((7, KIND_UNAVAILABLE, ("SUN",), 10 * 60 + 30, 12 * 60))
+    _inject(monkeypatch, rules)
+    stub, asked = v2._build_pattern_catalog_for_scenario, []
+
+    def catalogue(scenario_id, **kwargs):
+        asked.append(kwargs)
+        return stub(scenario_id, **kwargs)
+
+    monkeypatch.setattr(v2, "_build_pattern_catalog_for_scenario", catalogue)
+    profiles = {"s": StudentProfile("s", "CS", ["CORE", "SOFT"], RiskTier.C, 0)}
+
+    report = runner.run_secondary_recovery_for_scenario(
+        scenario.id, {}, profiles, {}, {"SOFT_M1": frozenset({7})}, {"CORE": "T1", "SOFT": "T3"}
+    )
+
+    soft.refresh_from_db()
+    assert not report["applied"]
+    assert report["stop_reason"] != "persistence_guard_rejected"
+    assert soft.start_time == "09:00"
+    assert asked == [{"availability": rules, "section_instructor_ids": {"SOFT_M1": frozenset({7})}}]
+
+
+def _recovery_scenario(settings, monkeypatch):
+    """The recovery runner's precedent board: CORE (locked) and SOFT both on SUN
+    09:00 (a clash for the one student); SUN 10:30 frees SOFT. Returns
+    ``(scenario, SOFT's placement)``."""
+    from core.models import (
+        Room,
+        ScenarioSectionBudget,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    settings.TIMETABLE_TIERED_OBJECTIVE_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    settings.TIMETABLE_SECONDARY_RECOVERY_ENABLED = True
+    settings.TIMETABLE_SECONDARY_RECOVERY_SECONDS = 2
+    settings.TIMETABLE_SECONDARY_RECOVERY_ITERATIONS = 2
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="recovery av", gender="M", programs=["CS"]
+    )
+    delivery = DeliveryBoard.objects.create(
+        scenario=scenario, program="CS", nominal_term=1, label="CS"
+    )
+    Room.objects.create(
+        room_code="R1", capacity=40, room_type="lecture", section="M", department="CS"
+    )
+    rows = {}
+    for course, start, end, locked in [
+        ("CORE", "09:00", "10:15", True),
+        ("SOFT", "09:00", "10:15", False),
+    ]:
+        ScenarioSectionBudget.objects.create(
+            scenario=scenario,
+            course_key=course,
+            course_code=course,
+            department="CS",
+            credit_hours=3,
+            total_demand=5,
+            planned_sections=1,
+            max_per_section=30,
+            programme_term=1,
+        )
+        section = TermSection.objects.create(
+            scenario=scenario,
+            course_key=course,
+            course_code=course,
+            section="M1",
+            available_capacity=30,
+        )
+        rows[course] = SectionPlacement.objects.create(
+            board=delivery,
+            term_section=section,
+            day="SUN",
+            start_time=start,
+            end_time=end,
+            room="R1" if locked else "",
+            is_locked=locked,
+        )
+        TermSectionMeeting.objects.create(
+            term_section=section,
+            day="SUN",
+            start_time=start,
+            end_time=end,
+            room="R1" if locked else "",
+            instructor="",
+        )
+    states = {s.section_id: s for s in build_section_states_for_scenario(scenario.id)}
+    family = states["SOFT_M1"].pattern_family
+    patterns = [
+        CanonicalPattern(
+            name, "", [SectionMeeting(SUN, *cell)], family, "75", False, 1, frozenset({SUN}), ""
+        )
+        for name, cell in (("soft_nine", (540, 615)), ("soft_late", (630, 705)))
+    ]
+    monkeypatch.setattr(
+        "core.services.timetable_optimizer_v2._build_pattern_catalog_for_scenario",
+        lambda _sid, **_kwargs: {family: patterns},
+    )
+    return scenario, rows["SOFT"]
+
+
+def test_the_repair_guard_spares_only_a_meeting_online_on_every_board() -> None:
+    """H7 in the cap and clash repairs: a meeting whose copies are online on every
+    board is never bound; one campus on some board is (control: no rule, no guard)."""
+    from types import SimpleNamespace
+
+    from core.services.timetable_instructor_cap_repair import _availability_guard
+
+    class Lookup:
+        def __init__(self, online_boards):
+            self.online_boards = online_boards
+
+        def is_online_course_for_board(self, board, _code):
+            return board in self.online_boards
+
+    section = SimpleNamespace(course_key="GS101", course_code="GS101", course_number="101")
+    here = SimpleNamespace(pk=1, board="AI", term_section=section)
+    copies = {1: [here, SimpleNamespace(pk=2, board="DS", term_section=section)]}
+
+    def teachers(_placement):
+        return frozenset({7})
+
+    everywhere = _availability_guard(NO_MORNINGS, Lookup({"AI", "DS"}), copies, teachers)
+    assert not everywhere(here, "SUN", "09:00", "10:15")
+    one_board = _availability_guard(NO_MORNINGS, Lookup({"AI"}), copies, teachers)
+    assert one_board(here, "SUN", "09:00", "10:15")
+    assert not one_board(here, "SUN", "13:00", "14:15")
+    assert _availability_guard(EMPTY_AVAILABILITY, Lookup(set()), copies, teachers) is None
+
+
+# ── T-O1: a whole Generate run ────────────────────────────────────────
+
+
+def _board_violations(scenario) -> tuple[int, dict]:
+    """Forbidden meetings on the persisted board under the map in force (B.8), and
+    the busiest charged teacher's first meeting ``{"name", "day"}``."""
+    from core.services.instructor_availability import load_instructor_availability
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    states = {s.section_id: s for s in build_section_states_for_scenario(scenario.id)}
+    charged = sta.load_assignment(scenario.id, incomplete="collect").v2_map()
+    exempt = [f"{key}_{label}" for key, label in helper.online_exempt_sections(scenario.id)]
+    teachers = sorted({iid for ids in charged.values() for iid in ids})
+    rules = load_instructor_availability(teachers)
+    count = constraints.count_instructor_availability_violations(
+        states, charged, rules, exempt=exempt
+    )
+    load: dict[int, list] = {}
+    for sid, ids in charged.items():
+        for iid in ids:
+            load.setdefault(iid, []).extend(states[sid].meetings if sid in states else [])
+    busiest = max(sorted(load), key=lambda iid: len(load[iid]))
+    first = min(load[busiest], key=lambda m: (m.day, m.start_min))
+    name = Instructor.objects.get(pk=busiest).full_name
+    return count, {"name": name, "day": ("SUN", "MON", "TUE", "WED", "THU")[first.day]}
+
+
+def _generate(settings, flag: bool, rule_for: dict | None) -> tuple[int, dict]:
+    from core.services.timetable_run_seed import seeded_timetable_run
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    out: dict = {}
+    try:
+        with transaction.atomic():
+            scenario = build_corpus(11)
+            if rule_for is not None:
+                person = Instructor.objects.get(full_name=rule_for["name"])
+                rule(person, KIND_UNAVAILABLE, (rule_for["day"],))
+            with seeded_timetable_run(3):
+                result = run_v2_optimisation_guarded(
+                    scenario.id,
+                    mode="full",
+                    strategies=["compact"],
+                    max_iterations=2,
+                    run_chain=False,
+                    run_cpsat=False,
+                )
+            assert "error" not in result, result.get("error")
+            out["violations"], out["busiest"] = _board_violations(scenario)
+            raise _Rollback
+    except _Rollback:
+        pass
+    return out["violations"], out["busiest"]
+
+
+@pytest.mark.django_db
+def test_a_generate_run_leaves_no_forbidden_meeting_on_the_persisted_board(av_on) -> None:
+    """T-O1: the busiest charged teacher of a flag-off Generate may not teach on the
+    day of his first meeting. With the flag off the same run (control, asserted
+    first) breaks that rule; with it on, the persisted board breaks none."""
+    _count, busiest = _generate(av_on, False, None)
+
+    control, _ = _generate(av_on, False, busiest)
+    assert control >= 1
+    ruled, _ = _generate(av_on, True, busiest)
+    assert ruled == 0
