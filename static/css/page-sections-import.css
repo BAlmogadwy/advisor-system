@@ -37,8 +37,8 @@
 .sections-import-page .si-eyebrow {
   margin: 0 0 0.25rem;
   color: var(--text-brand);
-  font-size: max(var(--fs-floor), 0.72rem);
-  font-weight: 800;
+  font-size: var(--text-micro);
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -58,10 +58,10 @@
   gap: 0.35rem;
   padding: 0.35rem 0.55rem;
   border: 1px solid var(--si-line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--t2);
   background: var(--si-soft);
-  font-size: max(var(--fs-floor), 0.74rem);
+  font-size: var(--text-xs);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -99,8 +99,8 @@
   margin: 0 0 0.55rem;
   padding: 0;
   color: var(--t1);
-  font-size: 0.84rem;
-  font-weight: 800;
+  font-size: var(--text-sm);
+  font-weight: 700;
 }
 
 .sections-import-page .si-dropzone {
@@ -142,7 +142,7 @@
   width: 3rem;
   height: 3rem;
   place-items: center;
-  border-radius: 0.85rem;
+  border-radius: var(--radius-lg);
   color: var(--text-brand);
   background: color-mix(in srgb, var(--teal) 12%, transparent);
 }
@@ -160,7 +160,7 @@
 }
 
 .sections-import-page .si-dropzone-copy strong {
-  font-size: 0.86rem;
+  font-size: var(--text-base);
 }
 
 .sections-import-page .si-dropzone-copy small {
@@ -174,11 +174,11 @@
   overflow: hidden;
   padding: 0.38rem 0.55rem;
   border: 1px solid var(--si-line);
-  border-radius: 0.55rem;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--text-brand);
   font-family: var(--font-mono);
-  font-size: max(var(--fs-floor), 0.7rem);
+  font-size: var(--text-xs);
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -208,12 +208,12 @@
 
 .sections-import-page .si-switch-row strong {
   color: var(--t1);
-  font-size: 0.84rem;
+  font-size: var(--text-sm);
 }
 
 .sections-import-page .si-switch-row small {
   color: var(--t3);
-  font-size: max(var(--fs-floor), 0.74rem);
+  font-size: var(--text-xs);
   line-height: 1.6;
 }
 
@@ -274,12 +274,12 @@
 .sections-import-page .si-text-button {
   padding: 0.3rem 0.5rem;
   border: 0;
-  border-radius: 0.45rem;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-brand);
   font: inherit;
   font-size: var(--text-xs);
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
   /* "Select all" wrapped onto two lines in its narrow column */
   white-space: nowrap;
@@ -304,7 +304,7 @@
   max-width: 75rem;
   margin: 0.55rem 0 0.8rem;
   color: var(--t3);
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
   line-height: 1.7;
 }
 
@@ -342,12 +342,12 @@
   justify-content: center;
   padding: 0.36rem 0.65rem;
   border: 1px solid var(--si-line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--card);
   color: var(--t2);
   font-family: var(--font-mono);
-  font-size: max(var(--fs-floor), 0.72rem);
-  font-weight: 800;
+  font-size: var(--text-micro);
+  font-weight: 700;
   transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
@@ -370,7 +370,7 @@
 .sections-import-page .si-selection-status {
   margin: 0.65rem 0 0;
   color: var(--text-brand);
-  font-size: max(var(--fs-floor), 0.74rem);
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -383,10 +383,10 @@
   width: 100%;
   padding: 0.7rem;
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-  border-radius: 0.6rem;
+  border-radius: var(--radius);
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 7%, var(--card));
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 
 .sections-import-page .si-merge-note {
@@ -419,13 +419,13 @@
 
 .sections-import-page .si-merge-note strong {
   color: var(--t1);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .sections-import-page .si-merge-note p {
   margin: 0.18rem 0 0;
   color: var(--t2);
-  font-size: max(var(--fs-floor), 0.74rem);
+  font-size: var(--text-xs);
   line-height: 1.6;
 }
 
@@ -435,7 +435,7 @@
   gap: 0.3rem;
   color: var(--sev-warning);
   font-size: var(--text-xs);
-  font-weight: 800;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -452,7 +452,7 @@
 .sections-import-page .si-status {
   margin: 0.75rem 0 0;
   padding: 0.7rem 0.85rem;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
@@ -462,11 +462,11 @@
   overflow: auto;
   padding: 0.85rem;
   border: 1px solid var(--si-line);
-  border-radius: 0.65rem;
+  border-radius: var(--radius);
   direction: ltr;
   background: color-mix(in srgb, var(--t1) 4%, var(--card));
   color: var(--t2);
-  font-size: max(var(--fs-floor), 0.7rem);
+  font-size: var(--text-xs);
   text-align: left;
   white-space: pre-wrap;
 }
@@ -493,13 +493,13 @@
   gap: 0.55rem;
   padding: 0.8rem;
   border: 1px solid var(--si-line);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-md);
   background: var(--card);
 }
 
 .sections-import-page .si-impact-card span {
   color: var(--t3);
-  font-size: max(var(--fs-floor), 0.7rem);
+  font-size: var(--text-xs);
   font-weight: 700;
   line-height: 1.4;
 }
@@ -507,7 +507,7 @@
 .sections-import-page .si-impact-card strong {
   color: var(--t1);
   font-family: var(--font-serif);
-  font-size: 1.55rem;
+  font-size: var(--text-xl);
   line-height: 1;
 }
 
@@ -527,7 +527,7 @@
 .sections-import-page .si-impact-details {
   margin: 0.8rem 0 0;
   color: var(--t3);
-  font-size: max(var(--fs-floor), 0.73rem);
+  font-size: var(--text-xs);
   line-height: 1.6;
 }
 
@@ -539,7 +539,7 @@
 .sections-import-page .si-table-heading p {
   margin: 0.25rem 0 0;
   color: var(--t3);
-  font-size: max(var(--fs-floor), 0.73rem);
+  font-size: var(--text-xs);
 }
 
 .sections-import-page .si-table-panel {
@@ -549,7 +549,7 @@
 .sections-import-page .table-responsive {
   overflow-x: auto;
   border: 1px solid var(--si-line);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-md);
 }
 
 .sections-import-page .si-preview-table {
@@ -564,8 +564,8 @@
   border-block-end-color: var(--si-line);
   background: var(--si-soft);
   color: var(--t2);
-  font-size: max(var(--fs-floor), 0.7rem);
-  font-weight: 800;
+  font-size: var(--text-xs);
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -573,7 +573,7 @@
   padding: 0.68rem 0.6rem;
   border-color: color-mix(in srgb, var(--t4) 18%, transparent);
   color: var(--t2);
-  font-size: max(var(--fs-floor), 0.73rem);
+  font-size: var(--text-xs);
   vertical-align: middle;
 }
 
@@ -599,11 +599,11 @@
 .sections-import-page .si-source-tag {
   display: inline-flex;
   padding: 0.2rem 0.45rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--si-soft-strong);
   color: var(--text-brand);
   font-size: var(--text-micro);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .sections-import-page .si-filterable {
@@ -618,7 +618,7 @@
   align-items: center;
   justify-content: center;
   margin-inline-start: 0.2rem;
-  border-radius: 0.3rem;
+  border-radius: var(--radius-xs);
   border: 0;
   padding: 0;
   background: transparent;
@@ -652,7 +652,7 @@
   width: 13rem;
   padding: 0.65rem;
   border: 1px solid var(--si-line);
-  border-radius: 0.65rem;
+  border-radius: var(--radius);
   background: var(--card);
   box-shadow: var(--shadow-card);
 }
@@ -671,11 +671,11 @@
   width: 100%;
   padding: 0.42rem 0.5rem;
   border: 1px solid var(--si-line);
-  border-radius: 0.45rem;
+  border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--t1);
   font: inherit;
-  font-size: max(var(--fs-floor), 0.72rem);
+  font-size: var(--text-xs);
   outline: none;
 }
 
@@ -706,13 +706,13 @@
 
 .sections-import-page .empty-title {
   color: var(--t2);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .sections-import-page .empty-hint {
   margin-block-start: 0.35rem;
   color: var(--t3);
-  font-size: max(var(--fs-floor), 0.73rem);
+  font-size: var(--text-xs);
 }
 
 html[data-theme="dark"] .sections-import-page {

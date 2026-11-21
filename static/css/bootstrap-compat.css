@@ -124,8 +124,11 @@
 .text-decoration-none { text-decoration: none !important; }
 .fw-semibold          { font-weight: 600 !important; }
 .fw-bold              { font-weight: 700 !important; }
-.fs-6                 { font-size: 1rem !important; }
-.small, small         { font-size: 0.875em; }
+.fs-6                 { font-size: var(--text-md) !important; }
+/* Small print is a step of the type scale (13px), not 0.875em of whatever it
+   sits in: em made it 13.13px in 15px body copy and 11.48px when nested. */
+.small, small         { font-size: var(--text-sm); }
+.small .small, small small, .small small, small .small { font-size: inherit; }
 
 /* ── BACKGROUNDS ────────────────────────────────────────── */
 .bg-light          { background-color: var(--glass-bg) !important; }
@@ -177,7 +180,7 @@ html[data-theme="dark"] .text-bg-danger { color: var(--btn-primary-ink) !importa
 .form-label {
   display: inline-block;
   margin-bottom: 0.35rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--ink, #0d1526);
 }
@@ -186,13 +189,13 @@ html[data-theme="dark"] .text-bg-danger { color: var(--btn-primary-ink) !importa
   display: block;
   width: 100%;
   padding: 0.55rem 1rem;
-  font-size: 0.88rem;
+  font-size: var(--text-base);
   font-weight: 400;
   line-height: 1.5;
   color: var(--ink, #0d1526);
   background-color: var(--glass-bg-data);
   border: 1px solid var(--control-edge);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
   appearance: none;
 }
@@ -204,15 +207,15 @@ html[data-theme="dark"] .text-bg-danger { color: var(--btn-primary-ink) !importa
 }
 .form-control-sm {
   padding: 0.35rem 0.75rem;
-  font-size: 0.8rem;
-  border-radius: 999px;
+  font-size: var(--text-sm);
+  border-radius: var(--radius-pill);
 }
 
 .form-select {
   display: block;
   width: 100%;
   padding: 0.55rem 2.25rem 0.55rem 1rem;
-  font-size: 0.88rem;
+  font-size: var(--text-base);
   font-weight: 400;
   line-height: 1.5;
   color: var(--ink, #0d1526);
@@ -222,7 +225,7 @@ html[data-theme="dark"] .text-bg-danger { color: var(--btn-primary-ink) !importa
   background-position: right 0.85rem center;
   background-size: 14px 10px;
   border: 1px solid var(--control-edge);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
   appearance: none;
 }
@@ -241,13 +244,13 @@ html[dir="rtl"] .form-select {
 .form-select-sm {
   padding-top: 0.35rem;
   padding-bottom: 0.35rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .form-check          { display: flex; align-items: center; gap: 0.4rem; min-height: 1.5rem; }
-.form-check-input    { width: 1rem; height: 1rem; margin: 0; border: 1px solid var(--control-edge); border-radius: 0.25rem; appearance: none; background-color: var(--card); cursor: pointer; }
+.form-check-input    { width: 1rem; height: 1rem; margin: 0; border: 1px solid var(--control-edge); border-radius: var(--radius-xs); appearance: none; background-color: var(--card); cursor: pointer; }
 .form-check-input:checked { background-color: var(--brand, #0A8E6E); border-color: var(--brand, #0A8E6E); background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='none' stroke='%23fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='m6 10 3 3 6-6'/%3e%3c/svg%3e"); background-size: 100%; background-position: center; }
-.form-check-label    { cursor: pointer; font-size: 0.88rem; }
+.form-check-label    { cursor: pointer; font-size: var(--text-base); }
 
 /* ── BUTTONS ─────────────────────────────────────────────── */
 /* Base btn is defined in global.css — these are supplementary */
@@ -319,7 +322,7 @@ h6,
 .h6 {
   margin-top: 0;
   color: var(--t1, #1e1e4a);
-  font-size: 1rem;
+  font-size: var(--text-md);
   font-weight: 700;
   line-height: 1.35;
 }
@@ -338,7 +341,7 @@ h6,
   display: flex;
   height: 1rem;
   overflow: hidden;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   background-color: var(--line, #e9ecef);
   border-radius: var(--radius-sm, 7px);
 }
@@ -389,7 +392,7 @@ h6,
   padding: 1rem;
   border-bottom: 1px solid var(--line, #ded8ca);
 }
-.modal-title { margin: 0; font-weight: 600; font-size: 1.05rem; }
+.modal-title { margin: 0; font-weight: 600; font-size: var(--text-md); }
 .modal-body { position: relative; flex: 1 1 auto; padding: 1rem; }
 .fade { opacity: 0; transition: opacity 0.15s linear; }
 .fade.show { opacity: 1; }
