@@ -373,9 +373,10 @@ def test_status_pills_take_severity_inks_and_lie_flat_in_a_toolbar() -> None:
 #   Optimise result (unresolved count, zero scores, its chip), Reserve Pressure.
 
 ROOT = CSS_DIR.parents[1]
-#: MRI (owner), split (stage 4), and the error pages (their own tokens; they do
-#: not load global.css).
-INLINE_EXCLUDED = ("mri", "split", "404.html", "500.html")
+#: MRI (owner) and split (stage 4). The 404 and 500 pages are scanned like any
+#: template: they no longer carry a palette of their own, but global.css's tokens
+#: (tests/test_error_pages.py).
+INLINE_EXCLUDED = ("mri", "split")
 INLINE_FILL_AS_TEXT_CAP = 7
 INLINE_FILL_AS_TEXT = re.compile(
     r"(?<![\w-])color:\s*var\(--(?:teal|teal-bright|teal-pale|teal-deep|brand|success|amber"
@@ -411,6 +412,7 @@ def _inline_lines(pattern: re.Pattern[str], also: re.Pattern[str] | None = None)
 def test_the_inline_scan_reads_the_templates_and_scripts() -> None:
     names = {p.name for p in _inline_sources()}
     assert {"base.html", "section_planning.html", "page-timetable-workspace.js"} <= names
+    assert {"404.html", "500.html"} <= names
     assert not {"page-timetable-mri.js", "timetable_workspace_split.html"} & names
 
 
