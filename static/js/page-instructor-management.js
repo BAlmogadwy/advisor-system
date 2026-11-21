@@ -46,6 +46,8 @@ const T = {
   edit:                 IS_AR ? 'تعديل' : 'Edit',
   activate:             IS_AR ? 'تفعيل' : 'Activate',
   deactivate:           IS_AR ? 'تعطيل' : 'Deactivate',
+  times:                IS_AR ? 'الأوقات' : 'Times',
+  teachingTimes:        IS_AR ? 'أوقات التدريس' : 'Teaching times',
   assign:               IS_AR ? 'توزيع' : 'Assign',
   unassign:             IS_AR ? 'إلغاء التوزيع' : 'Unassign',
   bulkAssign:           IS_AR ? 'توزيع مجمع' : 'Bulk Assign',
@@ -220,36 +222,62 @@ function imRenderInstructorTable(instructors = null) {
   const data = instructors || allInstructors;
 
   if (data.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-note">${T.noInstructors}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-note">${T.noInstructors}</td></tr>`;
     return;
   }
 
+  // safeHtml escapes every value; the teaching-times pill comes from
+  // instructor-time-rules.js, driven by the list's own `time_rules`.
+  const dash = safeHtml`<span class="im-none" aria-label="—">—</span>`;
+  const rules = window.InstructorTimeRules;
   tbody.innerHTML = data.map(instructor => {
     const id = Number(instructor.id);
-    const name = escapeHtml(instructor.full_name);
+    const name = instructor.full_name;
     const other = imOtherName(instructor);
-    const dash = '<span class="im-none" aria-label="—">—</span>';
-    return `<tr>
+    const department = imField(instructor.department);
+    const email = imField(instructor.email);
+    const employee = imField(instructor.employee_no);
+    const action = instructor.is_active ? T.deactivate : T.activate;
+    return String(safeHtml`<tr>
       <td>
         <div class="im-instructor-name">
           <strong>${name}</strong>
-          ${other ? `<span class="im-name-other">${escapeHtml(other)}</span>` : ''}
+          ${other ? safeHtml`<span class="im-name-other">${other}</span>` : ''}
         </div>
       </td>
-      <td>${imField(instructor.department) ? escapeHtml(imField(instructor.department)) : dash}</td>
-      <td>${imField(instructor.email) ? `<bdi dir="ltr">${escapeHtml(imField(instructor.email))}</bdi>` : dash}</td>
-      <td>${imField(instructor.employee_no) ? `<bdi dir="ltr">${escapeHtml(imField(instructor.employee_no))}</bdi>` : dash}</td>
+      <td>${department || dash}</td>
+      <td>${email ? safeHtml`<bdi dir="ltr">${email}</bdi>` : dash}</td>
+      <td>${employee ? safeHtml`<bdi dir="ltr">${employee}</bdi>` : dash}</td>
       <td class="text-center">${instructor.max_weekly_hours || dash}</td>
+      <td>${rules ? rules.pill(instructor.time_rules) : dash}</td>
       <td><span class="pill-status ${instructor.is_active ? 'pill-g' : 'pill-muted'}">${instructor.is_active ? T.active : T.inactive}</span></td>
       <td>
         <div class="im-row-actions">
           <button type="button" class="btn btn-sm btn-neutral" data-im-edit="${id}" aria-label="${T.edit} — ${name}">${T.edit}</button>
+          <button type="button" class="btn btn-sm btn-neutral" data-im-rules="${id}" aria-label="${T.teachingTimes} — ${name}">${T.times}</button>
           <button type="button" class="btn btn-sm btn-neutral" data-im-active="${id}" data-im-to="${instructor.is_active ? '0' : '1'}"
-                  aria-label="${instructor.is_active ? T.deactivate : T.activate} — ${name}">${instructor.is_active ? T.deactivate : T.activate}</button>
+                  aria-label="${action} — ${name}">${action}</button>
         </div>
       </td>
-    </tr>`;
+    </tr>`);
   }).join('');
+}
+
+/* Teaching times: the rules editor (instructor-time-rules.js), opened from
+   the row. A save redraws the roster (the row's pill) before the dialog
+   closes, so the keyboard goes back to the new Times button. */
+function imOpenTimeRules(instructorId) {
+  const instructor = allInstructors.find(i => i.id === instructorId);
+  if (!instructor || !window.InstructorTimeRules) return;
+  window.InstructorTimeRules.open(instructor, {
+    returnFocus: () => document.querySelector(`[data-im-rules="${Number(instructorId)}"]`),
+    dayNames: [T.sunday, T.monday, T.tuesday, T.wednesday, T.thursday],
+    onSaved: (id, timeRules) => {
+      const row = allInstructors.find(i => i.id === id);
+      if (row) row.time_rules = timeRules;
+      imFilterInstructors();
+    },
+  });
 }
 
 /* The second name under a roster name: the Arabic one, shown only when it
@@ -1250,6 +1278,8 @@ function imWire() {
   $('imInstructorTable').addEventListener('click', event => {
     const edit = event.target.closest('[data-im-edit]');
     if (edit) { imEditInstructor(Number(edit.dataset.imEdit)); return; }
+    const times = event.target.closest('[data-im-rules]');
+    if (times) { imOpenTimeRules(Number(times.dataset.imRules)); return; }
     const toggle = event.target.closest('[data-im-active]');
     if (toggle) imToggleInstructorActive(Number(toggle.dataset.imActive), toggle.dataset.imTo === '1');
   });

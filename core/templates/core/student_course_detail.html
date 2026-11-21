@@ -146,7 +146,7 @@
             <span class="cd-name" dir="auto">{{ course.course_name }}</span>
             {% if course.waiting_only_on_this %}
               <span class="cd-muted" dir="auto">{% if LANGUAGE_CODE == 'ar' %}— هذا هو آخر متطلب سابق غير مستوفى لهذا المقرر{% else %}— waiting on this course alone{% endif %}</span>
-            {% else %}
+            {% elif course.also_waiting_on or course.also_short_on_credit_hours %}
               <span class="cd-muted" dir="auto">{% if LANGUAGE_CODE == 'ar' %}— لا تزال له متطلبات أخرى غير مستوفاة:{% else %}— also waiting on{% endif %}
                 {% for other in course.also_waiting_on %}<span dir="ltr">{{ other }}</span>{% if not forloop.last %}، {% endif %}{% endfor %}{% if course.also_short_on_credit_hours %}{% if course.also_waiting_on %}، {% endif %}{% if LANGUAGE_CODE == 'ar' %}الحد المطلوب من الساعات المعتمدة{% else %}credit hours{% endif %}{% endif %}</span>
             {% endif %}

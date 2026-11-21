@@ -127,8 +127,27 @@ def instructor_management_page(request: HttpRequest) -> HttpResponse:
         **get_sidebar_context(request),
         "default_year": defaults["academic_year"],
         "default_term": defaults["term"],
+        "time_rules_enforced": _time_rules_enforced(),
     }
     return render(request, "core/instructor_management.html", ctx)
+
+
+def _time_rules_enforced() -> bool:
+    """Whether the timetable builder applies the teaching-time rules today.
+
+    The rules editor tells staff the truth either way: the builder honours a
+    rule only when its setting is on and one teacher per section is active (a
+    rule binds the one teacher a section is charged to). The setting is
+    declared by the engine change that reads it; until then it reads as off.
+    """
+    from django.conf import settings
+
+    from core.services.timetable_flags import is_one_teacher_active
+
+    return (
+        bool(getattr(settings, "TIMETABLE_INSTRUCTOR_AVAILABILITY", False))
+        and is_one_teacher_active()
+    )
 
 
 # ── Roster CRUD ──────────────────────────────────────────────────
@@ -660,9 +679,11 @@ def _clean_rules(raw: object) -> tuple[list[dict[str, Any]], list[dict[str, obje
     """A replace-all rule list -> storable rows, and EVERY error in the list."""
     if not isinstance(raw, list):
         return [], [_rule_error(-1, "rules", "rules_not_list")]
-    errors: list[dict[str, object]] = []
     if len(raw) > MAX_RULES_PER_INSTRUCTOR:
-        errors.append(_rule_error(-1, "rules", "too_many"))
+        # One error and nothing else: per-item errors of an over-long list
+        # would let one small request build an unbounded response.
+        return [], [_rule_error(-1, "rules", "too_many")]
+    errors: list[dict[str, object]] = []
     clean: list[dict[str, Any]] = []
     seen: set[tuple[object, ...]] = set()
     for index, item in enumerate(raw):

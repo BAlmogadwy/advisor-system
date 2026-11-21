@@ -622,6 +622,15 @@ def test_list_level_problems_use_index_minus_one():
     assert _bad(too_many[:-1], instructor=instructor).status_code == 200
 
 
+def test_an_over_long_rule_list_is_one_error_and_no_item_is_validated():
+    # Per-item errors of a huge list would make one small request build a huge
+    # response (10,000 empty objects would be 40,001 errors).
+    response = _bad([{}] * 10_000)
+    assert _codes(response) == [(-1, "rules", "too_many")]
+    assert len(response.content) < 1_000
+    assert not InstructorTimeRule.objects.exists()
+
+
 def test_duplicates_are_the_same_kind_days_and_window_whatever_the_order_or_note():
     response = _bad(
         [
@@ -697,14 +706,12 @@ def test_every_problem_of_a_request_is_reported_at_once():
                 7,
                 _wire(start="12:00", end="11:00", note="y" * 201),
                 _wire(),
-            ]
-            + [_wire(start=f"13:{i:02d}", end="20:00") for i in range(16)],
+            ],
         },
     )
     assert _codes(response) == [
         (-1, "instructor_id", "instructor_id_invalid"),
         (-1, "expected_revision", "revision_required"),
-        (-1, "rules", "too_many"),
         (1, "kind", "kind_invalid"),
         (1, "days", "days_invalid"),
         (1, "start", "start_invalid"),
@@ -794,3 +801,42 @@ def test_the_list_summary_costs_one_query_however_many_instructors():
         "none",
         "any",
     )
+
+
+# -- The editor's help line is truthful about the builder ----------------------
+
+
+def _page_flag(client: Client) -> str:
+    response = client.get("/instructor-management/")
+    assert response.status_code == 200
+    html = response.content.decode()
+    marker = 'data-rules-enforced="'
+    assert html.count(marker) == 1
+    return html.split(marker, 1)[1].split('"', 1)[0]
+
+
+def test_the_page_does_not_promise_the_builder_while_its_setting_is_absent(settings):
+    # The engine change declares TIMETABLE_INSTRUCTOR_AVAILABILITY; before it
+    # exists the editor must not promise what the builder does not do.
+    assert not hasattr(settings, "TIMETABLE_INSTRUCTOR_AVAILABILITY")
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = True
+    settings.TIMETABLE_ONE_TEACHER_PER_SECTION = True
+    assert _page_flag(_client()) == "0"
+
+
+@pytest.mark.parametrize(
+    ("availability", "links", "one_teacher", "expected"),
+    [
+        (True, True, True, "1"),
+        (False, True, True, "0"),
+        (True, True, False, "0"),  # a rule binds the ONE teacher of a section
+        (True, False, True, "0"),  # one teacher per section needs the links
+    ],
+)
+def test_the_page_promises_the_builder_only_when_it_applies_the_rules(
+    settings, availability, links, one_teacher, expected
+):
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = availability
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = links
+    settings.TIMETABLE_ONE_TEACHER_PER_SECTION = one_teacher
+    assert _page_flag(_client()) == expected

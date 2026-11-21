@@ -99,7 +99,7 @@ test('the roster: the second name only when it differs, empty fields as a dash, 
   assert.equal(rows[1].cells[3].textContent.trim(), '—', 'a stored "None" is no value');
   assert.equal(rows[0].querySelector('.pill-status').tagName, 'SPAN');
   assert.equal(rows[0].querySelector('button.pill-status'), null);
-  assert.deepEqual([...rows[0].querySelectorAll('.im-row-actions button')].map(b => b.textContent.trim()), ['Edit', 'Deactivate']);
+  assert.deepEqual([...rows[0].querySelectorAll('.im-row-actions button')].map(b => b.textContent.trim()), ['Edit', 'Times', 'Deactivate']);
   h.$('imIncludeInactive').checked = true;
   h.$('imIncludeInactive').dispatchEvent(new h.w.Event('change'));
   assert.equal(h.d.querySelectorAll('#imInstructorTable tbody tr').length, 3, 'inactive shown without another read');

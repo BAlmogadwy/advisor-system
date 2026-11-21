@@ -10,7 +10,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}{% endblock %}
 
 {% block page_chips %}
-            <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → ج{% else %}Steps A → C{% endif %}</span>
+            <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ ← ج{% else %}Steps A → C{% endif %}</span>
             <span class="ph-chip ph-chip-gray d-none" id="plannerContextChip"></span>
 {% endblock %}
 
@@ -36,7 +36,7 @@
             </div>
           </div>
 
-          <button class="command-bar-toggle" onclick="this.nextElementSibling.classList.toggle('expanded');this.querySelector('.toggle-arrow').textContent=this.nextElementSibling.classList.contains('expanded')?'▲':'▼';" aria-label="Toggle filters">
+          <button class="command-bar-toggle" aria-expanded="false" onclick="this.nextElementSibling.classList.toggle('expanded');this.querySelector('.toggle-arrow').textContent=this.nextElementSibling.classList.contains('expanded')?'▲':'▼';this.setAttribute('aria-expanded',String(this.nextElementSibling.classList.contains('expanded')));" aria-label="Toggle filters">
             <span class="pl-text-xs">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجلسة{% else %}Session settings{% endif %}</span>
             <span class="toggle-arrow">▼</span>
           </button>

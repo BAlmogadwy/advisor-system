@@ -48,6 +48,11 @@ EXEMPT = {
     # One of the Timetable Workspace toolbar's split buttons, which share one
     # neutral look (pinned in test_design_system_buttons).
     ("core/templates/core/timetable_workspace.html", "twExport"),
+    # Not exports at all: the two answers to a stale save in the teaching-times
+    # dialog. Their Arabic says «نسخة» ("version": "load their version", "save
+    # mine instead"), which contains «نسخ» ("copy"). Nothing leaves the screen.
+    ("core/templates/core/instructor_management.html", "imRulesLoadTheirs"),
+    ("core/templates/core/instructor_management.html", "imRulesSaveMine"),
 }
 
 #: The MRI page is frozen by the owner (2026-10-23): never restyled from here.
