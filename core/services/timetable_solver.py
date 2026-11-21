@@ -351,7 +351,7 @@ def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_con
         return availability, restrict
     from core.services.section_teacher_assignment import load_assignment
 
-    assignment = load_assignment(scenario.id)  # pinned inside runs
+    assignment = load_assignment(scenario.id, release_unteachable=True)  # pinned inside runs
     charged, fixed = assignment.pr4_map(), fixed_section_keys(assignment)
     budgets_by_code = {b.course_key or b.course_code: b for b in budgets}
     exemption = placed_online = None

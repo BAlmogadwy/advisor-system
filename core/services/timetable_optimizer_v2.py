@@ -483,7 +483,10 @@ def build_section_states_for_scenario(
 
 
 def build_section_instructor_map_for_scenario(
-    scenario_id: int, *, incomplete: str = INCOMPLETE_RAISE
+    scenario_id: int,
+    *,
+    incomplete: str = INCOMPLETE_RAISE,
+    release_unteachable: bool | None = None,
 ) -> dict[str, frozenset[int]]:
     """``{section_id: frozenset[instructor_id]}`` for the instructor idle-gap term.
 
@@ -505,13 +508,21 @@ def build_section_instructor_map_for_scenario(
     ``incomplete`` is ``load_assignment``'s: an engine raises on an English
     section without one complete weekly pattern; the clash backstop
     (``"collect"``) leaves it absent and checks every other section.
+    ``release_unteachable`` (default: an engine read, ``incomplete="raise"``, which
+    is an engine phase) drops a stored teacher whose teaching-time rules leave
+    no legal week; the scenario quality passes False (fix plan D-H).
     """
     from core.services.timetable_flags import is_one_teacher_active
 
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        return load_assignment(scenario_id, incomplete=incomplete).v2_map()
+        release = (
+            incomplete == INCOMPLETE_RAISE if release_unteachable is None else release_unteachable
+        )
+        return load_assignment(
+            scenario_id, incomplete=incomplete, release_unteachable=release
+        ).v2_map()
 
     scenario = TimetableScenario.objects.filter(id=scenario_id).first()
     if scenario is None:
@@ -2352,7 +2363,7 @@ def _own_day_off_anchor(scenario_id: int, baseline) -> DayOffAnchor | None:
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        universe = load_assignment(scenario_id).universe
+        universe = load_assignment(scenario_id, release_unteachable=True).universe
     return DayOffAnchor.from_metrics(
         schedule_metrics_of(baseline), padded=is_one_teacher_active(), universe=universe
     )

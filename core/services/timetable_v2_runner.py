@@ -339,7 +339,7 @@ class _RunTeachers:
         """C0: the map the required-section retry charges. Pure."""
         from core.services.section_teacher_assignment import load_assignment
 
-        return self.pin(load_assignment(self.scenario_id))
+        return self.pin(load_assignment(self.scenario_id, release_unteachable=True))
 
     def save(self, *, rename: bool) -> None:
         """C2: the saved map; its names are written before the snapshot takes them."""
@@ -351,7 +351,7 @@ class _RunTeachers:
             write_names,
         )
 
-        self.saved = load_assignment(self.scenario_id)
+        self.saved = load_assignment(self.scenario_id, release_unteachable=True)
         if rename:
             with transaction.atomic():
                 write_names(self.scenario_id, self.saved)
@@ -427,7 +427,7 @@ class _RunTeachers:
         persisted, once."""
         from core.services.section_teacher_assignment import load_assignment
 
-        self.final = load_assignment(self.scenario_id)
+        self.final = load_assignment(self.scenario_id, release_unteachable=True)
 
     def universe(self) -> frozenset:
         return frozenset(self.saved.universe) | frozenset(self.final.universe)

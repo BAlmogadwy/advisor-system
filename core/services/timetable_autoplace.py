@@ -1616,7 +1616,7 @@ def auto_place_board(
             from core.services.section_teacher_assignment import PlacerGuard, load_assignment
 
             # The map ``build_section_instructor_ids`` would return, read once.
-            _one_teacher_map = load_assignment(scenario.id)
+            _one_teacher_map = load_assignment(scenario.id, release_unteachable=True)
             link_map = _one_teacher_map.pr4_map()
             availability = availability_for(scenario.id, universe=_one_teacher_map.universe)
             _av_assignment = _one_teacher_map

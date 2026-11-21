@@ -308,7 +308,11 @@ def build_section_instructor_ids(scenario, *, incomplete: str = "raise") -> dict
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        return load_assignment(scenario.id, incomplete=incomplete).pr4_map()
+        # An engine's read ("raise") is an engine phase: it drops a stored
+        # teacher whose teaching-time rules leave no legal week (fix plan D-H).
+        return load_assignment(
+            scenario.id, incomplete=incomplete, release_unteachable=incomplete == "raise"
+        ).pr4_map()
 
     return linked_section_instructor_ids(scenario).ids
 

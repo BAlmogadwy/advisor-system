@@ -909,7 +909,7 @@ def optimize_board(
             availability,
             sections,
             valid_options,
-            load_assignment(scenario.id).pr4_map(),
+            load_assignment(scenario.id, release_unteachable=True).pr4_map(),
             exempt=online_exempt_sections(scenario.id),
         )
 

@@ -2256,7 +2256,7 @@ def load_assignment(
     *,
     ignore_pin: bool = False,
     incomplete: str = "raise",
-    release_unteachable: bool | None = None,
+    release_unteachable: bool = False,
 ) -> TeacherAssignment:
     """The map in force for ``scenario_id`` on its current layout. Never writes.
 
@@ -2273,16 +2273,20 @@ def load_assignment(
     section keeps its teacher. One request's memo serves both: a collected map
     re-raises for an engine read.
 
-    ``release_unteachable`` (default: an engine read, ``incomplete="raise"``)
-    ignores a stored engine row whose teacher's teaching-time rules leave no
-    legal week for the course (``_validated_rows``); the memo keeps that map
-    apart only when it differs.
+    ``release_unteachable`` (opt-in, fix plan D-H: only an engine phase passes
+    it — ``run_placer``, ``prepare_section_teachers`` rebuild/layout, the
+    optimiser's and the stages' map reads) ignores a stored engine row whose
+    teacher's teaching-time rules leave no legal week for the course
+    (``_validated_rows``). Every other read (the staff reconcile action,
+    ``apply_primary_instructor`` without a map, the scenario quality, the
+    display) keeps the stored teacher. The memo keeps the released map apart
+    only when it differs, and serves it whether or not a plain read came first.
     """
     from core.services.timetable_optimizer_v2 import INCOMPLETE_MODES
 
     if incomplete not in INCOMPLETE_MODES:
         raise ValueError(f"incomplete must be one of {INCOMPLETE_MODES}, not {incomplete!r}")
-    release = incomplete == "raise" if release_unteachable is None else release_unteachable
+    release = release_unteachable
     pinned = None if ignore_pin else current_pin(scenario_id)
     if pinned is not None:
         return pinned
@@ -2290,13 +2294,13 @@ def load_assignment(
     fingerprint = None
     if cache is not None:
         fingerprint = _layout_fingerprint(scenario_id)
-        hit = cache.get("assignment")
-        if hit is not None and hit[0] == fingerprint:
-            if not (release and hit[2]):
-                return _in_mode(hit[1], incomplete)
+        if release:
             released = cache.get("assignment_released")
             if released is not None and released[0] == fingerprint:
                 return _in_mode(released[1], incomplete)
+        hit = cache.get("assignment")
+        if hit is not None and hit[0] == fingerprint and not (release and hit[2]):
+            return _in_mode(hit[1], incomplete)
     slots, info = _collect(scenario_id, incomplete=incomplete)
     unteachable = _unteachable_rows(slots, info)
     valid, ignored = _validated_rows(slots, info, release_unteachable=release)
@@ -2708,13 +2712,15 @@ def prepare_section_teachers(
     lets it drop a stored row whose teacher's teaching-time rules leave no
     legal week for the course, exactly as the map it places under does; a
     manual create never does (every other stored row stays as it is).
+    ``rebuild`` and ``layout`` are engine phases: their reads always release
+    (fix plan D-H).
     """
     from core.services.board_ownership import assert_rebuild_ownership
     from core.services.timetable_board_persistence import locked_physical_section_ids
 
     if phase == "rebuild":
         assert_rebuild_ownership(scenario_id)
-        previous = load_assignment(scenario_id)
+        previous = load_assignment(scenario_id, release_unteachable=True)
         delete_engine_rows(scenario_id)
         slots, info = _collect(
             scenario_id, sections=sections, placed_filter=locked_physical_section_ids(scenario_id)
@@ -2724,10 +2730,10 @@ def prepare_section_teachers(
         written = persist_assignment(scenario_id, seed)
         return {"assignment": seed, "previous": previous, "persist": written}
     if phase == "layout":
-        current = load_assignment(scenario_id)
+        current = load_assignment(scenario_id, release_unteachable=True)
         chosen = propose_layout_assignment(scenario_id, current=current, keep_violations_of=current)
         written = persist_assignment(scenario_id, chosen)
-        chosen = load_assignment(scenario_id)
+        chosen = load_assignment(scenario_id, release_unteachable=True)
         write_names(scenario_id, chosen)
         return {"assignment": chosen, "previous": current, "persist": written}
     if phase == "ensure":
@@ -2762,7 +2768,9 @@ def run_placer(scenario_id: int, place, *, rebuild: bool):
             final = prepare_section_teachers(scenario_id, phase="layout")["assignment"]
         else:
             prepare_section_teachers(scenario_id, phase="ensure")
-            with pinned_assignment(scenario_id, load_assignment(scenario_id)):
+            with pinned_assignment(
+                scenario_id, load_assignment(scenario_id, release_unteachable=True)
+            ):
                 result = place()
             final = prepare_section_teachers(scenario_id, phase="ensure", release_unteachable=True)[
                 "assignment"

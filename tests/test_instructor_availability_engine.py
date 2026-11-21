@@ -1269,13 +1269,113 @@ def test_a_stored_teacher_without_a_legal_week_is_released_on_engine_reads_only(
     _engine_row(sc, key, "S1", a)
     rule(a, KIND_AVAILABLE_ONLY, ("THU",))  # one day: no 2 x 75 week at all
 
-    assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == b.pk
+    # An engine phase opts in (fix plan D-H); a plain read, even in raise mode,
+    # and the display keep the stored teacher.
+    assert sta.load_assignment(sc.id, release_unteachable=True).teacher[f"{key}_S1"] == b.pk
+    assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == a.pk
     assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
-    # Inside one request scope both reads keep their own answer.
+    # Inside one request scope every read keeps its own answer.
     with sta.assignment_scope(sc.id):
         assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
-        assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == b.pk
+        assert sta.load_assignment(sc.id, release_unteachable=True).teacher[f"{key}_S1"] == b.pk
         assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+        assert sta.load_assignment(sc.id).teacher[f"{key}_S1"] == a.pk
+        assert sta.load_assignment(sc.id, release_unteachable=True).teacher[f"{key}_S1"] == b.pk
+
+
+def _meeting_names(ts) -> set[str]:
+    from core.models import TermSectionMeeting
+
+    return set(
+        TermSectionMeeting.objects.filter(term_section=ts).values_list("instructor", flat=True)
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("path", ["reconcile", "apply_primary_instructor"])
+def test_a_non_engine_write_keeps_the_stored_teacher_without_a_legal_week(av_on, path) -> None:
+    """D-H (foundation:F3): only an engine phase releases a stored engine row
+    whose teacher has no legal week. The staff "reconcile" action and
+    ``apply_primary_instructor`` without a passed map write the STORED teacher's
+    name, the one the row and the workspace show. Control: an engine read
+    (``release_unteachable=True``) re-picks Dr B."""
+    from core.services.course_instructor_assignment import (
+        apply_primary_instructor,
+        reconcile_scenario_instructors,
+    )
+
+    sc, board, key, ts, (a, b) = _ruled_board()
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))  # no 2 x 75 week at all
+
+    if path == "reconcile":
+        reconcile_scenario_instructors(sc)
+    else:
+        apply_primary_instructor(ts, sc, board, ts.course_code)
+
+    assert _meeting_names(ts) == {"Dr A"}
+    assert sta.section_teacher_display(sc.id)[ts.pk]["id"] == a.pk
+    assert sta.load_assignment(sc.id, release_unteachable=True).teacher[f"{key}_S1"] == b.pk
+
+
+@pytest.mark.django_db
+def test_the_scenario_quality_counts_the_stored_teacher_without_a_legal_week(av_on) -> None:
+    """D-H (foundation:F3): ``build_scenario_quality`` never releases: the stored
+    Dr A (no legal week, nobody else may teach it) still counts as assigned and
+    his days are counted, as the workspace shows it. Control: an engine read
+    leaves the section TBD for availability."""
+    from core.services.timetable_scenario_quality import build_scenario_quality
+
+    sc, _board, key, ts, (a,) = _ruled_board(eligible=("Dr A",))
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    instructor = build_scenario_quality(sc.id)["instructor"]
+
+    assert (instructor["coverage"]["assigned"], instructor["coverage"]["tbd"]) == (1, 0)
+    assert instructor["working_days"] > 0
+    engine = sta.load_assignment(sc.id, release_unteachable=True)
+    assert engine.tbd_reason[f"{key}_S1"] == sta.AVAILABILITY_REASON
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_a_place_missing_run_places_under_the_released_map(av_on, ruled) -> None:
+    """D-H: ``run_placer``'s place-missing map is an engine read, so the missing
+    section's stored Dr A (no legal week) is released before the greedy runs and
+    Dr B's section is placed; the final ensure then stores Dr B. Control: no
+    rule, Dr A keeps it."""
+    from core.models import SectionInstructor
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    sc, _board, key, _ts, (a, b) = _ruled_board(placed=False)
+    _engine_row(sc, key, "S1", a)
+    if ruled:
+        rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    sta.run_placer(sc.id, lambda: auto_place_scenario(sc.id, strategy="compact"), rebuild=False)
+
+    assert len(_placed_meetings(sc, key)) == 2
+    stored = SectionInstructor.objects.filter(scenario=sc, course_key=key, section="S1")
+    assert list(stored.values_list("instructor_id", flat=True)) == [b.pk if ruled else a.pk]
+
+
+@pytest.mark.django_db
+def test_the_released_map_is_memoised_without_a_prior_display_read(av_on) -> None:
+    """D-H (foundation:F5): inside one scope, a second engine read of a map that
+    released a stored row is served from the memo (only the layout fingerprint
+    is read again), even when no display read came first."""
+    sc, _board, key, _ts, (a, b) = _ruled_board()
+    _engine_row(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    with sta.assignment_scope(sc.id):
+        first = sta.load_assignment(sc.id, release_unteachable=True)
+        with CaptureQueriesContext(connection) as ctx:
+            second = sta.load_assignment(sc.id, release_unteachable=True)
+
+    assert second is first and first.teacher[f"{key}_S1"] == b.pk
+    assert len(ctx.captured_queries) == 1, [q["sql"] for q in ctx.captured_queries]
 
 
 @pytest.mark.django_db
