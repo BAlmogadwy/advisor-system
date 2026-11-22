@@ -470,3 +470,116 @@ def test_an_english_section_whose_only_legal_bundle_is_its_own_leaves_the_rest_p
         assert "ENG101" not in polished  # held fixed
     else:
         assert polished["ENG101"] == [(day, 9 * 60, 12 * 60) for day in (SUN, MON, WED, THU)]
+
+
+# ── D-J: a whole-board rollback restores the side-band count ─────────────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("baseline", [2, None], ids=["baseline-count", "no-baseline-count"])
+def test_a_whole_board_rollback_reports_the_restored_boards_rule_count(
+    monkeypatch, settings, baseline
+) -> None:
+    """D-J (improvement:F4): the run lowered the count to 0, then a regression
+    rolled the whole board back. The reported count is the baseline board's (2),
+    or absent when the run pinned none, never the discarded board's 0."""
+    from core.services import timetable_optimizer_v2 as optimiser
+    from core.services.timetable_board_persistence import snapshot_scenario
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from tests.test_timetable_runner_rollback import _persisted_board
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    scenario, _board, _section = _persisted_board("d-j rollback")
+    original = snapshot_scenario(scenario.id)
+
+    def worse(**_kwargs):
+        SectionPlacement.objects.filter(board__scenario_id=scenario.id).update(day="WED")
+        return {
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            "final_score": [1, 0, 0, 0, 0, 0],
+            "quality_score": {"instructor_availability": {"violations": 0}},
+            **(
+                {"baseline_instructor_availability": {"violations": baseline}}
+                if baseline is not None
+                else {}
+            ),
+        }
+
+    monkeypatch.setattr(optimiser, "optimise_current_timetable", worse)
+    result = run_v2_optimisation_guarded(scenario.id, mode="current")
+
+    assert result["safety_blocked"] is True
+    assert snapshot_scenario(scenario.id) == original
+    if baseline is None:
+        assert "instructor_availability" not in result["quality_score"]
+    else:
+        assert result["quality_score"]["instructor_availability"] == {"violations": 2}
+
+
+@pytest.mark.django_db
+def test_a_kept_run_reports_its_own_rule_count(monkeypatch, settings) -> None:
+    """D-J control: without a rollback the run's own count stands."""
+    from core.services import timetable_optimizer_v2 as optimiser
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from tests.test_timetable_runner_rollback import _persisted_board
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    scenario, _board, _section = _persisted_board("d-j kept")
+
+    def same(**_kwargs):
+        return {
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            "final_score": [0, 0, 0, 0, 0, 0],
+            "quality_score": {"instructor_availability": {"violations": 0}},
+            "baseline_instructor_availability": {"violations": 2},
+        }
+
+    monkeypatch.setattr(optimiser, "optimise_current_timetable", same)
+    result = run_v2_optimisation_guarded(scenario.id, mode="current")
+
+    assert not result.get("safety_blocked")
+    assert result["quality_score"]["instructor_availability"] == {"violations": 0}
+
+
+def _no_afternoons_for_the_corpus_teachers() -> None:
+    from core.models import Instructor
+    from tests._instructor_availability_fixture import rule
+    from tests.test_one_teacher_flag_parity import LINKS
+
+    for person in Instructor.objects.filter(full_name__in=set(LINKS.values())):
+        rule(person, KIND_UNAVAILABLE, ("SUN", "MON", "TUE", "WED", "THU"), "16:00", "24:00")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_optimise_current_pins_the_baseline_boards_rule_count(av_on, flag) -> None:
+    """D-J: Optimise Current pins the baseline board's side band next to it, as
+    it pins the student gap split (flag off: neither key exists)."""
+    from django.db import transaction
+
+    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from tests.test_instructor_availability_engine import _Rollback
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    out: dict = {}
+    try:
+        with transaction.atomic():
+            scenario = build_corpus(11)
+            auto_place_scenario(scenario.id, strategy="compact")
+            _no_afternoons_for_the_corpus_teachers()
+            out["result"] = run_v2_optimisation_guarded(
+                scenario.id, mode="current", max_iterations=1, run_chain=False, run_cpsat=False
+            )
+            raise _Rollback
+    except _Rollback:
+        pass
+    result = out["result"]
+
+    if flag:
+        assert set(result["baseline_instructor_availability"]) == {"violations"}
+        assert isinstance(result["baseline_instructor_availability"]["violations"], int)
+    else:
+        assert "baseline_instructor_availability" not in result
+        assert "instructor_availability" not in result["quality_score"]

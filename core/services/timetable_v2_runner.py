@@ -309,6 +309,20 @@ def restore_baseline_student_gap(result: dict) -> None:
         result["quality_score"]["student_gap"] = dict(result["baseline_student_gap"])
 
 
+def restore_baseline_instructor_availability(result: dict) -> None:
+    """After a whole-board rollback the teaching-time side band is the baseline
+    board's count, or absent when no baseline count exists (fix plan D-J): the
+    post-run count described the board the rollback discarded."""
+    quality = result.get("quality_score")
+    if not isinstance(quality, dict):
+        return
+    baseline = result.get("baseline_instructor_availability")
+    if isinstance(baseline, dict):
+        quality["instructor_availability"] = dict(baseline)
+    else:
+        quality.pop("instructor_availability", None)
+
+
 class _RunTeachers:
     """One teacher per section through the guarded runner (Phase 1 spec 3.3).
 
@@ -1034,6 +1048,7 @@ def _run_v2_optimisation_guarded(
         if isinstance(result.get("quality_score"), dict):
             result["quality_score"]["instructor_schedule"] = instructor_before
         restore_baseline_student_gap(result)
+        restore_baseline_instructor_availability(result)
         result["persist_result"] = {
             "action": "rolled_back_safety_regression",
             "reason": (

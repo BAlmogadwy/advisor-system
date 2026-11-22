@@ -2508,6 +2508,18 @@ def _optimise_current_timetable(
             if "student_gap" in (baseline.quality_score or {})
             else {}
         ),
+        # Teaching-time rules: the baseline board's side-band count, pinned so a
+        # safety rollback reports the restored board's (fix plan D-J). Absent
+        # whenever the evaluator wrote no side band (flag off, no rule loaded).
+        **(
+            {
+                "baseline_instructor_availability": dict(
+                    baseline.quality_score["instructor_availability"]
+                )
+            }
+            if "instructor_availability" in (baseline.quality_score or {})
+            else {}
+        ),
         "total_students": len(student_profiles),
         "local_search_applied": False,
         "persist_result": None,
