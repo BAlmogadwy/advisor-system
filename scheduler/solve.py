@@ -2028,17 +2028,13 @@ def plan_portfolio(
         # room assignment after selection and potentially reporting another one.
         result.board = assign_rooms_exact(snapshot, result.board, time_limit_seconds=5.0)
         drift = time_of_day_drift(snapshot, result.board)
-        # A seed whose teaching-time rules had to be let go solved a snapshot with
-        # those instructors' sections unassigned; measure it against that one, or
-        # their sessions would be owed to people the board never used.
-        measured = release_instructors(snapshot, result.released_instructors)
         runs.append(
             {
                 "result": result,
-                "metrics": instructor_metrics(measured, result.board),
+                "metrics": instructor_metrics(snapshot, result.board),
                 "clashes": expected_clashes(snapshot, result.board),
                 "unroomed": len(result.board.unroomed),
-                "violations": validate(measured, result.board).violation_count,
+                "violations": validate(snapshot, result.board).violation_count,
                 "unplaced": len(result.unplaced),
                 "released": len(result.released_instructors),
                 "astray": astray_count(drift, kwargs.get("max_time_of_day_slots", 1)),

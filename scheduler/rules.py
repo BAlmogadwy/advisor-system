@@ -399,7 +399,7 @@ def _check_instructor_time(
         return ()
     out: list[Violation] = []
     for p in sorted(board.placements, key=lambda x: x.id):
-        windows = forbidden.get(p.instructor_id) if p.instructor_id is not None else None
+        windows = forbidden.get(p.instructor_id)
         if not windows:
             continue  # unassigned (D5), or an instructor with no rule
         if spec.online_exempt and p.delivery is DeliveryMode.ONLINE:

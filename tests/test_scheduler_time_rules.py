@@ -15,6 +15,7 @@ forbidden time" is written out here and is deliberately not the code's helper.
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 
 import pytest
 from django.db import connection
@@ -699,6 +700,16 @@ def test_the_naive_reference_board_honours_the_rules_too():
     assert not rule_violations(snap, board)
 
 
+def test_the_naive_reference_board_places_an_online_section_whatever_the_rules_say():
+    snap = snapshot(
+        [offering(delivery=DeliveryMode.ONLINE)],
+        [Section("o1#S1", "o1", 1, 30, instructor_id=7)],
+        [person(7, "Dr A", {"o1"}, tuple((d, 0, 1440) for d in range(5)))],
+    )
+
+    assert len(place_naively(snap).placements) == 1
+
+
 # ── the safety net: a rule never costs a class its place ──────────────────
 
 
@@ -758,28 +769,66 @@ def test_a_meeting_a_rule_leaves_unplaceable_releases_the_instructor_too():
 
 
 def test_the_release_is_not_taken_when_it_places_nothing_more():
-    # infeasible for a reason that has nothing to do with the rule: two sections
-    # of a one-cell course can never both be placed, ruled instructor or not
-    one_cell_grid = Grid.from_spec(
-        lecture_starts={"09:00": 75}, lab_starts={"09:00": 100}, days=(SUN,)
-    )
+    # a meeting no grid window can hold (77 minutes) is unplaced for EVERYONE, so
+    # releasing the ruled instructor gains nothing and must not be done
     snap = snapshot(
-        [offering()],
-        [
-            Section("o1#S1", "o1", 1, 30, instructor_id=1),
-            Section("o1#S2", "o1", 2, 30),
-        ],
+        [offering("o1"), offering("odd", duration=77)],
+        [Section("o1#S1", "o1", 1, 30, instructor_id=1), Section("odd#S1", "odd", 1, 30)],
         [person(1, "Dr One", {"o1"}, ((0, 1200, 1300),))],
-        grid=one_cell_grid,
     )
+    assert solved(snap).unplaced == ("odd#S1#M1",)
 
     result = plan(snap, time_limit_seconds=6, workers=1)
 
     assert result.released_instructors == ()
     assert not any("teaching-time rules" in w for w in result.warnings)
+    assert result.unplaced == ("odd#S1#M1",)
 
 
-def test_the_portfolio_measures_a_released_run_against_the_snapshot_it_solved():
+def test_a_rule_that_empties_even_the_relaxed_problem_still_releases_the_instructors():
+    """plan() drops the same-hour rule when nothing satisfies it; the rules may be
+    what leaves the relaxed problem empty too. Here X cannot keep its two lectures
+    within one slot of each other (that rule alone empties the first attempt, with
+    or without any instructor rule), and the two ruled instructors cannot share
+    their one cell (that empties the relaxed attempt)."""
+    split = Offering(
+        id="x",
+        course_code="X",
+        course_name="x",
+        credit_hours=3,
+        programs=frozenset({"AI"}),
+        terms=frozenset({1}),
+        requirements=(
+            MeetingRequirement(
+                MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 1, allowed_starts=(540,)
+            ),
+            MeetingRequirement(
+                MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 1, allowed_starts=(780,)
+            ),
+        ),
+        capacity=30,
+        capacity_is_declared=True,
+    )
+    snap = _jointly_infeasible()
+    snap = replace(
+        snap,
+        offerings=(*snap.offerings, split),
+        sections=(*snap.sections, Section("x#S1", "x", 1, 30)),
+    )
+    free = release_instructors(snap, (1, 2))
+    assert solved(free, max_time_of_day_slots=1).status == "INFEASIBLE"  # the same-hour rule
+    assert not solved(free).unplaced  # ...and only that rule
+    assert solved(snap).status == "INFEASIBLE"  # the instructor rules, on their own
+
+    result = plan(snap, time_limit_seconds=10, workers=1)
+
+    assert len(result.board.placements) == 4 and not result.unplaced
+    assert result.released_instructors == (1, 2)
+    assert any("the rule was dropped" in w for w in result.warnings)
+    assert any("teaching-time rules" in w for w in result.warnings)
+
+
+def test_the_portfolio_carries_the_release_of_the_run_it_keeps():
     snap = _jointly_infeasible()
 
     result = plan_portfolio(
@@ -873,18 +922,146 @@ def test_readiness_says_nothing_when_every_ruled_instructor_has_a_week():
 # ── the bridge ────────────────────────────────────────────────────────────
 
 
-def test_the_bridge_hands_the_cost_warning_and_the_release_to_its_result():
-    """Source-level wiring: the one caller that writes the classic side must add
-    the cost warning and measure against the released snapshot."""
-    import inspect
-
+def _bridge_world(monkeypatch, settings, make_snapshot):
+    """The real bridge over an in-memory snapshot: AI301 ("X COURSE") in term 2, one
+    teacher who is eligible for it. ``make_snapshot(teacher_id)`` builds the snapshot."""
     from scheduler import bridge
+    from tests.one_teacher_support import FLAG_ON, budget, instructor, link, requirement, scenario
 
-    source = inspect.getsource(bridge.build_into_scenario)
+    for name, value in FLAG_ON.items():
+        setattr(settings, name, value)
+    key = requirement("AI", "AI301", "X COURSE")
+    sc, _board = scenario()
+    teacher = instructor("Dr Ruled")
+    link("AI", "AI301", teacher)
+    budget(sc, key, 1, code="AI301")
+    snap = make_snapshot(teacher.id)
+    monkeypatch.setattr(bridge, "build_snapshot", lambda **kwargs: snap)
+    return bridge, sc, key, teacher
 
-    assert "describe_time_rule_cost(time_rule_cost(snapshot))" in source
-    assert "release_instructors(snapshot, result.released_instructors)" in source
-    # the cost is read off the assignment BEFORE the release rewrites it, and both
-    # happen before anything is roomed, seated or written
-    assert source.index("time_rule_cost(") < source.index("release_instructors(")
-    assert source.index("release_instructors(") < source.index("assign_rooms_exact(")
+
+def _x_course(meetings=2):
+    return replace(
+        offering("x", meetings=meetings),
+        course_code="AI301",
+        course_name="X COURSE",
+        terms=frozenset({2}),
+    )
+
+
+@pytest.mark.django_db
+def test_through_the_bridge_the_stored_teacher_teaches_only_inside_his_allowed_time(
+    monkeypatch, settings
+):
+    from core.models import SectionInstructor, TermSectionMeeting
+
+    forbidden = allowed_only(cell(SUN, W13), cell(TUE, W13))
+    bridge, sc, key, teacher = _bridge_world(
+        monkeypatch,
+        settings,
+        lambda tid: snapshot(
+            [_x_course()],
+            [Section("x#S1", "x", 1, 30)],
+            [person(tid, "Dr Ruled", {"x"}, forbidden)],
+        ),
+    )
+
+    summary = bridge.build_into_scenario(
+        sc.id,
+        academic_year="1448",
+        term=2,
+        programs=["AI"],
+        gender="M",
+        seconds=6,
+        runs=1,
+        confirmation_seconds=0,
+    )
+
+    stored = SectionInstructor.objects.get(scenario=sc, course_key=key, section="S1")
+    assert stored.instructor_id == teacher.id
+    meetings = list(
+        TermSectionMeeting.objects.filter(term_section__scenario=sc).values_list(
+            "day", "start_time", "instructor"
+        )
+    )
+    assert sorted((d, st) for d, st, _ in meetings) == [("SUN", "13:00"), ("TUE", "13:00")]
+    assert {name for _d, _s, name in meetings} == {"Dr Ruled"}
+    assert summary["violations"] == 0
+    assert not [w for w in summary["warnings"] if "teaching-time rules" in w]
+
+
+@pytest.mark.django_db
+def test_through_the_bridge_a_rule_that_costs_a_section_is_warned_about_and_the_build_still_succeeds(
+    monkeypatch, settings
+):
+    from core.models import SectionInstructor, TermSectionMeeting
+
+    # his two open cells are both on Sunday, so he cannot hold a two-day section
+    forbidden = allowed_only(cell(SUN, W9), cell(SUN, W13))
+    bridge, sc, key, teacher = _bridge_world(
+        monkeypatch,
+        settings,
+        lambda tid: snapshot(
+            [_x_course()],
+            [Section("x#S1", "x", 1, 30)],
+            [person(tid, "Dr Ruled", {"x"}, forbidden)],
+        ),
+    )
+
+    summary = bridge.build_into_scenario(
+        sc.id,
+        academic_year="1448",
+        term=2,
+        programs=["AI"],
+        gender="M",
+        seconds=6,
+        runs=1,
+        confirmation_seconds=0,
+    )
+
+    assert summary["meetings_written"] == 2 and summary["meetings_unplaced"] == 0
+    assert any("Dr Ruled" in w and "AI301 S1" in w for w in summary["warnings"])
+    assert not SectionInstructor.objects.filter(scenario=sc).exists()
+    assert set(
+        TermSectionMeeting.objects.filter(term_section__scenario=sc).values_list(
+            "instructor", flat=True
+        )
+    ) == {""}
+
+
+@pytest.mark.django_db
+def test_through_the_bridge_a_release_is_reported_and_nothing_is_credited_to_the_released(
+    monkeypatch, settings
+):
+    from core.models import TermSectionMeeting
+
+    only = allowed_only(cell(SUN, W9))
+
+    def two_rival_sections(tid):
+        return snapshot(
+            [_x_course(meetings=1)],
+            [Section("x#S1", "x", 1, 30), Section("x#S2", "x", 2, 30)],
+            [person(tid, "Dr Ruled", {"x"}, only), person(tid + 1000, "Dr Rival", {"x"}, only)],
+        )
+
+    bridge, sc, key, teacher = _bridge_world(monkeypatch, settings, two_rival_sections)
+
+    summary = bridge.build_into_scenario(
+        sc.id,
+        academic_year="1448",
+        term=2,
+        programs=["AI"],
+        gender="M",
+        seconds=8,
+        runs=1,
+        confirmation_seconds=0,
+    )
+
+    assert summary["meetings_written"] == 2 and summary["meetings_unplaced"] == 0
+    assert any("released" in w and "Dr Ruled" in w for w in summary["warnings"])
+    assert summary["meetings_with_an_instructor"] == 0
+    assert set(
+        TermSectionMeeting.objects.filter(term_section__scenario=sc).values_list(
+            "instructor", flat=True
+        )
+    ) == {""}
