@@ -233,9 +233,9 @@ def diagnostic_driven_local_search(
     """Multi-pass local search with aggressive move generation.
 
     ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``, the run's
-    one object): a move that leaves a moved section with more meetings its
-    charged teacher may not teach is rejected (delta: a section already
-    breaking a rule may move without breaking it more).
+    one object): a move that takes any meeting of a moved section into a time
+    its charged teacher may not teach is rejected (fix plan D-D, strict: a
+    forbidden meeting the section already had may stay where it is).
 
     Strategy:
       Pass 1: Repattern hotspot + reserve-heavy sections (focused)

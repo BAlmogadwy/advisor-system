@@ -530,14 +530,16 @@ def move_adds_availability_violation(
     *,
     exempt: Iterable[str] = (),
 ) -> bool:
-    """Delta form: True iff a moved section now holds MORE blocked meetings than
-    it did before the move.
+    """Strict form (fix plan D-D): True iff a moved section now holds a blocked
+    meeting it did not ALREADY HAVE before the move (same day, start and end).
 
     ``before_meetings_by_id`` maps each moved section id to its meetings BEFORE
     the move (:func:`before_meetings_of`); ``sections_by_id`` holds the moved
-    board. A section that already broke a rule may keep doing so, or move to a
-    time that breaks it no more often: a pre-existing violation never blocks an
-    unrelated move (the repair pass, not every move, removes it).
+    board. A violating meeting may stay where it is and a section may move from
+    a forbidden time to a legal one, but no move takes any meeting INTO a
+    forbidden time, even when the section's count would fall. Only the
+    whole-board nets (persist guard, recovery runner, evaluator side band)
+    compare counts.
     """
     if not availability:
         return False
@@ -546,9 +548,13 @@ def move_adds_availability_violation(
         sec = sections_by_id.get(section_id)
         if sec is None or section_id in skip:
             continue
-        ids = section_instructor_ids.get(section_id) or ()
-        if _blocked_meeting_count(sec.meetings, ids, availability) > _blocked_meeting_count(
-            before, ids, availability
+        ids = tuple(section_instructor_ids.get(section_id) or ())
+        if not ids:
+            continue
+        had = {(m.day, m.start_min, m.end_min) for m in before}
+        if any(
+            cell not in had and any(availability.blocks(iid, *cell) for iid in ids)
+            for cell in _distinct_meetings(sec.meetings)
         ):
             return True
     return False

@@ -370,8 +370,9 @@ def chain_local_search(
     """Chain-2 local search — runs AFTER single-move search exhausts.
 
     ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a chain
-    that leaves a moved section with more meetings its charged teacher may not
-    teach is rejected, judged against the section's FIRST snapshot.
+    that leaves a moved section with a meeting its charged teacher may not teach
+    and the section did not already have is rejected (fix plan D-D, strict),
+    judged against the section's FIRST snapshot.
 
     For each iteration:
       1. Generate chain-2 moves from current diagnostics
@@ -493,8 +494,8 @@ def chain_local_search(
                 chains_tried += 1
                 continue
 
-            # Teaching-time rules: neither leg may leave a moved section with
-            # more meetings its charged teacher may not teach (first snapshot).
+            # Teaching-time rules: neither leg may leave a moved section with a
+            # forbidden meeting it did not already have (its first snapshot).
             if instructor_availability and move_adds_availability_violation(
                 sections_by_id,
                 section_instructor_ids or {},

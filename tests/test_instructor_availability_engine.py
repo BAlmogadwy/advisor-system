@@ -520,21 +520,24 @@ def test_a_move_into_a_blocked_time_adds_a_violation() -> None:
     )
 
 
-def test_a_section_already_breaking_a_rule_may_move_without_breaking_it_more() -> None:
+def test_a_section_already_breaking_a_rule_may_keep_that_meeting_but_gain_none() -> None:
+    """Fix plan D-D (strict): a violating meeting may stay where it is; no meeting
+    moves INTO a forbidden time, even when the section's count would fall."""
     board = _board()
     charged = {"X_S1": frozenset({7})}
     before = {"X_S1": list(board["X_S1"].meetings)}
-    # SUN+TUE mornings (2 blocked) -> MON morning + WED afternoon (1 blocked): allowed.
-    board["X_S1"].meetings[:] = [SectionMeeting(MON, *AM), SectionMeeting(WED, *PM)]
+    # SUN+TUE mornings (2 blocked) -> SUN morning kept + TUE afternoon: allowed.
+    board["X_S1"].meetings[:] = [SectionMeeting(SUN, *AM), SectionMeeting(TUE, *PM)]
     assert not constraints.move_adds_availability_violation(board, charged, NO_MORNINGS, before)
 
-    # From one blocked meeting to another single blocked meeting: still allowed (delta).
+    # SUN+TUE mornings (2 blocked) -> MON morning + WED afternoon (1 blocked, but a
+    # meeting X never had): refused although the count falls.
+    board["X_S1"].meetings[:] = [SectionMeeting(MON, *AM), SectionMeeting(WED, *PM)]
+    assert constraints.move_adds_availability_violation(board, charged, NO_MORNINGS, before)
+
+    # From one blocked meeting to another single blocked meeting: refused.
     before = {"X_S1": [SectionMeeting(MON, *AM), SectionMeeting(WED, *PM)]}
     board["X_S1"].meetings[:] = [SectionMeeting(THU, *AM), SectionMeeting(WED, *PM)]
-    assert not constraints.move_adds_availability_violation(board, charged, NO_MORNINGS, before)
-
-    # Control: one more blocked meeting than before is refused.
-    board["X_S1"].meetings[:] = [SectionMeeting(THU, *AM), SectionMeeting(WED, *AM)]
     assert constraints.move_adds_availability_violation(board, charged, NO_MORNINGS, before)
 
 
@@ -2691,8 +2694,8 @@ def test_local_search_v2_never_moves_a_section_into_a_forbidden_pattern(rules) -
 
 
 def test_local_search_v2_lets_a_section_keep_a_violation_it_already_had() -> None:
-    """T-V3 (delta): A already has one forbidden meeting and may move to another
-    pattern with one forbidden meeting (the repair, not every move, removes it)."""
+    """T-V3 (D-D strict rule): A's forbidden SUN 09:00 meeting may stay where it
+    is while its other meeting moves (the repair, not every move, removes it)."""
     sections, catalog, profiles, baseline = _search_board(A_AM_PM, B_TUE_PM, [A_AM_PM, A_AM_PM_WED])
 
     result = _local_search(NO_MORNINGS, sections, catalog, profiles, baseline)
@@ -4290,11 +4293,14 @@ def test_only_the_automatic_stages_and_the_semi_automatic_writers_ask_for_the_ru
 
 
 def test_only_the_in_memory_searches_use_the_move_delta() -> None:
+    """The one strict move rule (fix plan D-D): every stage that moves an
+    already-placed section, the English bundle search included."""
     assert _av_sources_matching(KERNELS) == {
         "core/services/timetable_constraints.py",
         "core/services/timetable_local_search_v2.py",
         "core/services/timetable_local_search_chains.py",
         "core/services/timetable_secondary_recovery.py",
+        "core/services/timetable_fixed_pattern_search.py",
     }
 
 

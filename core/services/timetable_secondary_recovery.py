@@ -159,8 +159,9 @@ def recover_secondary_quality(
     """Return a Pareto improvement in soft seats and physical room shortages.
 
     ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a move
-    that leaves a moved section with more meetings its charged teacher may not
-    teach is a structural rejection (a pre-existing violation may stay).
+    that takes any meeting of a moved section into a time its charged teacher
+    may not teach is a structural rejection (fix plan D-D, strict: a forbidden
+    meeting the section already had may stay where it is).
 
     Input sections and the database remain unchanged. Every committed move
     ratchets both secondary counts and each teacher's days/idle. The deadline is
