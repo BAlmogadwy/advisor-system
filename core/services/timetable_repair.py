@@ -8106,8 +8106,6 @@ def _weak_slot_penalty(meeting: dict[str, str]) -> int:
         return 6
     if start >= 16 * 60:
         return 6
-    if 12 * 60 <= start < 14 * 60:
-        return 2
     return 0
 
 

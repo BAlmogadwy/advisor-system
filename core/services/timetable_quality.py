@@ -70,8 +70,6 @@ def meeting_weak_slot_penalty(day: int, start_min: int, end_min: int) -> int:
         penalty += 60
     if day == 4 and start_min >= 14 * 60:
         penalty += 35
-    if 12 * 60 + 30 <= start_min < 14 * 60:
-        penalty += 10
     return penalty
 
 
