@@ -734,22 +734,143 @@ def run_v2_optimisation_guarded(
     preserve_saved_week = mode == "current" and is_instructor_priority_enabled()
     # Optimise Current also answers for the teacher the closure will give a section
     # that has none, once its stages have moved the board (``WeekClosureGuard``).
+    options: dict = {
+        "mode": mode,
+        "max_iterations": max_iterations,
+        "run_chain": run_chain,
+        "run_cpsat": run_cpsat,
+        "cpsat_limit": cpsat_limit,
+        "strategies": strategies,
+        "max_chain_iterations": max_chain_iterations,
+        "checkpoint": checkpoint,
+    }
     with (
         availability_scope(scenario_id),
         saved_week_scope(preserve_saved_week),
         week_closure_scope(mode == "current"),
     ):
-        return _run_v2_optimisation_guarded(
-            scenario_id,
-            mode=mode,
-            max_iterations=max_iterations,
-            run_chain=run_chain,
-            run_cpsat=run_cpsat,
-            cpsat_limit=cpsat_limit,
-            strategies=strategies,
-            max_chain_iterations=max_chain_iterations,
-            checkpoint=checkpoint,
-        )
+        capture: dict = {}
+        first = _run_v2_optimisation_guarded(scenario_id, **options, _capture=capture)
+        if mode == "current" and _search_dropped_after_run_start(first, capture):
+            return _second_try(scenario_id, first, capture, options)
+        return first
+
+
+def _search_dropped_after_run_start(result: dict, capture: dict) -> bool:
+    """The week-closure guard dropped the search AND the run-start re-pick (C5) had
+    changed who teaches what: the one case a second try can differ from the first run."""
+    teachers = capture.get("teachers")
+    return bool(
+        teachers is not None
+        and teachers.start is not None
+        and teachers.start.v2_map() != teachers.saved.v2_map()
+        and any(d.get("stage") == "search" for d in result.get("week_closure_dropped") or [])
+    )
+
+
+def _attempt_kept(result: dict) -> bool:
+    return (
+        "error" not in result
+        and (result.get("persist_result") or {}).get("action") != "rolled_back_safety_regression"
+    )
+
+
+def _attempt_score(result: dict) -> list | None:
+    """The score the attempt reached (a rolled-back attempt's is its candidate's)."""
+    blocked = (result.get("persist_result") or {}).get("action") == "rolled_back_safety_regression"
+    score = result.get("candidate_final_score") if blocked else result.get("final_score")
+    return list(score) if score else None
+
+
+def _attempt_evaluation(scenario_id: int, teachers: _RunTeachers):
+    """The persisted board judged under the map the attempt ended with (None: no evidence)."""
+    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
+        build_section_states_for_scenario,
+        build_student_profiles_for_scenario,
+    )
+
+    profiles = build_student_profiles_for_scenario(scenario_id)
+    sections = build_section_states_for_scenario(scenario_id)
+    if not profiles or not sections or teachers.final is None:
+        return None
+    return evaluate_generated_timetable_candidate(
+        candidate_id="second_try",
+        generated_sections=sections,
+        student_profiles=profiles,
+        course_rigidity=build_course_rigidity_for_scenario(scenario_id),
+        section_instructor_ids=teachers.final.v2_map(),
+        course_tiers=build_course_tier_map_for_scenario(scenario_id)
+        if is_tiered_objective_enabled()
+        else None,
+    )
+
+
+def _second_is_better(second_eval, first_eval, second: dict) -> bool:
+    """The project's own stage relation (``stage_is_better``: the day-off policy's
+    ``core`` when the run had one, else ``evaluation_is_better``), second against first."""
+    from contextlib import nullcontext
+
+    from core.services.timetable_optimisation_policy import (
+        DayOffPolicy,
+        day_off_scope,
+        stage_is_better,
+    )
+
+    if second_eval is None or first_eval is None:
+        return False
+    policy = DayOffPolicy.from_dict(second.get("day_off_policy"))
+    with day_off_scope(policy) if policy is not None else nullcontext():
+        return stage_is_better(second_eval, first_eval)
+
+
+def _second_try(scenario_id: int, first: dict, capture: dict, options: dict) -> dict:
+    """The week-closure guard dropped the search because the run-start re-pick left a
+    section without a teacher: run the whole pipeline once more under the SAVED map (C5
+    not applied) and keep the better outcome. The second run is a complete run of its own
+    (its own snapshot, C7 and final gates; the same budgets), so "blocked" and "error" are
+    its gates' words. It is kept when the first was blocked, or when ``stage_is_better``
+    prefers it to the first's persisted board; otherwise the first attempt's board and
+    result stand, restored from a snapshot taken before the second began."""
+    checkpoint = options["checkpoint"]
+    if checkpoint:
+        checkpoint()
+    first_kept = _attempt_kept(first)
+    first_eval = _attempt_evaluation(scenario_id, capture["teachers"]) if first_kept else None
+    first_snapshot = snapshot_scenario(scenario_id) if first_kept else None
+    if first_kept:
+        restore_scenario(scenario_id, capture["snapshot"])  # the board the run began with
+    second_capture: dict = {}
+    second = _run_v2_optimisation_guarded(
+        scenario_id, **options, _skip_run_start=True, _capture=second_capture
+    )
+    if "error" in second:
+        outcome = "error"
+    elif not _attempt_kept(second):
+        outcome = "blocked"
+    elif not first_kept:
+        outcome = "kept"
+    elif _second_is_better(
+        _attempt_evaluation(scenario_id, second_capture["teachers"]), first_eval, second
+    ):
+        outcome = "kept"
+    else:
+        outcome = "not_better"
+    keep_second = outcome == "kept"
+    if not keep_second and first_kept:
+        restore_scenario(scenario_id, first_snapshot)
+    kept = second if keep_second else first
+    kept["second_try"] = {
+        "reason": "search_dropped_by_week_closure_after_run_start_repick",
+        "kept": "second" if keep_second else "first",
+        "second_outcome": outcome,
+        "first_score": _attempt_score(first),
+        "second_score": _attempt_score(second),
+    }
+    return kept
 
 
 def _run_v2_optimisation_guarded(
@@ -763,8 +884,14 @@ def _run_v2_optimisation_guarded(
     strategies: list[str] | None = None,
     max_chain_iterations: int = 10,
     checkpoint: Callable[[], None] | None = None,
+    _skip_run_start: bool = False,
+    _capture: dict | None = None,
 ) -> dict:
     """Run the V2 optimiser behind the snapshot → regression → rollback gate.
+
+    ``_skip_run_start`` and ``_capture`` belong to the second try
+    (:func:`_second_try`): the run keeps the saved teacher map instead of the run-start
+    re-pick's, and hands back the snapshot it began from and its teacher state.
 
     ``mode`` is ``"full"`` (regenerate from scratch) or ``"current"`` (improve
     the existing board). Returns the optimiser result dict augmented with
@@ -850,6 +977,8 @@ def _run_v2_optimisation_guarded(
         teachers.save(rename=mode == "current" and has_existing_board)  # C2
 
     board_snapshot = snapshot_scenario(scenario_id)
+    if _capture is not None:
+        _capture.update(snapshot=board_snapshot, teachers=teachers)
     from core.services.timetable_optimisation_policy import (
         instructor_schedule_metrics,
         is_day_off_policy_active,
@@ -920,9 +1049,17 @@ def _run_v2_optimisation_guarded(
                 if teachers is not None:
                     # C5, after the snapshot so rollback and cancel return the saved
                     # map: a re-pick no teacher's week can lose by, pinned for the run.
+                    if _skip_run_start and has_existing_board:
+                        # The second try: the saved map stays in force, nothing is re-picked.
+                        from core.services.section_teacher_assignment import stage_report
+
+                        teachers.start = teachers.saved
+                        teachers.report["run_start"] = stage_report(
+                            teachers.saved, changed_sections=[], skipped="second_try"
+                        )
                     run_stack.enter_context(
                         teachers.start_run(teacher_bounds)
-                        if has_existing_board
+                        if has_existing_board and not _skip_run_start
                         else teachers.pin(teachers.saved)
                     )
                     if day_off_anchor is not None and teachers.start is not None:
