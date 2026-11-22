@@ -28,9 +28,9 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
 
-from scheduler.domain import Snapshot
+from scheduler.domain import DeliveryMode, Snapshot
 from scheduler.domain.board import Board, Placement
-from scheduler.meeting_patterns import pattern_cells, policy_accepts
+from scheduler.meeting_patterns import meeting_blocked, pattern_cells, policy_accepts
 
 
 class Severity(str, Enum):
@@ -160,6 +160,25 @@ class WeeklyPatternCompliance(RuleSpec):
 
 
 @dataclass(frozen=True)
+class InstructorTimeCompliance(RuleSpec):
+    """A campus meeting never falls in its instructor's forbidden teaching time.
+
+    The forbidden windows are the stored per-instructor rules, carried on the
+    snapshot as ``Instructor.forbidden``. Only a section that HAS an instructor
+    is graded (D5), and an online meeting is exempt: it is taught from anywhere.
+    """
+
+    online_exempt: bool = True
+
+    def declaration(self) -> dict:
+        return {
+            **super().declaration(),
+            "source": "instructor.forbidden",
+            "online_exempt": self.online_exempt,
+        }
+
+
+@dataclass(frozen=True)
 class DailyCardinality(RuleSpec):
     """A key may appear at most `cap` times on one day.
 
@@ -228,6 +247,7 @@ RULEBOOK: tuple[RuleSpec, ...] = (
     LegalWindow("H3", "Legal slot grid"),
     NoOverlapByKey("H7", "Instructor clash", key="instructor"),
     DailyCardinality("H8", "Instructor daily cap", key="instructor", cap=3),
+    InstructorTimeCompliance("H_INSTRUCTOR_TIME", "Instructor teaching-time rules"),
     NoOverlapByKey("H9", "Room exclusivity", key="room"),
     NoOverlapByKey("H10", "Same-offering separation", key="offering"),
     RoomCompatibility("H11_H12_H14", "Room type / capacity / programme"),
@@ -369,6 +389,31 @@ def _check_daily_cap(spec: DailyCardinality, snap: Snapshot, board: Board) -> tu
         for (key, day), items in sorted(counts.items())
         if len(items) > spec.cap
     )
+
+
+def _check_instructor_time(
+    spec: InstructorTimeCompliance, snap: Snapshot, board: Board
+) -> tuple[Violation, ...]:
+    forbidden = {i.id: i.forbidden for i in snap.instructors if i.forbidden}
+    if not forbidden:
+        return ()
+    out: list[Violation] = []
+    for p in sorted(board.placements, key=lambda x: x.id):
+        windows = forbidden.get(p.instructor_id) if p.instructor_id is not None else None
+        if not windows:
+            continue  # unassigned (D5), or an instructor with no rule
+        if spec.online_exempt and p.delivery is DeliveryMode.ONLINE:
+            continue
+        if meeting_blocked(windows, p.day, p.window):
+            out.append(
+                Violation(
+                    spec.rule_id,
+                    f"{p.id}: {p.day.value} {p.window} is time instructor "
+                    f"{p.instructor_id} may not teach",
+                    (p.id,),
+                )
+            )
+    return tuple(out)
 
 
 def _check_legal_window(spec: LegalWindow, snap: Snapshot, board: Board) -> tuple[Violation, ...]:
@@ -518,6 +563,7 @@ _CHECKERS: dict[type, Checker] = {
     NoOverlapByKey: _check_no_overlap,
     DistinctDays: _check_distinct_days,
     DailyCardinality: _check_daily_cap,
+    InstructorTimeCompliance: _check_instructor_time,
     LegalWindow: _check_legal_window,
     ExactMeetingMultiset: _check_multiset,
     WeeklyPatternCompliance: _check_weekly_pattern,

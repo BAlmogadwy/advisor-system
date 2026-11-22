@@ -33,6 +33,7 @@ from dataclasses import replace
 
 from scheduler.domain import Snapshot
 from scheduler.meeting_patterns import pattern_cells
+from scheduler.time_rules import has_legal_week
 
 #: Sections of one course a single instructor may hold (D10), once the course
 #: runs more than `_CAP_APPLIES_ABOVE` sections.
@@ -78,6 +79,8 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
     per_course: Counter[tuple[int, str]] = Counter()
     assigned: dict[str, int] = {}
     reserved_patterns: dict[int, list] = {}
+    #: The sections a ruled instructor already holds, for the legal-week check.
+    held: dict[int, list] = {i.id: [] for i in snapshot.instructors if i.forbidden}
 
     # Deterministic order: instructor id, then offering id, then section index.
     for instructor in sorted(snapshot.instructors, key=lambda i: i.id):
@@ -107,6 +110,22 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
                     break  # D10
                 if load[instructor.id] + weekly > weekly_cap:
                     continue  # derived weekly cap — leave unlinked (D5)
+                if instructor.forbidden:
+                    # A teaching-time rule never costs a class its place: he takes
+                    # this section only if EVERYTHING he holds, with it, still has
+                    # a legal week inside the time he may teach. Checked by the
+                    # solver's own model (`has_legal_week`), so it is exact for
+                    # the pattern bundles too — which makes the first-fit bundle
+                    # reservation below redundant for him. A section he cannot
+                    # take stays open to the next eligible instructor, or
+                    # unassigned (D5).
+                    if not has_legal_week(snapshot, instructor, [*held[instructor.id], section]):
+                        continue
+                    held[instructor.id].append(section)
+                    assigned[section.id] = instructor.id
+                    load[instructor.id] += weekly
+                    per_course[(instructor.id, offering_id)] += 1
+                    continue
                 chosen_pattern = None
                 if policy is not None:
                     occupied = reserved_patterns.get(instructor.id, [])

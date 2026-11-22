@@ -19,17 +19,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from scheduler.domain import Snapshot, TimeWindow
+from scheduler.domain import DeliveryMode, Snapshot, TimeWindow
 from scheduler.domain.board import Board, Placement
 from scheduler.domain.calendar import Day
-from scheduler.meeting_patterns import pattern_cells
+from scheduler.meeting_patterns import meeting_blocked, pattern_cells
 
 
 @dataclass
 class _Occupancy:
     """Who is busy when. Plain interval bookkeeping — no turnover (D8)."""
 
-    def __init__(self) -> None:
+    def __init__(self, forbidden: dict[int, tuple] | None = None) -> None:
+        # Teaching-time rules (`Instructor.forbidden`), so a board this placer
+        # builds can be validated against them rather than flagged by them.
+        self.forbidden = forbidden or {}
         self.by_room: dict[tuple[str, Day], list[TimeWindow]] = {}
         self.by_instructor: dict[tuple[int, Day], list[TimeWindow]] = {}
         self.by_offering: dict[tuple[str, Day], list[TimeWindow]] = {}
@@ -43,8 +46,12 @@ class _Occupancy:
     def room_free(self, room: str, day: Day, window: TimeWindow) -> bool:
         return self._free(self.by_room.get((room, day), []), window)
 
-    def instructor_free(self, iid: int, day: Day, window: TimeWindow, cap: int) -> bool:
+    def instructor_free(
+        self, iid: int, day: Day, window: TimeWindow, cap: int, *, online: bool = False
+    ) -> bool:
         if self.instructor_day_count.get((iid, day), 0) >= cap:
+            return False
+        if not online and meeting_blocked(self.forbidden.get(iid, ()), day, window):
             return False
         return self._free(self.by_instructor.get((iid, day), []), window)
 
@@ -65,7 +72,7 @@ class _Occupancy:
 def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
     """First-fit every required meeting. Leaves a meeting unroomed rather than
     dropping it — a room is an assignment that can be left unmade (D7)."""
-    occupancy = _Occupancy()
+    occupancy = _Occupancy({i.id: i.forbidden for i in snapshot.instructors if i.forbidden})
     offerings = snapshot.offerings_by_id
     placements: list[Placement] = []
 
@@ -147,7 +154,11 @@ def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
         if not occupancy.offering_free(offering.id, day, window):
             continue  # H10: sibling sections must not collide
         if section.instructor_id is not None and not occupancy.instructor_free(
-            section.instructor_id, day, window, cap
+            section.instructor_id,
+            day,
+            window,
+            cap,
+            online=requirement.delivery is DeliveryMode.ONLINE,
         ):
             continue  # H7/H8
         if not needs_room:
@@ -167,7 +178,11 @@ def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
         if not occupancy.offering_free(offering.id, day, window):
             continue
         if section.instructor_id is not None and not occupancy.instructor_free(
-            section.instructor_id, day, window, cap
+            section.instructor_id,
+            day,
+            window,
+            cap,
+            online=requirement.delivery is DeliveryMode.ONLINE,
         ):
             continue
         return _make(section, offering, index, requirement, day, window, None)
