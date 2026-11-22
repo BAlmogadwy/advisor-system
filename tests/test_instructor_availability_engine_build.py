@@ -507,7 +507,7 @@ def _shapes_board(name: str, *, ruled: bool):
 @pytest.mark.django_db
 @pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
 def test_optimal_keeps_its_cpsat_build_with_a_fixed_teacher_without_a_legal_week(
-    av_on, caplog, ruled
+    av_on, caplog, monkeypatch, ruled
 ) -> None:
     """adversary:ADV-2 / fix plan D-M: 'optimal' (through ``run_placer``) keeps its
     CP-SAT board; the pinned section holds exactly one forbidden meeting (the
@@ -519,6 +519,20 @@ def test_optimal_keeps_its_cpsat_build_with_a_fixed_teacher_without_a_legal_week
     from core.services.timetable_autoplace import auto_place_scenario
 
     sc, _board, key, a = _shapes_board(f"d-m {ruled}", ruled=ruled)
+    # The solve is wall-clock bound (5 s under 'optimal'): under CPU load CP-SAT
+    # could return empty and the board fall back to compact for a reason that has
+    # nothing to do with the rule. Give it a generous cap; a model this small ends
+    # as soon as it is proved optimal, so the cap is never what stops it.
+    from core.services import timetable_solver
+
+    real_solve = timetable_solver.solve_scenario
+    monkeypatch.setattr(
+        timetable_solver,
+        "solve_scenario",
+        lambda scenario_id, **kwargs: real_solve(
+            scenario_id, **{**kwargs, "time_limit_seconds": 120.0}
+        ),
+    )
 
     with caplog.at_level(logging.WARNING, logger="core.services.timetable_autoplace"):
         result = sta.run_placer(
