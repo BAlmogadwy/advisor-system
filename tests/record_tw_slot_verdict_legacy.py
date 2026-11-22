@@ -2,7 +2,13 @@
 
 Recorded at ``a5d8f96``, before sub-PR 5d added the verdict: the oracle must
 describe the code before the change, or "the legacy output is unchanged"
-proves nothing. Never re-record it on a branch that changes the previews::
+proves nothing. Never re-record it on a branch that changes the previews.
+
+Re-recorded once, 2026-11-22, when the owner removed the midday "weak slot"
+penalty from the quality score. Every difference from the ``a5d8f96`` recording
+was checked to be that removal and nothing else: 40 slot options lost the
+"Uses weaker teaching slots" reason and its 10 points, 6 two-meeting options
+lost 20, and two candidate lists re-ranked where 13:00 now ties or wins::
 
     TW_SLOT_VERDICT_RECORD=<file> python -m pytest -p no:cacheprovider \\
         tests/record_tw_slot_verdict_legacy.py
