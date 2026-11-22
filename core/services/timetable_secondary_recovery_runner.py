@@ -270,6 +270,7 @@ def _run_secondary_recovery_for_scenario(
         settings, "TIMETABLE_SECONDARY_RECOVERY_ENABLED", True
     ):
         return {"applied": False, "stop_reason": "disabled"}
+    from core.services.section_teacher_assignment import WeekClosureGuard, record_dropped_stage
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_constraints import count_instructor_availability_violations
     from core.services.timetable_exact_rooming import ExactRoomingError
@@ -367,6 +368,7 @@ def _run_secondary_recovery_for_scenario(
         _reset_rejected_report(report, baseline, report["stop_reason"])
         return report
 
+    week_closure = WeekClosureGuard(scenario_id)
     with transaction.atomic():
         current_rows = list(
             SectionPlacement.objects.select_for_update()
@@ -416,6 +418,13 @@ def _run_secondary_recovery_for_scenario(
                     "label": "Persisted recovery added an instructor time-rule violation",
                 }
             )
+        breach = week_closure.introduced(tuple(persisted.lexicographic_score))
+        if breach is not None:
+            # The closure would hand a teacher-less section to a teacher at a week
+            # the gates block (``WeekClosureGuard``): no stage saw it, the final gate
+            # would discard the whole run for it.
+            failures.append(breach)
+            record_dropped_stage(result, "secondary_recovery", breach)
         day_off = current_day_off_policy()
         if day_off is not None and not day_off.keeps_breaches(persisted, baseline):
             # The run's day-off ratchet: frozen days and idle can still turn a

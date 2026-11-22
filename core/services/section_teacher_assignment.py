@@ -2381,6 +2381,126 @@ def pad_schedule_metrics(metrics: Mapping, universe: Iterable) -> dict:
     return padded
 
 
+class WeekClosureGuard:
+    """An optional stage must not make the closure give a teacher a blocked week.
+
+    Inside a run every stage charges the PINNED map, where a section with no
+    teacher costs nobody anything. The board is read, stored and judged by the
+    final gate under the map's closure on the layout the stages leave, and a stage
+    that frees a section for its only teacher (a compaction that clears the day
+    cap, a search that moves the clash away) hands that teacher the section's
+    week: a fifth working day no stage's gate saw, which rolls the whole run back
+    at the end. ``breach`` treats that hand-over as one more move, judged by
+    ``week_move_breaks_gate`` from the week the pinned map gives to the week its
+    closure gives. ``introduced`` is what a stage added: a breach already there
+    when the stage began (a mandatory repair freed the section) is not the
+    stage's, and the final gate keeps it. Inert outside ``week_closure_scope``
+    (Generate, a standalone pass) and without one teacher per section."""
+
+    def __init__(self, scenario_id: int) -> None:
+        self.scenario_id = scenario_id
+        self.active = self._active()
+        self.before = self.breach() if self.active else None
+
+    @staticmethod
+    def _active() -> bool:
+        from core.services.timetable_flags import is_one_teacher_active
+        from core.services.timetable_optimisation_policy import week_closure_guarded
+
+        return week_closure_guarded() and is_one_teacher_active()
+
+    def breach(self, score: Iterable[int] = ()) -> dict[str, Any] | None:
+        """The hand-over the closure would make on the board in the database now,
+        when ``week_move_breaks_gate`` blocks it; None otherwise."""
+        if not self.active:
+            return None
+        from core.services.timetable_optimisation_policy import (
+            current_day_off_policy,
+            instructor_schedule_metrics,
+            week_move_breaks_gate,
+        )
+        from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+        pinned = load_assignment(self.scenario_id, release_unteachable=True)
+        # Not a stage's read (those get the pin): the map the board is stored and read as.
+        closed = _read_assignment(self.scenario_id, ignore_pin=True, release_unteachable=True)
+        pinned_map, closed_map = pinned.v2_map(), closed.v2_map()
+        if pinned_map == closed_map:
+            return None
+        states = build_section_states_for_scenario(self.scenario_id)
+        policy = current_day_off_policy()
+        board_score = tuple(score) or (tuple(policy.score) if policy is not None else ())
+        before = instructor_schedule_metrics(states, pinned_map)
+        after = instructor_schedule_metrics(states, closed_map)
+        if not week_move_breaks_gate(before, board_score, after, board_score):
+            return None
+        handed = sorted(
+            key for key in closed.teacher if closed.teacher.get(key) != pinned.teacher.get(key)
+        )
+        return {
+            "metric": "week_closure",
+            "label": "A section without a teacher would be handed to a teacher at a blocked week",
+            "sections": handed,
+            "instructor_ids": sorted(
+                {str(closed.teacher[key]) for key in handed if closed.teacher.get(key)}
+            ),
+            "days_before": before.get("working_days_by_instructor"),
+            "days_after": after.get("working_days_by_instructor"),
+        }
+
+    def introduced(self, score: Iterable[int] = ()) -> dict[str, Any] | None:
+        """``breach`` now, unless it was already there when the guard was made: a stage
+        is answerable for a teacher or a section the earlier breach did not cover."""
+        if not self.active:
+            return None
+        now = self.breach(score)
+        if now is None or self.before is None:
+            return now
+        known_sections, known_teachers = (
+            set(self.before["sections"]),
+            set(self.before["instructor_ids"]),
+        )
+        if set(now["sections"]) <= known_sections and set(now["instructor_ids"]) <= known_teachers:
+            return None
+        return now
+
+
+def run_stage_under_week_closure(
+    scenario_id: int, stage, *, score: Iterable[int] = ()
+) -> tuple[Any, dict[str, Any] | None]:
+    """``stage()`` (a pass that writes the board), undone in its own savepoint
+    when it introduced a ``WeekClosureGuard`` breach. Returns ``(stage's result,
+    the breach or None)``; a stage the guard does not watch runs as it is."""
+    guard = WeekClosureGuard(scenario_id)
+    if not guard.active:
+        return stage(), None
+    with transaction.atomic():
+        out = stage()
+        breach = guard.introduced(score)
+        if breach is not None:
+            transaction.set_rollback(True)
+    if breach is not None:
+        invalidate_scope(scenario_id)
+    return out, breach
+
+
+def record_dropped_stage(result: dict, stage: str, breach: Mapping[str, Any]) -> None:
+    """``result["week_closure_dropped"]``: an optional stage the week-closure guard
+    undid, with the sections and teachers the closure would have handed a blocked
+    week (absent when no stage was dropped)."""
+    result.setdefault("week_closure_dropped", []).append({"stage": stage, **breach})
+
+
+def closure_handover(chosen: TeacherAssignment, stored: TeacherAssignment) -> list[dict[str, Any]]:
+    """The sections ``stored`` (what a persist wrote: the closure of ``chosen`` on the
+    layout) gives a teacher ``chosen`` did not: what a re-pick's judgement never saw."""
+    return [
+        {"section": key, "instructor_id": str(teacher)}
+        for key, teacher in sorted(stored.teacher.items())
+        if teacher is not None and chosen.teacher.get(key) != teacher
+    ]
+
+
 def teacher_bounds(before_metrics: Mapping) -> dict[str, tuple[int, int, int]]:
     """Each teacher's run-start week as a bound: ``(days, idle, allowance)``.
 
@@ -2511,6 +2631,22 @@ def _in_mode(assignment: TeacherAssignment, incomplete: str) -> TeacherAssignmen
 
 
 def load_assignment(
+    scenario_id: int,
+    *,
+    ignore_pin: bool = False,
+    incomplete: str = "raise",
+    release_unteachable: bool = False,
+) -> TeacherAssignment:
+    """The map in force for ``scenario_id`` on its current layout (``_read_assignment``)."""
+    return _read_assignment(
+        scenario_id,
+        ignore_pin=ignore_pin,
+        incomplete=incomplete,
+        release_unteachable=release_unteachable,
+    )
+
+
+def _read_assignment(
     scenario_id: int,
     *,
     ignore_pin: bool = False,
