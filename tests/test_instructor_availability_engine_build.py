@@ -1039,3 +1039,23 @@ def test_only_an_engine_teacher_is_released_when_every_option_clashes(av_on, pin
         assert report["released"] == [{"section": f"{key}|S1", "instructor_ids": [a.pk]}]
         assert len(_placed_meetings(sc, key)) == 2
     assert report["ranked_last"] == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_the_clash_ledger_read_drops_a_stored_teacher_without_a_legal_week(av_on, ruled) -> None:
+    """fix plan D-H, F2: ``build_section_instructor_ids`` (the clash and cap ledger
+    every stage charges) reads as an engine phase, so a stored engine teacher whose
+    rules leave no legal week is absent from it; the display read
+    (``incomplete="collect"``) keeps him. The two must differ, or the ledger would
+    charge a teacher the same stage's availability domains drop. Control: without
+    the rule both reads charge him."""
+    from core.services.timetable_pr4_instructor import build_section_instructor_ids
+
+    sc, key, a = _stored_teacher_board(f"f2 {ruled}", ruled=ruled)
+
+    engine = build_section_instructor_ids(sc)
+    display = build_section_instructor_ids(sc, incomplete="collect")
+
+    assert display[f"{key}|S1"] == {a.pk}
+    assert engine[f"{key}|S1"] == (set() if ruled else {a.pk})
