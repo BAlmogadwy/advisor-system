@@ -49,6 +49,7 @@ from core.services.timetable_flags import is_section_day_spread_enabled
 from core.services.timetable_instructor_availability import (
     meetings_blocked,
     option_blocked,
+    option_meetings,
     rule_ids,
 )
 from core.services.timetable_optimisation_policy import evaluation_is_better
@@ -132,11 +133,17 @@ def _has_legal_option(
     lab_slot_config: list[dict],
 ) -> bool:
     """Every meeting of a ruled section has an option on the polisher's grid its
-    teacher may teach (an English section: some bundle he may teach)."""
+    teacher may teach OTHER THAN ITS CURRENT SLOT (an English section: some bundle
+    he may teach other than its current one). Design H6 / fix plan D-F: a section
+    whose only legal cell is the one it sits in cannot move legally anyway, and a
+    one-cell domain lets any other hard constraint on that cell (a pre-existing
+    clash, all-different-days) make the whole model infeasible."""
     policy = get_course_meeting_policy(sec.course_code)
     if policy:
+        current = sorted((m.day, m.start_min, m.end_min) for m in sec.meetings)
         return any(
             not option_blocked(availability, ids, bundle)
+            and sorted(option_meetings(bundle)) != current
             for bundle in meeting_options_for_policy(
                 policy,
                 blocked_slots=scenario_obj.blocked_slots or [],
@@ -145,7 +152,8 @@ def _has_legal_option(
         )
     return all(
         any(
-            not meetings_blocked(availability, ids, [(opt[0], opt[6], opt[7])])
+            (opt[0], opt[6], opt[7]) != (meeting.day, meeting.start_min, meeting.end_min)
+            and not meetings_blocked(availability, ids, [(opt[0], opt[6], opt[7])])
             for opt in get_options(meeting.end_min - meeting.start_min)
         )
         for meeting in sec.meetings
@@ -291,9 +299,10 @@ def polish_scenario_with_cpsat(
         return [opt for opt in slots if opt[7] - opt[6] == duration]
 
     # Teaching-time rules (H6): a ruled section with a meeting that has no option
-    # on the grid its teacher may teach is held fixed (as a locked section is)
-    # instead of being polished, so an off-grid forbidden meeting can never empty
-    # a domain and abort the pass; it could not move legally anyway. The others
+    # on the grid its teacher may teach other than its current slot is held fixed
+    # (as a locked section is) instead of being polished, so a forbidden meeting
+    # can never empty a domain, nor a one-cell domain meet another hard
+    # constraint, and abort the pass; it could not move legally anyway. The others
     # are polished with their forbidden cells closed below (the current slot
     # stays allowed, so an existing violation may stay, never grow).
     av_ids: dict[str, tuple[int, ...]] = {}

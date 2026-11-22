@@ -26,6 +26,7 @@ from core.models import SectionPlacement
 from core.services import timetable_constraints as constraints
 from core.services.instructor_availability import (
     EMPTY_AVAILABILITY,
+    KIND_AVAILABLE_ONLY,
     KIND_UNAVAILABLE,
 )
 from core.services.timetable_assignment_models import (
@@ -42,6 +43,7 @@ from tests.test_instructor_availability_engine import (
     NO_MORNINGS,
     PM,
     SUN,
+    THU,
     TUE,
     WED,
     _av,
@@ -360,3 +362,111 @@ def test_cap_repair_never_unplaces_a_session_because_a_rule_kept_another(
     else:
         assert "availability_blocked" not in report
         assert _course_days(scenario, "C1") == ["SUN", "MON", "TUE"]
+
+
+# ── D-F: the polisher's H6 as designed ───────────────────────────────────
+
+#: Teacher 7 may teach only SUN 13:00-14:15.
+ONLY_SUN_ONE = _av((7, KIND_AVAILABLE_ONLY, ("SUN",), 13 * 60, 14 * 60 + 15))
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_a_pre_existing_clash_of_a_narrow_window_teacher_leaves_the_rest_polishable(
+    settings, monkeypatch, rules
+) -> None:
+    """D-F probe 1 (improvement:F1): A1 and A2 (teacher 7, only SUN 13:00) both
+    sit at SUN 13:00, a clash a manual move may leave. Each one's only legal cell
+    is its current one, so both are held fixed; X still leaves the locked B's SUN
+    09:00 (with the old H6 the clash made the whole model infeasible). Control: an
+    empty availability polishes them all."""
+    from tests.test_instructor_availability_engine import (
+        MON_PM_CELL,
+        SUN_AM_CELL,
+        SUN_PM_CELL,
+        _polish_case,
+    )
+
+    settings.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = True
+    # Instructor priority off: splitting the clash costs teacher 7 a day or idle
+    # time, which would veto the control's polish for a reason unrelated to H6.
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    result, polished = _polish_case(
+        monkeypatch,
+        {"A1": [SUN_PM_CELL], "A2": [SUN_PM_CELL], "X": [SUN_AM_CELL]},
+        {"B": [SUN_AM_CELL]},
+        overlap={("B", "X"): 2},
+        takes=("B", "X"),
+        section_ids={"A1": frozenset({7}), "A2": frozenset({7})},
+        availability=ONLY_SUN_ONE if rules else EMPTY_AVAILABILITY,
+    )
+
+    assert result is not None
+    assert polished["X"] != [SUN_AM_CELL]
+    if rules:
+        assert "A1" not in polished and "A2" not in polished  # held fixed
+    else:
+        assert sorted([polished["A1"], polished["A2"]]) == [[SUN_PM_CELL], [MON_PM_CELL]]
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_an_off_grid_meeting_under_all_different_days_leaves_the_rest_polishable(
+    monkeypatch, rules
+) -> None:
+    """D-F probe 2 (improvement:F1): R (teacher 7, only SUN 13:00) meets SUN 13:00
+    (legal) and MON 08:00 (off the grid, forbidden). Each meeting alone has the
+    legal SUN 13:00, but both may not be on SUN: meeting 0 has no legal option
+    other than its current slot, so R is held fixed and X is still polished
+    (control: an empty availability polishes X too)."""
+    from tests.test_instructor_availability_engine import SUN_AM_CELL, SUN_PM_CELL, _polish_case
+
+    off_grid = (MON, 8 * 60, 9 * 60 + 15)
+    result, polished = _polish_case(
+        monkeypatch,
+        {"R": [SUN_PM_CELL, off_grid], "X": [SUN_AM_CELL]},
+        {"B": [SUN_AM_CELL]},
+        overlap={("B", "X"): 2},
+        takes=("B", "X"),
+        section_ids={"R": frozenset({7})},
+        availability=ONLY_SUN_ONE if rules else EMPTY_AVAILABILITY,
+    )
+
+    assert result is not None
+    assert polished["X"] != [SUN_AM_CELL]
+    if rules:
+        assert "R" not in polished  # held fixed
+
+
+@pytest.mark.django_db
+@RULES_OR_EMPTY
+def test_an_english_section_whose_only_legal_bundle_is_its_own_leaves_the_rest_polishable(
+    settings, monkeypatch, rules
+) -> None:
+    """D-F, the bundle branch: ENG101 (teacher 7, no mornings) teaches the
+    afternoon bundle, which already clashes with teacher 7's locked B on SUN 13:00.
+    Its only legal bundle is its current one, so it is held fixed and X is still
+    polished (with the old H6 the clash closed the one legal bundle and the model
+    was infeasible). Control: an empty availability moves ENG101 to the mornings."""
+    from tests.test_instructor_availability_engine import SUN_PM_CELL, _polish_case
+
+    settings.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = False
+    afternoon = [(day, 13 * 60, 16 * 60) for day in (SUN, MON, WED, THU)]
+    result, polished = _polish_case(
+        monkeypatch,
+        {"ENG101": afternoon, "X": [(TUE, 9 * 60, 10 * 60 + 15)]},
+        {"B": [SUN_PM_CELL], "C": [(TUE, 9 * 60, 10 * 60 + 15)]},
+        open_cells=None,
+        overlap={("C", "X"): 2},
+        takes=("C", "X"),
+        section_ids={"ENG101": frozenset({7}), "B": frozenset({7})},
+        availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )
+
+    assert result is not None
+    assert polished["X"] != [(TUE, 9 * 60, 10 * 60 + 15)]
+    if rules:
+        assert "ENG101" not in polished  # held fixed
+    else:
+        assert polished["ENG101"] == [(day, 9 * 60, 12 * 60) for day in (SUN, MON, WED, THU)]
