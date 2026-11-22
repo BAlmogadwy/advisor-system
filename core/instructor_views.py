@@ -365,6 +365,7 @@ def course_assignments_view(request: HttpRequest) -> JsonResponse:
             "full_name": link.instructor.full_name,
             "full_name_ar": link.instructor.full_name_ar,
             "role": link.role,
+            "max_sections": link.max_sections,
         }
         if link.role == "primary":
             row["instructor"] = entry
@@ -384,6 +385,50 @@ def course_assignments_view(request: HttpRequest) -> JsonResponse:
     )
 
 
+MAX_SECTIONS_LIMIT = 99
+
+
+def _parse_instructor_entries(
+    raw: object,
+) -> tuple[list[int], dict[int, int | None], JsonResponse | None]:
+    """Validate the ``instructors: [{id, max_sections}]`` form of the set view."""
+    if not isinstance(raw, list):
+        return [], {}, _err("instructors must be a list", code="VALIDATION", status=400)
+    ids: list[int] = []
+    limits: dict[int, int | None] = {}
+    for entry in raw:
+        iid = entry.get("id") if isinstance(entry, dict) else None
+        if isinstance(iid, bool) or not isinstance(iid, int):
+            return (
+                [],
+                {},
+                _err("each instructor needs an integer id", code="VALIDATION", status=400),
+            )
+        value = entry.get("max_sections")
+        if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit():
+            value = int(value.strip())  # "2" is a whole number; "2.5" / "x" stay rejected
+        if value is not None:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= MAX_SECTIONS_LIMIT
+            ):
+                return (
+                    [],
+                    {},
+                    _err(
+                        f"max_sections for instructor {iid} must be a whole number "
+                        f"from 1 to {MAX_SECTIONS_LIMIT}, or empty",
+                        code="VALIDATION",
+                        status=400,
+                    ),
+                )
+        ids.append(iid)
+        if iid not in limits:  # a repeated id keeps its first entry (first wins)
+            limits[iid] = value
+    return ids, limits, None
+
+
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
 def course_assignment_set_view(request: HttpRequest) -> JsonResponse:
@@ -398,13 +443,19 @@ def course_assignment_set_view(request: HttpRequest) -> JsonResponse:
         return bad
     if not course_code:
         return _err("course_code is required", code="VALIDATION", status=400)
-    ids = payload.get("instructor_ids")
-    if ids is None and payload.get("instructor_id") is not None:
-        ids = [payload.get("instructor_id")]
-    if not isinstance(ids, list):
-        return _err("instructor_ids must be a list", code="VALIDATION", status=400)
+    limits: dict[int, int | None] | None = None
+    if payload.get("instructors") is not None:
+        ids, limits, bad = _parse_instructor_entries(payload.get("instructors"))
+        if bad:
+            return bad
+    else:
+        ids = payload.get("instructor_ids")
+        if ids is None and payload.get("instructor_id") is not None:
+            ids = [payload.get("instructor_id")]
+        if not isinstance(ids, list):
+            return _err("instructor_ids must be a list", code="VALIDATION", status=400)
     try:
-        instructors = set_course_instructors(program, course_code, section, ids)
+        instructors = set_course_instructors(program, course_code, section, ids, limits)
     except ValueError as exc:
         return _err(str(exc), code="NOT_FOUND", status=404)
     log_audit_event(
@@ -843,6 +894,7 @@ def instructor_load_report_view(request: HttpRequest) -> JsonResponse:
                 "course_code": link.course_code,
                 "section": link.section,
                 "role": link.role,
+                "max_sections": link.max_sections,
             }
         )
         acc["course_keys"].add(normalise_course_code(link.course_code))

@@ -78,6 +78,8 @@
     </div>
   </div>
 
+  <p class="im-limits-help" id="caLimitsHelp">{% if LANGUAGE_CODE == 'ar' %}اتركه فارغًا للقاعدة الافتراضية: شعبتان على الأكثر من المقرر الذي تزيد شعبه على ثلاث. الشعب الزائدة على حد كل عضو هيئة تدريس تبقى دون إسناد.{% else %}Leave "Max sections" blank for the default: at most 2 sections of a course that runs more than 3. Sections above every instructor's limit stay unassigned.{% endif %}</p>
+
   <div class="table-wrap">
     <table class="tbl-card im-table" id="caTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}إسناد المقررات إلى المدرسين{% else %}Course-to-instructor assignments{% endif %}">
       <thead>
@@ -310,5 +312,5 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/instructor-time-rules.js' %}?v=1"></script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=18"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=19"></script>
 {% endblock %}

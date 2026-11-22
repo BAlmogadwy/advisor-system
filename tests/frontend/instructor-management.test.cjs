@@ -231,9 +231,11 @@ test('a name with quotes stays text: nothing it holds becomes an attribute', asy
   h.$('caProgram').value = 'AI';
   h.$('caProgram').dispatchEvent(new h.w.Event('change'));
   await new Promise(r => setTimeout(r, 20));
-  const chip = h.d.querySelector('.ca-chip-name');
+  const chip = h.d.querySelector('.ca-teacher-name');
+  assert.equal(chip.textContent, evil);
   assert.equal(chip.hasAttribute('onfocus'), false);
-  assert.equal(chip.dataset.caAssign, 'C"1');
+  assert.equal(h.d.querySelector('.ca-limit-input').getAttribute('aria-label'), `Max sections — ${evil} — C"1`);
+  assert.equal(h.d.querySelector('[data-ca-assign]').dataset.caAssign, 'C"1');
   assert.equal(h.d.querySelectorAll('[onfocus], [autofocus]').length, 0);
 });
 
@@ -304,4 +306,118 @@ test('badges use the design system tones; bulk assign never picks the first of s
   h.$('caProgram').dispatchEvent(new h.w.Event('change'));
   await new Promise(r => setTimeout(r, 20));
   assert.equal(h.$('caBulkbar').classList.contains('d-none'), true);
+});
+
+// ── Per-teacher section limits (the course row lists every teacher) ──
+const TWO_TEACHERS = [{
+  course_code: 'CS112', course_name: 'Programming', programme_term: 2, credit_hours: 3,
+  instructor: { id: 1, full_name: 'Dr Hala Omar', role: 'primary', max_sections: 2 },
+  co_instructors: [{ id: 2, full_name: 'ابراهيم فتحي', role: 'co', max_sections: null }],
+}];
+
+async function limitsPage(t, courses = TWO_TEACHERS) {
+  const h = await page(t, { answer: url => (url.startsWith('/ops/instructors/course-assignments/?') ? { ok: true, courses } : undefined) });
+  h.$('caProgram').value = 'CS';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await settle();
+  return h;
+}
+const lastSet = h => h.posts.filter(p => p.url === '/ops/instructors/course-assignments/set/').at(-1);
+
+test('a course row shows every teacher with their limit, labelled by name and course', async t => {
+  const h = await limitsPage(t);
+  const teachers = [...h.d.querySelectorAll('#caTable .ca-teacher')];
+  assert.equal(teachers.length, 2);
+  assert.deepEqual(teachers.map(x => x.querySelector('.ca-teacher-name').textContent), ['Dr Hala Omar', 'ابراهيم فتحي']);
+  assert.deepEqual(teachers.map(x => x.querySelector('.ca-limit-input').value), ['2', '']);
+  assert.equal(teachers[0].querySelector('.ca-limit-input').getAttribute('aria-label'), 'Max sections — Dr Hala Omar — CS112');
+  assert.equal(teachers[1].querySelector('.ca-limit-input').placeholder, 'Default');
+  assert.equal(h.d.querySelectorAll('#caTable [data-ca-remove]').length, 2, 'with several teachers each has its own remove');
+  assert.equal(h.d.querySelector('#caTable [data-ca-assign]').textContent.trim(), '+ Add instructor');
+});
+
+test('adding a teacher posts the whole list, appended, keeping the limits', async t => {
+  const h = await limitsPage(t);
+  h.d.querySelector('#caTable [data-ca-assign]').click();
+  const search = h.$('caPopSearch');
+  search.value = 'old';
+  search.dispatchEvent(new h.w.Event('input'));
+  await new Promise(r => setTimeout(r, 400));
+  const option = [...h.d.querySelectorAll('#caPopResults .ca-pop-opt')].find(o => o.dataset.id === '3');
+  option.click();
+  await settle();
+  assert.deepEqual(lastSet(h).body, {
+    program: 'CS', course_code: 'CS112', section: 'M',
+    instructors: [{ id: 1, max_sections: 2 }, { id: 2, max_sections: null }, { id: 3, max_sections: null }],
+  });
+});
+
+test('picking a teacher who is already linked adds nothing', async t => {
+  const h = await limitsPage(t);
+  h.d.querySelector('#caTable [data-ca-assign]').click();
+  h.$('caPopSearch').value = 'hala';
+  h.$('caPopSearch').dispatchEvent(new h.w.Event('input'));
+  await new Promise(r => setTimeout(r, 400));
+  [...h.d.querySelectorAll('#caPopResults .ca-pop-opt')].find(o => o.dataset.id === '1').click();
+  await settle();
+  assert.equal(lastSet(h), undefined);
+});
+
+test('editing a limit posts the list with that number; clearing it posts null', async t => {
+  const h = await limitsPage(t);
+  const second = h.d.querySelectorAll('#caTable .ca-limit-input')[1];
+  second.value = '3';
+  second.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.deepEqual(lastSet(h).body.instructors, [{ id: 1, max_sections: 2 }, { id: 2, max_sections: 3 }]);
+  const first = h.d.querySelectorAll('#caTable .ca-limit-input')[0];
+  first.value = '';
+  first.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.deepEqual(lastSet(h).body.instructors, [{ id: 1, max_sections: null }, { id: 2, max_sections: null }]);
+});
+
+test('a limit that is not a whole number from 1 to 99 is refused in the page and nothing is sent', async t => {
+  const h = await limitsPage(t);
+  for (const bad of ['0', '100', '-1', '2.5']) {
+    const input = h.d.querySelectorAll('#caTable .ca-limit-input')[1];
+    input.value = bad;
+    input.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+    await settle();
+  }
+  assert.equal(lastSet(h), undefined);
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 4);
+  assert.equal(h.d.querySelectorAll('#caTable .ca-limit-input')[1].value, '', 'the field shows what is stored again');
+});
+
+test('removing the primary posts the rest in order, so the next becomes primary', async t => {
+  const three = [{ ...TWO_TEACHERS[0], co_instructors: [
+    { id: 2, full_name: 'ابراهيم فتحي', max_sections: 3 }, { id: 3, full_name: 'Dr Old Name', max_sections: null }] }];
+  const h = await limitsPage(t, three);
+  h.d.querySelector('#caTable [data-ca-remove="1"]').click();
+  await settle();
+  assert.deepEqual(lastSet(h).body.instructors, [{ id: 2, max_sections: 3 }, { id: 3, max_sections: null }]);
+});
+
+test('Remove all clears the course; a single teacher’s × does too', async t => {
+  const h = await limitsPage(t);
+  h.d.querySelector('#caTable [data-ca-clear]').click();
+  await settle();
+  assert.equal(h.posts.at(-1).url, '/ops/instructors/course-assignments/clear/');
+  const one = await limitsPage(t, [{ ...TWO_TEACHERS[0], co_instructors: [] }]);
+  assert.equal(one.d.querySelectorAll('#caTable [data-ca-remove]').length, 0);
+  one.d.querySelector('#caTable .ca-teacher-x').click();
+  await settle();
+  assert.equal(one.posts.at(-1).url, '/ops/instructors/course-assignments/clear/');
+});
+
+test('a teacher name with HTML is text in the row, the labels and the search', async t => {
+  const evil = '<img src=x onerror=alert(1)> "q"';
+  const h = await limitsPage(t, [{ ...TWO_TEACHERS[0], instructor: { id: 1, full_name: evil, max_sections: 1 } }]);
+  assert.equal(h.d.querySelector('#caTable img'), null);
+  assert.equal(h.d.querySelector('#caTable .ca-teacher-name').textContent, evil);
+  assert.equal(h.d.querySelector('#caTable .ca-limit-input').getAttribute('aria-label'), `Max sections — ${evil} — CS112`);
+  h.$('caSearch').value = 'ابراهيم';
+  h.$('caSearch').dispatchEvent(new h.w.Event('input'));
+  assert.equal(h.d.querySelector('#caTable tbody tr[data-course]').style.display, '', 'a co-teacher is found by the search');
 });

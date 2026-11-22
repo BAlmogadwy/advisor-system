@@ -247,6 +247,7 @@ def serialize_course_instructors(
             "full_name_ar": link.instructor.full_name_ar,
             "role": link.role,
             "is_active": link.instructor.is_active,
+            "max_sections": link.max_sections,
         }
         for link in links
     ]
@@ -256,14 +257,20 @@ def serialize_course_instructors(
 
 @transaction.atomic
 def set_course_instructors(
-    program: str, course_code: str, section: str, instructor_ids: list[int]
+    program: str,
+    course_code: str,
+    section: str,
+    instructor_ids: list[int],
+    limits: dict[int, int | None] | None = None,
 ) -> list[dict[str, object]]:
     """Replace the instructor set for one (program, course, section).
 
     The first id becomes the ``primary`` (its name is what the planner writes
     through); the rest are ``co``. An empty list clears the assignment. Returns
-    the serialised links.
+    the serialised links. ``limits`` maps instructor id -> the most sections of
+    this course that teacher may hold (``None``/absent = the default rule).
     """
+    limits = limits or {}
     code = normalise_course_code(course_code)
     resolved: list[Instructor] = []
     seen: set[int] = set()
@@ -283,6 +290,7 @@ def set_course_instructors(
             section=section,
             instructor=instructor,
             role="primary" if idx == 0 else "co",
+            max_sections=limits.get(instructor.pk),
         )
     return serialize_course_instructors(program, code, section)
 

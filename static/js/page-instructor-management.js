@@ -73,6 +73,12 @@ const T = {
   notOfferedThisTerm:   IS_AR ? 'في الدليل — غير مطروح هذا الفصل' : 'In catalogue — not offered this term',
   electiveSlot:         IS_AR ? 'خانة اختياري' : 'Elective slot',
   slotHint:             IS_AR ? 'لا يوجد مقرر مرتبط بهذه الخانة هذا الفصل — اربط مقرراً أولاً' : 'No course is mapped to this elective slot this term — map one first',
+  maxSections:          IS_AR ? 'الحد الأعلى للشعب' : 'Max sections',
+  maxDefault:           IS_AR ? 'افتراضي' : 'Default',
+  addInstructor:        IS_AR ? '+ إضافة عضو هيئة تدريس' : '+ Add instructor',
+  removeInstructor:     IS_AR ? 'إزالة' : 'Remove',
+  removeAll:            IS_AR ? 'إزالة الكل' : 'Remove all',
+  limitInvalid:         IS_AR ? 'أدخل عددًا صحيحًا من 1 إلى 99، أو اتركه فارغًا' : 'Enter a whole number from 1 to 99, or leave it blank',
   legacy:               IS_AR ? 'قديم' : 'Legacy',
   orphanHint:           IS_AR ? 'مُسند إلى رمز لم يعد يُجدول — يمكن إزالته' : 'Assigned to a code that is no longer scheduled — you can clear it',
 
@@ -709,6 +715,7 @@ const ca = {
   popoverTrigger: null,   // element to restore focus to on close
   activeOptIndex: -1,     // keyboard-highlighted result index
   searchSeq: 0,           // request token: drop stale typeahead responses
+  pendingFocus: null,     // {code, selector} to focus after the next render
 
   // ── Main loader ──
   async loadCourses() {
@@ -784,13 +791,33 @@ const ca = {
       let assignmentCell;
       // Codes travel in data attributes (escaped), never inside inline script.
       const code = escapeHtml(course.course_code);
-      if (course.instructor) {
-        const who = escapeHtml(course.instructor.full_name);
-        assignmentCell = `<div class="ca-chip">
-             <button type="button" class="ca-chip-name" data-ca-assign="${code}" aria-haspopup="dialog" aria-label="${T.assign} — ${code}: ${who}">${who}</button>
-             <button type="button" class="ca-chip-x" data-ca-clear="${code}"
-                     aria-label="${T.unassign} ${who} — ${code}">×</button>
+      const teachers = this.teachersOf(course);
+      if (teachers.length) {
+        // Every linked teacher with an optional limit; one teacher's × clears the
+        // course, with several it removes only that teacher.
+        const single = teachers.length === 1;
+        const raw = course.course_code;
+        const rows = teachers.map(t => {
+          const id = Number(t.id);
+          const limit = Number.isInteger(t.max_sections) ? t.max_sections : '';
+          const removeLabel = `${single ? T.unassign : T.removeInstructor} ${t.full_name} — ${raw}`;
+          const removeButton = single
+            ? safeHtml`<button type="button" class="ca-teacher-x" data-ca-clear="${raw}" aria-label="${removeLabel}">×</button>`
+            : safeHtml`<button type="button" class="ca-teacher-x" data-ca-remove="${id}" data-ca-code="${raw}" aria-label="${removeLabel}">×</button>`;
+          return safeHtml`<div class="ca-teacher">
+             <span class="ca-teacher-name">${t.full_name}</span>
+             <label class="ca-limit"><span class="ca-limit-label">${T.maxSections}</span>
+               <input type="number" class="ca-limit-input" min="1" max="99" step="1" inputmode="numeric"
+                      placeholder="${T.maxDefault}" value="${limit}" data-ca-limit="${id}" data-ca-code="${raw}"
+                      aria-label="${T.maxSections} — ${t.full_name} — ${raw}"></label>
+             ${removeButton}
            </div>`;
+        });
+        const add = unschedulable ? '' : safeHtml`<button type="button" class="ca-assign-add" data-ca-assign="${raw}"
+                   aria-haspopup="dialog" aria-label="${T.addInstructor.replace(/^\+\s*/, '')} — ${raw}">${T.addInstructor}</button>`;
+        const all = single ? '' : safeHtml`<button type="button" class="ca-assign-add" data-ca-clear="${raw}"
+                   aria-label="${T.removeAll} — ${raw}">${T.removeAll}</button>`;
+        assignmentCell = safeHtml`<div class="ca-teachers">${rows}<div class="ca-teachers-actions">${add}${all}</div></div>`.toString();
       } else if (unschedulable) {
         assignmentCell = `<button type="button" class="ca-assign-add" disabled aria-disabled="true"
                    title="${escapeHtml(unschedulableHint)}" aria-label="${escapeHtml(unschedulableHint)}">${T.addAssign}</button>`;
@@ -827,6 +854,26 @@ const ca = {
         <td class="ca-assign-cell">${assignmentCell}</td>
       </tr>`;
     }).join('');
+    this.applyPendingFocus();
+  },
+
+  // A re-render replaces the row; give the keyboard back to where it was.
+  applyPendingFocus() {
+    const want = this.pendingFocus;
+    this.pendingFocus = null;
+    if (!want) return;
+    const row = [...$$('#caTable tbody tr[data-course]')].find(r => r.dataset.course === want.code);
+    const el = row && row.querySelector(want.selector);
+    if (el && el.focus) el.focus();
+  },
+
+  // Everyone linked to a course: the primary first, then the others.
+  teachersOf(course) {
+    return [course.instructor, ...(course.co_instructors || [])].filter(Boolean);
+  },
+
+  teacherPayload(teachers) {
+    return teachers.map(t => ({ id: t.id, max_sections: Number.isInteger(t.max_sections) ? t.max_sections : null }));
   },
 
   renderEmptyTable() {
@@ -847,7 +894,7 @@ const ca = {
       const matches = !query ||
         course.course_code.toLowerCase().includes(query) ||
         String(course.course_name || '').toLowerCase().includes(query) ||
-        String(course.instructor?.full_name || '').toLowerCase().includes(query);
+        this.teachersOf(course).some(t => String(t.full_name || '').toLowerCase().includes(query));
 
       row.style.display = matches ? '' : 'none';
       if (matches) visible++;
@@ -1067,7 +1114,7 @@ const ca = {
 
     resultsDiv.innerHTML = instructors.map((inst, idx) =>
       `<div class="ca-pop-opt" id="caPopOpt${idx}" role="option" aria-selected="false"
-            onclick="ca.assignInstructor(${inst.id})" data-id="${inst.id}">
+            data-id="${Number(inst.id)}">
          <strong>${escapeHtml(inst.full_name)}</strong>
          ${imField(inst.department) ? `<div class="ca-pop-dept">${escapeHtml(imField(inst.department))}</div>` : ''}
        </div>`
@@ -1075,30 +1122,72 @@ const ca = {
   },
 
   // ── Assignment actions ──
+  // The picker ADDS a teacher: the others stay, with their limits.
   async assignInstructor(instructorId) {
-    if (!this.activePopoverCourse) return;
+    const code = this.activePopoverCourse;
+    if (!code) return;
+    const course = this.courses.find(c => c.course_code === code);
+    const list = this.teacherPayload(course ? this.teachersOf(course) : []);
+    if (list.some(t => t.id === instructorId)) {   // already linked: nothing to add
+      this.hideAssignPopover();
+      return;
+    }
+    list.push({ id: instructorId, max_sections: null });
+    await this.saveTeachers(code, list, '[data-ca-assign]');
+  },
 
+  // Post a course's whole teacher list (order kept: the first is the primary).
+  async saveTeachers(code, list, focusSelector) {
     try {
       const data = await imApiCall('/ops/instructors/course-assignments/set/', {
         method: 'POST',
         body: JSON.stringify({
           program: this.currentProgram,
-          course_code: this.activePopoverCourse,
+          course_code: code,
           section: this.currentSection,
-          instructor_ids: [instructorId]
+          instructors: list
         })
       });
 
       if (data.ok) {
         notify.success(T.assignmentUpdated);
         this.hideAssignPopover();
+        this.pendingFocus = focusSelector ? { code, selector: focusSelector } : null;
         this.loadCourses(); // Refresh table
       } else {
         throw new Error(data.error?.message || 'Failed to assign');
       }
     } catch (error) {
       notify.error(error.message);
+      this.renderTable(); // put back what the server still holds
     }
+  },
+
+  async saveLimit(code, instructorId, input) {
+    const course = this.courses.find(c => c.course_code === code);
+    if (!course) return;
+    const raw = input.value.trim();
+    let limit = null;
+    if (raw !== '') {
+      limit = /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (!(limit >= 1 && limit <= 99)) {
+        notify.error(T.limitInvalid);
+        this.renderTable();
+        return;
+      }
+    }
+    const teachers = this.teachersOf(course);
+    const current = teachers.find(t => t.id === instructorId);
+    if (!current || (Number.isInteger(current.max_sections) ? current.max_sections : null) === limit) return;
+    const list = this.teacherPayload(teachers).map(t => (t.id === instructorId ? { ...t, max_sections: limit } : t));
+    await this.saveTeachers(code, list, `[data-ca-limit="${instructorId}"]`);
+  },
+
+  async removeTeacher(code, instructorId) {
+    const course = this.courses.find(c => c.course_code === code);
+    if (!course) return;
+    const list = this.teacherPayload(this.teachersOf(course)).filter(t => t.id !== instructorId);
+    await this.saveTeachers(code, list, '[data-ca-assign]');
   },
 
   async clearAssignment(courseCode, event) {
@@ -1258,14 +1347,23 @@ function imWire() {
     ca.setSection(next.dataset.sec);
     next.focus();
   });
+  // A picked result: the option carries the instructor's id as data.
+  $('caPopResults').addEventListener('click', event => {
+    const opt = event.target.closest('.ca-pop-opt');
+    if (opt) ca.assignInstructor(Number(opt.dataset.id));
+  });
   const table = $('caTable');
   table.addEventListener('click', event => {
     const clear = event.target.closest('[data-ca-clear]');
     if (clear) { ca.clearAssignment(clear.dataset.caClear, event); return; }
+    const remove = event.target.closest('[data-ca-remove]');
+    if (remove) { ca.removeTeacher(remove.dataset.caCode, Number(remove.dataset.caRemove)); return; }
     const assign = event.target.closest('[data-ca-assign]');
     if (assign && !assign.disabled) ca.showAssignPopover(assign.dataset.caAssign, event, assign);
   });
   table.addEventListener('change', event => {
+    const limit = event.target.closest('[data-ca-limit]');
+    if (limit) { ca.saveLimit(limit.dataset.caCode, Number(limit.dataset.caLimit), limit); return; }
     const box = event.target.closest('[data-ca-course]');
     if (box) ca.toggleCourse(box.dataset.caCourse, box);
   });
