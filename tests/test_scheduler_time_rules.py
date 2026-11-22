@@ -761,6 +761,22 @@ def test_a_block_tier_section_is_probed_with_the_sibling_it_shares_its_block_wit
     assert has_legal_week(snap, teacher, [snap.sections[0]])
 
 
+def test_a_tier_that_shares_no_block_is_probed_without_its_siblings():
+    """Only a block tier shares slots with its siblings. A T1 course on a grid with
+    one cell cannot place its second section, but that is nobody's rule: the first
+    must still be held by the instructor who may teach in that one cell."""
+    one_cell = Grid.from_spec(lecture_starts={"09:00": 75}, lab_starts={"09:00": 100}, days=(SUN,))
+    teacher = person(1, "Dr R", {"o1"}, ((0, 1200, 1300),))
+    snap = snapshot(
+        [offering("o1")],
+        [Section("o1#S1", "o1", 1, 30), Section("o1#S2", "o1", 2, 30)],
+        [teacher],
+        grid=one_cell,
+    )
+
+    assert has_legal_week(snap, teacher, [snap.sections[0]])
+
+
 # ── the validator ─────────────────────────────────────────────────────────
 
 
@@ -1035,10 +1051,25 @@ def _hand_assigned_shut_and_harmless():
     )
 
 
-def test_the_ladder_releases_only_the_instructor_whose_own_week_fails():
+def test_the_ladder_releases_only_the_instructor_whose_own_week_fails(monkeypatch):
+    import scheduler.solve as solve_module
+
+    walls = []
+    real = solve_module.solve
+
+    def spy(snap, **kwargs):
+        result = real(snap, **kwargs)
+        if kwargs.get("alpha") != 1.0:
+            walls.append(result.wall_time_seconds)
+        return result
+
+    monkeypatch.setattr(solve_module, "solve", spy)
     snap = _hand_assigned_shut_and_harmless()
 
     result = plan(snap, time_limit_seconds=8, workers=1)
+
+    # the failed attempt's time travels with the retry that was kept
+    assert result.wall_time_seconds >= sum(walls) - 1e-9
 
     assert result.released_instructors == (4,)
     [warning] = [w for w in result.warnings if "teaching-time rules" in w]
@@ -1046,6 +1077,94 @@ def test_the_ladder_releases_only_the_instructor_whose_own_week_fails():
     kept = release_instructors(snap, result.released_instructors)
     assert [s.instructor_id for s in kept.sections] == [None, 5]  # Dr Fine still teaches
     assert {p.instructor_id for p in result.board.placements} == {None, 5}
+
+
+def test_when_every_ruled_instructors_own_week_fails_the_ladder_has_one_rung(monkeypatch):
+    import scheduler.solve as solve_module
+
+    calls = []
+    real = solve_module.solve
+
+    def spy(snap, **kwargs):
+        result = real(snap, **kwargs)
+        calls.append((kwargs.get("alpha"), result.wall_time_seconds))
+        return result
+
+    monkeypatch.setattr(solve_module, "solve", spy)
+    monkeypatch.setattr(solve_module, "has_legal_week", lambda *a, **k: False)
+
+    result = plan(_hand_assigned_shut_and_harmless(), time_limit_seconds=8, workers=1)
+
+    assert result.released_instructors == (4, 5)
+    assert len(calls) == 2  # the first pass and ONE retry, not the same release twice
+
+
+def test_the_ladder_judges_each_instructor_under_the_options_the_caller_asked_for():
+    """No same-hour ceiling was asked for, so Dr Narrow's week is fine and only the
+    shut instructor is released; under the default ceiling he would fail too."""
+    snap = _narrow_snapshot()
+    narrow = replace(snap.instructors[0])
+    shut = person(4, "Dr Shut", {"o3"}, tuple((d, 0, 1440) for d in range(5)))
+    snap = replace(
+        snap,
+        offerings=(*snap.offerings, offering("o3")),
+        sections=(
+            replace(snap.sections[0], instructor_id=narrow.id),
+            snap.sections[1],
+            Section("o3#S1", "o3", 1, 30, instructor_id=4),
+        ),
+        instructors=(narrow, snap.instructors[1], shut),
+    )
+
+    result = plan(snap, time_limit_seconds=8, workers=1, max_time_of_day_slots=None)
+
+    assert result.released_instructors == (4,)
+
+
+def test_the_relaxed_attempt_is_probed_under_no_hard_options_and_the_first_under_the_default(
+    monkeypatch,
+):
+    import scheduler.solve as solve_module
+
+    asked = []
+    real = solve_module.has_legal_week
+
+    def spy(snap, instructor, sections, **kwargs):
+        asked.append(kwargs.get("hard_options"))
+        return real(snap, instructor, sections, **kwargs)
+
+    monkeypatch.setattr(solve_module, "has_legal_week", spy)
+    split = Offering(
+        id="x",
+        course_code="X",
+        course_name="x",
+        credit_hours=3,
+        programs=frozenset({"AI"}),
+        terms=frozenset({1}),
+        requirements=(
+            MeetingRequirement(
+                MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 1, allowed_starts=(540,)
+            ),
+            MeetingRequirement(
+                MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 1, allowed_starts=(780,)
+            ),
+        ),
+        capacity=30,
+        capacity_is_declared=True,
+    )
+    snap = _jointly_infeasible()
+    snap = replace(
+        snap,
+        offerings=(*snap.offerings, split),
+        sections=(*snap.sections, Section("x#S1", "x", 1, 30)),
+    )
+
+    plan(snap, time_limit_seconds=10, workers=1)
+
+    import scheduler.solve as sm
+
+    assert sm.planner_hard_options() in asked  # the first attempt: the planner's own
+    assert {} in asked  # the relaxed attempt: nothing was hard any more
 
 
 def _three_rivals():
@@ -1099,18 +1218,25 @@ def test_a_retry_is_counted_in_the_wall_time_even_when_it_is_discarded_and_cappe
         walls.append(wall)
         return solve_module.SolveResult(Board(()), "INFEASIBLE", False, float("inf"), wall)
 
+    clock = [0.0]
+
+    def probe(snap, instructor, *a, **k):
+        clock[0] += 2.0  # each probe 'takes' 2s
+        return instructor.id != 4  # Dr Shut fails his own week, Dr Fine does not: two rungs
+
     monkeypatch.setattr(solve_module, "solve", stub)
+    monkeypatch.setattr(solve_module, "has_legal_week", probe)
     monkeypatch.setattr(
-        solve_module, "has_legal_week", lambda snap, instructor, *a, **k: instructor.id != 4
-    )  # Dr Shut fails his own week, Dr Fine does not: two rungs
+        solve_module, "time", type("Clock", (), {"perf_counter": staticmethod(lambda: clock[0])})
+    )
     snap = _hand_assigned_shut_and_harmless()
 
     result = plan(snap, time_limit_seconds=40, workers=1)
 
     assert limits[0] == 20.0  # the first pass: half
-    assert 9.0 <= limits[1] <= 10.0  # 40 - 30 left, below half
-    assert limits[2] < limits[1]  # ...and the first retry's second has been spent
-    assert result.wall_time_seconds >= 30.0 + 1.0 + 1.0  # first + both retries
+    assert limits[1] == 40 - 30 - 4  # what is left after the first pass and 2 probes
+    assert limits[2] == limits[1] - 1  # ...and the first retry's second has been spent
+    assert result.wall_time_seconds >= 30.0 + 4.0 + 1.0 + 1.0  # first, probes, both retries
 
 
 def test_the_portfolio_prefers_the_run_that_kept_its_instructors(monkeypatch):
