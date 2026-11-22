@@ -13,7 +13,15 @@ from core.services.timetable_course_policy import (
 )
 
 
-def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = False) -> dict:
+def improve_fixed_course_patterns(
+    scenario_id: int, *, repair_clashes: bool = False, repair_availability: bool = False
+) -> dict:
+    """Whole-bundle neighbourhood. ``repair_availability`` (the teaching-time
+    repair, ``TIMETABLE_INSTRUCTOR_AVAILABILITY``): switch only a bundle that
+    breaks its teacher's rules to the legal bundle with the fewest broken
+    meetings, never raising a clash or overload and never taking the teacher's
+    last day off; the day, idle and student vetoes of the optional search do
+    not apply (the repair is mandatory and the run's floors absorb its cost)."""
     from core.models import SectionPlacement, TimetableScenario
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_constraints import (
@@ -73,6 +81,17 @@ def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = Fa
         )
 
     incumbent = evaluate()
+    if repair_availability:
+        if not availability:
+            return {"evaluated": 0, "accepted": 0}
+        return _switch_bundles_into_availability(
+            scenario_id,
+            scenario,
+            (states, sections, teachers, locked),
+            availability,
+            evaluate,
+            incumbent,
+        )
     ceilings = schedule_metrics_of(incumbent)
     trials = accepted = 0
     for _round in range(2):
@@ -149,6 +168,89 @@ def improve_fixed_course_patterns(scenario_id: int, *, repair_clashes: bool = Fa
                         section.meetings = old
         if not changed:
             break
+    if accepted:
+        persist_section_states_to_scenario(scenario_id, sections)
+    return {"evaluated": trials, "accepted": accepted}
+
+
+def _switch_bundles_into_availability(
+    scenario_id, scenario, board, availability, evaluate, incumbent
+) -> dict:
+    """The ``repair_availability`` mode: for each unlocked bundle that breaks its
+    teacher's rules, take the legal-for-the-teacher bundle with the fewest broken
+    meetings (the first among equals), provided no clash or overload is added and
+    the instructor-week gate (a teacher keeps a day off) is not tripped."""
+    from core.services.timetable_constraints import (
+        count_instructor_clashes,
+        count_instructor_daily_overloads,
+        section_availability_violations,
+    )
+    from core.services.timetable_optimisation_policy import (
+        schedule_metrics_of,
+        week_move_breaks_gate,
+    )
+    from core.services.timetable_optimizer_v2 import persist_section_states_to_scenario
+    from core.services.timetable_pr4_instructor import get_instructor_daily_cap
+
+    states, sections, teachers, locked = board
+    trials = accepted = 0
+    for section in sorted(states, key=lambda s: s.section_id):
+        policy = get_course_meeting_policy(section.course_code)
+        if not policy or section.section_id in locked:
+            continue
+        ids = teachers.get(section.section_id, ())
+        before = section_availability_violations(section, ids, availability)
+        if not before:
+            continue
+        cap = get_instructor_daily_cap()
+        old_clashes = count_instructor_clashes(sections, teachers)
+        old_overloads = count_instructor_daily_overloads(sections, teachers, cap)
+        old = section.meetings
+        best = None
+        for option in meeting_options_for_policy(
+            policy,
+            blocked_slots=scenario.blocked_slots or [],
+            slots=(scenario.slot_config or []) + (scenario.lab_slot_config or []),
+        ):
+            candidate = [
+                SectionMeeting(
+                    ("SUN", "MON", "TUE", "WED", "THU").index(m["day"]),
+                    int(m["start"][:2]) * 60 + int(m["start"][3:]),
+                    int(m["end"][:2]) * 60 + int(m["end"][3:]),
+                )
+                for m in option
+            ]
+            if candidate == old:
+                continue
+            section.meetings = candidate
+            try:
+                trials += 1
+                if (
+                    count_instructor_clashes(sections, teachers) > old_clashes
+                    or count_instructor_daily_overloads(sections, teachers, cap) > old_overloads
+                ):
+                    continue
+                after = section_availability_violations(section, ids, availability)
+                if after >= before or (best is not None and after >= best[0]):
+                    continue
+                evaluated = evaluate()
+                if week_move_breaks_gate(
+                    schedule_metrics_of(incumbent),
+                    incumbent.lexicographic_score,
+                    schedule_metrics_of(evaluated),
+                    evaluated.lexicographic_score,
+                ):
+                    continue
+                best = (after, candidate)
+            finally:
+                section.meetings = old
+        if best is not None:
+            section.meetings = best[1]
+            permitted = policy.pattern_for(best[1])
+            assert permitted is not None
+            section.pattern_id = permitted.pattern_id
+            incumbent = evaluate()
+            accepted += 1
     if accepted:
         persist_section_states_to_scenario(scenario_id, sections)
     return {"evaluated": trials, "accepted": accepted}

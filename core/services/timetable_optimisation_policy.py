@@ -895,6 +895,32 @@ def current_day_off_policy() -> DayOffPolicy | None:
     return _DAY_OFF.get()
 
 
+def week_move_breaks_gate(
+    before_metrics: Mapping,
+    before_score: Iterable[int],
+    after_metrics: Mapping,
+    after_score: Iterable[int],
+) -> bool:
+    """True iff a move that turns the board measured by ``before_metrics`` into
+    the one measured by ``after_metrics`` is a change the instructor-week gate
+    blocks: inside a day-off scope, a breach of R1-R4 that grows or a fifth
+    working day; outside one (or with incomplete evidence), a teacher newly
+    working all five days. A teacher keeps at least one day off; a spare day may
+    be spent. Callers that must never trip the gate (the teaching-time repair)
+    leave a move alone when this says True."""
+    policy = current_day_off_policy()
+    if policy is not None:
+        after = policy.measure(after_metrics, tuple(after_score))
+        before = policy.measure(before_metrics, tuple(before_score))
+        if after is not None and before is not None:
+            return not _no_new_breach(after, before) or _adds_fifth_day(after, before)
+    old_days = before_metrics.get("working_days_by_instructor") or {}
+    return any(
+        int(days) > MAX_WORKING_DAYS >= int(old_days.get(teacher, 0))
+        for teacher, days in (after_metrics.get("working_days_by_instructor") or {}).items()
+    )
+
+
 def stage_is_better(out: TimetableEvaluationResult, inp: TimetableEvaluationResult) -> bool:
     """A stage boundary: ``core`` inside a day-off scope, else the unchanged
     ``evaluation_is_better``. A step relation does not compose across a stage,
