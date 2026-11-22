@@ -424,8 +424,12 @@ def _gate_released(assignment: TeacherAssignment, released: Iterable[str]) -> Te
         reason.pop(key, None)
         trial = schedule_of(replace(assignment, teacher=teacher, status=status))
         # Outside a run's saved-week scope: that scope is the repair's. A release
-        # happens only in a placer, before the run's baseline is measured, so the
-        # re-pick is part of the baseline the final gate compares with.
+        # normally happens in the required-section pre-step, before the run's
+        # baseline is measured, so the re-pick is part of the baseline the final
+        # gate compares with and a spare day may be spent on it. The one release
+        # after the baseline (the optimiser's closing reinstatement of a section a
+        # stage unplaced) is judged like any other re-pick, by the C7 week gate
+        # and the final day and idle rows: a run it would worsen is blocked.
         with saved_week_scope(False):
             breaks = week_move_breaks_gate(current, (), trial, ())
         if breaks:
