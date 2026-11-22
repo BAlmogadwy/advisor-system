@@ -1314,8 +1314,11 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     )
     # The bundle pass runs before the per-meeting loop measures its own start, so
     # what it spent is measured from its own before/after (present when it switched).
+    # They are taken out of the report here: only ``spent_switches`` (a bundle that
+    # cost something) is added to what the report held before this change.
     bundle_pass = report["weekly_pattern_search"]
-    pass_start = bundle_pass.get("instructor_before")
+    pass_start = bundle_pass.pop("instructor_before", None)
+    pass_end = bundle_pass.pop("instructor_after", None)
     scenario = TimetableScenario.objects.get(id=scenario_id)
     day_spread_on = is_section_day_spread_enabled()
     cap_map = build_section_instructor_map_for_scenario(scenario_id)
@@ -1399,7 +1402,7 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     report["detected"] = [_row(p) for p in violating]
     if not violating:
         if pass_start is not None:
-            spent = instructor_spend(pass_start, bundle_pass["instructor_after"])
+            spent = instructor_spend(pass_start, pass_end)
             if not spend_is_empty(spent):
                 report["spent"] = spent
         return report
@@ -1529,7 +1532,9 @@ def repair_instructor_availability(scenario_id: int) -> dict:
                 continue
             if get_course_meeting_policy(_display_code(p.term_section)):
                 # A whole bundle moves or stays (the pass above): what is still
-                # forbidden here has no legal bundle the week gate allows.
+                # forbidden here has no legal bundle that is clash-free, within the
+                # cap and free of a teacher's last day off (a bundle that only costs
+                # days or idle was taken by the pass above, cheapest first).
                 report["locked_blocked"].append(_row(p, "no_legal_bundle"))
                 continue
             if _no_legal_week(p):

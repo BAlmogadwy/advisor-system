@@ -21,17 +21,38 @@ from core.services.timetable_workspace import compute_scenario_safety_summary
 logger = logging.getLogger(__name__)
 
 
-def availability_repair_credit(result: dict) -> dict[str, dict[str, int]]:
+def availability_repair_credit(
+    result: dict, before: dict | None = None
+) -> dict[str, dict[str, int]]:
     """What the teaching-time repair spent in this run, per teacher (owner,
     2026-11-22): ``{"extra_days": {id: n}, "idle_minutes": {id: m}}``, positive
     whole numbers only, empty when it spent nothing or ran not at all. The final
-    gates credit it to the teacher's baseline."""
+    gates credit it to the teacher's baseline.
+
+    With ``before`` (the run's saved board) a teacher's credit is cut to what the
+    board right after the hard repairs (``instructor_schedule_after_hard_repairs``,
+    when the optimiser recorded it) still stands above ``before``: a day an earlier
+    stage saved him and the repair then spent back is owed nothing, so it cannot
+    cover a later stage's rise."""
     spent = (result.get("instructor_availability_repair") or {}).get("spent") or {}
     credit: dict[str, dict[str, int]] = {"extra_days": {}, "idle_minutes": {}}
     for name in credit:
         for teacher, value in (spent.get(name) or {}).items():
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 credit[name][str(teacher)] = value
+    repaired = result.get("instructor_schedule_after_hard_repairs")
+    if before is not None and isinstance(repaired, dict):
+        for name, key in (
+            ("extra_days", "working_days_by_instructor"),
+            ("idle_minutes", "idle_minutes_by_instructor"),
+        ):
+            then, saved = repaired.get(key) or {}, before.get(key) or {}
+            for teacher in list(credit[name]):
+                owed = int(then.get(teacher, 0)) - int(saved.get(teacher, 0))
+                if owed <= 0:
+                    del credit[name][teacher]
+                else:
+                    credit[name][teacher] = min(credit[name][teacher], owed)
     return credit
 
 
@@ -81,7 +102,7 @@ def optimiser_instructor_day_regression(before: dict, after: dict, result: dict)
         instructor_day_regressions,
     )
 
-    credit_days = availability_repair_credit(result)["extra_days"]
+    credit_days = availability_repair_credit(result, before)["extra_days"]
     regressions = instructor_day_regressions(before, after)
     repair_metrics = result.get("instructor_schedule_after_hard_repairs") or {}
     repair_days = repair_metrics.get("working_days_by_instructor") or {}
@@ -138,7 +159,7 @@ def optimiser_instructor_idle_regression(before: dict, after: dict, result: dict
     """
     from core.services.timetable_optimisation_policy import instructor_idle_regressions
 
-    credit_idle = availability_repair_credit(result)["idle_minutes"]
+    credit_idle = availability_repair_credit(result, before)["idle_minutes"]
     pre_pass = result.get("instructor_schedule_before_passes") or before
     repaired = result.get("instructor_schedule_after_hard_repairs") or {}
 
@@ -980,17 +1001,32 @@ def _run_v2_optimisation_guarded(
     # What the teaching-time repair spent (owner, 2026-11-22), credited to the
     # teachers' baselines in whichever final gate judges the run; empty (and every
     # result unchanged) when it spent nothing.
-    repair_credit = availability_repair_credit(result) if mode == "current" else None
+    repair_credit = (
+        availability_repair_credit(result, instructor_before) if mode == "current" else None
+    )
+    # The part of that credit still owed: a teacher's credit never exceeds how far
+    # the final board is above the saved one (an earlier stage may have saved him a
+    # day the repair then spent back), and a fifth day is never covered.
+    credit_used = (
+        _availability_credit_used(instructor_before, instructor_after, repair_credit)
+        if repair_credit and (repair_credit["extra_days"] or repair_credit["idle_minutes"])
+        else []
+    )
     if mode == "current" and run_policy is not None:
         # R1-R5 against the saved board: every breach blocks, a repair's
         # included (the owner's default) except what the teaching-time repair
-        # spent, which is added to that teacher's baseline (a fifth day never).
+        # spent and the final board still owes, which is added to that teacher's
+        # baseline (a fifth day never).
         # R2 reads the optimiser's own board
         # (like-for-like, as the student gate does): a mandatory repair's
         # student cost does not void a spare day the search paid for.
+        owed = {"extra_days": {}, "idle_minutes": {}}
+        for row in credit_used:
+            name = "extra_days" if row["metric"] == "instructor_working_days" else "idle_minutes"
+            owed[name][row["instructor_id"]] = row["used"]
         judge = (
-            run_policy.with_credit(repair_credit["extra_days"], repair_credit["idle_minutes"])
-            if repair_credit and (repair_credit["extra_days"] or repair_credit["idle_minutes"])
+            run_policy.with_credit(owed["extra_days"], owed["idle_minutes"])
+            if credit_used
             else run_policy
         )
         rows, day_off_report = judge.final_check(
@@ -999,7 +1035,7 @@ def _run_v2_optimisation_guarded(
         )
         if judge is not run_policy:
             # The teachers' days_before / idle_before below include this credit.
-            day_off_report["availability_repair_credit"] = repair_credit
+            day_off_report["availability_repair_credit"] = owed
         instructor_regression = {
             "blocked": bool(rows),
             "regressions": rows,
@@ -1038,13 +1074,10 @@ def _run_v2_optimisation_guarded(
         "repair_exceptions": instructor_regression["repair_exceptions"],
         "trade_exceptions": instructor_regression.get("trade_exceptions", []),
     }
-    if repair_credit and (repair_credit["extra_days"] or repair_credit["idle_minutes"]):
-        # The credit the final gate was judged with, and the part of it the
-        # teachers' rises used (computed on the saved board, so it reads the same
-        # whichever gate judged the run).
-        used = _availability_credit_used(instructor_before, instructor_after, repair_credit)
-        if used:
-            result["instructor_schedule_metric"]["availability_repair_exceptions"] = used
+    if credit_used:
+        # The part of the credit the teachers' rises used (computed on the saved
+        # board, so it reads the same whichever gate judged the run).
+        result["instructor_schedule_metric"]["availability_repair_exceptions"] = credit_used
     if day_off_report is not None:
         result["instructor_schedule_metric"]["day_off_policy"] = day_off_report
     if mode == "full" and isinstance(result.get("day_off_policy"), dict):

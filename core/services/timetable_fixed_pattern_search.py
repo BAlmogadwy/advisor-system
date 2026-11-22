@@ -188,8 +188,9 @@ def _switch_bundles_into_availability(
     not take a teacher's last day off is taken (fewest working days added, then
     the smallest idle rise, then fewest broken meetings): owner, 2026-11-22.
     The returned report carries ``instructor_before`` / ``instructor_after``
-    (the whole pass) and ``spent_switches`` (the bundles that cost something)
-    only when a bundle switched."""
+    (the whole pass) when a bundle switched, for the caller to measure what the
+    pass spent (it removes them from the report it keeps), and
+    ``spent_switches`` (the bundles that cost something) only when one did."""
     from core.services.timetable_constraints import (
         count_instructor_clashes,
         count_instructor_daily_overloads,

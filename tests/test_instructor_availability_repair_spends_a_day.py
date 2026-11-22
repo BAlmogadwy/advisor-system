@@ -588,7 +588,7 @@ def test_without_the_credit_the_same_run_is_blocked_and_rolled_back(gate, monkey
     monkeypatch.setattr(
         runner,
         "availability_repair_credit",
-        lambda _result: {"extra_days": {}, "idle_minutes": {}},
+        lambda *_args: {"extra_days": {}, "idle_minutes": {}},
     )
     sc, x, _a = _wed_pair_board(f"e2e no credit {gate}")
 
@@ -634,3 +634,328 @@ def test_a_run_whose_repair_spent_nothing_reports_no_credit(gate) -> None:
     metric = result["instructor_schedule_metric"]
     assert "availability_repair_exceptions" not in metric
     assert "availability_repair_credit" not in metric.get("day_off_policy", {})
+
+
+# ── the bundle report keeps its old keys ─────────────────────────────────
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("paid", [False, True], ids=["free-switch", "paid-switch"])
+def test_the_bundle_report_gains_only_the_spent_switches_key(
+    repair_flags, monkeypatch, paid
+) -> None:
+    """A switch that costs nothing leaves ``weekly_pattern_search`` exactly as it was
+    before the change (``evaluated`` and ``accepted``); a paid one adds only
+    ``spent_switches``. The measurements the repair needs are not left in the report."""
+    if paid:
+        scenario = _english_board("sp keys paid")
+    else:
+        scenario = _instructor_board(
+            "sp keys free",
+            [
+                ("ENG101", "S1", [(d, "09:00", "12:00") for d in ("SUN", "MON", "WED", "THU")]),
+                ("C2", "S1", [("MON", "12:15", "13:00")]),
+            ],
+        )
+    _inject(monkeypatch, _no_mornings_until_11(_dr()))
+
+    report = (
+        _repair_in_saved_week(scenario.id)
+        if paid
+        else cap_repair.repair_instructor_availability(scenario.id)
+    )
+
+    keys = set(report["weekly_pattern_search"])
+    assert keys == {"evaluated", "accepted"} | ({"spent_switches"} if paid else set())
+    assert report["weekly_pattern_search"]["accepted"] == 1
+    assert ("spent" in report) is paid
+
+
+# ── the credit is only what the repair left owed ─────────────────────────
+
+
+def _hard(days: int, idle: int = 0) -> dict:
+    return _week({"1": days}, {"1": idle})
+
+
+def test_a_day_an_earlier_stage_saved_and_the_repair_spent_back_is_owed_nothing() -> None:
+    """Teacher 1: 3 days at the start, an earlier stage saves one (2), the repair spends
+    it back (3). The board right after the repairs stands at 3, as the saved one, so
+    the repair is owed no credit; a later stage's rise 3 -> 4 is then a plain rise."""
+    saved = _week({"1": 3}, {"1": 0})
+    four = _week({"1": 4}, {"1": 0})
+    spent = _spent({"1": 1})
+
+    def with_hard(days: int) -> dict:
+        return {**spent, "instructor_schedule_after_hard_repairs": _hard(days)}
+
+    assert runner.availability_repair_credit(with_hard(3), saved)["extra_days"] == {}
+    assert runner.availability_repair_credit(with_hard(4), saved)["extra_days"] == {"1": 1}
+    assert _blocking(saved, four, with_hard(3)) == [("instructor_working_days", "1")]
+    assert _blocking(saved, four, with_hard(4)) == []
+    # Idle is cut the same way.
+    idle = {
+        **_spent(idle={"1": 30}),
+        "instructor_schedule_after_hard_repairs": _hard(3, 20),
+    }
+    credit = runner.availability_repair_credit(idle, _week({"1": 3}, {"1": 0}))
+    assert credit["idle_minutes"] == {"1": 20}
+
+
+# The runner's stand-in optimiser (see ``test_timetable_runner_day_off_policy``): it moves
+# placements, reports the scores and what the repair "spent".
+
+from core.services.timetable_optimisation_policy import (  # noqa: E402
+    day_off_scope,
+    week_move_breaks_gate,
+)
+from tests.test_timetable_runner_day_off_policy import (  # noqa: E402
+    BASE,
+    GAIN,
+    SPARE_DAY,
+    THREE_DAYS,
+    WORSE,
+    _board,
+)
+
+
+def _stand_in_run(
+    monkeypatch,
+    moves,
+    *,
+    final,
+    before_passes,
+    spent,
+    hard_days,
+    hard_idle=0,
+    placements=THREE_DAYS,
+    stage=None,
+):
+    """``stage(scenario_id)`` runs inside the stand-in, after the moves, under the policy
+    scope (a later repair stage) and returns what it adds to the result."""
+    from core.services import timetable_optimizer_v2 as optimizer
+
+    scenario, board = _board(placements)
+    teacher_map = {f"{code}_S1": frozenset({1}) for code, *_rest in placements}
+    monkeypatch.setattr(
+        optimizer, "build_section_instructor_map_for_scenario", lambda _sid: teacher_map
+    )
+    monkeypatch.setattr(runner, "compute_scenario_safety_summary", lambda _sid: {})
+
+    def optimise(**kwargs):
+        for code, day, start, end in moves:
+            SectionPlacement.objects.filter(board=board, term_section__course_code=code).update(
+                day=day, start_time=start, end_time=end
+            )
+        policy = DayOffPolicy(kwargs["day_off_anchor"], BASE, "saved_board")
+        result = {
+            "baseline_score": list(BASE),
+            "final_score": list(final),
+            "score_before_instructor_passes": list(before_passes),
+            "day_off_policy": policy.to_dict(),
+            "instructor_availability_repair": {"spent": spent},
+            "instructor_schedule_after_hard_repairs": _hard(hard_days, hard_idle),
+        }
+        if stage is not None:
+            with day_off_scope(policy):
+                result.update(stage(scenario.id))
+        return result
+
+    monkeypatch.setattr(optimizer, "optimise_current_timetable", optimise)
+    return scenario, runner.run_v2_optimisation_guarded(scenario.id, mode="current")
+
+
+@pytest.fixture
+def policy_on(settings):
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = True
+    return settings
+
+
+@pytest.mark.django_db
+def test_a_spent_back_day_does_not_become_a_false_saved_day_in_the_policy(
+    policy_on, monkeypatch
+) -> None:
+    """The day-off policy's final check: the board ends where the saved one began (3
+    days), the repair reported a spent day that an earlier stage had saved. The policy
+    baseline stays 3: no ``days_before: 4``, no saved day, no credit key."""
+    _sc, result = _stand_in_run(
+        monkeypatch,
+        [],
+        final=BASE,
+        before_passes=BASE,
+        spent={"extra_days": {"1": 1}, "idle_minutes": {}},
+        hard_days=3,
+    )
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    metric = result["instructor_schedule_metric"]
+    teacher = metric["day_off_policy"]["teachers"]["1"]
+    assert (teacher["days_before"], teacher["days_after"], teacher["days_saved"]) == (3, 3, 0)
+    assert "availability_repair_credit" not in metric["day_off_policy"]
+    assert "availability_repair_exceptions" not in metric
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("hard_days", [3, 4], ids=["spent-back-day", "day-still-owed-control"])
+def test_a_later_stage_rise_is_blocked_unless_the_repair_still_owes_the_day(
+    policy_on, monkeypatch, hard_days
+) -> None:
+    """A later stage gives teacher 1 a fourth day with no student gain. If the repair
+    left the board at 3 days (it only spent back a saved day) nothing covers it and the
+    run is blocked; if the repair itself ended at 4 days the credit covers one day and
+    the run is kept."""
+    _sc, result = _stand_in_run(
+        monkeypatch,
+        SPARE_DAY,
+        final=BASE,
+        before_passes=BASE,
+        spent={"extra_days": {"1": 1}, "idle_minutes": {}},
+        hard_days=hard_days,
+    )
+
+    blocked = hard_days == 3
+    assert result["safety_blocked"] is blocked
+    if blocked:
+        assert [r["metric"] for r in result["safety_regression"]["regressions"]] == [
+            "instructor_spare_day_without_student_gain"
+        ]
+    else:
+        credit = result["instructor_schedule_metric"]["day_off_policy"][
+            "availability_repair_credit"
+        ]
+        assert credit["extra_days"] == {"1": 1}
+
+
+# ── a refused cell that only costs the students ──────────────────────────
+
+
+def test_the_gate_refuses_a_move_that_only_voids_an_earlier_spare_days_student_gain() -> None:
+    """The premise of the next test: teacher 7 gave up a spare day earlier in the run for
+    a student gain (R2 holds). A move that changes none of his days or idle but worsens
+    the score voids that gain, so the day-off policy's gate refuses it."""
+    anchor = DayOffAnchor.from_metrics(_week({"7": 3}, {"7": 0}), padded=False)
+    policy = DayOffPolicy(anchor=anchor, score=BASE, source="test")
+    four_days = _week({"7": 4}, {"7": 0})
+
+    with day_off_scope(policy):
+        assert week_move_breaks_gate(four_days, GAIN, four_days, WORSE) is True
+        assert week_move_breaks_gate(four_days, GAIN, four_days, GAIN) is False
+
+
+_HOURLY = [{"start": f"{h:02d}:00", "end": f"{h + 1:02d}:00"} for h in (8, 9, 10, 11)]
+
+
+@pytest.mark.django_db
+def test_a_free_move_the_policy_gate_refuses_for_students_keeps_the_run(
+    policy_on, monkeypatch
+) -> None:
+    """Teacher 1 gave up a spare day (G to WED) for a student gain. X (MON 10:00, forbidden)
+    can move to MON 08:00, which changes none of his days or idle but worsens the score the
+    repair sees, so the gate refuses it and tier 1 takes it at zero cost and zero credit.
+    The final gate reads R2 on the optimiser's own board (``score_before_instructor_passes``,
+    still the gain), so the spare day stays justified: the run is KEPT and X has moved,
+    where before this change X stayed."""
+    from types import SimpleNamespace
+
+    from core.models import TimetableScenario
+    from core.services import timetable_candidate_eval as candidate_eval
+    from core.services import timetable_optimizer_v2 as optimizer
+
+    monkeypatch.setattr(optimizer, "build_student_profiles_for_scenario", lambda _sid: {"s": 1})
+    monkeypatch.setattr(optimizer, "build_course_rigidity_for_scenario", lambda _sid: {})
+
+    def evaluate(_name, states, *_args, **_kwargs):
+        at_ten = any(
+            m.start_min == 600
+            for state in states
+            if state.section_id == "X_S1"
+            for m in state.meetings
+        )
+        return SimpleNamespace(lexicographic_score=GAIN if at_ten else WORSE)
+
+    monkeypatch.setattr(candidate_eval, "evaluate_generated_timetable_candidate", evaluate)
+    _inject(monkeypatch, _av((1, KIND_UNAVAILABLE, ("MON",), 10 * 60, 11 * 60)))
+
+    def repair(scenario_id: int) -> dict:
+        TimetableScenario.objects.filter(pk=scenario_id).update(
+            slot_config=_HOURLY,
+            blocked_slots=[
+                {"day": day, "start": slot["start"]}
+                for day in ALL_DAYS
+                for slot in _HOURLY
+                if (day, slot["start"]) != ("MON", "08:00")
+            ],
+        )
+        return {
+            "instructor_availability_repair": cap_repair.repair_instructor_availability(scenario_id)
+        }
+
+    scenario, result = _stand_in_run(
+        monkeypatch,
+        SPARE_DAY,
+        final=WORSE,
+        before_passes=GAIN,
+        spent={},
+        hard_days=4,
+        placements=[*THREE_DAYS, ("X", "MON", "10:00", "11:00")],
+        stage=repair,
+    )
+
+    report = result["instructor_availability_repair"]
+    assert [row["to"] for row in report["repaired"]] == ["MON 08:00-09:00"]
+    assert report["repaired"][0]["cost"] == {"extra_days": {}, "idle_minutes": {}}
+    assert "spent" not in report
+    assert (
+        SectionPlacement.objects.get(
+            board__scenario=scenario, term_section__course_code="X"
+        ).start_time
+        == "08:00"
+    )
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    policy = result["instructor_schedule_metric"]["day_off_policy"]
+    assert policy["student_gain"] is True and "availability_repair_credit" not in policy
+    assert policy["teachers"]["1"]["days_given_up"] == 1
+
+
+@pytest.mark.django_db
+def test_a_day_a_later_stage_saved_back_is_not_credited_either(policy_on, monkeypatch) -> None:
+    """The repair ended at 4 days (it spent one), then a later stage brought teacher 1
+    back to the saved 3: the final board owes nothing, so the policy baseline stays 3
+    and the saved day is not shown as a false 4 -> 3."""
+    _sc, result = _stand_in_run(
+        monkeypatch,
+        [],
+        final=BASE,
+        before_passes=BASE,
+        spent={"extra_days": {"1": 1}, "idle_minutes": {}},
+        hard_days=4,
+    )
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    policy = result["instructor_schedule_metric"]["day_off_policy"]
+    teacher = policy["teachers"]["1"]
+    assert (teacher["days_before"], teacher["days_after"], teacher["days_saved"]) == (3, 3, 0)
+    assert "availability_repair_credit" not in policy
+
+
+@pytest.mark.django_db
+def test_the_policy_baseline_rises_only_by_what_the_final_board_still_owes(
+    policy_on, monkeypatch
+) -> None:
+    """The repair spent 30 idle minutes and ended 30 above the saved board, but a later
+    stage left the final board only 10 above it: the baseline rises by 10, not 30."""
+    _sc, result = _stand_in_run(
+        monkeypatch,
+        [("F", "SUN", "10:10", "11:10")],
+        final=BASE,
+        before_passes=BASE,
+        spent={"extra_days": {}, "idle_minutes": {"1": 30}},
+        hard_days=3,
+        hard_idle=30,
+    )
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    policy = result["instructor_schedule_metric"]["day_off_policy"]
+    assert policy["availability_repair_credit"] == {"extra_days": {}, "idle_minutes": {"1": 10}}
+    assert policy["teachers"]["1"]["idle_before"] == 10
