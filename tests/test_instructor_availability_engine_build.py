@@ -870,6 +870,44 @@ def test_an_unpinned_reinstatement_replaces_the_row_of_a_teacher_the_read_droppe
         ]
     else:
         assert rows[(key, "S2")] == "Dr A"
+    names = _meeting_names(sc, key)
+    assert names["S1"] == {"Dr A"}
+    assert names["S2"] == ({""} if ruled else {"Dr A"})
+
+
+def _meeting_names(sc, key):
+    """The instructor name each section's meeting rows carry (what exports read)."""
+    out: dict[str, set] = {}
+    for m in TermSectionMeeting.objects.filter(
+        term_section__scenario=sc, term_section__course_key=key
+    ):
+        out.setdefault(m.term_section.section, set()).add(m.instructor)
+    return out
+
+
+@pytest.mark.django_db
+def test_a_reinstatement_under_a_pin_leaves_the_stored_rows_to_the_run(av_on, monkeypatch) -> None:
+    """The v2 runner resolves the released sections itself after its pre-step, so a
+    reinstatement under a pinned map must not re-pick teachers: the stored rows are
+    exactly what they were."""
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, key, a = _stored_teacher_board("rr1 pinned", ruled=True)
+    before = ots.engine_rows(sc)
+    pinned = sta.load_assignment(sc.id, incomplete="collect")
+    resolved = []
+    real = sta.resolve_released_sections
+    monkeypatch.setattr(
+        sta, "resolve_released_sections", lambda *a, **k: resolved.append(a) or real(*a, **k)
+    )
+
+    with sta.pinned_assignment(sc.id, pinned):
+        report = reinstate_missing_required_sections(sc.id)
+
+    assert resolved == []  # the runner resolves after its own pre-step
+    assert _placed_meetings(sc, key, "S2")
+    assert report["instructor_availability"]["released"]
+    assert ots.engine_rows(sc) == before
 
 
 def _corpus_with_two_missing_sections(ruled: bool):

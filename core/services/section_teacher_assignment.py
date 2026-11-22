@@ -2926,8 +2926,7 @@ def resolve_released_sections(scenario_id: int, released_rows) -> None:
         ]
         scoped = replace(current, report=report)
         persist_assignment(scenario_id, scoped, only_missing=True)
-        keys = set((current.report or {}).get("closure_keys") or []) & v2_keys
-        write_names(scenario_id, current, only_keys=keys)
+        write_names(scenario_id, current, only_keys=v2_keys)
 
 
 def run_placer(scenario_id: int, place, *, rebuild: bool):
