@@ -416,6 +416,7 @@ def test_optimise_current_runs_the_repair_and_rescores_the_board(run_flags, flag
         assert "instructor_availability_repair" not in result
         assert "instructor_availability_report" not in result
         assert "score_before_instructor_passes" not in result
+        assert "instructor_schedule_after_hard_repairs" not in result
         return
     assert [row["from"][:3] for row in result["instructor_availability_repair"]["repaired"]] == [
         "WED"
@@ -423,6 +424,9 @@ def test_optimise_current_runs_the_repair_and_rescores_the_board(run_flags, flag
     assert _x_cells(sc, x)[0][0] != "WED"
     assert result["instructor_availability_report"]["count"] == 0
     assert "score_before_instructor_passes" in result
+    # H3: the pass's day cost is captured like the cap and clash repairs', before
+    # compaction, so the instructor-week gate reads it as a justified repair.
+    assert "instructor_schedule_after_hard_repairs" in result
 
 
 @pytest.mark.django_db
