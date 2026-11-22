@@ -1061,6 +1061,31 @@ def test_inside_a_day_off_scope_a_spare_day_without_student_gain_is_not_spent(ru
     assert [row["reason"] for row in report["locked_blocked"]] == ["needs_extra_working_day"]
 
 
+@pytest.mark.django_db
+def test_a_day_off_policy_without_an_anchor_still_keeps_the_saved_week(
+    run_flags, monkeypatch
+) -> None:
+    """The day-off policy ON but its anchor not measurable: the runner falls back to
+    the strict gates, which block ANY rise in a teacher's days. The repair must not
+    spend Dr A's spare day there either (the saved-week scope is open whenever
+    Optimise Current runs with the priority on), so X stays, is reported, and the run
+    is NOT rolled back."""
+    from core.services.timetable_optimisation_policy import DayOffAnchor
+
+    monkeypatch.setattr(DayOffAnchor, "from_metrics", classmethod(lambda cls, *_a, **_k: None))
+    sc, x, _a = _wed_pair_board("w3 policy on no anchor")
+
+    result = _run(sc.id)
+
+    assert "day_off_policy" not in (result.get("instructor_schedule_metric") or {})
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    assert _x_cells(sc, x) == [("WED", "09:00")]
+    report = result["instructor_availability_repair"]
+    assert report["repaired"] == []
+    assert [row["reason"] for row in report["locked_blocked"]] == ["needs_extra_working_day"]
+    assert not report.get("rolled_back")
+
+
 def test_the_reason_a_week_gate_refused_every_cell() -> None:
     """``needs_last_day_off``: every refused cell leaves a teacher on five days.
     ``needs_extra_working_day``: every refused cell is on a day he does not work
@@ -1129,15 +1154,24 @@ def test_the_week_gate_refuses_a_rise_in_days_or_idle_only_for_a_preserved_week(
         ("current", True, False, True),
         ("full", True, False, False),
         ("current", False, False, False),
-        ("current", True, True, False),
+        ("current", True, True, True),
+        ("full", True, True, False),
     ],
-    ids=["current-priority-no-policy", "generate", "priority-off", "day-off-policy"],
+    ids=[
+        "current-priority-no-policy",
+        "generate",
+        "priority-off",
+        "current-day-off-policy",
+        "generate-day-off-policy",
+    ],
 )
 def test_the_saved_week_scope_opens_only_for_a_run_that_preserves_it(
     settings, monkeypatch, mode, priority, policy, opened
 ) -> None:
-    """Only Optimise Current with the priority on and the day-off policy off opens
-    the scope; Generate, the priority off and the policy on keep the gate as it was."""
+    """Optimise Current with the priority on opens the scope, with or without the
+    day-off policy (a policy with complete evidence answers first inside the gate;
+    one without a usable anchor leaves the strict gates in charge). Generate and
+    the priority off keep the gate as it was."""
     from core.services import timetable_v2_runner as runner
 
     settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority

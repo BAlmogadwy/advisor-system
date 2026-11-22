@@ -966,6 +966,12 @@ def week_move_breaks_gate(
         # ``optimiser_instructor_idle_regression`` raise, repair or trade
         # exception included.
         return True
+    return takes_last_day_off(before_metrics, after_metrics)
+
+
+def takes_last_day_off(before_metrics: Mapping, after_metrics: Mapping) -> bool:
+    """Some teacher works more than ``MAX_WORKING_DAYS`` days after the move and
+    did not before it: the move costs a last day off."""
     old_days = before_metrics.get("working_days_by_instructor") or {}
     return any(
         int(days) > MAX_WORKING_DAYS >= int(old_days.get(teacher, 0))

@@ -1285,8 +1285,8 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     from core.services.timetable_fixed_pattern_search import improve_fixed_course_patterns
     from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimisation_policy import (
-        MAX_WORKING_DAYS,
         instructor_schedule_metrics,
+        takes_last_day_off,
         week_move_breaks_gate,
     )
     from core.services.timetable_optimizer_v2 import (
@@ -1524,24 +1524,13 @@ def repair_instructor_availability(scenario_id: int) -> dict:
             score_now = _score()
             allowed = []
             gated: list[tuple[str, bool]] = []  # (day, would work all five days)
-            old_days = teacher_now.get("working_days_by_instructor") or {}
             for day2, s2, e2 in hard:
                 trial = _trial_score_and_metrics(p, day2, s2, e2)
                 if trial is None:
                     continue
                 score, metrics = trial
                 if week_move_breaks_gate(teacher_now, score_now, metrics, score):
-                    gated.append(
-                        (
-                            day2,
-                            any(
-                                int(days) > MAX_WORKING_DAYS >= int(old_days.get(teacher, 0))
-                                for teacher, days in (
-                                    metrics.get("working_days_by_instructor") or {}
-                                ).items()
-                            ),
-                        )
-                    )
+                    gated.append((day2, takes_last_day_off(teacher_now, metrics)))
                     continue
                 allowed.append((day2, s2, e2, score))
             if not hard:
