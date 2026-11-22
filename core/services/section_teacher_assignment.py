@@ -2422,7 +2422,8 @@ class WeekClosureGuard:
         from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
 
         pinned = load_assignment(self.scenario_id, release_unteachable=True)
-        closed = load_assignment(self.scenario_id, ignore_pin=True, release_unteachable=True)
+        # Not a stage's read (those get the pin): the map the board is stored and read as.
+        closed = _read_assignment(self.scenario_id, ignore_pin=True, release_unteachable=True)
         pinned_map, closed_map = pinned.v2_map(), closed.v2_map()
         if pinned_map == closed_map:
             return None
@@ -2448,10 +2449,20 @@ class WeekClosureGuard:
         }
 
     def introduced(self, score: Iterable[int] = ()) -> dict[str, Any] | None:
-        """``breach`` now, unless it was already there when the guard was made."""
-        if not self.active or self.before is not None:
+        """``breach`` now, unless it was already there when the guard was made: a stage
+        is answerable for a teacher or a section the earlier breach did not cover."""
+        if not self.active:
             return None
-        return self.breach(score)
+        now = self.breach(score)
+        if now is None or self.before is None:
+            return now
+        known_sections, known_teachers = (
+            set(self.before["sections"]),
+            set(self.before["instructor_ids"]),
+        )
+        if set(now["sections"]) <= known_sections and set(now["instructor_ids"]) <= known_teachers:
+            return None
+        return now
 
 
 def run_stage_under_week_closure(
@@ -2620,6 +2631,22 @@ def _in_mode(assignment: TeacherAssignment, incomplete: str) -> TeacherAssignmen
 
 
 def load_assignment(
+    scenario_id: int,
+    *,
+    ignore_pin: bool = False,
+    incomplete: str = "raise",
+    release_unteachable: bool = False,
+) -> TeacherAssignment:
+    """The map in force for ``scenario_id`` on its current layout (``_read_assignment``)."""
+    return _read_assignment(
+        scenario_id,
+        ignore_pin=ignore_pin,
+        incomplete=incomplete,
+        release_unteachable=release_unteachable,
+    )
+
+
+def _read_assignment(
     scenario_id: int,
     *,
     ignore_pin: bool = False,

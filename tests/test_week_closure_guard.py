@@ -257,6 +257,8 @@ def test_g7_a_compaction_that_frees_the_section_for_a_fifth_day_is_undone(
     report = result["instructor_compaction"]
     assert report["rolled_back"] is True and report["rollback_reason"] == "week_closure"
     assert report["relocations"] == [] and report["candidate_relocations"]
+    # The undone pass's own audit moved aside: nothing in the report claims it happened.
+    assert report["candidate_report"]["relocations"] and "instructor_impact" not in report
     assert report["week_closure"]["instructor_ids"] == [str(a.id)]
     assert _x_day(sc, x) == "SUN"
     assert [(d["stage"], d["instructor_ids"]) for d in result["week_closure_dropped"]] == [
@@ -402,3 +404,18 @@ def test_g11_the_run_start_report_names_what_its_persist_handed_over(flags, monk
     assert result["section_teachers"]["run_start"]["closure_handover"] == [
         {"section": f"{x}_S1", "instructor_id": str(a.id)}
     ]
+
+
+def test_g12_a_breach_already_there_does_not_hide_a_new_teacher_or_section(monkeypatch) -> None:
+    guard = object.__new__(sta.WeekClosureGuard)
+    guard.active = True
+    guard.before = {"sections": ["X_S1"], "instructor_ids": ["1"]}
+    now = {"sections": ["X_S1"], "instructor_ids": ["1"]}
+    monkeypatch.setattr(guard, "breach", lambda score=(): now, raising=False)
+    assert guard.introduced() is None  # the same hand-over: the earlier stage's
+    now = {"sections": ["X_S1", "Y_S1"], "instructor_ids": ["1"]}
+    assert guard.introduced() is now  # another section
+    now = {"sections": ["X_S1"], "instructor_ids": ["1", "2"]}
+    assert guard.introduced() is now  # another teacher
+    now = None
+    assert guard.introduced() is None

@@ -2787,6 +2787,7 @@ def _optimise_current_timetable(
                 unresolved_students=len(baseline.unresolved_student_ids),
                 **hotspot_result_fields(baseline),
             )
+            result.pop("meeting_sync", None)  # written inside the undone savepoint
             result["search_reverted_by_week_closure"] = week_closure_breach
             record_dropped_stage(result, "search", week_closure_breach)
             logger.info("Search board undone: %s", week_closure_breach["label"])
@@ -2890,13 +2891,16 @@ def _optimise_current_timetable(
         )
         if compaction_breach is not None:
             # Undone in its own savepoint; the report keeps what it would have done.
+            # Its own audit fields describe the undone pass, so they move under
+            # ``candidate_report``; what is left is what the board holds.
             compaction = {
-                **compaction,
+                "enabled": True,
                 "rolled_back": True,
                 "rollback_reason": "week_closure",
                 "week_closure": compaction_breach,
                 "candidate_relocations": compaction.get("relocations", []),
                 "relocations": [],
+                "candidate_report": compaction,
             }
             record_dropped_stage(result, "compaction", compaction_breach)
         result["instructor_compaction"] = compaction
