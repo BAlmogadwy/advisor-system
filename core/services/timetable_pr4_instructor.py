@@ -252,25 +252,19 @@ def section_instructor_resolver(programs, gender: str) -> Callable[[object, obje
     return _course_instructor_links(programs, gender)[0]
 
 
-def section_limit_resolver(programs, gender: str) -> Callable[[object, object], dict[int, int]]:
-    """Return ``limit(course_key, display_code) -> {instructor_id: most sections}``.
-
-    The explicit per-teacher limit of a course (``CourseInstructor.max_sections``),
-    read with the same programme-serving and active-teacher filter as
-    :func:`section_instructor_resolver`. Only teachers who have a number are in
-    the answer. A teacher with several link rows for the course (one per
-    programme) gets the SMALLEST number among them; a blank row beside a
-    numbered one is ignored. Callers that need both answers use
-    :func:`section_resolvers`, which reads the links once.
-    """
-    return _read_course_links(programs, gender)[2]
-
-
 def section_resolvers(
     programs, gender: str
 ) -> tuple[Callable[[object, object], set[int]], Callable[[object, object], dict[int, int]]]:
-    """:func:`section_instructor_resolver` and :func:`section_limit_resolver`
-    from ONE read of the links."""
+    """``(resolve, limit)`` from ONE read of the links: :func:`section_instructor_resolver`
+    and ``limit(course_key, display_code) -> {instructor_id: most sections}``.
+
+    The limit is the explicit per-teacher number of a course
+    (``CourseInstructor.max_sections``), read with the same programme-serving and
+    active-teacher filter as the instructor resolver. Only teachers who have a
+    number are in the answer. A teacher with several link rows for the course
+    (one per programme) gets the SMALLEST number among them; a blank row beside a
+    numbered one is ignored.
+    """
     resolve, _names, limit = _read_course_links(programs, gender)
     return resolve, limit
 

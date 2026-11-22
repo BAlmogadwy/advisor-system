@@ -17,7 +17,7 @@ from django.test.utils import CaptureQueriesContext
 
 from core.models import CourseInstructor, SectionInstructor
 from core.services import section_teacher_assignment as sta
-from core.services.timetable_pr4_instructor import section_limit_resolver, section_resolvers
+from core.services.timetable_pr4_instructor import section_resolvers
 from tests.one_teacher_support import (
     FLAG_ON,
     budget,
@@ -126,6 +126,40 @@ def test_a_limit_of_one_binds_on_a_course_below_the_d10_threshold(flags) -> None
 
 
 @pytest.mark.django_db
+def test_the_exact_solver_holds_a_limit_of_one_on_three_sections(flags) -> None:
+    key = requirement("AI", "CS112", "PROGRAMMING I")
+    sc, _board = scenario()
+    only = instructor("Dr Only")
+    numbered("AI", "CS112", only, 1)
+    budget(sc, key, 3, code="CS112")
+
+    got = sta.propose_layout_assignment(sc.id)
+
+    assert held(got, key, only) == 1
+    assert len(tbd_of(got, key)) == 2
+    assert {got.tbd_reason[k] for k in tbd_of(got, key)} == {"d10"}
+
+
+@pytest.mark.django_db
+def test_the_exact_solver_adds_nothing_above_the_limit_to_a_pinned_teacher(flags) -> None:
+    key = requirement("AI", "CS112", "PROGRAMMING I")
+    sc, _board = scenario()
+    a, b = instructor("Dr A"), instructor("Dr B")
+    numbered("AI", "CS112", a, 1)
+    numbered("AI", "CS112", b, None, role="co")
+    budget(sc, key, 3, code="CS112")
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=key, section="S1", instructor=a, source="department"
+    )
+
+    got = sta.propose_layout_assignment(sc.id)
+
+    assert held(got, key, a) == 1  # the pin counts toward his limit
+    assert held(got, key, b) == 2
+    assert tbd_of(got, key) == []
+
+
+@pytest.mark.django_db
 def test_a_teacher_without_a_number_still_follows_d10(flags) -> None:
     key = requirement("AI", "CS112", "PROGRAMMING I")
     sc, _board = scenario()
@@ -177,7 +211,7 @@ def test_a_blank_row_next_to_a_numbered_row_gives_the_number(flags) -> None:
     numbered("AI", "CS112", person, None)
     numbered("AI2", "CS112", person, 3)
 
-    assert section_limit_resolver(["AI", "AI2"], "M")(key, "CS112") == {person.id: 3}
+    assert section_resolvers(["AI", "AI2"], "M")[1](key, "CS112") == {person.id: 3}
     got = sta.load_assignment(sc.id)
     assert held(got, key, person) == 3
 
@@ -189,7 +223,7 @@ def test_two_rows_of_one_teacher_that_differ_only_in_code_case_use_the_smaller(f
     numbered("AI", "CS112", person, 4)
     numbered("AI", "cs112", person, 2, role="co")
 
-    assert section_limit_resolver(["AI"], "M")(key, "CS112") == {person.id: 2}
+    assert section_resolvers(["AI"], "M")[1](key, "CS112") == {person.id: 2}
 
 
 @pytest.mark.django_db
@@ -203,8 +237,8 @@ def test_the_limit_resolver_skips_inactive_teachers_and_the_other_gender() -> No
         program="AI", course_code="CS112", section="F", instructor=here, max_sections=1
     )
 
-    assert section_limit_resolver(["AI"], "M")(key, "CS112") == {here.id: 2}
-    assert section_limit_resolver(["AI"], "")(key, "CS112") == {}
+    assert section_resolvers(["AI"], "M")[1](key, "CS112") == {here.id: 2}
+    assert section_resolvers(["AI"], "")[1](key, "CS112") == {}
 
 
 # ── Pins and stored rows ──────────────────────────────────────────────────
@@ -333,7 +367,7 @@ def test_no_numbers_leave_slots_and_queries_as_they_are(flags) -> None:
     assert all(slot.teacher_caps == () for slot in got.slots)
     assert {slot.cap_for(t) for slot in got.slots for t in (a.id, c.id)} == {sta.D10_MAX_SECTIONS}
     assert held(got, key, a) == 2 and held(got, key, c) == 2
-    assert section_limit_resolver(["AI"], "M")(key, "CS112") == {}
+    assert section_resolvers(["AI"], "M")[1](key, "CS112") == {}
 
     # the same shape with numbers runs the very same number of queries, and the
     # course links are read once either way
@@ -370,6 +404,18 @@ def test_the_floor_with_mixed_explicit_and_default_limits() -> None:
     slots = course("AI201::ML", [{} for _ in range(8)], eligible=(1, 2, 3))
     # teacher 1 explicit 3, teachers 2 and 3 default (D10: 2 each) -> capacity 7
     assert sta.tbd_d10_floor(_with_caps(slots, {1: 3})) == 1
+
+
+def test_the_floor_takes_the_most_generous_cap_when_a_courses_slots_disagree() -> None:
+    import dataclasses
+
+    slots = course("AI205::NW", [{} for _ in range(8)], eligible=(1,))
+    # one teacher, 8 sections: three slots say 2, five say 5 -> a lower bound may
+    # only be too low, so 5 counts (3 forced), not 2 (6 forced)
+    mixed = [
+        dataclasses.replace(s, teacher_caps=((1, 2 if n < 3 else 5),)) for n, s in enumerate(slots)
+    ]
+    assert sta.tbd_d10_floor(mixed) == 3
 
 
 def test_the_floor_is_zero_when_a_teacher_has_no_cap_at_all() -> None:
@@ -460,7 +506,7 @@ def test_scheduler_a_teacher_without_a_number_still_follows_d10() -> None:
 def test_scheduler_an_instructor_built_before_limits_existed_is_unchanged() -> None:
     from scheduler.domain import Instructor
 
-    assert Instructor(1, "A", frozenset({"off1"})).section_limits == ()
+    assert Instructor(1, "A", frozenset({"off1"})).max_sections_by_offering == ()
 
 
 @pytest.mark.django_db
@@ -487,5 +533,5 @@ def test_scheduler_intake_carries_the_smallest_number_of_the_rows_reaching_an_of
 
     offering = next(o for o in snap.offerings if o.course_code == "AI1")
     by_id = {i.id: i for i in snap.instructors}
-    assert dict(by_id[both.id].section_limits)[offering.id] == 2
-    assert by_id[blank.id].section_limits == ()
+    assert dict(by_id[both.id].max_sections_by_offering)[offering.id] == 2
+    assert by_id[blank.id].max_sections_by_offering == ()

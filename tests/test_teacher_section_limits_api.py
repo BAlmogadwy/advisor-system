@@ -12,7 +12,7 @@ from django.core import serializers
 from django.db import IntegrityError, transaction
 from django.test import Client
 
-from core.models import CourseInstructor, Instructor, ProgrammeRequirement
+from core.models import AuditLog, CourseInstructor, Instructor, ProgrammeRequirement
 from core.services.course_instructor_assignment import (
     serialize_course_instructors,
     set_course_instructors,
@@ -107,22 +107,109 @@ def test_new_form_round_trip_and_list_view(two) -> None:
 
 
 @pytest.mark.django_db
-def test_legacy_forms_store_no_limit(two) -> None:
+def test_legacy_instructor_ids_form_keeps_the_limit_of_a_teacher_it_keeps(two) -> None:
     a, c = two
     http = _client()
-    # keep a stale limit on the books: a legacy save must not carry it forward
     set_course_instructors("CS", "CS112", "M", [a.pk], {a.pk: 4})
+    # an old browser tab sends only ids: A stays with his 4, C is new and gets none
     assert _post(http, instructor_ids=[a.pk, c.pk]).status_code == 200
+    assert _rows() == [(a.pk, "primary", 4), (c.pk, "co", None)]
+    # the order may change; a teacher dropped and added again is a new teacher
+    assert _post(http, instructor_ids=[c.pk, a.pk]).status_code == 200
+    assert _rows() == [(c.pk, "primary", None), (a.pk, "co", 4)]
+    assert _post(http, instructor_ids=[c.pk]).status_code == 200
+    assert _post(http, instructor_ids=[c.pk, a.pk]).status_code == 200
+    assert _rows() == [(c.pk, "primary", None), (a.pk, "co", None)]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("blank", ["", "   ", "	"])
+def test_an_empty_or_blank_string_is_no_limit(two, blank) -> None:
+    a, c = two
+    set_course_instructors("CS", "CS112", "M", [a.pk], {a.pk: 5})
+    resp = _post(_client(), instructors=[{"id": a.pk, "max_sections": blank}, {"id": c.pk}])
+    assert resp.status_code == 200, resp.content
     assert _rows() == [(a.pk, "primary", None), (c.pk, "co", None)]
+
+
+@pytest.mark.django_db
+def test_the_audit_event_lists_teacher_ids_and_limits_without_names(two) -> None:
+    a, c = two
+    resp = _post(
+        _client(), instructors=[{"id": a.pk, "max_sections": 2}, {"id": c.pk, "max_sections": None}]
+    )
+    assert resp.status_code == 200, resp.content
+    event = AuditLog.objects.filter(action="course_instructor_set").latest("id")
+    details = json.loads(event.details_json)
+    assert details["instructors"] == [
+        {"id": a.pk, "max_sections": 2},
+        {"id": c.pk, "max_sections": None},
+    ]
+    assert (details["program"], details["course_code"], details["section"]) == ("CS", "CS112", "M")
+    assert "Teacher A" not in event.details_json and "Teacher C" not in event.details_json
+
+
+@pytest.mark.django_db
+def test_legacy_single_instructor_id_keeps_that_teachers_limit(two) -> None:
+    a, c = two
+    set_course_instructors("CS", "CS112", "M", [a.pk, c.pk], {a.pk: 4, c.pk: 3})
+    assert _post(_client(), instructor_id=c.pk).status_code == 200
+    assert _rows() == [(c.pk, "primary", 3)]
+
+
+@pytest.mark.django_db
+def test_bulk_assign_keeps_the_chosen_teachers_limit_and_a_new_teacher_gets_none(two) -> None:
+    a, c = two
+    set_course_instructors("CS", "CS112", "M", [a.pk, c.pk], {a.pk: 4, c.pk: 3})
+    set_course_instructors("CS", "CS113", "M", [a.pk], {a.pk: 2})
+    resp = _client().post(
+        "/ops/instructors/course-assignments/assign-bulk/",
+        data=json.dumps(
+            {
+                "program": "CS",
+                "section": "M",
+                "course_codes": ["CS112", "CS113", "CS114"],
+                "instructor_id": c.pk,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    got = {
+        (r.course_code, r.instructor_id, r.role, r.max_sections)
+        for r in CourseInstructor.objects.all()
+    }
+    assert got == {
+        ("CS112", c.pk, "primary", 3),  # already his: kept; A is dropped (the course is C's)
+        ("CS113", c.pk, "primary", None),  # newly added: none
+        ("CS114", c.pk, "primary", None),
+    }
+
+
+@pytest.mark.django_db
+def test_the_new_form_stores_exactly_what_it_is_given_null_clears(two) -> None:
+    a, c = two
+    http = _client()
+    set_course_instructors("CS", "CS112", "M", [a.pk, c.pk], {a.pk: 4, c.pk: 3})
+    resp = _post(http, instructors=[{"id": a.pk, "max_sections": None}, {"id": c.pk}])
+    assert resp.status_code == 200, resp.content
+    assert _rows() == [(a.pk, "primary", None), (c.pk, "co", None)]
+
+
+@pytest.mark.django_db
+def test_service_without_limits_keeps_stored_ones_and_with_an_empty_map_stores_none(two) -> None:
+    a, c = two
     set_course_instructors("CS", "CS112", "M", [a.pk], {a.pk: 4})
-    assert _post(http, instructor_id=c.pk).status_code == 200
-    assert _rows() == [(c.pk, "primary", None)]
+    set_course_instructors("CS", "CS112", "M", [a.pk, c.pk])
+    assert _rows() == [(a.pk, "primary", 4), (c.pk, "co", None)]
+    set_course_instructors("CS", "CS112", "M", [a.pk, c.pk], {})
+    assert [m for _, _, m in _rows()] == [None, None]
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "bad",
-    [0, -1, 100, 1000, True, False, "x", "2.5", "-3", "", 2.5, [2], {"a": 1}],
+    [0, -1, 100, 1000, True, False, "x", "2.5", "-3", 2.5, [2], {"a": 1}],
 )
 def test_bad_limit_is_a_400_naming_the_teacher_and_writes_nothing(two, bad) -> None:
     a, c = two
@@ -181,21 +268,6 @@ def test_empty_new_form_clears_the_course(two) -> None:
     set_course_instructors("CS", "CS112", "M", [a.pk], {a.pk: 5})
     assert _post(_client(), instructors=[]).status_code == 200
     assert _rows() == []
-
-
-@pytest.mark.django_db
-def test_bulk_assign_keeps_its_meaning_and_stores_no_limit(two) -> None:
-    a, c = two
-    set_course_instructors("CS", "CS112", "M", [a.pk, c.pk], {a.pk: 2, c.pk: 3})
-    resp = _client().post(
-        "/ops/instructors/course-assignments/assign-bulk/",
-        data=json.dumps(
-            {"program": "CS", "section": "M", "course_codes": ["CS112"], "instructor_id": c.pk}
-        ),
-        content_type="application/json",
-    )
-    assert resp.status_code == 200
-    assert _rows() == [(c.pk, "primary", None)]
 
 
 # ── Load report ──────────────────────────────────────────────────

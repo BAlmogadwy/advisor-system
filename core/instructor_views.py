@@ -405,6 +405,8 @@ def _parse_instructor_entries(
                 _err("each instructor needs an integer id", code="VALIDATION", status=400),
             )
         value = entry.get("max_sections")
+        if isinstance(value, str) and not value.strip():
+            value = None  # "or leave it blank": an empty box is no limit
         if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit():
             value = int(value.strip())  # "2" is a whole number; "2.5" / "x" stay rejected
         if value is not None:
@@ -462,7 +464,15 @@ def course_assignment_set_view(request: HttpRequest) -> JsonResponse:
         request,
         action="course_instructor_set",
         status="success",
-        details={"program": program, "course_code": course_code, "section": section},
+        details={
+            "program": program,
+            "course_code": course_code,
+            "section": section,
+            # ids and numbers only, no names
+            "instructors": [
+                {"id": row["id"], "max_sections": row["max_sections"]} for row in instructors
+            ],
+        },
     )
     return _ok(
         {

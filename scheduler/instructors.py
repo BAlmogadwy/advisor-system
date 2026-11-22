@@ -9,7 +9,7 @@ latter under the owner's load rules:
 * **D10** — at most **2 sections of one course** per instructor once that course
   runs more than 3 sections; the remainder are left unassigned. An instructor
   whose staffing row carries a number (`CourseInstructor.max_sections`, carried
-  as `Instructor.section_limits`) holds at most that many instead, at any
+  as `Instructor.max_sections_by_offering`) holds at most that many instead, at any
   section count and possibly above 2; the meeting-policy cap still applies;
 * **derived weekly cap** — H8 already limits an instructor to 3 sessions/day, and
   the week has 5 teaching days, so `3 x 5 = 15` sessions is the implied ceiling.
@@ -82,7 +82,7 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
     # Deterministic order: instructor id, then offering id, then section index.
     for instructor in sorted(snapshot.instructors, key=lambda i: i.id):
         weekly_cap = DERIVED_WEEKLY_SESSION_CAP
-        explicit_limits = dict(instructor.section_limits)
+        explicit_limits = dict(instructor.max_sections_by_offering)
         for offering_id in sorted(instructor.eligible_offerings):
             siblings = sections_by_offering.get(offering_id, ())
             if not siblings:

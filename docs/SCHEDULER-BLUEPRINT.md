@@ -546,7 +546,10 @@ lecture, and the day count returned to the floor on the end-to-end run.
 > the rest will be not linked"*
 
 An instructor may hold at most **2 sections of the same course** once that course
-runs more than 3 sections. Sections beyond that are simply **left unassigned** —
+runs more than 3 sections. A number stored on the instructor's link to the course
+(`CourseInstructor.max_sections`) replaces that 2 for him on that course, at any section
+count and possibly above 2; the smallest number among his rows wins and the meeting-policy
+cap still applies. Sections beyond that are simply **left unassigned** —
 consistent with D5, where unlinked is a first-class state rather than a gap.
 
 **Measured: this rule does not bind on today's data.** No course any instructor is

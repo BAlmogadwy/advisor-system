@@ -188,7 +188,7 @@ class Instructor:
     #: ``((offering, most sections), ...)`` sorted: the explicit limit of the
     #: offerings whose staffing row carries a number (empty: none does). A
     #: limit replaces the D10 cap for that instructor on that offering.
-    section_limits: tuple[tuple[OfferingId, int], ...] = ()
+    max_sections_by_offering: tuple[tuple[OfferingId, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

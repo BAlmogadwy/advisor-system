@@ -37,7 +37,7 @@ async function page(t, { arabic = false, answer = () => undefined } = {}) {
   w.fetch = async (url, opts = {}) => {
     const method = (opts.method || 'GET').toUpperCase();
     if (method === 'POST') posts.push({ url, body: JSON.parse(opts.body || '{}') }); else gets.push(url);
-    let body = answer(url, opts);
+    let body = await answer(url, opts);
     if (body === undefined) {
       if (url.startsWith('/ops/instructors/list/')) body = { ok: true, instructors: INSTRUCTORS };
       else if (url.startsWith('/ops/instructors/course-assignments/?')) body = { ok: true, courses: COURSES };
@@ -332,6 +332,9 @@ test('a course row shows every teacher with their limit, labelled by name and co
   assert.deepEqual(teachers.map(x => x.querySelector('.ca-limit-input').value), ['2', '']);
   assert.equal(teachers[0].querySelector('.ca-limit-input').getAttribute('aria-label'), 'Max sections — Dr Hala Omar — CS112');
   assert.equal(teachers[1].querySelector('.ca-limit-input').placeholder, 'Default');
+  const help = h.$('caLimitsHelp');
+  assert.ok(help, 'the help line exists');
+  for (const x of teachers) assert.equal(x.querySelector('.ca-limit-input').getAttribute('aria-describedby'), 'caLimitsHelp');
   assert.equal(h.d.querySelectorAll('#caTable [data-ca-remove]').length, 2, 'with several teachers each has its own remove');
   assert.equal(h.d.querySelector('#caTable [data-ca-assign]').textContent.trim(), '+ Add instructor');
 });
@@ -433,4 +436,128 @@ test('a teacher name with HTML is text in the row, the labels and the search', a
   h.$('caSearch').value = 'ابراهيم';
   h.$('caSearch').dispatchEvent(new h.w.Event('input'));
   assert.equal(h.d.querySelector('#caTable tbody tr[data-course]').style.display, '', 'a co-teacher is found by the search');
+});
+
+// ── Saves of the course table run one at a time; the refresh is in place ──
+const TEACHER_NAMES = { 1: 'Dr Hala Omar', 2: 'ابراهيم فتحي', 3: 'Dr Old Name' };
+
+// A server that keeps what it is sent. `gates` holds the next saves until released
+// (one promise each); `getGate` holds the course reads (the refresh) the same way.
+function liveServer() {
+  const server = { courses: [JSON.parse(JSON.stringify(TWO_TEACHERS[0]))], gates: [], getGate: null, fail: false };
+  server.answer = async (url, opts) => {
+    if (url.startsWith('/ops/instructors/course-assignments/?')) {
+      if (server.getGate) await server.getGate.promise;
+      return { ok: true, courses: JSON.parse(JSON.stringify(server.courses)) };
+    }
+    if (url === '/ops/instructors/course-assignments/set/') {
+      const gate = server.gates.shift();
+      if (gate) await gate;
+      if (server.fail) return { ok: false, error: { message: 'Boom' } };
+      const [first, ...rest] = JSON.parse(opts.body).instructors.map(i => ({ id: i.id, full_name: TEACHER_NAMES[i.id], max_sections: i.max_sections }));
+      server.courses[0].instructor = first || null;
+      server.courses[0].co_instructors = rest;
+      return { ok: true };
+    }
+    return undefined;
+  };
+  return server;
+}
+function deferred() {
+  let release;
+  const promise = new Promise(resolve => { release = resolve; });
+  return { promise, release };
+}
+async function livePage(t, server) {
+  const h = await page(t, { answer: server.answer });
+  h.$('caProgram').value = 'CS';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await settle();
+  return h;
+}
+const limitBox = (h, id) => h.d.querySelector(`#caTable [data-ca-limit="${id}"]`);
+const change = (h, input, value) => {
+  input.value = value;
+  input.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+};
+const setPosts = h => h.posts.filter(p => p.url === '/ops/instructors/course-assignments/set/');
+
+test('two limit changes made before the first save is back post in order, the second carrying the first', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  const gate = deferred();
+  server.gates.push(gate.promise);
+  change(h, limitBox(h, 1), '3');
+  await settle();
+  assert.equal(setPosts(h).length, 1);
+  change(h, limitBox(h, 2), '4');   // the first save has not answered yet
+  await settle();
+  assert.equal(setPosts(h).length, 1, 'the second waits for the first');
+  gate.release();
+  await settle();
+  const posts = setPosts(h);
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[0].body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: null }]);
+  assert.deepEqual(posts[1].body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: 4 }], 'built after the first save, not before it');
+  assert.deepEqual([limitBox(h, 1).value, limitBox(h, 2).value], ['3', '4']);
+});
+
+test('the refresh after a save keeps the box being typed in, with its text', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getGate = deferred();
+  const other = limitBox(h, 2);
+  change(h, limitBox(h, 1), '4');
+  await settle();            // saved; the refresh is waiting on the server
+  other.focus();
+  other.value = '5';         // typed, not yet changed
+  server.getGate.release();
+  await settle();
+  const now = limitBox(h, 2);
+  assert.ok(now !== other, 'the table was drawn again');
+  assert.equal(h.d.activeElement, now);
+  assert.equal(now.value, '5');
+  assert.equal(limitBox(h, 1).value, '4');
+});
+
+test('after a save the keyboard returns to the edited box only when nothing else has it', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  change(h, limitBox(h, 1), '3');
+  await settle();
+  assert.equal(h.d.activeElement, limitBox(h, 1), 'nothing had the keyboard');
+  h.$('caSearch').focus();
+  change(h, limitBox(h, 2), '4');
+  await settle();
+  assert.equal(h.d.activeElement, h.$('caSearch'), 'the search box keeps it');
+});
+
+test('the refresh after a save never shows the Loading row', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getGate = deferred();
+  change(h, limitBox(h, 1), '3');
+  await settle();            // the save is done, the read is pending
+  assert.equal(h.d.querySelectorAll('#caTable .empty-note').length, 0);
+  assert.equal(h.d.querySelectorAll('#caTable .ca-teacher').length, 2);
+  server.getGate.release();
+  await settle();
+  assert.equal(limitBox(h, 1).value, '3');
+});
+
+test('a failed save reports the error and the box shows what is stored', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.fail = true;
+  const box = limitBox(h, 2);
+  box.focus();
+  change(h, box, '4');
+  await settle();
+  assert.equal(h.notices.filter(n => n.type === 'error').at(-1).text, 'Boom');
+  assert.equal(limitBox(h, 2).value, '', 'the typed 4 is gone: the server holds none');
+  assert.equal(limitBox(h, 1).value, '2');
+  server.fail = false;
+  change(h, limitBox(h, 1), '3');   // the queue still works after a failure
+  await settle();
+  assert.deepEqual(setPosts(h).at(-1).body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: null }]);
 });

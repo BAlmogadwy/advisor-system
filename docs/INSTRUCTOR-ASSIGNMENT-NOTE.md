@@ -120,7 +120,8 @@ planner charges clashes and the daily cap to that teacher only.
 - **Who picks it.** `core/services/section_teacher_assignment.py`, a staged CP-SAT solve
   (fewest sections without a teacher, then the soft 12-session load, then fewer campus days,
   then less idle, then stability). Hard: no clash, the daily cap, at most 15 sessions a week, and
-  D10 (a course with more than 3 sections gives one teacher at most 2 of them). A section not
+  D10 (a course with more than 3 sections gives one teacher at most 2 of them; a number stored on
+  his link, `max_sections`, replaces the 2 for him on that course, at any section count). A section not
   placed yet goes only to a teacher who keeps one of its placer options free of clash and the
   cap, so the required-section retry can still place it; a section no teacher can keep a time
   for is "to be decided" (reason clash or cap). The placer keeps the same rule while it places:

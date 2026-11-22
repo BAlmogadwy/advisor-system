@@ -268,9 +268,11 @@ def set_course_instructors(
     The first id becomes the ``primary`` (its name is what the planner writes
     through); the rest are ``co``. An empty list clears the assignment. Returns
     the serialised links. ``limits`` maps instructor id -> the most sections of
-    this course that teacher may hold (``None``/absent = the default rule).
+    this course that teacher may hold (``None``/absent = the default rule) and is
+    stored exactly as given. Without ``limits`` (the legacy ``instructor_ids``
+    form, bulk assign) a teacher who is already linked keeps his stored limit and
+    a newly added one gets none.
     """
-    limits = limits or {}
     code = normalise_course_code(course_code)
     resolved: list[Instructor] = []
     seen: set[int] = set()
@@ -282,7 +284,10 @@ def set_course_instructors(
             seen.add(instructor.pk)
             resolved.append(instructor)
 
-    CourseInstructor.objects.filter(program=program, course_code=code, section=section).delete()
+    links = CourseInstructor.objects.filter(program=program, course_code=code, section=section)
+    if limits is None:
+        limits = {link.instructor_id: link.max_sections for link in links}
+    links.delete()
     for idx, instructor in enumerate(resolved):
         CourseInstructor.objects.create(
             program=program,
