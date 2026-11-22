@@ -583,3 +583,55 @@ def test_optimise_current_pins_the_baseline_boards_rule_count(av_on, flag) -> No
     else:
         assert "baseline_instructor_availability" not in result
         assert "instructor_availability" not in result["quality_score"]
+
+
+# ── D-K: the registration-repair read and apply paths are scoped ─────────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("rows", [False, True], ids=["zero-rows", "rules"])
+def test_every_repair_read_and_apply_path_reads_the_rules_at_most_once(av_on, rows) -> None:
+    """D-K (identity:F1), a T-P3 extension: the run detail, the candidate detail,
+    approve and apply each read the rules at most once, with no outer scope (the
+    views open none), however many candidates the run holds."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from core.models import Instructor
+    from core.services import section_teacher_assignment as sta
+    from core.services.timetable_repair import (
+        analyse_timetable_repair,
+        apply_approved_repair_candidate,
+        approve_repair_candidate,
+        repair_candidate_detail,
+        repair_run_detail,
+    )
+    from tests._instructor_availability_fixture import rule, rule_queries
+    from tests.test_one_teacher_pipeline import _repair_fixture
+
+    sc, placement = _repair_fixture()
+    sta.prepare_section_teachers(sc.id, phase="layout")
+    if rows:
+        for person in Instructor.objects.filter(full_name__in=("Dr A", "Dr B")):
+            rule(person, KIND_UNAVAILABLE, ("THU",), "16:00", "17:00")
+    created = analyse_timetable_repair(
+        placement_id=placement.id, blocked_student_ids=[1002], limits={"max_candidates": 4}
+    )
+    run_id = created["run"]["id"]
+    candidate_id = created["candidates"][0]["candidate_id"]
+
+    reads = {}
+    for name, step in {
+        "repair_run_detail": lambda: repair_run_detail(run_id),
+        "repair_candidate_detail": lambda: repair_candidate_detail(run_id, candidate_id),
+        "approve_repair_candidate": lambda: approve_repair_candidate(run_id, candidate_id),
+        "apply_approved_repair_candidate": lambda: apply_approved_repair_candidate(
+            run_id, candidate_id
+        ),
+    }.items():
+        with CaptureQueriesContext(connection) as ctx:
+            step()
+        reads[name] = len(rule_queries(ctx.captured_queries))
+
+    assert max(reads.values()) <= 1, reads
+    assert reads["repair_run_detail"] == 1, reads  # the flag and one teacher are on

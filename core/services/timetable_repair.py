@@ -2419,6 +2419,7 @@ def _simulation_opportunity_rank_key(row: dict[str, Any]) -> tuple:
     )
 
 
+@_rule_scope
 def repair_run_detail(run_id: UUID | str) -> dict[str, Any]:
     """Return a stable JSON-serialisable repair run detail payload."""
 
@@ -2588,6 +2589,7 @@ def repair_run_report(run_id: UUID | str, *, candidate_id: str | None = None) ->
     }
 
 
+@_rule_scope
 def repair_candidate_detail(
     run_id: UUID | str,
     candidate_identifier: int | str,
@@ -3135,6 +3137,7 @@ def _repair_state_fingerprint(scenario_id: int, blocked_ids: list[int]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+@_rule_scope
 def approve_repair_candidate(
     run_id: UUID | str,
     candidate_identifier: int | str,
@@ -3209,6 +3212,7 @@ def approve_repair_candidate(
     return repair_run_detail(run_id)
 
 
+@_rule_scope
 def apply_approved_repair_candidate(
     run_id: UUID | str,
     candidate_identifier: int | str,
