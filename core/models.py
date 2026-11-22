@@ -419,12 +419,23 @@ class CourseInstructor(models.Model):
         related_name="course_links",
     )
     role = models.TextField(default="primary")  # primary | co | lab
+    # The most sections of this course this teacher may hold in one timetable.
+    # NULL means the default rule (``section_teacher_assignment`` D10). Read by
+    # the one-teacher engine only; a department pin is never dropped for it.
+    max_sections = models.PositiveSmallIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "course_instructors"
         constraints = [
+            # A database constraint: ``bulk_create`` and ``QuerySet.update``
+            # never call ``save()``.
+            models.CheckConstraint(
+                condition=models.Q(max_sections__isnull=True)
+                | models.Q(max_sections__gte=1, max_sections__lte=99),
+                name="ck_course_instructor_max_sections",
+            ),
             models.UniqueConstraint(
                 fields=["program", "course_code", "section", "instructor"],
                 name="ux_course_instructor_unique",

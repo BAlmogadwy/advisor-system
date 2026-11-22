@@ -247,6 +247,7 @@ def serialize_course_instructors(
             "full_name_ar": link.instructor.full_name_ar,
             "role": link.role,
             "is_active": link.instructor.is_active,
+            "max_sections": link.max_sections,
         }
         for link in links
     ]
@@ -256,13 +257,21 @@ def serialize_course_instructors(
 
 @transaction.atomic
 def set_course_instructors(
-    program: str, course_code: str, section: str, instructor_ids: list[int]
+    program: str,
+    course_code: str,
+    section: str,
+    instructor_ids: list[int],
+    limits: dict[int, int | None] | None = None,
 ) -> list[dict[str, object]]:
     """Replace the instructor set for one (program, course, section).
 
     The first id becomes the ``primary`` (its name is what the planner writes
     through); the rest are ``co``. An empty list clears the assignment. Returns
-    the serialised links.
+    the serialised links. ``limits`` maps instructor id -> the most sections of
+    this course that teacher may hold (``None``/absent = the default rule) and is
+    stored exactly as given. Without ``limits`` (the legacy ``instructor_ids``
+    form, bulk assign) a teacher who is already linked keeps his stored limit and
+    a newly added one gets none.
     """
     code = normalise_course_code(course_code)
     resolved: list[Instructor] = []
@@ -275,7 +284,10 @@ def set_course_instructors(
             seen.add(instructor.pk)
             resolved.append(instructor)
 
-    CourseInstructor.objects.filter(program=program, course_code=code, section=section).delete()
+    links = CourseInstructor.objects.filter(program=program, course_code=code, section=section)
+    if limits is None:
+        limits = {link.instructor_id: link.max_sections for link in links}
+    links.delete()
     for idx, instructor in enumerate(resolved):
         CourseInstructor.objects.create(
             program=program,
@@ -283,6 +295,7 @@ def set_course_instructors(
             section=section,
             instructor=instructor,
             role="primary" if idx == 0 else "co",
+            max_sections=limits.get(instructor.pk),
         )
     return serialize_course_instructors(program, code, section)
 

@@ -14383,6 +14383,25 @@ html[dir="rtl"] body select.va-input.va-input { background-position: left 0.75re
 }
 .ca-chip-name:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: var(--radius-xs); }
 
+/* A course's teachers: one line each (name, optional max sections, remove),
+   wrapping at phone width; Add / Remove all sit under them. */
+.ca-teachers { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); min-width: 0; max-width: 100%; }
+.ca-teacher { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); max-width: 100%; }
+.ca-teacher-name { color: var(--text-brand); font-size: var(--text-sm); font-weight: 500; overflow-wrap: anywhere; }
+.ca-limit { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; }
+.ca-limit-label { color: var(--t3); font-size: var(--text-xs); }
+.ca-limit-input { width: 76px; min-height: 32px; padding: 2px var(--space-2); font-size: var(--text-sm); }
+.ca-teacher-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--t3); font-size: var(--text-sm); font-weight: 700; cursor: pointer;
+}
+.ca-teacher-x:hover { color: var(--text-brand); background: var(--teal-dim); }
+.ca-teacher-x:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.ca-teachers-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ca-teachers-actions:empty { display: none; }
+.im-limits-help { margin: 0; color: var(--t3); font-size: var(--text-xs); }
+
 /* ── The add/edit dialog (UXControls.dialog): two columns of fields ── */
 .im-dialog { width: min(680px, calc(100vw - 32px)); }
 .im-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }

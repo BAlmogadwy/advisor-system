@@ -73,6 +73,12 @@ const T = {
   notOfferedThisTerm:   IS_AR ? 'في الدليل — غير مطروح هذا الفصل' : 'In catalogue — not offered this term',
   electiveSlot:         IS_AR ? 'خانة اختياري' : 'Elective slot',
   slotHint:             IS_AR ? 'لا يوجد مقرر مرتبط بهذه الخانة هذا الفصل — اربط مقرراً أولاً' : 'No course is mapped to this elective slot this term — map one first',
+  maxSections:          IS_AR ? 'الحد الأعلى للشعب' : 'Max sections',
+  maxDefault:           IS_AR ? 'افتراضي' : 'Default',
+  addInstructor:        IS_AR ? '+ إضافة عضو هيئة تدريس' : '+ Add instructor',
+  removeInstructor:     IS_AR ? 'إزالة' : 'Remove',
+  removeAll:            IS_AR ? 'إزالة الكل' : 'Remove all',
+  limitInvalid:         IS_AR ? 'أدخل عددًا صحيحًا من 1 إلى 99، أو اتركه فارغًا' : 'Enter a whole number from 1 to 99, or leave it blank',
   legacy:               IS_AR ? 'قديم' : 'Legacy',
   orphanHint:           IS_AR ? 'مُسند إلى رمز لم يعد يُجدول — يمكن إزالته' : 'Assigned to a code that is no longer scheduled — you can clear it',
 
@@ -709,9 +715,20 @@ const ca = {
   popoverTrigger: null,   // element to restore focus to on close
   activeOptIndex: -1,     // keyboard-highlighted result index
   searchSeq: 0,           // request token: drop stale typeahead responses
+  pendingFocus: null,     // {code, selector} to focus after the next render
+  queue: Promise.resolve(), // saves of the table run one at a time, in order
+  stale: false,             // a refresh after a save failed: reload before the next save
+
+  // Run `task` after every earlier one has finished (a failure never breaks the chain).
+  enqueue(task) {
+    const run = this.queue.then(task);
+    this.queue = run.catch(() => {});
+    return run;
+  },
 
   // ── Main loader ──
-  async loadCourses() {
+  // quiet: refresh in place after a save: no "Loading…" row, the table stays as it is.
+  async loadCourses({ quiet = false } = {}) {
     const program = $('caProgram').value.trim();
     const section = this.currentSection;
 
@@ -727,14 +744,17 @@ const ca = {
     }
     this.currentProgram = program;
     const tbody = $('caTable').querySelector('tbody');
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.loading + '</td></tr>';
+    if (!quiet) tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.loading + '</td></tr>';
 
     try {
       const params = new URLSearchParams({ program, section });
       const data = await imApiCall(`/ops/instructors/course-assignments/?${params}`);
+      // The user moved to another programme or section while this was loading.
+      if (quiet && (program !== this.currentProgram || section !== this.currentSection)) return;
 
       if (data.ok) {
         this.courses = data.courses || [];
+        this.stale = false;
         this.renderTable();
         this.updateStatusPills();
       } else {
@@ -742,7 +762,13 @@ const ca = {
       }
     } catch (error) {
       notify.error(T.failedLoadCourses + ': ' + error.message);
-      this.renderEmptyTable();
+      if (quiet) {
+        // The table on screen may lack the save that asked for this refresh.
+        this.stale = true;
+        this.renderTable();
+      } else {
+        this.renderEmptyTable();
+      }
     }
   },
 
@@ -765,8 +791,10 @@ const ca = {
   },
 
   // ── Table rendering ──
-  renderTable() {
+  // discardTyped {code, selector}: that control shows what is stored, not what was typed.
+  renderTable({ discardTyped = null } = {}) {
     const tbody = $('caTable').querySelector('tbody');
+    const kept = this.captureFocus(tbody, discardTyped);
 
     if (this.courses.length === 0) {
       tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.noCourses + '</td></tr>';
@@ -784,13 +812,33 @@ const ca = {
       let assignmentCell;
       // Codes travel in data attributes (escaped), never inside inline script.
       const code = escapeHtml(course.course_code);
-      if (course.instructor) {
-        const who = escapeHtml(course.instructor.full_name);
-        assignmentCell = `<div class="ca-chip">
-             <button type="button" class="ca-chip-name" data-ca-assign="${code}" aria-haspopup="dialog" aria-label="${T.assign} — ${code}: ${who}">${who}</button>
-             <button type="button" class="ca-chip-x" data-ca-clear="${code}"
-                     aria-label="${T.unassign} ${who} — ${code}">×</button>
+      const teachers = this.teachersOf(course);
+      if (teachers.length) {
+        // Every linked teacher with an optional limit; one teacher's × clears the
+        // course, with several it removes only that teacher.
+        const single = teachers.length === 1;
+        const raw = course.course_code;
+        const rows = teachers.map(t => {
+          const id = Number(t.id);
+          const limit = Number.isInteger(t.max_sections) ? t.max_sections : '';
+          const removeLabel = `${single ? T.unassign : T.removeInstructor} ${t.full_name} — ${raw}`;
+          const removeButton = single
+            ? safeHtml`<button type="button" class="ca-teacher-x" data-ca-clear="${raw}" aria-label="${removeLabel}">×</button>`
+            : safeHtml`<button type="button" class="ca-teacher-x" data-ca-remove="${id}" data-ca-code="${raw}" aria-label="${removeLabel}">×</button>`;
+          return safeHtml`<div class="ca-teacher">
+             <span class="ca-teacher-name">${t.full_name}</span>
+             <label class="ca-limit"><span class="ca-limit-label">${T.maxSections}</span>
+               <input type="number" class="ca-limit-input" min="1" max="99" step="1" inputmode="numeric"
+                      placeholder="${T.maxDefault}" value="${limit}" data-ca-limit="${id}" data-ca-code="${raw}"
+                      aria-describedby="caLimitsHelp" aria-label="${T.maxSections} — ${t.full_name} — ${raw}"></label>
+             ${removeButton}
            </div>`;
+        });
+        const add = unschedulable ? '' : safeHtml`<button type="button" class="ca-assign-add" data-ca-assign="${raw}"
+                   aria-haspopup="dialog" aria-label="${T.addInstructor.replace(/^\+\s*/, '')} — ${raw}">${T.addInstructor}</button>`;
+        const all = single ? '' : safeHtml`<button type="button" class="ca-assign-add" data-ca-clear="${raw}"
+                   aria-label="${T.removeAll} — ${raw}">${T.removeAll}</button>`;
+        assignmentCell = safeHtml`<div class="ca-teachers">${rows}<div class="ca-teachers-actions">${add}${all}</div></div>`.toString();
       } else if (unschedulable) {
         assignmentCell = `<button type="button" class="ca-assign-add" disabled aria-disabled="true"
                    title="${escapeHtml(unschedulableHint)}" aria-label="${escapeHtml(unschedulableHint)}">${T.addAssign}</button>`;
@@ -827,6 +875,71 @@ const ca = {
         <td class="ca-assign-cell">${assignmentCell}</td>
       </tr>`;
     }).join('');
+    if (this.restoreFocus(kept)) this.pendingFocus = null;
+    else this.applyPendingFocus();
+  },
+
+  // The control of the table that has the keyboard, so a re-render can give it back
+  // with the text typed in it and not yet saved.
+  captureFocus(tbody, discardTyped) {
+    const el = document.activeElement;
+    if (!el || !tbody.contains(el)) return null;
+    const row = el.closest('tr[data-course]');
+    if (!row) return null;
+    let selector = null;
+    for (const attr of ['data-ca-limit', 'data-ca-remove']) {
+      if (el.hasAttribute(attr)) selector = `[${attr}="${el.getAttribute(attr)}"]`;
+    }
+    for (const attr of ['data-ca-assign', 'data-ca-clear', 'data-ca-course']) {
+      if (!selector && el.hasAttribute(attr)) selector = `[${attr}]`;
+    }
+    if (!selector) return null;
+    const code = row.dataset.course;
+    // Only text the user typed and has not saved: an untouched box takes the
+    // refreshed value.
+    const keepText = el.hasAttribute('data-ca-limit') && el.value !== el.defaultValue
+      && !(discardTyped && discardTyped.code === code && discardTyped.selector === selector);
+    return {
+      code, selector,
+      text: keepText ? el.value : null,
+      from: keepText ? el.selectionStart : null,
+      to: keepText ? el.selectionEnd : null,
+    };
+  },
+
+  restoreFocus(kept) {
+    if (!kept) return false;
+    const row = [...$$('#caTable tbody tr[data-course]')].find(r => r.dataset.course === kept.code);
+    const el = row && row.querySelector(kept.selector);
+    if (!el) return false;
+    if (kept.text !== null) el.value = kept.text;
+    el.focus();
+    if (kept.text !== null && kept.from !== null && el.setSelectionRange) {
+      try { el.setSelectionRange(kept.from, kept.to); } catch (error) { /* a number box has no selection */ }
+    }
+    return true;
+  },
+
+  // A re-render replaces the row; give the keyboard back to where it was, but only
+  // when nothing else has it (a control of the table keeps its own focus, above).
+  applyPendingFocus() {
+    const want = this.pendingFocus;
+    this.pendingFocus = null;
+    if (!want) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const row = [...$$('#caTable tbody tr[data-course]')].find(r => r.dataset.course === want.code);
+    const el = row && row.querySelector(want.selector);
+    if (el && el.focus) el.focus();
+  },
+
+  // Everyone linked to a course: the primary first, then the others.
+  teachersOf(course) {
+    return [course.instructor, ...(course.co_instructors || [])].filter(Boolean);
+  },
+
+  teacherPayload(teachers) {
+    return teachers.map(t => ({ id: t.id, max_sections: Number.isInteger(t.max_sections) ? t.max_sections : null }));
   },
 
   renderEmptyTable() {
@@ -847,7 +960,7 @@ const ca = {
       const matches = !query ||
         course.course_code.toLowerCase().includes(query) ||
         String(course.course_name || '').toLowerCase().includes(query) ||
-        String(course.instructor?.full_name || '').toLowerCase().includes(query);
+        this.teachersOf(course).some(t => String(t.full_name || '').toLowerCase().includes(query));
 
       row.style.display = matches ? '' : 'none';
       if (matches) visible++;
@@ -998,6 +1111,8 @@ const ca = {
     popover.setAttribute('aria-hidden', 'true');
     $('caPopSearch').removeAttribute('aria-activedescendant');
 
+    const active = document.activeElement;
+    const keyboardFree = !active || active === document.body || popover.contains(active);
     this.popoverVisible = false;
     this.activePopoverCourse = null;
     this.activeOptIndex = -1;
@@ -1010,7 +1125,7 @@ const ca = {
     const trigger = this.popoverTrigger;
     if (trigger) {
       if (trigger.setAttribute) trigger.setAttribute('aria-expanded', 'false');
-      if (document.contains(trigger) && trigger.focus) trigger.focus();
+      if (keyboardFree && document.contains(trigger) && trigger.focus) trigger.focus();
     }
     this.popoverTrigger = null;
   },
@@ -1067,7 +1182,7 @@ const ca = {
 
     resultsDiv.innerHTML = instructors.map((inst, idx) =>
       `<div class="ca-pop-opt" id="caPopOpt${idx}" role="option" aria-selected="false"
-            onclick="ca.assignInstructor(${inst.id})" data-id="${inst.id}">
+            data-id="${Number(inst.id)}">
          <strong>${escapeHtml(inst.full_name)}</strong>
          ${imField(inst.department) ? `<div class="ca-pop-dept">${escapeHtml(imField(inst.department))}</div>` : ''}
        </div>`
@@ -1075,54 +1190,112 @@ const ca = {
   },
 
   // ── Assignment actions ──
+  // The picker ADDS a teacher: the others stay, with their limits.
   async assignInstructor(instructorId) {
-    if (!this.activePopoverCourse) return;
+    const code = this.activePopoverCourse;
+    if (!code) return;
+    await this.saveTeachers(code, list => {
+      if (list.some(t => t.id === instructorId)) return null;   // already linked: nothing to add
+      return [...list, { id: instructorId, max_sections: null }];
+    }, '[data-ca-assign]', { closePopover: true });
+  },
 
-    try {
-      const data = await imApiCall('/ops/instructors/course-assignments/set/', {
-        method: 'POST',
-        body: JSON.stringify({
-          program: this.currentProgram,
-          course_code: this.activePopoverCourse,
-          section: this.currentSection,
-          instructor_ids: [instructorId]
-        })
-      });
-
-      if (data.ok) {
-        notify.success(T.assignmentUpdated);
-        this.hideAssignPopover();
-        this.loadCourses(); // Refresh table
-      } else {
-        throw new Error(data.error?.message || 'Failed to assign');
+  // Change a course's whole teacher list (order kept: the first is the primary).
+  // `build` gets the list as it stands WHEN THIS RUNS (after every earlier save and
+  // its refresh) and returns the list to post, or null for no change.
+  saveTeachers(code, build, focusSelector, { closePopover = false } = {}) {
+    const program = this.currentProgram;
+    const section = this.currentSection;
+    return this.enqueue(async () => {
+      const stored = { discardTyped: focusSelector ? { code, selector: focusSelector } : null };
+      if (program !== this.currentProgram || section !== this.currentSection) {
+        if (closePopover) this.hideAssignPopover();
+        return;
       }
-    } catch (error) {
-      notify.error(error.message);
+      // Never build a list from a table that failed to refresh: it may lack an
+      // earlier save, and posting it would undo that save.
+      if (this.stale) {
+        await this.loadCourses({ quiet: true });   // reports its own failure
+        if (this.stale) {
+          if (closePopover) this.hideAssignPopover();
+          this.renderTable(stored);
+          return;
+        }
+      }
+      try {
+        const course = this.courses.find(c => c.course_code === code);
+        const list = course ? build(this.teacherPayload(this.teachersOf(course))) : null;
+        if (!list) {
+          if (closePopover) this.hideAssignPopover();
+          return;
+        }
+        const data = await imApiCall('/ops/instructors/course-assignments/set/', {
+          method: 'POST',
+          body: JSON.stringify({ program, course_code: code, section, instructors: list })
+        });
+
+        if (!data.ok) throw new Error(data.error?.message || 'Failed to assign');
+        notify.success(T.assignmentUpdated);
+        if (closePopover) this.hideAssignPopover();
+        this.pendingFocus = focusSelector ? { code, selector: focusSelector } : null;
+        await this.loadCourses({ quiet: true }); // refresh in place, before the next save
+      } catch (error) {
+        notify.error(error.message);
+        // put back what the server still holds
+        this.renderTable(stored);
+      }
+    });
+  },
+
+  async saveLimit(code, instructorId, input) {
+    const raw = input.value.trim();
+    const selector = `[data-ca-limit="${instructorId}"]`;
+    // A number box reports '' for text it cannot read ("2e", "-"). That is a
+    // typing mistake, never a request to clear the saved limit.
+    const unreadable = !!(input.validity && input.validity.badInput);
+    let limit = null;
+    if (unreadable || raw !== '') {
+      limit = !unreadable && /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (!(limit >= 1 && limit <= 99)) {
+        notify.error(T.limitInvalid);
+        this.renderTable({ discardTyped: { code, selector } });
+        return;
+      }
     }
+    await this.saveTeachers(code, list => {
+      const current = list.find(t => t.id === instructorId);
+      if (!current || current.max_sections === limit) return null;
+      return list.map(t => (t.id === instructorId ? { ...t, max_sections: limit } : t));
+    }, selector);
+  },
+
+  async removeTeacher(code, instructorId) {
+    await this.saveTeachers(code, list => list.filter(t => t.id !== instructorId), '[data-ca-assign]');
   },
 
   async clearAssignment(courseCode, event) {
     event.stopPropagation();
+    const program = this.currentProgram;
+    const section = this.currentSection;
 
-    try {
-      const data = await imApiCall('/ops/instructors/course-assignments/clear/', {
-        method: 'POST',
-        body: JSON.stringify({
-          program: this.currentProgram,
-          course_code: courseCode,
-          section: this.currentSection
-        })
-      });
+    await this.enqueue(async () => {
+      if (program !== this.currentProgram || section !== this.currentSection) return;
+      try {
+        const data = await imApiCall('/ops/instructors/course-assignments/clear/', {
+          method: 'POST',
+          body: JSON.stringify({ program, course_code: courseCode, section })
+        });
 
-      if (data.ok) {
-        notify.success(T.assignmentUpdated);
-        this.loadCourses(); // Refresh table
-      } else {
-        throw new Error(data.error?.message || 'Failed to clear assignment');
+        if (data.ok) {
+          notify.success(T.assignmentUpdated);
+          await this.loadCourses({ quiet: true }); // refresh in place
+        } else {
+          throw new Error(data.error?.message || 'Failed to clear assignment');
+        }
+      } catch (error) {
+        notify.error(error.message);
       }
-    } catch (error) {
-      notify.error(error.message);
-    }
+    });
   },
 
   // ── Bulk assignment ──
@@ -1158,22 +1331,21 @@ const ca = {
       const instructor = matches[0];
       const courseCodes = Array.from(this.selectedCourses);
 
-      const data = await imApiCall('/ops/instructors/course-assignments/assign-bulk/', {
-        method: 'POST',
-        body: JSON.stringify({
-          program: this.currentProgram,
-          section: this.currentSection,
-          course_codes: courseCodes,
-          instructor_id: instructor.id
-        })
+      const body = JSON.stringify({
+        program: this.currentProgram,
+        section: this.currentSection,
+        course_codes: courseCodes,
+        instructor_id: instructor.id
       });
+      // After any save still running, so no later save works from an older table.
+      const data = await this.enqueue(() => imApiCall('/ops/instructors/course-assignments/assign-bulk/', { method: 'POST', body }));
 
       if (data.ok) {
         notify.success(T.bulkAssignCompleted + ': ' + T.nAssigned(data.updated || courseCodes.length));
         this.selectedCourses.clear();
         this.updateBulkBar();
         typeahead.value = '';
-        this.loadCourses();
+        await this.enqueue(() => this.loadCourses({ quiet: true }));
       } else {
         throw new Error(data.error?.message || 'Failed to bulk assign');
       }
@@ -1258,14 +1430,23 @@ function imWire() {
     ca.setSection(next.dataset.sec);
     next.focus();
   });
+  // A picked result: the option carries the instructor's id as data.
+  $('caPopResults').addEventListener('click', event => {
+    const opt = event.target.closest('.ca-pop-opt');
+    if (opt) ca.assignInstructor(Number(opt.dataset.id));
+  });
   const table = $('caTable');
   table.addEventListener('click', event => {
     const clear = event.target.closest('[data-ca-clear]');
     if (clear) { ca.clearAssignment(clear.dataset.caClear, event); return; }
+    const remove = event.target.closest('[data-ca-remove]');
+    if (remove) { ca.removeTeacher(remove.dataset.caCode, Number(remove.dataset.caRemove)); return; }
     const assign = event.target.closest('[data-ca-assign]');
     if (assign && !assign.disabled) ca.showAssignPopover(assign.dataset.caAssign, event, assign);
   });
   table.addEventListener('change', event => {
+    const limit = event.target.closest('[data-ca-limit]');
+    if (limit) { ca.saveLimit(limit.dataset.caCode, Number(limit.dataset.caLimit), limit); return; }
     const box = event.target.closest('[data-ca-course]');
     if (box) ca.toggleCourse(box.dataset.caCourse, box);
   });

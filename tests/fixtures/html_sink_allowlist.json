@@ -344,14 +344,13 @@
       "badge": 1,
       "cbDisabled": 1,
       "checked": 1,
-      "code": 10,
+      "code": 6,
       "cr": 1,
       "data.totals.course_count": 1,
       "data.totals.total_credit_hours": 1,
       "idx": 3,
       "idx + 1": 1,
       "imField(row.department) ? escapeHtml(imField(row.department)) : dash": 1,
-      "inst.id": 2,
       "label": 1,
       "loadStatusClass": 1,
       "row.course_count": 1,
@@ -360,8 +359,7 @@
       "status": 1,
       "tag": 1,
       "tone": 1,
-      "value": 1,
-      "who": 3
+      "value": 1
     },
     "page-planner.js": {
       "(opt.mappings||[]).map(m=>`…`).join('') || `…`": 1,
