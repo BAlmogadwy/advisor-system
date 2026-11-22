@@ -19,7 +19,7 @@ const OCCUPIED = { ...baseRoom, room_code: 'R9', available: false, tone: 'block'
 const TOO_SMALL = { ...baseRoom, room_code: 'R3', capacity: 10, available: false, tone: 'block', fits_capacity: false, reasons: ['capacity 10 < 30'] };
 const ROOM_CLASH = { critical_count: 0, warning_count: 1, room_clashes: [{ id: 99, room: 'R9', scope: 'cross_board' }] };
 
-async function splitHarness(t, intercept = () => undefined) {
+async function splitHarness(t, intercept = () => undefined, arabic = false) {
   const html = read('core/templates/core/timetable_workspace_split.html')
     .replace(/<script[\s\S]*?<\/script>/g, '').replace(/{%[\s\S]*?%}/g, '').replace(/{{[\s\S]*?}}/g, '');
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'http://split.test/', pretendToBeVisual: true });
@@ -29,7 +29,7 @@ async function splitHarness(t, intercept = () => undefined) {
   const boardData = () => ({ board, placements: [placement], slot_config: [{ start: '09:00', end: '10:15' }, { start: '10:30', end: '11:45' }] });
   w.addEventListener('error', event => errors.push(event.error));
   t.after(() => { w.close(); assert.deepEqual(errors, []); });
-  Object.assign(w, { LANGUAGE_CODE: 'en', djCsrfToken: 'audit', INITIAL_SCENARIO: '', INITIAL_BOARD: '', DEFAULT_YEAR: '1448', DEFAULT_TERM: '1' });
+  Object.assign(w, { LANGUAGE_CODE: arabic ? 'ar' : 'en', djCsrfToken: 'audit', INITIAL_SCENARIO: '', INITIAL_BOARD: '', DEFAULT_YEAR: '1448', DEFAULT_TERM: '1' });
   w.esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   w.notify = Object.fromEntries(['success', 'warning', 'error', 'info'].map(kind => [kind, message => notices.push({ kind, message })]));
   w.console.error = () => {};
@@ -236,4 +236,64 @@ test('split view keeps the legacy rule: its room reads never ask for the audit (
   const reads = h.requests.filter(row => row.url.includes('/room-candidates/'));
   assert.ok(reads.length > 0, 'split view read its rooms');
   assert.ok(reads.every(row => !/[?&]audit=/.test(row.url)), reads.map(row => row.url).join('\n'));
+});
+
+// Teaching-time rules (slice C): shown as a warning, never refused; the
+// automatic pickers (not a human) skip a time the teacher's rules forbid.
+const TEACHER_RULE_ROW = { ids: [10], term_section_id: 110, instructor_id: 7, instructor: 'Dr A', section: 'AI10-S1', day: 'SUN', start: '09:00', end: '10:15', detail: 'Dr A: SUN 09:00-10:15' };
+const TEACHER_KIND = { en: 'Teacher not available at this time', ar: 'المدرّس غير متاح في هذا الوقت' };
+for (const arabic of [false, true]) test(`J-S1 a teaching-time row tones the cell amber and is listed in Issues and Selection (${arabic ? 'ar' : 'en'})`, async t => {
+  const kind = TEACHER_KIND[arabic ? 'ar' : 'en'];
+  const h = await splitHarness(t, url => (url.endsWith('/conflicts/') ? { overlaps: [], instructor_clashes: [], room_clashes: [], teacher_rule_violations: [TEACHER_RULE_ROW] } : undefined), arabic);
+  await h.w.loadSplitPane(0);
+  assert.deepEqual(h.state.panes[0].boardData.conflicts.teacher_rule_violations.map(row => row.ids), [[10]], 'the whitelist keeps the key');
+  const cell = h.cell('SUN', '09:00');
+  assert.ok(cell.classList.contains('clash') && cell.classList.contains('clash-warn'));
+  h.panel.open = true; h.panel.tab = 'issues'; h.w.renderRpanel();
+  const head = [...h.d.querySelectorAll('#twsRpanelBody .section-head')].find(node => node.firstChild.textContent === kind);
+  assert.ok(head, kind);
+  assert.equal(head.className, 'section-head warn');
+  assert.equal(head.querySelector('.n').textContent, '1');
+  assert.ok(head.nextElementSibling.querySelector('.title').textContent.includes('Dr A'));
+  assert.ok(head.nextElementSibling.querySelector('.meta').textContent.includes('⁦09:00–10:15⁩'), 'the time is isolated');
+  assert.equal(h.d.getElementById('twsRpCountIssues').textContent, '1');
+  h.state.selectedPlacementId = 10; h.state.selectedPaneIdx = 0; h.panel.tab = 'selection'; h.w.renderRpanel();
+  assert.ok(h.d.getElementById('twsRpanelBody').textContent.includes(kind), 'Selection shows the evidence');
+});
+
+test('J-S1b one meeting on two visible boards is one Issues row', async t => {
+  const h = await splitHarness(t);
+  h.state.panes[0].boardData.conflicts = { overlaps: [], instructor_clashes: [], room_clashes: [], teacher_rule_violations: [TEACHER_RULE_ROW], cross_board: [] };
+  h.state.panes[1].boardId = 3; h.state.panes[1].boardLabel = 'Board two';
+  h.state.panes[1].boardData = { board: { id: 3, label: 'Board two' }, placements: [], slot_config: [], conflicts: { overlaps: [], instructor_clashes: [], room_clashes: [], teacher_rule_violations: [{ ...TEACHER_RULE_ROW, ids: [11] }], cross_board: [] } };
+  h.state.cols = 2;
+  h.panel.open = true; h.panel.tab = 'issues'; h.w.renderRpanel();
+  assert.equal(h.d.getElementById('twsRpCountIssues').textContent, '1');
+});
+
+test('J-S2 the automatic pickers refuse a forbidden candidate; a human can still move there', async t => {
+  const h = await splitHarness(t);
+  const safe = { kind: 'lect', day: 'TUE', start: '09:00', end: '10:15', student_outcome: { improved_student_count: 2 }, critical_count: 0 };
+  const forbidden = { ...safe, teacher_rule_blocked: true };
+  assert.equal(h.w.candidateIsValidatedSafe(safe), true, 'control: the safe candidate is safe');
+  assert.equal(h.w.candidateRegressionReason(forbidden), 'the teacher is not available at this time');
+  assert.equal(h.w.candidateIsValidatedSafe(forbidden), false);
+  // A pair (bundle) whose companion's time is forbidden arrives marked the same way.
+  const bundle = { ...safe, pair: { protected: false, critical: 0 }, teacher_rule_blocked: true };
+  assert.equal(h.w.candidateIsValidatedSafe(bundle), false);
+  // The fix queue says why it paused, and sends nothing.
+  h.panel.fixQueue.items = [{ candidate: forbidden, placementId: 10, paneIdx: 0, placement: { id: 10 } }];
+  await h.w.applyFixQueueItem(0);
+  assert.equal(h.notices.at(-1).message, 'Move paused: the teacher is not available at this time. Preview it manually first.');
+  assert.equal(h.posts('/move/').length, 0);
+  // A human is never refused.
+  await h.w.movePlacementToSlot({ placementId: 10, targetPaneIdx: 0, sourcePaneIdx: 0, day: 'MON', start: '09:00', end: '10:15' });
+  assert.equal(h.posts('/move/').length, 1);
+});
+
+for (const arabic of [false, true]) test(`J-S3 the candidate names a teaching-time problem (${arabic ? 'ar' : 'en'})`, async t => {
+  const h = await splitHarness(t, undefined, arabic);
+  const tags = h.w.candidateSignalTags({ kind: 'lect', day: 'TUE', start: '09:00', end: '10:15', teacher_rule_blocked: true, student_outcome: { improved_student_count: 2 } });
+  assert.equal(tags[0], TEACHER_KIND[arabic ? 'ar' : 'en'], 'first, so the slot line shows it');
+  assert.equal(h.w.candidateSignalTags({ kind: 'lect', day: 'TUE', start: '09:00', end: '10:15' }).includes(TEACHER_KIND.en), false);
 });

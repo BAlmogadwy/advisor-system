@@ -4549,3 +4549,41 @@ def test_the_switch_the_hot_path_read_and_the_loaders_are_opened_only_where_pinn
                     f"{rel}::{name}" for name in _functions_asking(rel, frozenset({door}))
                 }
     assert found == DOOR_CALLERS
+
+
+#: Who may ask the workspace's display door (slice C): the conflict check and the
+#: slot previews; never a write path, validation or a view.
+DISPLAY_DOOR_USERS = {
+    "detect_board_conflicts",
+    "preview_placement_slot_candidates",
+    "preview_planned_section_slot_candidates",
+}
+
+
+def _top_level_functions_naming(path: str, name: str) -> set[str]:
+    import ast
+
+    tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
+    return {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and any(isinstance(inner, ast.Name) and inner.id == name for inner in ast.walk(node))
+        and node.name != name
+    }
+
+
+def test_only_the_conflict_check_and_the_previews_use_the_display_door() -> None:
+    """S-1: the workspace SHOWS the rules through ``_display_rule_checker`` only from
+    the conflict check and the previews; the views never name it."""
+    assert (
+        _top_level_functions_naming("core/services/timetable_workspace.py", "_display_rule_checker")
+        == DISPLAY_DOOR_USERS
+    )
+    assert (
+        _top_level_functions_naming("core/timetable_workspace_views.py", "_display_rule_checker")
+        == set()
+    )
+    assert _top_level_functions_naming(
+        "core/services/timetable_move_outcome.py", "_display_rule_checker"
+    ) == {"preview_placement_student_outcome_candidates"}

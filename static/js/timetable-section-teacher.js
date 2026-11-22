@@ -5,7 +5,9 @@
    `teacher` only with the rule on: `{id, name, status, source, reason}`, or
    null for a section its map leaves out.
 
-   - status "tbd": no teacher yet; `reason` says why (the hint).
+   - status "tbd": no teacher yet; `reason` says why (the hint): d10,
+     weekly_ceiling, clash, daily_cap, bound, or availability (the teaching-time
+     rules forbid this time for every eligible teacher).
    - status "unknown": the teacher is not shown, because this English
      section has no one complete weekly pattern on every board (its meetings
      are not known); "—", and `reason` says why. Never its meeting name.
@@ -25,6 +27,7 @@
     clash: ['Every eligible teacher is teaching at this time.', 'كل المدرسين المؤهلين لديهم محاضرة في هذا الوقت.'],
     daily_cap: ['Every eligible teacher is at the daily limit on this day.', 'كل المدرسين المؤهلين بلغوا الحد اليومي في هذا اليوم.'],
     bound: ['Any eligible teacher would get a longer week.', 'إسنادها لأي مدرس مؤهل يطيل أسبوعه.'],
+    availability: ['No eligible teacher can teach at this time (teaching-time rules).', 'لا يستطيع أي مدرّس مؤهل التدريس في هذا الوقت (قواعد أوقات التدريس).'],
     incomplete_english_pattern: [
       'Teacher not shown: this English section does not have one complete weekly pattern on every board. Remove it and place it again.',
       'لم يُعرض المدرّس: ليس لهذه الشعبة الإنجليزية نمط أسبوعي كامل واحد على كل اللوحات. احذفها وضعها من جديد.',

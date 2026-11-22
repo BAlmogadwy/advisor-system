@@ -19,11 +19,13 @@ import too. This module is the classic engine's ONE door to them:
   rules do not bind is online on EVERY board it sits on and on every board it
   would be placed on), asked through the scope's :func:`online_exemption`.
 
-Manual moves, validation and the slot previews never call anything here.
+Manual moves and validation never call anything here; the workspace SHOWS the rules
+through :func:`display_rule_checker` (slice C, ``timetable_workspace._display_rule_checker``).
 """
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -70,6 +72,7 @@ class _Holder:
 
     __slots__ = (
         "checker",
+        "display",
         "everyone",
         "loaded",
         "online",
@@ -85,6 +88,9 @@ class _Holder:
         self.universe: frozenset[int] = frozenset()
         self.everyone = False
         self.checker: RuleChecker | None = None
+        # The display door's own checker with the (availability, assignment) it was
+        # built from; never ``checker`` (slice C, R7).
+        self.display: tuple[Any, Any, RuleChecker] | None = None
         self.online: OnlineExemption | None = None
         # Every stored rule, read by the universe-less path while its collect
         # works out the universe (so that collect needs no second rule query).
@@ -101,6 +107,7 @@ class _Holder:
         self.universe = frozenset(universe)
         self.everyone = everyone
         self.checker = None  # built from the previous availability
+        self.display = None
 
     def covers(self, universe: Iterable[int]) -> bool:
         return self.everyone or self.universe.issuperset(universe)
@@ -380,7 +387,8 @@ class RuleChecker:
     Built once per call (cached on the scope) from the scope's availability, the
     map in force (``load_assignment(..., incomplete="collect").v2_map()``) and the
     online exemption (a section online on every board it is placed on is never
-    bound). Validation and the manual paths never build one.
+    bound). Validation and the manual write paths never build one; the workspace's
+    conflict check and slot previews read one (display only).
     """
 
     def __init__(
@@ -392,6 +400,58 @@ class RuleChecker:
         self.availability = availability
         self.charged = charged
         self.exempt = exempt
+        self._names: dict[int, str] | None = None
+
+    @functools.cached_property
+    def ruled_charged(self) -> frozenset[int]:
+        """Teachers the map charges who have a rule (ids only; one build)."""
+        ruled = self.availability.instructor_ids
+        return frozenset(
+            i for ids in self.charged.values() for i in ids if _is_id(i) and i in ruled
+        )
+
+    @property
+    def binds(self) -> bool:
+        """Some teacher the map charges has a rule: the workspace's display switch."""
+        return bool(self.ruled_charged)
+
+    def section_ids(
+        self, course_key: str, label: str, *, exempt: bool | None = None
+    ) -> tuple[int, ...]:
+        """The section's charged teachers that have a rule, sorted; ``()`` when the
+        section is exempt (``exempt=None``: online on every board it sits on,
+        ``self.exempt``; True/False: the caller's decision, for a section not placed
+        yet) or charged to nobody (TBD, unknown, no links). ``course_key`` is the
+        planner identity ``course_key or course_code``."""
+        if ((course_key, label) in self.exempt) if exempt is None else exempt:
+            return ()
+        return tuple(
+            sorted(
+                i for i in self.charged.get(f"{course_key}_{label}", ()) if i in self.ruled_charged
+            )
+        )
+
+    def meeting_blocked(
+        self, ids: Iterable[int], day: str, start: str, end: str
+    ) -> tuple[int, ...]:
+        """Those of ``ids`` whose rules this ONE meeting breaks, in ``ids`` order. No
+        bundle expansion (display judges each physical meeting alone); a day or time
+        that does not read breaks nothing."""
+        meetings = option_meetings([{"day": day, "start": start, "end": end}])
+        return tuple(
+            i for i in ids if any(self.availability.blocks(i, d, s, e) for d, s, e in meetings)
+        )
+
+    def teacher_name(self, instructor_id: int) -> str:
+        """``Instructor.full_name`` of a ruled charged teacher; ONE query per checker,
+        on first use."""
+        if self._names is None:
+            from core.models import Instructor
+
+            self._names = dict(
+                Instructor.objects.filter(pk__in=self.ruled_charged).values_list("pk", "full_name")
+            )
+        return self._names.get(instructor_id, "")
 
     def fingerprint(self) -> str:
         """The rules and the ruled teachers the map charges, for caches of an
@@ -458,6 +518,85 @@ def section_rule_checker(scenario_id: int) -> RuleChecker | None:
     if holder is not None:
         holder.checker = checker
     return checker
+
+
+@contextmanager
+def teaching_rules_request() -> Iterator[None]:
+    """A request scope for every scenario the request touches, only while the rules
+    are on (slice C: the views the display reads from); otherwise a pass-through
+    that opens nothing and costs nothing."""
+    if not rules_enabled():
+        yield
+        return
+    from core.services.section_teacher_assignment import request_scope
+
+    with request_scope():
+        yield
+
+
+@contextmanager
+def display_scope(scenario_id: int) -> Iterator[None]:
+    """``assignment_scope(scenario_id)`` while the rules are on (one map read for the
+    scenario's link map and the display door), else a pass-through."""
+    if not rules_enabled():
+        yield
+        return
+    from core.services.section_teacher_assignment import assignment_scope
+
+    with assignment_scope(scenario_id):
+        yield
+
+
+def display_rule_checker(scenario_id: int) -> RuleChecker | None:
+    """The rules as the workspace SHOWS them: a :class:`RuleChecker` over the map in
+    force, or None while the rules are off, no teacher the scenario can charge has a
+    rule, or no charged teacher does (``binds``); then every answer is byte-identical.
+
+    It builds its OWN checker and never reads or fills the writers' cached one
+    (``section_rule_checker``); inside a scope it keeps its own, reused only while
+    the scope's memoised map is the same object (a write changes the layout, so the
+    memo returns a new one and the checker is rebuilt)."""
+    if not rules_enabled():
+        return None
+    from core.services.section_teacher_assignment import (
+        assignment_scope,
+        load_assignment,
+        memoised_assignment,
+    )
+
+    with assignment_scope(scenario_id):
+        availability = availability_for(scenario_id)
+        if not availability:
+            return None
+        # The map the caller's own validated read just left in the scope (no second
+        # layout read per board); the first read of a scope loads it.
+        assignment = memoised_assignment(scenario_id) or load_assignment(
+            scenario_id, incomplete="collect"
+        )
+        holder = _holder(scenario_id)
+        cached = holder.display if holder is not None else None
+        if cached is not None and cached[0] is availability and cached[1] is assignment:
+            return cached[2] if cached[2].binds else None
+        charged = assignment.v2_map()
+        ruled = availability.instructor_ids
+        if not any(i in ruled for ids in charged.values() for i in ids if _is_id(i)):
+            return None  # nothing the map charges has a rule: no exemption read either
+        checker = RuleChecker(availability, charged, online_exempt_sections(scenario_id))
+        if holder is not None:
+            holder.display = (availability, assignment, checker)
+    return checker
+
+
+def unplaced_section_exempt(
+    scenario_id: int, board: Any, section_key: tuple[str, str], display_code: str
+) -> bool:
+    """The online exemption of a section NOT placed yet that a preview would put on
+    ``board`` (:func:`section_online_exempt`: the copies it already has plus that
+    board). ``section_key`` is ``(course_key or course_code, label)``."""
+    exemption = online_exemption(scenario_id)
+    online_here = exemption.lookup().is_online_course_for_board(board, display_code)
+    placed = exemption.placed_by_section().get(section_key, ())
+    return exemption.exempt(section_key[0], (*placed, online_here))
 
 
 def fixed_section_keys(assignment: Any) -> frozenset[str]:
@@ -677,6 +816,8 @@ __all__ = [
     "bound_availability",
     "cell_predicate",
     "clear_released",
+    "display_rule_checker",
+    "display_scope",
     "fixed_section_keys",
     "meetings_blocked",
     "online_everywhere",
@@ -695,4 +836,6 @@ __all__ = [
     "rules_enabled",
     "section_online_exempt",
     "section_rule_checker",
+    "unplaced_section_exempt",
+    "teaching_rules_request",
 ]
