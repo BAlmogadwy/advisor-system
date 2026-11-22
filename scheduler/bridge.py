@@ -52,6 +52,7 @@ from scheduler.solve import (
     sibling_adjacency,
     time_of_day_drift,
 )
+from scheduler.time_rules import describe_time_rule_cost, release_instructors, time_rule_cost
 from scheduler.validate import validate
 
 SOURCE_TAG = "tw_scheduler"
@@ -416,6 +417,15 @@ def build_into_scenario(
             clash_tolerance=clash_tolerance,
             **({"seed": search_seeds[0]} if seed is not None else {}),
         )
+
+    # What the instructors' teaching-time rules cost: worked out against the
+    # assignment they produced (empty, and free, with no rule), then the solve may
+    # have had to let ruled instructors go (D5) to place every class, so everything
+    # below is measured and written against the snapshot it actually solved.
+    cost_warning = describe_time_rule_cost(time_rule_cost(snapshot))
+    if cost_warning:
+        result.warnings.append(cost_warning)
+    snapshot = release_instructors(snapshot, result.released_instructors)
 
     if snapshot.low_demand_dropped:
         # Said in the WARNINGS channel, not only in the summary dict, because

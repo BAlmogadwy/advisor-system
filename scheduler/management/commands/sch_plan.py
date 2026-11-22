@@ -29,6 +29,7 @@ from scheduler.solve import (
     sibling_adjacency,
     time_of_day_drift,
 )
+from scheduler.time_rules import describe_time_rule_cost, release_instructors, time_rule_cost
 from scheduler.validate import validate
 
 
@@ -163,6 +164,12 @@ class Command(BaseCommand):
             "idle from 955 to 2700 min and sibling pairing from 43%% to 5%%, so "
             "it is OFF by default. Negative switches it off.",
         )
+        parser.add_argument(
+            "--ignore-time-rules",
+            action="store_true",
+            help="plan as if no instructor had a teaching-time rule, even where the "
+            "rules are switched on, to see what the rules cost",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
     def handle(self, *args, **options) -> None:
@@ -175,6 +182,7 @@ class Command(BaseCommand):
                 default_capacity=options["default_capacity"],
                 min_demand=options["min_demand"],
                 phase_terms=options["phase_terms"],
+                time_rules=False if options["ignore_time_rules"] else None,
             )
         except IntakeError as exc:
             raise CommandError(str(exc)) from exc
@@ -209,6 +217,14 @@ class Command(BaseCommand):
             clash_tolerance=options["clash_tolerance"],
             **plan_kwargs,
         )
+        # What the teaching-time rules cost (against the assignment they produced),
+        # then the solve may have released ruled instructors to place every class:
+        # what follows is measured against the snapshot it actually solved.
+        cost_warning = describe_time_rule_cost(time_rule_cost(snapshot))
+        if cost_warning:
+            result.warnings.append(cost_warning)
+        snapshot = release_instructors(snapshot, result.released_instructors)
+
         # Exact, not first-fit: greedy strands a class whose only legal room was
         # already spent on one that had alternatives (see tests).
         board = assign_rooms_exact(snapshot, result.board)

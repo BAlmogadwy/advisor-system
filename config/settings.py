@@ -1028,7 +1028,9 @@ TIMETABLE_ONLINE_EVENING_WINDOWS = os.getenv(
 # It needs one teacher per section (TIMETABLE_ONE_TEACHER_PER_SECTION): the rules bind
 # the section's own teacher. Online sections are exempt. Manual moves, validation and
 # the previews never read it. All of it goes through
-# ``core.services.timetable_instructor_availability``.
+# ``core.services.timetable_instructor_availability``. The clean-room ``scheduler/``
+# engine reads the same switch once, at intake (``rules_in_force``), and then solves,
+# assigns and validates against each instructor's forbidden windows.
 # Off -- or on with no rule for any teacher of the scenario -- every engine is
 # byte-identical. Optimise Current also tries to move an existing violation to an
 # allowed time (``repair_instructor_availability``); one it cannot move stays and is
