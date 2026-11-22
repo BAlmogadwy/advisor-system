@@ -709,6 +709,9 @@ def capture_instructor_schedule_after_hard_repairs(result, scenario_id, instruct
     """Record justified hard-repair day costs before optional compaction runs."""
     if not is_instructor_priority_enabled():
         return
+    # A bundle-only availability repair adds no ``repaired`` row but may still have
+    # spent a day (``spent``): the final gates cut that credit to what this board
+    # stands above the saved one, so the board must be recorded for it too.
     if not any(
         (result.get(key) or {}).get("repaired") or (result.get(key) or {}).get("unplaced")
         for key in (
@@ -716,7 +719,7 @@ def capture_instructor_schedule_after_hard_repairs(result, scenario_id, instruct
             "instructor_clash_repair",
             "instructor_availability_repair",
         )
-    ):
+    ) and not (result.get("instructor_availability_repair") or {}).get("spent"):
         return
     result["instructor_schedule_after_hard_repairs"] = instructor_schedule_metrics(
         build_section_states_for_scenario(scenario_id), instructor_map

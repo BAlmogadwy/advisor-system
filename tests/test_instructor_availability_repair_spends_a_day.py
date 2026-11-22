@@ -422,7 +422,9 @@ def _spent(days: dict | None = None, idle: dict | None = None) -> dict:
 
 
 def _blocking(before: dict, after: dict, result: dict) -> list[tuple[str, str | None]]:
-    """(metric, instructor) of every row either strict gate blocks or excepts."""
+    """(metric, instructor) of every row either strict gate blocks or excepts. Unless the
+    result says otherwise the repair left the board where this check finds it (``after``)."""
+    result = {"instructor_schedule_after_hard_repairs": after, **result}
     day = runner.optimiser_instructor_day_regression(before, after, result)
     idle = runner.optimiser_instructor_idle_regression(before, after, result)
     return [
@@ -730,9 +732,14 @@ def _stand_in_run(
     hard_idle=0,
     placements=THREE_DAYS,
     stage=None,
+    bundle_only=False,
+    late_moves=(),
 ):
     """``stage(scenario_id)`` runs inside the stand-in, after the moves, under the policy
-    scope (a later repair stage) and returns what it adds to the result."""
+    scope (a later repair stage) and returns what it adds to the result. ``hard_days``
+    None leaves out the record of the board after the hard repairs; ``bundle_only``
+    instead has the REAL optimiser helper record it for a repair that spent through a
+    bundle switch (no ``repaired`` row), and ``late_moves`` are applied after that."""
     from core.services import timetable_optimizer_v2 as optimizer
 
     scenario, board = _board(placements)
@@ -742,11 +749,14 @@ def _stand_in_run(
     )
     monkeypatch.setattr(runner, "compute_scenario_safety_summary", lambda _sid: {})
 
-    def optimise(**kwargs):
-        for code, day, start, end in moves:
+    def move(rows):
+        for code, day, start, end in rows:
             SectionPlacement.objects.filter(board=board, term_section__course_code=code).update(
                 day=day, start_time=start, end_time=end
             )
+
+    def optimise(**kwargs):
+        move(moves)
         policy = DayOffPolicy(kwargs["day_off_anchor"], BASE, "saved_board")
         result = {
             "baseline_score": list(BASE),
@@ -754,8 +764,19 @@ def _stand_in_run(
             "score_before_instructor_passes": list(before_passes),
             "day_off_policy": policy.to_dict(),
             "instructor_availability_repair": {"spent": spent},
-            "instructor_schedule_after_hard_repairs": _hard(hard_days, hard_idle),
         }
+        if bundle_only:
+            result["instructor_availability_repair"] = {
+                "repaired": [],
+                "spent": spent,
+                "weekly_pattern_search": {"evaluated": 1, "accepted": 1},
+            }
+            optimizer.capture_instructor_schedule_after_hard_repairs(
+                result, scenario.id, teacher_map
+            )
+            move(late_moves)
+        elif hard_days is not None:
+            result["instructor_schedule_after_hard_repairs"] = _hard(hard_days, hard_idle)
         if stage is not None:
             with day_off_scope(policy):
                 result.update(stage(scenario.id))
@@ -959,3 +980,70 @@ def test_the_policy_baseline_rises_only_by_what_the_final_board_still_owes(
     policy = result["instructor_schedule_metric"]["day_off_policy"]
     assert policy["availability_repair_credit"] == {"extra_days": {}, "idle_minutes": {"1": 10}}
     assert policy["teachers"]["1"]["idle_before"] == 10
+
+
+# ── a repair that spent only through a bundle switch ─────────────────────
+
+_ONE_DAY = {"extra_days": {"1": 1}, "idle_minutes": {}}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("early", "late", "blocked"),
+    [
+        (SPARE_DAY, (), False),  # the bundle switch left teacher 1 on 4 days: owed
+        ((), SPARE_DAY, True),  # it left him on 3 (it spent back a saved day): a later rise
+    ],
+    ids=["bundle-owes-the-day", "bundle-spent-back-a-saved-day"],
+)
+def test_a_bundle_only_spend_is_clamped_like_any_other(
+    policy_on, monkeypatch, early, late, blocked
+) -> None:
+    """The optimiser records the board after the hard repairs also when the repair's only
+    work was a bundle switch (no ``repaired`` row) that spent: the credit is the day the
+    board then stands above the saved one, so a later stage's rise only passes when the
+    bundle really owes it."""
+    _sc, result = _stand_in_run(
+        monkeypatch,
+        early,
+        final=BASE,
+        before_passes=BASE,
+        spent=_ONE_DAY,
+        hard_days=None,
+        bundle_only=True,
+        late_moves=late,
+    )
+
+    assert result["safety_blocked"] is blocked
+    if blocked:
+        assert [r["metric"] for r in result["safety_regression"]["regressions"]] == [
+            "instructor_spare_day_without_student_gain"
+        ]
+
+
+@pytest.mark.django_db
+def test_a_spend_without_the_record_of_the_repaired_board_is_never_credited(
+    policy_on, monkeypatch
+) -> None:
+    """Defence in depth: if the record is missing nothing shows how far above the saved
+    board the spend stands, so there is no credit and the rise blocks."""
+    _sc, result = _stand_in_run(
+        monkeypatch,
+        SPARE_DAY,
+        final=BASE,
+        before_passes=BASE,
+        spent=_ONE_DAY,
+        hard_days=None,
+    )
+
+    assert result["safety_blocked"] is True
+
+
+def test_the_credit_is_empty_for_a_spend_without_a_record_only_when_a_baseline_is_given() -> None:
+    result = _spent({"1": 1})
+
+    assert runner.availability_repair_credit(result, _week({"1": 3}, {"1": 0})) == {
+        "extra_days": {},
+        "idle_minutes": {},
+    }
+    assert runner.availability_repair_credit(result)["extra_days"] == {"1": 1}

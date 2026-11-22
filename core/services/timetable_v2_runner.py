@@ -33,7 +33,8 @@ def availability_repair_credit(
     board right after the hard repairs (``instructor_schedule_after_hard_repairs``,
     when the optimiser recorded it) still stands above ``before``: a day an earlier
     stage saved him and the repair then spent back is owed nothing, so it cannot
-    cover a later stage's rise."""
+    cover a later stage's rise. With ``before`` but no such record the credit is
+    empty (the optimiser records it whenever the repair spent)."""
     spent = (result.get("instructor_availability_repair") or {}).get("spent") or {}
     credit: dict[str, dict[str, int]] = {"extra_days": {}, "idle_minutes": {}}
     for name in credit:
@@ -41,6 +42,10 @@ def availability_repair_credit(
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
                 credit[name][str(teacher)] = value
     repaired = result.get("instructor_schedule_after_hard_repairs")
+    if before is not None and not isinstance(repaired, dict):
+        # A spend without the record of the board it left is never credited
+        # unclamped: nothing shows how far above the saved board it stands.
+        return {"extra_days": {}, "idle_minutes": {}}
     if before is not None and isinstance(repaired, dict):
         for name, key in (
             ("extra_days", "working_days_by_instructor"),
