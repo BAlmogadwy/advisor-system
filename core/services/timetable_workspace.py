@@ -48,7 +48,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -529,6 +529,51 @@ def _h15_blocked_students(shared: int, masks_a: list[int], masks_b: list[int]) -
     return 0 if _has_clash_free_section_pair(masks_a, masks_b) else shared
 
 
+def _display_rule_checker(scenario_id: int):
+    """Slice C: the teaching-time rules as the workspace SHOWS them -- the helper's own
+    display checker, or None while the flag is off, no rule binds a charged teacher
+    or nobody is charged; then every answer is byte-identical and, with the flag off,
+    no query is made. Called ONLY by :func:`detect_board_conflicts` and the previews,
+    each time after that function's existing map read, so the scope memo is filled."""
+    from core.services.timetable_instructor_availability import display_rule_checker
+
+    return display_rule_checker(scenario_id)
+
+
+def _teacher_rule_rows(checker, items: list[PlacementInfo]) -> list[dict]:
+    """One row per (placement, charged teacher whose rule that meeting breaks), sorted
+    by day, start, section and teacher. Each physical meeting is judged alone."""
+    rows: list[dict] = []
+    for item in items:
+        ids = checker.section_ids(item.course_key, item.section)
+        if not ids:
+            continue
+        for iid in checker.meeting_blocked(ids, item.day, item.start_time, item.end_time):
+            name = checker.teacher_name(iid)
+            rows.append(
+                {
+                    "ids": [item.id],
+                    "term_section_id": item.term_section_id,
+                    "instructor_id": iid,
+                    "instructor": name,
+                    "section": f"{item.course_code}-{item.section}",
+                    "day": item.day,
+                    "start": item.start_time,
+                    "end": item.end_time,
+                    "detail": f"{name}: {item.day} {item.start_time}-{item.end_time}",
+                }
+            )
+    rows.sort(
+        key=lambda r: (
+            _DAY_INDEX.get(r["day"].upper(), 99),
+            _to_minutes(r["start"]),
+            r["section"],
+            r["instructor_id"],
+        )
+    )
+    return rows
+
+
 def _publish_teacher_keys(
     link_map: Mapping[str, set[int]],
     by_presence: bool,
@@ -595,7 +640,48 @@ def detect_board_conflicts(board_id: int) -> dict:
         warning overlaps + room clashes.  ``blocked_students`` is the number
         of students left with no clash-free pair of sections (``None`` for a
         same-course overlap); :func:`compute_affected_students` reports it.
+
+        With ``TIMETABLE_INSTRUCTOR_AVAILABILITY`` on and a rule binding a
+        teacher the scenario charges, a fourth list ``teacher_rule_violations``
+        (placement ``ids``, ``term_section_id``, ``instructor_id``,
+        ``instructor``, ``section``, ``day``, ``start``, ``end``, ``detail``)
+        sits before ``summary`` -- one row per meeting outside its charged
+        teacher's teaching times, counted in ``warning`` (never ``critical``;
+        nothing is refused). Absent otherwise, byte-identical.
     """
+    with ExitStack() as stack:
+        (
+            overlaps,
+            instructor_clashes,
+            room_clashes,
+            warning_overlaps,
+            critical,
+            items,
+            scenario_id,
+        ) = _scan_board_conflicts(board_id, stack)
+        checker = _display_rule_checker(scenario_id) if scenario_id is not None else None
+        violations = _teacher_rule_rows(checker, items) if checker is not None else None
+
+    result: dict = {
+        "overlaps": overlaps,
+        "instructor_clashes": instructor_clashes,
+        "room_clashes": room_clashes,
+    }
+    if violations is not None:
+        result["teacher_rule_violations"] = violations
+    warning = warning_overlaps + len(room_clashes) + len(violations or ())
+    result["summary"] = {"critical": critical, "warning": warning, "info": 0}
+    return result
+
+
+def _scan_board_conflicts(board_id: int, stack: ExitStack) -> tuple:
+    """The conflict scan of :func:`detect_board_conflicts`: ``(overlaps,
+    instructor_clashes, room_clashes, warning overlaps, critical, items,
+    scenario id)``. With the rules on, the scenario's assignment scope is entered
+    on ``stack`` right after the board is read, so the link map and the display
+    door share one map read."""
+    from core.services.timetable_instructor_availability import display_scope
+
     items = _placements_for_conflict_checks(board_id)
 
     overlaps: list[dict] = []
@@ -621,6 +707,7 @@ def detect_board_conflicts(board_id: int) -> dict:
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
         scenario_id = board.scenario_id
+        stack.enter_context(display_scope(scenario_id))
         # Demand rows are keyed by the planner identity ("CS112::PROGRAMMING_II"),
         # so the matrix must be too: display codes match no row, which left the
         # matrix empty and every cross-course student overlap invisible.
@@ -772,14 +859,15 @@ def detect_board_conflicts(board_id: int) -> dict:
     critical_overlaps = sum(1 for o in overlaps if o.get("severity") == "critical")
     warning_overlaps = sum(1 for o in overlaps if o.get("severity") == "warning")
     critical = critical_overlaps + len(instructor_clashes)
-    warning = warning_overlaps + len(room_clashes)
-
-    return {
-        "overlaps": overlaps,
-        "instructor_clashes": instructor_clashes,
-        "room_clashes": room_clashes,
-        "summary": {"critical": critical, "warning": warning, "info": 0},
-    }
+    return (
+        overlaps,
+        instructor_clashes,
+        room_clashes,
+        warning_overlaps,
+        critical,
+        items,
+        scenario_id,
+    )
 
 
 @dataclass(frozen=True)

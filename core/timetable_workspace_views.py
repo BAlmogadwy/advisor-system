@@ -372,6 +372,21 @@ def _one_teacher_request(view):
     return wrapped
 
 
+def _teaching_rules_request(view):
+    """Teaching-time rules: a request scope for every scenario the request touches
+    (one read of the stored rows, the rules and the map per request, not per board)
+    -- only while the rules are on; otherwise the view as is."""
+
+    @functools.wraps(view)
+    def wrapped(request, *args, **kwargs):
+        from core.services.timetable_instructor_availability import teaching_rules_request
+
+        with teaching_rules_request():
+            return view(request, *args, **kwargs)
+
+    return wrapped
+
+
 def _programme_marks(scenario_id: int) -> dict | None:
     """The "mainly for programme" context for ``_placement_to_dict``, read once
     per request: None with the feature off (no placement gets the keys, as with
@@ -1788,6 +1803,7 @@ def tw_graph_status_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@_teaching_rules_request
 def tw_scenario_graph_summary_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Preview the scenario graph twin generated from Django source tables."""
     deny = _require_general_advisor(request)
@@ -1801,6 +1817,7 @@ def tw_scenario_graph_summary_view(request: HttpRequest, scenario_id: int) -> Js
 
 @login_required(login_url="login")
 @require_GET
+@_teaching_rules_request
 def tw_scenario_graph_view_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Return an embedded graph slice for the selected timetable lens."""
     deny = _require_general_advisor(request)
@@ -2222,6 +2239,7 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_GET
+@_teaching_rules_request
 def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return aggregate summary stats for a board (sections, students, etc.)."""
     deny = _require_general_advisor(request)

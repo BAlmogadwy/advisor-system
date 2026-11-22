@@ -558,24 +558,33 @@ def display_rule_checker(scenario_id: int) -> RuleChecker | None:
     memo returns a new one and the checker is rebuilt)."""
     if not rules_enabled():
         return None
-    from core.services.section_teacher_assignment import assignment_scope, load_assignment
+    from core.services.section_teacher_assignment import (
+        assignment_scope,
+        load_assignment,
+        memoised_assignment,
+    )
 
     with assignment_scope(scenario_id):
         availability = availability_for(scenario_id)
         if not availability:
             return None
-        assignment = load_assignment(scenario_id, incomplete="collect")
+        # The map the caller's own validated read just left in the scope (no second
+        # layout read per board); the first read of a scope loads it.
+        assignment = memoised_assignment(scenario_id) or load_assignment(
+            scenario_id, incomplete="collect"
+        )
         holder = _holder(scenario_id)
         cached = holder.display if holder is not None else None
         if cached is not None and cached[0] is availability and cached[1] is assignment:
-            checker = cached[2]
-        else:
-            checker = RuleChecker(
-                availability, assignment.v2_map(), online_exempt_sections(scenario_id)
-            )
-            if holder is not None:
-                holder.display = (availability, assignment, checker)
-    return checker if checker.binds else None
+            return cached[2] if cached[2].binds else None
+        charged = assignment.v2_map()
+        ruled = availability.instructor_ids
+        if not any(i in ruled for ids in charged.values() for i in ids if _is_id(i)):
+            return None  # nothing the map charges has a rule: no exemption read either
+        checker = RuleChecker(availability, charged, online_exempt_sections(scenario_id))
+        if holder is not None:
+            holder.display = (availability, assignment, checker)
+    return checker
 
 
 def fixed_section_keys(assignment: Any) -> frozenset[str]:

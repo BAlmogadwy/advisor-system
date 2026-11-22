@@ -2353,6 +2353,18 @@ def _layout_fingerprint(scenario_id: int) -> tuple:
     )
 
 
+def memoised_assignment(scenario_id: int) -> TeacherAssignment | None:
+    """The scope's last validated map of ``scenario_id`` WITHOUT reading the layout
+    again (no query); None outside a scope, inside a run's pin, or before the first
+    read. For a display read made right after a validated ``load_assignment`` with
+    no write in between (the workspace's display door)."""
+    if current_pin(scenario_id) is not None:
+        return None
+    cache = _scope_cache(scenario_id)
+    hit = cache.get("assignment") if cache is not None else None
+    return hit[1] if hit is not None else None
+
+
 def _in_mode(assignment: TeacherAssignment, incomplete: str) -> TeacherAssignment:
     """``assignment`` as a read in ``incomplete`` mode sees it: an engine read
     (``"raise"``) of a map with unknown sections raises the first one's error."""
