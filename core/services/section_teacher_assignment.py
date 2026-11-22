@@ -505,10 +505,11 @@ class _Static:
         return self.daytime_options[course_key]
 
     def teacher_options(self, course_key: str, budget, teacher: int, availability) -> tuple:
-        """The DAYTIME options of :meth:`options` as ``teacher``'s teaching-time
-        rules leave them: the placer's own per-teacher option source
-        (``timetable_autoplace.availability_section_options``, the same
-        arguments as :meth:`options`). ``()``: no legal week.
+        """EVERY daytime week of the course ``teacher``'s teaching-time rules
+        leave (fix plan D-C: the complete legal set,
+        ``timetable_autoplace.availability_complete_options``, the same arguments
+        as :meth:`options`), so the placer guard and the exact solve never miss a
+        legal week the greedy may take. ``()``: no legal week.
 
         Only a section the rules bind asks (``_with_availability``). The evening
         online-window options are every teacher's only for a section online on
@@ -524,11 +525,11 @@ class _Static:
             from core.services.timetable_autoplace import (
                 DEFAULT_LAB_SLOTS,
                 DEFAULT_SLOTS,
-                availability_section_options,
+                availability_complete_options,
             )
 
             slot_config, lab_slot_config, blocked = self.grids
-            daytime = availability_section_options(
+            daytime = availability_complete_options(
                 availability,
                 (teacher,),
                 budget.course_code,
@@ -544,10 +545,32 @@ class _Static:
         return self.teacher_placer_options[cache_key]
 
     def daytime_cells(self, course_key: str, budget) -> tuple:
-        """Every daytime option of the course as :func:`_option_cells` (what a
-        teacher no rule restricts may take: :meth:`teacher_options`' baseline)."""
+        """Every daytime week of the course as :func:`_option_cells`, complete
+        like :meth:`teacher_options` (what a teacher no rule restricts may take:
+        its baseline, so a teacher whose rules close no cell of the course's
+        grids gets no entry)."""
         if course_key not in self.daytime_option_cells:
-            self.daytime_option_cells[course_key] = _option_cells(self._daytime(course_key, budget))
+            from core.services.timetable_autoplace import (
+                DEFAULT_LAB_SLOTS,
+                DEFAULT_SLOTS,
+                availability_complete_options,
+            )
+
+            slot_config, lab_slot_config, blocked = self.grids
+            self.daytime_option_cells[course_key] = _option_cells(
+                availability_complete_options(
+                    EMPTY_AVAILABILITY,
+                    (),
+                    budget.course_code,
+                    budget.credit_hours or 3,
+                    slot_config or DEFAULT_SLOTS,
+                    lab_slot_config or DEFAULT_LAB_SLOTS,
+                    blocked or [],
+                    course_key=course_key,
+                    meeting_pattern=budget.meeting_pattern,
+                    course_options=self._daytime(course_key, budget),
+                )
+            )
         return self.daytime_option_cells[course_key]
 
     def online_everywhere(self, budget) -> bool:

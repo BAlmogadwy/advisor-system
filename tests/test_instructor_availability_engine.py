@@ -1750,7 +1750,8 @@ def test_the_greedy_feed_places_an_engine_teachers_section_in_a_mixed_period_wee
 @pytest.mark.django_db
 def test_without_the_feed_the_same_section_is_left_unplaced_by_the_rule(av_on, monkeypatch) -> None:
     """T-G2's control: the same engine map, with the greedy's feed reduced to the
-    course list, leaves the section unplaced with ``INSTRUCTOR_UNAVAILABLE``."""
+    course list and its complete legal set (tier 2, fix plan D-C) taken out,
+    leaves the section unplaced with ``INSTRUCTOR_UNAVAILABLE``."""
     from core.services import timetable_autoplace as autoplace
     from core.services.timetable_decision_trace import INSTRUCTOR_UNAVAILABLE
 
@@ -1763,6 +1764,7 @@ def test_without_the_feed_the_same_section_is_left_unplaced_by_the_rule(av_on, m
         "availability_section_options",
         lambda *args, course_options, **kwargs: course_options,
     )
+    monkeypatch.setattr(autoplace, "availability_complete_options", lambda *a, **k: [])
 
     with sta.pinned_assignment(sc.id, engine):
         result = _greedy(sc)
@@ -1779,8 +1781,10 @@ def test_without_the_feed_the_same_section_is_left_unplaced_by_the_rule(av_on, m
 
 @pytest.mark.django_db
 def test_the_placer_guard_and_the_greedy_ask_for_the_same_legal_options(av_on, monkeypatch) -> None:
-    """T-G3: the one-teacher guard (``_Static.teacher_options``) and the greedy get
-    a ruled teacher's options from the same source with the same arguments."""
+    """T-G3 (as fix plan D-C restates it): the one-teacher guard
+    (``_Static.teacher_options``) holds the COMPLETE legal set of the very
+    arguments the greedy's per-teacher feed is asked with, so it holds every
+    option of that feed and every week the greedy's tier 2 may take."""
     import sys
 
     from core.services import timetable_autoplace as autoplace
@@ -1792,16 +1796,18 @@ def test_the_placer_guard_and_the_greedy_ask_for_the_same_legal_options(av_on, m
 
     def spy(*args, **kwargs):
         out = real(*args, **kwargs)
-        seen.setdefault(sys._getframe(1).f_code.co_name, []).append(out)
+        seen.setdefault(sys._getframe(1).f_code.co_name, []).append((args, kwargs, out))
         return out
 
     monkeypatch.setattr(autoplace, "availability_section_options", spy)
     _greedy(sc)
 
-    (greedy,) = seen["auto_place_board"]
+    ((args, kwargs, greedy),) = seen["auto_place_board"]
     static = sta._load_static(sc.id)
     guard = static.teacher_options(key, static.budgets[key], a.pk, helper.availability_for(sc.id))
-    assert greedy and sta._option_cells(greedy) == guard
+    complete = sta._option_cells(autoplace.availability_complete_options(*args, **kwargs))
+    assert greedy and set(sta._option_cells(greedy)) < set(guard)
+    assert guard == complete
 
 
 @pytest.mark.django_db

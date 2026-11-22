@@ -67,7 +67,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
-from itertools import combinations
+from itertools import combinations, product
 
 from django.db.models import Q
 
@@ -312,6 +312,61 @@ def availability_section_options(
     )
 
 
+def availability_complete_options(
+    availability,
+    instructor_ids,
+    display_code: str,
+    credit_hours: int,
+    slot_config: list[dict] | None,
+    lab_slot_config: list[dict] | None,
+    blocked_slots: list[dict] | None,
+    *,
+    course_key: str,
+    meeting_pattern: str,
+    course_options: list[list[dict]],
+) -> list[list[dict]]:
+    """EVERY weekly option of the section that none of ``instructor_ids`` is
+    forbidden to teach (fix plan D-C): :func:`availability_section_options`'
+    options first, in their order, then each other legal week (the product, per
+    day combination, of the open cells of each meeting's grid on its day,
+    de-duplicated). The same-index generator can miss a legal week (a teacher
+    allowed SUN 09:00-11:45 and TUE 13:00-15:45 never gets SUN 10:30 + TUE
+    14:30); this set cannot. ``instructor_ids`` may be empty: then every week of
+    the course. A meeting-policy course's legal bundles are already complete.
+    The greedy asks it only when the per-teacher options leave nothing
+    placeable; the one-teacher assignment (``_Static.teacher_options``) always."""
+    from core.services.timetable_instructor_availability import cell_predicate
+
+    feed = availability_section_options(
+        availability,
+        instructor_ids,
+        display_code,
+        credit_hours,
+        slot_config,
+        lab_slot_config,
+        blocked_slots,
+        course_key=course_key,
+        meeting_pattern=meeting_pattern,
+        course_options=course_options,
+    )
+    if get_course_meeting_policy(display_code, course_key):
+        return feed
+    seen = {_meeting_signature(option) for option in feed}
+    extra = [
+        option
+        for option in _generate_meeting_options(
+            get_meeting_pattern(credit_hours, meeting_pattern=meeting_pattern),
+            slot_config or [],
+            lab_slot_config,
+            blocked_slots,
+            cell_blocked=cell_predicate(availability, instructor_ids),
+            complete=True,
+        )
+        if _meeting_signature(option) not in seen
+    ]
+    return [*feed, *extra]
+
+
 # ── Default Slots ────────────────────────────────────────────────
 # Five 75-minute teaching slots spanning the day, with a gap from 11:45 to
 # 13:00 for the midday break.  A scenario may override these via its
@@ -418,6 +473,7 @@ def _generate_meeting_options(
     blocked_slots: list[dict] | None = None,
     *,
     cell_blocked: Callable[[str, str, str], bool] | None = None,
+    complete: bool = False,
 ) -> list[list[dict]]:
     """Generate every valid way to schedule a course's weekly meetings.
 
@@ -439,6 +495,13 @@ def _generate_meeting_options(
         ``(day, start, end) -> bool``: a cell the section's teacher may not
         teach (teaching-time rules), closed like a blocked slot. ``None`` keeps
         the generator exactly as without rules.
+    complete : bool
+        Instead of the same-index heuristic (each meeting takes the first
+        meeting's slot index, else the FIRST open cell of its day), every open
+        cell of each meeting's grid on its day: for each day combination the
+        product over the meetings, de-duplicated (fix plan D-C). Only the
+        teaching-time rules ask for it (:func:`availability_complete_options`);
+        it never changes the default list.
 
     Returns
     -------
@@ -520,6 +583,30 @@ def _generate_meeting_options(
         pattern_variants = [pattern]
 
     all_options: list[list[dict]] = []
+
+    if complete:
+        seen: set[tuple] = set()
+        for current_pattern in pattern_variants:
+            grids = [lab_positions if d > 75 else lecture_positions for d in current_pattern]
+            for days in day_combos:
+                open_cells = [
+                    [pos for pos in grids[m_idx] if _open(days[m_idx], pos)]
+                    for m_idx in range(num_meetings)
+                ]
+                for cells in product(*open_cells):
+                    signature = tuple(
+                        (days[m_idx], pos[1], pos[2]) for m_idx, pos in enumerate(cells)
+                    )
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    all_options.append(
+                        [
+                            {"day": days[m_idx], "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
+                            for m_idx, pos in enumerate(cells)
+                        ]
+                    )
+        return all_options
 
     for current_pattern in pattern_variants:
         slot_options_per_duration = [
@@ -793,6 +880,10 @@ DAY_RUN_GUARD_RANK = 10**6
 # persist guard and the run gates compare that count). An ENGINE teacher's
 # forbidden option is filtered out instead (``INSTRUCTOR_UNAVAILABLE``).
 AVAILABILITY_GUARD_RANK = 10**12
+
+#: Marks the end of an option tier in ``auto_place_board``'s candidate list (fix
+#: plan D-C, D-B): never an option, never scored.
+_NEXT_TIER = object()
 
 
 def _option_is_day_run(option: list[dict]) -> bool:
@@ -1697,6 +1788,7 @@ def auto_place_board(
     av_charged: dict[str, tuple[int, ...]] = {}
     av_fixed: frozenset[str] = frozenset()
     av_legal_cache: dict[tuple[str, tuple[int, ...]], list] = {}
+    av_complete_cache: dict[tuple[str, tuple[int, ...]], list] = {}
     av_exemption = None  # the scope's OnlineExemption, asked on first need
     av_placed_online: dict[tuple[str, str], tuple[bool, ...]] | None = None
     availability_ranked_last: list[dict] = []
@@ -1979,6 +2071,30 @@ def auto_place_board(
             return SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx
         return None
 
+    def _complete_legal(cd: dict, display_code: str, ids: tuple[int, ...]) -> list:
+        """Every legal week of ``cd``'s course for ``ids`` (fix plan D-C, cached per
+        board). An online-window course's and a meeting-policy course's
+        per-teacher options are complete already (filters of their own lists)."""
+        cache_key = (cd["code"], ids)
+        if cache_key not in av_complete_cache:
+            av_complete_cache[cache_key] = (
+                []
+                if cd["online_windows"] or cd.get("meeting_policy")
+                else availability_complete_options(
+                    availability,
+                    ids,
+                    display_code,
+                    cd["credit_hours"],
+                    slot_config,
+                    lab_slot_config,
+                    scenario.blocked_slots if scenario.blocked_slots else [],
+                    course_key=cd["code"],
+                    meeting_pattern=cd["budget"].meeting_pattern,
+                    course_options=cd["all_options"],
+                )
+            )
+        return av_complete_cache[cache_key]
+
     def _av_online_everywhere(code: str, sec_label: str) -> bool:
         """The section, about to be placed on this board where its course is
         online, is exempt from its teachers' rules (fix plan D-A,
@@ -2175,7 +2291,29 @@ def auto_place_board(
             room_check_interval = meeting_policy is None and (
                 shape_for(budget.meeting_pattern, cd["credit_hours"]) is not None
             )
-            for option in all_options:
+
+            # Teaching-time rules: the options above are tier 1. A marker after
+            # them is met once tier 1 is scored; only when tier 1 left no LEGAL
+            # placeable option (none placed, or a fixed teacher's best one is
+            # forbidden) does it append every other legal week of the complete
+            # set (tier 2, fix plan D-C). A section tier 1 places legally is
+            # placed exactly as before. Without a ruled teacher: the list itself.
+            candidates = [*all_options, _NEXT_TIER] if av_ids else all_options
+            av_tier = 1
+            for option in candidates:
+                if option is _NEXT_TIER:
+                    if av_tier == 1 and (
+                        best_option is None
+                        or (av_is_fixed and option_blocked(availability, av_ids, best_option))
+                    ):
+                        av_tier = 2
+                        tried = {_meeting_signature(o) for o in all_options}
+                        candidates.extend(
+                            o
+                            for o in _complete_legal(cd, display_code, av_ids)
+                            if _meeting_signature(o) not in tried
+                        )
+                    continue
                 rejection = _hard_rejection(option, code, sec_label, meeting_policy)
                 if rejection is not None:
                     rejection_code, rejection_ctx = rejection
