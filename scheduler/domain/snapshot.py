@@ -202,6 +202,17 @@ class Snapshot:
             # `allowed_starts` above, but a reader should not have to derive it.
             "term_half_days": list(self.term_half_days),
         }
+        # Teaching-time rules change which boards are legal, so two runs that
+        # differ in them are solving different instances (N8). The key is added
+        # ONLY when some instructor carries a rule, so every snapshot without
+        # one keeps the fingerprint it had before the rules existed.
+        forbidden = sorted(
+            [i.id, [list(window) for window in i.forbidden]]
+            for i in self.instructors
+            if i.forbidden
+        )
+        if forbidden:
+            payload["instructor_time_rules"] = forbidden
         blob = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
         return hashlib.sha256(blob.encode()).hexdigest()
 

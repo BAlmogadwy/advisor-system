@@ -28,6 +28,7 @@ from scheduler.domain import MeetingKind, Snapshot
 # GSE2 and GSE3, every one of which appears in the live plan — and it silently
 # disagreed with the rule used elsewhere. One question, one answer.
 from scheduler.intake import is_placeholder_code  # noqa: E402
+from scheduler.time_rules import no_legal_week_offerings  # noqa: E402
 
 
 class Severity(str, Enum):
@@ -352,6 +353,36 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
             },
         )
     )
+
+    # ── 5b. Teaching-time rules that leave an instructor no legal week ───────
+    # A rule never blocks the build: such an instructor simply is not given the
+    # course (the next eligible one is, or it stays unassigned). But "eligible"
+    # then means nothing for him, and whoever set the rule should be told.
+    stuck = no_legal_week_offerings(snapshot)
+    if stuck:
+        add(
+            Finding(
+                Severity.WARNING,
+                "INSTRUCTOR_TIME_RULES_NO_WEEK",
+                f"{len(stuck)} instructor(s) have teaching-time rules that leave no legal "
+                f"week for a course they are eligible to teach, so they will not be given "
+                f"it: "
+                + "; ".join(
+                    f"{instructor.name}: " + ", ".join(sorted(o.course_code for o in offerings))
+                    for instructor, offerings in stuck
+                ),
+                {
+                    "instructors": [
+                        {
+                            "instructor_id": instructor.id,
+                            "name": instructor.name,
+                            "courses": sorted(o.course_code for o in offerings),
+                        }
+                        for instructor, offerings in stuck
+                    ]
+                },
+            )
+        )
 
     # ── 6. Elective placeholders masquerading as offerings ─────────────────
     # A placeholder (AI1, DS2, CS1 …) is a slot in the plan, not a teachable

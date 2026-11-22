@@ -4380,7 +4380,9 @@ def test_only_the_flags_module_and_the_helper_read_the_flag() -> None:
 def test_only_the_automatic_stages_and_the_semi_automatic_writers_ask_for_the_rules() -> None:
     """Manual moves, validation, the previews, the views, exports and the
     scheduler package never ask. B2 adds the runner (its gate row and report read
-    the persisted board) and the report module."""
+    the persisted board) and the report module. The scheduler package has no
+    stage that asks either: it reads the stored rules once, at intake, through
+    the loader and the switch pinned in ``DOOR_CALLERS`` below (slice D)."""
     assert _av_sources_matching(ASKS) == {
         "core/services/timetable_instructor_availability.py",
         "core/services/timetable_instructor_availability_report.py",
@@ -4455,6 +4457,7 @@ RULE_DOORS = frozenset(
         "availability_for",
         "section_rule_checker",
         "rules_enabled",
+        "rules_in_force",
         "bound_availability",
         "load_instructor_availability",
         "load_time_rules",
@@ -4528,7 +4531,14 @@ DOOR_CALLERS = {
     "bound_availability": {
         "core/services/timetable_candidate_eval.py::evaluate_generated_timetable_candidate",
     },
-    "load_instructor_availability": set(),
+    # Slice D: the clean-room scheduler loads the rules ONCE, when it builds a
+    # snapshot (``Instructor.forbidden``), and asks the switch there too through
+    # ``rules_in_force`` (the classic ``rules_enabled`` behind a seam, because
+    # ``scheduler/`` must never import a ``timetable_*`` module). Nothing else in
+    # the package may open either door: the solver and the checkers read only the
+    # snapshot.
+    "rules_in_force": {"scheduler/intake.py::build_snapshot"},
+    "load_instructor_availability": {"scheduler/intake.py::build_snapshot"},
     "load_time_rules": {"core/instructor_views.py::_time_rule_summaries"},  # the rules editor
 }
 

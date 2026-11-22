@@ -1333,6 +1333,46 @@ day for a tighter timetable is a question about people, not about search.
 
 ---
 
+### D22 — An instructor's teaching-time rules are hard here too, and never cost a class
+
+`InstructorTimeRule` (unavailable / available-only windows per instructor) is
+honoured by the classic engine behind `TIMETABLE_INSTRUCTOR_AVAILABILITY`. This
+engine now reads the same switch once, at intake (`rules_in_force()`, the classic
+`rules_enabled()` behind a seam, because `scheduler/` may not import a
+`timetable_*` module), and carries each instructor's merged forbidden windows on
+`Instructor.forbidden`. Nothing else in the package touches the database or the
+flag.
+
+- **Solver.** A section's meetings never take a cell that overlaps its
+  instructor's forbidden windows: the cells are pruned at the source (whole
+  bundles for an institutional pattern), so no constraint is added. Online
+  meetings are exempt. Off, or with no rule stored, the model, the boards, the
+  objective values, the assignment and the snapshot fingerprint are what they
+  were (checked against master's code under a fixed hash seed).
+- **Assignment.** A ruled instructor is given a section only if everything he
+  holds, with it, has a legal week inside his allowed time. That is decided by
+  running the solver's own model on just his sections (`has_legal_week`), not by
+  a second statement of its rules. A section he cannot take goes to the next
+  eligible instructor or stays unassigned (D5).
+- **Safety net.** A rule is a statement about who may teach, never a reason a class
+  goes unplaced or a build fails. If the solve has no timetable, or leaves a meeting
+  unplaced that the same problem with the ruled instructors released places,
+  `plan()` releases their sections and solves again, and names them in a warning
+  (`SolveResult.released_instructors`; callers measure and persist against the
+  released snapshot). A portfolio never ranks such a run above one that kept every
+  assignment.
+- **Checked and reported.** New hard rule `H_INSTRUCTOR_TIME` in the rulebook (the
+  rulebook fingerprint changes); the naive reference board honours the rules; the
+  bridge and `sch_plan` warn what the rules cost each instructor (the sections he
+  would have taught without them), `readiness` warns about an instructor whose rules
+  leave no legal week for a course he is eligible for, and `sch_plan
+  --ignore-time-rules` plans as if there were none.
+
+Not done: the rules do not steer which instructor is preferred, and an unavoidable
+conflict is resolved by releasing instructors, not by choosing whose rule to bend.
+
+---
+
 ### On making the search better — what was tried, and what it was worth
 
 The pinning experiment behind D17 also produced the clearest evidence we have

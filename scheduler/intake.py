@@ -415,8 +415,15 @@ def build_snapshot(
     phase_terms: bool = False,
     grid: Grid | None = None,
     meeting_patterns: Mapping[str, str] | None = None,
+    time_rules: bool | None = None,
 ) -> Snapshot:
     """Assemble an immutable, fingerprinted snapshot for one gender cohort.
+
+    ``time_rules`` says whether the stored per-instructor teaching-time rules
+    are loaded onto the instructors (``Instructor.forbidden``): ``True`` loads
+    them, ``False`` never queries, and ``None`` (the default) asks whether the
+    rules are in force at all — the classic engine's own switch, so both engines
+    obey one setting.
 
     ``meeting_patterns`` is classic Generate's decision on each course's weekly
     meetings, ``{course_key: meeting_pattern}`` for every budget of the scenario
@@ -1036,12 +1043,36 @@ def build_snapshot(
     instructor_names = {
         row.id: row.full_name for row in InstructorRow.objects.filter(id__in=list(eligible) or [0])
     }
+    # Teaching-time rules (`InstructorTimeRule`): ONE query for the snapshot's
+    # instructors, and none at all when the rules are off. `None` follows the
+    # same switch the classic engine reads; True/False are explicit (tests,
+    # `sch_plan --ignore-time-rules`). The pure module is the single source of
+    # what a rule means; this only carries its answer onto the snapshot.
+    forbidden_windows: dict[int, tuple[tuple[int, int, int], ...]] = {}
+    if time_rules is None:
+        from core.services.instructor_availability import rules_in_force
+
+        time_rules = rules_in_force()
+    if time_rules and eligible:
+        from core.services.instructor_availability import (
+            DAY_CODES,
+            load_instructor_availability,
+        )
+
+        availability = load_instructor_availability(sorted(eligible))
+        for iid in sorted(availability.instructor_ids):
+            forbidden_windows[iid] = tuple(
+                (day, start, end)
+                for day in range(len(DAY_CODES))
+                for start, end in availability.forbidden(iid, day)
+            )
     instructors = tuple(
         Instructor(
             id=iid,
             name=instructor_names.get(iid, f"instructor:{iid}"),
             eligible_offerings=frozenset(oids),
             max_sections_by_offering=tuple(sorted(max_by_offering.get(iid, {}).items())),
+            forbidden=forbidden_windows.get(iid, ()),
         )
         for iid, oids in sorted(eligible.items())
     )

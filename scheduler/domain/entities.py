@@ -189,6 +189,13 @@ class Instructor:
     #: offerings whose staffing row carries a number (empty: none does). A
     #: limit replaces the D10 cap for that instructor on that offering.
     max_sections_by_offering: tuple[tuple[OfferingId, int], ...] = ()
+    #: ``((day_index, start_minute, end_minute), ...)`` merged and sorted: the
+    #: windows in which this instructor may NOT teach (empty: no rule), days
+    #: 0..4 = SUN..THU, half-open like every window here. A campus meeting that
+    #: overlaps one of them is illegal for any section this instructor holds
+    #: (an online meeting is exempt). Loaded at intake from the stored teaching
+    #: -time rules; this tuple is all the domain and the solver ever read.
+    forbidden: tuple[tuple[int, int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
