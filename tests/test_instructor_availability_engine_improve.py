@@ -635,3 +635,130 @@ def test_every_repair_read_and_apply_path_reads_the_rules_at_most_once(av_on, ro
 
     assert max(reads.values()) <= 1, reads
     assert reads["repair_run_detail"] == 1, reads  # the flag and one teacher are on
+
+
+# ── D-P improvement:F2: the SECOND section of a swap, leg B of a chain ───
+
+P_SUN_AM = _pat("p_sun_am", [(SUN, AM)])
+P_SUN_PM = _pat("p_sun_pm", [(SUN, PM)])
+P_MON_AM = _pat("p_mon_am", [(MON, AM)])
+P_MON_PM = _pat("p_mon_pm", [(MON, PM)])
+C_LOCKED = _pat("c_locked", [(SUN, AM)], family="c")
+#: Only B is ruled (teacher 7, no mornings); A has no teacher.
+B_MAP = {"B": frozenset({7})}
+
+
+def _second_section_board(a, b):
+    """A (unruled) clashes with the locked C on SUN 09:00 for the one student."""
+    sections = {"A": _sec("A", a), "B": _sec("B", b), "C": _sec("C", C_LOCKED)}
+    catalog = {"fam": [P_SUN_AM, P_SUN_PM, P_MON_AM, P_MON_PM], "c": [C_LOCKED]}
+    profiles = {"s": StudentProfile("s", "AI", ["A", "C"], RiskTier.C, 0)}
+    baseline = evaluate_generated_timetable_candidate(
+        "baseline", list(sections.values()), profiles, {}, B_MAP
+    )
+    return sections, catalog, profiles, baseline
+
+
+@pytest.mark.parametrize("priority", [True, False], ids=["priority-on", "priority-off"])
+@RULES_OR_EMPTY
+def test_the_second_section_of_a_local_search_swap_is_judged(
+    settings, monkeypatch, rules, priority
+) -> None:
+    """improvement:F2: the one swap moves A (unruled) out of SUN 09:00 and B
+    (teacher 7, no mornings) INTO it. B is the swap's second section; the swap is
+    refused (control: an empty availability takes it). With instructor priority
+    off the evaluator's veto returns early, so only the kernel can refuse it."""
+    from core.services import timetable_local_search_v2 as local_search
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority
+    sections, catalog, profiles, baseline = _second_section_board(P_SUN_AM, P_SUN_PM)
+    swap = TimetableMove("swap", "A", "p_sun_am", "p_sun_pm", "B", "p_sun_pm", "p_sun_am")
+    monkeypatch.setattr(local_search, "generate_all_repattern_moves", lambda *a, **k: [])
+    monkeypatch.setattr(local_search, "generate_swap_moves", lambda *a, **k: [swap])
+
+    result = local_search.diagnostic_driven_local_search(
+        baseline,
+        sections,
+        catalog,
+        profiles,
+        {},
+        locked_section_ids={"C"},
+        max_iterations=1,
+        section_instructor_ids=B_MAP,
+        instructor_availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )
+
+    if rules:
+        assert result is baseline
+        assert (sections["A"].pattern_id, sections["B"].pattern_id) == ("p_sun_am", "p_sun_pm")
+    else:
+        assert result is not baseline
+        assert (sections["A"].pattern_id, sections["B"].pattern_id) == ("p_sun_pm", "p_sun_am")
+
+
+@pytest.mark.parametrize("priority", [True, False], ids=["priority-on", "priority-off"])
+@RULES_OR_EMPTY
+def test_leg_b_of_a_chain_is_judged(settings, monkeypatch, rules, priority) -> None:
+    """improvement:F2: leg A frees A from the locked C (A is unruled); leg B takes
+    B (teacher 7, no mornings) from MON 13:00 into MON 09:00. The chain is rolled
+    back whole (control: an empty availability takes it)."""
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority
+    sections, catalog, profiles, baseline = _second_section_board(P_SUN_AM, P_MON_PM)
+    chain = chains.ChainMove(
+        TimetableMove("repattern", "A", "p_sun_am", "p_sun_pm"),
+        TimetableMove("repattern", "B", "p_mon_pm", "p_mon_am"),
+    )
+    monkeypatch.setattr(chains, "generate_chain_2_moves", lambda *a, **k: [chain])
+
+    result = chains.chain_local_search(
+        baseline,
+        sections,
+        catalog,
+        profiles,
+        {},
+        locked_section_ids={"C"},
+        max_iterations=1,
+        section_instructor_ids=B_MAP,
+        instructor_availability=NO_MORNINGS if rules else EMPTY_AVAILABILITY,
+    )
+
+    if rules:
+        assert result is baseline
+        assert (sections["A"].pattern_id, sections["B"].pattern_id) == ("p_sun_am", "p_mon_pm")
+    else:
+        assert result is not baseline
+        assert (sections["A"].pattern_id, sections["B"].pattern_id) == ("p_sun_pm", "p_mon_am")
+
+
+# ── D-P repairs:R2: an APPLIED recovery pass while a rule binds ──────────
+
+
+@pytest.mark.django_db
+def test_the_recovery_runner_keeps_a_legal_pass_while_a_rule_binds(settings, monkeypatch) -> None:
+    """repairs:R2: teacher 7 (charged with SOFT) may not teach on THU, so a rule
+    binds the run; the search moves SOFT from SUN 09:00 (clashing with the locked
+    CORE) to SUN 10:30, which he may teach. The persisted guard compares
+    0 > 0: the pass is APPLIED (a '>=' guard would roll back every pass)."""
+    from core.services import timetable_secondary_recovery_runner as runner
+    from tests.test_instructor_availability_engine import _recovery_scenario
+
+    scenario, soft = _recovery_scenario(settings, monkeypatch)
+    _inject(monkeypatch, _av((7, KIND_UNAVAILABLE, ("THU",), 0, 24 * 60)))
+    profiles = {"s": StudentProfile("s", "CS", ["CORE", "SOFT"], RiskTier.C, 0)}
+
+    report = runner.run_secondary_recovery_for_scenario(
+        scenario.id,
+        {},
+        profiles,
+        {},
+        {"SOFT_M1": frozenset({7})},
+        {"CORE": "T1", "SOFT": "T3"},
+    )
+
+    soft.refresh_from_db()
+    assert report["applied"]
+    assert report.get("stop_reason") != "persistence_guard_rejected"
+    assert "instructor_availability_violations" not in [
+        f.get("metric") for f in report.get("regressions") or []
+    ]
+    assert soft.start_time == "10:30"
