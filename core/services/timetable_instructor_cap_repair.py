@@ -1250,10 +1250,14 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     (``improve_fixed_course_patterns(..., repair_availability=True)``). The
     pass never unplaces, never moves a frozen (locked, external, divergent)
     meeting, skips online-exempt sections, and never makes a move the
-    instructor-week gate blocks (a teacher keeps one day off): when the only
-    legal cells would cost a teacher his last day off, the meeting stays and is
-    reported under ``locked_blocked`` with reason ``needs_extra_working_day``.
-    A rule no week can meet is ``unavoidable``. A no-op returning
+    instructor-week gate blocks (a teacher keeps one day off): when every legal
+    cell is one the gate blocks, the meeting stays and is reported under
+    ``locked_blocked`` with the reason ``needs_last_day_off`` (every legal cell
+    leaves a teacher working all five days), ``needs_extra_working_day`` (the
+    legal cells are all on days the teacher does not work now, and the gate
+    keeps those days: a spare day with no student gain, or the saved week of an
+    Optimise Current run) or ``instructor_week_gate`` (anything else it blocks,
+    such as an idle rise). A rule no week can meet is ``unavoidable``. A no-op returning
     ``enabled: False`` when no rule binds a teacher of the scenario."""
     report: dict = {
         "enabled": False,
@@ -1281,6 +1285,7 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     from core.services.timetable_fixed_pattern_search import improve_fixed_course_patterns
     from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimisation_policy import (
+        MAX_WORKING_DAYS,
         instructor_schedule_metrics,
         week_move_breaks_gate,
     )
@@ -1518,19 +1523,32 @@ def repair_instructor_availability(scenario_id: int) -> dict:
             teacher_now = instructor_schedule_metrics(states, cap_map)
             score_now = _score()
             allowed = []
+            gated: list[tuple[str, bool]] = []  # (day, would work all five days)
+            old_days = teacher_now.get("working_days_by_instructor") or {}
             for day2, s2, e2 in hard:
                 trial = _trial_score_and_metrics(p, day2, s2, e2)
                 if trial is None:
                     continue
                 score, metrics = trial
                 if week_move_breaks_gate(teacher_now, score_now, metrics, score):
+                    gated.append(
+                        (
+                            day2,
+                            any(
+                                int(days) > MAX_WORKING_DAYS >= int(old_days.get(teacher, 0))
+                                for teacher, days in (
+                                    metrics.get("working_days_by_instructor") or {}
+                                ).items()
+                            ),
+                        )
+                    )
                     continue
                 allowed.append((day2, s2, e2, score))
             if not hard:
                 report["locked_blocked"].append(_row(p, "no_legal_slot_preserving_duration"))
                 continue
             if not allowed:
-                report["locked_blocked"].append(_row(p, "needs_extra_working_day"))
+                report["locked_blocked"].append(_row(p, _week_gate_reason(gated, works)))
                 continue
             allowed.sort(key=lambda c: (not works[c[0]], WEEKDAYS.index(c[0]), c[1]))
             best = None
@@ -1600,6 +1618,17 @@ def repair_instructor_availability(scenario_id: int) -> dict:
         report["remaining_violations"],
     )
     return report
+
+
+def _week_gate_reason(gated: list[tuple[str, bool]], works: dict[str, bool]) -> str:
+    """Why the instructor-week gate refused every legal cell of a meeting.
+    ``gated`` lists each refused cell as ``(day, would take a fifth day)``;
+    ``works`` says which days the teacher works now."""
+    if gated and all(fifth for _day, fifth in gated):
+        return "needs_last_day_off"
+    if gated and not any(works.get(day) for day, _fifth in gated):
+        return "needs_extra_working_day"
+    return "instructor_week_gate"
 
 
 def _blocked_keys(scenario):
