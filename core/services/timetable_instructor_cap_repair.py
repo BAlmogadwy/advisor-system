@@ -1249,16 +1249,25 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     same-course overlap and no cap breach; English bundles move whole
     (``improve_fixed_course_patterns(..., repair_availability=True)``). The
     pass never unplaces, never moves a frozen (locked, external, divergent)
-    meeting, skips online-exempt sections, and never makes a move the
-    instructor-week gate blocks (a teacher keeps one day off): when every legal
-    cell is one the gate blocks, the meeting stays and is reported under
-    ``locked_blocked`` with the reason ``needs_last_day_off`` (every legal cell
-    leaves a teacher working all five days), ``needs_extra_working_day`` (the
-    legal cells are all on days the teacher does not work now, and the gate
-    keeps those days: a spare day with no student gain, or the saved week of an
-    Optimise Current run) or ``instructor_week_gate`` (anything else it blocks,
-    such as an idle rise). A rule no week can meet is ``unavoidable``. A no-op returning
-    ``enabled: False`` when no rule binds a teacher of the scenario."""
+    meeting, skips online-exempt sections, and never takes a teacher's last day
+    off (no teacher ends on more than
+    ``MAX_WORKING_DAYS`` days who was not there before). Fixing a violation may
+    cost a teacher an extra working day or some idle time (owner, 2026-11-22),
+    in two tiers. Tier 0: the cells the instructor-week gate
+    (``week_move_breaks_gate``) allows, chosen exactly as before. Tier 1, only
+    when tier 0 is empty: the cells the gate refuses that cost no last day off,
+    chosen by the fewest working days added (summed over teachers), then the
+    smallest idle-minute rise, then the tier-0 ordering. A tier-1 row in
+    ``repaired`` carries ``cost`` (``extra_days`` and ``idle_minutes`` by
+    teacher, non-zero entries only). ``spent`` (present only when something rose)
+    is the per-teacher total the whole pass added, bundle pass included; the
+    runner credits it to the teachers' baselines in its final gates. When every
+    legal cell takes a last day off the meeting stays and is reported under
+    ``locked_blocked`` with the reason ``needs_last_day_off``; the reason
+    ``instructor_week_gate`` is left for legal cells that could not be measured
+    at all (the section has no state to try them on). A rule no week can meet is
+    ``unavoidable``. A no-op returning ``enabled: False`` when no rule binds a
+    teacher of the scenario."""
     report: dict = {
         "enabled": False,
         "detected": [],
@@ -1286,6 +1295,9 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimisation_policy import (
         instructor_schedule_metrics,
+        instructor_spend,
+        spend_is_empty,
+        spend_order_key,
         takes_last_day_off,
         week_move_breaks_gate,
     )
@@ -1300,6 +1312,13 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     report["weekly_pattern_search"] = improve_fixed_course_patterns(
         scenario_id, repair_availability=True
     )
+    # The bundle pass runs before the per-meeting loop measures its own start, so
+    # what it spent is measured from its own before/after (present when it switched).
+    # They are taken out of the report here: only ``spent_switches`` (a bundle that
+    # cost something) is added to what the report held before this change.
+    bundle_pass = report["weekly_pattern_search"]
+    pass_start = bundle_pass.pop("instructor_before", None)
+    pass_end = bundle_pass.pop("instructor_after", None)
     scenario = TimetableScenario.objects.get(id=scenario_id)
     day_spread_on = is_section_day_spread_enabled()
     cap_map = build_section_instructor_map_for_scenario(scenario_id)
@@ -1382,6 +1401,10 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     )
     report["detected"] = [_row(p) for p in violating]
     if not violating:
+        if pass_start is not None:
+            spent = instructor_spend(pass_start, pass_end)
+            if not spend_is_empty(spent):
+                report["spent"] = spent
         return report
 
     static = _static(scenario_id)
@@ -1509,7 +1532,9 @@ def repair_instructor_availability(scenario_id: int) -> dict:
                 continue
             if get_course_meeting_policy(_display_code(p.term_section)):
                 # A whole bundle moves or stays (the pass above): what is still
-                # forbidden here has no legal bundle the week gate allows.
+                # forbidden here has no legal bundle that is clash-free, within the
+                # cap and free of a teacher's last day off (a bundle that only costs
+                # days or idle was taken by the pass above, cheapest first).
                 report["locked_blocked"].append(_row(p, "no_legal_bundle"))
                 continue
             if _no_legal_week(p):
@@ -1523,21 +1548,34 @@ def repair_instructor_availability(scenario_id: int) -> dict:
             teacher_now = instructor_schedule_metrics(states, cap_map)
             score_now = _score()
             allowed = []
-            gated: list[tuple[str, bool]] = []  # (day, would work all five days)
+            # Cells the week gate refuses that cost no last day off (tier 1), each
+            # with what it would cost; ``refused`` counts every refused cell.
+            paid: list[tuple[tuple, dict, tuple]] = []
+            refused = 0
             for day2, s2, e2 in hard:
                 trial = _trial_score_and_metrics(p, day2, s2, e2)
                 if trial is None:
                     continue
                 score, metrics = trial
                 if week_move_breaks_gate(teacher_now, score_now, metrics, score):
-                    gated.append((day2, takes_last_day_off(teacher_now, metrics)))
+                    refused += 1
+                    if not takes_last_day_off(teacher_now, metrics):
+                        cost = instructor_spend(teacher_now, metrics)
+                        paid.append((spend_order_key(cost), cost, (day2, s2, e2, score)))
                     continue
                 allowed.append((day2, s2, e2, score))
             if not hard:
                 report["locked_blocked"].append(_row(p, "no_legal_slot_preserving_duration"))
                 continue
+            cell_costs: dict[tuple[str, str, str], dict] | None = None
+            if not allowed and paid:
+                # Tier 1: the cheapest refused cells (fewest days added, then least
+                # idle), the tier-0 ordering and score choice below among equals.
+                cheapest = min(key for key, _cost, _cell in paid)
+                allowed = [cell for key, _cost, cell in paid if key == cheapest]
+                cell_costs = {cell[:3]: cost for key, cost, cell in paid if key == cheapest}
             if not allowed:
-                report["locked_blocked"].append(_row(p, _week_gate_reason(gated, works)))
+                report["locked_blocked"].append(_row(p, _week_gate_reason(refused)))
                 continue
             allowed.sort(key=lambda c: (not works[c[0]], WEEKDAYS.index(c[0]), c[1]))
             best = None
@@ -1574,13 +1612,14 @@ def repair_instructor_availability(scenario_id: int) -> dict:
                 daily_count[(iid, old_day)] = daily_count.get((iid, old_day), 0) - 1
                 daily_count[(iid, day2)] = daily_count.get((iid, day2), 0) + 1
             moved_ids |= set(iid_set)
-            report["repaired"].append(
-                {
-                    **_row(p),
-                    "from": f"{old_day} {old_start}-{old_end}",
-                    "to": f"{day2} {s2}-{e2}",
-                }
-            )
+            repaired_row = {
+                **_row(p),
+                "from": f"{old_day} {old_start}-{old_end}",
+                "to": f"{day2} {s2}-{e2}",
+            }
+            if cell_costs is not None:
+                repaired_row["cost"] = cell_costs[(day2, s2, e2)]
+            report["repaired"].append(repaired_row)
             touched[p.term_section_id] = p.board
             touched_boards.update(row.board_id for row in copies)
 
@@ -1595,6 +1634,9 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     report["moved_instructors"] = sorted(i for i in moved_ids if isinstance(i, int))
     report["student_score_after"] = list(_score()) if profiles else None
     report["instructor_after"] = instructor_schedule_metrics(states, cap_map)
+    spent = instructor_spend(pass_start or teacher_before, report["instructor_after"])
+    if not spend_is_empty(spent):
+        report["spent"] = spent
     if report["repaired"] and tbd_before is not None:
         tbd_after = _tbd()
         if tbd_after is not None:
@@ -1609,15 +1651,14 @@ def repair_instructor_availability(scenario_id: int) -> dict:
     return report
 
 
-def _week_gate_reason(gated: list[tuple[str, bool]], works: dict[str, bool]) -> str:
-    """Why the instructor-week gate refused every legal cell of a meeting.
-    ``gated`` lists each refused cell as ``(day, would take a fifth day)``;
-    ``works`` says which days the teacher works now."""
-    if gated and all(fifth for _day, fifth in gated):
-        return "needs_last_day_off"
-    if gated and not any(works.get(day) for day, _fifth in gated):
-        return "needs_extra_working_day"
-    return "instructor_week_gate"
+def _week_gate_reason(refused: int) -> str:
+    """Why a meeting with legal cells stays after the tier-1 choice. Every cell
+    the instructor-week gate refused (``refused`` of them) takes a teacher's last
+    day off, because a refused cell that does not is taken instead. With none
+    refused the legal cells could not be measured at all (the section has no
+    state to try them on): ``instructor_week_gate``. The reason
+    ``needs_extra_working_day`` no longer exists: an extra day is now spent."""
+    return "needs_last_day_off" if refused else "instructor_week_gate"
 
 
 def _blocked_keys(scenario):

@@ -15,7 +15,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import inf, isfinite
 from typing import Any, ClassVar
 
@@ -349,6 +349,15 @@ def evaluation_is_better(
 #    third day off may raise their idle only under R4 (owner, 2026-10-20).
 # Days and idle are judged per person against the run's start A, so a change of
 # who teaches what between stages is judged on the same ledger.
+#
+# Owner ruling (2026-11-22): fixing a teaching-time rule violation may cost a
+# teacher an extra working day (never the last day off: R1's fifth day stays
+# forbidden). A violation stays a warning, never a publish blocker. Only the
+# teaching-time repair (``repair_instructor_availability``) has this permission,
+# and only when no cell the week gate allows exists. What the repair spends is
+# credited to that teacher's baseline in the run's final gates
+# (``DayOffPolicy.with_credit``; ``availability_repair_credit`` in the runner):
+# a rise beyond the credit blocks exactly as before.
 
 TEACHING_WEEK = 5  # R1: SUN-THU
 MAX_WORKING_DAYS = 4  # R1: at least one day off
@@ -749,6 +758,25 @@ class DayOffPolicy:
             return None
         return day_off_bounds(self.anchor, measured.days, measured.idle)
 
+    def with_credit(
+        self, extra_days: Mapping[str, int], idle_minutes: Mapping[str, int]
+    ) -> DayOffPolicy:
+        """This policy with what the teaching-time repair spent added to each
+        teacher's baseline in A (owner, 2026-11-22). A teacher's days rise by the
+        credit but never past ``MAX_WORKING_DAYS`` (a fifth working day is never
+        credited; one already on five is left alone), idle rises by the credit,
+        and the total idle follows. A teacher A does not know gets nothing. The
+        run's own start score is unchanged."""
+        days, idle = dict(self.anchor.days), dict(self.anchor.idle)
+        for teacher, extra in extra_days.items():
+            if teacher in days and extra > 0:
+                days[teacher] = max(days[teacher], min(days[teacher] + extra, MAX_WORKING_DAYS))
+        for teacher, minutes in idle_minutes.items():
+            if teacher in idle and minutes > 0:
+                idle[teacher] += minutes
+        anchor = replace(self.anchor, days=days, idle=idle, total_idle=sum(idle.values()))
+        return replace(self, anchor=anchor)
+
     def final_check(self, after: Mapping, score: Iterable[int]) -> tuple[list[dict], dict]:
         """The runner's final gate: one blocking row per non-zero component of
         V (or one evidence row), and the per-instructor report."""
@@ -903,8 +931,11 @@ def saved_week_scope(active: bool = True) -> Iterator[None]:
     """Inside, a run promises to keep every teacher's saved week: Optimise Current
     with the instructor priority on and no day-off policy in force. There the
     runner's final gate turns ANY rise in a teacher's working days or idle into a
-    blocking row, so ``week_move_breaks_gate`` must refuse such a rise too (a
-    spare day is not spendable). ``active=False`` opens nothing."""
+    blocking row, so ``week_move_breaks_gate`` refuses such a rise for every
+    optional move (a spare day is not spendable). The one exception is the
+    teaching-time repair (owner, 2026-11-22): it may still take a refused cell
+    when no allowed one exists, and the runner credits what it spent to that
+    teacher's baseline. ``active=False`` opens nothing."""
     token = _WEEK_PRESERVED.set(bool(active))
     try:
         yield
@@ -949,8 +980,11 @@ def week_move_breaks_gate(
     blocks: inside a day-off scope, a breach of R1-R4 that grows or a fifth
     working day; outside one (or with incomplete evidence), a teacher newly
     working all five days. A teacher keeps at least one day off; a spare day may
-    be spent. Callers that must never trip the gate (the teaching-time repair)
-    leave a move alone when this says True."""
+    be spent. An optional move that trips the gate is left alone. The
+    teaching-time repair asks the gate too, but a violation it cannot fix any
+    other way may take a refused cell that does not cost a last day off
+    (``takes_last_day_off``), cheapest first (``instructor_spend``); the
+    runner credits that spend (owner, 2026-11-22)."""
     policy = current_day_off_policy()
     if policy is not None:
         after = policy.measure(after_metrics, tuple(after_score))
@@ -967,6 +1001,36 @@ def week_move_breaks_gate(
         # exception included.
         return True
     return takes_last_day_off(before_metrics, after_metrics)
+
+
+def instructor_spend(before_metrics: Mapping, after_metrics: Mapping) -> dict[str, dict[str, int]]:
+    """What a change cost each teacher: the working days and idle minutes that
+    ROSE from ``before_metrics`` to ``after_metrics`` (a fall is not netted
+    against another teacher's rise), non-zero entries only, keyed by the
+    teacher's string id. A teacher the before side does not mention reads 0."""
+    spent: dict[str, dict[str, int]] = {"extra_days": {}, "idle_minutes": {}}
+    for key, name in (
+        ("working_days_by_instructor", "extra_days"),
+        ("idle_minutes_by_instructor", "idle_minutes"),
+    ):
+        old = {str(i): int(v) for i, v in (before_metrics.get(key) or {}).items()}
+        for teacher, value in (after_metrics.get(key) or {}).items():
+            rise = int(value) - old.get(str(teacher), 0)
+            if rise > 0:
+                spent[name][str(teacher)] = rise
+    return spent
+
+
+def spend_is_empty(spent: Mapping) -> bool:
+    return not (spent.get("extra_days") or spent.get("idle_minutes"))
+
+
+def spend_order_key(spent: Mapping) -> tuple[int, int]:
+    """Fewest working days added, then the smallest idle-minute rise."""
+    return (
+        sum((spent.get("extra_days") or {}).values()),
+        sum((spent.get("idle_minutes") or {}).values()),
+    )
 
 
 def takes_last_day_off(before_metrics: Mapping, after_metrics: Mapping) -> bool:

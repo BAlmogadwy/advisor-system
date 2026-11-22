@@ -21,7 +21,11 @@ def improve_fixed_course_patterns(
     breaks its teacher's rules to the legal bundle with the fewest broken
     meetings, never raising a clash or overload and never taking the teacher's
     last day off; the day, idle and student vetoes of the optional search do
-    not apply (the repair is mandatory and the run's floors absorb its cost)."""
+    not apply (the repair is mandatory and the run's floors absorb its cost).
+    A bundle the instructor-week gate allows is always preferred. Only when no
+    legal bundle passes the gate may the repair take one that costs a teacher
+    an extra working day or idle time (owner, 2026-11-22): the cheapest first,
+    and the cost is reported."""
     from core.models import SectionPlacement, TimetableScenario
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_constraints import (
@@ -179,14 +183,26 @@ def _switch_bundles_into_availability(
     """The ``repair_availability`` mode: for each unlocked bundle that breaks its
     teacher's rules, take the legal-for-the-teacher bundle with the fewest broken
     meetings (the first among equals), provided no clash or overload is added and
-    the instructor-week gate (a teacher keeps a day off) is not tripped."""
+    the instructor-week gate (a teacher keeps a day off) is not tripped. When
+    the gate refuses every legal bundle, the cheapest refused bundle that does
+    not take a teacher's last day off is taken (fewest working days added, then
+    the smallest idle rise, then fewest broken meetings): owner, 2026-11-22.
+    The returned report carries ``instructor_before`` / ``instructor_after``
+    (the whole pass) when a bundle switched, for the caller to measure what the
+    pass spent (it removes them from the report it keeps), and
+    ``spent_switches`` (the bundles that cost something) only when one did."""
     from core.services.timetable_constraints import (
         count_instructor_clashes,
         count_instructor_daily_overloads,
         section_availability_violations,
     )
     from core.services.timetable_optimisation_policy import (
+        instructor_schedule_metrics,
+        instructor_spend,
         schedule_metrics_of,
+        spend_is_empty,
+        spend_order_key,
+        takes_last_day_off,
         week_move_breaks_gate,
     )
     from core.services.timetable_optimizer_v2 import persist_section_states_to_scenario
@@ -194,6 +210,8 @@ def _switch_bundles_into_availability(
 
     states, sections, teachers, locked = board
     trials = accepted = 0
+    week_start = instructor_schedule_metrics(states, teachers)
+    paid_switches: list[dict] = []
     for section in sorted(states, key=lambda s: s.section_id):
         policy = get_course_meeting_policy(section.course_code)
         if not policy or section.section_id in locked:
@@ -205,8 +223,10 @@ def _switch_bundles_into_availability(
         cap = get_instructor_daily_cap()
         old_clashes = count_instructor_clashes(sections, teachers)
         old_overloads = count_instructor_daily_overloads(sections, teachers, cap)
+        week_now = instructor_schedule_metrics(states, teachers)
         old = section.meetings
-        best = None
+        best = None  # tier 0: the cheapest legal bundle the week gate allows
+        paid = None  # tier 1: a refused bundle that costs no last day off
         for option in meeting_options_for_policy(
             policy,
             blocked_slots=scenario.blocked_slots or [],
@@ -240,10 +260,20 @@ def _switch_bundles_into_availability(
                     schedule_metrics_of(evaluated),
                     evaluated.lexicographic_score,
                 ):
+                    if best is None:
+                        week_trial = instructor_schedule_metrics(states, teachers)
+                        if not takes_last_day_off(week_now, week_trial):
+                            cost = instructor_spend(week_now, week_trial)
+                            rank = (*spend_order_key(cost), after)
+                            if paid is None or rank < paid[0]:
+                                paid = (rank, candidate, cost)
                     continue
                 best = (after, candidate)
             finally:
                 section.meetings = old
+        cost = None
+        if best is None and paid is not None:
+            best, cost = (paid[0][2], paid[1]), paid[2]
         if best is not None:
             section.meetings = best[1]
             permitted = policy.pattern_for(best[1])
@@ -251,6 +281,13 @@ def _switch_bundles_into_availability(
             section.pattern_id = permitted.pattern_id
             incumbent = evaluate()
             accepted += 1
+            if cost is not None and not spend_is_empty(cost):
+                paid_switches.append({"section_id": section.section_id, "cost": cost})
+    report: dict = {"evaluated": trials, "accepted": accepted}
     if accepted:
         persist_section_states_to_scenario(scenario_id, sections)
-    return {"evaluated": trials, "accepted": accepted}
+        report["instructor_before"] = week_start
+        report["instructor_after"] = instructor_schedule_metrics(states, teachers)
+        if paid_switches:
+            report["spent_switches"] = paid_switches
+    return report
