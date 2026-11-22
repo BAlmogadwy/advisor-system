@@ -323,6 +323,49 @@ def restore_baseline_instructor_availability(result: dict) -> None:
         quality.pop("instructor_availability", None)
 
 
+def _availability_pairs(scenario_id: int):
+    """Blocked meetings per ``(section id, teacher id)`` on the persisted board
+    under the map in force, or None while no rule binds a teacher of the scenario
+    (the flag off, or no rule: nothing is read and no gate row or key exists)."""
+    from core.services.timetable_instructor_availability import availability_for
+
+    if not availability_for(scenario_id):
+        return None
+    from core.services.timetable_instructor_availability_report import (
+        pair_counts,
+        scenario_instructor_availability_report,
+    )
+
+    return pair_counts(scenario_instructor_availability_report(scenario_id))
+
+
+#: Why a teacher cannot take a section on this layout: he is busy at its time.
+_BUSY_REASONS = ("clash", "daily_cap")
+
+
+def _rule_attributed_tbd(saved, final, repair: dict | None) -> list[str]:
+    """Sections left "to be decided" by this run because of a teaching-time rule
+    (B2-5, H12): newly TBD after the run, and either released by the rule and not
+    re-picked (reason ``availability``) or charged before the run to a teacher the
+    availability repair moved and who is now busy at its time (clash, daily cap).
+    Attributed per section, never by comparing two estimators; any other TBD
+    rise still blocks."""
+    from core.services.section_teacher_assignment import AVAILABILITY_REASON, STATUS_TBD
+
+    moved = set((repair or {}).get("moved_instructors") or ())
+    out = []
+    for slot in final.slots:
+        key = slot.key
+        if final.status.get(key) != STATUS_TBD or saved.status.get(key) == STATUS_TBD:
+            continue
+        reason = final.tbd_reason.get(key)
+        if reason == AVAILABILITY_REASON or (
+            reason in _BUSY_REASONS and saved.teacher.get(key) in moved
+        ):
+            out.append(key)
+    return sorted(out)
+
+
 class _RunTeachers:
     """One teacher per section through the guarded runner (Phase 1 spec 3.3).
 
@@ -680,6 +723,10 @@ def _run_v2_optimisation_guarded(
         instructor_before = instructor_schedule_metrics(
             build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
         )
+        # Teaching-time rules (B2-6): the violations each (section, teacher) pair
+        # holds at the snapshot, under the saved map. None unless a rule binds a
+        # teacher of the scenario: no read, no key, no gate row.
+        availability_before = _availability_pairs(scenario_id)
     teacher_bounds = None
     if teachers is not None and is_instructor_priority_enabled():
         from core.services.section_teacher_assignment import teacher_bounds as _bounds
@@ -828,6 +875,9 @@ def _run_v2_optimisation_guarded(
         instructor_after = instructor_schedule_metrics(
             build_section_states_for_scenario(scenario_id) if instructor_map else [], instructor_map
         )
+        availability_after = (
+            _availability_pairs(scenario_id) if availability_before is not None else None
+        )
     if teachers is not None and is_instructor_priority_enabled():
         from core.services.section_teacher_assignment import pad_schedule_metrics
 
@@ -918,9 +968,19 @@ def _run_v2_optimisation_guarded(
             "before": coverage_before,
             "after": coverage_after,
         }
+        # Teaching-time rules (B2-5): a section TBD after the run BECAUSE of a rule
+        # is listed and does not count against the floor; only while a rule binds.
+        rule_tbd: list[str] = []
+        if availability_before is not None and mode == "current":
+            rule_tbd = _rule_attributed_tbd(
+                teachers.saved, teachers.final, result.get("instructor_availability_repair")
+            )
+            result["instructor_schedule_metric"]["coverage"]["availability_attributed_tbd"] = (
+                rule_tbd
+            )
         if (
             mode == "current"
-            and coverage_after["tbd_beyond_d10"] > coverage_before["tbd_beyond_d10"]
+            and coverage_after["tbd_beyond_d10"] - len(rule_tbd) > coverage_before["tbd_beyond_d10"]
         ):
             blocking_regressions.append(
                 {
@@ -929,6 +989,39 @@ def _run_v2_optimisation_guarded(
                     "before": coverage_before["tbd_beyond_d10"],
                     "after": coverage_after["tbd_beyond_d10"],
                     "delta": coverage_after["tbd_beyond_d10"] - coverage_before["tbd_beyond_d10"],
+                }
+            )
+    if availability_before is not None and availability_after is not None:
+        # B2-6: the backstop for "an automatic stage created a violation". A pair
+        # holding MORE blocked meetings on the final board (final map) than at the
+        # snapshot (saved map) blocks, unless a stage already reported it as one
+        # it could not avoid (the repair's locked_blocked / unavoidable, a placer's
+        # ranked_last).
+        from core.services.timetable_instructor_availability_report import excused_pairs
+
+        repair = result.get("instructor_availability_repair") or {}
+        reinstated = [
+            ((source or {}).get("instructor_availability") or {}).get("ranked_last", [])
+            for source in (result.get("required_section_reinstatement"), pre_repair)
+        ]
+        excused = excused_pairs(
+            repair.get("locked_blocked", []), repair.get("unavoidable", []), *reinstated
+        )
+        grown = sorted(
+            pair
+            for pair, count in availability_after.items()
+            if count > availability_before.get(pair, 0) and pair not in excused
+        )
+        if grown:
+            blocking_regressions.append(
+                {
+                    "metric": "instructor_availability_violations",
+                    "label": "Instructor teaching-time rules broken by this run",
+                    "before": sum(availability_before.values()),
+                    "after": sum(availability_after.values()),
+                    "delta": sum(availability_after.values()) - sum(availability_before.values()),
+                    "sections": [section for section, _teacher in grown],
+                    "instructor_ids": sorted({teacher for _section, teacher in grown}),
                 }
             )
     # Required-section guarantee — the rollback gate. This run's own work
@@ -1028,6 +1121,23 @@ def _run_v2_optimisation_guarded(
                     "student_score_before": None,
                     "student_score_after": None,
                 }
+        if isinstance(result.get("instructor_availability_repair"), dict):
+            availability_repair = result["instructor_availability_repair"]
+            result["candidate_instructor_availability_repair"] = availability_repair
+            with teachers.pin(teachers.saved) if teachers is not None else nullcontext():
+                restored_pairs = _availability_pairs(scenario_id)
+            result["instructor_availability_repair"] = {
+                "enabled": availability_repair.get("enabled", False),
+                "rolled_back": True,
+                "rollback_reason": "whole_board_rollback",
+                "detected": availability_repair.get("detected", []),
+                "repaired": [],
+                "unplaced": [],
+                "locked_blocked": [],
+                "unavoidable": [],
+                # Re-measured on the restored board under the saved map.
+                "remaining_violations": sum((restored_pairs or {}).values()),
+            }
         if isinstance(result.get("instructor_compaction"), dict):
             compaction = result["instructor_compaction"]
             result["candidate_instructor_compaction"] = compaction
@@ -1106,6 +1216,20 @@ def _run_v2_optimisation_guarded(
     attach_student_gap_fields(result)
 
     attach_optimiser_safety_metrics(result, safety_before, safety_after)
+
+    if availability_before is not None:
+        # B2-7: the authoritative count, read from the PERSISTED board under the
+        # map in force once the rollback decision is made (a NEW key: the
+        # existing ``instructor_availability`` of board results is untouched).
+        from core.services.timetable_instructor_availability_report import (
+            attachable,
+            scenario_instructor_availability_report,
+        )
+
+        with teachers.pin(teachers.final) if teachers is not None else nullcontext():
+            result["instructor_availability_report"] = attachable(
+                scenario_instructor_availability_report(scenario_id)
+            )
 
     # Required-section guarantee — final reporting. Computed on the FINAL
     # persisted state (after a rollback restored the board, if one fired

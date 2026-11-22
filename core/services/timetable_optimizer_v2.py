@@ -605,6 +605,7 @@ def refresh_final_score_after_instructor_passes(
     _changed_keys = (
         ("instructor_cap_repair", ("repaired", "unplaced")),
         ("instructor_clash_repair", ("repaired", "unplaced")),
+        ("instructor_availability_repair", ("repaired",)),
         ("instructor_compaction", ("relocations",)),
     )
     changed = False
@@ -710,7 +711,11 @@ def capture_instructor_schedule_after_hard_repairs(result, scenario_id, instruct
         return
     if not any(
         (result.get(key) or {}).get("repaired") or (result.get(key) or {}).get("unplaced")
-        for key in ("instructor_cap_repair", "instructor_clash_repair")
+        for key in (
+            "instructor_cap_repair",
+            "instructor_clash_repair",
+            "instructor_availability_repair",
+        )
     ):
         return
     result["instructor_schedule_after_hard_repairs"] = instructor_schedule_metrics(
@@ -2176,6 +2181,7 @@ def _optimise_scenario_timetable_v2(
         is_instructor_daily_cap_enabled()
         or is_instructor_clash_enabled()
         or is_instructor_compaction_enabled()
+        or bool(availability)
     ):
         from core.services.timetable_workspace import compute_scenario_safety_summary
 
@@ -2199,6 +2205,14 @@ def _optimise_scenario_timetable_v2(
         from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
 
         result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
+
+    # Teaching-time rules: move what still breaks a rule to a legal cell, after
+    # the clash repair (its moves read the cleared board). Only while a rule
+    # binds a teacher of the scenario: no key, no work otherwise.
+    if availability:
+        from core.services.timetable_instructor_cap_repair import repair_instructor_availability
+
+        result["instructor_availability_repair"] = repair_instructor_availability(scenario_id)
 
     # Instructor-day compaction — runs AFTER the cap + clash repairs (which it
     # treats as hard gates) to shrink each instructor's within-day idle gaps.
@@ -2798,6 +2812,7 @@ def _optimise_current_timetable(
         is_instructor_daily_cap_enabled()
         or is_instructor_clash_enabled()
         or is_instructor_compaction_enabled()
+        or bool(availability)
     ):
         from core.services.timetable_workspace import compute_scenario_safety_summary
 
@@ -2824,6 +2839,11 @@ def _optimise_current_timetable(
         from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
 
         result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
+
+    if availability:
+        from core.services.timetable_instructor_cap_repair import repair_instructor_availability
+
+        result["instructor_availability_repair"] = repair_instructor_availability(scenario_id)
 
     capture_instructor_schedule_after_hard_repairs(result, scenario_id, section_instructor_ids)
     if checkpoint:

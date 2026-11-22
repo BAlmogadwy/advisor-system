@@ -4,9 +4,12 @@
 The pass moves a meeting that breaks its charged teacher's teaching-time rule to
 a cell the teacher may teach. It never unplaces, never moves a frozen meeting,
 never makes a move the instructor-week gate blocks, and a rule no week can meet
-is reported. These tests call it on its own (nothing wires it into the optimiser
-yet). Every behavioural test has a control: the pass skipped (an empty
-availability), or no rule binding a teacher of the scenario.
+is reported. The first half of this file calls it on its own; the second half
+(below the "second half" banner) covers its wiring into both optimiser
+pipelines, the runner's gates and the persisted-board report. Every
+behavioural test has a
+control: the pass skipped (an empty availability, or the flag off), or no rule
+binding a teacher of the scenario.
 """
 
 from __future__ import annotations
@@ -322,15 +325,19 @@ def test_the_week_gate_blocks_a_fifth_day_and_allows_a_spare_day() -> None:
 # judges it (B2-2, B2-4, B2-5, B2-6) and attaches the persisted-board report (B2-7).
 # Every guard has a flag-off or no-rule control.
 
-from core.models import SectionInstructor  # noqa: E402
+import dataclasses  # noqa: E402
+
+from core.models import Instructor, SectionInstructor  # noqa: E402
 from core.services import section_teacher_assignment as sta  # noqa: E402
 from core.services.timetable_instructor_availability_report import (  # noqa: E402
+    excused_pairs,
     pair_counts,
     scenario_instructor_availability_report,
 )
 from tests import one_teacher_support as ots  # noqa: E402
 from tests._instructor_availability_fixture import AVAILABILITY_FLAGS, rule  # noqa: E402
 from tests.test_one_teacher_day_off_policy import _enrol  # noqa: E402
+from tests.test_one_teacher_flag_parity import LINKS  # noqa: E402
 
 RUN = {"max_iterations": 3, "run_chain": False, "run_cpsat": False, "max_chain_iterations": 2}
 
@@ -359,6 +366,189 @@ def _run(scenario_id: int, **kwargs) -> dict:
     from core.services.timetable_v2_runner import run_v2_optimisation_guarded
 
     return run_v2_optimisation_guarded(scenario_id, mode="current", **{**RUN, **kwargs})
+
+
+def _x_cells(sc, key: str) -> list[tuple[str, str]]:
+    rows = SectionPlacement.objects.filter(board__scenario=sc, term_section__course_key=key)
+    return sorted(rows.values_list("day", "start_time"))
+
+
+def _one_section_board(name: str, *, day: str, rule_day: str | None = "WED"):
+    """Dr A (the only linked teacher) teaches X (AI301 S1, stored engine row) on
+    ``day`` 09:00; he may not teach on ``rule_day``. Students want X (the run needs
+    profiles). Returns ``(scenario, course key, Dr A)``."""
+    sc, board = ots.scenario(name)
+    a = ots.instructor("Dr A")
+    x = ots.requirement("AI", "AI301", "X COURSE")
+    ots.link("AI", "AI301", a)
+    ots.budget(sc, x, 1)
+    ots.place(
+        board, ots.section(sc, x, "S1"), [(day, "09:00", "10:15")], instructor_name=a.full_name
+    )
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=x, section="S1", instructor=a, source="engine"
+    )
+    _enrol(sc, x)
+    if rule_day is not None:
+        rule(a, KIND_UNAVAILABLE, (rule_day,))
+    return sc, x, a
+
+
+# ── B2-3: the pass is wired into Optimise Current and Generate ───────────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_optimise_current_runs_the_repair_and_rescores_the_board(run_flags, flag) -> None:
+    """B2-3 and T-B12: a meeting that breaks its teacher's rule is moved to a legal
+    cell by the run itself, the board is RE-SCORED because the pass moved something
+    (``_changed_keys``: ``score_before_instructor_passes`` is the pre-pass score the
+    student gate judges), and the persisted-board report counts 0. Control: with the
+    flag off the meeting stays and no availability key exists."""
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, x, _a = _one_section_board(f"b2-3 {flag}", day="WED")
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    if not flag:
+        assert _x_cells(sc, x) == [("WED", "09:00")]
+        assert "instructor_availability_repair" not in result
+        assert "instructor_availability_report" not in result
+        assert "score_before_instructor_passes" not in result
+        return
+    assert [row["from"][:3] for row in result["instructor_availability_repair"]["repaired"]] == [
+        "WED"
+    ]
+    assert _x_cells(sc, x)[0][0] != "WED"
+    assert result["instructor_availability_report"]["count"] == 0
+    assert "score_before_instructor_passes" in result
+
+
+@pytest.mark.django_db
+def test_a_run_with_nothing_to_repair_does_not_rescore(run_flags) -> None:
+    """T-B12 control: the pass ran (a rule binds Dr A) and moved nothing, so the
+    board is not re-scored (no evaluation is bought on every run)."""
+    sc, x, _a = _one_section_board("b2-3 clean", day="SUN")
+
+    result = _run(sc.id)
+
+    assert result["instructor_availability_repair"]["repaired"] == []
+    assert "score_before_instructor_passes" not in result
+    assert _x_cells(sc, x) == [("SUN", "09:00")]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_the_safety_snapshot_is_taken_when_only_a_rule_binds(run_flags, flag) -> None:
+    """B2-3: with the cap, clash and compaction passes all off, a bound rule alone
+    makes the optimiser snapshot the safety state BEFORE the instructor passes, so
+    the safety gate judges the optimiser's board and not the repair's. Control: the
+    flag off takes no snapshot (nothing runs after the search)."""
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    run_flags.TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = False
+    run_flags.TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = False
+    run_flags.TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED = False
+    sc, _x, _a = _one_section_board(f"b2-3 snapshot {flag}", day="WED")
+
+    result = _run(sc.id)
+
+    assert "error" not in result, result.get("error")
+    assert ("safety_before_instructor_passes" in result) is flag
+
+
+def test_the_repair_registry_entries_are_present() -> None:
+    """B2-3 / H3: the pass is registered with the cap and clash repairs in the
+    re-score keys and in the capture of the hard repairs' instructor schedule."""
+    import inspect
+
+    from core.services import timetable_optimizer_v2 as v2
+
+    assert '("instructor_availability_repair", ("repaired",))' in inspect.getsource(
+        v2.refresh_final_score_after_instructor_passes
+    )
+    assert '"instructor_availability_repair"' in inspect.getsource(
+        v2.capture_instructor_schedule_after_hard_repairs
+    )
+
+
+def test_refresh_rescores_only_when_the_availability_repair_moved_something(monkeypatch) -> None:
+    """T-B12 (unit): ``refresh_final_score_after_instructor_passes`` re-scores for a
+    moved availability repair and not for an empty one."""
+    from types import SimpleNamespace
+
+    from core.services import timetable_optimizer_v2 as v2
+
+    evaluated = []
+
+    def evaluate(**kwargs):
+        evaluated.append(kwargs["candidate_id"])
+        return SimpleNamespace(
+            lexicographic_score=(1,),
+            unresolved_student_ids=[],
+            quality_score={},
+            hotspot_courses=[],
+            capacity_pressure_courses=[],
+            reserve_heavy_sections=[],
+        )
+
+    monkeypatch.setattr(v2, "build_section_states_for_scenario", lambda _sid: [object()])
+    monkeypatch.setattr(v2, "evaluate_generated_timetable_candidate", evaluate)
+    monkeypatch.setattr(v2, "hotspot_result_fields", lambda _post: {})
+
+    for repaired, rescored in (([{"section": "X"}], True), ([], False)):
+        evaluated.clear()
+        result = {"final_score": [9], "instructor_availability_repair": {"repaired": repaired}}
+        v2.refresh_final_score_after_instructor_passes(result, 1, {"s": 1}, {}, None, None)
+        assert bool(evaluated) is rescored
+        assert ("score_before_instructor_passes" in result) is rescored
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_generate_runs_the_repair_after_the_clash_repair(run_flags, monkeypatch, flag) -> None:
+    """B2-3 (full mode, the other insertion): the pass is called once, after the
+    clash repair, only while a rule binds; the flag off never calls it and adds no key."""
+    from core.services import timetable_instructor_cap_repair as cap
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    calls: list[str] = []
+    real_clash = cap.repair_instructor_clashes
+
+    def clash(scenario_id):
+        calls.append("clash")
+        return real_clash(scenario_id)
+
+    def availability_repair(scenario_id):
+        calls.append("availability")
+        return {"enabled": True, "repaired": [], "locked_blocked": [], "unavoidable": []}
+
+    monkeypatch.setattr(cap, "repair_instructor_clashes", clash)
+    monkeypatch.setattr(cap, "repair_instructor_availability", availability_repair)
+    sc = build_corpus(11)
+    person = Instructor.objects.filter(full_name__in=set(LINKS.values())).first()
+    rule(person, KIND_UNAVAILABLE, ("THU",), "16:00", "17:00")
+
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    result = run_v2_optimisation_guarded(
+        sc.id,
+        mode="full",
+        strategies=["compact"],
+        max_iterations=1,
+        run_chain=False,
+        run_cpsat=False,
+    )
+
+    assert "error" not in result, result.get("error")
+    if flag:
+        assert calls == ["clash", "availability"]
+        assert result["instructor_availability_repair"]["enabled"] is True
+    else:
+        assert calls == ["clash"]
+        assert "instructor_availability_repair" not in result
+        assert "instructor_availability_report" not in result
 
 
 # ── B2-4: the re-pick of a section a rule released passes the week gate ──
@@ -473,6 +663,201 @@ def test_a_gated_released_pick_stays_to_be_decided_for_the_week_gate() -> None:
     # A section that is not released is never touched.
     x, four_days = board(4)
     assert _gate_released(four_days, []) is four_days
+
+
+# ── B2-5: a TBD rise a rule caused is attributed per section ─────────────
+
+
+@pytest.fixture
+def final_without_teacher(monkeypatch):
+    """The run's final re-pick leaves ``X`` to be decided, with the given reason."""
+    from core.services.timetable_v2_runner import _RunTeachers
+
+    real = _RunTeachers.finish
+
+    def install(reason: str) -> None:
+        def finish(self, **kwargs):
+            real(self, **kwargs)
+            key = next(k for k, t in self.final.teacher.items() if t is not None and "AI301" in k)
+            self.final = dataclasses.replace(
+                self.final,
+                teacher={**self.final.teacher, key: None},
+                status={**self.final.status, key: sta.STATUS_TBD},
+                tbd_reason={**self.final.tbd_reason, key: reason},
+            )
+            return True
+
+        monkeypatch.setattr(_RunTeachers, "finish", finish)
+
+    return install
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("flag", "day", "reason", "excused"),
+    [
+        (True, "SUN", "availability", True),
+        (True, "WED", "clash", True),
+        (True, "SUN", "weekly_ceiling", False),
+        (True, "SUN", "clash", False),
+        (False, "SUN", "availability", False),
+    ],
+    ids=[
+        "released-by-the-rule",
+        "teacher-made-busy-by-the-repair",
+        "other-rise-control",
+        "busy-without-a-repair-control",
+        "flag-off-control",
+    ],
+)
+def test_a_section_left_to_be_decided_by_a_rule_does_not_count_against_coverage(
+    run_flags, final_without_teacher, flag, day, reason, excused
+) -> None:
+    """B2-5: X was charged to Dr A and is to be decided after the run. When a rule is
+    the cause the section is listed under ``availability_attributed_tbd`` and does not count:
+    it was released by the rule and not re-picked (``availability``), or its teacher
+    was moved by the availability repair and is now busy (``clash``, board with a
+    violating meeting on WED). Any other rise still blocks with ``teacher_coverage``:
+    another cause (``weekly_ceiling``), a clash with no repair behind it, and the
+    same rise with the flag off."""
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, x, _a = _one_section_board(f"b2-5 {flag} {day} {reason}", day=day)
+    final_without_teacher(reason)
+
+    result = _run(sc.id)
+
+    coverage = result["instructor_schedule_metric"]["coverage"]
+    if excused:
+        assert result["safety_blocked"] is False, result["safety_regression"]
+        assert coverage["availability_attributed_tbd"] == [f"{x}_S1"]
+    else:
+        blocked = {row["metric"] for row in result["safety_regression"]["regressions"]}
+        assert result["safety_blocked"] is True and "teacher_coverage" in blocked
+        assert coverage.get("availability_attributed_tbd", []) == []
+        assert ("availability_attributed_tbd" in coverage) is flag
+
+
+# ── B2-6: the availability gate row ──────────────────────────────────────
+
+
+def _make_a_stage_move_x_to(monkeypatch, day: str, *, report: dict | None = None) -> None:
+    """The availability repair is replaced by a stage that moves X to ``day`` 09:00
+    (where Dr A may not teach): an automatic stage that creates a violation."""
+    from core.services import timetable_instructor_cap_repair as cap
+
+    def stage(scenario_id):
+        placement = SectionPlacement.objects.select_related("term_section", "board").get(
+            board__scenario_id=scenario_id, term_section__course_code="AI301"
+        )
+        cap._relocate(placement, day, "09:00", "10:15")
+        return {"enabled": True, "repaired": [{"section": "AI301 S1"}], **(report or {})}
+
+    monkeypatch.setattr(cap, "repair_instructor_availability", stage)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "case",
+    ["created", "excused", "flag-off"],
+    ids=["created", "excused-control", "flag-off-control"],
+)
+def test_a_run_that_creates_a_violation_is_blocked(run_flags, monkeypatch, case) -> None:
+    """B2-6 (T-B10): a stage moves X onto Dr A's forbidden WED. The final board holds a
+    blocked meeting the snapshot did not, so the run is rolled back under
+    ``instructor_availability_violations`` and X is back where it was. Controls: the
+    stage reported the pair as one it could not avoid (``locked_blocked``): the run
+    stands; the flag off never calls the stage."""
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = case != "flag-off"
+    sc, x, a = _one_section_board(f"b2-6 {case}", day="SUN")
+    excuse = {
+        "locked_blocked": [{"section_id": f"{x}_S1", "instructor_ids": [a.pk], "reason": "locked"}]
+    }
+    _make_a_stage_move_x_to(monkeypatch, "WED", report=excuse if case == "excused" else None)
+
+    result = _run(sc.id)
+
+    metrics = {row["metric"] for row in result["safety_regression"]["regressions"]}
+    if case == "created":
+        assert result["safety_blocked"] is True
+        assert metrics == {"instructor_availability_violations"}
+        assert _x_cells(sc, x) == [("SUN", "09:00")]
+        row = result["safety_regression"]["regressions"][0]
+        assert row["before"] == 0 and row["after"] == 1 and row["sections"] == [f"{x}_S1"]
+    elif case == "excused":
+        assert result["safety_blocked"] is False, result["safety_regression"]
+        assert _x_cells(sc, x) == [("WED", "09:00")]
+        assert result["instructor_availability_report"]["count"] == 1
+    else:
+        assert result["safety_blocked"] is False
+        assert _x_cells(sc, x) == [("SUN", "09:00")]
+        assert "instructor_availability_report" not in result
+
+
+@pytest.mark.django_db
+def test_a_violation_the_run_started_with_is_not_blocked(run_flags, monkeypatch) -> None:
+    """B2-6 control: a pair that already held the blocked meeting at the snapshot is
+    not 'more': the delta form (a run must not be refused for a board that was
+    already broken). Here a stage leaves it where it is."""
+    from core.services import timetable_instructor_cap_repair as cap
+
+    sc, x, _a = _one_section_board("b2-6 started", day="WED")
+    monkeypatch.setattr(
+        cap,
+        "repair_instructor_availability",
+        lambda _sid: {"enabled": True, "repaired": [], "locked_blocked": [], "unavoidable": []},
+    )
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is False, result["safety_regression"]
+    assert _x_cells(sc, x) == [("WED", "09:00")]
+    assert result["instructor_availability_report"]["count"] == 1
+
+
+def test_excused_pairs_read_every_report_shape() -> None:
+    """The repair names ``section_id`` and ``instructor_ids``; a placer's ranked-last
+    row names ``section`` as ``course_key|label``."""
+    assert excused_pairs(
+        [{"section_id": "A_S1", "instructor_ids": [3, 4]}],
+        [{"section": "C::D|S2", "instructor_ids": [5]}],
+        [{"section_id": "E_S1", "instructor_id": 6}, {"reason": "no section"}],
+    ) == {("A_S1", 3), ("A_S1", 4), ("C::D_S2", 5), ("E_S1", 6)}
+
+
+# ── B2-3: the whole-board rollback rewrites the repair report ────────────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_a_whole_board_rollback_rewrites_the_availability_repair_report(
+    run_flags, final_without_teacher, flag
+) -> None:
+    """T-B11: the real repair moves X off Dr A's WED; another gate (a coverage rise
+    from another cause) rolls the run back, so X is on WED again. The report then
+    says so: nothing repaired, ``rolled_back``, the candidate's report under
+    ``candidate_instructor_availability_repair`` and the remaining count re-measured
+    on the restored board. Control: the flag off has no such key to rewrite."""
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, x, _a = _one_section_board(f"b2-3 rollback {flag}", day="WED")
+    final_without_teacher("weekly_ceiling")
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is True
+    assert _x_cells(sc, x) == [("WED", "09:00")]
+    if not flag:
+        assert "instructor_availability_repair" not in result
+        assert "candidate_instructor_availability_repair" not in result
+        return
+    report = result["instructor_availability_repair"]
+    assert report["rolled_back"] is True and report["rollback_reason"] == "whole_board_rollback"
+    assert report["repaired"] == [] and report["locked_blocked"] == []
+    assert report["unplaced"] == [] and report["unavoidable"] == []
+    assert len(report["detected"]) == 1
+    assert report["remaining_violations"] == 1
+    candidate = result["candidate_instructor_availability_repair"]
+    assert len(candidate["repaired"]) == 1 and "rolled_back" not in candidate
+    assert result["instructor_availability_report"]["count"] == 1
 
 
 # ── B2-7: the final report ───────────────────────────────────────────────
