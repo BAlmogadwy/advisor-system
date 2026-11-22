@@ -947,6 +947,27 @@ def saved_week_preserved() -> bool:
     return _WEEK_PRESERVED.get()
 
 
+_CLOSURE_GUARD: ContextVar[bool] = ContextVar("week_closure_guarded", default=False)
+
+
+@contextmanager
+def week_closure_scope(active: bool = True) -> Iterator[None]:
+    """Inside, a run's optional stages answer for the teachers the board will give
+    sections that have none (Optimise Current, one teacher per section): a stage
+    whose board lets the closure hand such a section to a teacher at a week
+    ``week_move_breaks_gate`` blocks is undone (``WeekClosureGuard``). ``active=False``
+    opens nothing."""
+    token = _CLOSURE_GUARD.set(bool(active))
+    try:
+        yield
+    finally:
+        _CLOSURE_GUARD.reset(token)
+
+
+def week_closure_guarded() -> bool:
+    return _CLOSURE_GUARD.get()
+
+
 def _saved_week_rises(before: Mapping, after: Mapping) -> bool:
     """Some teacher's working days or idle minutes (or either total) rose from
     ``before`` to ``after``, by the project's own ``instructor_schedule_regressions``

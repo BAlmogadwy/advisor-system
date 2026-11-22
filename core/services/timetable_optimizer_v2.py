@@ -1383,6 +1383,7 @@ def _final_teacher_recompute(
         assignment_key,
         assignment_scope,
         close_on_layout,
+        closure_handover,
         persist_and_read,
         propose_layout_assignment,
         write_names,
@@ -1440,6 +1441,9 @@ def _final_teacher_recompute(
             for key in set(stored.teacher) | set(in_force.teacher)
             if stored.teacher.get(key) != in_force.teacher.get(key)
         ),
+        # Only when the persisted closure gave a section a teacher the chosen map had
+        # not (the policy judged ``chosen``, the board stores its closure).
+        **({"closure_handover": handed} if (handed := closure_handover(chosen, stored)) else {}),
         # Present only when a policy was handed in: did it judge this swap?
         **({"day_off_policy": swap_bounds is not None} if policy is not None else {}),
     )
@@ -2714,10 +2718,14 @@ def _optimise_current_timetable(
     # ── Step 6: Persist improvements ──
     if checkpoint:
         checkpoint()
-    # Only update placements that changed — no deletion, no re-generation.
-    # Respects is_locked flag on placements.
-    search_persisted = stage_is_better(current_eval, baseline)
-    if search_persisted:
+    from core.services.section_teacher_assignment import (
+        record_dropped_stage,
+        run_stage_under_week_closure,
+    )
+
+    def _persist_search() -> None:
+        # Only update placements that changed — no deletion, no re-generation.
+        # Respects is_locked flag on placements.
         persist_result = persist_section_states_to_scenario(scenario_id, sections_by_id)
         result["persist_result"] = {
             "action": "updated_in_place",
@@ -2761,7 +2769,28 @@ def _optimise_current_timetable(
             "written": _sync.meetings_written,
         }
 
-    else:
+    search_persisted = stage_is_better(current_eval, baseline)
+    week_closure_breach = None
+    if search_persisted:
+        # An optimiser board that lets the closure hand a teacher-less section to a
+        # teacher at a blocked week is not kept (``WeekClosureGuard``): the run keeps
+        # the board it began with, as when the search finds nothing.
+        _, week_closure_breach = run_stage_under_week_closure(
+            scenario_id, _persist_search, score=tuple(current_eval.lexicographic_score)
+        )
+        if week_closure_breach is not None:
+            search_persisted = False
+            current_eval = baseline
+            result.update(
+                final_score=list(baseline.lexicographic_score),
+                quality_score=baseline.quality_score,
+                unresolved_students=len(baseline.unresolved_student_ids),
+                **hotspot_result_fields(baseline),
+            )
+            result["search_reverted_by_week_closure"] = week_closure_breach
+            record_dropped_stage(result, "search", week_closure_breach)
+            logger.info("Search board undone: %s", week_closure_breach["label"])
+    if not search_persisted:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")
 
@@ -2854,7 +2883,23 @@ def _optimise_current_timetable(
     if is_instructor_compaction_enabled():
         from core.services.timetable_instructor_compaction import compact_instructor_schedules
 
-        result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
+        compaction, compaction_breach = run_stage_under_week_closure(
+            scenario_id,
+            lambda: compact_instructor_schedules(scenario_id),
+            score=tuple(result.get("final_score") or ()),
+        )
+        if compaction_breach is not None:
+            # Undone in its own savepoint; the report keeps what it would have done.
+            compaction = {
+                **compaction,
+                "rolled_back": True,
+                "rollback_reason": "week_closure",
+                "week_closure": compaction_breach,
+                "candidate_relocations": compaction.get("relocations", []),
+                "relocations": [],
+            }
+            record_dropped_stage(result, "compaction", compaction_breach)
+        result["instructor_compaction"] = compaction
 
     # The passes above mutate the persisted board after final_score was written,
     # so re-score it. No-op when no pass actually relocated/unplaced anything →

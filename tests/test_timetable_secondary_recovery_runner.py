@@ -179,6 +179,45 @@ def test_persisted_seat_and_room_recovery_matches_independent_canonical_evaluati
     )
 
 
+def test_recovery_is_undone_when_the_closure_would_hand_a_teacher_a_blocked_week(
+    board, monkeypatch
+):
+    """The recovery asks the week-closure guard about the board it persisted: a breach
+    it introduced is a persistence failure like any other (the guard's own judgement is
+    pinned in test_week_closure_guard)."""
+    from core.services import section_teacher_assignment as sta
+
+    scenario, rows = board
+    SectionPlacement.objects.filter(pk=rows[1].pk).update(start_time="09:00", end_time="10:15")
+    TermSectionMeeting.objects.filter(term_section=rows[1].term_section).update(
+        start_time="09:00",
+        end_time="10:15",
+    )
+    before = all_rows(scenario)
+    meetings_before = list(TermSectionMeeting.objects.order_by("id").values())
+    asked: list[tuple] = []
+    breach = {"metric": "week_closure", "label": "handed to a blocked week"}
+
+    class Guard:
+        def __init__(self, scenario_id):
+            asked.append(("made", scenario_id))
+
+        def introduced(self, score=()):
+            asked.append(("introduced", tuple(score)))
+            return breach
+
+    monkeypatch.setattr(sta, "WeekClosureGuard", Guard)
+    report, result, _profiles = invoke(scenario)
+
+    assert not report["applied"]
+    assert report["stop_reason"] == "persistence_guard_rejected"
+    assert breach in report["regressions"]
+    assert result["week_closure_dropped"] == [{"stage": "secondary_recovery", **breach}]
+    assert [kind for kind, _ in asked] == ["made", "introduced"]
+    assert all_rows(scenario) == before
+    assert list(TermSectionMeeting.objects.order_by("id").values()) == meetings_before
+
+
 def test_failed_persistence_rolls_back_only_secondary_changes_after_mandatory_repair(
     board, monkeypatch
 ):

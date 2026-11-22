@@ -521,6 +521,7 @@ class _RunTeachers:
         """C5: the bounded run-start re-pick, persisted and pinned for the run."""
         from core.services.section_teacher_assignment import (
             assignment_scope,
+            closure_handover,
             persist_and_read,
             propose_layout_assignment,
             stage_report,
@@ -544,6 +545,13 @@ class _RunTeachers:
                 key
                 for key, teacher in self.start.teacher.items()
                 if teacher != self.saved.teacher.get(key)
+            ),
+            # Only when the persisted closure gave a section a teacher the re-pick had
+            # not: the week the bounds judged is then not the one that was stored.
+            **(
+                {"closure_handover": handed}
+                if (handed := closure_handover(proposed, self.start))
+                else {}
             ),
         )
         return self.pin(self.start)
@@ -591,6 +599,20 @@ class _RunTeachers:
 
     def universe(self) -> frozenset:
         return frozenset(self.saved.universe) | frozenset(self.final.universe)
+
+
+def _name_taken_over_sections(row: dict, saved, final) -> dict:
+    """A blocking row about a teacher's week names the sections the final map gave
+    that teacher and the saved map did not (a re-pick's, or the persisted closure's
+    hand-over), so the registrar sees which section cost the week. Rows about no
+    teacher, and teachers who took over nothing, are left as they are."""
+    ids = {str(i) for i in (row.get("instructor_ids") or [row.get("instructor_id")]) if i}
+    taken = sorted(
+        key
+        for key, teacher in final.teacher.items()
+        if teacher is not None and str(teacher) in ids and saved.teacher.get(key) != teacher
+    )
+    return {**row, "sections_taken_over": taken} if taken else row
 
 
 def _week_gate(scenario_id: int, instructor_before: dict, result: dict, teachers: _RunTeachers):
@@ -695,6 +717,7 @@ def run_v2_optimisation_guarded(
     from core.services.timetable_optimisation_policy import (
         is_instructor_priority_enabled,
         saved_week_scope,
+        week_closure_scope,
     )
 
     # Optimise Current with the priority on promises every teacher's saved week
@@ -709,7 +732,13 @@ def run_v2_optimisation_guarded(
     # ``week_move_breaks_gate``, so the scope changes nothing there. Generate and
     # the priority off never open it.
     preserve_saved_week = mode == "current" and is_instructor_priority_enabled()
-    with availability_scope(scenario_id), saved_week_scope(preserve_saved_week):
+    # Optimise Current also answers for the teacher the closure will give a section
+    # that has none, once its stages have moved the board (``WeekClosureGuard``).
+    with (
+        availability_scope(scenario_id),
+        saved_week_scope(preserve_saved_week),
+        week_closure_scope(mode == "current"),
+    ):
         return _run_v2_optimisation_guarded(
             scenario_id,
             mode=mode,
@@ -1221,6 +1250,11 @@ def _run_v2_optimisation_guarded(
     # rollback gate, designed to protect an EXISTING board, applies when a prior
     # board existed; otherwise discarding the build leaves the scenario empty.
     if blocking_regressions and not board_snapshot.is_empty:
+        if teachers is not None:
+            blocking_regressions = [
+                _name_taken_over_sections(row, teachers.saved, teachers.final)
+                for row in blocking_regressions
+            ]
         candidate_final_score = result.get("final_score")
         restore_scenario(scenario_id, board_snapshot)
         if teachers is not None:
