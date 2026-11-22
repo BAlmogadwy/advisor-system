@@ -4154,7 +4154,7 @@ UNCHARGED = "Dr Nour"
 
 def _uncharged_rule(scenario) -> None:
     """D-I (construction:CON-6, improvement:F3, identity:F7): Dr Nour may teach
-    DS210 and has an all-week rule, but every DS210 section is pinned to Dr Hani,
+    DS210 and has rules, but every DS210 section is pinned to Dr Hani,
     so with the flag OFF he is provably never charged (the test asserts it)."""
     from core.models import CourseInstructor, SectionInstructor
     from core.services.course_identity import planner_course_key
@@ -4174,7 +4174,10 @@ def _uncharged_rule(scenario) -> None:
             role=sta.ROLE_PRIMARY,
             source=sta.SOURCE_DEPARTMENT,
         )
-    rule(nour, KIND_UNAVAILABLE)
+    # Only a mixed-period week fits him: a catalogue built for his rule would
+    # gain patterns, so the plain catalogue below shows he is not followed.
+    rule(nour, KIND_AVAILABLE_ONLY, ("SUN",), "13:00", "17:15")
+    rule(nour, KIND_AVAILABLE_ONLY, ("TUE",), "10:30", "12:05")
 
 
 def _leaves(value, prefix: str = ""):
