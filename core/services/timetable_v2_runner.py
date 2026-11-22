@@ -589,8 +589,21 @@ def run_v2_optimisation_guarded(
     once (``TIMETABLE_INSTRUCTOR_AVAILABILITY``; nothing loads while it is off).
     """
     from core.services.timetable_instructor_availability import availability_scope
+    from core.services.timetable_optimisation_policy import (
+        is_day_off_policy_active,
+        is_instructor_priority_enabled,
+        saved_week_scope,
+    )
 
-    with availability_scope(scenario_id):
+    # Optimise Current with the priority on and no day-off policy promises every
+    # teacher's saved week: the final gate below blocks ANY rise in a teacher's
+    # days or idle, so the week gate the availability repair asks must refuse such
+    # a rise too. Nothing else (Generate, priority off, the day-off policy) opens
+    # the scope.
+    preserve_saved_week = (
+        mode == "current" and is_instructor_priority_enabled() and not is_day_off_policy_active()
+    )
+    with availability_scope(scenario_id), saved_week_scope(preserve_saved_week):
         return _run_v2_optimisation_guarded(
             scenario_id,
             mode=mode,

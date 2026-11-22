@@ -955,3 +955,222 @@ def test_run_placer_attaches_the_persisted_board_report(av_on, flag) -> None:
         assert result["instructor_availability_report"]["count"] == 0
     else:
         assert "instructor_availability_report" not in result
+
+
+# ══ Review fixes: the saved week, honest reasons, a failed read ══════════════
+#
+# Optimise Current with the instructor priority on and the day-off policy off
+# promises every teacher's saved week: the runner's final gate turns ANY rise in a
+# teacher's days or idle into a blocking row, so the week gate the repair asks must
+# refuse such a rise too (``saved_week_scope``). Controls: Generate, the priority
+# off, the policy on, the flag off.
+
+from core.services.timetable_optimisation_policy import (  # noqa: E402
+    saved_week_preserved,
+    saved_week_scope,
+)
+
+
+@pytest.fixture
+def week_flags(run_flags):
+    """``run_flags`` with the day-off policy OFF: the saved week is promised."""
+    run_flags.TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = False
+    return run_flags
+
+
+def _wed_pair_board(name: str, *, other_day: str | None = None):
+    """Dr A teaches AI301 (X, WED 09:00) and AI302 (Y, WED 13:00), stored engine
+    rows, and he may teach on WED only from 13:00 to 14:15 (X breaks his rule, Y does
+    not). ``other_day``: he also teaches AI303 (Z) there at 09:00, a day he already
+    works. Returns ``(scenario, X's key, Dr A)``."""
+    sc, board = ots.scenario(name)
+    a = ots.instructor("Dr A")
+    keys = []
+    for code, day, start, end in (
+        ("AI301", "WED", "09:00", "10:15"),
+        ("AI302", "WED", "13:00", "14:15"),
+        *((("AI303", other_day, "09:00", "10:15"),) if other_day else ()),
+    ):
+        key = ots.requirement("AI", code, f"{code} COURSE")
+        ots.link("AI", code, a)
+        ots.budget(sc, key, 1)
+        ots.place(board, ots.section(sc, key, "S1"), [(day, start, end)], instructor_name="Dr A")
+        SectionInstructor.objects.create(
+            scenario=sc, course_key=key, section="S1", instructor=a, source="engine"
+        )
+        if not keys:
+            _enrol(sc, key)  # students want X: the run needs profiles
+        keys.append(key)
+    rule(a, KIND_UNAVAILABLE, ("WED",), "00:00", "13:00")
+    rule(a, KIND_UNAVAILABLE, ("WED",), "14:15", "24:00")
+    return sc, keys[0], a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "case",
+    ["new-day", "worked-day-control", "flag-off-control"],
+    ids=["new-day", "worked-day-control", "flag-off-control"],
+)
+def test_the_repair_never_spends_a_day_the_saved_week_does_not_allow(week_flags, case) -> None:
+    """The reviewer's input: only a new day can take X off WED, which would give Dr A
+    a second working day (1 -> 2). Priority on, policy off, Optimise Current: the
+    meeting stays, is reported under ``locked_blocked`` (a spare day is not
+    spendable) and the run is NOT rolled back. Controls: with a cell on SUN, a day he
+    already works, X moves there at no cost; the flag off leaves it alone."""
+    week_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = case != "flag-off-control"
+    sc, x, _a = _wed_pair_board(
+        f"w1 {case}", other_day="SUN" if case == "worked-day-control" else None
+    )
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    if case == "flag-off-control":
+        assert _x_cells(sc, x) == [("WED", "09:00")]
+        assert "instructor_availability_repair" not in result
+        return
+    report = result["instructor_availability_repair"]
+    if case == "worked-day-control":
+        assert _x_cells(sc, x)[0][0] == "SUN"
+        assert [row["from"][:3] for row in report["repaired"]] == ["WED"]
+        assert report["locked_blocked"] == []
+        assert result["instructor_availability_report"]["count"] == 0
+        return
+    assert _x_cells(sc, x) == [("WED", "09:00")]
+    assert report["repaired"] == []
+    assert [row["reason"] for row in report["locked_blocked"]] == ["needs_extra_working_day"]
+    assert result["instructor_availability_report"]["count"] == 1
+    assert not report.get("rolled_back")
+
+
+def test_the_week_gate_refuses_a_rise_in_days_or_idle_only_for_a_preserved_week() -> None:
+    """``week_move_breaks_gate`` outside a day-off scope: a spare day or an idle rise
+    passes unless the run preserves the saved week (``saved_week_scope``); a move
+    that raises nothing passes in both, and a teacher a side does not mention reads
+    0 (his first day is a rise)."""
+
+    def week(days: dict, idle: dict) -> dict:
+        return {
+            "working_days_by_instructor": days,
+            "idle_minutes_by_instructor": idle,
+            "working_days": sum(days.values()),
+            "idle_minutes": sum(idle.values()),
+            "affected_instructors": len(days),
+        }
+
+    base = week({"7": 2}, {"7": 30})
+    spare_day = week({"7": 3}, {"7": 30})
+    more_idle = week({"7": 2}, {"7": 45})
+    day_saved_for_idle = week({"7": 1}, {"7": 45})
+    nothing = week({"7": 2}, {"7": 30})
+    less = week({"7": 2}, {"7": 0})
+    new_teacher = week({"7": 2, "8": 1}, {"7": 30, "8": 0})
+    rises = (spare_day, more_idle, day_saved_for_idle, new_teacher)
+
+    for after in (*rises, nothing, less):
+        assert week_move_breaks_gate(base, (), after, ()) is False  # no scope: as today
+    assert saved_week_preserved() is False
+    with saved_week_scope():
+        assert saved_week_preserved() is True
+        assert [week_move_breaks_gate(base, (), after, ()) for after in rises] == [True] * 4
+        assert [week_move_breaks_gate(base, (), after, ()) for after in (nothing, less)] == [
+            False,
+            False,
+        ]
+        # Metrics of another shape (no idle, no totals) never block on evidence they
+        # do not carry; a rise in days still does.
+        assert week_move_breaks_gate({}, (), {}, ()) is False
+        days_one = {"working_days_by_instructor": {"7": 1}}
+        days_two = {"working_days_by_instructor": {"7": 2}}
+        assert week_move_breaks_gate(days_one, (), days_two, ()) is True
+    with saved_week_scope(False):
+        assert saved_week_preserved() is False
+    assert saved_week_preserved() is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("mode", "priority", "policy", "opened"),
+    [
+        ("current", True, False, True),
+        ("full", True, False, False),
+        ("current", False, False, False),
+        ("current", True, True, False),
+    ],
+    ids=["current-priority-no-policy", "generate", "priority-off", "day-off-policy"],
+)
+def test_the_saved_week_scope_opens_only_for_a_run_that_preserves_it(
+    settings, monkeypatch, mode, priority, policy, opened
+) -> None:
+    """Only Optimise Current with the priority on and the day-off policy off opens
+    the scope; Generate, the priority off and the policy on keep the gate as it was."""
+    from core.services import timetable_v2_runner as runner
+
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = priority
+    settings.TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = policy
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "_run_v2_optimisation_guarded",
+        lambda *_a, **_k: seen.append(saved_week_preserved()),
+    )
+
+    runner.run_v2_optimisation_guarded(1, mode=mode)
+
+    assert seen == [opened]
+    assert saved_week_preserved() is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("rule_on", "spare_day"),
+    [(True, False), (False, False), (True, True)],
+    ids=["last-day-off", "no-rule-control", "spare-day-control"],
+)
+def test_a_rule_released_repick_does_not_roll_back_a_preserved_week_run(
+    week_flags, rule_on, spare_day
+) -> None:
+    """B2-4 under the saved week (priority on, policy off). A placer releases a
+    section only before the snapshot (the required-section pre-step, resolved before
+    the baseline is measured), so its re-pick is already in the baseline the final
+    gate compares with, and Optimise Current releases nothing after it. The three
+    ADV-4 boards therefore never trip the legacy gate: the run is not rolled back
+    and the stored teacher is the one the saved map shows."""
+    sc, x, _a, _b = _released_board(
+        f"w3 {rule_on} {spare_day}", spare_day=spare_day, rule_on=rule_on
+    )
+    saved = sta.load_assignment(sc.id, release_unteachable=True)
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    stored = {
+        (row.course_key, row.section): row.instructor_id
+        for row in SectionInstructor.objects.filter(scenario=sc, source="engine")
+    }
+    assert stored.get((x, "S1")) == saved.teacher[f"{x}_S1"]
+
+
+def test_a_released_repick_keeps_the_b2_4_gate_inside_the_saved_week_scope() -> None:
+    """``_gate_released`` asks the gate outside the saved-week scope: a re-pick may
+    still spend a spare day (B2-4); the scope belongs to the repair's own moves."""
+    from core.services.section_teacher_assignment import STATUS_ENGINE, TeacherAssignment
+
+    slots = [
+        ots.course(f"P{day}", [{"fixed": 2, "meetings": [(day, 540, 615)]}], eligible=(2,))[0]
+        for day in range(3)
+    ]
+    slots += ots.course("X", [{"meetings": [(4, 540, 615)]}], eligible=(1, 2))
+    x = slots[-1].key
+    three_days = TeacherAssignment(
+        teacher={s.key: 2 for s in slots[:-1]} | {x: 2},
+        status={s.key: "pinned" for s in slots[:-1]} | {x: STATUS_ENGINE},
+        tbd_reason={},
+        kept=frozenset(),
+        universe=frozenset({1, 2}),
+        slots=tuple(slots),
+    )
+
+    with saved_week_scope():
+        assert sta._gate_released(three_days, [x]) is three_days

@@ -402,7 +402,7 @@ def _gate_released(assignment: TeacherAssignment, released: Iterable[str]) -> Te
     stays to be decided, reason ``availability``, and the run is not rolled back
     for it. Sections that are not released are left as they are; ``assignment``
     itself when nothing changes."""
-    from core.services.timetable_optimisation_policy import week_move_breaks_gate
+    from core.services.timetable_optimisation_policy import saved_week_scope, week_move_breaks_gate
 
     picked = [
         key
@@ -423,7 +423,12 @@ def _gate_released(assignment: TeacherAssignment, released: Iterable[str]) -> Te
         teacher[key], status[key] = assignment.teacher[key], STATUS_ENGINE
         reason.pop(key, None)
         trial = schedule_of(replace(assignment, teacher=teacher, status=status))
-        if week_move_breaks_gate(current, (), trial, ()):
+        # Outside a run's saved-week scope: that scope is the repair's. A release
+        # happens only in a placer, before the run's baseline is measured, so the
+        # re-pick is part of the baseline the final gate compares with.
+        with saved_week_scope(False):
+            breaks = week_move_breaks_gate(current, (), trial, ())
+        if breaks:
             teacher[key], status[key], reason[key] = None, STATUS_TBD, AVAILABILITY_REASON
         else:
             current = trial
