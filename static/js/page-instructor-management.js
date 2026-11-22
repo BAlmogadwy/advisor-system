@@ -1167,9 +1167,12 @@ const ca = {
     const course = this.courses.find(c => c.course_code === code);
     if (!course) return;
     const raw = input.value.trim();
+    // A number box reports '' for text it cannot read ("2e", "-"). That is a
+    // typing mistake, never a request to clear the saved limit.
+    const unreadable = !!(input.validity && input.validity.badInput);
     let limit = null;
-    if (raw !== '') {
-      limit = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    if (unreadable || raw !== '') {
+      limit = !unreadable && /^\d+$/.test(raw) ? Number(raw) : NaN;
       if (!(limit >= 1 && limit <= 99)) {
         notify.error(T.limitInvalid);
         this.renderTable();

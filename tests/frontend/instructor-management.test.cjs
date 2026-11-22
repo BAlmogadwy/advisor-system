@@ -390,6 +390,19 @@ test('a limit that is not a whole number from 1 to 99 is refused in the page and
   assert.equal(h.d.querySelectorAll('#caTable .ca-limit-input')[1].value, '', 'the field shows what is stored again');
 });
 
+test('text a number box cannot read ("2e") is a mistake: the saved limit is kept and nothing is sent', async t => {
+  const h = await limitsPage(t);
+  const first = h.d.querySelectorAll('#caTable .ca-limit-input')[0];
+  // A browser reports '' as the value of a number box holding unreadable text.
+  first.value = '';
+  Object.defineProperty(first, 'validity', { value: { badInput: true } });
+  first.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(lastSet(h), undefined, 'the limit of 2 is not cleared');
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 1);
+  assert.equal(h.d.querySelectorAll('#caTable .ca-limit-input')[0].value, '2', 'the field shows what is stored again');
+});
+
 test('removing the primary posts the rest in order, so the next becomes primary', async t => {
   const three = [{ ...TWO_TEACHERS[0], co_instructors: [
     { id: 2, full_name: 'ابراهيم فتحي', max_sections: 3 }, { id: 3, full_name: 'Dr Old Name', max_sections: null }] }];
