@@ -665,6 +665,102 @@ def test_the_assignment_never_makes_the_solve_fail_over_random_rules():
         assert not rule_violations(snap, result.board)
 
 
+# ── the probe holds a ruled instructor to the planner's own hard options ──
+
+
+def _narrow_snapshot():
+    """Dr Narrow may teach only Sun 09:00 and Mon 13:00, and holds a 2-meeting
+    section: legal windows, distinct days, no clash... but 09:00 and 13:00 are two
+    slots apart, and `plan()` keeps a section within ONE slot of itself by default."""
+    narrow = person(1, "Dr Narrow", {"o1"}, allowed_only(cell(SUN, W9), cell(MON, W13)))
+    fine = person(2, "Dr Fine", {"o2"}, QUIET)
+    return snapshot(
+        [offering("o1", meetings=2), offering("o2")],
+        [Section("o1#S1", "o1", 1, 30), Section("o2#S1", "o2", 1, 30)],
+        [narrow, fine],
+    )
+
+
+def test_the_probe_applies_the_planners_default_same_hour_ceiling():
+    snap = _narrow_snapshot()
+    narrow = snap.instructors[0]
+    section = snap.sections[0]
+
+    assert not has_legal_week(snap, narrow, [section])
+    assert has_legal_week(snap, narrow, [section], hard_options={})  # without the ceiling
+    assert [s.instructor_id for s in assign_instructors(snap).sections] == [None, 2]
+
+
+def test_a_week_the_ceiling_rules_out_costs_a_harmless_instructor_nothing():
+    snap = assign_instructors(_narrow_snapshot())
+
+    result = plan(snap, time_limit_seconds=8, workers=1)
+
+    assert result.released_instructors == ()
+    assert not result.warnings
+    assert len(result.board.placements) == 3
+
+
+def test_the_probe_reads_its_defaults_from_the_one_place_plan_does(monkeypatch):
+    import scheduler.solve as solve_module
+
+    snap = _narrow_snapshot()
+    narrow, section = snap.instructors[0], snap.sections[0]
+    assert not has_legal_week(snap, narrow, [section])
+
+    monkeypatch.setattr(solve_module, "planner_hard_options", lambda: {})
+
+    assert has_legal_week(snap, narrow, [section])
+
+
+def test_plans_own_defaults_are_the_probes_defaults():
+    """Fails if somebody edits a default in plan()'s signature (or the helper) alone."""
+    import inspect
+
+    import scheduler.solve as solve_module
+
+    defaults = {
+        name: inspect.signature(plan).parameters[name].default
+        for name in solve_module.planner_hard_options()
+    }
+
+    assert defaults == solve_module.planner_hard_options()
+    assert set(solve_module.planner_hard_options()) == {
+        "max_time_of_day_slots",
+        "max_time_of_day_minutes",
+        "exact_block_tiers",
+    }
+
+
+def test_the_probe_applies_the_exact_block_of_a_tier_it_is_asked_about():
+    t2 = replace(offering("o1", meetings=2), tier="T2")
+    teacher = person(1, "Dr R", {"o1"}, allowed_only(cell(SUN, W9), cell(MON, W1030)))
+    snap = snapshot([t2], [Section("o1#S1", "o1", 1, 30)], [teacher])
+    section = snap.sections[0]
+    no_ceiling = {"max_time_of_day_slots": None}
+
+    # a lone T2 section keeps ONE slot every day; his two cells are two slots
+    assert not has_legal_week(snap, teacher, [section])
+    assert has_legal_week(snap, teacher, [section], hard_options=no_ceiling)
+    assert not has_legal_week(
+        snap,
+        teacher,
+        [section],
+        hard_options={**no_ceiling, "exact_block_tiers": frozenset({"T2"})},
+    )
+
+
+def test_a_block_tier_section_is_probed_with_the_sibling_it_shares_its_block_with():
+    """S1 and S2 of a T2 course own a block of TWO slots and may swap between them,
+    so S1 alone may use 09:00 one day and 10:30 the next. Probed without S2 it would
+    look like a lone section and be refused."""
+    t2 = replace(offering("o1", meetings=2), tier="T2")
+    teacher = person(1, "Dr R", {"o1"}, allowed_only(cell(SUN, W9), cell(MON, W1030)))
+    snap = snapshot([t2], [Section("o1#S1", "o1", 1, 30), Section("o1#S2", "o1", 2, 30)], [teacher])
+
+    assert has_legal_week(snap, teacher, [snap.sections[0]])
+
+
 # ── the validator ─────────────────────────────────────────────────────────
 
 
@@ -749,6 +845,18 @@ def test_the_naive_reference_board_places_an_online_section_whatever_the_rules_s
     assert len(place_naively(snap).placements) == 1
 
 
+def test_the_naive_reference_board_places_an_online_meeting_inside_a_bundle():
+    policy = get_course_meeting_policy("ENG101")
+    online = offering("eng", policy=policy, delivery=DeliveryMode.ONLINE)
+    snap = snapshot(
+        [online],
+        [Section("eng#S1", "eng", 1, 25, instructor_id=3)],
+        [person(3, "Dr E", {"eng"}, tuple((d, 0, 1440) for d in range(5)))],
+    )
+
+    assert len(place_naively(snap).placements) == 4
+
+
 # ── the safety net: a rule never costs a class its place ──────────────────
 
 
@@ -824,6 +932,35 @@ def test_the_release_is_not_taken_when_it_places_nothing_more():
     assert result.unplaced == ("odd#S1#M1",)
 
 
+def test_a_meeting_nobody_could_place_makes_no_extra_solve_call(monkeypatch):
+    """The net fires on a board with no timetable or a RULE-caused hole, not on one
+    that is short for a reason no instructor has anything to do with."""
+    import scheduler.solve as solve_module
+
+    calls = []
+    real = solve_module.solve
+
+    def spy(snap, **kwargs):
+        calls.append(kwargs.get("alpha"))
+        return real(snap, **kwargs)
+
+    monkeypatch.setattr(solve_module, "solve", spy)
+
+    def build(ruled):
+        return snapshot(
+            [offering("o1"), offering("odd", duration=77)],
+            [Section("o1#S1", "o1", 1, 30, instructor_id=1), Section("odd#S1", "odd", 1, 30)],
+            [person(1, "Dr One", {"o1"}, QUIET if ruled else ())],
+        )
+
+    plan(build(ruled=False), time_limit_seconds=6, workers=1)
+    baseline = list(calls)
+    calls.clear()
+    plan(build(ruled=True), time_limit_seconds=6, workers=1)
+
+    assert calls == baseline and len(calls) == 2 and all(a is None for a in calls)
+
+
 def test_a_rule_that_empties_even_the_relaxed_problem_still_releases_the_instructors():
     """plan() drops the same-hour rule when nothing satisfies it; the rules may be
     what leaves the relaxed problem empty too. Here X cannot keep its two lectures
@@ -884,6 +1021,98 @@ def test_a_ruled_but_harmless_instructor_costs_the_plan_no_extra_solve(monkeypat
     assert result.released_instructors == () and len(calls) == 2
 
 
+def _hand_assigned_shut_and_harmless():
+    """Dr Shut's only course has no legal cell at all (assigned by hand, bypassing
+    the assignment's own check); Dr Fine is ruled harmlessly and teaches fine."""
+    shut = tuple((d, 0, 1440) for d in range(5))
+    return snapshot(
+        [offering("o1"), offering("o2")],
+        [
+            Section("o1#S1", "o1", 1, 30, instructor_id=4),
+            Section("o2#S1", "o2", 1, 30, instructor_id=5),
+        ],
+        [person(4, "Dr Shut", {"o1"}, shut), person(5, "Dr Fine", {"o2"}, QUIET)],
+    )
+
+
+def test_the_ladder_releases_only_the_instructor_whose_own_week_fails():
+    snap = _hand_assigned_shut_and_harmless()
+
+    result = plan(snap, time_limit_seconds=8, workers=1)
+
+    assert result.released_instructors == (4,)
+    [warning] = [w for w in result.warnings if "teaching-time rules" in w]
+    assert "Dr Shut" in warning and "Dr Fine" not in warning
+    kept = release_instructors(snap, result.released_instructors)
+    assert [s.instructor_id for s in kept.sections] == [None, 5]  # Dr Fine still teaches
+    assert {p.instructor_id for p in result.board.placements} == {None, 5}
+
+
+def _three_rivals():
+    only = allowed_only(cell(SUN, W9))
+    return snapshot(
+        [offering()],
+        [Section(f"o1#S{i}", "o1", i, 30, instructor_id=i) for i in (1, 2, 3)],
+        [person(i, f"Dr {i}", {"o1"}, only) for i in (1, 2, 3)],
+    )
+
+
+def test_the_second_rung_releases_everybody_when_one_release_is_not_enough(monkeypatch):
+    """Stubbed: no single instructor's own week fails here (each can hold his one
+    section alone), so a natural case has no first rung. The probe is told Dr 1
+    fails; releasing him alone still leaves Dr 2 and Dr 3 fighting for one cell, so
+    the ladder must go on to release all three."""
+    import scheduler.solve as solve_module
+
+    real = solve_module.has_legal_week
+    monkeypatch.setattr(
+        solve_module,
+        "has_legal_week",
+        lambda snap, instructor, sections, **kw: instructor.id != 1
+        and real(snap, instructor, sections, **kw),
+    )
+    snap = _three_rivals()
+
+    result = plan(snap, time_limit_seconds=8, workers=1)
+
+    assert result.released_instructors == (1, 2, 3)
+    [warning] = [w for w in result.warnings if "teaching-time rules" in w]
+    assert all(f"Dr {i}" in warning for i in (1, 2, 3))
+    assert len(result.board.placements) == 3 and not result.unplaced
+
+
+def test_a_retry_is_counted_in_the_wall_time_even_when_it_is_discarded_and_capped(monkeypatch):
+    """Stubbed clock: the first solve 'takes' 30s of a 40s budget and proves
+    nothing. Each retry gets at most what is left, and the time every retry (kept
+    or not) reports ends up in the result's wall time."""
+    import scheduler.solve as solve_module
+    from scheduler.domain.board import Board
+
+    real = solve_module.solve
+    limits, walls = [], []
+
+    def stub(snap, **kwargs):
+        if kwargs.get("alpha") == 1.0:  # the assignment probe: the real model
+            return real(snap, **kwargs)
+        limits.append(kwargs["time_limit_seconds"])
+        wall = 30.0 if len(limits) == 1 else 1.0
+        walls.append(wall)
+        return solve_module.SolveResult(Board(()), "INFEASIBLE", False, float("inf"), wall)
+
+    monkeypatch.setattr(solve_module, "solve", stub)
+    monkeypatch.setattr(
+        solve_module, "has_legal_week", lambda snap, instructor, *a, **k: instructor.id != 4
+    )  # Dr Shut fails his own week, Dr Fine does not: two rungs
+    snap = _hand_assigned_shut_and_harmless()
+
+    result = plan(snap, time_limit_seconds=40, workers=1)
+
+    assert limits[0] == 20.0  # the first pass: half
+    assert 9.0 <= limits[1] <= 10.0  # 40 - 30 left, below half
+    assert limits[2] < limits[1]  # ...and the first retry's second has been spent
+    assert result.wall_time_seconds >= 30.0 + 1.0 + 1.0  # first + both retries
+
+
 def test_the_portfolio_prefers_the_run_that_kept_its_instructors(monkeypatch):
     import scheduler.solve as solve_module
 
@@ -897,6 +1126,24 @@ def test_the_portfolio_prefers_the_run_that_kept_its_instructors(monkeypatch):
     chosen = plan_portfolio(snap, seeds=(1, 2), confirmation_seconds=0)
 
     assert chosen is kept
+
+
+def test_the_portfolio_measures_a_released_run_against_the_snapshot_it_solved(monkeypatch):
+    import scheduler.solve as solve_module
+
+    seen = []
+    real = solve_module.instructor_metrics
+
+    def spy(snap, board):
+        seen.append(sum(1 for s in snap.sections if s.instructor_id is not None))
+        return real(snap, board)
+
+    monkeypatch.setattr(solve_module, "instructor_metrics", spy)
+    snap = _jointly_infeasible()
+
+    plan_portfolio(snap, seeds=(1,), time_limit_seconds=8, confirmation_seconds=0, workers=1)
+
+    assert seen[0] == 0  # both instructors released: nobody is credited with a section
 
 
 def test_the_portfolio_carries_the_release_of_the_run_it_keeps():

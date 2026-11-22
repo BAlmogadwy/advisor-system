@@ -115,8 +115,14 @@ def _place_pattern(snapshot, occupancy, section, offering, cap):
         if len(cells) != len(requirements):
             continue
         if section.instructor_id is not None and any(
-            not occupancy.instructor_free(section.instructor_id, day, window, cap)
-            for day, window in cells
+            not occupancy.instructor_free(
+                section.instructor_id,
+                day,
+                window,
+                cap,
+                online=requirement.delivery is DeliveryMode.ONLINE,
+            )
+            for requirement, (day, window) in zip(requirements, cells, strict=True)
         ):
             continue
         # Dedicated space is part of this institutional pattern's contract;

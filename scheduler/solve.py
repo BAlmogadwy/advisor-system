@@ -50,7 +50,12 @@ from scheduler.meeting_patterns import (
     pattern_cells,
     teaching_days,
 )
-from scheduler.time_rules import release_instructors, restricted_instructor_ids
+from scheduler.time_rules import (
+    has_legal_week,
+    release_instructors,
+    restricted_instructor_ids,
+    unplaced_by_rule,
+)
 
 #: Expected-clash weights are fractional; CP-SAT is integral. Scale, then round.
 _SCALE = 1000
@@ -127,6 +132,25 @@ class SolveResult:
             "student_seating": self.seating_confirmation,
             **self.board.summary(),
         }
+
+
+#: The HARD options `plan()` applies unless the caller says otherwise. They live
+#: here, once, because the instructor-assignment probe (`time_rules.has_legal_week`)
+#: must hold a ruled instructor's own sections to exactly the rules the planner
+#: will: a probe that is looser than the planner approves weeks the planner cannot
+#: place. `plan()`'s own defaults are written from these, and a test pins that.
+DEFAULT_MAX_TIME_OF_DAY_SLOTS = 1
+DEFAULT_MAX_TIME_OF_DAY_MINUTES: int | None = None
+DEFAULT_EXACT_BLOCK_TIERS: frozenset[str] = frozenset({"T2", "T3"})
+
+
+def planner_hard_options() -> dict:
+    """The `solve()` keywords `plan()` passes by default that bind a section's own week."""
+    return {
+        "max_time_of_day_slots": DEFAULT_MAX_TIME_OF_DAY_SLOTS,
+        "max_time_of_day_minutes": DEFAULT_MAX_TIME_OF_DAY_MINUTES,
+        "exact_block_tiers": DEFAULT_EXACT_BLOCK_TIERS,
+    }
 
 
 def _atoms(windows: list[TimeWindow]) -> list[tuple[int, int]]:
@@ -1462,12 +1486,12 @@ def plan(
     # expense is not this system's call to make by default. Weight 1 is the only
     # setting worth offering: 3 and 10 are worse for BOTH parties.
     student_adjacency_weight: int = 0,
-    max_time_of_day_slots: int | None = 1,
+    max_time_of_day_slots: int | None = DEFAULT_MAX_TIME_OF_DAY_SLOTS,
     #: D21 — how many days beyond the proven floor an instructor may take if it
     #: buys a more compact day. Default 0: days stay lexicographically first, as
     #: they have been. See the note at the pass-2 budget below.
     day_slack: int = 0,
-    exact_block_tiers: frozenset[str] = frozenset({"T2", "T3"}),
+    exact_block_tiers: frozenset[str] = DEFAULT_EXACT_BLOCK_TIERS,
     # Owner rule: T2 and T3 courses run in other sections right across the
     # college, so a student who cannot fit one here finds a seat elsewhere.
     # Measured on the M cohort: discounting them leaves instructor idle and
@@ -1482,7 +1506,7 @@ def plan(
     # idle from a median 955 minutes to 2700 and sibling back-to-back pairing
     # from 42.9% to 4.8%. The owner's stated priority is the instructor
     # timetable, so switching it on is their call, not this default's. See D14.
-    max_time_of_day_minutes: int | None = None,
+    max_time_of_day_minutes: int | None = DEFAULT_MAX_TIME_OF_DAY_MINUTES,
     **kwargs,
 ) -> SolveResult:
     """Plan in two passes: settle the working days, then attack the gaps.
@@ -1529,20 +1553,67 @@ def plan(
     # instructor sections he can hold inside his allowed time. But it checks his
     # own week alone; the full problem adds rooms, siblings and every other
     # instructor, and may still have no board for him. A rule is a preference
-    # about WHO teaches, never a reason a section goes unplaced or a build fails,
-    # so when the solve below comes back empty or short, the ruled instructors'
-    # sections are released (D5: unassigned is a normal state) and it is solved
-    # again, and the caller is told which instructors that was. With no ruled
-    # instructor `ruled` is empty and none of this runs.
+    # about WHO teaches, never a reason a section goes unplaced or a build fails.
+    # So when a solve comes back with no board, or with a meeting unplaced BECAUSE
+    # of a rule (not one nobody could place), instructors' sections are released
+    # (D5: unassigned is a normal state) and it is solved again, and the caller is
+    # told exactly who was released. The ladder is: first only the ruled
+    # instructors whose own week fails under the hard options of the solve that
+    # just failed, then, if that is not enough (or nobody's own week fails: the
+    # conflict is between people), all of them. Every retry's time is counted, kept
+    # or not, and each is capped by what is left of `time_limit_seconds`. With no
+    # ruled instructor `ruled` is empty and none of this runs.
     ruled = restricted_instructor_ids(snapshot)
     names = {i.id: i.name for i in snapshot.instructors}
     released: tuple[int, ...] = ()
     released_because = ""
 
-    def solve_first(snap: Snapshot, *, relax: bool) -> SolveResult:
+    def hard_options(relax: bool) -> dict:
+        if relax:
+            return {}
+        return {
+            "max_time_of_day_slots": max_time_of_day_slots,
+            "max_time_of_day_minutes": max_time_of_day_minutes,
+            "exact_block_tiers": exact_block_tiers,
+        }
+
+    def rescue(
+        snap: Snapshot, failed: SolveResult, *, relax: bool
+    ) -> tuple[Snapshot, SolveResult, tuple[int, ...]] | None:
+        """Re-solve with some ruled instructors released; None when nothing helps.
+
+        The retry that is kept carries the failed attempt's time too; a discarded
+        one is added to ``failed`` so the caller's accounting still sees it."""
+        began = time.perf_counter()
+        options = hard_options(relax)
+        by_id = {i.id: i for i in snap.instructors}
+        failing = tuple(
+            iid
+            for iid in ruled
+            if not has_legal_week(
+                snap,
+                by_id[iid],
+                [s for s in snap.sections if s.instructor_id == iid],
+                hard_options=options,
+            )
+        )
+        failed.wall_time_seconds += time.perf_counter() - began
+        rungs = [failing] if failing and failing != ruled else []
+        rungs.append(ruled)
+        for ids in rungs:
+            budget = max(1.0, min(half, time_limit_seconds - failed.wall_time_seconds))
+            candidate = release_instructors(snap, ids)
+            retry = solve_first(candidate, relax=relax, limit=budget)
+            if _rescue_helps(retry, failed):
+                retry.wall_time_seconds += failed.wall_time_seconds
+                return candidate, retry, ids
+            failed.wall_time_seconds += retry.wall_time_seconds
+        return None
+
+    def solve_first(snap: Snapshot, *, relax: bool, limit: float | None = None) -> SolveResult:
         return solve(
             snap,
-            time_limit_seconds=half,
+            time_limit_seconds=half if limit is None else limit,
             span_weight=0,
             sibling_adjacency_weight=0,
             max_time_of_day_slots=None if relax else max_time_of_day_slots,
@@ -1579,17 +1650,16 @@ def plan(
         tier_weights=tier_weights,
         **kwargs,
     )
-    if ruled and _rules_hurt(first):
-        rescue = release_instructors(snapshot, ruled)
-        retry = solve_first(rescue, relax=False)
-        if _rescue_helps(retry, first):
-            released_because = (
-                f"left {len(first.unplaced)} meeting(s) unplaced"
-                if first.board.placements
-                else "left no timetable"
-            )
-            retry.wall_time_seconds += first.wall_time_seconds
-            snapshot, first, released = rescue, retry, ruled
+    if ruled and _rules_hurt(snapshot, first):
+        because = (
+            f"left {len(unplaced_by_rule(snapshot, first.unplaced))} meeting(s) unplaced"
+            if first.board.placements
+            else "left no timetable"
+        )
+        saved = rescue(snapshot, first, relax=False)
+        if saved is not None:
+            snapshot, first, released = saved
+            released_because = because
     # Unlike every other preference, the time-of-day ceiling belongs in BOTH
     # passes. Pass 2's clash budget is derived from pass 1's score, so a ceiling
     # applied only later would be measured against a total achieved without it,
@@ -1618,12 +1688,10 @@ def plan(
         )
         if not relaxed.board.placements and ruled and not released:
             # The rules may be what makes even the relaxed problem empty.
-            rescue = release_instructors(snapshot, ruled)
-            again = solve_first(rescue, relax=True)
-            if again.board.placements:
+            saved = rescue(snapshot, relaxed, relax=True)
+            if saved is not None:
+                snapshot, relaxed, released = saved
                 released_because = "left no timetable"
-                again.wall_time_seconds += relaxed.wall_time_seconds
-                snapshot, relaxed, released = rescue, again, ruled
         if relaxed.board.placements:
             asked = []
             if max_time_of_day_slots is not None:
@@ -1779,9 +1847,13 @@ def plan(
     return finish(second)
 
 
-def _rules_hurt(result: SolveResult) -> bool:
-    """Whether a solve came back with no board, or with meetings it could not place."""
-    return not result.board.placements or bool(result.unplaced)
+def _rules_hurt(snapshot: Snapshot, result: SolveResult) -> bool:
+    """Whether a solve came back with no board, or with a meeting a RULE left unplaced.
+
+    A meeting no cell can hold even without any rule (a duration the grid never
+    declared) is unplaced for everyone; releasing instructors cannot help it.
+    """
+    return not result.board.placements or bool(unplaced_by_rule(snapshot, result.unplaced))
 
 
 def _rescue_helps(rescued: SolveResult, original: SolveResult) -> bool:
@@ -2028,13 +2100,16 @@ def plan_portfolio(
         # room assignment after selection and potentially reporting another one.
         result.board = assign_rooms_exact(snapshot, result.board, time_limit_seconds=5.0)
         drift = time_of_day_drift(snapshot, result.board)
+        # A run that released instructors solved a snapshot without them: measure
+        # it against THAT one, so its coverage figures describe the board it kept.
+        measured = release_instructors(snapshot, result.released_instructors)
         runs.append(
             {
                 "result": result,
-                "metrics": instructor_metrics(snapshot, result.board),
+                "metrics": instructor_metrics(measured, result.board),
                 "clashes": expected_clashes(snapshot, result.board),
                 "unroomed": len(result.board.unroomed),
-                "violations": validate(snapshot, result.board).violation_count,
+                "violations": validate(measured, result.board).violation_count,
                 "unplaced": len(result.unplaced),
                 "released": len(result.released_instructors),
                 "astray": astray_count(drift, kwargs.get("max_time_of_day_slots", 1)),

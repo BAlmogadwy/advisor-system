@@ -67,7 +67,14 @@ def instructor_floor_days(sessions: int, largest_section_days: int, daily_cap: i
 
 
 def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
-    """Return a snapshot whose sections carry an instructor where one fits."""
+    """Return a snapshot whose sections carry an instructor where one fits.
+
+    ``daily_cap`` shapes the first-fit bundle reservation of an instructor WITHOUT a
+    teaching-time rule only. A ruled instructor is checked by ``has_legal_week``,
+    which runs ``solve()`` and so always uses the solver's own daily cap (3); there
+    is no solver option to pass another through, so for him a non-default
+    ``daily_cap`` has no effect. Nothing calls it with one today.
+    """
     sections_by_offering = snapshot.sections_by_offering
     offerings = snapshot.offerings_by_id
 
@@ -118,7 +125,8 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
                     # the pattern bundles too — which makes the first-fit bundle
                     # reservation below redundant for him. A section he cannot
                     # take stays open to the next eligible instructor, or
-                    # unassigned (D5).
+                    # unassigned (D5). (His daily cap is solve()'s own, 3:
+                    # `daily_cap` is not passed; see the docstring.)
                     if not has_legal_week(snapshot, instructor, [*held[instructor.id], section]):
                         continue
                     held[instructor.id].append(section)

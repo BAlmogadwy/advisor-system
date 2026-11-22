@@ -60,32 +60,81 @@ def _meeting_requirement(offering, index: int):
     return expanded[index - 1]
 
 
+def never_placeable(snapshot: Snapshot) -> set[str]:
+    """The meetings (``section#M<index>``) that have no legal cell even WITHOUT any rule.
+
+    A duration the grid never declared is unplaceable for everyone, so it is
+    neither a reason to refuse an instructor a section nor a reason to release
+    instructors.
+    """
+    offerings = snapshot.offerings_by_id
+    out = set()
+    for section in snapshot.sections:
+        offering = offerings[section.offering_id]
+        for index in range(1, offering.meetings_per_week + 1):
+            requirement = _meeting_requirement(offering, index)
+            if not legal_cells(snapshot, offering, requirement, index):
+                out.add(f"{section.id}#M{index}")
+    return out
+
+
+def unplaced_by_rule(snapshot: Snapshot, unplaced) -> tuple[str, ...]:
+    """Those of ``unplaced`` that have legal cells without the rules: a rule left them out."""
+    free = never_placeable(snapshot)
+    return tuple(u for u in unplaced if u not in free)
+
+
 def has_legal_week(
-    snapshot: Snapshot, instructor: Instructor, sections: list[Section] | tuple[Section, ...]
+    snapshot: Snapshot,
+    instructor: Instructor,
+    sections: list[Section] | tuple[Section, ...],
+    *,
+    hard_options: dict | None = None,
 ) -> bool:
     """Whether ``instructor`` can hold all of ``sections`` inside his allowed time.
 
     Probes the solver's own model on just these sections, stopping at the first
     feasible solution (there is no objective), so every hard rule it enforces —
     legal windows and ``allowed_starts``, one meeting per section per day,
-    institutional bundles, no overlap among his own sections, the daily cap —
-    is checked by the code that will really place them. Rooms and students are
-    left out: they are other people's constraints, and the planner's own safety
-    net answers for whatever the full problem adds.
+    institutional bundles, no overlap among his own sections, the daily cap — is
+    checked by the code that will really place them. Rooms and students are left
+    out: they are other people's constraints, and the planner's own safety net
+    answers for whatever the full problem adds.
 
-    A meeting that has no legal cell even WITHOUT the rule (a duration the grid
-    never declared) is unplaceable for everyone, so it does not count against
-    this instructor. Anything the probe does not finish counts as "no": the
-    cautious answer leaves the section unassigned, never dropped.
+    ``hard_options`` are the ``solve()`` keywords of the planner that will place
+    them (the same-hour ceiling, the exact-block tiers); the default is
+    ``solve.planner_hard_options()``, the one place ``plan()`` takes its own from.
+    A section of a block tier is probed together with its siblings (unassigned),
+    because its block is shared with them.
+
+    A meeting that has no legal cell even WITHOUT the rule is unplaceable for
+    everyone, so it does not count against this instructor. Anything the probe
+    does not finish counts as "no": the cautious answer leaves the section
+    unassigned, never dropped. The daily cap is ``solve()``'s own (3): there is no
+    solver option for another, so this probe cannot honour a different one.
     """
-    from scheduler.solve import solve
+    from scheduler.solve import planner_hard_options, solve
 
+    options = dict(planner_hard_options() if hard_options is None else hard_options)
+    tiers = options.get("exact_block_tiers") or frozenset()
     held = tuple(replace(s, instructor_id=instructor.id) for s in sections)
-    wanted = {s.offering_id for s in held}
+    held_ids = {s.id for s in held}
+    offerings = snapshot.offerings_by_id
+    siblings = tuple(
+        replace(s, instructor_id=None)
+        for s in snapshot.sections
+        if s.id not in held_ids
+        and s.offering_id in {h.offering_id for h in held}
+        and offerings[s.offering_id].tier in tiers
+        and not offerings[s.offering_id].is_fully_online
+        and offerings[s.offering_id].meeting_policy is None
+    )
+    everyone = (*held, *siblings)
+    wanted = {s.offering_id for s in everyone}
     probe = replace(
         snapshot,
         offerings=tuple(o for o in snapshot.offerings if o.id in wanted),
-        sections=held,
+        sections=everyone,
         rooms=(),
         instructors=(instructor,),
         demand=(),
@@ -96,18 +145,11 @@ def has_legal_week(
         workers=1,
         break_symmetry=False,
         alpha=1.0,
+        **options,
     )
     if result.status not in ("OPTIMAL", "FEASIBLE"):
         return False
-    offerings = probe.offerings_by_id
-    never_placeable = set()
-    for section in held:
-        offering = offerings[section.offering_id]
-        for index in range(1, offering.meetings_per_week + 1):
-            requirement = _meeting_requirement(offering, index)
-            if not legal_cells(probe, offering, requirement, index):
-                never_placeable.add(f"{section.id}#M{index}")
-    return set(result.unplaced) <= never_placeable
+    return set(result.unplaced) <= never_placeable(probe)
 
 
 def no_legal_week_offerings(snapshot: Snapshot) -> list[tuple[Instructor, list]]:
