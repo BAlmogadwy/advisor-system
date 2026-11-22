@@ -392,6 +392,46 @@ def _without_released(seed: Mapping[str, int], released: Mapping[str, tuple[int,
     return {key: teacher for key, teacher in seed.items() if teacher not in released.get(key, ())}
 
 
+def _gate_released(assignment: TeacherAssignment, released: Iterable[str]) -> TeacherAssignment:
+    """The re-pick of a section released for a teaching-time rule passes the same
+    instructor-week gate as any other re-pick (B2-4, review finding ADV-4).
+
+    Each ``released`` section the closure gave to a NEW teacher is taken back, in
+    key order, when that teacher's week would break the gate (a teacher keeps at
+    least one day off; a spare day may be spent: ``week_move_breaks_gate``): it
+    stays to be decided, reason ``availability``, and the run is not rolled back
+    for it. Sections that are not released are left as they are; ``assignment``
+    itself when nothing changes."""
+    from core.services.timetable_optimisation_policy import week_move_breaks_gate
+
+    picked = [
+        key
+        for key in sorted(set(released))
+        if assignment.status.get(key) == STATUS_ENGINE and assignment.teacher.get(key) is not None
+    ]
+    if not picked:
+        return assignment
+    teacher, status, reason = (
+        dict(assignment.teacher),
+        dict(assignment.status),
+        dict(assignment.tbd_reason),
+    )
+    for key in picked:  # start from the week WITHOUT the re-picks
+        teacher[key], status[key], reason[key] = None, STATUS_TBD, AVAILABILITY_REASON
+    current = schedule_of(replace(assignment, teacher=teacher, status=status))
+    for key in picked:
+        teacher[key], status[key] = assignment.teacher[key], STATUS_ENGINE
+        reason.pop(key, None)
+        trial = schedule_of(replace(assignment, teacher=teacher, status=status))
+        if week_move_breaks_gate(current, (), trial, ()):
+            teacher[key], status[key], reason[key] = None, STATUS_TBD, AVAILABILITY_REASON
+        else:
+            current = trial
+    if all(status[key] == STATUS_ENGINE for key in picked):
+        return assignment
+    return replace(assignment, teacher=teacher, status=status, tbd_reason=reason)
+
+
 @contextmanager
 def assignment_scope(scenario_id: int) -> Iterator[None]:
     """Memoise one request's layout-independent reads for ``scenario_id``.
@@ -1392,15 +1432,39 @@ def greedy_assign(
     return _assemble(slots, picks, cur, bounds=bounds, kept=frozenset(), report=report)
 
 
-def _closure(slots: list[Slot], seed: Mapping[str, int]) -> tuple[TeacherAssignment, list[str]]:
+def _closure(
+    slots: list[Slot], seed: Mapping[str, int], *, released: Iterable[str] = ()
+) -> tuple[TeacherAssignment, list[str]]:
     """Fill every choice section without a seed that some teacher can still take
-    on this layout. Returns the map and the keys the closure filled."""
+    on this layout. Returns the map and the keys the closure filled.
+
+    A section a teaching-time rule affects (an eligible teacher's rules block its
+    placed meetings, or the run ``released`` it) is filled only by a teacher whose
+    week passes the instructor-week gate (:func:`_gate_released`, B2-4): it stays
+    to be decided otherwise. Every closure applies it, so a map that is closure-
+    complete stays so."""
     filled = greedy_assign(slots, seed=seed)
+    return _gated_closure(slots, filled, seed, released)
+
+
+def _gated_closure(
+    slots: Iterable[Slot],
+    filled: TeacherAssignment,
+    seed: Mapping[str, int],
+    released: Iterable[str] = (),
+) -> tuple[TeacherAssignment, list[str]]:
     added = [
         key
         for key, teacher in filled.teacher.items()
         if teacher is not None and filled.status.get(key) == STATUS_ENGINE and key not in seed
     ]
+    affected = {s.key for s in slots if s.blocked_teachers} | set(released)
+    gated = (
+        _gate_released(filled, [key for key in added if key in affected]) if affected else filled
+    )
+    if gated is not filled:
+        filled = gated
+        added = [key for key in added if filled.status.get(key) == STATUS_ENGINE]
     return filled, added
 
 
@@ -2427,7 +2491,17 @@ def load_assignment(
     valid, ignored = _validated_rows(
         slots, info, release_unteachable=release, released=run_released
     )
-    filled, added = _closure(slots, valid)
+    filled, added = _closure(slots, valid, released=run_released)
+    dropped: dict[str, int] = {}
+    if release and unteachable:
+        by_key = {s.key: s for s in slots}
+        dropped = {
+            key: info["engine_rows"][key]
+            for key in sorted(unteachable)
+            if by_key[key].fixed_kind != STATUS_UNKNOWN
+            and by_key[key].is_choice
+            and info["engine_rows"][key] in by_key[key].eligible
+        }
     report = dict(filled.report)
     report.update(
         engine="read",
@@ -2439,20 +2513,11 @@ def load_assignment(
         ignored_row_keys=ignored,
         closure_keys=added,
     )
-    if release and unteachable:
+    if dropped:
         # The stored ENGINE rows this read ignored for a rule alone, with their
         # teacher: a placer that places such a section records the release, so the
         # stored row is replaced (RR-1). Absent without a rule.
-        by_key = {s.key: s for s in slots}
-        dropped = {
-            key: info["engine_rows"][key]
-            for key in sorted(unteachable)
-            if by_key[key].fixed_kind != STATUS_UNKNOWN
-            and by_key[key].is_choice
-            and info["engine_rows"][key] in by_key[key].eligible
-        }
-        if dropped:
-            report["unteachable_rows"] = dropped
+        report["unteachable_rows"] = dropped
     assignment = TeacherAssignment(
         teacher=filled.teacher,
         status=filled.status,
@@ -2485,6 +2550,7 @@ def close_on_layout(scenario_id: int, assignment: TeacherAssignment, *, bounds=N
     if released:  # a teacher the run released is not kept as a seed (D-B)
         seed = _without_released(seed, released)
     closed = greedy_assign(slots, seed=seed, bounds=bounds)
+    closed, _added = _gated_closure(slots, closed, seed, released)  # the week gate (B2-4)
     closed.report.update(engine="closure", programmes_source=info["programmes_source"])
     return closed
 
@@ -2506,6 +2572,7 @@ def propose_layout_assignment(
     slots, info = _collect(scenario_id, sections=sections)
     cur = _current_map(slots, current) if current is not None else None
     kept: set[str] = set()
+    released: dict[str, tuple[int, ...]] = {}
     if keep_violations_of is not None:
         in_force = _current_map(slots, keep_violations_of)
         released = _run_released(scenario_id)
@@ -2515,6 +2582,8 @@ def propose_layout_assignment(
     result = solve_layout_aware(
         slots, current=cur if cur is not None else None, bounds=bounds, kept=kept
     )
+    if released:  # a re-pick of a released section passes the week gate (B2-4)
+        result = _gate_released(result, released)
     result.report.update(
         programmes_source=info["programmes_source"],
         pins_orphaned=info["pins_orphaned"],
@@ -2743,7 +2812,7 @@ def _persist(
             for key, teacher in assignment.teacher.items()
             if teacher is not None and assignment.status.get(key) == STATUS_ENGINE
         }
-        final, _added = _closure(slots, seed)
+        final, _added = _closure(slots, seed, released=_run_released(scenario_id))
         # An unknown section's row is held, like a frozen one's: never deleted.
         frozen_keys = _frozen_row_keys(scenario_id) | {
             slot.row_key for slot in slots if slot.fixed_kind == STATUS_UNKNOWN

@@ -314,3 +314,150 @@ def test_the_week_gate_blocks_a_fifth_day_and_allows_a_spare_day() -> None:
     assert week_move_breaks_gate(week(4), (), week(5), ()) is True
     assert week_move_breaks_gate(week(3), (), week(4), ()) is False
     assert week_move_breaks_gate(week(5), (), week(5), ()) is False
+
+
+# ══ Slice B2, second half: wiring, gates and the final report ═══════════════
+#
+# The pass above is wired into both optimiser pipelines (decision B2-3), the runner
+# judges it (B2-2, B2-4, B2-5, B2-6) and attaches the persisted-board report (B2-7).
+# Every guard has a flag-off or no-rule control.
+
+from core.models import SectionInstructor  # noqa: E402
+from core.services import section_teacher_assignment as sta  # noqa: E402
+from tests import one_teacher_support as ots  # noqa: E402
+from tests._instructor_availability_fixture import AVAILABILITY_FLAGS, rule  # noqa: E402
+from tests.test_one_teacher_day_off_policy import _enrol  # noqa: E402
+
+RUN = {"max_iterations": 3, "run_chain": False, "run_cpsat": False, "max_chain_iterations": 2}
+
+
+@pytest.fixture
+def run_flags(settings):
+    """Production's engine flags with the rules ON and the day-off policy."""
+    for name, value in {**AVAILABILITY_FLAGS, **ots.FLAG_ON}.items():
+        setattr(settings, name, value)
+    settings.TIMETABLE_INSTRUCTOR_PRIORITY_ENABLED = True
+    settings.TIMETABLE_INSTRUCTOR_DAY_OFF_POLICY = True
+    settings.TIMETABLE_SECONDARY_RECOVERY_ENABLED = False
+    settings.TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = 5
+    return settings
+
+
+def _run(scenario_id: int, **kwargs) -> dict:
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    return run_v2_optimisation_guarded(scenario_id, mode="current", **{**RUN, **kwargs})
+
+
+# ── B2-4: the re-pick of a section a rule released passes the week gate ──
+
+
+def _released_board(name: str, *, spare_day: bool, rule_on: bool):
+    """X (AI301 S1, THU) is stored with Dr A, who may teach on no day when ``rule_on``.
+    Dr B, the only other eligible teacher, works SUN-WED (pinned): THU would be his
+    fifth day. ``spare_day``: Dr B works SUN-TUE only, so THU is a spare day he may spend."""
+    sc, board = ots.scenario(name)
+    a, b = ots.instructor("Dr A"), ots.instructor("Dr B")
+    x = ots.requirement("AI", "AI301", "X COURSE")
+    ots.link("AI", "AI301", a)
+    ots.link("AI", "AI301", b, role="co")
+    ots.budget(sc, x, 1)
+    for index, day in enumerate(("SUN", "MON", "TUE", "WED")[: 3 if spare_day else 4]):
+        pinned = ots.requirement("AI", f"AI40{index}", f"PIN {index}")
+        ots.budget(sc, pinned, 1)
+        ots.place(
+            board, ots.section(sc, pinned, "S1"), [(day, "09:00", "10:15")], instructor_name="Dr B"
+        )
+        SectionInstructor.objects.create(
+            scenario=sc, course_key=pinned, section="S1", instructor=b, source="department"
+        )
+    ots.place(board, ots.section(sc, x, "S1"), [("THU", "09:00", "10:15")], instructor_name="Dr A")
+    SectionInstructor.objects.create(
+        scenario=sc, course_key=x, section="S1", instructor=a, source="engine"
+    )
+    _enrol(sc, x)
+    if rule_on:
+        rule(a, KIND_UNAVAILABLE)
+    return sc, x, a, b
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("rule_on", "spare_day"),
+    [(True, False), (False, False), (True, True)],
+    ids=["last-day-off", "no-rule-control", "spare-day-control"],
+)
+def test_a_released_section_is_left_to_be_decided_rather_than_cost_a_last_day_off(
+    run_flags, rule_on, spare_day
+) -> None:
+    """B2-4 (ADV-4): a rule leaves Dr A no legal week, so his stored section X is
+    released and re-picked. Dr B, the only other teacher, would lose his last day
+    off, so X stays to be decided (reason ``availability``) and the run is NOT
+    rolled back. Controls: without the rule Dr A keeps X; with a spare day Dr B
+    takes it (a spare day may be spent)."""
+    sc, x, a, b = _released_board(
+        f"b2-4 {rule_on} {spare_day}", spare_day=spare_day, rule_on=rule_on
+    )
+    key = f"{x}_S1"
+    saved = sta.load_assignment(sc.id, release_unteachable=True)
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is False, result.get("safety_regression")
+    stored = {
+        (row.course_key, row.section): row.instructor_id
+        for row in SectionInstructor.objects.filter(scenario=sc, source="engine")
+    }
+    if rule_on and not spare_day:
+        assert saved.teacher[key] is None and saved.tbd_reason[key] == "availability"
+        assert (x, "S1") not in stored
+        assert (
+            result["instructor_schedule_metric"]["before"]["working_days_by_instructor"][str(b.pk)]
+            == 4
+        )
+    elif rule_on:
+        assert saved.teacher[key] == b.pk and stored[(x, "S1")] == b.pk
+    else:
+        assert saved.teacher[key] == a.pk and stored[(x, "S1")] == a.pk
+        assert "instructor_availability_report" not in result
+
+
+def test_a_gated_released_pick_stays_to_be_decided_for_the_week_gate() -> None:
+    """B2-4 (unit): the gate itself. Dr B on four days may not take a section on a
+    fifth; on three he may."""
+    from core.services.section_teacher_assignment import (
+        AVAILABILITY_REASON,
+        STATUS_ENGINE,
+        STATUS_TBD,
+        TeacherAssignment,
+        _gate_released,
+    )
+
+    def board(pinned_days: int):
+        slots = [
+            ots.course(f"P{day}", [{"fixed": 2, "meetings": [(day, 540, 615)]}], eligible=(2,))[0]
+            for day in range(pinned_days)
+        ]
+        slots += ots.course("X", [{"meetings": [(4, 540, 615)]}], eligible=(1, 2))
+        x = slots[-1].key
+        teacher = {s.key: 2 for s in slots[:-1]} | {x: 2}
+        status = {s.key: "pinned" for s in slots[:-1]} | {x: STATUS_ENGINE}
+        return x, TeacherAssignment(
+            teacher=teacher,
+            status=status,
+            tbd_reason={},
+            kept=frozenset(),
+            universe=frozenset({1, 2}),
+            slots=tuple(slots),
+        )
+
+    x, four_days = board(4)
+    gated = _gate_released(four_days, [x])
+    assert gated.status[x] == STATUS_TBD and gated.tbd_reason[x] == AVAILABILITY_REASON
+    assert gated.teacher[x] is None
+
+    x, three_days = board(3)
+    assert _gate_released(three_days, [x]) is three_days
+    # A section that is not released is never touched.
+    x, four_days = board(4)
+    assert _gate_released(four_days, []) is four_days
