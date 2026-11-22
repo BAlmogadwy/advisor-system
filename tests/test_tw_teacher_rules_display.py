@@ -944,3 +944,20 @@ def test_an_english_section_previews_judge_the_move_by_its_whole_bundle(av_on, h
         )
         assert ("teacher_rule_blocked" in candidate) == expected
     assert any("teacher_rule_blocked" in c for c in preview["candidates"])
+
+
+def test_every_tbd_reason_the_server_sends_has_words():
+    """T-1: the shared JS words every reason the server can send as a TBD teacher."""
+    import re
+    from pathlib import Path
+
+    from core.services.section_teacher_assignment import (
+        AVAILABILITY_REASON,
+        REASON_INCOMPLETE_PATTERN,
+        TBD_REASONS,
+    )
+
+    source = Path("static/js/timetable-section-teacher.js").read_text(encoding="utf-8")
+    body = source.split("const REASONS = {", 1)[1].split("};", 1)[0]
+    keys = set(re.findall(r"^    (\w+): ", body, flags=re.MULTILINE))
+    assert keys >= set(TBD_REASONS) | {AVAILABILITY_REASON, REASON_INCOMPLETE_PATTERN}

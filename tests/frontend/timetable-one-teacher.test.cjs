@@ -339,3 +339,16 @@ test('the coverage stat is the first of the instructors group, before its days a
   assert.equal(row.hidden, true);
   dom.window.close();
 });
+
+test('J-T1 the shared rule words the availability reason, en and ar', () => {
+  const words = { en: 'No eligible teacher can teach at this time (teaching-time rules).', ar: 'لا يستطيع أي مدرّس مؤهل التدريس في هذا الوقت (قواعد أوقات التدريس).' };
+  for (const lang of ['en', 'ar']) {
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { runScripts: 'outside-only' });
+    dom.window.LANGUAGE_CODE = lang;
+    dom.window.eval(read('static/js/timetable-section-teacher.js'));
+    const seen = dom.window.TimetableSectionTeacher.teacherOf({ teacher: { status: 'tbd', reason: 'availability' } });
+    assert.equal(seen.state, 'tbd');
+    assert.equal(seen.hint, words[lang]);
+    dom.window.close();
+  }
+});
