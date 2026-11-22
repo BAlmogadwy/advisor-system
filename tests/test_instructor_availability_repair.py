@@ -1207,3 +1207,101 @@ def test_a_released_repick_keeps_the_b2_4_gate_inside_the_saved_week_scope() -> 
 
     with saved_week_scope():
         assert sta._gate_released(three_days, [x]) is three_days
+
+
+# ── A failed report read is not a clean board ────────────────────────────
+
+
+def _fail_report_read(monkeypatch, nth: int | None) -> None:
+    """The ``nth`` read of the persisted-board report (1: the snapshot, 2: the final
+    board, 3: the restored board after a rollback) raises inside the report."""
+    from core.services import timetable_instructor_availability_report as report_module
+
+    real, calls = report_module.availability_for, []
+
+    def flaky(scenario_id, *args, **kwargs):
+        calls.append(scenario_id)
+        if len(calls) == nth:
+            raise RuntimeError("unreadable")
+        return real(scenario_id, *args, **kwargs)
+
+    monkeypatch.setattr(report_module, "availability_for", flaky)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("case", "failing", "blocked", "noted"),
+    [
+        ("created", None, True, False),
+        ("created", 2, False, True),
+        ("started", None, False, False),
+        ("started", 1, False, True),
+        ("flag-off", 1, False, False),
+    ],
+    ids=[
+        "created-both-reads-fine",
+        "created-after-read-fails",
+        "started-both-reads-fine",
+        "started-before-read-fails",
+        "flag-off-control",
+    ],
+)
+def test_a_failed_report_read_neither_blocks_nor_passes_the_availability_gate(
+    run_flags, monkeypatch, case, failing, blocked, noted
+) -> None:
+    """B2-6 with a read that fails. A stage that CREATES a violation is blocked when
+    both reads work; when the final read fails the board is not known clean, so the
+    gate neither blocks nor passes silently: it records ``checked: False``. A board
+    that STARTED with the violation is not blocked when both reads work; when the
+    snapshot read fails every pre-existing pair must not look new. Control: the flag
+    off reads nothing and adds no key."""
+    from core.services import timetable_instructor_cap_repair as cap
+
+    run_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = case != "flag-off"
+    sc, _x, _a = _one_section_board(
+        f"b2-6 read {case} {failing}", day="WED" if case == "started" else "SUN"
+    )
+    if case == "started":
+        monkeypatch.setattr(
+            cap,
+            "repair_instructor_availability",
+            lambda _sid: {"enabled": True, "repaired": [], "locked_blocked": [], "unavoidable": []},
+        )
+    else:
+        _make_a_stage_move_x_to(monkeypatch, "WED")
+    _fail_report_read(monkeypatch, failing)
+
+    result = _run(sc.id)
+
+    metrics = {row["metric"] for row in result["safety_regression"]["regressions"]}
+    assert result["safety_blocked"] is blocked, result["safety_regression"]
+    assert ("instructor_availability_violations" in metrics) is blocked
+    if noted:
+        assert result["instructor_availability_gate"] == {"checked": False}
+    else:
+        assert "instructor_availability_gate" not in result
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("failing", [None, 3], ids=["read-fine-control", "restored-read-fails"])
+def test_a_rollback_does_not_write_a_remaining_count_from_a_failed_read(
+    run_flags, monkeypatch, final_without_teacher, failing
+) -> None:
+    """T-B11 with a failing re-measure: another gate rolls the run back; the repair
+    report's remaining count is re-read on the restored board. A failed read is
+    marked unmeasured (``None`` and ``remaining_unmeasured``), never written as 0.
+    Control: a good read writes the count."""
+    sc, _x, _a = _one_section_board(f"b2-3 restored {failing}", day="WED")
+    final_without_teacher("weekly_ceiling")
+    _fail_report_read(monkeypatch, failing)
+
+    result = _run(sc.id)
+
+    assert result["safety_blocked"] is True
+    report = result["instructor_availability_repair"]
+    if failing is None:
+        assert report["remaining_violations"] == 1
+        assert "remaining_unmeasured" not in report
+    else:
+        assert report["remaining_violations"] is None
+        assert report["remaining_unmeasured"] is True

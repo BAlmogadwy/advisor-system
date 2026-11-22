@@ -323,10 +323,17 @@ def restore_baseline_instructor_availability(result: dict) -> None:
         quality.pop("instructor_availability", None)
 
 
+#: A read of the persisted board's teaching-time violations that failed: neither
+#: a clean board nor a broken one, so no gate may pass or block on it.
+_UNREAD = object()
+
+
 def _availability_pairs(scenario_id: int):
     """Blocked meetings per ``(section id, teacher id)`` on the persisted board
-    under the map in force, or None while no rule binds a teacher of the scenario
-    (the flag off, or no rule: nothing is read and no gate row or key exists)."""
+    under the map in force; None while no rule binds a teacher of the scenario
+    (the flag off, or no rule: nothing is read and no gate row or key exists);
+    ``_UNREAD`` when the report could not be read (``checked`` False: an empty
+    count would look like a clean board)."""
     from core.services.timetable_instructor_availability import availability_for
 
     if not availability_for(scenario_id):
@@ -336,7 +343,10 @@ def _availability_pairs(scenario_id: int):
         scenario_instructor_availability_report,
     )
 
-    return pair_counts(scenario_instructor_availability_report(scenario_id))
+    report = scenario_instructor_availability_report(scenario_id)
+    if not report.get("checked"):
+        return _UNREAD
+    return pair_counts(report)
 
 
 #: Why a teacher cannot take a section on this layout: he is busy at its time.
@@ -1004,7 +1014,11 @@ def _run_v2_optimisation_guarded(
                     "delta": coverage_after["tbd_beyond_d10"] - coverage_before["tbd_beyond_d10"],
                 }
             )
-    if availability_before is not None and availability_after is not None:
+    if availability_before is _UNREAD or availability_after is _UNREAD:
+        # A failed read (before or after) is not a clean board: the comparison is
+        # skipped, nothing is blocked or passed on it, and the result says so.
+        result["instructor_availability_gate"] = {"checked": False}
+    elif availability_before is not None and availability_after is not None:
         # B2-6: the backstop for "an automatic stage created a violation". A pair
         # holding MORE blocked meetings on the final board (final map) than at the
         # snapshot (saved map) blocks, unless a stage already reported it as one
@@ -1148,9 +1162,14 @@ def _run_v2_optimisation_guarded(
                 "unplaced": [],
                 "locked_blocked": [],
                 "unavoidable": [],
-                # Re-measured on the restored board under the saved map.
-                "remaining_violations": sum((restored_pairs or {}).values()),
+                # Re-measured on the restored board under the saved map; a failed
+                # read is unmeasured, never a count of zero.
+                "remaining_violations": (
+                    None if restored_pairs is _UNREAD else sum((restored_pairs or {}).values())
+                ),
             }
+            if restored_pairs is _UNREAD:
+                result["instructor_availability_repair"]["remaining_unmeasured"] = True
         if isinstance(result.get("instructor_compaction"), dict):
             compaction = result["instructor_compaction"]
             result["candidate_instructor_compaction"] = compaction
