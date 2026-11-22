@@ -185,6 +185,10 @@ class Instructor:
     id: InstructorId
     name: str
     eligible_offerings: frozenset[OfferingId]
+    #: ``((offering, most sections), ...)`` sorted: the explicit limit of the
+    #: offerings whose staffing row carries a number (empty: none does). A
+    #: limit replaces the D10 cap for that instructor on that offering.
+    section_limits: tuple[tuple[OfferingId, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

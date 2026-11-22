@@ -1002,6 +1002,9 @@ def build_snapshot(
             targets_of_placeholder[(programme, placeholder)].add(target)
 
     eligible: dict[int, set[str]] = defaultdict(set)
+    # instructor -> offering -> the SMALLEST explicit limit among the rows that
+    # reach it (a blank row beside a numbered one is ignored).
+    section_limits: dict[int, dict[str, int]] = defaultdict(dict)
     for link in CourseInstructor.objects.filter(
         program__in=program_set, section__iexact=gender
     ).select_related("instructor"):
@@ -1027,6 +1030,9 @@ def build_snapshot(
                     # written to prevent, walking in through the front door.
                     continue
                 eligible[int(link.instructor_id)].add(offering.id)
+                if link.max_sections is not None:
+                    held = section_limits[int(link.instructor_id)]
+                    held[offering.id] = min(link.max_sections, held.get(offering.id, 10**6))
     instructor_names = {
         row.id: row.full_name for row in InstructorRow.objects.filter(id__in=list(eligible) or [0])
     }
@@ -1035,6 +1041,7 @@ def build_snapshot(
             id=iid,
             name=instructor_names.get(iid, f"instructor:{iid}"),
             eligible_offerings=frozenset(oids),
+            section_limits=tuple(sorted(section_limits.get(iid, {}).items())),
         )
         for iid, oids in sorted(eligible.items())
     )

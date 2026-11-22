@@ -20,7 +20,9 @@ module and nothing reads ``section_instructors``.
 overlap of distinct physical meetings, sibling sections included) and the daily
 cap, each only while the board enforces it; at most ``weekly_ceiling()``
 sessions a week; and D10 — a course running more than 3 sections gives one
-teacher at most 2 of them, fewer for a meeting-policy course. A section not
+teacher at most 2 of them, fewer for a meeting-policy course; a teacher whose
+course link carries a number (``CourseInstructor.max_sections``) holds at most
+that many instead, at any section count (the policy cap still applies). A section not
 placed yet is charged only to a teacher who keeps one of its placer options
 free of clash and of the daily cap, so the required-section retry can still
 place it: on lab scenario 667 the days-first optimum otherwise gave instructor
@@ -205,6 +207,12 @@ class Slot:
     what the weekly ceiling counts. ``eligible`` is sorted, with teachers who
     hold a co/lab row on this section removed. ``course_sections`` is the D10
     count N_c and ``course_cap`` the resulting per-teacher limit (None: none).
+    ``teacher_caps`` are the explicit limits ``(teacher, most sections)`` of
+    the teachers whose course link carries a number
+    (``CourseInstructor.max_sections``), already held to the meeting-policy cap:
+    such a teacher's limit REPLACES the D10 one, at any section count (empty:
+    no teacher of this course has a number, the common case). Every reader asks
+    :meth:`cap_for`, never ``course_cap`` alone.
     ``source`` says where a fixed or stored teacher comes from: a pin's row
     source, ``owner`` (the owner scenario's row) or ``meeting`` (the meeting
     name) for a frozen section, ``engine`` for a stored engine row.
@@ -236,6 +244,7 @@ class Slot:
     current: int | None = None
     course_sections: int = 0
     course_cap: int | None = None
+    teacher_caps: tuple[tuple[int, int], ...] = ()
     stored: int | None = None
     frozen_name: str = ""
     display_code: str = ""
@@ -243,6 +252,15 @@ class Slot:
     options: tuple[tuple[tuple[int, int, int], ...], ...] = ()
     teacher_options: tuple[tuple[int, tuple[tuple[tuple[int, int, int], ...], ...]], ...] = ()
     blocked_teachers: tuple[int, ...] = ()
+
+    def cap_for(self, teacher: int) -> int | None:
+        """The most sections of this course ``teacher`` may hold (None: no
+        limit): his explicit limit when he has one, else the course default
+        (D10 above 3 sections, the meeting-policy cap)."""
+        for t, cap in self.teacher_caps:
+            if t == teacher:
+                return cap
+        return self.course_cap
 
     def options_for(self, teacher: int) -> tuple:
         """The options of this section (not placed yet) ``teacher`` may teach."""
@@ -545,7 +563,11 @@ class _Static:
     names: dict[int, str]
     by_normalised: dict[str, int]
     grids: tuple[list, list, list] = ([], [], [])
+    limit: Any = None
     resolved: dict[tuple[str, str], tuple[int, ...]] = field(default_factory=dict)
+    resolved_limits: dict[tuple[str, str], tuple[tuple[int, int], ...]] = field(
+        default_factory=dict
+    )
     placer_options: dict[str, tuple] = field(default_factory=dict)
     # The daytime option dicts per course (the generator's own output), and, with
     # teaching-time rules, one ruled teacher's legal options per (course,
@@ -563,6 +585,18 @@ class _Static:
         if cache_key not in self.resolved:
             self.resolved[cache_key] = tuple(sorted(self.resolve(course_key, display_code)))
         return self.resolved[cache_key]
+
+    def explicit_limits(self, course_key: str, display_code: str) -> tuple[tuple[int, int], ...]:
+        """``((teacher, limit), ...)`` sorted: the teachers of the course whose
+        link carries a number (empty without any)."""
+        if self.limit is None:
+            return ()
+        cache_key = (course_key, display_code)
+        if cache_key not in self.resolved_limits:
+            self.resolved_limits[cache_key] = tuple(
+                sorted(self.limit(course_key, display_code).items())
+            )
+        return self.resolved_limits[cache_key]
 
     def options(self, course_key: str, budget) -> tuple:
         """The weekly options ``auto_place_board`` tries for a missing section
@@ -755,7 +789,7 @@ def _minutes(value: object) -> int:
 
 def _load_static(scenario_id: int) -> _Static | None:
     from core.models import Instructor, ScenarioSectionBudget, TimetableScenario
-    from core.services.timetable_pr4_instructor import section_instructor_resolver
+    from core.services.timetable_pr4_instructor import section_resolvers
 
     scenario = TimetableScenario.objects.filter(pk=scenario_id).first()
     if scenario is None:
@@ -776,6 +810,7 @@ def _load_static(scenario_id: int) -> _Static | None:
         if is_active:
             active.add(pk)
             by_normalised[normalised] = pk
+    resolve, limit = section_resolvers(programmes, gender)
     return _Static(
         scenario_id=scenario_id,
         gender=gender,
@@ -783,7 +818,8 @@ def _load_static(scenario_id: int) -> _Static | None:
         programmes=programmes,
         programmes_source=source,
         budgets=budgets,
-        resolve=section_instructor_resolver(programmes, gender),
+        resolve=resolve,
+        limit=limit,
         active=active,
         names=names,
         by_normalised=by_normalised,
@@ -1024,6 +1060,12 @@ def _collect(
                 cap_c = (
                     min(cap_c, len(policy.patterns)) if cap_c is not None else len(policy.patterns)
                 )
+            # An explicit limit replaces D10 for that teacher (any section
+            # count, possibly above 2); the policy cap stays a minimum on top.
+            teacher_caps = tuple(
+                (t, min(n, len(policy.patterns)) if policy is not None else n)
+                for t, n in static.explicit_limits(course_key, display)
+            )
             row_key = (_norm(course_key), _norm(label))
             seen_row_keys.add(row_key)
             eligible = static.eligible(course_key, display)
@@ -1095,6 +1137,7 @@ def _collect(
                     current=current,
                     course_sections=n_course,
                     course_cap=cap_c,
+                    teacher_caps=teacher_caps,
                     stored=stored,
                     frozen_name=frozen_name,
                     display_code=display,
@@ -1307,12 +1350,15 @@ class _Ledger:
             idle_added += _merged_idle(after) - _merged_idle(before)
         return new_days, idle_added
 
+    def at_cap(self, slot: Slot, teacher: int) -> bool:
+        """``teacher`` already holds the most sections of this course he may
+        (his explicit limit, else the course default)."""
+        cap = slot.cap_for(teacher)
+        return cap is not None and self.per_course[(teacher, slot.course_key)] >= cap
+
     def layout_free_blocker(self, slot: Slot, teacher: int) -> str | None:
         """D10 or the weekly ceiling: what stops ``teacher`` at any time."""
-        if (
-            slot.course_cap is not None
-            and self.per_course[(teacher, slot.course_key)] >= slot.course_cap
-        ):
+        if self.at_cap(slot, teacher):
             return "d10"
         if self.load[teacher] + slot.nominal_sessions > self.ceiling:
             return "weekly_ceiling"
@@ -1541,9 +1587,7 @@ def _solve_component(
     for slot in comp:
         allowed = []
         for teacher in slot.eligible:
-            if slot.course_cap is not None and (
-                ledger.per_course[(teacher, slot.course_key)] >= slot.course_cap
-            ):
+            if ledger.at_cap(slot, teacher):
                 continue
             if ledger.load[teacher] + slot.nominal_sessions > ledger.ceiling:
                 continue
@@ -1586,10 +1630,10 @@ def _solve_component(
             model.add(sum(s.nominal_sessions * x[(s.key, teacher)] for s in own) <= room)
         courses: dict[str, list[Slot]] = defaultdict(list)
         for slot in own:
-            if slot.course_cap is not None:
+            if slot.cap_for(teacher) is not None:
                 courses[slot.course_key].append(slot)
         for course_key, members in courses.items():
-            limit = members[0].course_cap - ledger.per_course[(teacher, course_key)]
+            limit = members[0].cap_for(teacher) - ledger.per_course[(teacher, course_key)]
             if len(members) > limit:
                 model.add(sum(x[(s.key, teacher)] for s in members) <= limit)
         placed = [s for s in own if s.placed and s.meetings]
@@ -2172,7 +2216,14 @@ def adds_violations(candidate: TeacherAssignment, incumbent: TeacherAssignment) 
 
 
 def tbd_d10_floor(slots: Iterable[Slot]) -> int:
-    """A layout-free lower bound on the TBD sections D10 forces (2.10)."""
+    """A layout-free lower bound on the TBD sections D10 and the teachers'
+    explicit limits force (2.10).
+
+    Without an explicit limit in the course this is D10 alone (above 3
+    sections). With one, a teacher's own cap counts at any section count; a
+    teacher with no cap at all leaves the course unbounded, so it adds nothing.
+    When a course's slots disagree on a teacher's cap (a display code that
+    differs), the most generous one is taken: a bound may only be too low."""
     by_course: dict[str, list[Slot]] = defaultdict(list)
     for slot in slots:
         by_course[slot.course_key].append(slot)
@@ -2180,14 +2231,26 @@ def tbd_d10_floor(slots: Iterable[Slot]) -> int:
     for members in by_course.values():
         n_c = members[0].course_sections
         cap_c = members[0].course_cap
-        if n_c <= D10_APPLIES_ABOVE or cap_c is None:
+        explicit = any(s.teacher_caps for s in members)
+        if not explicit and (n_c <= D10_APPLIES_ABOVE or cap_c is None):
             continue
         eligible = {t for s in members for t in s.eligible}
         if not eligible:
             continue
         fixed = [s for s in members if s.fixed is not None or s.fixed_kind]
         fixed_by = Counter(s.fixed for s in fixed if s.fixed is not None)
-        capacity = sum(max(0, cap_c - fixed_by[t]) for t in eligible)
+        if not explicit:
+            capacity: int | None = sum(max(0, cap_c - fixed_by[t]) for t in eligible)
+        else:
+            capacity = 0
+            for t in eligible:
+                caps = [s.cap_for(t) for s in members if t in s.eligible]
+                if any(c is None for c in caps):
+                    capacity = None
+                    break
+                capacity += max(0, max(caps) - fixed_by[t])
+        if capacity is None:
+            continue
         floor += max(0, (n_c - len(fixed)) - capacity)
     return floor
 
@@ -2203,15 +2266,16 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
     loads = schedule["load_by_instructor"]
     reasons = Counter(a.tbd_reason.get(s.key, "bound") for s in tbd_slots)
     fixed_per_course: Counter = Counter()
-    course_caps: dict[str, int | None] = {}
+    course_slot: dict[str, Slot] = {}
     for slot in a.slots:
-        course_caps[slot.course_key] = slot.course_cap
+        course_slot[slot.course_key] = slot
         if slot.fixed is not None:
             fixed_per_course[(slot.course_key, slot.fixed)] += 1
     d10_by_pins = sorted(
         (course, teacher)
         for (course, teacher), n in fixed_per_course.items()
-        if course_caps.get(course) is not None and n > course_caps[course]
+        if course_slot[course].cap_for(teacher) is not None
+        and n > course_slot[course].cap_for(teacher)
     )
     fixed_only = TeacherAssignment(
         teacher={s.key: s.fixed for s in a.slots if s.fixed is not None},
@@ -2383,7 +2447,7 @@ def _validated_rows(
     for key, teacher in valid.items():
         groups[(teacher, by_key[key].course_key)].append(by_key[key])
     for (teacher, course_key), members in groups.items():
-        cap_c = members[0].course_cap
+        cap_c = members[0].cap_for(teacher)
         if cap_c is None:
             continue
         limit = max(0, cap_c - ledger.per_course[(teacher, course_key)])
@@ -3252,10 +3316,7 @@ def persist_bridge_assignment(scenario_id: int, rows: Mapping[tuple[str, str], i
                 reason = "pinned_or_frozen" if slot.fixed_kind else "not_eligible"
             elif teacher not in slot.eligible:
                 reason = "not_eligible"
-            elif (
-                slot.course_cap is not None
-                and ledger.per_course[(teacher, slot.course_key)] >= slot.course_cap
-            ):
+            elif ledger.at_cap(slot, teacher):
                 reason = "d10"
             elif ledger.load[teacher] + slot.nominal_sessions > ledger.ceiling:
                 reason = "weekly_ceiling"
