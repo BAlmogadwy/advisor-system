@@ -252,27 +252,71 @@ def section_instructor_resolver(programs, gender: str) -> Callable[[object, obje
     return _course_instructor_links(programs, gender)[0]
 
 
+def section_resolvers(
+    programs, gender: str
+) -> tuple[Callable[[object, object], set[int]], Callable[[object, object], dict[int, int]]]:
+    """``(resolve, limit)`` from ONE read of the links: :func:`section_instructor_resolver`
+    and ``limit(course_key, display_code) -> {instructor_id: most sections}``.
+
+    The limit is the explicit per-teacher number of a course
+    (``CourseInstructor.max_sections``), read with the same programme-serving and
+    active-teacher filter as the instructor resolver. Only teachers who have a
+    number are in the answer. A teacher with several link rows for the course
+    (one per programme) gets the SMALLEST number among them; a blank row beside a
+    numbered one is ignored.
+    """
+    resolve, _names, limit = _read_course_links(programs, gender)
+    return resolve, limit
+
+
 def _course_instructor_links(
     programs, gender: str
 ) -> tuple[Callable[[object, object], set[int]], dict[int, str]]:
     """:func:`section_instructor_resolver` and the linked instructors' names, by
     id, read in the same query (the active-instructor filter joins them
     already). Two queries with a gender, none without."""
+    resolve, names, _limit = _read_course_links(programs, gender)
+    return resolve, names
+
+
+def _read_course_links(
+    programs, gender: str
+) -> tuple[
+    Callable[[object, object], set[int]],
+    dict[int, str],
+    Callable[[object, object], dict[int, int]],
+]:
+    """The one read of the course links: who may teach (resolver), their names,
+    and each teacher's explicit section limit (resolver). The limit rides on the
+    same query as one more column."""
     from core.models import CourseInstructor
 
     if not gender:
-        return (lambda _course_key, _display_code: set()), {}
+        return (lambda _course_key, _display_code: set()), {}, (lambda _k, _d: {})
     programs = [p for p in programs if p]
     serving = programmes_serving_course(programs)
 
     # (program, normalised course_code) -> {instructor_id}
     by_course: dict[tuple[str, str], set[int]] = {}
+    # The same key -> {instructor_id: its rows' smallest explicit limit}; only
+    # numbered rows. Empty when no row carries a number.
+    limits_by_course: dict[tuple[str, str], dict[int, int]] = {}
     names: dict[int, str] = {}
-    for prog, code, instructor_id, full_name in CourseInstructor.objects.filter(
+    for prog, code, instructor_id, full_name, max_sections in CourseInstructor.objects.filter(
         program__in=programs, section=gender, instructor__is_active=True
-    ).values_list("program", "course_code", "instructor_id", "instructor__full_name"):
-        by_course.setdefault((prog, (code or "").strip().upper()), set()).add(instructor_id)
+    ).values_list(
+        "program", "course_code", "instructor_id", "instructor__full_name", "max_sections"
+    ):
+        key = (prog, (code or "").strip().upper())
+        by_course.setdefault(key, set()).add(instructor_id)
         names[instructor_id] = full_name
+        if max_sections is not None:
+            # Codes are compared normalised, so two rows of one teacher that
+            # differ only in case reach the same key: the smallest number wins.
+            row_limits = limits_by_course.setdefault(key, {})
+            row_limits[instructor_id] = min(
+                max_sections, row_limits.get(instructor_id, max_sections)
+            )
 
     def resolve(course_key: object, display_code: object) -> set[int]:
         norm = str(display_code or "").strip().upper()
@@ -281,7 +325,17 @@ def _course_instructor_links(
             ids |= by_course.get((prog, norm), set())
         return ids
 
-    return resolve, names
+    def limit(course_key: object, display_code: object) -> dict[int, int]:
+        if not limits_by_course:
+            return {}
+        norm = str(display_code or "").strip().upper()
+        out: dict[int, int] = {}
+        for prog in serving(course_key):
+            for instructor_id, number in limits_by_course.get((prog, norm), {}).items():
+                out[instructor_id] = min(number, out.get(instructor_id, number))
+        return out
+
+    return resolve, names, limit
 
 
 def build_section_instructor_ids(scenario, *, incomplete: str = "raise") -> dict[str, set[int]]:
@@ -308,7 +362,11 @@ def build_section_instructor_ids(scenario, *, incomplete: str = "raise") -> dict
     if is_one_teacher_active():
         from core.services.section_teacher_assignment import load_assignment
 
-        return load_assignment(scenario.id, incomplete=incomplete).pr4_map()
+        # An engine's read ("raise") is an engine phase: it drops a stored
+        # teacher whose teaching-time rules leave no legal week (fix plan D-H).
+        return load_assignment(
+            scenario.id, incomplete=incomplete, release_unteachable=incomplete == "raise"
+        ).pr4_map()
 
     return linked_section_instructor_ids(scenario).ids
 

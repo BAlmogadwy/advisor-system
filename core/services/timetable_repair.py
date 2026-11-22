@@ -69,6 +69,12 @@ from core.services.section_move_optimisation_components import (
 )
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_flags import is_section_programme_preference_enabled
+from core.services.timetable_instructor_availability import (
+    RuleChecker,
+    availability_scope,
+    rules_enabled,
+    section_rule_checker,
+)
 from core.services.timetable_meeting_shape import MeetingShape, shape_for
 from core.services.timetable_move_outcome import preview_placement_student_outcome_candidates
 from core.services.timetable_online import OnlineCourseLookup
@@ -96,6 +102,20 @@ from core.services.timetable_workspace import (
     preview_placement_slot_candidates,
     validate_placement,
 )
+
+
+def _rule_scope(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Run a registration-repair entry point inside one teaching-time rule scope
+    (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): its fingerprint and every candidate's
+    hard feasibility check share one rule read and one rule checker."""
+
+    @functools.wraps(fn)
+    def inner(*args: Any, **kwargs: Any) -> Any:
+        with availability_scope(None):
+            return fn(*args, **kwargs)
+
+    return inner
+
 
 DEFAULT_LIMITS = {
     "max_depth": 3,
@@ -346,6 +366,7 @@ def _repair_planning_scope(
     return scope
 
 
+@_rule_scope
 def analyse_timetable_repair(
     *,
     placement_id: int,
@@ -512,6 +533,7 @@ def analyse_timetable_repair(
     return detail
 
 
+@_rule_scope
 def simulate_timetable_repair_scope(
     *,
     scenario_id: int,
@@ -701,6 +723,7 @@ def simulate_timetable_repair_scope(
     }
 
 
+@_rule_scope
 def create_global_repair_plan(
     *,
     scenario_id: int,
@@ -2396,6 +2419,7 @@ def _simulation_opportunity_rank_key(row: dict[str, Any]) -> tuple:
     )
 
 
+@_rule_scope
 def repair_run_detail(run_id: UUID | str) -> dict[str, Any]:
     """Return a stable JSON-serialisable repair run detail payload."""
 
@@ -2565,6 +2589,7 @@ def repair_run_report(run_id: UUID | str, *, candidate_id: str | None = None) ->
     }
 
 
+@_rule_scope
 def repair_candidate_detail(
     run_id: UUID | str,
     candidate_identifier: int | str,
@@ -3102,10 +3127,17 @@ def _repair_state_fingerprint(scenario_id: int, blocked_ids: list[int]) -> str:
     )
     if any(row[2] for row in budget_rows):
         payload["meeting_patterns"] = budget_rows
+    # Teaching-time rules decide which destinations an analysis may recommend, so
+    # while they bind a teacher of the scenario a rule edit (or a re-pick of a
+    # ruled teacher) invalidates cached analyses. Without one nothing is added.
+    rule_checker = section_rule_checker(scenario_id)
+    if rule_checker is not None:
+        payload["instructor_availability"] = rule_checker.fingerprint()
     encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+@_rule_scope
 def approve_repair_candidate(
     run_id: UUID | str,
     candidate_identifier: int | str,
@@ -3180,6 +3212,7 @@ def approve_repair_candidate(
     return repair_run_detail(run_id)
 
 
+@_rule_scope
 def apply_approved_repair_candidate(
     run_id: UUID | str,
     candidate_identifier: int | str,
@@ -5114,8 +5147,14 @@ def hard_feasibility_rejections(
     room: str,
     room_reasons: list[dict[str, Any]],
     planning_scope: dict[str, Any] | None = None,
+    rule_checker: RuleChecker | None = None,
 ) -> list[dict[str, Any]]:
-    """Reject impossible candidates before any future student solver."""
+    """Reject impossible candidates before any future student solver.
+
+    ``rule_checker`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a destination the
+    section's teacher may not teach is rejected with its own code,
+    ``INSTRUCTOR_UNAVAILABLE`` (never folded into the validation's critical count).
+    """
 
     reasons: list[dict[str, Any]] = []
     if section_policy(placement.term_section):
@@ -5159,6 +5198,21 @@ def hard_feasibility_rejections(
                 "details": {
                     "overlaps": validation.get("overlaps", []),
                     "instructor_clashes": validation.get("instructor_clashes", []),
+                },
+            }
+        )
+    if rule_checker is not None and (
+        blocked_ids := rule_checker.blocked(placement, day, start_time, end_time)
+    ):
+        reasons.append(
+            {
+                "code": "INSTRUCTOR_UNAVAILABLE",
+                "message": "The section's instructor cannot teach at this time",
+                "details": {
+                    "instructor_ids": list(blocked_ids),
+                    "day": day,
+                    "start": start_time,
+                    "end": end_time,
                 },
             }
         )
@@ -6974,6 +7028,7 @@ def _hard_feasibility_rejections_for_move_set(
 ) -> list[dict[str, Any]]:
     moving_ids = {int(move.get("placement_id") or 0) for move in moves}
     rejections: list[dict[str, Any]] = []
+    rule_checker = _move_set_rule_checker(placements_by_id)
     for move in moves:
         placement_id = int(move.get("placement_id") or 0)
         placement = placements_by_id.get(placement_id)
@@ -6994,6 +7049,7 @@ def _hard_feasibility_rejections_for_move_set(
             room=str(move.get("room") or ""),
             room_reasons=list(move.get("room_reasons") or []),
             planning_scope=planning_scope,
+            **({"rule_checker": rule_checker} if rule_checker is not None else {}),
         )
         for reason in scoped_rejections:
             filtered = _filter_move_set_self_conflict_reason(reason, moving_ids)
@@ -7005,6 +7061,17 @@ def _hard_feasibility_rejections_for_move_set(
                 rejections.append(filtered)
     rejections.extend(policy_move_rejections(placements_by_id, moves))
     return rejections
+
+
+def _move_set_rule_checker(
+    placements_by_id: dict[int, SectionPlacement],
+) -> RuleChecker | None:
+    """The rule checker of the move set's scenario (one per scope); None while the
+    rules are off, without touching a placement's board."""
+    if not rules_enabled():
+        return None
+    scenario_ids = {row.board.scenario_id for row in placements_by_id.values()}
+    return section_rule_checker(scenario_ids.pop()) if len(scenario_ids) == 1 else None
 
 
 def _filter_move_set_self_conflict_reason(

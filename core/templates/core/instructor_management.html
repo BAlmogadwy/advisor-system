@@ -78,6 +78,8 @@
     </div>
   </div>
 
+  <p class="im-limits-help" id="caLimitsHelp">{% if LANGUAGE_CODE == 'ar' %}اتركه فارغًا للقاعدة الافتراضية: شعبتان على الأكثر من المقرر الذي تزيد شعبه على ثلاث. الشعب الزائدة على حد كل عضو هيئة تدريس تبقى دون إسناد.{% else %}Leave "Max sections" blank for the default: at most 2 sections of a course that runs more than 3. Sections above every instructor's limit stay unassigned.{% endif %}</p>
+
   <div class="table-wrap">
     <table class="tbl-card im-table" id="caTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}إسناد المقررات إلى المدرسين{% else %}Course-to-instructor assignments{% endif %}">
       <thead>
@@ -125,12 +127,13 @@
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}البريد{% else %}Email{% endif %}</th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}رقم الموظف{% else %}Employee no{% endif %}</th>
           <th scope="col" class="text-center">{% if LANGUAGE_CODE == 'ar' %}الحد الأسبوعي{% else %}Weekly limit{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}أوقات التدريس{% else %}Teaching times{% endif %}</th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
           <th scope="col"><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th>
         </tr>
       </thead>
       <tbody>
-        <tr><td colspan="7" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل…{% else %}Loading instructors…{% endif %}</td></tr>
+        <tr><td colspan="8" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل…{% else %}Loading instructors…{% endif %}</td></tr>
       </tbody>
     </table>
   </div>
@@ -221,6 +224,86 @@
     </div>
   </form>
 </dialog>
+
+<!-- ─── Teaching times: one instructor's time rules (static/js/instructor-time-rules.js) ─── -->
+<dialog id="imRulesDialog" class="ux-dialog ux-dialog-scroll ux-dialog-wide" aria-labelledby="imRulesTitle" aria-describedby="imRulesHelp" data-rules-enforced="{{ time_rules_enforced|yesno:'1,0' }}">
+  <form method="dialog" id="imRulesForm" novalidate>
+    <div class="ux-dialog-head">
+      <div>
+        <h2 class="ux-dialog-title" id="imRulesTitle">{% if LANGUAGE_CODE == 'ar' %}أوقات التدريس{% else %}Teaching times{% endif %}</h2>
+        <p class="ux-dialog-sub" id="imRulesHelp">{% if LANGUAGE_CODE == 'ar' %}يُبقي منشئ الجدول محاضرات هذا العضو ضمن هذه الأوقات. أما النقل اليدوي فمسموح دائماً، ويُشار إليه بتنبيه.{% else %}The timetable builder keeps this instructor's classes inside these times. Moves you make by hand are always allowed and are flagged.{% endif %}</p>
+      </div>
+      <button type="button" class="btn btn-sm btn-neutral btn-icon" data-dialog-close aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="ux-dialog-body">
+      <p class="sr-only" id="imRulesAnnounce" role="status"></p>
+      <div class="im-rules-notice" id="imRulesRestored" hidden>
+        <p id="imRulesRestoredText" role="status"></p>
+        <div class="im-rules-notice-actions">
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesDiscard">{% if LANGUAGE_CODE == 'ar' %}تجاهل التعديلات{% else %}Discard changes{% endif %}</button>
+        </div>
+      </div>
+      <div class="im-rules-notice" id="imRulesStale" data-tone="warning" hidden>
+        <p id="imRulesStaleText" role="alert"></p>
+        <div class="im-rules-notice-actions">
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesLoadTheirs">{% if LANGUAGE_CODE == 'ar' %}تحميل نسخة الزميل{% else %}Load their version{% endif %}</button>
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesSaveMine">{% if LANGUAGE_CODE == 'ar' %}حفظ نسختي بدلاً منها{% else %}Save mine instead{% endif %}</button>
+        </div>
+      </div>
+
+      <div class="im-rules-quick" role="group" aria-labelledby="imRulesQuickLabel">
+        <span class="ux-field-label" id="imRulesQuickLabel">{% if LANGUAGE_CODE == 'ar' %}إضافة سريعة{% else %}Quick add{% endif %}</span>
+        <div class="im-rules-quick-list">
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesAddNoMornings" data-itr-quick="no_mornings">{% if LANGUAGE_CODE == 'ar' %}لا تدريس صباحاً{% else %}No mornings{% endif %}</button>
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesAddNoAfternoons" data-itr-quick="no_afternoons">{% if LANGUAGE_CODE == 'ar' %}لا تدريس بعد الظهر{% else %}No afternoons{% endif %}</button>
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesAddDayOff" data-itr-quick="day_off">{% if LANGUAGE_CODE == 'ar' %}يوم إجازة{% else %}Day off{% endif %}</button>
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesAddOnlyDays" data-itr-quick="only_days">{% if LANGUAGE_CODE == 'ar' %}أيام محددة فقط{% else %}Only these days{% endif %}</button>
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesAddOnlyBetween" data-itr-quick="only_between">{% if LANGUAGE_CODE == 'ar' %}في فترة محددة فقط{% else %}Only between{% endif %}</button>
+          <button type="button" class="btn btn-sm btn-neutral" id="imRulesAddRule" data-itr-quick="add">{% if LANGUAGE_CODE == 'ar' %}إضافة قاعدة{% else %}Add rule{% endif %}</button>
+        </div>
+      </div>
+
+      <div class="im-rules-section">
+        <h3 class="im-rules-heading" id="imRulesListLabel">{% if LANGUAGE_CODE == 'ar' %}القواعد{% else %}Rules{% endif %}</h3>
+        <p class="empty-note im-rules-empty" id="imRulesEmpty">{% if LANGUAGE_CODE == 'ar' %}لا قواعد بعد: يمكن لمنشئ الجدول وضع محاضرات هذا العضو في أي وقت تدريس.{% else %}No rules yet: the builder may place this instructor's classes at any teaching time.{% endif %}</p>
+        <ol class="im-rules-list" id="imRulesList" aria-labelledby="imRulesListLabel"></ol>
+      </div>
+
+      <section class="im-rules-effect" aria-labelledby="imRulesEffectLabel">
+        <div class="im-rules-effect-head">
+          <h3 class="im-rules-heading" id="imRulesEffectLabel">{% if LANGUAGE_CODE == 'ar' %}ما تتيحه هذه القواعد{% else %}What these rules leave open{% endif %}</h3>
+          <span id="imRulesState"></span>
+        </div>
+        <div class="im-rules-warning" id="imRulesWarning" role="status"></div>
+        <p class="im-rules-line" id="imRulesNoDays" hidden></p>
+        <p class="im-rules-hint" id="imRulesSkipped" hidden></p>
+        <h4 class="im-rules-subheading" id="imRulesShapesLabel">{% if LANGUAGE_CODE == 'ar' %}أنواع المقررات التي ما زال ممكناً إسنادها إليه{% else %}Course types this instructor can still be given{% endif %}</h4>
+        <ul class="im-shapes" id="imRulesShapes" aria-labelledby="imRulesShapesLabel"></ul>
+        <p class="im-rules-line" id="imRulesCounts"></p>
+        <div class="ux-legend" role="note">
+          <span class="ux-legend-item"><span class="ux-tone-icon" data-tone="ok" aria-hidden="true"></span>{% if LANGUAGE_CODE == 'ar' %}متاحة{% else %}Open{% endif %}</span>
+          <span class="ux-legend-item"><span class="ux-tone-icon" data-tone="critical" aria-hidden="true"></span>{% if LANGUAGE_CODE == 'ar' %}محجوبة بهذه القواعد{% else %}Blocked by these rules{% endif %}</span>
+        </div>
+        <div class="im-grid-block">
+          <h4 class="im-rules-subheading" id="imRulesLectureLabel"></h4>
+          <div class="im-grid-scroll" id="imRulesLectureGrid" role="region" tabindex="0" aria-labelledby="imRulesLectureLabel"></div>
+        </div>
+        <div class="im-grid-block">
+          <h4 class="im-rules-subheading" id="imRulesLabLabel"></h4>
+          <div class="im-grid-scroll" id="imRulesLabGrid" role="region" tabindex="0" aria-labelledby="imRulesLabLabel"></div>
+        </div>
+      </section>
+
+      <p class="im-form-error" id="imRulesError" role="alert" hidden></p>
+    </div>
+    <div class="ux-dialog-foot">
+      <button type="button" class="btn btn-neutral" id="imRulesCancel" data-dialog-close>{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+      <button type="submit" class="btn btn-primary" id="imRulesSave">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block extra_js %}
@@ -228,5 +311,6 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=17"></script>
+<script src="{% static 'js/instructor-time-rules.js' %}?v=1"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=19"></script>
 {% endblock %}

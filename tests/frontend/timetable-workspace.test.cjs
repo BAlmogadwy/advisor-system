@@ -8428,3 +8428,102 @@ test('GS19 the Custom the dialog opened with comes back on the current generator
   h.d.querySelector('input[name="twGenEngine"][value="classic"]').click();
   assert.equal(checked(), 'default', 'the user chose Default: it stays');
 });
+
+// Teaching-time rules (slice C): a meeting outside its teacher's teaching
+// times is a WARNING shown on the card, in Issues, in the Move dialog and in
+// the publish dialogs; nothing is refused.
+const RULE_ROW = { ids: [10], term_section_id: 5, instructor_id: 7, instructor: 'Dr A', section: 'CS323-S1', day: 'SUN', start: '09:00', end: '10:15', detail: 'Dr A: SUN 09:00-10:15' };
+const TEACHER_WORDS = {
+  en: { kind: 'Teacher not available at this time', line: 'This time is outside Dr A’s teaching times', bare: 'This time is outside the teacher’s teaching times' },
+  ar: { kind: 'المدرّس غير متاح في هذا الوقت', line: 'هذا الوقت خارج أوقات تدريس Dr A', bare: 'هذا الوقت خارج أوقات تدريس المدرّس' },
+};
+const issueBadge = h => h.d.getElementById('twIssuesCount').textContent;
+for (const arabic of [false, true]) test(`J-C1 teaching-time rows ring the card amber and are listed under Lowers quality (${arabic ? 'ar' : 'en'})`, async t => {
+  const words = TEACHER_WORDS[arabic ? 'ar' : 'en'];
+  const plain = await modelHarness(t, { placements: [at(10, { course_code: 'CS323', section: 'S1' })], arabic });
+  await plain.select();
+  const base = Number(issueBadge(plain));
+  const h = await modelHarness(t, { placements: [at(10, { course_code: 'CS323', section: 'S1' })], arabic,
+    conflicts: { ...quiet, summary: { critical: 0, warning: 1 }, teacher_rule_violations: [RULE_ROW] } });
+  await h.select();
+  assert.equal(tone(h, 10), 'warning');
+  assert.equal(Number(issueBadge(h)), base + 1, 'the badge rises by exactly one');
+  h.w.renderRightPanel('issues');
+  const row = [...h.d.querySelectorAll('#twRightBody .tw-issue-row')].find(node => node.querySelector('.tw-issue-kind')?.textContent === words.kind);
+  assert.ok(row, 'listed, not quiet');
+  assert.equal(row.dataset.tone, 'warning');
+  assert.equal(row.querySelector('.tw-issue-subject').textContent, 'Dr A — CS323 S1');
+  assert.ok(row.innerHTML.includes('<bdi dir="ltr">09:00–10:15</bdi>'), 'the time is isolated');
+  assert.ok(h.w.buildBoardIssues().rows.some(r => r.kind === 'teacherRule' && r.tone === 'warning' && !r.quiet));
+  assert.deepEqual(h.errors, []);
+});
+
+test('J-C2 the edit report names the teaching-time row after a move', async t => {
+  const h = await modelHarness(t, { placements: [at(10)], conflicts: { ...quiet, teacher_rule_violations: [RULE_ROW] }, q: noRooms });
+  await h.select();
+  assert.equal(plainOf(h.w.editReport('Moved.', [10])).text, 'Moved. · Lowers quality: Teacher not available at this time');
+  assert.equal(plainOf(h.w.editReport('Moved.', [12])).text, 'Moved.');
+});
+
+for (const arabic of [false, true]) test(`J-C3 the Move dialog words a teacherRule item and keeps the time choosable (${arabic ? 'ar' : 'en'})`, async t => {
+  const words = TEACHER_WORDS[arabic ? 'ar' : 'en'];
+  const named = vItem('teacherRule', 'warning', { source: 'teacher_rule', teacher: 'Dr <b>A</b>' });
+  const h = await moveHarness(t, { arabic, moves: () => movesAnswer([
+    slotAt('MON', '09:00', '10:15', 1, verdictOf([named])),
+    slotAt('TUE', '09:00', '10:15', 2, verdictOf([vItem('teacherRule', 'warning', { source: 'teacher_rule', teacher: null })])),
+  ]) });
+  await h.select();
+  moveByKey(h);
+  await movesSettled(h);
+  const radio = moveRadio(h, 'MON|09:00');
+  assert.equal(radio.disabled, false);
+  assert.equal(radio.closest('.ux-choice').dataset.tone, 'warning');
+  const line = h.d.getElementById(radio.getAttribute('aria-describedby').split(' ')[1]);
+  assert.equal(line.textContent, `${words.kind}: ${words.line.replace('Dr A', 'Dr <b>A</b>')}`);
+  assert.equal(line.querySelector('b'), null, 'the name is text, never markup');
+  assert.ok(line.querySelector('bdi'));
+  const bare = h.d.getElementById(moveRadio(h, 'TUE|09:00').getAttribute('aria-describedby').split(' ')[1]);
+  assert.equal(bare.textContent, `${words.kind}: ${words.bare}`);
+  assert.deepEqual(h.errors, []);
+});
+
+test('J-C4 the publish dialogs word the teaching-time warning and never count it as a blocker', async t => {
+  const item = { code: 'board_teacher_rule_violations', board_label: 'Term 7', count: 1, params: { teachers: ['Dr A'] } };
+  const en = await modelHarness(t, { placements: [at(10)] });
+  await en.select();
+  assert.equal(en.w.readinessItemText(item), 'Board “Term 7”: 1 meeting outside the teacher’s teaching times (\u2066Dr A\u2069).');
+  assert.equal(en.w.readinessItemText({ ...item, count: 3, params: { teachers: [] } }), 'Board “Term 7”: 3 meetings outside the teacher’s teaching times.');
+  const ar = await modelHarness(t, { placements: [at(10)], arabic: true });
+  await ar.select();
+  assert.equal(ar.w.readinessItemText({ ...item, count: 2 }), 'اللوحة «Term 7»: لقاءان خارج أوقات تدريس المدرّس (\u2066Dr A\u2069).');
+  const ready = { ready: true, blockers: [], warnings: ['x'], blocker_items: [], warning_items: [item] };
+  const h = await modelHarness(t, { placements: [at(10)], readiness: ready });
+  await h.select();
+  assert.doesNotMatch(h.d.getElementById('twPublish').textContent, /blocker/i);
+  assert.equal(h.w.buildBoardIssues().rows.some(r => r.kind === 'server'), false, 'a warning item is never an Issues row');
+});
+
+test('J-C5 without the key the issue model is unchanged', async t => {
+  const model = async conflicts => {
+    const h = await modelHarness(t, { placements: [at(10)], conflicts });
+    await h.select();
+    const { rows, counts } = h.w.buildBoardIssues();
+    return JSON.stringify({ rows, counts });
+  };
+  const without = await model(quiet);
+  assert.equal(await model({ ...quiet, teacher_rule_violations: [] }), without);
+});
+
+test('J-C6 the inspector MRI tab changes only its warnings number', async t => {
+  const mriOf = async conflicts => {
+    const h = await modelHarness(t, { placements: [at(10)], conflicts, q: noRooms });
+    await h.select();
+    h.w.renderRightPanel('mri');
+    const body = h.d.getElementById('twRightBody');
+    return { metrics: [...body.querySelectorAll('.tw-mri-metrics > div > span')].map(n => n.textContent), score: body.querySelector('.tw-mri-score span').textContent,
+      layers: [...body.querySelectorAll('[data-mri-layer]')].map(n => `${n.dataset.mriLayer}:${n.className}`) };
+  };
+  const a = await mriOf(quiet), b = await mriOf({ ...quiet, teacher_rule_violations: [RULE_ROW] });
+  assert.equal(Number(b.metrics[1]), Number(a.metrics[1]) + 1);
+  assert.deepEqual([b.metrics[0], b.score, b.layers], [a.metrics[0], a.score, a.layers]);
+});

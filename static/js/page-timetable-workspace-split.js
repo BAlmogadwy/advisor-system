@@ -40,6 +40,7 @@ const T = {
    home (E2's timetable-section-labels.js, D5's timetable-remove-flow.js),
    which deletes both copies and that test. '' for any other refusal, which
    stays in the console, as before. */
+const TEACHER_RULE_KIND = IS_AR ? 'المدرّس غير متاح في هذا الوقت' : 'Teacher not available at this time';
 const ltrIsolate = text => `${String.fromCharCode(0x2066)}${text}${String.fromCharCode(0x2069)}`;
 function serverRefusalWords(error) {
   const code = error && typeof error === 'object' ? error.code : '';
@@ -1297,6 +1298,9 @@ function candidateOutcomeImpact(candidate) {
 
 function candidateRegressionReason(candidate) {
   if (!candidate) return 'missing candidate';
+  // The server's writers' check: the teacher's rules forbid this time (or a
+  // companion's / another meeting's in a bundle). A human may still choose it.
+  if (candidate.teacher_rule_blocked) return 'the teacher is not available at this time';
   const exact = candidateExactRepair(candidate);
   if (exact?.enabled) {
     const lost = Number(exact.existing_lost || 0);
@@ -1606,6 +1610,7 @@ function candidateSignalTags(candidate) {
     || rows.reduce((sum, row) => sum + Number(row.student_count || 0), 0);
   const outcomeSignal = candidateOutcomeSignal(candidate);
   const qualitySignal = candidateQualitySignal(candidate);
+  if (candidate.teacher_rule_blocked) add(TEACHER_RULE_KIND);
   if (outcomeSignal) add(outcomeSignal);
   if (qualitySignal) add(qualitySignal);
   if (candidateHasEvidence(candidate, ['cross_board_room', 'room'])) add('Room busy');
@@ -2987,7 +2992,8 @@ async function loadSplitPane(idx) {
   // conflicts endpoint spreads its fields at the response root.
   p.boardData.conflicts = cdata
     ? { overlaps: cdata.overlaps || [], instructor_clashes: cdata.instructor_clashes || [],
-        room_clashes: cdata.room_clashes || [], cross_board: cdata.cross_board_conflicts || [],
+        room_clashes: cdata.room_clashes || [], teacher_rule_violations: cdata.teacher_rule_violations || [],
+        cross_board: cdata.cross_board_conflicts || [],
         student_impact: cdata.student_impact || {} }
     : {};
   renderPane(currentIndex);
@@ -4259,6 +4265,10 @@ function openSelectionInspector() {
   else renderRpanel();
 }
 
+function teacherRuleWhen(row) {
+  return row?.start && row?.end ? `${row.day || ''} ${ltrIsolate(`${row.start}–${row.end}`)}`.trim() : '';
+}
+
 function issueRowIds(row) {
   return (row?.ids || [row?.placement_a_id, row?.placement_b_id]).filter(id => id != null);
 }
@@ -4309,6 +4319,14 @@ function placementIssueMap(conflicts, boardId) {
       tone: 'warn',
       title: `${row.room || 'Room'} | ${(row.sections || []).join(' / ')}`,
       detail: row.detail || '',
+    }));
+  });
+  (conflicts.teacher_rule_violations || []).forEach(row => {
+    issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
+      kind: TEACHER_RULE_KIND,
+      tone: 'warn',
+      title: `${row.instructor || '—'} | ${ltrIsolate(row.section || '')}`,
+      detail: teacherRuleWhen(row) || row.detail || '',
     }));
   });
   (conflicts.cross_board || []).forEach(row => {
@@ -4789,16 +4807,16 @@ async function applyGuidedResolver() {
     const data = await applyRoomCandidate(resolver.placementId, resolver.room, resolver.slot);
     ok = data !== null;
   } else {
-    if (!candidateIsValidatedSafe(resolver.candidate)) {
-      resolver.applying = false;
-      notify.warning('Guided fix paused: not validated safe. Review manually.');
-      if (RP.open && RP.tab === 'selection') renderRpanel();
-      return;
-    }
     const regression = candidateRegressionReason(resolver.candidate);
     if (regression) {
       resolver.applying = false;
       notify.warning(`Guided fix paused: ${regression}. Review manually.`);
+      if (RP.open && RP.tab === 'selection') renderRpanel();
+      return;
+    }
+    if (!candidateIsValidatedSafe(resolver.candidate)) {
+      resolver.applying = false;
+      notify.warning('Guided fix paused: not validated safe. Review manually.');
       if (RP.open && RP.tab === 'selection') renderRpanel();
       return;
     }
@@ -5052,14 +5070,14 @@ function previewFixQueueItem(idx) {
 async function applyFixQueueItem(idx) {
   const item = RP.fixQueue.items[idx];
   if (!item) return;
-  if (!candidateIsValidatedSafe(item.candidate)) {
-    notify.warning('Move paused: not validated safe. Preview it manually first.');
-    previewFixQueueItem(idx);
-    return;
-  }
   const regression = candidateRegressionReason(item.candidate);
   if (regression) {
     notify.warning(`Move paused: ${regression}. Preview it manually first.`);
+    previewFixQueueItem(idx);
+    return;
+  }
+  if (!candidateIsValidatedSafe(item.candidate)) {
+    notify.warning('Move paused: not validated safe. Preview it manually first.');
     previewFixQueueItem(idx);
     return;
   }
@@ -5406,11 +5424,21 @@ function renderRpanelIssues(body) {
   const overlaps = [];
   const iClashes = [];
   const rClashes = [];
+  const tRules = [];
   const crossBoard = [];
   boards.forEach(b => {
     (b.conflicts.overlaps || []).forEach(o => overlaps.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
     (b.conflicts.instructor_clashes || []).forEach(o => iClashes.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
     (b.conflicts.room_clashes || []).forEach(o => rClashes.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
+    // One meeting seen on two visible boards is one row: ids and board labels
+    // joined, the first pane's badge.
+    (b.conflicts.teacher_rule_violations || []).forEach(o => {
+      const key = [o.term_section_id, o.day, o.start, o.end].join('|');
+      const seen = tRules.find(x => x._key === key);
+      if (!seen) { tRules.push({ ...o, ids: [...(o.ids || [])], _key: key, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }); return; }
+      (o.ids || []).forEach(id => { if (!seen.ids.includes(id)) seen.ids.push(id); });
+      if (!seen._boardLabel.split(' / ').includes(b.boardLabel)) seen._boardLabel += ` / ${b.boardLabel}`;
+    });
     (b.conflicts.cross_board || []).forEach(o => {
       // Dedupe by the exact placement pair so the same cross-board clash is
       // never listed twice when both boards are visible.
@@ -5421,7 +5449,7 @@ function renderRpanelIssues(body) {
       if (!crossBoard.some(x => x._key === key)) crossBoard.push({ ...o, _key: key });
     });
   });
-  const total = overlaps.length + iClashes.length + rClashes.length + crossBoard.length;
+  const total = overlaps.length + iClashes.length + rClashes.length + tRules.length + crossBoard.length;
   $('twsRpCountIssues').textContent = String(total);
   if (total === 0) {
     body.innerHTML = `<div id="twsReadinessConsole">${readinessConsoleHtml(RP.builder.readiness)}</div>
@@ -5526,6 +5554,10 @@ function renderRpanelIssues(body) {
   if (rClashes.length) {
     html += `<div class="section-head warn">${IS_AR ? 'تعارض قاعة' : 'Room clash'}<span class="n">${rClashes.length}</span></div>`;
     html += rClashes.map(o => issueRow('warn', `${o.room || '—'} · ${(o.sections || []).join(' / ')}`, `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
+  }
+  if (tRules.length) {
+    html += `<div class="section-head warn">${esc(TEACHER_RULE_KIND)}<span class="n">${tRules.length}</span></div>`;
+    html += tRules.map(o => issueRow('warn', `${o.instructor || '—'} · ${ltrIsolate(o.section || '')}`, `${o._boardLabel} · ${teacherRuleWhen(o)}`, o.ids, o._paneIdx)).join('');
   }
   if (crossBoard.length) {
     html += `<div class="section-head cross">${IS_AR ? 'تداخل محتمل في طلب المقررات عبر اللوحات' : 'Potential course-demand overlaps across boards'}<span class="n">${crossBoard.length}</span></div>`;

@@ -233,6 +233,10 @@ main.exam-rosters-page .et-roster-head .et-audit-note { margin: 12px 0 0; }
 main.exam-rosters-page .et-find { position: relative; flex: 0 1 360px; min-width: 0; }
 main.exam-rosters-page .et-find-field { position: relative; display: flex; align-items: center; gap: 6px; }
 main.exam-rosters-page .et-find-field .form-control { padding-inline-end: 2.25rem !important; }
+/* In Arabic the badge resolved its end inset in its own direction: `kbd` is
+   direction:ltr (global G13), so it sat over the placeholder's first word. The
+   "/" is neutral, so the badge takes the page's direction. */
+html[dir="rtl"] main.exam-rosters-page .et-find-key { direction: rtl; }
 main.exam-rosters-page .et-find-key { position: absolute; inset-inline-end: 8px; padding: 0 6px; border: 1px solid var(--et-border); border-radius: var(--radius-xs); background: var(--et-subtle); color: var(--et-muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: var(--text-xs); pointer-events: none; }
 main.exam-rosters-page .et-find-help { margin-top: 4px; color: var(--et-muted); font-size: var(--text-xs); }
 main.exam-rosters-page .et-find-help summary { width: fit-content; cursor: pointer; }

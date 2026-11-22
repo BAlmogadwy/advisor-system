@@ -157,12 +157,18 @@
   display: grid;
   gap: 14px;
   align-content: start;
+  /* a grid item's automatic minimum is its content's width: without this, the
+     Neo4j card and the scenario select ran past a phone's edge */
+  min-width: 0;
 }
 
 .tg-card {
   border-radius: var(--radius);
   padding: 14px;
+  min-width: 0;
 }
+.tg-card select,
+.tg-card .form-select { max-width: 100%; }
 
 .tg-card-head {
   display: flex;
@@ -1165,7 +1171,9 @@
   .tg-layout,
   .tg-two,
   .tg-explorer {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr), not 1fr (= minmax(auto, 1fr)): the column may be
+       narrower than its widest card */
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .tg-metric-grid {

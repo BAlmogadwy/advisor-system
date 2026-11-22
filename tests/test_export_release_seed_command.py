@@ -32,6 +32,7 @@ from core.models import (
     AuditLog,
     Course,
     Instructor,
+    InstructorTimeRule,
     SectionInstructor,
     Student,
     StudentCourse,
@@ -411,6 +412,41 @@ def test_section_instructor_export_carries_global_rows_and_drops_scenario_rows(t
     assert record["fields"]["course_key"] == "CS113"
     assert record["fields"]["section"] == "M1"
     assert record["fields"]["scenario"] is None
+
+
+def test_instructor_time_rules_survive_a_production_rebuild(tmp_path):
+    """Teaching-time rules are entered locally and reach production only through
+    the seed: ``_flush_target_database`` truncates every table it does not reload,
+    so a rules table missing from the signed profile would be emptied by every
+    rebuild while the instructors it hangs from survived."""
+
+    instructor = Instructor.objects.create(
+        full_name="Rule Holder",
+        normalised_name="rule holder",
+    )
+    rule = InstructorTimeRule.objects.create(
+        instructor=instructor,
+        kind="available_only",
+        day_mask=16,
+        start_minute=480,
+        end_minute=1440,
+        note="Thursdays only",
+    )
+
+    _, _, manifest, records = _export(tmp_path / "time-rules-release.json.gz")
+
+    assert "core.instructortimerule" in manifest["profile"]["allowed_models"]
+    counts = manifest["fixture"]["per_model"]["core.instructortimerule"]
+    assert counts == {"source": 1, "exported": 1, "filtered": 0}
+    record = _record(records, "core.instructortimerule", rule.pk)
+    assert record["fields"]["instructor"] == instructor.pk
+    assert (
+        record["fields"]["kind"],
+        record["fields"]["day_mask"],
+        record["fields"]["start_minute"],
+        record["fields"]["end_minute"],
+        record["fields"]["note"],
+    ) == ("available_only", 16, 480, 1440, "Thursdays only")
 
 
 def test_programme_marks_never_leave_with_the_release_seed(tmp_path):

@@ -6,12 +6,12 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}" data-can-edit-exam-timetable="{{ can_edit_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=38" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=4" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=39" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=5" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء → جدولة → تقرير{% else %}Create → Schedule → Report{% endif %}</span>
+  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء ← جدولة ← تقرير{% else %}Create → Schedule → Report{% endif %}</span>
 {% endblock %}
 
 {% block page_intro %}
@@ -349,7 +349,7 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/exam-review.js' %}?v=8"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=40"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=41"></script>
 <script src="{% static 'js/exam-student-export.js' %}?v=4"></script>
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/exam-roster-drawer.js' %}?v=3"></script>

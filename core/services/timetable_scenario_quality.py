@@ -298,7 +298,10 @@ def _build_scenario_quality(
 
     try:
         sections = build_section_states_for_scenario(scenario_id)
-        instructor_ids = build_section_instructor_map_for_scenario(scenario_id)
+        # A display read: a stored teacher counts as stored (fix plan D-H).
+        instructor_ids = build_section_instructor_map_for_scenario(
+            scenario_id, release_unteachable=False
+        )
         metrics = instructor_schedule_metrics(sections, instructor_ids)
         result["instructor"] = {
             "working_days": metrics["working_days"],

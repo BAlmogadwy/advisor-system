@@ -12,6 +12,7 @@ import logging
 
 from django.conf import settings
 
+from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.timetable_assignment_models import (
     CanonicalPattern,
     RoomOccupancy,
@@ -24,6 +25,7 @@ from core.services.timetable_assignment_models import (
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
     before_meetings_of,
+    move_adds_availability_violation,
     move_exceeds_instructor_daily_cap,
     move_introduces_day_run,
     move_introduces_instructor_clash,
@@ -225,8 +227,15 @@ def diagnostic_driven_local_search(
     locked_section_ids: set[str] | None = None,
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
     course_tiers: dict[str, str] | None = None,
+    *,
+    instructor_availability: InstructorAvailability = EMPTY_AVAILABILITY,
 ) -> TimetableEvaluationResult:
     """Multi-pass local search with aggressive move generation.
+
+    ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``, the run's
+    one object): a move that takes any meeting of a moved section into a time
+    its charged teacher may not teach is rejected (fix plan D-D, strict: a
+    forbidden meeting the section already had may stay where it is).
 
     Strategy:
       Pass 1: Repattern hotspot + reserve-heavy sections (focused)
@@ -393,6 +402,17 @@ def diagnostic_driven_local_search(
             # section already had may stay.
             if day_spread_on and move_introduces_day_run(
                 sections_by_id, before_meetings_of(snapshot.snapshots)
+            ):
+                _rollback(snapshot, sections_by_id, room_occupancies)
+                continue
+
+            # Teaching-time rules: a moved section never gains a meeting its
+            # charged teacher may not teach (online sections are locked above).
+            if instructor_availability and move_adds_availability_violation(
+                sections_by_id,
+                section_instructor_ids or {},
+                instructor_availability,
+                before_meetings_of(snapshot.snapshots),
             ):
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue

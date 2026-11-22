@@ -127,6 +127,7 @@ def test_every_step_of_the_type_scale_has_a_px_floor() -> None:
         "--text-xl": 20,
         "--text-display": 24,
         "--text-numeral": 28,
+        "--text-body": 14,
     }
     for token, px in floors.items():
         value = re.search(rf"{re.escape(token)}:\s*([^;]+);", root)
@@ -166,7 +167,7 @@ def test_raw_font_sizes_only_ever_get_fewer() -> None:
         if p == "font-size" and _raw_size(v)
     ]
     # Display numerals, hero headings and glyph sizes stay fluid on purpose.
-    assert len(raw) <= 20, "a new raw font-size: use a --text-* token\n" + "\n".join(raw)
+    assert len(raw) <= 19, "a new raw font-size: use a --text-* token\n" + "\n".join(raw)
 
 
 def test_no_off_scale_font_weights() -> None:
@@ -244,5 +245,139 @@ def test_the_global_resets_never_reach_mri_split_or_the_workspace_board() -> Non
         assert ".sidebar *" in line and ".sbp *" in line, line
     # MRI's body keeps the old fluid clamp: the 15px body is scoped away from it,
     # and the sidebar and its palette keep the size they were measured at.
-    assert "body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }" in GLOBAL
+    assert "body:not(.twm-root):not(.tws-root) { font-size: var(--text-body); }" in GLOBAL
     assert ".sidebar, .sbp { font-size: clamp(0.8125rem, 0.742rem + 0.19vw, 0.9375rem); }" in GLOBAL
+
+
+def _rule(selector: str) -> str:
+    """The declarations of the first rule written as `<selector> {`."""
+    at = GLOBAL.index(selector + " {")
+    return GLOBAL[at : GLOBAL.index("}", at)]
+
+
+def _tokens(declarations: str) -> dict[str, str]:
+    return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", declarations))
+
+
+ARABIC = 'html[dir="rtl"]:not(:has(> body.twm-root, > body.tws-root))'
+HELD = 'html[dir="rtl"] :where(.sidebar, .sbp, .sidebar-toggle, .sb-tip,'
+TOUCH = "@media (max-width: 768px), (pointer: coarse) {\n  "
+
+
+def test_the_root_is_the_fluid_clamp_and_not_a_step_of_the_scale() -> None:
+    """html's own size is what every rem multiplies: 14px at 375px wide to 16px
+    at 1440px. The premium review's codemod (#250) rewrote the clamp as
+    var(--text-md), which fixed the root at 16px and moved the MRI page, the
+    classic MRI tab and split view (owner: unchanged) at every width under 1440px
+    -- and an Arabic --text-md would have grown every rem on the page."""
+    assert re.search(
+        r"--text-root:\s*clamp\(0\.875rem, 0\.831rem \+ 0\.19vw, 1rem\);", _root_block()
+    )
+    html = re.search(r"\nhtml \{([^}]*)\}", GLOBAL)
+    assert html, "the html rule"
+    assert re.search(r"font-size:\s*var\(--text-root\);", html.group(1)), html.group(1)
+    assert GLOBAL.count("--text-root:") == 1, "no language or page redefines the root"
+
+
+def test_arabic_has_its_own_steps_on_every_page_but_mri_and_split() -> None:
+    """Noto Kufi's letter body is 48-50px at 100px against Inter's 55px x-height,
+    so 12px Arabic read like 10.4px Latin. The Arabic steps are about 15% larger.
+    They are set on <html>, the element the aliases are computed on, and kept
+    off the MRI page and split view by those pages' body class."""
+    tokens = _tokens(_rule(ARABIC))
+    floors = {
+        "--fs-floor": "13px",
+        "--text-micro": "max(13px,",
+        "--text-xs": "max(14px,",
+        "--text-sm": "max(15px,",
+        "--text-base": "max(16px,",
+        "--text-md": "max(18px,",
+        "--text-lg": "max(20px,",
+        "--text-body": "max(16px,",
+        # controls stop a step short: filter bars keep to one line
+        "--control-fs-sm": "max(14px,",
+        "--control-fs": "max(15px,",
+        "--field-fs-sm": "max(14px,",
+        "--field-fs": "max(15px,",
+    }
+    for token, start in floors.items():
+        assert tokens.get(token, "").startswith(start), (token, tokens.get(token))
+    # Latin digits (the KPI numerals) and the serif masthead, whose x-height
+    # equals the Kufi letter body, are not scaled; nor is the root.
+    for token in ("--text-xl", "--text-display", "--text-numeral", "--text-root"):
+        assert token not in tokens, token
+    # A phone or tablet keeps 16px field text (no iOS zoom): the :root touch
+    # block is less specific than the Arabic one, so it is restated.
+    touch = _tokens(GLOBAL[GLOBAL.index(TOUCH + ARABIC) :].split("}", 1)[0])
+    assert touch == {"--field-fs": "max(16px, 1rem)", "--field-fs-sm": "max(16px, 1rem)"}, touch
+
+
+def test_the_held_zones_keep_todays_arabic_sizes() -> None:
+    """The owner's sidebar (fitted to its 252/210/195px rail), the workspace's
+    chrome (a 170px budget, already 170px in Arabic) and board grid, and the
+    exam builder's grid, toolbar and fixed-height chips keep their sizes. A
+    token computed on <html> arrives as a finished value, so every one the
+    Arabic scale moves is restated, at the first :root block's value."""
+    held_at = GLOBAL.index(HELD)
+    selectors = GLOBAL[held_at : GLOBAL.index("{", held_at)]
+    for zone in (
+        ".sidebar", ".sbp", ".sidebar-toggle", ".sb-tip",
+        ".tw-header", ".tw-cmd-bar", ".tw-stats", ".tw-panel-tabs", ".tw-grid-table", "#twWorkspace",
+        "#schedGrid", ".et-edit-controls", "#progList", "#secList",
+        ".audit-table", ".tg-shell",
+    ):  # fmt: skip
+        assert zone in selectors, zone
+    held = _tokens(GLOBAL[held_at : GLOBAL.index("}", held_at)])
+    assert set(_tokens(_rule(ARABIC))) <= set(held), "every Arabic step is restated"
+    root = _tokens(_root_block())
+    for token in ("--text-xs", "--text-sm", "--text-base", "--text-md", "--text-lg", "--text-body"):
+        assert held[token] == root[token], (token, held[token], root[token])
+    assert (held["--text-micro"], held["--fs-floor"]) == ("max(12px, 0.75rem)", "12px")
+    for alias, step in (
+        ("--text-2xs", "--text-micro"),
+        ("--fs-sm", "--text-micro"),
+        ("--control-fs-sm", "--text-sm"),
+        ("--control-fs", "--text-base"),
+        ("--field-fs-sm", "--text-sm"),
+        ("--field-fs", "--text-base"),
+    ):
+        assert held[alias] == f"var({step})" == root[alias], alias
+    touch = _tokens(GLOBAL[GLOBAL.index(TOUCH + HELD) :].split("}", 1)[0])
+    assert touch == {"--field-fs": "var(--text-md)", "--field-fs-sm": "var(--text-md)"}, touch
+    # A size inherited from outside a zone arrives finished, so each zone that
+    # inherits its text gets the size it inherited before, at zero specificity
+    # (any size a component gives the zone itself still wins).
+    inherited = {
+        "var(--text-body)": (".tw-header", ".tw-stats", ".tw-grid-table", ".tg-shell"),
+        "var(--text-base)": ("#schedGrid", ".et-edit-controls", "#progList", "#secList"),
+    }
+    for size, zones in inherited.items():
+        rule = re.search(
+            r':where\(html\[dir="rtl"\]\) :where\(([^{]*)\) \{\s*font-size: '
+            + re.escape(size)
+            + r";\s*\}",
+            GLOBAL,
+        )
+        assert rule, f"the zones that inherit {size}"
+        for zone in zones:
+            assert zone in rule.group(1), (size, zone)
+
+
+def test_the_arabic_type_rules_never_reach_mri_split_or_the_sidebar() -> None:
+    """The face, weight and leading rules for Arabic labels, headings and
+    placeholders use broad patterns ([class*="kicker"], .badge, input); each
+    skips the MRI page and split view by body class, and the classic MRI tab
+    and the sidebar by ancestry."""
+    rules = [
+        line
+        for line in GLOBAL.split("}")
+        if re.search(
+            r'html\[dir="rtl"\] body:not\(\.twm-root\):not\(\.tws-root\) (:is|\.badge)', line
+        )
+    ]
+    # the face, the weight cap, the badge and heading leading, the placeholder face
+    assert len(rules) >= 5, len(rules)
+    for rule in rules:
+        selector = re.sub(r"/\*.*?\*/", "", rule, flags=re.S).split("{")[0]
+        for skipped in (".tw-mri *", ".sidebar *", ".sbp *"):
+            assert skipped in selector, (skipped, selector.strip()[:120])

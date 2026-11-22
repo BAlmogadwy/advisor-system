@@ -335,6 +335,15 @@
   /* the serif masthead / hero headline, and the serif display numeral */
   --text-display:   max(24px, 1.75rem);
   --text-numeral:   max(28px, 2.25rem);
+  /* running text: the body copy every page inherits (15px desktop, 14px phone) */
+  --text-body:      max(14px, 0.9375rem);
+  /* THE ROOT, not a step: html's own size, which every rem on the page is a
+     multiple of. Fluid, 14px at 375px wide to 16px at 1440px and up. It is a
+     token so that no sweep can fold it into the scale again: the premium
+     review's codemod (#250) rewrote this clamp as var(--text-md), which fixed
+     the root at 16px at every width and moved the MRI page, the classic MRI
+     tab and split view (owner: unchanged) at every width under 1440px. */
+  --text-root:      clamp(0.875rem, 0.831rem + 0.19vw, 1rem);
 
   /* ── control sizes — ONE height ladder for buttons, fields, selects and
      segmented controls, so a toolbar row lines up. Height is a MINIMUM: a
@@ -415,6 +424,100 @@ html[dir="rtl"] {
     --field-fs:     var(--text-md);
     --field-fs-sm:  var(--text-md);
   }
+}
+
+/* ── The Arabic type scale ────────────────────────────────────────────────────
+   Noto Kufi Arabic draws its letters smaller than Inter at the same size. In
+   Chrome at 100px, Inter's x-height is 55px and the Kufi letter body 48-50px,
+   so 12px Arabic reads like 10.4px Latin; 72% of the Arabic text measured 12px
+   on desktop and 78% on phones (Arabic review, 2026-11). Each step is about 15%
+   larger in Arabic, so a page reads at the same size in both languages.
+   Not every step: --text-display is the serif masthead, and DM Serif Display's
+   x-height (48px at 100px) already equals the Kufi letter body, so 28px Arabic
+   matches it; --text-xl and --text-numeral are KPI numerals in Latin digits.
+   The controls stop one step short of the text: 15/14px keeps every filter bar
+   on its line, and the 16px touch field text (no iOS zoom) is restated below,
+   because the :root touch block above is less specific than this one.
+   On <html>, the element :root names, so the aliases computed there (--text-2xs,
+   --fs-sm) follow the new steps. Not on the MRI page or split view (owner:
+   unchanged): their body class keeps the whole block off their <html>, and they
+   keep the 12px Arabic micro step below. */
+html[dir="rtl"]:not(:has(> body.twm-root, > body.tws-root)) {
+  --fs-floor:       13px;
+  --text-micro:     max(13px, 0.8125rem);
+  --text-xs:        max(14px, 0.875rem);
+  --text-sm:        max(15px, 0.9375rem);
+  --text-base:      max(16px, 1rem);
+  --text-md:        max(18px, 1.125rem);
+  --text-lg:        max(20px, 1.25rem);
+  --text-body:      max(16px, 1.0625rem);
+  --control-fs-sm:  max(14px, 0.875rem);
+  --control-fs:     max(15px, 0.9375rem);
+  --field-fs-sm:    max(14px, 0.875rem);
+  --field-fs:       max(15px, 0.9375rem);
+}
+@media (max-width: 768px), (pointer: coarse) {
+  html[dir="rtl"]:not(:has(> body.twm-root, > body.tws-root)) {
+    --field-fs:     max(16px, 1rem);
+    --field-fs-sm:  max(16px, 1rem);
+  }
+}
+/* What keeps the Arabic sizes it has today:
+   - the owner's sidebar, its command palette, its phone toggle and the icon
+     rail's tooltip (which is appended to <body>): its labels are fitted to the
+     252/210/195px rail, and tests pin the Arabic section headings at 14px and
+     the search row's label uncut at every step;
+   - the dense tool surfaces whose geometry is measured: the Timetable
+     Workspace's chrome above its panes (at most 170px, and already 170px in
+     Arabic at 1536px), its inspector's four tabs (a 296-320px pane) and its
+     board grid (a 96px slot, a 56px day column), and the exam builder's
+     schedule grid, its edit toolbar and its fixed-height scope chips. Their
+     side panels and panel bodies, which scroll, take the scale;
+   - Latin data: the audit log's table (roles, actions, endpoints, hashes; its
+     Arabic headers and dates take the scale again below), and the Timetable
+     Graph page, which has no Arabic text at all.
+   A token computed on <html> arrives here as a finished value, so every alias
+   is restated too; tests/test_design_type_scale.py checks that these are the
+   first :root block's values (12px micro aside). :where() keeps the list at
+   zero specificity, so a component can still adjust a step inside it. */
+html[dir="rtl"] :where(.sidebar, .sbp, .sidebar-toggle, .sb-tip,
+    .tw-header, .tw-cmd-bar, .tw-stats, .tw-panel-tabs, .tw-grid-table, main:has(#twWorkspace) .page-header,
+    main.exam-builder-page :is(#schedGrid, .et-edit-controls, #progList, #secList),
+    .audit-table, .tg-shell) {
+  --fs-floor:       12px;
+  --text-micro:     max(12px, 0.75rem);
+  --text-2xs:       var(--text-micro);
+  --fs-sm:          var(--text-micro);
+  --text-xs:        max(12px, 0.75rem);
+  --text-sm:        max(13px, 0.8125rem);
+  --text-base:      max(14px, 0.875rem);
+  --text-md:        max(16px, 1rem);
+  --text-lg:        max(18px, 1.125rem);
+  --text-body:      max(14px, 0.9375rem);
+  --control-fs-sm:  var(--text-sm);
+  --control-fs:     var(--text-base);
+  --field-fs-sm:    var(--text-sm);
+  --field-fs:       var(--text-base);
+}
+@media (max-width: 768px), (pointer: coarse) {
+  html[dir="rtl"] :where(.sidebar, .sbp, .sidebar-toggle, .sb-tip,
+      .tw-header, .tw-cmd-bar, .tw-stats, .tw-panel-tabs, .tw-grid-table, main:has(#twWorkspace) .page-header,
+      main.exam-builder-page :is(#schedGrid, .et-edit-controls, #progList, #secList),
+      .audit-table, .tg-shell) {
+    --field-fs:     var(--text-md);
+    --field-fs-sm:  var(--text-md);
+  }
+}
+/* ...and a held zone's own unsized text keeps the size it inherited: the tokens
+   are restated inside, but a size inherited from outside the zone arrives
+   finished (the graph's node labels grew from 15 to 17px with the body). Zero
+   specificity, so any size a component gives the zone itself still wins. */
+:where(html[dir="rtl"]) :where(.tw-header, .tw-cmd-bar, .tw-stats, .tw-panel-tabs, .tw-grid-table,
+    main:has(#twWorkspace) .page-header, .tg-shell) {
+  font-size: var(--text-body);
+}
+:where(html[dir="rtl"]) :where(main.exam-builder-page :is(#schedGrid, .et-edit-controls, #progList, #secList)) {
+  font-size: var(--text-base);
 }
 
 /* ── MRI stays exactly as it was (owner, 2026-10-23) ─────────────────────────
@@ -617,7 +720,9 @@ html[data-theme="dark"] {
 html[data-theme="light"] { color-scheme: light; }
 
 /* Arabic is read at a larger size than Latin to be as legible: the micro-label
-   floor is 12px, not 11px, wherever --text-micro is used. */
+   floor is 12px, not 11px, wherever --text-micro is used. This is what the MRI
+   page and split view keep; every other page takes the Arabic type scale near
+   the top of this sheet, whose selector outranks this one. */
 html[dir="rtl"] { --text-micro: max(12px, 0.75rem); }
 
 /* ── Dark body background ──
@@ -1253,8 +1358,8 @@ html {
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Fluid root: 14px @ 375  →  16px @ 1440 */
-  font-size: var(--text-md);
+  /* Fluid root: 14px @ 375  →  16px @ 1440 (see --text-root) */
+  font-size: var(--text-root);
   /* DM Serif Display is loaded at its one real weight (400). Without this, a
      heading or stat numeral asked for 700 is thickened by the browser, which
      blurs the serif's hairlines. Inter, JetBrains Mono and Noto Kufi Arabic are
@@ -1282,7 +1387,7 @@ body {
    relative to a root that is itself 14px on a phone, so running text was
    11.4px at 390px wide. MRI and split view keep the clamp (owner: out of
    scope); their body classes are set before anything paints. */
-body:not(.twm-root):not(.tws-root) { font-size: max(14px, 0.9375rem); }
+body:not(.twm-root):not(.tws-root) { font-size: var(--text-body); }
 /* The sidebar and its command palette keep the size they were designed and
    measured at (their labels are fitted to the rail's 210/195px steps). */
 .sidebar, .sbp { font-size: clamp(0.8125rem, 0.742rem + 0.19vw, 0.9375rem); }
@@ -1800,7 +1905,10 @@ html[dir="rtl"] .nav-lbl[aria-expanded="false"] .nav-lbl-chev { transform: rotat
   top: 7px;
   bottom: 7px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  /* rounded on its inner side, which is the left one in Arabic */
+  border-radius: 0;
+  border-start-end-radius: 3px;
+  border-end-end-radius: 3px;
   background: linear-gradient(180deg, var(--teal), var(--sky));
   box-shadow: 0 0 8px color-mix(in srgb, var(--teal) 30%, transparent), 0 0 4px rgba(0,174,218,0.2);
 }
@@ -2382,8 +2490,16 @@ main.p-0 .page-header {
     font-size: var(--text-display);
     line-height: 1.2;
   }
+  /* Arabic: DM Serif Display has no Arabic, so the title fell back to Noto Kufi
+     at the serif's one weight (400) and its tight 1.2 leading — thin, with the
+     marks of a second line touching the first. Its size already matches the
+     English (the serif's x-height equals the Kufi letter body), so it keeps
+     28px and takes the body face at 600 with room for the marks. */
   html[dir="rtl"] main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-module {
     letter-spacing: 0;
+    font-family: var(--font-body);
+    font-weight: 600;
+    line-height: 1.4;
   }
   main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-right {
     padding-top: 0.2rem;
@@ -2454,6 +2570,11 @@ main.p-0 .page-header {
 .empty-state {
   text-align: center; padding: 2.5rem 1.5rem;
   color: var(--t4); display: flex; flex-direction: column; align-items: center;
+}
+@media (max-width: 768px) {
+  /* In a table wider than the phone the empty state was centred on the
+     table, off screen; it stays in the visible part of its scroller. */
+  td > .empty-state { position: sticky; inset-inline-start: 0; max-width: calc(100vw - 2.5rem); }
 }
 .empty-state .i { display: inline-flex; align-items: center; justify-content: center; opacity: 0.45; }
 .empty-icon { display: block; font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.6; }
@@ -2560,6 +2681,9 @@ main.p-0 .page-header {
   margin-bottom:   0.3rem;
   display:         block;
 }
+/* A field's help line sits under its label, not above it: it had no rule and
+   took the 15px body text (17px in Arabic) in full ink, over a 12px label. */
+.form-text { font-size: var(--text-xs); line-height: 1.5; color: var(--t3); }
 
 .form-control,
 .form-select {
@@ -4055,6 +4179,7 @@ html[dir="rtl"] .tbl-card thead th { letter-spacing: 0; text-transform: none; fo
 /* layout toggle */
 .pg-modes{display:flex;gap:2px;margin-inline-start:auto;padding:2px;border-radius:var(--radius-pill);background:color-mix(in srgb, var(--navy) 5%, transparent)}
 .pg-mode{
+  white-space:nowrap;
   min-height:32px;border:0;cursor:pointer;padding:6px 13px;border-radius:var(--radius-pill);background:transparent;
   font-family:var(--font-mono);font-size:var(--text-xs);font-weight:700;letter-spacing:0.01em;color:var(--t3);
   transition:all .25s var(--ease);
@@ -4567,6 +4692,9 @@ html[data-theme="dark"] .fb-fit .fb-search.fb-sm:focus-within { box-shadow: inse
   padding:14px 0; border-block-end:1px solid var(--rule);
   display:flex; align-items:center; gap:9px; background:none;
 }
+/* a panel header that holds the graph's layout switch lets it take its own
+   line on a phone ("By / term" broke inside the pill) */
+.cp-h:has(.pg-modes) { flex-wrap:wrap; row-gap:8px; }
 .cp-t { font-size:var(--text-base); font-weight:700; color:var(--t1); }
 .cp-live {
   font-family:var(--font-mono); font-size:var(--text-micro); font-weight:700;
@@ -5262,6 +5390,10 @@ pre, .pre-output {
        14.7px subtitle below it) */
     font-size: var(--text-lg);
   }
+  /* the Arabic title's weight on a phone is the desktop masthead's (600) */
+  html[dir="rtl"] main:not(.p-0):not([data-width="full"]):not([data-fill="viewport"]) .page-header-module {
+    font-weight: 600;
+  }
   .page-intro h2 { font-size: var(--text-md); }
   /* Chips wrap to a second line rather than being cut mid-word ("Student: ..."
      and "1448/1" were clipped at the screen edge). */
@@ -5426,7 +5558,9 @@ pre, .pre-output {
 
   /* ── Mobile density: tighter padding for admin screens ── */
   .soft-card { padding: 0.75rem; margin-bottom: 0.5rem; }
-  .filter-bar { padding: 8px 12px; gap: 6px; margin-bottom: 12px; }
+  /* flush with the title and the rule above it, as the desktop bar is (it kept
+     the card-era 12px inset, so a phone's fields started 12px in) */
+  .filter-bar { padding: 8px 0; gap: 6px; margin-bottom: 12px; }
   /* Buttons and fields keep the touch tier here too: this block used to shrink
      them to 34px with 10.9px labels, undoing the 44px rule above it. */
   html body .btn { padding-inline: var(--control-px-sm) !important; }
@@ -5889,6 +6023,25 @@ pre, .pre-output {
   to   { width: 0%; }
 }
 
+/* The toast is a card (UI review 3): it had the page's own colour and no edge,
+   so in dark mode only its 3px status bar told it from the page. A one-line
+   toast centres its title against the icon and the close button; one with a
+   second line keeps them at the top. Not the MRI page or split view (owner). */
+:where(body:not(.twm-root):not(.tws-root)) .ux-toast {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-inline-start-width: 3px;
+  align-items: center;
+}
+:where(body:not(.twm-root):not(.tws-root)) .ux-toast:has(.ux-toast-sub) { align-items: flex-start; }
+@media (max-width: 768px) {
+  /* A phone's toasts span the page between its gutters. The older phone block
+     above comes before the base rules, which outrank it, so the stack sat 43px
+     from one edge and 8px from the other. */
+  :where(body:not(.twm-root):not(.tws-root)) #toast-container { inset-inline: 1rem; }
+  :where(body:not(.twm-root):not(.tws-root)) #toast-container .ux-toast { min-width: 0; max-width: none; }
+}
+
 /* ============================================================
    SORT ARROWS
    ============================================================ */
@@ -6312,6 +6465,21 @@ html body .btn.btn-neutral.disabled:focus {
   background:   var(--btn-neutral-bg);
   color:        var(--btn-neutral-text);
   box-shadow:   inset 0 0 0 1px var(--btn-neutral-border) !important;
+}
+/* The outline variants draw their edge as an inset ring, and the disabled rule
+   above replaces every shadow: a disabled "Insert sections" was borderless red
+   text beside a solid button. They keep the ring; opacity says disabled. */
+html body .btn.btn-outline-primary:disabled,
+html body .btn.btn-outline-primary.disabled,
+html body .btn.btn-outline-primary:disabled:focus,
+html body .btn.btn-outline-primary.disabled:focus {
+  box-shadow:   inset 0 0 0 1px var(--text-brand) !important;
+}
+html body .btn.btn-outline-danger:disabled,
+html body .btn.btn-outline-danger.disabled,
+html body .btn.btn-outline-danger:disabled:focus,
+html body .btn.btn-outline-danger.disabled:focus {
+  box-shadow:   inset 0 0 0 1px var(--sev-critical) !important;
 }
 
 /* ── Export button style (was undefined in audit_explorer) ──── */
@@ -7703,8 +7871,10 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   width:       32px;
   height:      18px;
   border:      none;
-  border-radius: var(--radius);
-  background:  var(--line-h);
+  /* a pill, and a track that is there when it is off: --line-h made the off
+     switch a dark knob on a dark track, about 1.2:1 */
+  border-radius: var(--radius-pill);
+  background:  var(--t4);
   appearance:  none;
   -webkit-appearance: none;
   cursor:      pointer;
@@ -7930,6 +8100,9 @@ details > summary::-webkit-details-marker   { display: none; }
     align-items:     center;
     justify-content: space-between;
     width:           100%;
+    /* the phone's only way to the Student ID field: a full touch target, not a
+       28px text row */
+    min-height:      var(--control-h);
     padding:         0.4rem 0;
     border:          none;
     background:      none;
@@ -8676,6 +8849,15 @@ html[data-theme="dark"] #baselineWeekly .table td  { border-color: var(--line); 
   font-size: var(--text-xs);
   line-height: 1.35;
 }
+/* Two lines at most for a list of ids: a broken audit chain listed about a
+   hundred row ids, five lines at 1440 and fourteen on a phone. The row links
+   to the audit log, and the full list is the line's title. */
+.dcc-triage-row small.dcc-triage-ids {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 /* Severity was a coloured dot and nothing else. A dot alone tells a reader who
    cannot separate the hues nothing at all, and tells everyone else nothing
    about rank — amber and red are a guess until you hover the row. The margin
@@ -9037,6 +9219,9 @@ html[data-theme="dark"] .dcc-kpi:hover { border-color: var(--teal); }
 
 .fb-search-full { max-width: none; }
 .fb-w-110 { max-width: 110px; }
+/* a floor, so a field that no longer fits beside its neighbour wraps instead
+   of being crushed (the scrape form's programme field: 28px on an Arabic phone) */
+.fb-search.fb-w-110 { min-width: 64px; }
 /* `padding: 8px 14px` indented the controls 14px while the bar's rule still
    spanned the full width, so a small bar read as misaligned against every
    other one on the page. */
@@ -9919,7 +10104,9 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       .dba-nav-item {
         flex-shrink: 0;
       }
-      .dba-risk-badge { display: none; }
+      /* it stays: on a phone, too, the label is the only cue that tells a
+         harmless operation from a destructive one (see the note on the strip) */
+      .dba-risk-badge { padding: 1px 6px; }
       .dba-nav-name  { font-size: var(--text-xs); }
       .dba-snapshot-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .dba-snapshot-preserved ul { grid-template-columns: 1fr; }
@@ -10390,7 +10577,10 @@ html[data-theme="dark"] .btn-export {
     .sp-cap-grp { display: flex; flex-direction: column; min-width: 100px; }
     .sp-cap-grp input { width: 80px; text-align: center; }
     .sp-caps-info { font-size: var(--text-micro); color: var(--t3); align-self: center; margin-inline-start: auto; }
-    .sp-toggle-caps { font-size: var(--text-sm); color: var(--text-brand); cursor: pointer; background: none; border: none; font-weight: 600; padding: 2px 0; text-decoration: underline; text-underline-offset: 2px; }
+    /* a disclosure, told by its chevron: not an underlined brand link running
+       through an emoji (the third label's drew as a missing-glyph box) */
+    .sp-toggle-caps { display: inline-flex; align-items: center; gap: .4rem; font-size: var(--text-sm); color: var(--t1); cursor: pointer; background: none; border: none; font-weight: 600; padding: 2px 0; text-decoration: none; }
+    .sp-toggle-caps:hover { color: var(--text-brand); }
 
     /* Scope fields: each as wide as its value, never the 80px compact cap.
        Widths are in ch, so a wider font (Arabic, a CI machine's fonts)
@@ -11018,6 +11208,15 @@ a.fb-dd, a.fb-dd:hover { text-decoration: none; }
   font-weight: 700;
   text-align: center;
   text-decoration: none;
+  /* a label longer than its third of the bar wraps inside its own segment
+     ("Formal recommendation" ran under its neighbour on a phone) */
+  min-width: 0;
+  line-height: 1.25;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+@media (max-width: 480px) {
+  .ap-grad-tab { padding-inline: .4rem; }
 }
 .ap-grad-tab:hover { color: var(--ink); }
 .ap-grad-tab.is-active {
@@ -13067,6 +13266,13 @@ html[data-theme="dark"] .pf-card.pf-saved {
   border-bottom: 2px solid var(--line);
   background: var(--glass-bg-header);
 }
+@media (max-width: 768px) {
+  /* A phone keeps the columns an admin acts on (select, user, role, status,
+     actions); the status toggle and the row actions were past the screen's
+     edge. Hidden: advisor id, departments, last login, created. The indices
+     follow the <thead> in user_management.html. */
+  #umTable :is(th, td):is(:nth-child(4), :nth-child(5), :nth-child(7), :nth-child(8)) { display: none; }
+}
 #umTable tbody td {
   padding: 5px 10px; font-size: var(--text-sm);
   vertical-align: middle; border-bottom: 1px solid rgba(0,0,0,0.04);
@@ -14177,6 +14383,25 @@ html[dir="rtl"] body select.va-input.va-input { background-position: left 0.75re
 }
 .ca-chip-name:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: var(--radius-xs); }
 
+/* A course's teachers: one line each (name, optional max sections, remove),
+   wrapping at phone width; Add / Remove all sit under them. */
+.ca-teachers { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); min-width: 0; max-width: 100%; }
+.ca-teacher { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); max-width: 100%; }
+.ca-teacher-name { color: var(--text-brand); font-size: var(--text-sm); font-weight: 500; overflow-wrap: anywhere; }
+.ca-limit { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; }
+.ca-limit-label { color: var(--t3); font-size: var(--text-xs); }
+.ca-limit-input { width: 76px; min-height: 32px; padding: 2px var(--space-2); font-size: var(--text-sm); }
+.ca-teacher-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--t3); font-size: var(--text-sm); font-weight: 700; cursor: pointer;
+}
+.ca-teacher-x:hover { color: var(--text-brand); background: var(--teal-dim); }
+.ca-teacher-x:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.ca-teachers-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ca-teachers-actions:empty { display: none; }
+.im-limits-help { margin: 0; color: var(--t3); font-size: var(--text-xs); }
+
 /* ── The add/edit dialog (UXControls.dialog): two columns of fields ── */
 .im-dialog { width: min(680px, calc(100vw - 32px)); }
 .im-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
@@ -14341,6 +14566,109 @@ html[data-theme="dark"] .im-assignment-notice {
   color: var(--t4);
   font-size: var(--text-xs);
 }
+
+/* ── Teaching times (static/js/instructor-time-rules.js) ──
+   The roster's pill, and the rules dialog (#imRulesDialog): quick adds, one
+   card per rule, and the live preview of what the rules leave open. Open and
+   blocked are told by an icon's shape and words, never by colour alone. */
+.im-times-pill { white-space: nowrap; }
+.im-times-pill bdi { font-variant-numeric: tabular-nums; }
+.im-rules-notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--sev-info); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--sev-info) 7%, var(--card));
+  color: var(--t1); font-size: var(--text-sm);
+}
+.im-rules-notice[data-tone="warning"] {
+  border-inline-start-color: var(--sev-warning);
+  background: color-mix(in srgb, var(--sev-warning) 7%, var(--card));
+}
+.im-rules-notice[hidden] { display: none; }
+.im-rules-notice > p { flex: 1 1 16rem; min-width: 0; margin: 0; font-weight: 600; }
+.im-rules-notice-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.im-rules-quick { display: grid; gap: 6px; min-width: 0; }
+.im-rules-quick-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.im-rules-section { display: grid; gap: 8px; min-width: 0; }
+.im-rules-heading { margin: 0; color: var(--t0); font-size: var(--text-sm); font-weight: 700; }
+.im-rules-subheading { margin: 0; color: var(--t2); font-size: var(--text-xs); font-weight: 600; }
+.im-rules-empty { margin: 0; font-size: var(--text-sm); }
+.im-rules-list { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.im-rule {
+  display: grid; gap: 8px; min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--card);
+}
+.im-rule-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
+.im-rule-num { color: var(--t2); font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
+.im-rule .im-rule-kind { width: auto; min-width: 9rem; }
+/* The days are toggles (aria-pressed), so they wrap rather than scroll. */
+.im-days { flex-wrap: wrap; overflow: visible; }
+.im-day[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--teal) 9%, var(--card));
+  color: var(--t0); font-weight: 600;
+  box-shadow: inset 0 0 0 2px var(--text-brand);
+}
+.im-day-mark {
+  display: none; flex: none; width: 12px; height: 12px;
+  background: currentColor;
+  -webkit-mask: var(--ux-icon-ok) center / contain no-repeat;
+          mask: var(--ux-icon-ok) center / contain no-repeat;
+}
+.im-day[aria-pressed="true"] .im-day-mark { display: inline-block; }
+.im-rule-remove { margin-inline-start: auto; }
+.im-rule-times { align-items: flex-end; }
+.im-rule-allday { min-height: var(--control-h); }
+.im-rule-field { display: grid; gap: 4px; min-width: 0; }
+.im-rule-field > label { color: var(--t2); font-size: var(--text-xs); font-weight: 600; }
+.im-rule .ux-rows-time { width: 5.5rem; min-width: 5.5rem; }
+.im-rule-note { flex: 1 1 12rem; }
+.im-rule[aria-invalid="true"] { border-color: var(--sev-critical); box-shadow: inset 0 0 0 1px var(--sev-critical); }
+.im-rule .ux-field-error { margin: 0; }
+/* A phone: the rule's number and its Remove share the first line; the kind
+   and the days take the lines under it. */
+@media (max-width: 560px) {
+  .im-rule-line:first-child > * { order: 1; }
+  .im-rule-line:first-child > .im-rule-num { order: 0; flex: 1 1 auto; }
+  .im-rule-line:first-child > .im-rule-remove { order: 0; }
+  .im-rule-line:first-child > .im-rule-kind { flex: 1 1 100%; }
+}
+/* The preview, under the rules. */
+.im-rules-effect { display: grid; gap: 10px; min-width: 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.im-rules-effect-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.im-rules-line { margin: 0; color: var(--t1); font-size: var(--text-sm); }
+.im-rules-hint { margin: 0; color: var(--t3); font-size: var(--text-xs); }
+.im-rules-warning:not(:empty) {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--sev-warning); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--sev-warning) 7%, var(--card));
+  color: var(--t1); font-size: var(--text-sm); font-weight: 600;
+}
+.im-rules-warning[data-tone="critical"]:not(:empty) {
+  border-inline-start-color: var(--sev-critical);
+  background: color-mix(in srgb, var(--sev-critical) 7%, var(--card));
+}
+.im-rules-warning .ux-tone-icon { margin-top: 3px; }
+.im-shapes { display: grid; gap: 4px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.im-shape { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--t1); font-size: var(--text-sm); }
+.im-shape-name { flex: 1 1 auto; min-width: 0; }
+.im-shape-verdict { flex: none; color: var(--t2); font-size: var(--text-xs); font-weight: 600; }
+.im-shape[data-feasible="false"] .im-shape-name { color: var(--t2); }
+/* A period table scrolls inside its own frame, under its title; the page
+   never does. */
+.im-grid-block { display: grid; gap: 4px; min-width: 0; }
+.im-grid-scroll { position: relative; min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.im-grid-scroll:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.im-grid { width: 100%; border-collapse: collapse; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.im-grid th,
+.im-grid td { padding: 4px 6px; border-top: 1px solid var(--line); text-align: center; white-space: nowrap; }
+/* A period's times may break after the dash, so seven of them fit a dialog. */
+.im-grid thead th { color: var(--t2); font-weight: 600; white-space: normal; }
+.im-grid tbody th { color: var(--t1); font-weight: 600; text-align: start; }
+.im-grid td[data-open="true"] { background: color-mix(in srgb, var(--sev-ok) 6%, var(--card)); }
+.im-grid td[data-open="false"] { background: color-mix(in srgb, var(--sev-critical) 6%, var(--card)); }
 
 
 /* ── Student adviser: durable conversations ──────────────────────
@@ -15462,7 +15790,9 @@ html.sa-overlay-open { overflow: hidden; }
   }
   .sa-workspace-head { padding: .65rem .7rem; }
   .sa-workspace-kicker { display: none; }
-  .sa-workspace-head h2 { max-width: 34vw; font-size: var(--text-sm); }
+  /* 34vw (132px at 390) was fitted to 13px: the Arabic title was cut beside
+     150px of empty header */
+  .sa-workspace-head h2 { max-width: 56vw; font-size: var(--text-sm); }
   .sa-workspace-actions { gap: .35rem; }
   .sa-workspace-actions .btn { padding-inline: .55rem; }
   .sa-history-toggle span:last-child,
@@ -15529,7 +15859,9 @@ html.sa-overlay-open { overflow: hidden; }
   border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
 }
 .sp-kpi-card span { color: var(--t2); font-size: var(--text-xs); }
-.sp-kpi-card strong { color: var(--text-brand); font-size: var(--text-lg); font-variant-numeric: tabular-nums; }
+/* margin-block-start: the values of a row share a line when one label wraps
+   and its neighbour does not */
+.sp-kpi-card strong { color: var(--text-brand); font-size: var(--text-lg); font-variant-numeric: tabular-nums; margin-block-start: auto; }
 
 .sp-section-head {
   display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;
@@ -15762,6 +16094,11 @@ html body .btn.sp-requested-remove {
 .cd-reasons li { color: var(--t2); }
 .cd-prereq, .cd-option { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .cd-code { font-weight: 600; }
+/* a course code that links to its course: the brand colour, not the
+   browser's default blue and underline */
+a.cd-code { color: var(--text-brand); text-decoration: none; }
+a.cd-code:hover,
+a.cd-code:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
 .cd-name { color: var(--t2); }
 
 /* The prerequisite's own state, as a badge — the affordance a chat answer cannot
@@ -16577,6 +16914,8 @@ html[data-theme="dark"] .student-timetable-calendar :is(.wg-h, .wg-cid, .wg-meta
     flex-wrap: nowrap;
     overflow-x: auto;
     scroll-snap-type: x proximity;
+    /* snap to the padded edge: the first chip was snapped to x=0, border cut */
+    scroll-padding-inline: 1rem;
     scrollbar-width: none;
     margin-inline: -1rem;
     padding-inline: 1rem;
@@ -16644,6 +16983,9 @@ html[data-theme="dark"] .student-timetable-calendar :is(.wg-h, .wg-cid, .wg-meta
 .student-grad-record-note > summary,
 .student-grad-map-details > summary {
   width: max-content;
+  /* never wider than its card: the Arabic summary ran out of it on a phone */
+  max-width: 100%;
+  overflow-wrap: anywhere;
   cursor: pointer;
   color: var(--text-brand);
   font-weight: 700;
@@ -16949,6 +17291,10 @@ html[dir="rtl"] .ap-grad-term-table th,
 html[dir="rtl"] .ai-cases thead th {
   text-transform: none;
   letter-spacing: 0;
+  /* the header is told from the body by weight alone, and 700 Kufi closes up
+     at 14px; a header that wraps (narrow columns do) needs the Arabic leading */
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 /* G7 — no Latin typography on Arabic. Letter-spacing pulls apart letters that
@@ -16967,6 +17313,108 @@ html[dir="rtl"] :is(.empty-note, .um-time-never, .ap-grad-wait-text, .sa-status-
 }
 /* a rule with three classes outranks the universal one above */
 html[dir="rtl"] .student-timetable-calendar .wg-blocks .wg-h { letter-spacing: 0; }
+/* Nor a Latin face. JetBrains Mono has no Arabic, so an Arabic label set in it
+   is drawn in Noto Kufi, but its spaces stay the mono's: 0.6em against Kufi's
+   0.34em, so the words of a kicker stood almost twice as far apart. Labels
+   take the body face; codes, fields and Latin islands keep the mono. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is([class*="kicker"], [class*="eyebrow"],
+    .dcc-kpi-label, .audit-filter-label, .audit-count, .audit-view-btn, .audit-page-info,
+    .audit-page-current, .scrape-term-toggle, .scrape-term-empty, .section-badge,
+    .si-dropzone-file, .si-dropzone-copy small,
+    .admin-grad-lookup-head > div > span):not(code, kbd, samp, pre, input, textarea, select,
+    [dir="ltr"] *, .tw-mri *, .sidebar *, .sbp *, .tg-shell *) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+}
+/* The prerequisite graph is a left-to-right island (its tiers run left to
+   right in both languages), so the rule above skips it: its Arabic band
+   labels, legend and mode buttons are named here. */
+html[dir="rtl"] :is(.pg-band-lbl, .pg-legend, .pg-legend *, .pg-mode, .pg-info) {
+  font-family: var(--font-body);
+  letter-spacing: normal;
+}
+/* the audit log's times stay in step down the column without the mono */
+html[dir="rtl"] .audit-ts { font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+/* Small Arabic labels at 700 close their counters up; Latin small labels are
+   700 for the capitals Arabic does not have. Headings keep 700. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is([class*="kicker"], [class*="eyebrow"],
+    .badge, .section-badge, .dcc-kpi-label, .audit-filter-label, .pf-label, .ph-chip,
+    .kpi .k):not(.tw-mri *, .sidebar *, .sbp *, .tg-shell *) {
+  font-weight: 600;
+}
+
+/* G18 — Arabic leading. Noto Kufi's letters reach higher (alef, hamza) and
+   lower (descenders, kasra) than Inter's, so the Latin 1.0-1.3 leading crowds
+   or crops them wherever a line wraps, is clamped, or sits on a background.
+   These are the places the Arabic probe measured under 1.4 that do. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) .badge:not(.tw-mri *, .sidebar *, .sbp *) {
+  line-height: 1.5;
+  padding-block: 0;  /* the pill keeps its height: 0.25em + 1 + 0.25em before */
+}
+html[dir="rtl"] :is(.ux-toast-title, .dba-nav-name, .admin-grad-journey strong, .admin-grad-eyebrow,
+    .student-timetable-comparison-scope, .student-timetable-state, .student-timetable-block-name) {
+  line-height: 1.5;
+}
+html[dir="rtl"] :is(.dcc-triage-row small, .admin-grad-journey small) { line-height: 1.6; }
+html[dir="rtl"] .admin-grad-search .admin-grad-landing-copy h2 { line-height: 1.3; }
+/* the sign-in title and the overview greeting: no Arabic in DM Serif Display,
+   so the body face at 600 rather than Kufi at the serif's one weight */
+html[dir="rtl"] .login-title { font-family: var(--font-body); font-weight: 600; line-height: 1.4; }
+html[dir="rtl"] .ov-greeting { font-family: var(--font-body); font-weight: 600; }
+/* The exam builder's course card: the Arabic name is a two-line clamp whose cap
+   was 2.6em, two lines at 1.3; at 1.5 it is 3em. In the dense grid it takes one
+   step (13px) and the Latin code stays at 12px. */
+html[dir="rtl"] main.exam-builder-page .et-course-card .et-course-short-name {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  max-height: 3em;
+}
+html[dir="rtl"] main.exam-builder-page .et-quick-metric { line-height: 1.5; }
+@media (min-width: 769px) {
+  /* the edit toolbar's buttons take one step on a desktop (12 to 13px); the
+     phone's six-column grid has no width to give */
+  html[dir="rtl"] main.exam-builder-page .et-edit-controls { --text-xs: max(13px, 0.8125rem); }
+}
+/* Wrapped card and section headings take the Arabic leading too. */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is(.advisor-block h3, .zone-title, .um-panel-title,
+    .cp-t, .dba-section-title, .pf-card-title, .pane-title, .ap-drawer-section-title,
+    .student-section-title):not(.tw-mri *, .sidebar *, .sbp *) {
+  line-height: 1.5;
+  text-wrap: balance;
+}
+/* the intro's heading does not take its paragraph's 1.75 */
+html[dir="rtl"] .page-intro h2 { line-height: 1.4; }
+html[dir="rtl"] :is(.page-intro p, .panel-sub, .empty-hint) { text-wrap: pretty; }
+/* An Arabic placeholder is prose: the body face, even in a mono field (the
+   graduation lookup's "مثال: 4504484" was JetBrains Mono at 700). */
+html[dir="rtl"] body:not(.twm-root):not(.tws-root) :is(input, textarea):not(.tw-mri *, .sidebar *, .sbp *)::placeholder {
+  font-family: var(--font-body);
+  font-weight: 400;
+}
+
+/* G19 — Arabic fits. What the larger Arabic steps no longer fitted where they
+   were (measured, before and after, in Chrome and in the fit tests' wide font). */
+/* The audit log's table holds Latin data at the Latin step (held above); its
+   Arabic headers and its Arabic dates take the Arabic one. */
+html[dir="rtl"] .audit-table thead,
+html[dir="rtl"] .audit-table .audit-ts { --text-xs: max(14px, 0.875rem); }
+/* The exam rosters' lookup: its fixed period column held "08:00-10:00" at
+   13px; at 15px it broke the time at the hyphen. */
+html[dir="rtl"] main.exam-rosters-page .et-lookup-table th.et-col-period { width: 128px; }
+@media (max-width: 760px) {
+  /* Group availability: three equal tabs that may wrap, not a strip that cut
+     its third ("اليوم الكامل (10 د)") */
+  html[dir="rtl"] .ga-tab {
+    flex: 1 1 0; min-width: 0;
+    padding-inline: 0.4rem;
+    white-space: normal; line-height: 1.4; text-align: center;
+  }
+}
+@media (max-width: 480px) {
+  /* The advisor portfolio's three export buttons share one phone line at the
+     Latin button step: any one that wrapped would be left alone on its line. */
+  html[dir="rtl"] .fb-fit .fb-actions:has(> #apCsvLink) { --control-fs-sm: max(13px, 0.8125rem); }
+}
 
 /* G11 — DM Serif Display has ONE weight (400). Every element set in it says so,
    so nothing is asked for a bold that the browser would have to fake. */
@@ -17097,20 +17545,87 @@ html[dir="rtl"] .audit-endpoint {
   .nav-sec { animation-duration: auto !important; }
 }
 
-/* G5 (Arabic) — Arabic at 11px is not legible; the shared micro-labels that sit
-   between 11 and 12px in Latin are 12px in Arabic. The workspace sheets are not
-   touched: their cards and slots are sized to a 96px slot and pinned by tests. */
-html[dir="rtl"] :is(.nav-lbl, .logo-sub, .u-rl, .ph-chip, .um-time, .um-time-never,
-    .pf-hint, .pf-pw-hint, .audit-ts, .chip-legend-item, .fs-11, .pane-sub,
-    .card-heading, .wg-h, .pf-label, .fb-dd, .metric .k, .kpi .k,
-    #umUserCount, #imInstructorCount, #apAdvisorChip, #apCountChip, #fetchState,
-    #trustStrip, #pfRoleBadge, .dlg-input-row label,
-    .dcc-mini-stats, .dcc-scenario-meta, .dcc-activity-time,
-    .student-timetable-room, .student-timetable-block-name,
-    .student-timetable-table th) {
+/* G17 — a table wider than its frame scrolls sideways and said nothing of it:
+   the exports table's Copy column, the audit log's hash and the batch table's
+   share column were cut at the frame's edge with no sign of more (UI review 3).
+   The menu's cue (G16), across: the far edge fades while there is more that
+   way, the near edge once you have scrolled. A table that fits does not
+   scroll, so no fade is drawn; an Arabic table fades its left edge first.
+   Only where scrollbars are overlays, on a touch screen: there the fade is the
+   only cue, while a mouse desktop already draws the scrollbar, which a mask
+   would fade with the table. And not while the frame has keyboard focus: a
+   mask also clips what is drawn outside the box, which is where its focus
+   ring is (the audit log's table is a tab stop). */
+@property --tbl-fade-s { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --tbl-fade-e { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@keyframes tbl-scroll-cue {
+  0%   { --tbl-fade-s: 0px;  --tbl-fade-e: 28px; }
+  8%   { --tbl-fade-s: 24px; --tbl-fade-e: 28px; }
+  92%  { --tbl-fade-s: 24px; --tbl-fade-e: 28px; }
+  100% { --tbl-fade-s: 24px; --tbl-fade-e: 0px; }
+}
+@supports (animation-timeline: scroll()) {
+  @media (pointer: coarse) {
+    :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
+      -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tbl-fade-s),
+                          #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+      mask-image: linear-gradient(to right, transparent 0, #000 var(--tbl-fade-s),
+                  #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+      animation: tbl-scroll-cue linear both;
+      animation-timeline: scroll(self inline);
+    }
+    :where(html[dir="rtl"] body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
+      -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--tbl-fade-s),
+                          #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+      mask-image: linear-gradient(to left, transparent 0, #000 var(--tbl-fade-s),
+                  #000 calc(100% - var(--tbl-fade-e)), transparent 100%);
+    }
+    :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)):focus-visible {
+      -webkit-mask-image: none;
+      mask-image: none;
+    }
+  }
+  @media (pointer: coarse) and (prefers-reduced-motion: reduce) {
+    /* the reduced-motion rule shortens every animation to 0.01ms; a scroll
+       timeline has no duration, and a fade is not motion */
+    :where(body:not(.twm-root):not(.tws-root)) :where(.table-wrap, .audit-table-wrap):where(:not(.tw-mri *)) {
+      animation-duration: auto !important;
+    }
+  }
+}
+
+/* G5 (Arabic) — Arabic at 11px is not legible; the sidebar's micro-labels that
+   sit between 11 and 12px in Latin are 12px in Arabic (the owner's sidebar keeps
+   the sizes it was fitted at). Everything else this list used to hold at 12px
+   follows the Arabic type scale near the top of this sheet. */
+html[dir="rtl"] :is(.nav-lbl, .logo-sub, .u-rl) {
   font-size: max(12px, 0.75rem);
 }
-html[dir="rtl"] .form-label { font-size: var(--text-xs) !important; }
+/* The sidebar in Arabic (UI review 3, from the owner's screenshot). Its text sat
+   a step below the page's Arabic scale; the two-line product name was thin
+   Kufi at the serif's one weight with its marks touching at 1.1 leading; and
+   the role and the university line were set in the mono face, whose 0.6em
+   space opened their word gaps. No width moves and the tested values hold: the
+   section headings stay 14px in 40px rows, and the 210/195px rails below
+   1201px keep their sizes. */
+html[dir="rtl"] .logo-title {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+html[dir="rtl"] :is(.logo-sub, .u-rl) { font-family: var(--font-body); letter-spacing: 0; }
+@media (min-width: 1201px) {
+  /* the full 252px rail: links one step up (13 to 14px), the search row, the
+     user's lines and the university line one step up (12 to 13px) */
+  html[dir="rtl"] .sidebar .nav-a { font-size: var(--text-base); }
+  html[dir="rtl"] .sidebar .nav-find-btn,
+  html[dir="rtl"] .sidebar .u-nm,
+  html[dir="rtl"] .sidebar .u-rl,
+  html[dir="rtl"] .sidebar .logo-sub { font-size: var(--text-sm); }
+}
+html[dir="rtl"] .form-label { font-size: var(--text-xs) !important; font-weight: 600 !important; }
 /* (not the viewport-filling tool pages: their footer is one pinned 11px line) */
 html[dir="rtl"] main:not([data-fill="viewport"]) .system-footer { font-size: var(--text-xs); }
 
@@ -17140,4 +17655,4 @@ html[dir="rtl"] :is(#apTable .pill-status, #apShowing, .pg-mode, .pg-info,
    planner's two disclosure toggles 20px; 28px is a comfortable pointer target
    and does not move the row they sit in. */
 .ap-hp-btn { min-height: 28px; }
-#spToggleCaps, #spToggleAdv { min-height: 28px; display: inline-flex; align-items: center; }
+#spToggleCaps, #spToggleAdv, #spToggleMeet { min-height: 28px; display: inline-flex; align-items: center; }

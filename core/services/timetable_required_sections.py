@@ -131,8 +131,14 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
     placed = None
     try:
         from core.services.timetable_autoplace import auto_place_scenario
+        from core.services.timetable_instructor_availability import availability_scope
 
-        placed = auto_place_scenario(scenario_id)
+        # One teaching-time rule scope for the placement and what follows it, so
+        # a section the placer released from its engine teacher is still known
+        # as released afterwards (fix plan D-B).
+        with availability_scope(scenario_id):
+            placed = auto_place_scenario(scenario_id)
+            _resolve_released_teachers(scenario_id, placed)
         after = find_missing_required_sections(scenario_id)
     except Exception:
         logger.exception(
@@ -176,7 +182,43 @@ def reinstate_missing_required_sections(scenario_id: int) -> dict:
     ]
     if ranked_last:
         report["teacher_guard_ranked_last"] = ranked_last
+    # Teaching-time rules (only while a teacher the scenario can charge has one):
+    # the placer's own report — sections of a fixed teacher placed at a time he
+    # may not teach, and sections the rule (not clash, cap or same-course) kept
+    # off the board — carried for the run's gates and its final report.
+    availability = [
+        board["instructor_availability"]
+        for board in (boards or {}).values()
+        if isinstance(board, dict) and isinstance(board.get("instructor_availability"), dict)
+    ]
+    if availability:
+        report["instructor_availability"] = {
+            part: [row for board in availability for row in board.get(part, [])]
+            for part in ("ranked_last", "unplaced", "released")
+        }
     return report
+
+
+def _resolve_released_teachers(scenario_id: int, placed) -> None:
+    """Teaching-time rules (fix plan D-B): when the placer released a section from
+    its engine teacher and no run pins the map (a run re-picks its teachers on the
+    real layout itself), choose the released section's teacher on the board just
+    placed, as ``run_placer``'s final ensure does: the stored row of the released
+    teacher is replaced by another eligible teacher with a legal free option, or
+    by none. Nothing happens without a release."""
+    boards = placed.get("boards") if isinstance(placed, dict) else None
+    released = [
+        row
+        for board in (boards or {}).values()
+        if isinstance(board, dict)
+        for row in (board.get("instructor_availability") or {}).get("released", [])
+    ]
+    if not released:
+        return
+    from core.services.section_teacher_assignment import current_pin, resolve_released_sections
+
+    if current_pin(scenario_id) is None:
+        resolve_released_sections(scenario_id, released)
 
 
 def maybe_reinstate_missing_required_sections(scenario_id: int) -> dict | None:

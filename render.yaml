@@ -118,6 +118,12 @@ services:
       # Only automatic Build/Generate/Optimise read it. "false" restores the old daytime placement.
       - key: TIMETABLE_ONLINE_EVENING_WINDOWS
         value: "true"
+      # Teaching-time rules per instructor (owner 2026-11-21), typed on Instructor Management:
+      # no automatic stage places a teacher at a time his rules forbid; a manual move is saved
+      # and shown as a warning. With no rule stored, timetables are unchanged.
+      # "false" makes every stage ignore the rules; the stored rules stay.
+      - key: TIMETABLE_INSTRUCTOR_AVAILABILITY
+        value: "true"
       # Workspace JSON gzip (stage 3, B5) stays OFF here. Render documents that its
       # load balancers already compress app responses (Brotli and gzip), so gzip in
       # the app would repeat that work on this 0.5-CPU instance. Pinned by

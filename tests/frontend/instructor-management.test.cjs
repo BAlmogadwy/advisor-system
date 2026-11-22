@@ -37,7 +37,7 @@ async function page(t, { arabic = false, answer = () => undefined } = {}) {
   w.fetch = async (url, opts = {}) => {
     const method = (opts.method || 'GET').toUpperCase();
     if (method === 'POST') posts.push({ url, body: JSON.parse(opts.body || '{}') }); else gets.push(url);
-    let body = answer(url, opts);
+    let body = await answer(url, opts);
     if (body === undefined) {
       if (url.startsWith('/ops/instructors/list/')) body = { ok: true, instructors: INSTRUCTORS };
       else if (url.startsWith('/ops/instructors/course-assignments/?')) body = { ok: true, courses: COURSES };
@@ -99,7 +99,7 @@ test('the roster: the second name only when it differs, empty fields as a dash, 
   assert.equal(rows[1].cells[3].textContent.trim(), '—', 'a stored "None" is no value');
   assert.equal(rows[0].querySelector('.pill-status').tagName, 'SPAN');
   assert.equal(rows[0].querySelector('button.pill-status'), null);
-  assert.deepEqual([...rows[0].querySelectorAll('.im-row-actions button')].map(b => b.textContent.trim()), ['Edit', 'Deactivate']);
+  assert.deepEqual([...rows[0].querySelectorAll('.im-row-actions button')].map(b => b.textContent.trim()), ['Edit', 'Times', 'Deactivate']);
   h.$('imIncludeInactive').checked = true;
   h.$('imIncludeInactive').dispatchEvent(new h.w.Event('change'));
   assert.equal(h.d.querySelectorAll('#imInstructorTable tbody tr').length, 3, 'inactive shown without another read');
@@ -231,9 +231,11 @@ test('a name with quotes stays text: nothing it holds becomes an attribute', asy
   h.$('caProgram').value = 'AI';
   h.$('caProgram').dispatchEvent(new h.w.Event('change'));
   await new Promise(r => setTimeout(r, 20));
-  const chip = h.d.querySelector('.ca-chip-name');
+  const chip = h.d.querySelector('.ca-teacher-name');
+  assert.equal(chip.textContent, evil);
   assert.equal(chip.hasAttribute('onfocus'), false);
-  assert.equal(chip.dataset.caAssign, 'C"1');
+  assert.equal(h.d.querySelector('.ca-limit-input').getAttribute('aria-label'), `Max sections — ${evil} — C"1`);
+  assert.equal(h.d.querySelector('[data-ca-assign]').dataset.caAssign, 'C"1');
   assert.equal(h.d.querySelectorAll('[onfocus], [autofocus]').length, 0);
 });
 
@@ -304,4 +306,329 @@ test('badges use the design system tones; bulk assign never picks the first of s
   h.$('caProgram').dispatchEvent(new h.w.Event('change'));
   await new Promise(r => setTimeout(r, 20));
   assert.equal(h.$('caBulkbar').classList.contains('d-none'), true);
+});
+
+// ── Per-teacher section limits (the course row lists every teacher) ──
+const TWO_TEACHERS = [{
+  course_code: 'CS112', course_name: 'Programming', programme_term: 2, credit_hours: 3,
+  instructor: { id: 1, full_name: 'Dr Hala Omar', role: 'primary', max_sections: 2 },
+  co_instructors: [{ id: 2, full_name: 'ابراهيم فتحي', role: 'co', max_sections: null }],
+}];
+
+async function limitsPage(t, courses = TWO_TEACHERS) {
+  const h = await page(t, { answer: url => (url.startsWith('/ops/instructors/course-assignments/?') ? { ok: true, courses } : undefined) });
+  h.$('caProgram').value = 'CS';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await settle();
+  return h;
+}
+const lastSet = h => h.posts.filter(p => p.url === '/ops/instructors/course-assignments/set/').at(-1);
+
+test('a course row shows every teacher with their limit, labelled by name and course', async t => {
+  const h = await limitsPage(t);
+  const teachers = [...h.d.querySelectorAll('#caTable .ca-teacher')];
+  assert.equal(teachers.length, 2);
+  assert.deepEqual(teachers.map(x => x.querySelector('.ca-teacher-name').textContent), ['Dr Hala Omar', 'ابراهيم فتحي']);
+  assert.deepEqual(teachers.map(x => x.querySelector('.ca-limit-input').value), ['2', '']);
+  assert.equal(teachers[0].querySelector('.ca-limit-input').getAttribute('aria-label'), 'Max sections — Dr Hala Omar — CS112');
+  assert.equal(teachers[1].querySelector('.ca-limit-input').placeholder, 'Default');
+  const help = h.$('caLimitsHelp');
+  assert.ok(help, 'the help line exists');
+  for (const x of teachers) assert.equal(x.querySelector('.ca-limit-input').getAttribute('aria-describedby'), 'caLimitsHelp');
+  assert.equal(h.d.querySelectorAll('#caTable [data-ca-remove]').length, 2, 'with several teachers each has its own remove');
+  assert.equal(h.d.querySelector('#caTable [data-ca-assign]').textContent.trim(), '+ Add instructor');
+});
+
+test('adding a teacher posts the whole list, appended, keeping the limits', async t => {
+  const h = await limitsPage(t);
+  h.d.querySelector('#caTable [data-ca-assign]').click();
+  const search = h.$('caPopSearch');
+  search.value = 'old';
+  search.dispatchEvent(new h.w.Event('input'));
+  await new Promise(r => setTimeout(r, 400));
+  const option = [...h.d.querySelectorAll('#caPopResults .ca-pop-opt')].find(o => o.dataset.id === '3');
+  option.click();
+  await settle();
+  assert.deepEqual(lastSet(h).body, {
+    program: 'CS', course_code: 'CS112', section: 'M',
+    instructors: [{ id: 1, max_sections: 2 }, { id: 2, max_sections: null }, { id: 3, max_sections: null }],
+  });
+});
+
+test('picking a teacher who is already linked adds nothing', async t => {
+  const h = await limitsPage(t);
+  h.d.querySelector('#caTable [data-ca-assign]').click();
+  h.$('caPopSearch').value = 'hala';
+  h.$('caPopSearch').dispatchEvent(new h.w.Event('input'));
+  await new Promise(r => setTimeout(r, 400));
+  [...h.d.querySelectorAll('#caPopResults .ca-pop-opt')].find(o => o.dataset.id === '1').click();
+  await settle();
+  assert.equal(lastSet(h), undefined);
+});
+
+test('editing a limit posts the list with that number; clearing it posts null', async t => {
+  const h = await limitsPage(t);
+  const second = h.d.querySelectorAll('#caTable .ca-limit-input')[1];
+  second.value = '3';
+  second.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.deepEqual(lastSet(h).body.instructors, [{ id: 1, max_sections: 2 }, { id: 2, max_sections: 3 }]);
+  const first = h.d.querySelectorAll('#caTable .ca-limit-input')[0];
+  first.value = '';
+  first.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.deepEqual(lastSet(h).body.instructors, [{ id: 1, max_sections: null }, { id: 2, max_sections: null }]);
+});
+
+test('a limit that is not a whole number from 1 to 99 is refused in the page and nothing is sent', async t => {
+  const h = await limitsPage(t);
+  for (const bad of ['0', '100', '-1', '2.5']) {
+    const input = h.d.querySelectorAll('#caTable .ca-limit-input')[1];
+    input.value = bad;
+    input.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+    await settle();
+  }
+  assert.equal(lastSet(h), undefined);
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 4);
+  assert.equal(h.d.querySelectorAll('#caTable .ca-limit-input')[1].value, '', 'the field shows what is stored again');
+});
+
+test('text a number box cannot read ("2e") is a mistake: the saved limit is kept and nothing is sent', async t => {
+  const h = await limitsPage(t);
+  const first = h.d.querySelectorAll('#caTable .ca-limit-input')[0];
+  // A browser reports '' as the value of a number box holding unreadable text.
+  first.value = '';
+  Object.defineProperty(first, 'validity', { value: { badInput: true } });
+  first.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(lastSet(h), undefined, 'the limit of 2 is not cleared');
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 1);
+  assert.equal(h.d.querySelectorAll('#caTable .ca-limit-input')[0].value, '2', 'the field shows what is stored again');
+});
+
+test('removing the primary posts the rest in order, so the next becomes primary', async t => {
+  const three = [{ ...TWO_TEACHERS[0], co_instructors: [
+    { id: 2, full_name: 'ابراهيم فتحي', max_sections: 3 }, { id: 3, full_name: 'Dr Old Name', max_sections: null }] }];
+  const h = await limitsPage(t, three);
+  h.d.querySelector('#caTable [data-ca-remove="1"]').click();
+  await settle();
+  assert.deepEqual(lastSet(h).body.instructors, [{ id: 2, max_sections: 3 }, { id: 3, max_sections: null }]);
+});
+
+test('Remove all clears the course; a single teacher’s × does too', async t => {
+  const h = await limitsPage(t);
+  h.d.querySelector('#caTable [data-ca-clear]').click();
+  await settle();
+  assert.equal(h.posts.at(-1).url, '/ops/instructors/course-assignments/clear/');
+  const one = await limitsPage(t, [{ ...TWO_TEACHERS[0], co_instructors: [] }]);
+  assert.equal(one.d.querySelectorAll('#caTable [data-ca-remove]').length, 0);
+  one.d.querySelector('#caTable .ca-teacher-x').click();
+  await settle();
+  assert.equal(one.posts.at(-1).url, '/ops/instructors/course-assignments/clear/');
+});
+
+test('a teacher name with HTML is text in the row, the labels and the search', async t => {
+  const evil = '<img src=x onerror=alert(1)> "q"';
+  const h = await limitsPage(t, [{ ...TWO_TEACHERS[0], instructor: { id: 1, full_name: evil, max_sections: 1 } }]);
+  assert.equal(h.d.querySelector('#caTable img'), null);
+  assert.equal(h.d.querySelector('#caTable .ca-teacher-name').textContent, evil);
+  assert.equal(h.d.querySelector('#caTable .ca-limit-input').getAttribute('aria-label'), `Max sections — ${evil} — CS112`);
+  h.$('caSearch').value = 'ابراهيم';
+  h.$('caSearch').dispatchEvent(new h.w.Event('input'));
+  assert.equal(h.d.querySelector('#caTable tbody tr[data-course]').style.display, '', 'a co-teacher is found by the search');
+});
+
+// ── Saves of the course table run one at a time; the refresh is in place ──
+const TEACHER_NAMES = { 1: 'Dr Hala Omar', 2: 'ابراهيم فتحي', 3: 'Dr Old Name' };
+
+// A server that keeps what it is sent. `gates` holds the next saves until released
+// (one promise each); `getGate` holds the course reads (the refresh) the same way.
+function liveServer() {
+  const server = { courses: [JSON.parse(JSON.stringify(TWO_TEACHERS[0]))], gates: [], getGate: null, fail: false };
+  server.answer = async (url, opts) => {
+    if (url.startsWith('/ops/instructors/course-assignments/?')) {
+      if (server.getGate) await server.getGate.promise;
+      if (server.getFail) return { ok: false, error: { message: 'Down' } };
+      return { ok: true, courses: JSON.parse(JSON.stringify(server.courses)) };
+    }
+    if (url === '/ops/instructors/course-assignments/set/') {
+      const gate = server.gates.shift();
+      if (gate) await gate;
+      if (server.fail) return { ok: false, error: { message: 'Boom' } };
+      const [first, ...rest] = JSON.parse(opts.body).instructors.map(i => ({ id: i.id, full_name: TEACHER_NAMES[i.id], max_sections: i.max_sections }));
+      server.courses[0].instructor = first || null;
+      server.courses[0].co_instructors = rest;
+      return { ok: true };
+    }
+    return undefined;
+  };
+  return server;
+}
+function deferred() {
+  let release;
+  const promise = new Promise(resolve => { release = resolve; });
+  return { promise, release };
+}
+async function livePage(t, server) {
+  const h = await page(t, { answer: server.answer });
+  h.$('caProgram').value = 'CS';
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await settle();
+  return h;
+}
+const limitBox = (h, id) => h.d.querySelector(`#caTable [data-ca-limit="${id}"]`);
+const change = (h, input, value) => {
+  input.value = value;
+  input.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+};
+const setPosts = h => h.posts.filter(p => p.url === '/ops/instructors/course-assignments/set/');
+
+test('two limit changes made before the first save is back post in order, the second carrying the first', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  const gate = deferred();
+  server.gates.push(gate.promise);
+  change(h, limitBox(h, 1), '3');
+  await settle();
+  assert.equal(setPosts(h).length, 1);
+  change(h, limitBox(h, 2), '4');   // the first save has not answered yet
+  await settle();
+  assert.equal(setPosts(h).length, 1, 'the second waits for the first');
+  gate.release();
+  await settle();
+  const posts = setPosts(h);
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[0].body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: null }]);
+  assert.deepEqual(posts[1].body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: 4 }], 'built after the first save, not before it');
+  assert.deepEqual([limitBox(h, 1).value, limitBox(h, 2).value], ['3', '4']);
+});
+
+test('the refresh after a save keeps the box being typed in, with its text', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getGate = deferred();
+  const other = limitBox(h, 2);
+  change(h, limitBox(h, 1), '4');
+  await settle();            // saved; the refresh is waiting on the server
+  other.focus();
+  other.value = '5';         // typed, not yet changed
+  server.getGate.release();
+  await settle();
+  const now = limitBox(h, 2);
+  assert.ok(now !== other, 'the table was drawn again');
+  assert.equal(h.d.activeElement, now);
+  assert.equal(now.value, '5');
+  assert.equal(limitBox(h, 1).value, '4');
+});
+
+test('after a save the keyboard returns to the edited box only when nothing else has it', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  change(h, limitBox(h, 1), '3');
+  await settle();
+  assert.equal(h.d.activeElement, limitBox(h, 1), 'nothing had the keyboard');
+  h.$('caSearch').focus();
+  change(h, limitBox(h, 2), '4');
+  await settle();
+  assert.equal(h.d.activeElement, h.$('caSearch'), 'the search box keeps it');
+});
+
+test('the refresh after a save never shows the Loading row', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getGate = deferred();
+  change(h, limitBox(h, 1), '3');
+  await settle();            // the save is done, the read is pending
+  assert.equal(h.d.querySelectorAll('#caTable .empty-note').length, 0);
+  assert.equal(h.d.querySelectorAll('#caTable .ca-teacher').length, 2);
+  server.getGate.release();
+  await settle();
+  assert.equal(limitBox(h, 1).value, '3');
+});
+
+test('a failed save reports the error and the box shows what is stored', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.fail = true;
+  const box = limitBox(h, 2);
+  box.focus();
+  change(h, box, '4');
+  await settle();
+  assert.equal(h.notices.filter(n => n.type === 'error').at(-1).text, 'Boom');
+  assert.equal(limitBox(h, 2).value, '', 'the typed 4 is gone: the server holds none');
+  assert.equal(limitBox(h, 1).value, '2');
+  server.fail = false;
+  change(h, limitBox(h, 1), '3');   // the queue still works after a failure
+  await settle();
+  assert.deepEqual(setPosts(h).at(-1).body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: null }]);
+});
+
+test('after a refresh fails, the next save reloads first and does not undo the earlier save', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getFail = true;
+  change(h, limitBox(h, 1), '3');   // saved; its refresh fails, so the table still holds 2
+  await settle();
+  assert.equal(setPosts(h).length, 1);
+  server.getFail = false;
+  change(h, limitBox(h, 2), '4');
+  await settle();
+  assert.deepEqual(setPosts(h).at(-1).body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: 4 }], 'the first save is kept');
+  assert.deepEqual([limitBox(h, 1).value, limitBox(h, 2).value], ['3', '4']);
+});
+
+test('while the table cannot be refreshed a change is not posted and the box shows what is stored', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getFail = true;
+  change(h, limitBox(h, 1), '3');
+  await settle();
+  const box = limitBox(h, 2);
+  box.focus();
+  change(h, box, '4');              // the reload before this save fails again
+  await settle();
+  assert.equal(setPosts(h).length, 1, 'no list is built from a table that may be out of date');
+  assert.equal(limitBox(h, 2).value, '', 'the typed 4 is gone: it was not saved');
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 2, 'each failed refresh is reported once');
+});
+
+test('a focused box the user did not edit takes the refreshed value', async t => {
+  const server = liveServer();
+  server.courses.push({
+    course_code: 'CS113', course_name: 'Programming II', programme_term: 3, credit_hours: 3,
+    instructor: { id: 3, full_name: 'Dr Old Name', role: 'primary', max_sections: null }, co_instructors: [],
+  });
+  const h = await livePage(t, server);
+  server.courses[1].instructor.max_sections = 5;   // changed elsewhere since the page loaded
+  limitBox(h, 3).focus();           // focused, nothing typed
+  const first = limitBox(h, 1);
+  first.value = '3';
+  first.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(h.d.activeElement, limitBox(h, 3), 'the keyboard stays where it was');
+  assert.equal(limitBox(h, 3).value, '5', 'not the old blank');
+});
+
+test('a queued add is dropped when the programme is switched, and its picker closes', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  const gate = deferred();
+  server.gates.push(gate.promise);
+  change(h, limitBox(h, 1), '3');   // held by the server
+  await settle();
+  h.d.querySelector('#caTable [data-ca-assign]').click();
+  const search = h.$('caPopSearch');
+  search.value = 'old';
+  search.dispatchEvent(new h.w.Event('input'));
+  await new Promise(r => setTimeout(r, 400));
+  [...h.d.querySelectorAll('#caPopResults .ca-pop-opt')].find(o => o.dataset.id === '3').click();   // queued
+  await settle();
+  h.$('caProgram').value = 'AI';                 // the user moves to another programme
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await settle();
+  assert.equal(h.$('caProgram').value, 'AI');
+  gate.release();
+  await settle();
+  assert.equal(setPosts(h).length, 1, 'the add meant for the first list is not posted to the other one');
+  assert.equal(h.$('caPop').style.display, 'none');
 });

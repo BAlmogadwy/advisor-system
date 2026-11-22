@@ -5386,8 +5386,9 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
       // the raw key, never disappears.
       const flagLabel = copyMap.getAttribute(`data-flag-${flagKey}`) || flag;
       const pill = document.createElement('span');
+      // Sized by the banner's badge rule (the type scale), not inline: an inline
+      // 0.75rem was 10.5px on a phone and outranked the scale in both languages.
       pill.className = 'badge bg-light text-dark border';
-      pill.style.fontSize = '0.75rem';
       pill.textContent = flagLabel;
       flagsEl.appendChild(pill);
     });
