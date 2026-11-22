@@ -2147,6 +2147,14 @@ const READINESS_ITEM_TEXT = {
       ? `تجتمع ${name} بواقع ${placed}، لكن المقرر مضبوط على ${expected}. انقل لقاءاتها إلى أعمدة مدتها ١٠٠ دقيقة، أو احذفها ثم شغّل «تحسين».`
       : `${name} meets ${placed} but the course is set to ${expected}. Move its meetings into 100-minute columns, or remove it and run Optimise.`;
   },
+  // A meeting at a time its teacher's rules forbid: a warning, never a blocker.
+  board_teacher_rule_violations: p => {
+    const names = (p.teachers || []).map(isolatedText).join(IS_AR ? '، ' : ', ');
+    const n = Number(p.count) || 0;
+    return IS_AR
+      ? `اللوحة «${p.board_label}»: ${pluralAr(n, { one: 'لقاء واحد', two: 'لقاءان', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })} خارج أوقات تدريس المدرّس${names ? ` (${names})` : ''}.`
+      : `Board “${p.board_label}”: ${n} meeting${n === 1 ? '' : 's'} outside the teacher’s teaching times${names ? ` (${names})` : ''}.`;
+  },
   // A course set to 2 × 100 min in a scenario with no 100-minute column an
   // in-person class may use: no engine can place its in-person sections.
   meeting_pattern_no_window: p => {
@@ -4931,9 +4939,17 @@ function moveVerdictWords(verdict) {
 /* One item of a verdict as a line (HTML): what it is, who or what it meets,
    where (a board other than `boardId` named), when, and how many students
    it costs. Move's lines and Place's (5f) alike. */
+/* "This time is outside Dr A's teaching times", the name isolated (no Arabic
+   verb is inflected: an instructor has no recorded gender). */
+const teacherRuleHtml = name => {
+  const who = name ? `<bdi>${esc(name)}</bdi>` : '';
+  if (IS_AR) return who ? `هذا الوقت خارج أوقات تدريس ${who}` : 'هذا الوقت خارج أوقات تدريس المدرّس';
+  return who ? `This time is outside ${who}’s teaching times` : 'This time is outside the teacher’s teaching times';
+};
 function moveDetailHtml(item, boardId = MOVE.boardId) {
   const label = esc(issueKindLabel(item.issue_kind));
   if (item.issue_kind === 'blocked') return label;
+  if (item.issue_kind === 'teacherRule') return `${label}: ${teacherRuleHtml(item.teacher)}`;
   const other = item.other || {};
   const course = `<bdi>${esc([other.course_code, other.section].filter(Boolean).join(' '))}</bdi>`;
   const board = other.board_label ? ` (<bdi>${esc(other.board_label)}</bdi>)` : '';
@@ -6777,6 +6793,7 @@ const ISSUE_KINDS = {
   noRoom:          { tone: 'critical', en: 'No room',                            ar: 'بلا قاعة' },
   blocked:         { tone: 'critical', en: 'On a blocked time',                  ar: 'في وقت محجوب' },
   server:          { tone: 'critical', en: 'Publish check',                      ar: 'فحص النشر' },
+  teacherRule:     { tone: 'warning',  en: 'Teacher not available at this time', ar: 'المدرّس غير متاح في هذا الوقت' },
   softOverlap:     { tone: 'warning',  en: 'Overlap students can route round',   ar: 'تداخل يمكن تجاوزه' },
   roomUnset:       { tone: 'warning',  en: 'Room not assigned yet',              ar: 'لم تُحدَّد القاعة بعد' },
   roomSmall:       { tone: 'warning',  en: 'Room too small',                     ar: 'القاعة أصغر من المطلوب' },
@@ -6922,6 +6939,13 @@ function computeBoardIssues() {
       const ps = placementsOf(c.ids);
       (c.ids || []).forEach(id => roomClashIds.add(String(id)));
       add('room', c.ids, [c.room, (c.sections || ps.map(name)).join(' / ')].filter(Boolean).join(' — '), ps.map(when).join(' · '));
+    });
+    // A meeting outside its teacher's teaching times: a fault of the card,
+    // listed (not quiet) like a missing room; a warning, never a refusal.
+    (conflicts.teacher_rule_violations || []).forEach(v => {
+      const p = placementsOf(v.ids)[0];
+      add('teacherRule', v.ids, [v.instructor, p ? name(p) : String(v.section || '').replace('-', ' ')].filter(Boolean).join(' — '),
+        p ? when(p) : `${dayName(v.day)} ${v.start}–${v.end}`);
     });
     // A pair at the publish check's line is a warning there; below it, context.
     const line = Number.isFinite(conflicts.hard_overlap_threshold) ? conflicts.hard_overlap_threshold : Infinity;

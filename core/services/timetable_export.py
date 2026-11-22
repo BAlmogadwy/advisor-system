@@ -811,6 +811,17 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     )
                     ws.cell(row=row, column=3, value=" vs ".join(c.get("sections", [])))
                     row += 1
+                for v in conflicts.get("teacher_rule_violations") or ():
+                    ws.cell(
+                        row=row, column=1, value=f"TEACHING TIME: {v.get('instructor', '')}"
+                    ).font = Font(color="D97706", size=8)
+                    ws.cell(
+                        row=row,
+                        column=3,
+                        value=f"{v.get('section', '')} {v.get('day', '')} "
+                        f"{v.get('start', '')}-{v.get('end', '')}",
+                    )
+                    row += 1
 
         # ── Course Info Sidebar (right side of each sheet) ───────
         term_budget = budget_by_term.get(term_num, [])
