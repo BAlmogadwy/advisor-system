@@ -3,8 +3,9 @@
 
 The pass moves a meeting that breaks its charged teacher's teaching-time rule to
 a cell the teacher may teach. It never unplaces, never moves a frozen meeting,
-never makes a move the instructor-week gate blocks, and a rule no week can meet
-is reported. The first half of this file calls it on its own; the second half
+never takes a teacher's last day off (it may spend an extra day or idle time:
+``test_instructor_availability_repair_spends_a_day.py``), and a rule no week can
+meet is reported. The first half of this file calls it on its own; the second half
 (below the "second half" banner) covers its wiring into both optimiser
 pipelines, the runner's gates and the persisted-board report. Every
 behavioural test has a
@@ -1012,12 +1013,13 @@ def _wed_pair_board(name: str, *, other_day: str | None = None):
     ["new-day", "worked-day-control", "flag-off-control"],
     ids=["new-day", "worked-day-control", "flag-off-control"],
 )
-def test_the_repair_never_spends_a_day_the_saved_week_does_not_allow(week_flags, case) -> None:
-    """The reviewer's input: only a new day can take X off WED, which would give Dr A
-    a second working day (1 -> 2). Priority on, policy off, Optimise Current: the
-    meeting stays, is reported under ``locked_blocked`` (a spare day is not
-    spendable) and the run is NOT rolled back. Controls: with a cell on SUN, a day he
-    already works, X moves there at no cost; the flag off leaves it alone."""
+def test_the_repair_may_spend_a_day_the_saved_week_does_not_allow(week_flags, case) -> None:
+    """Changed on purpose (owner, 2026-11-22: fixing a rule violation may cost a teacher
+    an extra working day). Only a new day can take X off WED, which gives Dr A a second
+    working day (1 -> 2). Priority on, policy off, Optimise Current: X now moves to
+    that day, nothing is left blocked and the run is NOT rolled back (the final gate
+    credits the spend). Controls: with a cell on SUN, a day he already works, X moves
+    there at no cost; the flag off leaves it alone."""
     week_flags.TIMETABLE_INSTRUCTOR_AVAILABILITY = case != "flag-off-control"
     sc, x, _a = _wed_pair_board(
         f"w1 {case}", other_day="SUN" if case == "worked-day-control" else None
@@ -1037,39 +1039,41 @@ def test_the_repair_never_spends_a_day_the_saved_week_does_not_allow(week_flags,
         assert report["locked_blocked"] == []
         assert result["instructor_availability_report"]["count"] == 0
         return
-    assert _x_cells(sc, x) == [("WED", "09:00")]
-    assert report["repaired"] == []
-    assert [row["reason"] for row in report["locked_blocked"]] == ["needs_extra_working_day"]
-    assert result["instructor_availability_report"]["count"] == 1
+    assert _x_cells(sc, x)[0][0] != "WED"  # a new day: the spend
+    assert [row["from"][:3] for row in report["repaired"]] == ["WED"]
+    assert report["locked_blocked"] == []
+    assert result["instructor_availability_report"]["count"] == 0
     assert not report.get("rolled_back")
 
 
 @pytest.mark.django_db
-def test_inside_a_day_off_scope_a_spare_day_without_student_gain_is_not_spent(run_flags) -> None:
-    """The same board with the day-off policy ON (the production config): the policy
-    gives up a spare day only for a student gain and the repair has none, so X stays
-    with the reason ``needs_extra_working_day`` (he works one day; this is not a last
-    day off) and nothing is rolled back."""
+def test_inside_a_day_off_scope_a_spare_day_without_student_gain_is_spent_by_the_repair(
+    run_flags,
+) -> None:
+    """Changed on purpose (owner, 2026-11-22). The same board with the day-off policy ON
+    (the production config): an optional move may give up a spare day only for a student
+    gain, but the repair has the owner's permission, so X moves to the new day and the
+    run is kept (the policy's final check credits the spend)."""
     sc, x, _a = _wed_pair_board("w2 policy on")
 
     result = _run(sc.id)
 
     assert result["safety_blocked"] is False, result.get("safety_regression")
-    assert _x_cells(sc, x) == [("WED", "09:00")]
+    assert _x_cells(sc, x)[0][0] != "WED"
     report = result["instructor_availability_repair"]
-    assert report["repaired"] == []
-    assert [row["reason"] for row in report["locked_blocked"]] == ["needs_extra_working_day"]
+    assert [row["from"][:3] for row in report["repaired"]] == ["WED"]
+    assert report["locked_blocked"] == []
 
 
 @pytest.mark.django_db
-def test_a_day_off_policy_without_an_anchor_still_keeps_the_saved_week(
+def test_a_day_off_policy_without_an_anchor_credits_the_repairs_spend_too(
     run_flags, monkeypatch
 ) -> None:
-    """The day-off policy ON but its anchor not measurable: the runner falls back to
-    the strict gates, which block ANY rise in a teacher's days. The repair must not
-    spend Dr A's spare day there either (the saved-week scope is open whenever
-    Optimise Current runs with the priority on), so X stays, is reported, and the run
-    is NOT rolled back."""
+    """Changed on purpose (owner, 2026-11-22). The day-off policy ON but its anchor not
+    measurable: the runner falls back to the strict gates, which block ANY rise in a
+    teacher's days. The repair now spends Dr A's spare day there as well (the saved-week
+    scope still refuses every optional move), the strict gates credit it, so X moves
+    and the run is NOT rolled back."""
     from core.services.timetable_optimisation_policy import DayOffAnchor
 
     monkeypatch.setattr(DayOffAnchor, "from_metrics", classmethod(lambda cls, *_a, **_k: None))
@@ -1079,27 +1083,23 @@ def test_a_day_off_policy_without_an_anchor_still_keeps_the_saved_week(
 
     assert "day_off_policy" not in (result.get("instructor_schedule_metric") or {})
     assert result["safety_blocked"] is False, result.get("safety_regression")
-    assert _x_cells(sc, x) == [("WED", "09:00")]
+    assert _x_cells(sc, x)[0][0] != "WED"
     report = result["instructor_availability_repair"]
-    assert report["repaired"] == []
-    assert [row["reason"] for row in report["locked_blocked"]] == ["needs_extra_working_day"]
+    assert [row["from"][:3] for row in report["repaired"]] == ["WED"]
+    assert report["locked_blocked"] == []
     assert not report.get("rolled_back")
 
 
 def test_the_reason_a_week_gate_refused_every_cell() -> None:
-    """``needs_last_day_off``: every refused cell leaves a teacher on five days.
-    ``needs_extra_working_day``: every refused cell is on a day he does not work
-    now. ``instructor_week_gate``: anything else (a refused cell on a day he works,
-    an idle rise)."""
+    """Changed on purpose (owner, 2026-11-22). ``needs_last_day_off``: cells the gate
+    refused exist and none could be taken (every one costs a last day off).
+    ``instructor_week_gate``: no cell could be measured at all.
+    ``needs_extra_working_day`` is gone: an extra day is spent."""
     reason = cap_repair._week_gate_reason
-    works = {"SUN": True, "MON": False, "TUE": False}
 
-    assert reason([("MON", True), ("TUE", True)], works) == "needs_last_day_off"
-    assert reason([("MON", True), ("TUE", False)], works) == "needs_extra_working_day"
-    assert reason([("MON", False)], works) == "needs_extra_working_day"
-    assert reason([("SUN", False)], works) == "instructor_week_gate"
-    assert reason([("SUN", False), ("MON", False)], works) == "instructor_week_gate"
-    assert reason([], works) == "instructor_week_gate"
+    assert reason(2) == "needs_last_day_off"
+    assert reason(1) == "needs_last_day_off"
+    assert reason(0) == "instructor_week_gate"
 
 
 def test_the_week_gate_refuses_a_rise_in_days_or_idle_only_for_a_preserved_week() -> None:
