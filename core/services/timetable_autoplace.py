@@ -1794,6 +1794,7 @@ def auto_place_board(
     availability_ranked_last: list[dict] = []
     availability_unplaced: list[dict] = []
     availability_released: list[dict] = []
+    av_dropped: dict[str, int] = {}
     if availability and _av_assignment is not None:
         av_charged = {
             key: ids
@@ -1801,6 +1802,10 @@ def auto_place_board(
             if (ids := rule_ids(availability, teachers))
         }
         av_fixed = fixed_section_keys(_av_assignment)
+        # V2 section id -> the stored engine teacher the map in force ignored for a
+        # rule alone (RR-1): a section placed here is recorded released from him, so
+        # the stored row is replaced once the layout is known.
+        av_dropped = dict((_av_assignment.report or {}).get("unteachable_rows") or {})
 
     # ── 2b. Existing-placement preload (PR1 locks included) ──────────
     # Every meeting already placed on THIS board is seeded into the same
@@ -2654,6 +2659,16 @@ def auto_place_board(
                 availability_released.append(
                     {"section": av_key, "instructor_ids": list(av_released[0])}
                 )
+            elif av_dropped and f"{code}_{sec_label}" in av_dropped:
+                # The map in force ignored this section's stored engine row for a
+                # rule alone: record it like a release, so the stored row is
+                # replaced by the teacher the layout allows (RR-1). Only a section
+                # placed here: a row of an already placed one is left alone.
+                from core.services.section_teacher_assignment import release_in_run
+
+                dropped_id = av_dropped[f"{code}_{sec_label}"]
+                availability_released.append({"section": av_key, "instructor_ids": [dropped_id]})
+                release_in_run(scenario.id, f"{code}_{sec_label}", (dropped_id,))
 
             # ── Persist the chosen placement ──────────────────────────
             # TermSection: the logical section record (e.g. "MATH101 S1").

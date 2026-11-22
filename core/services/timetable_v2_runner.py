@@ -635,6 +635,17 @@ def _run_v2_optimisation_guarded(
                     return {"error": f"Teacher map error: {traceback.format_exc(limit=3)}"}
             with pre_context:
                 pre_repair = reinstate_missing_required_sections(scenario_id)
+            if teachers is not None:
+                # The retry placed under the pinned map, which no re-pick followed:
+                # the stored rows of the sections it released a teacher from are
+                # replaced now, so the snapshot (and a rollback to it) holds a map
+                # that matches the board (RR-1). No rows, no work.
+                from core.services.section_teacher_assignment import resolve_released_sections
+
+                resolve_released_sections(
+                    scenario_id,
+                    (pre_repair.get("instructor_availability") or {}).get("released", []),
+                )
             missing_before = sections_short_by_course(pre_repair["after_missing"])
         elif mode != "current":
             missing_before = sections_short_by_course(find_missing_required_sections(scenario_id))

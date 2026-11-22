@@ -207,17 +207,18 @@ def _resolve_released_teachers(scenario_id: int, placed) -> None:
     teacher is replaced by another eligible teacher with a legal free option, or
     by none. Nothing happens without a release."""
     boards = placed.get("boards") if isinstance(placed, dict) else None
-    released = any(
-        (board.get("instructor_availability") or {}).get("released")
+    released = [
+        row
         for board in (boards or {}).values()
         if isinstance(board, dict)
-    )
+        for row in (board.get("instructor_availability") or {}).get("released", [])
+    ]
     if not released:
         return
-    from core.services.section_teacher_assignment import current_pin, prepare_section_teachers
+    from core.services.section_teacher_assignment import current_pin, resolve_released_sections
 
     if current_pin(scenario_id) is None:
-        prepare_section_teachers(scenario_id, phase="ensure", release_unteachable=True)
+        resolve_released_sections(scenario_id, released)
 
 
 def maybe_reinstate_missing_required_sections(scenario_id: int) -> dict | None:

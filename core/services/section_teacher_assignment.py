@@ -2451,6 +2451,20 @@ def load_assignment(
         ignored_row_keys=ignored,
         closure_keys=added,
     )
+    if release and unteachable:
+        # The stored ENGINE rows this read ignored for a rule alone, with their
+        # teacher: a placer that places such a section records the release, so the
+        # stored row is replaced (RR-1). Absent without a rule.
+        by_key = {s.key: s for s in slots}
+        dropped = {
+            key: info["engine_rows"][key]
+            for key in sorted(unteachable)
+            if by_key[key].fixed_kind != STATUS_UNKNOWN
+            and by_key[key].is_choice
+            and info["engine_rows"][key] in by_key[key].eligible
+        }
+        if dropped:
+            report["unteachable_rows"] = dropped
     assignment = TeacherAssignment(
         teacher=filled.teacher,
         status=filled.status,
@@ -2896,6 +2910,35 @@ def prepare_section_teachers(
         write_names(scenario_id, current, only_keys=keys)
         return {"assignment": current, "persist": written}
     raise ValueError(f"unknown phase {phase!r}")
+
+
+def resolve_released_sections(scenario_id: int, released_rows) -> None:
+    """Choose the teacher of the sections a placement just released (RR-1).
+
+    ``released_rows``: the placer's ``instructor_availability["released"]`` rows
+    (``{"section": "code|label", "instructor_ids": [...]}``), each a section this
+    call newly placed whose stored engine teacher the placement did not charge. Its
+    stored row is replaced by another eligible teacher with a legal free option on
+    the board just placed, or by none. Only those sections' rows are touched: a
+    stored row of an already placed section stays as it is. Nothing happens
+    without rows."""
+    wanted = {row["section"]: tuple(row.get("instructor_ids") or ()) for row in released_rows or ()}
+    if not wanted:
+        return
+    with availability_scope(scenario_id):
+        for section, ids in wanted.items():
+            code, _bar, label = section.partition("|")
+            record_release(scenario_id, f"{code}_{label}", ids)
+        current = load_assignment(scenario_id, release_unteachable=True)
+        row_keys = {tuple(s.row_key) for s in current.slots if s.pr4_key in wanted}
+        v2_keys = {s.key for s in current.slots if s.pr4_key in wanted}
+        report = dict(current.report or {})
+        report["ignored_row_keys"] = [
+            k for k in report.get("ignored_row_keys", []) if tuple(k) in row_keys
+        ]
+        scoped = replace(current, report=report)
+        persist_assignment(scenario_id, scoped, only_missing=True)
+        write_names(scenario_id, current, only_keys=v2_keys)
 
 
 def run_placer(scenario_id: int, place, *, rebuild: bool):
