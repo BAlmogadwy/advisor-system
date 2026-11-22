@@ -360,6 +360,19 @@ def load_time_rules(instructor_ids: Iterable[int] | None = None) -> list[TimeRul
     ]
 
 
+def rules_in_force() -> bool:
+    """Whether the stored rules bind the automatic stages right now.
+
+    The one switch, exposed to the ``scheduler`` package, which may import this
+    module but never a ``timetable_*`` one: it is exactly the classic engine's
+    ``rules_enabled()`` (the flag AND one teacher per section), imported lazily
+    so this module stays free of that dependency until somebody asks.
+    """
+    from core.services.timetable_instructor_availability import rules_enabled
+
+    return rules_enabled()
+
+
 def load_instructor_availability(
     instructor_ids: Iterable[int] | None = None, *, scenario: Any = None
 ) -> InstructorAvailability:
@@ -557,6 +570,7 @@ __all__ = [
     "mask_from_days",
     "open_periods",
     "open_summary",
+    "rules_in_force",
     "rules_revision",
     "shape_feasible",
     "to_hhmm",
