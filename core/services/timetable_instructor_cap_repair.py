@@ -1239,6 +1239,387 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     return report
 
 
+def repair_instructor_availability(scenario_id: int) -> dict:
+    """Move every meeting that breaks its charged teacher's teaching-time rules
+    to a legal cell (``TIMETABLE_INSTRUCTOR_AVAILABILITY``), modelled on
+    :func:`repair_instructor_clashes`.
+
+    A destination keeps the section's other days and the meeting's duration,
+    is a cell no charged teacher is forbidden, and creates no instructor or
+    same-course overlap and no cap breach; English bundles move whole
+    (``improve_fixed_course_patterns(..., repair_availability=True)``). The
+    pass never unplaces, never moves a frozen (locked, external, divergent)
+    meeting, skips online-exempt sections, and never makes a move the
+    instructor-week gate blocks (a teacher keeps one day off): when every legal
+    cell is one the gate blocks, the meeting stays and is reported under
+    ``locked_blocked`` with the reason ``needs_last_day_off`` (every legal cell
+    leaves a teacher working all five days), ``needs_extra_working_day`` (the
+    legal cells are all on days the teacher does not work now, and the gate
+    keeps those days: a spare day with no student gain, or the saved week of an
+    Optimise Current run) or ``instructor_week_gate`` (anything else it blocks,
+    such as an idle rise). A rule no week can meet is ``unavoidable``. A no-op returning
+    ``enabled: False`` when no rule binds a teacher of the scenario."""
+    report: dict = {
+        "enabled": False,
+        "detected": [],
+        "repaired": [],
+        "unplaced": [],
+        "locked_blocked": [],
+        "unavoidable": [],
+        "remaining_violations": 0,
+        "moved_instructors": [],
+        "instructor_before": None,
+        "instructor_after": None,
+        "coverage_forced_rise": 0,
+        "student_score_before": None,
+        "student_score_after": None,
+    }
+    availability = availability_for(scenario_id)
+    if not availability:
+        return report
+    report["enabled"] = True
+
+    from core.services.section_teacher_assignment import _static
+    from core.services.timetable_assignment_models import SectionMeeting
+    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_fixed_pattern_search import improve_fixed_course_patterns
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimisation_policy import (
+        instructor_schedule_metrics,
+        takes_last_day_off,
+        week_move_breaks_gate,
+    )
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
+        build_section_instructor_map_for_scenario,
+        build_section_states_for_scenario,
+        build_student_profiles_for_scenario,
+    )
+
+    report["weekly_pattern_search"] = improve_fixed_course_patterns(
+        scenario_id, repair_availability=True
+    )
+    scenario = TimetableScenario.objects.get(id=scenario_id)
+    day_spread_on = is_section_day_spread_enabled()
+    cap_map = build_section_instructor_map_for_scenario(scenario_id)
+    cap_on = is_instructor_daily_cap_enabled()
+    cap = get_instructor_daily_cap() if cap_on else 10**9
+    online_lookup = OnlineCourseLookup()
+    blocked = {(d.upper(), st) for (d, st) in _blocked_keys(scenario)}
+
+    placements = list(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .exclude(day="")
+        .select_related("term_section", "board")
+    )
+    placements, copies_by_id = _physical_groups(placements)
+    external_ids = external_shared_section_ids(scenario_id)
+    divergent_sections = _divergent_shared_sections(copies_by_id)
+    locked_sections = {p.term_section_id for p in placements if p.is_locked}
+    if is_lock_enforcement_enabled():
+        locked_sections |= locked_physical_section_ids(scenario_id)
+
+    def _sid(p):
+        ts = p.term_section
+        return f"{ts.course_key or ts.course_code}_{ts.section}"
+
+    def _instr_ids(p):
+        return cap_map.get(_sid(p), frozenset())
+
+    into_blocked = _availability_guard(
+        availability,
+        online_lookup,
+        copies_by_id,
+        _instr_ids,
+        course_online=online_exemption(scenario_id).course_online_everywhere,
+    )
+    assert into_blocked is not None  # availability is non-empty
+
+    def _frozen_reason(p) -> str | None:
+        if p.term_section_id in external_ids:
+            return "externally_owned"
+        if p.is_locked or p.term_section_id in locked_sections:
+            return "locked"
+        if p.term_section_id in divergent_sections:
+            return "divergent_copies"
+        return None
+
+    slot_count: dict[tuple[object, str, str], int] = {}
+    daily_count: dict[tuple[object, str], int] = {}
+    section_days: dict[int, set[str]] = {}
+    course_slots: dict[str, set[tuple[str, str]]] = {}
+    for p in placements:
+        day = (p.day or "").upper()
+        section_days.setdefault(p.term_section_id, set()).add(day)
+        course_slots.setdefault(_offering_key(p.term_section), set()).add((day, p.start_time))
+        for iid in _instr_ids(p):
+            slot_count[(iid, day, p.start_time)] = slot_count.get((iid, day, p.start_time), 0) + 1
+            daily_count[(iid, day)] = daily_count.get((iid, day), 0) + 1
+
+    def _row(p, reason: str | None = None) -> dict:
+        ts = p.term_section
+        ids = rule_ids(availability, _instr_ids(p))
+        row = {
+            "section_id": _sid(p),
+            "section": f"{ts.course_code} {ts.section}",
+            "course_key": ts.course_key or ts.course_code,
+            "label": ts.section,
+            "day": p.day.upper(),
+            "start": p.start_time,
+            "end": p.end_time,
+            "instructor_id": next(iter(ids), None),
+            "instructor_ids": list(ids),
+        }
+        if reason is not None:
+            row["reason"] = reason
+        return row
+
+    # Detect: a physical, non-exempt meeting its charged teacher may not teach.
+    violating = sorted(
+        (p for p in placements if into_blocked(p, p.day.upper(), p.start_time, p.end_time)),
+        key=lambda p: (_sid(p), _day_idx(p.day), _to_min(p.start_time)),
+    )
+    report["detected"] = [_row(p) for p in violating]
+    if not violating:
+        return report
+
+    static = _static(scenario_id)
+
+    def _no_legal_week(p) -> bool:
+        """Some blocked teacher of the section has no legal week for its course at
+        all: the rule cannot be met by any move (``_Static.teacher_options``)."""
+        if static is None:
+            return False
+        key = p.term_section.course_key or p.term_section.course_code
+        budget = static.budgets.get(key)
+        if budget is None:
+            return False
+        return any(
+            not static.teacher_options(key, budget, teacher, availability)
+            for teacher in rule_ids(availability, _instr_ids(p))
+        )
+
+    states = _physical_states(build_section_states_for_scenario(scenario_id))
+    sections_by_id = {s.section_id: s for s in states}
+    profiles = build_student_profiles_for_scenario(scenario_id)
+    rigidity = build_course_rigidity_for_scenario(scenario_id) if profiles else {}
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
+
+    def _score():
+        if not profiles:
+            return ()
+        return tuple(
+            evaluate_generated_timetable_candidate(
+                "availability_repair",
+                states,
+                profiles,
+                rigidity,
+                section_instructor_ids=cap_map,
+                course_tiers=course_tiers,
+            ).lexicographic_score
+        )
+
+    def _meeting_idx(p):
+        s = sections_by_id.get(_sid(p))
+        if s is None:
+            return None, None
+        di, sm = _day_idx(p.day), _to_min(p.start_time)
+        for i, m in enumerate(s.meetings):
+            if m.day == di and m.start_min == sm and m.end_min == _to_min(p.end_time):
+                return s, i
+        return s, None
+
+    baseline = _score()
+    report["student_score_before"] = list(baseline) if baseline else None
+    teacher_before = instructor_schedule_metrics(states, cap_map)
+    report["instructor_before"] = teacher_before
+
+    def _hard_candidates(p, iid_set):
+        slots = _repair_slot_domain(scenario, p, online_lookup)
+        cur_day = (p.day or "").upper()
+        others = section_days.get(p.term_section_id, set()) - {cur_day}
+        course = _offering_key(p.term_section)
+        for day2 in WEEKDAYS:
+            if day2 in others:
+                continue
+            if (
+                cap_on
+                and day2 != cur_day
+                and any(daily_count.get((iid, day2), 0) >= cap for iid in iid_set)
+            ):
+                continue
+            for s2, e2 in slots:
+                if (day2, s2, e2) == (cur_day, p.start_time, p.end_time) or (day2, s2) in blocked:
+                    continue
+                if into_blocked(p, day2, s2, e2):
+                    continue
+                if any(slot_count.get((iid, day2, s2), 0) > 0 for iid in iid_set):
+                    continue
+                if (day2, s2) in course_slots.get(course, set()):
+                    continue
+                if _creates_board_interval_overlap(
+                    p, day2, _to_min(s2), _to_min(e2), iid_set, placements, _instr_ids
+                ):
+                    continue
+                yield day2, s2, e2
+
+    def _trial_score_and_metrics(p, day2, s2, e2):
+        """Score and teacher metrics with ``p`` moved to the cell (in memory)."""
+        state, index = _meeting_idx(p)
+        if state is None or index is None:
+            return None
+        orig = state.meetings[index]
+        state.meetings[index] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
+        try:
+            return _score(), instructor_schedule_metrics(states, cap_map)
+        finally:
+            state.meetings[index] = orig
+
+    def _tbd() -> int | None:
+        """Sections left "to be decided" beyond D10 on the persisted board."""
+        try:
+            from core.services.section_teacher_assignment import (
+                close_on_layout,
+                coverage_of,
+                load_assignment,
+            )
+
+            return int(
+                coverage_of(close_on_layout(scenario_id, load_assignment(scenario_id)))[
+                    "tbd_beyond_d10"
+                ]
+            )
+        except Exception:  # an unreadable assignment must not fail the repair
+            logger.exception("availability repair: teacher coverage unreadable")
+            return None
+
+    moved_ids: set[int] = set()
+    touched: dict[int, object] = {}
+    touched_boards: set[int] = set()
+    tbd_before: int | None = None
+    tbd_read = False
+    with transaction.atomic():
+        for p in violating:
+            frozen = _frozen_reason(p)
+            if frozen is not None:
+                report["locked_blocked"].append(_row(p, frozen))
+                continue
+            if get_course_meeting_policy(_display_code(p.term_section)):
+                # A whole bundle moves or stays (the pass above): what is still
+                # forbidden here has no legal bundle the week gate allows.
+                report["locked_blocked"].append(_row(p, "no_legal_bundle"))
+                continue
+            if _no_legal_week(p):
+                report["unavoidable"].append(_row(p, "rule_cannot_be_met"))
+                continue
+            iid_set = _instr_ids(p)
+            hard = list(_hard_candidates(p, iid_set))
+            works = {
+                day: any(daily_count.get((iid, day), 0) > 0 for iid in iid_set) for day in WEEKDAYS
+            }
+            teacher_now = instructor_schedule_metrics(states, cap_map)
+            score_now = _score()
+            allowed = []
+            gated: list[tuple[str, bool]] = []  # (day, would work all five days)
+            for day2, s2, e2 in hard:
+                trial = _trial_score_and_metrics(p, day2, s2, e2)
+                if trial is None:
+                    continue
+                score, metrics = trial
+                if week_move_breaks_gate(teacher_now, score_now, metrics, score):
+                    gated.append((day2, takes_last_day_off(teacher_now, metrics)))
+                    continue
+                allowed.append((day2, s2, e2, score))
+            if not hard:
+                report["locked_blocked"].append(_row(p, "no_legal_slot_preserving_duration"))
+                continue
+            if not allowed:
+                report["locked_blocked"].append(_row(p, _week_gate_reason(gated, works)))
+                continue
+            allowed.sort(key=lambda c: (not works[c[0]], WEEKDAYS.index(c[0]), c[1]))
+            best = None
+            for day2, s2, e2, sc in _prefer_no_day_run(
+                allowed,
+                lambda c, p=p: _move_makes_day_run(p, c[0], section_days),
+                day_spread_on,
+            ):
+                if best is None or sc < best[0]:
+                    best = (sc, day2, s2, e2)
+                if baseline and sc <= baseline:
+                    break
+            assert best is not None
+            _sc, day2, s2, e2 = best
+            if not tbd_read:
+                tbd_read = True
+                tbd_before = _tbd()
+            old_day, old_start = p.day.upper(), p.start_time
+            old_end = p.end_time
+            state, index = _meeting_idx(p)
+            if state is not None and index is not None:
+                state.meetings[index] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
+            copies = copies_by_id[p.pk]
+            _relocate(p, day2, s2, e2, copies=copies if len(copies) > 1 else None)
+            course_slots.get(_offering_key(p.term_section), set()).discard((old_day, old_start))
+            course_slots.setdefault(_offering_key(p.term_section), set()).add((day2, s2))
+            section_days.get(p.term_section_id, set()).discard(old_day)
+            section_days.setdefault(p.term_section_id, set()).add(day2)
+            for iid in iid_set:
+                slot_count[(iid, old_day, old_start)] = (
+                    slot_count.get((iid, old_day, old_start), 0) - 1
+                )
+                slot_count[(iid, day2, s2)] = slot_count.get((iid, day2, s2), 0) + 1
+                daily_count[(iid, old_day)] = daily_count.get((iid, old_day), 0) - 1
+                daily_count[(iid, day2)] = daily_count.get((iid, day2), 0) + 1
+            moved_ids |= set(iid_set)
+            report["repaired"].append(
+                {
+                    **_row(p),
+                    "from": f"{old_day} {old_start}-{old_end}",
+                    "to": f"{day2} {s2}-{e2}",
+                }
+            )
+            touched[p.term_section_id] = p.board
+            touched_boards.update(row.board_id for row in copies)
+
+        ts_by_id = {ts.id: ts for ts in TermSection.objects.filter(id__in=touched.keys())}
+        for ts_id, board in touched.items():
+            ts = ts_by_id.get(ts_id)
+            if ts is not None:
+                _apply_course_instructor(ts, scenario, board, _display_code(ts))
+        if touched_boards:
+            _assign_repaired_rooms(scenario_id, touched_boards, copies_by_id)
+
+    report["moved_instructors"] = sorted(i for i in moved_ids if isinstance(i, int))
+    report["student_score_after"] = list(_score()) if profiles else None
+    report["instructor_after"] = instructor_schedule_metrics(states, cap_map)
+    if report["repaired"] and tbd_before is not None:
+        tbd_after = _tbd()
+        if tbd_after is not None:
+            report["coverage_forced_rise"] = max(0, tbd_after - tbd_before)
+    report["remaining_violations"] = len(report["locked_blocked"]) + len(report["unavoidable"])
+    logger.info(
+        "Instructor availability repair (scenario %d): %d relocated, %d remaining",
+        scenario_id,
+        len(report["repaired"]),
+        report["remaining_violations"],
+    )
+    return report
+
+
+def _week_gate_reason(gated: list[tuple[str, bool]], works: dict[str, bool]) -> str:
+    """Why the instructor-week gate refused every legal cell of a meeting.
+    ``gated`` lists each refused cell as ``(day, would take a fifth day)``;
+    ``works`` says which days the teacher works now."""
+    if gated and all(fifth for _day, fifth in gated):
+        return "needs_last_day_off"
+    if gated and not any(works.get(day) for day, _fifth in gated):
+        return "needs_extra_working_day"
+    return "instructor_week_gate"
+
+
 def _blocked_keys(scenario):
     from core.services.timetable_validation import blocked_slot_keys
 

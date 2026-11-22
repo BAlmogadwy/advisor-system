@@ -895,6 +895,90 @@ def current_day_off_policy() -> DayOffPolicy | None:
     return _DAY_OFF.get()
 
 
+_WEEK_PRESERVED: ContextVar[bool] = ContextVar("saved_week_preserved", default=False)
+
+
+@contextmanager
+def saved_week_scope(active: bool = True) -> Iterator[None]:
+    """Inside, a run promises to keep every teacher's saved week: Optimise Current
+    with the instructor priority on and no day-off policy in force. There the
+    runner's final gate turns ANY rise in a teacher's working days or idle into a
+    blocking row, so ``week_move_breaks_gate`` must refuse such a rise too (a
+    spare day is not spendable). ``active=False`` opens nothing."""
+    token = _WEEK_PRESERVED.set(bool(active))
+    try:
+        yield
+    finally:
+        _WEEK_PRESERVED.reset(token)
+
+
+def saved_week_preserved() -> bool:
+    return _WEEK_PRESERVED.get()
+
+
+def _saved_week_rises(before: Mapping, after: Mapping) -> bool:
+    """Some teacher's working days or idle minutes (or either total) rose from
+    ``before`` to ``after``, by the project's own ``instructor_schedule_regressions``
+    (the measure behind the runner's baseline rows). A teacher a side does not
+    mention reads 0, as the runner pads its baseline; a missing-evidence row is
+    not a rise (a move cannot be judged by metrics another reader never wrote)."""
+    from core.services.section_teacher_assignment import pad_schedule_metrics
+
+    teachers = {
+        str(i)
+        for metrics in (before, after)
+        for key in ("working_days_by_instructor", "idle_minutes_by_instructor")
+        for i in (metrics.get(key) or {})
+    }
+    return any(
+        not row["metric"].endswith("_evidence")
+        for row in instructor_schedule_regressions(
+            pad_schedule_metrics(before, teachers), pad_schedule_metrics(after, teachers)
+        )
+    )
+
+
+def week_move_breaks_gate(
+    before_metrics: Mapping,
+    before_score: Iterable[int],
+    after_metrics: Mapping,
+    after_score: Iterable[int],
+) -> bool:
+    """True iff a move that turns the board measured by ``before_metrics`` into
+    the one measured by ``after_metrics`` is a change the instructor-week gate
+    blocks: inside a day-off scope, a breach of R1-R4 that grows or a fifth
+    working day; outside one (or with incomplete evidence), a teacher newly
+    working all five days. A teacher keeps at least one day off; a spare day may
+    be spent. Callers that must never trip the gate (the teaching-time repair)
+    leave a move alone when this says True."""
+    policy = current_day_off_policy()
+    if policy is not None:
+        after = policy.measure(after_metrics, tuple(after_score))
+        before = policy.measure(before_metrics, tuple(before_score))
+        if after is not None and before is not None:
+            return not _no_new_breach(after, before) or _adds_fifth_day(after, before)
+    if saved_week_preserved() and _saved_week_rises(before_metrics, after_metrics):
+        # Composes with the runner's final gate: a move that raises no teacher's
+        # days or idle against the board it starts from leaves every later board
+        # no worse than the first, so a run made of such moves (on a board that
+        # was no worse than the saved week when they began) cannot trip the
+        # baseline rows ``optimiser_instructor_day_regression`` and
+        # ``optimiser_instructor_idle_regression`` raise, repair or trade
+        # exception included.
+        return True
+    return takes_last_day_off(before_metrics, after_metrics)
+
+
+def takes_last_day_off(before_metrics: Mapping, after_metrics: Mapping) -> bool:
+    """Some teacher works more than ``MAX_WORKING_DAYS`` days after the move and
+    did not before it: the move costs a last day off."""
+    old_days = before_metrics.get("working_days_by_instructor") or {}
+    return any(
+        int(days) > MAX_WORKING_DAYS >= int(old_days.get(teacher, 0))
+        for teacher, days in (after_metrics.get("working_days_by_instructor") or {}).items()
+    )
+
+
 def stage_is_better(out: TimetableEvaluationResult, inp: TimetableEvaluationResult) -> bool:
     """A stage boundary: ``core`` inside a day-off scope, else the unchanged
     ``evaluation_is_better``. A step relation does not compose across a stage,

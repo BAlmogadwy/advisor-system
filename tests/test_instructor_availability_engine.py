@@ -4264,6 +4264,20 @@ def test_a_rule_on_a_never_charged_teacher_leaves_the_board_and_the_catalogue_al
     assert ".quality_score.instructor_availability.violations" in additive
     assert all("availability" in path for path in additive), sorted(additive)
     carried = {path: leaf for path, leaf in _leaves(on["result"]) if path in additive}
+    # B2's repair report and final report say "enabled"/"checked" and carry no
+    # measurement when nothing moved; every count in them is still zero.
+    b2_flags = (
+        ".instructor_availability_repair.enabled",
+        ".instructor_availability_report.checked",
+    )
+    b2_unmeasured = (
+        ".instructor_availability_repair.instructor_before",
+        ".instructor_availability_repair.instructor_after",
+        ".instructor_availability_repair.student_score_before",
+        ".instructor_availability_repair.student_score_after",
+    )
+    assert all(carried.pop(path) is True for path in b2_flags if path in carried)
+    assert all(carried.pop(path) is None for path in b2_unmeasured if path in carried)
     assert carried and all(leaf in (0, [], {}) for leaf in carried.values()), carried
 
     scenario = build_corpus(11)
@@ -4365,9 +4379,12 @@ def test_only_the_flags_module_and_the_helper_read_the_flag() -> None:
 
 def test_only_the_automatic_stages_and_the_semi_automatic_writers_ask_for_the_rules() -> None:
     """Manual moves, validation, the previews, the views, exports and the
-    scheduler package never ask (B2 adds the runner and the backstop)."""
+    scheduler package never ask. B2 adds the runner (its gate row and report read
+    the persisted board) and the report module."""
     assert _av_sources_matching(ASKS) == {
         "core/services/timetable_instructor_availability.py",
+        "core/services/timetable_instructor_availability_report.py",
+        "core/services/timetable_v2_runner.py",
         "core/services/timetable_autoplace.py",
         "core/services/timetable_solver.py",
         "core/services/timetable_local_search.py",
