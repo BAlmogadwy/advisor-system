@@ -459,3 +459,191 @@ def test_a_released_section_leaves_its_teachers_ledger_and_guard(av_on, monkeypa
     assert len(_placed_meetings(sc, key)) == 2
     assert (f"{key}|S1" in seen["ledger"]) is not ruled
     assert (f"{key}|S1" in seen["pending"]) is not ruled
+
+
+# ── D-M: CP-SAT holds a fixed teacher without a legal week to his fewest ──
+
+
+CPSAT_BUILDERS = ("solve_board", "solve_board_with_hints")
+
+
+def _shapes_board(name: str, *, ruled: bool):
+    """adversary:ADV-2's shapes board: CS101 (two 2 x 75 sections), AI201 (4
+    credits) and ENG101 on one board. Dr A is pinned to CS101 S1 and may teach
+    only on Thursday, so every week of CS101 holds at least one meeting he may
+    not teach (exactly one at best)."""
+    from core.services.course_identity import planner_course_key
+
+    sc, board = ots.scenario(name, programs=("AI",))
+    keys = {}
+    for code, course, credit, planned, teacher in (
+        ("CS101", "INTRO", 3, 2, "Dr A"),
+        ("AI201", "ML", 4, 1, "Dr B"),
+        ("ENG101", "ENGLISH", 3, 1, "Dr E"),
+    ):
+        ProgrammeRequirement.objects.create(
+            program="AI",
+            course_code=code,
+            course_name=course,
+            programme_term=2,
+            credit_hours=credit,
+        )
+        keys[code] = planner_course_key(code, course)
+        ots.budget(sc, keys[code], planned, code=code, credit=credit)
+        ots.link("AI", code, _person(teacher))
+    a = _person("Dr A")
+    _pin(sc, keys["CS101"], "S1", a)
+    if ruled:
+        rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+    return sc, board, keys["CS101"], a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_optimal_keeps_its_cpsat_build_with_a_fixed_teacher_without_a_legal_week(
+    av_on, caplog, ruled
+) -> None:
+    """adversary:ADV-2 / fix plan D-M: 'optimal' (through ``run_placer``) keeps its
+    CP-SAT board; the pinned section holds exactly one forbidden meeting (the
+    fewest any week has) and the board reports it. It used to be solved
+    unpruned, so the persist guard threw the whole board away and 'optimal'
+    fell back to compact. Control: no rule, no fallback, no report key."""
+    import logging
+
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    sc, _board, key, a = _shapes_board(f"d-m {ruled}", ruled=ruled)
+
+    with caplog.at_level(logging.WARNING, logger="core.services.timetable_autoplace"):
+        result = sta.run_placer(
+            sc.id, lambda: auto_place_scenario(sc.id, strategy="optimal"), rebuild=True
+        )
+
+    assert not [r for r in caplog.records if "falling back to compact" in r.getMessage()]
+    board = _board_result(result)
+    assert board["status"] in ("optimal", "feasible") and not board.get("persist_rolled_back")
+    assert _missing(sc) == {}
+    meetings = _placed_meetings(sc, key)
+    assert len(meetings) == 2
+    if ruled:
+        assert len(_blocked(meetings, a, _rules_of(a))) == 1, meetings
+        assert board["instructor_availability"]["ranked_last"] == [
+            {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
+        ]
+    else:
+        assert "instructor_availability" not in board
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+def test_both_builders_hold_a_fixed_teacher_to_his_fewest_forbidden_meetings(
+    av_on, builder
+) -> None:
+    """fix plan D-M in each builder (T-C5 strengthened): the pinned "only
+    Thursday" section is placed with exactly one meeting off Thursday, the
+    minimum (unconstrained, the model is free to put both elsewhere)."""
+    from tests.test_instructor_availability_engine import _solve
+
+    sc, board, key, (a,) = _greedy_scenario(f"d-m {builder}", pin=True)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    result = _solve(builder, board)
+
+    assert result["status"] in ("optimal", "feasible") and result["placed"] == 1
+    meetings = [(m["day"], m["start"], m["end"]) for m in result["placements"][0]["meetings"]]
+    assert len(_blocked(meetings, a, _rules_of(a))) == 1, meetings
+    assert result["instructor_availability"]["ranked_last"] == [
+        {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
+    ]
+
+
+def _sunday_and_monday_mornings(person) -> None:
+    """No ENG bundle is legal: every bundle meets on Sunday. The AM bundle also
+    meets on Monday morning, so it breaks the rule twice, the PM bundle once."""
+    rule(person, KIND_UNAVAILABLE, ("SUN",))
+    rule(person, KIND_UNAVAILABLE, ("MON",), "09:00", "12:00")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+@pytest.mark.parametrize("pinned", [True, False], ids=["fixed", "engine"])
+def test_an_english_section_without_a_legal_bundle_in_cpsat(av_on, builder, pinned) -> None:
+    """identity:F4 (G13) and construction:CON-4 (mutant D). A FIXED teacher's
+    English section without a legal bundle keeps the bundle with the fewest
+    forbidden meetings (PM) and the board solves; an ENGINE teacher's is left
+    no bundle, so the board is infeasible and its caller keeps the greedy."""
+    from tests.test_instructor_availability_engine import _solve
+
+    sc, board, key, (a,) = _greedy_scenario(
+        f"d-m eng {builder} {pinned}", code="ENG101", pin=pinned
+    )
+    _sunday_and_monday_mornings(a)
+
+    if pinned:
+        result = _solve(builder, board)
+    else:
+        with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+            result = _solve(builder, board)
+
+    if pinned:
+        assert result["status"] in ("optimal", "feasible") and result["placed"] == 1
+        starts = {m["start"] for m in result["placements"][0]["meetings"]}
+        assert starts == {"13:00"}, starts
+    else:
+        assert result["status"] == "infeasible" and result["placed"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("builder", CPSAT_BUILDERS)
+@pytest.mark.parametrize("days", [("SUN", "TUE"), ("SUN",)], ids=["two-days", "one-day"])
+def test_a_fixed_online_window_section_is_pruned_at_exactly_enough_days(
+    av_on, monkeypatch, builder, days
+) -> None:
+    """construction:CON-7 (mutant H): GS101 is online on the AI board but campus
+    elsewhere, so its pinned teacher's rules bind. He may teach the first
+    evening window on exactly as many days as it meets (two): that is a legal
+    week, and its domains are pruned to those two cells. Control: one such day
+    is not a legal week; the domains stay whole (the fewest-forbidden cap holds
+    it to one forbidden meeting instead)."""
+    from core.models import InstructorTimeRule
+    from tests.test_instructor_availability_engine import _domain_sizes, _online_here
+
+    av_on.TIMETABLE_ONLINE_EVENING_WINDOWS = True
+    sc, ai_board, key, a = _online_here(elsewhere=True)
+    InstructorTimeRule.objects.filter(instructor=a).delete()
+    _pin(sc, key, "S1", a)
+    rule(a, KIND_AVAILABLE_ONLY, days, "15:50", "17:30")
+
+    sizes = _domain_sizes(monkeypatch, builder, ai_board)
+
+    assert sizes == ([2, 2] if len(days) == 2 else [15, 15])
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("pinned", "rule_kind"),
+    [(True, "only-thursday"), (True, "no-mornings"), (False, "only-thursday")],
+    ids=["fixed-without-legal-week", "fixed-with-legal-week", "engine"],
+)
+def test_the_persist_guard_forgives_only_a_fixed_teachers_unavoidable_meetings(
+    av_on, pinned, rule_kind
+) -> None:
+    """fix plan D-M: the persist guard forgives a section exactly the forbidden
+    meetings it cannot avoid, and only when its teacher is FIXED and has no
+    legal week; a fixed teacher with a legal week and an engine teacher are
+    forgiven nothing."""
+    sc, _board, key, (a,) = _greedy_scenario(f"d-m guard {rule_kind} {pinned}", pin=pinned)
+    if rule_kind == "only-thursday":
+        rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+    else:
+        rule(a, KIND_UNAVAILABLE, end="13:00")
+    av = helper.availability_for(sc.id)
+
+    if pinned:
+        forgiven = sta.unavoidable_violations(sc.id, av)
+    else:
+        with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+            forgiven = sta.unavoidable_violations(sc.id, av)
+
+    expected = {f"{key}_S1": 1} if (pinned and rule_kind == "only-thursday") else {}
+    assert forgiven == expected

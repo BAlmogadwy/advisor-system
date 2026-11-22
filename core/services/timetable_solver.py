@@ -31,13 +31,16 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.cpsat_resources import BudgetedCpModel, ModelTooLarge, cpsat_workers
+from core.services.instructor_availability import EMPTY_AVAILABILITY
 from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
     _board_seed_scope,
+    _forbidden_meetings,
     _time_mask,
+    availability_complete_options,
     availability_section_options,
     free_section_labels,
     get_meeting_pattern,
@@ -334,21 +337,26 @@ def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_con
     ``assign == 0`` per forbidden option; not inside ``_add_instructor_constraints``,
     whose clash-or-cap early return would drop it).
 
-    Returns ``(availability, restrict)``: ``restrict[i]`` holds the ruled teachers
-    whose forbidden cells leave section ``i``'s meeting domains. A meeting-policy
-    section's ``bundles`` are replaced (in ``sections``, never the budget's shared
-    list) by the bundles its teacher may teach. Exempt (fix plan D-A,
-    ``section_online_exempt``): a section online on this board, on every board
-    it already sits on and on every board of its course's term. A FIXED teacher (pin or
-    teacher-frozen) with no legal week is not pruned: the section is still placed
-    (rank-last in the greedy; reported by the persisted-board report). An engine
-    section left no option makes the model infeasible, and the caller keeps the
-    greedy board, as for any infeasible board.
+    Returns ``(availability, restrict, least)``: ``restrict[i]`` holds the ruled
+    teachers whose forbidden cells leave section ``i``'s meeting domains. A
+    meeting-policy section's ``bundles`` are replaced (in ``sections``, never the
+    budget's shared list) by the bundles its teacher may teach. Exempt (fix plan
+    D-A, ``section_online_exempt``): a section online on this board, on every
+    board it already sits on and on every board of its course's term. A FIXED
+    teacher (pin or teacher-frozen) with no legal week is held to his FEWEST
+    forbidden meetings (fix plan D-M): ``least[i] = (teachers, k)`` caps the
+    forbidden meetings of section ``i`` at ``k``, the fewest any week of its
+    course has; a meeting-policy section keeps only its bundles with the fewest
+    (``k`` None: nothing more to cap).
+    The section is still placed, and reported (``_availability_report``). An
+    engine section left no option makes the model infeasible, and the caller
+    keeps the greedy board, as for any infeasible board.
     """
     availability = availability_for(scenario.id)
     restrict: dict[int, tuple[int, ...]] = {}
+    least: dict[int, tuple[tuple[int, ...], int | None]] = {}
     if not availability:
-        return availability, restrict
+        return availability, restrict, least
     from core.services.section_teacher_assignment import load_assignment
 
     assignment = load_assignment(scenario.id, release_unteachable=True)  # pinned inside runs
@@ -368,9 +376,19 @@ def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_con
             if exemption.exempt(sec["code"], here_and_placed):
                 continue
         if sec["meeting_policy"] is not None:
-            legal = [b for b in sec["bundles"] or [] if not option_blocked(availability, ids, b)]
+            bundles = sec["bundles"] or []
+            legal = [b for b in bundles if not option_blocked(availability, ids, b)]
             if legal or key not in fixed:
                 sections[i] = {**sec, "bundles": legal}
+            elif bundles:
+                counts = [_forbidden_meetings(availability, ids, b) for b in bundles]
+                sections[i] = {
+                    **sec,
+                    "bundles": [
+                        b for b, n in zip(bundles, counts, strict=True) if n == min(counts)
+                    ],
+                }
+                least[i] = (ids, None)  # the bundles above are the whole cap
         elif key not in fixed or _has_legal_week(
             availability,
             ids,
@@ -381,7 +399,96 @@ def _availability_domains(scenario, sections, budgets, slot_config, lab_slot_con
             lab_slot_config,
         ):
             restrict[i] = ids
-    return availability, restrict
+        else:
+            fewest = _fewest_forbidden(
+                availability,
+                ids,
+                sec,
+                budgets_by_code.get(sec["code"]),
+                scenario,
+                slot_config,
+                lab_slot_config,
+            )
+            if fewest is not None:
+                least[i] = (ids, fewest)
+    return availability, restrict, least
+
+
+def _fewest_forbidden(
+    availability, ids, sec, budget, scenario, slot_config, lab_slot_config
+) -> int | None:
+    """The fewest forbidden meetings any weekly option of ``sec`` has for ``ids``
+    (fix plan D-M): over the course's complete set of weeks on this builder's
+    grids (an online-window section: the meetings beyond its days with a window
+    cell they may teach). None without a budget (left unconstrained)."""
+    if sec.get("online_windows"):
+        days = {
+            cell[0]
+            for cell in sec["online_windows"]
+            if not meetings_blocked(availability, ids, [(cell[0], cell[6], _option_end_min(cell))])
+        }
+        return max(0, len(sec["pattern"]) - len(days))
+    if budget is None:
+        return None
+    weeks = availability_complete_options(
+        EMPTY_AVAILABILITY,
+        (),
+        sec["display_code"],
+        budget.credit_hours or 3,
+        slot_config,
+        lab_slot_config,
+        scenario.blocked_slots or [],
+        course_key=sec["code"],
+        meeting_pattern=budget.meeting_pattern,
+        course_options=[],
+    )
+    return min((_forbidden_meetings(availability, ids, week) for week in weeks), default=None)
+
+
+def _add_fewest_forbidden(model, availability, least, sec_options, assign) -> None:
+    """Fix plan D-M: section ``i`` of ``least`` takes at most ``k`` meetings its
+    fixed teachers may not teach."""
+    for i, (ids, fewest) in least.items():
+        if fewest is None:  # a meeting-policy section: its bundles are already pruned
+            continue
+        forbidden = [
+            var
+            for options, variables in zip(sec_options[i], assign[i], strict=True)
+            for option, var in zip(options, variables, strict=True)
+            if meetings_blocked(
+                availability, ids, [(option[0], option[6], _option_end_min(option))]
+            )
+        ]
+        if forbidden:
+            model.add(sum(forbidden) <= fewest)
+
+
+def _availability_report(availability, least, sections, placements) -> dict:
+    """The board's ``instructor_availability`` key, as the greedy's (only while a
+    rule binds a teacher of the scenario): each section of a fixed teacher with
+    no legal week placed at a time he may not teach ("rule cannot be met")."""
+    if not availability:
+        return {}
+    ranked_last = []
+    for i, (ids, _fewest) in sorted(least.items()):
+        sec = sections[i]
+        placed = next(
+            (
+                p
+                for p in placements
+                if (p["course_code"], p["section"]) == (sec["code"], sec["label"])
+            ),
+            None,
+        )
+        if placed is not None and option_blocked(availability, ids, placed["meetings"]):
+            ranked_last.append(
+                {
+                    "section": f"{sec['code']}|{sec['label']}",
+                    "instructor_ids": list(ids),
+                    "reason": "rule_cannot_be_met",
+                }
+            )
+    return {"instructor_availability": {"ranked_last": ranked_last, "unplaced": [], "released": []}}
 
 
 def _has_legal_week(availability, ids, sec, budget, scenario, slot_config, lab_slot_config) -> bool:
@@ -644,7 +751,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     if not sections:
         return {"status": "optimal", "placed": 0, "placements": [], "objective": 0}
 
-    availability, restrict = _availability_domains(
+    availability, restrict, least = _availability_domains(
         scenario, sections, budgets, slot_config, lab_slot_config
     )
 
@@ -691,6 +798,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     _link_weekly_bundles(model, sections, assign)
     _add_instructor_constraints(model, board, sections, sec_options, assign)
+    _add_fewest_forbidden(model, availability, least, sec_options, assign)
 
     # ── Hard: all-different days per section ──────────────────────
     for i, sec in enumerate(sections):
@@ -990,6 +1098,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         "placed": len(placements),
         "placements": placements,
         "objective": int(solver.objective_value) if penalties else 0,
+        **_availability_report(availability, least, sections, placements),
     }
 
 
@@ -1277,7 +1386,7 @@ def solve_board_with_hints(
             "improved": False,
         }
 
-    availability, restrict = _availability_domains(
+    availability, restrict, least = _availability_domains(
         scenario, sections, budgets, slot_config, lab_slot_config
     )
 
@@ -1319,6 +1428,7 @@ def solve_board_with_hints(
 
     _link_weekly_bundles(model, sections, assign)
     _add_instructor_constraints(model, board, sections, sec_options, assign)
+    _add_fewest_forbidden(model, availability, least, sec_options, assign)
 
     # Hard: all-different days per section
     for i, sec in enumerate(sections):
@@ -1581,6 +1691,7 @@ def solve_board_with_hints(
         "objective": obj,
         "improved": len(placements) >= greedy_count,
         "placed_vs_greedy": len(placements) - greedy_count,
+        **_availability_report(availability, least, sections, placements),
     }
 
 

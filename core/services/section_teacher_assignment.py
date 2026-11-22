@@ -1946,6 +1946,35 @@ def violations(a: TeacherAssignment) -> dict[str, Any]:
     return out
 
 
+def unavoidable_violations(scenario_id: int, availability) -> dict[str, int]:
+    """V2 id -> the fewest meetings its FIXED teacher (pin or teacher-frozen) may
+    not teach that any week of the course has, for each fixed section whose
+    teacher has no legal week (fix plan D-M: CP-SAT and the greedy's rank-last
+    place it at that minimum; the persist guard forgives it). Read from the map
+    in force (pinned in runs); empty without such a section."""
+    if not availability:
+        return {}
+    assignment = load_assignment(scenario_id, release_unteachable=True)
+    static = None
+    out: dict[str, int] = {}
+    for slot in assignment.slots:
+        teacher = assignment.teacher.get(slot.key)
+        if assignment.status.get(slot.key) not in (STATUS_PINNED, STATUS_FROZEN):
+            continue
+        if teacher is None or slot.has_legal_week(teacher):
+            continue
+        static = static or _static(scenario_id)
+        budget = static.budgets.get(slot.course_key) if static is not None else None
+        if budget is None:
+            continue
+        weeks = static.daytime_cells(slot.course_key, budget)
+        out[slot.key] = min(
+            (sum(1 for d, s, e in week if availability.blocks(teacher, d, s, e)) for week in weeks),
+            default=0,
+        )
+    return out
+
+
 def _availability_active(slots: Iterable[Slot]) -> bool:
     """Teaching-time rules bind some slot (the only case a new key appears)."""
     return any(s.blocked_teachers or s.teacher_options for s in slots)

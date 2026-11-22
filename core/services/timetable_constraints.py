@@ -467,13 +467,23 @@ def count_instructor_availability_violations(
     availability: Any,
     *,
     exempt: Iterable[str] = (),
+    allowance: Mapping[str, int] | None = None,
 ) -> int:
-    """Whole board: blocked distinct meetings over every charged, non-exempt section."""
+    """Whole board: blocked distinct meetings over every charged, non-exempt section.
+
+    ``allowance`` (section id -> meetings) forgives a section that many: the
+    fewest forbidden meetings a FIXED teacher with no legal week cannot avoid
+    (fix plan D-M), so a writer that places him at that minimum adds none."""
     if not availability:
         return 0
     skip = set(exempt)
+    forgiven = allowance or {}
     return sum(
-        section_availability_violations(sections_by_id.get(section_id), ids, availability)
+        max(
+            0,
+            section_availability_violations(sections_by_id.get(section_id), ids, availability)
+            - forgiven.get(section_id, 0),
+        )
         for section_id, ids in section_instructor_ids.items()
         if section_id not in skip
     )

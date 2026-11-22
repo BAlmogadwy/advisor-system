@@ -515,6 +515,7 @@ def _reject_external_shared_candidate(board, result, original_schedule):
 
 def _capture_persist_guard(board):
     """Read the scenario baseline before a writer opens its pass-local changes."""
+    from core.services.section_teacher_assignment import unavoidable_violations
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_constraints import (
         count_instructor_availability_violations,
@@ -580,6 +581,7 @@ def _capture_persist_guard(board):
                 ids,
                 availability,
                 exempt={f"{key}_{label}" for key, label in online_exempt_sections(scenario_id)},
+                allowance=unavoidable_violations(scenario_id, availability),
             )
         }
         if availability
