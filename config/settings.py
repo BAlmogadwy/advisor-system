@@ -1016,6 +1016,25 @@ TIMETABLE_ONLINE_EVENING_WINDOWS = os.getenv(
     "TIMETABLE_ONLINE_EVENING_WINDOWS", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_INSTRUCTOR_AVAILABILITY: per-instructor teaching-time rules (owner request
+# 2026-11; the rules are ``InstructorTimeRule`` rows, edited on Instructor Management)
+# are HARD for every automatic stage: no automatic stage ever CREATES a violation.
+# The stages that honour them: the one-teacher assignment (a teacher is never newly
+# picked for a section at a time his rules forbid), the greedy placer, both CP-SAT
+# builders, simulated annealing, the load balancer, local search v2, chain search, the
+# CP-SAT polisher, the instructor cap / clash repairs, compaction, the fixed-pattern
+# search, secondary recovery, bulk safe time moves and the registration repair; a
+# violation that already exists is kept (never a reason to unplace a class).
+# It needs one teacher per section (TIMETABLE_ONE_TEACHER_PER_SECTION): the rules bind
+# the section's own teacher. Online sections are exempt. Manual moves, validation and
+# the previews never read it. All of it goes through
+# ``core.services.timetable_instructor_availability``.
+# Off -- or on with no rule for any teacher of the scenario -- every engine is
+# byte-identical. Default OFF until the owner turns it on.
+TIMETABLE_INSTRUCTOR_AVAILABILITY = os.getenv(
+    "TIMETABLE_INSTRUCTOR_AVAILABILITY", "false"
+).lower() in ("1", "true", "yes", "on")
+
 # TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
 # objective in the candidate evaluator. When True the evaluator returns a
 # 9-element tuple that ranks resolution by course tier — Tier-1 (specialised

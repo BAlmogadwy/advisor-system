@@ -27,6 +27,7 @@ REQUIRED_SECTION_GUARANTEE_SETTING = "TIMETABLE_REQUIRED_SECTION_GUARANTEE_ENABL
 SECTION_DAY_SPREAD_SETTING = "TIMETABLE_SECTION_DAY_SPREAD"
 SECTION_DAY_SPREAD_WEIGHT_SETTING = "TIMETABLE_SECTION_DAY_SPREAD_WEIGHT"
 ONLINE_EVENING_WINDOWS_SETTING = "TIMETABLE_ONLINE_EVENING_WINDOWS"
+INSTRUCTOR_AVAILABILITY_SETTING = "TIMETABLE_INSTRUCTOR_AVAILABILITY"
 
 
 def is_stage_telemetry_enabled() -> bool:
@@ -167,6 +168,17 @@ def is_online_evening_windows_enabled() -> bool:
     return bool(getattr(settings, ONLINE_EVENING_WINDOWS_SETTING, False))
 
 
+def is_instructor_availability_enabled() -> bool:
+    """Per-instructor teaching-time rules bind the automatic stages — default OFF.
+
+    Read only by ``timetable_instructor_availability.rules_enabled`` (which also
+    needs one teacher per section); every stage asks that module for the
+    availability object instead of reading this. Off, every engine is
+    byte-identical.
+    """
+    return bool(getattr(settings, INSTRUCTOR_AVAILABILITY_SETTING, False))
+
+
 def is_async_planner_enabled() -> bool:
     return bool(getattr(settings, ASYNC_PLANNER_SETTING, False))
 
@@ -188,6 +200,7 @@ __all__ = [
     "ASYNC_JOB_UI_SETTING",
     "ASYNC_PLANNER_SETTING",
     "GAP_REGULAR_STUDENTS_ONLY_SETTING",
+    "INSTRUCTOR_AVAILABILITY_SETTING",
     "ONE_TEACHER_PER_SECTION_SETTING",
     "REQUIRED_SECTION_GUARANTEE_SETTING",
     "SECTION_DAY_SPREAD_SETTING",
@@ -204,6 +217,7 @@ __all__ = [
     "is_async_job_ui_enabled",
     "is_async_planner_enabled",
     "is_gap_regular_students_only_enabled",
+    "is_instructor_availability_enabled",
     "is_one_teacher_active",
     "is_required_section_guarantee_enabled",
     "is_section_day_spread_enabled",

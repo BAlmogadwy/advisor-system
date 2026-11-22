@@ -309,6 +309,20 @@ def restore_baseline_student_gap(result: dict) -> None:
         result["quality_score"]["student_gap"] = dict(result["baseline_student_gap"])
 
 
+def restore_baseline_instructor_availability(result: dict) -> None:
+    """After a whole-board rollback the teaching-time side band is the baseline
+    board's count, or absent when no baseline count exists (fix plan D-J): the
+    post-run count described the board the rollback discarded."""
+    quality = result.get("quality_score")
+    if not isinstance(quality, dict):
+        return
+    baseline = result.get("baseline_instructor_availability")
+    if isinstance(baseline, dict):
+        quality["instructor_availability"] = dict(baseline)
+    else:
+        quality.pop("instructor_availability", None)
+
+
 class _RunTeachers:
     """One teacher per section through the guarded runner (Phase 1 spec 3.3).
 
@@ -339,7 +353,7 @@ class _RunTeachers:
         """C0: the map the required-section retry charges. Pure."""
         from core.services.section_teacher_assignment import load_assignment
 
-        return self.pin(load_assignment(self.scenario_id))
+        return self.pin(load_assignment(self.scenario_id, release_unteachable=True))
 
     def save(self, *, rename: bool) -> None:
         """C2: the saved map; its names are written before the snapshot takes them."""
@@ -351,7 +365,7 @@ class _RunTeachers:
             write_names,
         )
 
-        self.saved = load_assignment(self.scenario_id)
+        self.saved = load_assignment(self.scenario_id, release_unteachable=True)
         if rename:
             with transaction.atomic():
                 write_names(self.scenario_id, self.saved)
@@ -427,7 +441,7 @@ class _RunTeachers:
         persisted, once."""
         from core.services.section_teacher_assignment import load_assignment
 
-        self.final = load_assignment(self.scenario_id)
+        self.final = load_assignment(self.scenario_id, release_unteachable=True)
 
     def universe(self) -> frozenset:
         return frozenset(self.saved.universe) | frozenset(self.final.universe)
@@ -526,6 +540,39 @@ def run_v2_optimisation_guarded(
     max_chain_iterations: int = 10,
     checkpoint: Callable[[], None] | None = None,
 ) -> dict:
+    """Run the V2 optimiser behind the snapshot → regression → rollback gate
+    (:func:`_run_v2_optimisation_guarded`), inside one teaching-time rule scope:
+    the pre-step reinstatement, every phase and both pipelines read the rules
+    once (``TIMETABLE_INSTRUCTOR_AVAILABILITY``; nothing loads while it is off).
+    """
+    from core.services.timetable_instructor_availability import availability_scope
+
+    with availability_scope(scenario_id):
+        return _run_v2_optimisation_guarded(
+            scenario_id,
+            mode=mode,
+            max_iterations=max_iterations,
+            run_chain=run_chain,
+            run_cpsat=run_cpsat,
+            cpsat_limit=cpsat_limit,
+            strategies=strategies,
+            max_chain_iterations=max_chain_iterations,
+            checkpoint=checkpoint,
+        )
+
+
+def _run_v2_optimisation_guarded(
+    scenario_id: int,
+    *,
+    mode: str = "current",
+    max_iterations: int = 50,
+    run_chain: bool = True,
+    run_cpsat: bool = True,
+    cpsat_limit: float = 60.0,
+    strategies: list[str] | None = None,
+    max_chain_iterations: int = 10,
+    checkpoint: Callable[[], None] | None = None,
+) -> dict:
     """Run the V2 optimiser behind the snapshot → regression → rollback gate.
 
     ``mode`` is ``"full"`` (regenerate from scratch) or ``"current"`` (improve
@@ -588,6 +635,17 @@ def run_v2_optimisation_guarded(
                     return {"error": f"Teacher map error: {traceback.format_exc(limit=3)}"}
             with pre_context:
                 pre_repair = reinstate_missing_required_sections(scenario_id)
+            if teachers is not None:
+                # The retry placed under the pinned map, which no re-pick followed:
+                # the stored rows of the sections it released a teacher from are
+                # replaced now, so the snapshot (and a rollback to it) holds a map
+                # that matches the board (RR-1). No rows, no work.
+                from core.services.section_teacher_assignment import resolve_released_sections
+
+                resolve_released_sections(
+                    scenario_id,
+                    (pre_repair.get("instructor_availability") or {}).get("released", []),
+                )
             missing_before = sections_short_by_course(pre_repair["after_missing"])
         elif mode != "current":
             missing_before = sections_short_by_course(find_missing_required_sections(scenario_id))
@@ -1001,6 +1059,7 @@ def run_v2_optimisation_guarded(
         if isinstance(result.get("quality_score"), dict):
             result["quality_score"]["instructor_schedule"] = instructor_before
         restore_baseline_student_gap(result)
+        restore_baseline_instructor_availability(result)
         result["persist_result"] = {
             "action": "rolled_back_safety_regression",
             "reason": (

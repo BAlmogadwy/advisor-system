@@ -271,9 +271,16 @@ def _run_secondary_recovery_for_scenario(
     ):
         return {"applied": False, "stop_reason": "disabled"}
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_constraints import count_instructor_availability_violations
     from core.services.timetable_exact_rooming import ExactRoomingError
+    from core.services.timetable_instructor_availability import (
+        availability_for,
+        online_exempt_sections,
+    )
     from core.services.timetable_optimizer_v2 import (
         _build_pattern_catalog_for_scenario,
+        _catalog_rules,
+        _kernel_rules,
         build_locked_section_ids_for_scenario,
         build_section_states_for_scenario,
     )
@@ -293,6 +300,24 @@ def _run_secondary_recovery_for_scenario(
         .values()
     )
     baseline_safety = compute_scenario_safety_summary(scenario_id)
+    # Teaching-time rules: the search never adds a forbidden meeting, and the
+    # persisted board may not hold more than the board it started from.
+    availability = availability_for(scenario_id)
+    exempt = (
+        [f"{key}_{label}" for key, label in online_exempt_sections(scenario_id)]
+        if availability
+        else []
+    )
+
+    def blocked_meetings(states: list[SectionState]) -> int:
+        return count_instructor_availability_violations(
+            {s.section_id: s for s in states},
+            section_instructor_ids or {},
+            availability,
+            exempt=exempt,
+        )
+
+    blocked_before = blocked_meetings(sections) if availability else 0
 
     def evaluate(states: list[SectionState]) -> TimetableEvaluationResult:
         return evaluate_generated_timetable_candidate(
@@ -314,7 +339,9 @@ def _run_secondary_recovery_for_scenario(
     recovered = recover_secondary_quality(
         current_eval=baseline,
         sections_by_id={s.section_id: s for s in sections},
-        pattern_catalog=_build_pattern_catalog_for_scenario(scenario_id),
+        pattern_catalog=_build_pattern_catalog_for_scenario(
+            scenario_id, **_catalog_rules(availability, section_instructor_ids)
+        ),
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
         section_instructor_ids=section_instructor_ids,
@@ -324,6 +351,7 @@ def _run_secondary_recovery_for_scenario(
         room_shortage_target=result.get("baseline_room_shortages"),
         time_limit_seconds=float(getattr(settings, "TIMETABLE_SECONDARY_RECOVERY_SECONDS", 45)),
         max_iterations=int(getattr(settings, "TIMETABLE_SECONDARY_RECOVERY_ITERATIONS", 12)),
+        **_kernel_rules(availability),
     )
     report = cast(dict[str, Any], recovered["report"])
     report["room_shortages_before_search"] = report["room_shortages_before"]
@@ -381,6 +409,13 @@ def _run_secondary_recovery_for_scenario(
         failures += instructor_schedule_regressions(
             schedule_metrics_of(baseline), schedule_metrics_of(persisted)
         )
+        if availability and blocked_meetings(persisted_sections) > blocked_before:
+            failures.append(
+                {
+                    "metric": "instructor_availability_violations",
+                    "label": "Persisted recovery added an instructor time-rule violation",
+                }
+            )
         day_off = current_day_off_policy()
         if day_off is not None and not day_off.keeps_breaches(persisted, baseline):
             # The run's day-off ratchet: frozen days and idle can still turn a

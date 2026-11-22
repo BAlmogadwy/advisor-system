@@ -31,6 +31,21 @@ campus working days, then campus idle, then keeping the current teacher, then
 the lowest id. A section nobody can take is TBD with the reason that stopped
 each teacher.
 
+**Teaching-time rules** (``TIMETABLE_INSTRUCTOR_AVAILABILITY``, through
+``timetable_instructor_availability``). With them on, ``_collect`` writes each
+ruled teacher's rules into the slots once (``Slot.blocked_teachers``: the placed
+section's meetings break that teacher's rule; ``Slot.teacher_options``: that
+teacher's legal weekly options), so every consumer — the ledger, the exact
+solve, the closure, the placer guard — stays a pure function of the slots and a
+teacher is never newly picked for a section at a time he may not teach (TBD
+reason ``availability``). A charged teacher whose placed section already breaks
+his rule is KEPT while he has a legal week for the course (the kept rule: the
+repair pass moves the meeting); a stored engine row whose teacher has no legal
+week at all is released on an engine read only (display reads and a manual
+create never drop a stored row). Online sections are exempt. Off, or with no
+rule for a teacher of the scenario, the slots carry nothing new and every
+result is byte-identical.
+
 **Fixed inputs.** A primary ``SectionInstructor`` row in the scenario whose
 ``source`` is not ``"engine"`` is a pin (department or registrar decision); the
 engine never writes or deletes it. A section this scenario does not own, or
@@ -60,11 +75,26 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from django.conf import settings
 from django.db import transaction
+
+from core.services.instructor_availability import EMPTY_AVAILABILITY
+from core.services.timetable_instructor_availability import (
+    OnlineExemption,
+    availability_for,
+    availability_scope,
+    clear_released,
+    meetings_blocked,
+    online_exemption,
+    record_release,
+    released_sections,
+    rule_ids,
+    rules_enabled,
+    section_online_exempt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +133,12 @@ CHARGED = frozenset({STATUS_ENGINE, STATUS_PINNED, STATUS_FROZEN})
 
 #: TBD reasons, in the order a teacher's first blocker is looked for.
 TBD_REASONS = ("d10", "weekly_ceiling", "clash", "daily_cap", "bound")
-_LAYOUT_REASONS = frozenset({"clash", "daily_cap", "bound"})
+#: Every eligible teacher's teaching-time rules forbid the section's time (or,
+#: not placed yet, every option). Not in ``TBD_REASONS``: ``coverage_of`` adds
+#: its count only while the rules bind some slot, so no payload gains a key
+#: with them off.
+AVAILABILITY_REASON = "availability"
+_LAYOUT_REASONS = frozenset({"clash", "daily_cap", "bound", AVAILABILITY_REASON})
 _STAGES = ("L1", "L2", "L3", "L4", "L5", "L6", "L7")
 
 
@@ -176,6 +211,13 @@ class Slot:
     ``options`` (a section not placed yet) are the placer's own weekly options
     for it, each as distinct ``(day, start_min, end_min)`` meetings: its
     teacher must keep one of them free (``_Ledger.free_option``).
+
+    Teaching-time rules (empty unless they bind this slot):
+    ``blocked_teachers`` are the candidate teachers whose rules the placed
+    section's meetings break; ``teacher_options`` holds, per ruled teacher
+    whose legal weekly options differ from ``options``, those legal options —
+    ``(teacher, ())`` when the teacher has no legal week for the course at all
+    (on a placed slot only that case is stored).
     """
 
     course_key: str
@@ -199,6 +241,16 @@ class Slot:
     display_code: str = ""
     source: str = ""
     options: tuple[tuple[tuple[int, int, int], ...], ...] = ()
+    teacher_options: tuple[tuple[int, tuple[tuple[tuple[int, int, int], ...], ...]], ...] = ()
+    blocked_teachers: tuple[int, ...] = ()
+
+    def options_for(self, teacher: int) -> tuple:
+        """The options of this section (not placed yet) ``teacher`` may teach."""
+        return next((o for t, o in self.teacher_options if t == teacher), self.options)
+
+    def has_legal_week(self, teacher: int) -> bool:
+        """``teacher``'s rules leave some weekly option of this course."""
+        return all(t != teacher or o for t, o in self.teacher_options)
 
     @property
     def key(self) -> str:
@@ -293,6 +345,53 @@ def current_pin(scenario_id: int) -> TeacherAssignment | None:
     return (_PINNED.get() or {}).get(scenario_id)
 
 
+# ── Sections a run released from their engine teacher (fix plan D-B) ─────
+
+
+def release_in_run(scenario_id: int, section_id: str, instructor_ids) -> None:
+    """The placer could give ``section_id`` (V2 id) no option its ENGINE teachers
+    ``instructor_ids`` may teach that passes the clash, cap and same-course
+    filters, so it RELEASES them for the rest of the run: the section is charged
+    to nobody (TBD, reason ``availability``) and placed from its ordinary
+    options. Every later read of the run sees it: the pinned map it was released
+    under (:func:`load_assignment`), the unpinned engine reads (the stored row is
+    ignored, ``_validated_rows``) and every re-pick's kept rule
+    (:func:`propose_layout_assignment`, :func:`close_on_layout`), until a map
+    closure-complete on the real layout is stored (``_persist``) and chooses the
+    section's teacher there: another eligible teacher with a legal free option,
+    else TBD. Kept on the run's teaching-time rule scope."""
+    record_release(scenario_id, section_id, instructor_ids, current_pin(scenario_id))
+
+
+def released_view(assignment: TeacherAssignment, released: Mapping[str, Iterable[int]]):
+    """``assignment`` with each section of ``released`` (V2 id -> released
+    teachers) still charged to one of them as an ENGINE pick shown released: no
+    teacher, TBD, reason ``availability``. ``assignment`` itself when none is."""
+    keys = {
+        key
+        for key, ids in released.items()
+        if assignment.status.get(key) == STATUS_ENGINE and assignment.teacher.get(key) in set(ids)
+    }
+    if not keys:
+        return assignment
+    return replace(
+        assignment,
+        teacher={**assignment.teacher, **dict.fromkeys(keys)},
+        status={**assignment.status, **dict.fromkeys(keys, STATUS_TBD)},
+        tbd_reason={**assignment.tbd_reason, **dict.fromkeys(keys, AVAILABILITY_REASON)},
+    )
+
+
+def _run_released(scenario_id: int) -> dict[str, tuple[int, ...]]:
+    """The run's released sections and the teachers each was released from."""
+    return {key: ids for key, (ids, _pin) in released_sections(scenario_id).items()}
+
+
+def _without_released(seed: Mapping[str, int], released: Mapping[str, tuple[int, ...]]):
+    """``seed`` (key -> teacher) without the pairs the run released."""
+    return {key: teacher for key, teacher in seed.items() if teacher not in released.get(key, ())}
+
+
 @contextmanager
 def assignment_scope(scenario_id: int) -> Iterator[None]:
     """Memoise one request's layout-independent reads for ``scenario_id``.
@@ -300,19 +399,21 @@ def assignment_scope(scenario_id: int) -> Iterator[None]:
     Slots' eligibility, budgets, instructors and the ``section_instructors``
     rows are read once. Each ``load_assignment`` inside still re-reads the
     placements and re-runs the in-memory closure when they changed, so a write
-    earlier in the same request (a drag, a manual create) is seen.
+    earlier in the same request (a drag, a manual create) is seen. The
+    teaching-time rules are read once in it too (``availability_scope``).
     """
-    scopes = _SCOPES.get()
-    if scopes is not None and (scenario_id in scopes or _EVERY_SCENARIO in scopes):
-        yield
-        return
-    new = dict(scopes or {})
-    new[scenario_id] = {}
-    token = _SCOPES.set(new)
-    try:
-        yield
-    finally:
-        _SCOPES.reset(token)
+    with availability_scope(scenario_id):
+        scopes = _SCOPES.get()
+        if scopes is not None and (scenario_id in scopes or _EVERY_SCENARIO in scopes):
+            yield
+            return
+        new = dict(scopes or {})
+        new[scenario_id] = {}
+        token = _SCOPES.set(new)
+        try:
+            yield
+        finally:
+            _SCOPES.reset(token)
 
 
 _EVERY_SCENARIO = 0  # never a primary key
@@ -322,18 +423,20 @@ _EVERY_SCENARIO = 0  # never a primary key
 def request_scope() -> Iterator[None]:
     """``assignment_scope`` for every scenario one request touches — for a view
     that learns its scenario only after reading its arguments (a drag, a
-    create, the board detail): one read of the stored rows per request."""
-    scopes = _SCOPES.get()
-    if scopes is not None and _EVERY_SCENARIO in scopes:
-        yield
-        return
-    new = dict(scopes or {})
-    new[_EVERY_SCENARIO] = {}
-    token = _SCOPES.set(new)
-    try:
-        yield
-    finally:
-        _SCOPES.reset(token)
+    create, the board detail): one read of the stored rows per request (and of
+    the teaching-time rules, per scenario)."""
+    with availability_scope(None):
+        scopes = _SCOPES.get()
+        if scopes is not None and _EVERY_SCENARIO in scopes:
+            yield
+            return
+        new = dict(scopes or {})
+        new[_EVERY_SCENARIO] = {}
+        token = _SCOPES.set(new)
+        try:
+            yield
+        finally:
+            _SCOPES.reset(token)
 
 
 def _scope_cache(scenario_id: int) -> dict[str, Any] | None:
@@ -395,12 +498,16 @@ class _Static:
     grids: tuple[list, list, list] = ([], [], [])
     resolved: dict[tuple[str, str], tuple[int, ...]] = field(default_factory=dict)
     placer_options: dict[str, tuple] = field(default_factory=dict)
-    # nominal term -> the programme list of each board placed at that term (the
-    # boards a budget of that term is built on), and one online-course lookup
-    # shared by every course; read on first need, only with
-    # TIMETABLE_ONLINE_EVENING_WINDOWS on.
-    board_programmes: dict[int, list[list[str]]] | None = None
-    online_lookup: Any = None
+    # The daytime option dicts per course (the generator's own output), and, with
+    # teaching-time rules, one ruled teacher's legal options per (course,
+    # teacher) for the availability object they were computed with.
+    daytime_options: dict[str, list] = field(default_factory=dict)
+    teacher_placer_options: dict[tuple[str, int], tuple] = field(default_factory=dict)
+    teacher_av: Any = None
+    daytime_option_cells: dict[str, tuple] = field(default_factory=dict)
+    # Whether a course is online on each board of its term (the one online
+    # exemption's static half, ``timetable_instructor_availability``).
+    online: OnlineExemption | None = None
 
     def eligible(self, course_key: str, display_code: str) -> tuple[int, ...]:
         cache_key = (course_key, display_code)
@@ -418,21 +525,92 @@ class _Static:
         course online on some of those boards only gets both sets (the guard
         only ranks options, so the superset never hides a real one)."""
         if course_key not in self.placer_options:
-            from core.services.timetable_autoplace import (
-                DEFAULT_LAB_SLOTS,
-                DEFAULT_SLOTS,
-                WEEKDAYS,
-                generate_course_meeting_options,
-            )
-
             slot_config, lab_slot_config, blocked = self.grids
             online_everywhere, window_options = self._online_window_options(
                 budget, slot_config, lab_slot_config, blocked
             )
-            daytime = (
-                []
-                if online_everywhere
-                else generate_course_meeting_options(
+            daytime = [] if online_everywhere else self._daytime(course_key, budget)
+            self.placer_options[course_key] = _option_cells([*daytime, *window_options])
+        return self.placer_options[course_key]
+
+    def _daytime(self, course_key: str, budget) -> list:
+        """The generator's daytime options for the course (option dicts)."""
+        if course_key not in self.daytime_options:
+            from core.services.timetable_autoplace import (
+                DEFAULT_LAB_SLOTS,
+                DEFAULT_SLOTS,
+                generate_course_meeting_options,
+            )
+
+            slot_config, lab_slot_config, blocked = self.grids
+            self.daytime_options[course_key] = generate_course_meeting_options(
+                budget.course_code,
+                budget.credit_hours or 3,
+                slot_config or DEFAULT_SLOTS,
+                lab_slot_config or DEFAULT_LAB_SLOTS,
+                blocked or [],
+                course_key=course_key,
+                meeting_pattern=budget.meeting_pattern,
+            )
+        return self.daytime_options[course_key]
+
+    def teacher_options(self, course_key: str, budget, teacher: int, availability) -> tuple:
+        """EVERY daytime week of the course ``teacher``'s teaching-time rules
+        leave (fix plan D-C: the complete legal set,
+        ``timetable_autoplace.availability_complete_options``, the same arguments
+        as :meth:`options`), so the placer guard and the exact solve never miss a
+        legal week the greedy may take. ``()``: no legal week.
+
+        Only a section the rules bind asks (``_with_availability``). The evening
+        online-window options are every teacher's only for a section online on
+        every board it sits on and would be placed on (fix plan D-A), and such a
+        section never asks; a bound section meets on campus somewhere, so its
+        teacher's legality is judged on the daytime options alone (a teacher who
+        may teach only the evening windows has no legal week, foundation:F1)."""
+        if availability is not self.teacher_av:
+            self.teacher_av = availability
+            self.teacher_placer_options = {}
+        cache_key = (course_key, teacher)
+        if cache_key not in self.teacher_placer_options:
+            from core.services.timetable_autoplace import (
+                DEFAULT_LAB_SLOTS,
+                DEFAULT_SLOTS,
+                availability_complete_options,
+            )
+
+            slot_config, lab_slot_config, blocked = self.grids
+            daytime = availability_complete_options(
+                availability,
+                (teacher,),
+                budget.course_code,
+                budget.credit_hours or 3,
+                slot_config or DEFAULT_SLOTS,
+                lab_slot_config or DEFAULT_LAB_SLOTS,
+                blocked or [],
+                course_key=course_key,
+                meeting_pattern=budget.meeting_pattern,
+                course_options=self._daytime(course_key, budget),
+            )
+            self.teacher_placer_options[cache_key] = _option_cells(daytime)
+        return self.teacher_placer_options[cache_key]
+
+    def daytime_cells(self, course_key: str, budget) -> tuple:
+        """Every daytime week of the course as :func:`_option_cells`, complete
+        like :meth:`teacher_options` (what a teacher no rule restricts may take:
+        its baseline, so a teacher whose rules close no cell of the course's
+        grids gets no entry)."""
+        if course_key not in self.daytime_option_cells:
+            from core.services.timetable_autoplace import (
+                DEFAULT_LAB_SLOTS,
+                DEFAULT_SLOTS,
+                availability_complete_options,
+            )
+
+            slot_config, lab_slot_config, blocked = self.grids
+            self.daytime_option_cells[course_key] = _option_cells(
+                availability_complete_options(
+                    EMPTY_AVAILABILITY,
+                    (),
                     budget.course_code,
                     budget.credit_hours or 3,
                     slot_config or DEFAULT_SLOTS,
@@ -440,23 +618,26 @@ class _Static:
                     blocked or [],
                     course_key=course_key,
                     meeting_pattern=budget.meeting_pattern,
+                    course_options=self._daytime(course_key, budget),
                 )
             )
-            found: set[tuple[tuple[int, int, int], ...]] = set()
-            for option in [*daytime, *window_options]:
-                cells = set()
-                for meeting in option:
-                    day = str(meeting.get("day", "")).upper()
-                    if day not in WEEKDAYS:
-                        break
-                    cells.add(
-                        (WEEKDAYS.index(day), _minutes(meeting["start"]), _minutes(meeting["end"]))
-                    )
-                else:
-                    if cells:
-                        found.add(tuple(sorted(cells)))
-            self.placer_options[course_key] = tuple(sorted(found))
-        return self.placer_options[course_key]
+        return self.daytime_option_cells[course_key]
+
+    def online_everywhere(self, budget) -> bool:
+        """The budget's course is online on every board of its term (the boards
+        :meth:`_online_window_options` judges), whatever the windows flag says:
+        the one online exemption's view of a section not placed yet
+        (``OnlineExemption.course_online_everywhere``)."""
+        return bool(
+            self._exemption().course_online_everywhere(budget.course_key or budget.course_code)
+        )
+
+    def _exemption(self) -> OnlineExemption:
+        """This read's :class:`OnlineExemption`, built on its own budgets (no
+        query until a course is asked, the very reads the windows always made)."""
+        if self.online is None:
+            self.online = OnlineExemption(self.scenario_id, budgets=self.budgets)
+        return self.online
 
     def _online_window_options(
         self, budget, slot_config: list, lab_slot_config: list, blocked: list
@@ -469,7 +650,6 @@ class _Static:
         greedy's cross-term step (1b) on a board of another term and judged
         online there, so every board of the scenario is asked for it."""
         from core.services.timetable_autoplace import get_meeting_pattern
-        from core.services.timetable_online import normalise_course_code
         from core.services.timetable_online_windows import (
             active_online_windows,
             online_window_meeting_options,
@@ -479,31 +659,7 @@ class _Static:
         windows = active_online_windows(slot_config, lab_slot_config)
         if not windows:
             return False, []
-        if self.board_programmes is None:
-            from core.models import DeliveryBoard
-            from core.services.timetable_online import OnlineCourseLookup, programmes_for_board
-
-            self.board_programmes = {}
-            for board in DeliveryBoard.objects.filter(scenario_id=self.scenario_id).order_by(
-                "display_order", "pk"
-            ):
-                if board.nominal_term is not None:
-                    self.board_programmes.setdefault(board.nominal_term, []).append(
-                        programmes_for_board(board)
-                    )
-            self.online_lookup = OnlineCourseLookup()
-        # Known residual: a budget whose term HAS boards but which step 1b picks
-        # up on another term's board is still judged by its own term's boards
-        # (the flag-on golden pins the term rule for courses not online there).
-        boards = self.board_programmes.get(budget.programme_term) or [
-            programmes
-            for term_boards in self.board_programmes.values()
-            for programmes in term_boards
-        ]
-        code = normalise_course_code(budget.course_code)
-        online = [
-            code in self.online_lookup.codes_for_programmes(programmes) for programmes in boards
-        ]
+        online = self._board_online_flags(budget)
         if not any(online):
             return False, []
         return (
@@ -518,6 +674,29 @@ class _Static:
                 blocked_slot_keys(blocked),
             ),
         )
+
+    def _board_online_flags(self, budget) -> list[bool]:
+        """Whether the budget's course is online on each board of its term (the
+        flag-on golden pins the term rule for courses not online there)."""
+        return self._exemption().board_flags(budget.course_code, budget.programme_term)
+
+
+def _option_cells(options) -> tuple:
+    """Placer options as sorted distinct ``(day, start_min, end_min)`` meetings."""
+    from core.services.timetable_autoplace import WEEKDAYS
+
+    found: set[tuple[tuple[int, int, int], ...]] = set()
+    for option in options:
+        cells = set()
+        for meeting in option:
+            day = str(meeting.get("day", "")).upper()
+            if day not in WEEKDAYS:
+                break
+            cells.add((WEEKDAYS.index(day), _minutes(meeting["start"]), _minutes(meeting["end"])))
+        else:
+            if cells:
+                found.add(tuple(sorted(cells)))
+    return tuple(sorted(found))
 
 
 def _minutes(value: object) -> int:
@@ -881,7 +1060,82 @@ def _collect(
             info["stale_row_keys"].append(list(row_key))
         else:
             info["pins_orphaned"].append({"course_key": row_key[0], "label": row_key[1]})
+    if rules_enabled():
+        universe = {t for s in slots for t in s.eligible} | {
+            s.fixed for s in slots if s.fixed is not None
+        }
+        availability = availability_for(scenario_id, universe=universe)
+        if availability:
+            slots = _with_availability(static, slots, availability, scenario_id)
     return slots, info
+
+
+def _with_availability(static: _Static, slots: list[Slot], availability, scenario_id: int):
+    """The slots with the teaching-time rules of their candidate teachers
+    written in (``Slot.blocked_teachers`` / ``Slot.teacher_options``). A slot
+    no ruled candidate touches is returned as it is. Exempt: an unknown
+    section, and a section online on every board it sits on and on every board
+    it would be placed on (``section_online_exempt``, fix plan D-A: the placed
+    copies from the scope's ``online_exemption``, the boards of the course's
+    term from this read's own budgets). A bound section's teachers are judged
+    on the DAYTIME options (``_Static.teacher_options``).
+    A section not placed yet that a rule touches gets its placer options even
+    when neither clash nor the daily cap would need them, so its teacher must
+    keep a LEGAL one."""
+    online_flags: dict[int, tuple[bool, ...]] | None = None
+    out: list[Slot] = []
+    for slot in slots:
+        candidates = ()
+        if slot.fixed_kind not in (STATUS_UNKNOWN, STATUS_FROZEN_UNKNOWN):
+            candidates = rule_ids(availability, (*slot.eligible, slot.fixed))
+        if not candidates:
+            out.append(slot)
+            continue
+        budget = static.budgets.get(slot.course_key)
+        if online_flags is None:
+            online_flags = {
+                ts_id: flags for ts_id, _key, flags in online_exemption(scenario_id).placed_rows()
+            }
+        placed_flags: tuple[bool, ...] = ()
+        if slot.placed:
+            # A section placed only in memory (``sections`` given) is judged by
+            # the board its state reads.
+            placed_flags = online_flags.get(slot.term_section_id) or (not slot.campus,)
+        if section_online_exempt(
+            placed_flags, static.online_everywhere(budget) if budget is not None else None
+        ):
+            out.append(slot)
+            continue
+        blocked: tuple[int, ...] = ()
+        if slot.placed and slot.meetings:
+            blocked = tuple(
+                t for t in candidates if meetings_blocked(availability, (t,), slot.meetings)
+            )
+        per_teacher: list[tuple[int, tuple]] = []
+        options = slot.options
+        if budget is not None:
+            unrestricted = static.daytime_cells(slot.course_key, budget)
+            for teacher in candidates:
+                legal = static.teacher_options(slot.course_key, budget, teacher, availability)
+                if slot.placed:
+                    if not legal:
+                        per_teacher.append((teacher, ()))
+                elif legal != unrestricted:
+                    per_teacher.append((teacher, legal))
+            if not slot.placed and per_teacher:
+                options = static.options(slot.course_key, budget)
+        if not blocked and not per_teacher:
+            out.append(slot)
+            continue
+        out.append(
+            replace(
+                slot,
+                options=options,
+                teacher_options=tuple(per_teacher),
+                blocked_teachers=blocked,
+            )
+        )
+    return out
 
 
 def collect_slots(scenario_id: int, *, sections=None, placed_filter=None) -> list[Slot]:
@@ -949,13 +1203,17 @@ class _Ledger:
         """None when ``teacher`` still has an option of ``slot`` (not placed yet)
         free of clash and of the daily cap — with ``extra`` meetings added —
         as the placer's two teacher filters test it; else the rule that took the
-        last one: ``"clash"`` when no option is clash-free, ``"daily_cap"``."""
+        last one: ``"clash"`` when no option is clash-free, ``"daily_cap"``;
+        ``"availability"`` when the teacher's teaching-time rules leave none."""
+        options = slot.options_for(teacher)
+        if slot.options and not options:
+            return AVAILABILITY_REASON
         if not (self.clash_on or self.cap_on):
             return None
         mine = [(d, s, e) for d, s, e, _key in self.cells.get(teacher, ())] + list(extra)
         per_day = Counter(d for d, _s, _e in mine)
         clash_free = False
-        for option in slot.options:
+        for option in options:
             if self.clash_on and _overlaps(option, mine):
                 continue
             clash_free = True
@@ -1016,6 +1274,8 @@ class _Ledger:
         reason = self.layout_free_blocker(slot, teacher)
         if reason is not None:
             return reason
+        if slot.placed and teacher in slot.blocked_teachers:
+            return AVAILABILITY_REASON
         if slot.placed and slot.meetings:
             mine = [(d, s, e) for d, s, e, key in self.cells.get(teacher, ()) if key != slot.key]
             if self.clash_on and _overlaps(slot.meetings, mine):
@@ -1214,6 +1474,8 @@ def _solve_component(
                 continue
             if ledger.load[teacher] + slot.nominal_sessions > ledger.ceiling:
                 continue
+            if slot.placed and teacher in slot.blocked_teachers:
+                continue
             if slot.placed and slot.meetings:
                 if ledger.clash_on and _overlaps(slot.meetings, fixed_cells[teacher]):
                     continue
@@ -1222,8 +1484,14 @@ def _solve_component(
                     for day, count in Counter(d for d, _s, _e in slot.meetings).items()
                 ):
                     continue
-            elif not slot.placed and slot.options and (ledger.clash_on or ledger.cap_on):
-                live[(slot.key, teacher)] = [o for o in slot.options if fixed_free(o, teacher)]
+            elif (
+                not slot.placed
+                and slot.options
+                and (ledger.clash_on or ledger.cap_on or slot.teacher_options)
+            ):
+                live[(slot.key, teacher)] = [
+                    o for o in slot.options_for(teacher) if fixed_free(o, teacher)
+                ]
                 if not live[(slot.key, teacher)]:
                     continue
             allowed.append(teacher)
@@ -1319,7 +1587,7 @@ def _solve_component(
         for pending in ledger.pending.get(teacher, ()):
             if pending.key in exempt:
                 continue
-            options = [o for o in pending.options if fixed_free(o, teacher)]
+            options = [o for o in pending.options_for(teacher) if fixed_free(o, teacher)]
             if options:
                 keep_one_free(teacher, options, None)
 
@@ -1613,6 +1881,8 @@ def _assemble(
             reason = "clash"
         elif "daily_cap" in found:
             reason = "daily_cap"
+        elif AVAILABILITY_REASON in found:
+            reason = AVAILABILITY_REASON
         else:
             reason = "bound"
         reasons[slot.key] = reason
@@ -1663,7 +1933,51 @@ def violations(a: TeacherAssignment) -> dict[str, Any]:
                     clash_pairs.add((min(k1, k2), max(k1, k2), teacher))
         for count in Counter(d for d, _s, _e, _k in windows).values():
             over_cap += max(0, count - cap)
-    return {"clash_pairs": len(clash_pairs), "over_cap_sessions": over_cap}
+    out: dict[str, Any] = {"clash_pairs": len(clash_pairs), "over_cap_sessions": over_cap}
+    if _availability_active(a.slots):
+        # Charged placed sections whose meetings break their teacher's rules.
+        out["availability"] = sum(
+            1
+            for s in a.slots
+            if s.placed
+            and a.status.get(s.key) in CHARGED
+            and a.teacher.get(s.key) in s.blocked_teachers
+        )
+    return out
+
+
+def unavoidable_violations(scenario_id: int, availability) -> dict[str, int]:
+    """V2 id -> the fewest meetings its FIXED teacher (pin or teacher-frozen) may
+    not teach that any week of the course has, for each fixed section whose
+    teacher has no legal week (fix plan D-M: CP-SAT and the greedy's rank-last
+    place it at that minimum; the persist guard forgives it). Read from the map
+    in force (pinned in runs); empty without such a section."""
+    if not availability:
+        return {}
+    assignment = load_assignment(scenario_id, release_unteachable=True)
+    static = None
+    out: dict[str, int] = {}
+    for slot in assignment.slots:
+        teacher = assignment.teacher.get(slot.key)
+        if assignment.status.get(slot.key) not in (STATUS_PINNED, STATUS_FROZEN):
+            continue
+        if teacher is None or slot.has_legal_week(teacher):
+            continue
+        static = static or _static(scenario_id)
+        budget = static.budgets.get(slot.course_key) if static is not None else None
+        if budget is None:
+            continue
+        weeks = static.daytime_cells(slot.course_key, budget)
+        out[slot.key] = min(
+            (sum(1 for d, s, e in week if availability.blocks(teacher, d, s, e)) for week in weeks),
+            default=0,
+        )
+    return out
+
+
+def _availability_active(slots: Iterable[Slot]) -> bool:
+    """Teaching-time rules bind some slot (the only case a new key appears)."""
+    return any(s.blocked_teachers or s.teacher_options for s in slots)
 
 
 def _violating_keys(slots: list[Slot], current: Mapping[str, int]) -> set[str]:
@@ -1673,6 +1987,17 @@ def _violating_keys(slots: list[Slot], current: Mapping[str, int]) -> set[str]:
     ``current`` has none of their options left (``_unplaceable_keys``)."""
     keep = _clash_or_cap_keys(slots, current)
     keep |= _unplaceable_keys(slots, current)
+    # Teaching-time rules: a charged teacher whose placed section breaks his
+    # rule stays (the repair pass moves the meeting) while the course has a
+    # legal week for him at all.
+    keep |= {
+        s.key
+        for s in slots
+        if s.fixed is None
+        and s.blocked_teachers
+        and current.get(s.key) in s.blocked_teachers
+        and s.has_legal_week(current[s.key])
+    }
     return keep
 
 
@@ -1689,7 +2014,9 @@ def _unplaceable_keys(slots: Iterable[Slot], current: Mapping[str, int]) -> set[
     for slot in slots:
         teacher = slot.fixed if slot.fixed is not None else current.get(slot.key)
         if teacher is not None and not slot.placed and slot.options:
-            if ledger.free_option(slot, teacher) is not None:
+            # Left no LEGAL option by its teacher's rules: released, not kept,
+            # so a re-pick can give it a teacher who can teach it.
+            if ledger.free_option(slot, teacher) not in (None, AVAILABILITY_REASON):
                 out.add(slot.key)
     return out
 
@@ -1767,6 +2094,7 @@ def adds_violations(candidate: TeacherAssignment, incumbent: TeacherAssignment) 
     return (
         new["clash_pairs"] > old["clash_pairs"]
         or new["over_cap_sessions"] > old["over_cap_sessions"]
+        or new.get("availability", 0) > old.get("availability", 0)
     )
 
 
@@ -1821,6 +2149,9 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
         slots=a.slots,
     )
     report = a.report or {}
+    tbd_reasons = {reason: reasons.get(reason, 0) for reason in TBD_REASONS}
+    if _availability_active(a.slots):
+        tbd_reasons[AVAILABILITY_REASON] = reasons.get(AVAILABILITY_REASON, 0)
     return {
         "sections_total": len(a.slots),
         "sections_with_links": sum(1 for s in a.slots if s.eligible or s.fixed is not None),
@@ -1836,7 +2167,7 @@ def coverage_of(a: TeacherAssignment) -> dict[str, Any]:
         "tbd": len(tbd_slots),
         "tbd_d10_floor": floor,
         "tbd_beyond_d10": max(0, len(tbd_slots) - floor),
-        "tbd_reasons": {reason: reasons.get(reason, 0) for reason in TBD_REASONS},
+        "tbd_reasons": tbd_reasons,
         "tbd_layout": sum(1 for s in tbd_slots if a.tbd_reason.get(s.key) in _LAYOUT_REASONS),
         "no_links": counts[STATUS_NO_LINKS],
         "placed_without_teacher": sum(
@@ -1940,8 +2271,20 @@ def teacher_bounds(before_metrics: Mapping) -> dict[str, tuple[int, int, int]]:
 # ── Read path ────────────────────────────────────────────────────────────
 
 
-def _validated_rows(slots: list[Slot], info: Mapping[str, Any]) -> tuple[dict[str, int], list]:
-    """The stored engine rows that still hold, every check layout-free (1.4)."""
+def _validated_rows(
+    slots: list[Slot],
+    info: Mapping[str, Any],
+    *,
+    release_unteachable: bool = False,
+    released: Mapping[str, tuple[int, ...]] | None = None,
+) -> tuple[dict[str, int], list]:
+    """The stored engine rows that still hold, every check layout-free (1.4).
+
+    ``release_unteachable`` (an engine read): a row whose teacher's
+    teaching-time rules leave no legal week for the course is ignored too, so
+    the run re-picks that section; so is the row of a section the run itself
+    RELEASED from that teacher (``released``, fix plan D-B). A display read or a
+    manual create never drops a stored row for a rule."""
     by_key = {s.key: s for s in slots}
     ignored: list[list[str]] = [list(k) for k in info.get("stale_row_keys", [])]
     valid: dict[str, int] = {}
@@ -1953,6 +2296,12 @@ def _validated_rows(slots: list[Slot], info: Mapping[str, Any]) -> tuple[dict[st
             continue
         if slot is None or not slot.is_choice or teacher not in slot.eligible:
             ignored.append(list(slot.row_key) if slot else [key, ""])
+            continue
+        if release_unteachable and not slot.has_legal_week(teacher):
+            ignored.append(list(slot.row_key))
+            continue
+        if released and teacher in released.get(key, ()):
+            ignored.append(list(slot.row_key))
             continue
         valid[key] = teacher
     ledger = _fixed_ledger(slots, {})
@@ -1983,6 +2332,17 @@ def _validated_rows(slots: list[Slot], info: Mapping[str, Any]) -> tuple[dict[st
     return valid, ignored
 
 
+def _unteachable_rows(slots: list[Slot], info: Mapping[str, Any]) -> frozenset[str]:
+    """Keys of the stored engine rows an engine read releases for a rule
+    (``_validated_rows(release_unteachable=True)``); empty without rules."""
+    by_key = {s.key: s for s in slots}
+    return frozenset(
+        key
+        for key, teacher in info.get("engine_rows", {}).items()
+        if key in by_key and not by_key[key].has_legal_week(teacher)
+    )
+
+
 def _layout_fingerprint(scenario_id: int) -> tuple:
     from core.models import SectionPlacement
 
@@ -2002,7 +2362,11 @@ def _in_mode(assignment: TeacherAssignment, incomplete: str) -> TeacherAssignmen
 
 
 def load_assignment(
-    scenario_id: int, *, ignore_pin: bool = False, incomplete: str = "raise"
+    scenario_id: int,
+    *,
+    ignore_pin: bool = False,
+    incomplete: str = "raise",
+    release_unteachable: bool = False,
 ) -> TeacherAssignment:
     """The map in force for ``scenario_id`` on its current layout. Never writes.
 
@@ -2018,23 +2382,51 @@ def load_assignment(
     a manual edit runs) gets it as ``STATUS_UNKNOWN`` instead, and every other
     section keeps its teacher. One request's memo serves both: a collected map
     re-raises for an engine read.
+
+    ``release_unteachable`` (opt-in, fix plan D-H: only an engine phase passes
+    it — ``run_placer``, ``prepare_section_teachers`` rebuild/layout, the
+    optimiser's and the stages' map reads) ignores a stored engine row whose
+    teacher's teaching-time rules leave no legal week for the course
+    (``_validated_rows``). Every other read (the staff reconcile action,
+    ``apply_primary_instructor`` without a map, the scenario quality, the
+    display) keeps the stored teacher. The memo keeps the released map apart
+    only when it differs, and serves it whether or not a plain read came first.
     """
     from core.services.timetable_optimizer_v2 import INCOMPLETE_MODES
 
     if incomplete not in INCOMPLETE_MODES:
         raise ValueError(f"incomplete must be one of {INCOMPLETE_MODES}, not {incomplete!r}")
+    release = release_unteachable
     pinned = None if ignore_pin else current_pin(scenario_id)
     if pinned is not None:
-        return pinned
+        # A section the run released under this very map reads released (D-B).
+        released_here = {
+            key: ids for key, (ids, pin) in released_sections(scenario_id).items() if pin is pinned
+        }
+        return released_view(pinned, released_here) if released_here else pinned
+    # An engine read ignores the stored row of a section the run released.
+    run_released = _run_released(scenario_id) if release else {}
+    released_token = tuple(sorted(run_released.items()))
     cache = _scope_cache(scenario_id)
     fingerprint = None
     if cache is not None:
         fingerprint = _layout_fingerprint(scenario_id)
+        if release:
+            released = cache.get("assignment_released")
+            if (
+                released is not None
+                and released[0] == fingerprint
+                and released[2] == released_token
+            ):
+                return _in_mode(released[1], incomplete)
         hit = cache.get("assignment")
-        if hit is not None and hit[0] == fingerprint:
+        if hit is not None and hit[0] == fingerprint and not (release and (hit[2] or run_released)):
             return _in_mode(hit[1], incomplete)
     slots, info = _collect(scenario_id, incomplete=incomplete)
-    valid, ignored = _validated_rows(slots, info)
+    unteachable = _unteachable_rows(slots, info)
+    valid, ignored = _validated_rows(
+        slots, info, release_unteachable=release, released=run_released
+    )
     filled, added = _closure(slots, valid)
     report = dict(filled.report)
     report.update(
@@ -2047,6 +2439,20 @@ def load_assignment(
         ignored_row_keys=ignored,
         closure_keys=added,
     )
+    if release and unteachable:
+        # The stored ENGINE rows this read ignored for a rule alone, with their
+        # teacher: a placer that places such a section records the release, so the
+        # stored row is replaced (RR-1). Absent without a rule.
+        by_key = {s.key: s for s in slots}
+        dropped = {
+            key: info["engine_rows"][key]
+            for key in sorted(unteachable)
+            if by_key[key].fixed_kind != STATUS_UNKNOWN
+            and by_key[key].is_choice
+            and info["engine_rows"][key] in by_key[key].eligible
+        }
+        if dropped:
+            report["unteachable_rows"] = dropped
     assignment = TeacherAssignment(
         teacher=filled.teacher,
         status=filled.status,
@@ -2058,7 +2464,10 @@ def load_assignment(
         incomplete=tuple(info["incomplete"]),
     )
     if cache is not None:
-        cache["assignment"] = (fingerprint, assignment)
+        if release and (unteachable or run_released):
+            cache["assignment_released"] = (fingerprint, assignment, released_token)
+        else:
+            cache["assignment"] = (fingerprint, assignment, unteachable)
     return assignment
 
 
@@ -2072,6 +2481,9 @@ def close_on_layout(scenario_id: int, assignment: TeacherAssignment, *, bounds=N
         for key, teacher in assignment.teacher.items()
         if teacher is not None and assignment.status.get(key) == STATUS_ENGINE
     }
+    released = _run_released(scenario_id)
+    if released:  # a teacher the run released is not kept as a seed (D-B)
+        seed = _without_released(seed, released)
     closed = greedy_assign(slots, seed=seed, bounds=bounds)
     closed.report.update(engine="closure", programmes_source=info["programmes_source"])
     return closed
@@ -2095,7 +2507,11 @@ def propose_layout_assignment(
     cur = _current_map(slots, current) if current is not None else None
     kept: set[str] = set()
     if keep_violations_of is not None:
-        kept = _violating_keys(slots, _current_map(slots, keep_violations_of))
+        in_force = _current_map(slots, keep_violations_of)
+        released = _run_released(scenario_id)
+        if released:  # the kept rule never keeps a teacher the run released (D-B)
+            in_force = _without_released(in_force, released)
+        kept = _violating_keys(slots, in_force)
     result = solve_layout_aware(
         slots, current=cur if cur is not None else None, bounds=bounds, kept=kept
     )
@@ -2131,11 +2547,16 @@ class PlacerGuard:
     is a hard filter: when every option ranks last the best of them is still
     placed (the required-section guarantee) and the section stays to be
     decided, with its reason in the coverage.
+
+    Teaching-time rules: a pending section keeps a LEGAL option of its teacher
+    (``Slot.options_for``), and an option of a section still to be decided
+    ranks last unless some open teacher may both take and TEACH it
+    (``availability``, the placer's own object; an online section is exempt).
     """
 
     RANK = GUARD_RANK
 
-    def __init__(self, assignment: TeacherAssignment) -> None:
+    def __init__(self, assignment: TeacherAssignment, availability=EMPTY_AVAILABILITY) -> None:
         from core.services.timetable_autoplace import WEEKDAYS
 
         ledger = _Ledger()
@@ -2144,11 +2565,12 @@ class PlacerGuard:
             if teacher is not None and assignment.status.get(slot.key) in CHARGED:
                 ledger.add(slot, teacher)
         self.clash_on, self.cap_on, self.cap = ledger.clash_on, ledger.cap_on, ledger.cap
+        self.availability = availability
         self.days = {day: index for index, day in enumerate(WEEKDAYS)}
         #: teacher -> [(placer key, options)] of the sections charged to them
         #: that were not placed when the map was chosen.
         self.pending: dict[int, list[tuple[str, tuple]]] = {
-            teacher: [(slot.pr4_key, slot.options) for slot in slots]
+            teacher: [(slot.pr4_key, slot.options_for(teacher)) for slot in slots]
             for teacher, slots in ledger.pending.items()
         }
         #: placer key -> the eligible teachers of a section still to be decided
@@ -2157,9 +2579,19 @@ class PlacerGuard:
         for slot in assignment.slots:
             if assignment.status.get(slot.key) != STATUS_TBD:
                 continue
-            free = tuple(t for t in slot.eligible if ledger.layout_free_blocker(slot, t) is None)
+            free = tuple(
+                t
+                for t in slot.eligible
+                if ledger.layout_free_blocker(slot, t) is None and slot.has_legal_week(t)
+            )
             if free:
                 self.open[slot.pr4_key] = free
+
+    def release(self, key: str) -> None:
+        """The placer released ``key`` (``course|label``) from its engine teacher
+        (fix plan D-B): no teacher keeps an option of it free any more."""
+        for teacher, pending in self.pending.items():
+            self.pending[teacher] = [(other, options) for other, options in pending if other != key]
 
     def _meetings(self, option) -> list[tuple[int, int, int]]:
         return [
@@ -2188,13 +2620,15 @@ class PlacerGuard:
             )
         )
 
-    def check(self, key: str, teachers, schedule):
+    def check(self, key: str, teachers, schedule, *, availability_exempt: bool = False):
         """For the section ``key`` (``course|label``) about to be placed, an
         ``option -> bool`` that is True when the option ranks last, or None when
         nothing is at stake. ``teachers`` are the section's charged teachers
         (none: still to be decided) and ``schedule`` the placer's
-        ``instructor_schedule_full`` (teacher -> ``{(key, DAY, start, end)}``)."""
-        if not (self.clash_on or self.cap_on):
+        ``instructor_schedule_full`` (teacher -> ``{(key, DAY, start, end)}``).
+        ``availability_exempt``: the section is online, so no teaching-time
+        rule applies to it."""
+        if not (self.clash_on or self.cap_on or self.availability):
             return None
         if teachers:
             at_stake = []
@@ -2223,11 +2657,16 @@ class PlacerGuard:
         candidates = self.open.get(key)
         if not candidates:
             return None
-        loads = [self._load(schedule, teacher) for teacher in candidates]
+        loads = [(teacher, *self._load(schedule, teacher)) for teacher in candidates]
+        rules = self.availability if not availability_exempt else EMPTY_AVAILABILITY
 
         def no_teacher_can_take_it(option) -> bool:
             mine = self._meetings(option)
-            return not any(self._free(mine, cells, per_day) for cells, per_day in loads)
+            return not any(
+                self._free(mine, cells, per_day)
+                and not (rules and meetings_blocked(rules, (teacher,), mine))
+                for teacher, cells, per_day in loads
+            )
 
         return no_teacher_can_take_it
 
@@ -2354,6 +2793,9 @@ def _persist(
         if new_rows:
             SectionInstructor.objects.bulk_create(new_rows, batch_size=500)
     invalidate_scope(scenario_id)
+    # The stored map is closure-complete on the real layout: it chose a teacher
+    # (or none) for every section the run released (D-B).
+    clear_released(scenario_id)
     if skipped:
         logger.warning("One-teacher persist skipped pinned sections %s", skipped[:10])
     stored = TeacherAssignment(
@@ -2400,7 +2842,12 @@ def delete_engine_rows(scenario_id: int) -> int:
 
 
 def prepare_section_teachers(
-    scenario_id: int, *, phase: str, sections=None, incomplete: str = "raise"
+    scenario_id: int,
+    *,
+    phase: str,
+    sections=None,
+    incomplete: str = "raise",
+    release_unteachable: bool = False,
 ) -> dict[str, Any]:
     """The run hooks (section 3 of the Phase 1 spec).
 
@@ -2414,13 +2861,19 @@ def prepare_section_teachers(
     ``incomplete`` (``load_assignment``'s) is read by ``ensure`` only: a manual
     edit names its section with ``"collect"`` (an English section elsewhere
     without one complete pattern is left as it is); a run's phases raise.
+    ``release_unteachable`` is read by ``ensure`` only: a run (``run_placer``)
+    lets it drop a stored row whose teacher's teaching-time rules leave no
+    legal week for the course, exactly as the map it places under does; a
+    manual create never does (every other stored row stays as it is).
+    ``rebuild`` and ``layout`` are engine phases: their reads always release
+    (fix plan D-H).
     """
     from core.services.board_ownership import assert_rebuild_ownership
     from core.services.timetable_board_persistence import locked_physical_section_ids
 
     if phase == "rebuild":
         assert_rebuild_ownership(scenario_id)
-        previous = load_assignment(scenario_id)
+        previous = load_assignment(scenario_id, release_unteachable=True)
         delete_engine_rows(scenario_id)
         slots, info = _collect(
             scenario_id, sections=sections, placed_filter=locked_physical_section_ids(scenario_id)
@@ -2430,19 +2883,50 @@ def prepare_section_teachers(
         written = persist_assignment(scenario_id, seed)
         return {"assignment": seed, "previous": previous, "persist": written}
     if phase == "layout":
-        current = load_assignment(scenario_id)
+        current = load_assignment(scenario_id, release_unteachable=True)
         chosen = propose_layout_assignment(scenario_id, current=current, keep_violations_of=current)
         written = persist_assignment(scenario_id, chosen)
-        chosen = load_assignment(scenario_id)
+        chosen = load_assignment(scenario_id, release_unteachable=True)
         write_names(scenario_id, chosen)
         return {"assignment": chosen, "previous": current, "persist": written}
     if phase == "ensure":
-        current = load_assignment(scenario_id, incomplete=incomplete)
+        current = load_assignment(
+            scenario_id, incomplete=incomplete, release_unteachable=release_unteachable
+        )
         written = persist_assignment(scenario_id, current, only_missing=True, incomplete=incomplete)
         keys = set((current.report or {}).get("closure_keys") or [])
         write_names(scenario_id, current, only_keys=keys)
         return {"assignment": current, "persist": written}
     raise ValueError(f"unknown phase {phase!r}")
+
+
+def resolve_released_sections(scenario_id: int, released_rows) -> None:
+    """Choose the teacher of the sections a placement just released (RR-1).
+
+    ``released_rows``: the placer's ``instructor_availability["released"]`` rows
+    (``{"section": "code|label", "instructor_ids": [...]}``), each a section this
+    call newly placed whose stored engine teacher the placement did not charge. Its
+    stored row is replaced by another eligible teacher with a legal free option on
+    the board just placed, or by none. Only those sections' rows are touched: a
+    stored row of an already placed section stays as it is. Nothing happens
+    without rows."""
+    wanted = {row["section"]: tuple(row.get("instructor_ids") or ()) for row in released_rows or ()}
+    if not wanted:
+        return
+    with availability_scope(scenario_id):
+        for section, ids in wanted.items():
+            code, _bar, label = section.partition("|")
+            record_release(scenario_id, f"{code}_{label}", ids)
+        current = load_assignment(scenario_id, release_unteachable=True)
+        row_keys = {tuple(s.row_key) for s in current.slots if s.pr4_key in wanted}
+        v2_keys = {s.key for s in current.slots if s.pr4_key in wanted}
+        report = dict(current.report or {})
+        report["ignored_row_keys"] = [
+            k for k in report.get("ignored_row_keys", []) if tuple(k) in row_keys
+        ]
+        scoped = replace(current, report=report)
+        persist_assignment(scenario_id, scoped, only_missing=True)
+        write_names(scenario_id, current, only_keys=v2_keys)
 
 
 def run_placer(scenario_id: int, place, *, rebuild: bool):
@@ -2453,17 +2937,26 @@ def run_placer(scenario_id: int, place, *, rebuild: bool):
     it produced, stable against that map. Otherwise (place what is missing and
     keep the rest): the closure is stored before and after ``place()``, which
     runs under the map in force — existing teachers stay.
+
+    The whole build is one teaching-time rule scope (``availability_scope``):
+    the rules are read once, and every stage of it (greedy, CP-SAT, annealing)
+    sees the same availability.
     """
-    if rebuild:
-        prepared = prepare_section_teachers(scenario_id, phase="rebuild")
-        with pinned_assignment(scenario_id, prepared["assignment"]):
-            result = place()
-        final = prepare_section_teachers(scenario_id, phase="layout")["assignment"]
-    else:
-        prepare_section_teachers(scenario_id, phase="ensure")
-        with pinned_assignment(scenario_id, load_assignment(scenario_id)):
-            result = place()
-        final = prepare_section_teachers(scenario_id, phase="ensure")["assignment"]
+    with availability_scope(scenario_id):
+        if rebuild:
+            prepared = prepare_section_teachers(scenario_id, phase="rebuild")
+            with pinned_assignment(scenario_id, prepared["assignment"]):
+                result = place()
+            final = prepare_section_teachers(scenario_id, phase="layout")["assignment"]
+        else:
+            prepare_section_teachers(scenario_id, phase="ensure")
+            with pinned_assignment(
+                scenario_id, load_assignment(scenario_id, release_unteachable=True)
+            ):
+                result = place()
+            final = prepare_section_teachers(scenario_id, phase="ensure", release_unteachable=True)[
+                "assignment"
+            ]
     if isinstance(result, dict):
         result["section_teachers"] = {"enabled": True, "final": stage_report(final)}
     return result

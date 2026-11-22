@@ -65,8 +65,9 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import nullcontext
-from itertools import combinations
+from itertools import combinations, product
 
 from django.db.models import Q
 
@@ -80,6 +81,7 @@ from core.models import (
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
+from core.services.instructor_availability import EMPTY_AVAILABILITY
 from core.services.section_source_tags import AUTO_SECTION_SOURCE_TAG
 from core.services.timetable_board_persistence import locked_physical_section_ids
 from core.services.timetable_constraints import days_form_day_run
@@ -90,6 +92,7 @@ from core.services.timetable_course_policy import (
 from core.services.timetable_decision_trace import (
     INSTRUCTOR_CLASH,
     INSTRUCTOR_DAILY_CAP,
+    INSTRUCTOR_UNAVAILABLE,
     SAME_COURSE_INSTRUCTOR_CLASH,
     STUDENT_CONFLICT,
     Alternative,
@@ -104,6 +107,16 @@ from core.services.timetable_flags import (
     get_section_day_spread_weight,
     is_one_teacher_active,
     is_section_day_spread_enabled,
+)
+from core.services.timetable_instructor_availability import (
+    availability_for,
+    availability_scope,
+    fixed_section_keys,
+    online_exemption,
+    option_blocked,
+    option_meetings,
+    rule_ids,
+    rules_enabled,
 )
 from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
@@ -222,6 +235,7 @@ def generate_course_meeting_options(
     *,
     course_key: str = "",
     meeting_pattern: str,
+    cell_blocked: Callable[[str, str, str], bool] | None = None,
 ) -> list[list[dict]]:
     """Complete course-scoped patterns; ordinary slot domains stay unchanged.
 
@@ -229,6 +243,10 @@ def generate_course_meeting_options(
     :func:`get_meeting_pattern`); it is required for the same reason. It is
     the one door every greedy campus option and the one-teacher guard's copy
     of those options go through, so both follow the scenario's shape together.
+
+    ``cell_blocked`` (a section's teacher's teaching-time rules, see
+    :func:`availability_section_options`) reaches the generator of an
+    ordinary course only; a meeting-policy course keeps its own bundles.
     """
     policy = get_course_meeting_policy(course_code, course_key)
     if policy:
@@ -243,7 +261,110 @@ def generate_course_meeting_options(
         slot_config or [],
         lab_slot_config,
         blocked_slots,
+        cell_blocked=cell_blocked,
     )
+
+
+def availability_section_options(
+    availability,
+    instructor_ids,
+    display_code: str,
+    credit_hours: int,
+    slot_config: list[dict] | None,
+    lab_slot_config: list[dict] | None,
+    blocked_slots: list[dict] | None,
+    *,
+    course_key: str,
+    meeting_pattern: str,
+    course_options: list[list[dict]],
+) -> list[list[dict]]:
+    """The weekly options of one section whose teacher has teaching-time rules
+    (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): only the options none of
+    ``instructor_ids`` is forbidden to teach.
+
+    An ordinary course runs the generator with the rules as blocked cells, so a
+    meeting that cannot keep the first meeting's period falls back to the first
+    period its teacher may teach that day: mixed-period weeks are generated,
+    and an option exists iff each meeting can go on its own day in a period of
+    its grid the teacher may teach. A meeting-policy course keeps the legal
+    whole bundles of ``course_options`` (its own list). The arguments are the
+    ones the caller passes :func:`generate_course_meeting_options`, so the
+    greedy placer, the CP-SAT builders and the one-teacher assignment, which
+    all ask here, agree on every option. ``[]``: no legal week.
+    """
+    from core.services.timetable_instructor_availability import cell_predicate, option_blocked
+
+    if get_course_meeting_policy(display_code, course_key):
+        return [
+            option
+            for option in course_options
+            if not option_blocked(availability, instructor_ids, option)
+        ]
+    return generate_course_meeting_options(
+        display_code,
+        credit_hours,
+        slot_config,
+        lab_slot_config,
+        blocked_slots,
+        course_key=course_key,
+        meeting_pattern=meeting_pattern,
+        cell_blocked=cell_predicate(availability, instructor_ids),
+    )
+
+
+def availability_complete_options(
+    availability,
+    instructor_ids,
+    display_code: str,
+    credit_hours: int,
+    slot_config: list[dict] | None,
+    lab_slot_config: list[dict] | None,
+    blocked_slots: list[dict] | None,
+    *,
+    course_key: str,
+    meeting_pattern: str,
+    course_options: list[list[dict]],
+) -> list[list[dict]]:
+    """EVERY weekly option of the section that none of ``instructor_ids`` is
+    forbidden to teach (fix plan D-C): :func:`availability_section_options`'
+    options first, in their order, then each other legal week (the product, per
+    day combination, of the open cells of each meeting's grid on its day,
+    de-duplicated). The same-index generator can miss a legal week (a teacher
+    allowed SUN 09:00-11:45 and TUE 13:00-15:45 never gets SUN 10:30 + TUE
+    14:30); this set cannot. ``instructor_ids`` may be empty: then every week of
+    the course. A meeting-policy course's legal bundles are already complete.
+    The greedy asks it only when the per-teacher options leave nothing
+    placeable; the one-teacher assignment (``_Static.teacher_options``) always."""
+    from core.services.timetable_instructor_availability import cell_predicate
+
+    feed = availability_section_options(
+        availability,
+        instructor_ids,
+        display_code,
+        credit_hours,
+        slot_config,
+        lab_slot_config,
+        blocked_slots,
+        course_key=course_key,
+        meeting_pattern=meeting_pattern,
+        course_options=course_options,
+    )
+    if get_course_meeting_policy(display_code, course_key):
+        return feed
+    seen = {_meeting_signature(option) for option in feed}
+    extra = [
+        option
+        for option in _generate_meeting_options(
+            get_meeting_pattern(credit_hours, meeting_pattern=meeting_pattern),
+            slot_config or [],
+            lab_slot_config,
+            blocked_slots,
+            cell_blocked=cell_predicate(availability, instructor_ids),
+            complete=True,
+        )
+        if _meeting_signature(option) not in seen
+    ]
+    return [*feed, *extra]
 
 
 # ── Default Slots ────────────────────────────────────────────────
@@ -350,6 +471,9 @@ def _generate_meeting_options(
     slot_config: list[dict],
     lab_slot_config: list[dict] | None = None,
     blocked_slots: list[dict] | None = None,
+    *,
+    cell_blocked: Callable[[str, str, str], bool] | None = None,
+    complete: bool = False,
 ) -> list[list[dict]]:
     """Generate every valid way to schedule a course's weekly meetings.
 
@@ -367,6 +491,17 @@ def _generate_meeting_options(
         Lecture slot definitions from the scenario, or ``DEFAULT_SLOTS``.
     lab_slot_config : list[dict] | None
         Lab (100-min) slot definitions. If ``None``, uses ``DEFAULT_LAB_SLOTS``.
+    cell_blocked : callable | None
+        ``(day, start, end) -> bool``: a cell the section's teacher may not
+        teach (teaching-time rules), closed like a blocked slot. ``None`` keeps
+        the generator exactly as without rules.
+    complete : bool
+        Instead of the same-index heuristic (each meeting takes the first
+        meeting's slot index, else the FIRST open cell of its day), every open
+        cell of each meeting's grid on its day: for each day combination the
+        product over the meetings, de-duplicated (fix plan D-C). Only the
+        teaching-time rules ask for it (:func:`availability_complete_options`);
+        it never changes the default list.
 
     Returns
     -------
@@ -424,6 +559,13 @@ def _generate_meeting_options(
     # positions are feasible. Every slot in the grid is a feasible cell; the
     # only exclusions applied here are the user's blocked_slots.
     lecture_positions = [(i, s["start"], s["end"]) for i, s in enumerate(slots)]
+
+    def _open(day: str, pos: tuple) -> bool:
+        """A blocked slot never; with rules, nor a cell the teacher may not teach."""
+        return (day, pos[1]) not in _blocked_set and (
+            cell_blocked is None or not cell_blocked(day, pos[1], pos[2])
+        )
+
     lab_positions = [(i, s["start"], s["end"]) for i, s in enumerate(lab_slots)]
 
     # Generate all unique permutations of the pattern so the lab can be
@@ -441,6 +583,30 @@ def _generate_meeting_options(
         pattern_variants = [pattern]
 
     all_options: list[list[dict]] = []
+
+    if complete:
+        seen: set[tuple] = set()
+        for current_pattern in pattern_variants:
+            grids = [lab_positions if d > 75 else lecture_positions for d in current_pattern]
+            for days in day_combos:
+                open_cells = [
+                    [pos for pos in grids[m_idx] if _open(days[m_idx], pos)]
+                    for m_idx in range(num_meetings)
+                ]
+                for cells in product(*open_cells):
+                    signature = tuple(
+                        (days[m_idx], pos[1], pos[2]) for m_idx, pos in enumerate(cells)
+                    )
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    all_options.append(
+                        [
+                            {"day": days[m_idx], "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
+                            for m_idx, pos in enumerate(cells)
+                        ]
+                    )
+        return all_options
 
     for current_pattern in pattern_variants:
         slot_options_per_duration = [
@@ -462,7 +628,7 @@ def _generate_meeting_options(
 
                     found = False
                     for pos in positions:
-                        if pos[0] == target_slot_idx and (day, pos[1]) not in _blocked_set:
+                        if pos[0] == target_slot_idx and _open(day, pos):
                             option.append(
                                 {"day": day, "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
                             )
@@ -472,7 +638,7 @@ def _generate_meeting_options(
                     if not found:
                         fallback_found = False
                         for pos in positions:
-                            if (day, pos[1]) not in _blocked_set:
+                            if _open(day, pos):
                                 option.append(
                                     {"day": day, "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
                                 )
@@ -705,10 +871,53 @@ def _section_day_spread_penalty(option: list[dict], weight: int) -> int:
 # exists, so the rule can never leave a section unplaced.
 DAY_RUN_GUARD_RANK = 10**6
 
+# Rank added to the FIRST score element of an option a section's FIXED teacher (a pin
+# or a teacher-frozen section) is forbidden to teach, under
+# ``TIMETABLE_INSTRUCTOR_AVAILABILITY``: above the teacher guard (1e9), so such an
+# option is chosen only when every other option is gone, and the section is placed
+# (reported "rule cannot be met") rather than left unplaced. It is added once per
+# forbidden meeting, so the fallback breaks the rule as few times as it can (the
+# persist guard and the run gates compare that count). An ENGINE teacher's
+# forbidden option is filtered out instead (``INSTRUCTOR_UNAVAILABLE``).
+AVAILABILITY_GUARD_RANK = 10**12
+
+#: Marks the end of an option tier in ``auto_place_board``'s candidate list (fix
+#: plan D-C, D-B): never an option, never scored.
+_NEXT_TIER = object()
+
 
 def _option_is_day_run(option: list[dict]) -> bool:
     """True iff a three-meeting option sits on three consecutive weekdays."""
     return len(option) == 3 and days_form_day_run(meeting["day"] for meeting in option)
+
+
+def _availability_context(availability, instructor_ids, option) -> dict:
+    """``INSTRUCTOR_UNAVAILABLE``'s context: the first teacher and meeting of
+    ``option`` a teaching-time rule forbids."""
+    for meeting in option:
+        for day, start, end in option_meetings([meeting]):
+            for iid in instructor_ids:
+                if availability.blocks(iid, day, start, end):
+                    return {
+                        "instructor_id": iid,
+                        "day": meeting["day"],
+                        "start": meeting["start"],
+                        "end": meeting["end"],
+                    }
+    return {}
+
+
+def _forbidden_meetings(availability, instructor_ids, option) -> int:
+    """How many meetings of ``option`` some teacher of ``instructor_ids`` may not teach."""
+    return sum(
+        1
+        for day, start, end in option_meetings(option)
+        if any(availability.blocks(iid, day, start, end) for iid in instructor_ids)
+    )
+
+
+def _meeting_signature(option) -> tuple:
+    return tuple((m["day"], m["start"], m["end"]) for m in option)
 
 
 def _score_option(
@@ -1489,14 +1698,20 @@ def auto_place_board(
     # placed (``PlacerGuard``). None with the flag off, so nothing changes.
     teacher_guard = None
     teacher_guard_ranked_last: list[dict] = []
+    # Teaching-time rules (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): read once per
+    # board, EMPTY (falsy) unless a teacher this scenario can charge has a rule.
+    availability = EMPTY_AVAILABILITY
+    _av_assignment = None
     if instructor_clash_on:
         if links_on and is_one_teacher_active():
             from core.services.section_teacher_assignment import PlacerGuard, load_assignment
 
             # The map ``build_section_instructor_ids`` would return, read once.
-            _one_teacher_map = load_assignment(scenario.id)
+            _one_teacher_map = load_assignment(scenario.id, release_unteachable=True)
             link_map = _one_teacher_map.pr4_map()
-            teacher_guard = PlacerGuard(_one_teacher_map)
+            availability = availability_for(scenario.id, universe=_one_teacher_map.universe)
+            _av_assignment = _one_teacher_map
+            teacher_guard = PlacerGuard(_one_teacher_map, availability)
         else:
             # NB: build_section_instructor_ids reads scenario.gender/.programs, so
             # it must receive the scenario OBJECT — passing scenario.id (an int)
@@ -1557,6 +1772,40 @@ def auto_place_board(
                     (section_full, day_upper, start_minute, end_minute)
                 )
             section_instructors.setdefault(section_full, set()).update(ids)
+
+    # The rules bind the section's own teacher whatever the clash flag says: with
+    # it off the map is read here instead, and only once a rule is known to bind
+    # a teacher of the scenario (fix plan D-L: with no rule row this costs the
+    # one rule query and never reads the map, so it cannot raise where the
+    # flag-off greedy did not read it).
+    if not instructor_clash_on and rules_enabled() and availability_for(scenario.id):
+        from core.services.section_teacher_assignment import load_assignment
+
+        _av_assignment = load_assignment(scenario.id, release_unteachable=True)
+        availability = availability_for(scenario.id, universe=_av_assignment.universe)
+    # placer key -> the section's ruled charged teachers; the keys of the sections
+    # whose teacher is fixed (rank-last instead of a filter).
+    av_charged: dict[str, tuple[int, ...]] = {}
+    av_fixed: frozenset[str] = frozenset()
+    av_legal_cache: dict[tuple[str, tuple[int, ...]], list] = {}
+    av_complete_cache: dict[tuple[str, tuple[int, ...]], list] = {}
+    av_exemption = None  # the scope's OnlineExemption, asked on first need
+    av_placed_online: dict[tuple[str, str], tuple[bool, ...]] | None = None
+    availability_ranked_last: list[dict] = []
+    availability_unplaced: list[dict] = []
+    availability_released: list[dict] = []
+    av_dropped: dict[str, int] = {}
+    if availability and _av_assignment is not None:
+        av_charged = {
+            key: ids
+            for key, teachers in _av_assignment.pr4_map().items()
+            if (ids := rule_ids(availability, teachers))
+        }
+        av_fixed = fixed_section_keys(_av_assignment)
+        # V2 section id -> the stored engine teacher the map in force ignored for a
+        # rule alone (RR-1): a section placed here is recorded released from him, so
+        # the stored row is replaced once the layout is known.
+        av_dropped = dict((_av_assignment.report or {}).get("unteachable_rows") or {})
 
     # ── 2b. Existing-placement preload (PR1 locks included) ──────────
     # Every meeting already placed on THIS board is seeded into the same
@@ -1725,6 +1974,145 @@ def auto_place_board(
             }
         )
 
+    def _hard_rejection(option, code: str, sec_label: str, meeting_policy):
+        """The first hard filter (instructor clash, daily cap, same-course
+        overlap) that removes ``option`` for the section ``code|sec_label``, as
+        ``(code, context)``; None when it passes all three."""
+        # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
+        # Reject any option that would double-book the current
+        # section's instructor at a (day, start_time) already
+        # held by a different section with the same normalised
+        # instructor id. This is a pre-score hard filter: options
+        # that fail this check never reach the
+        # scoring step. The first clashing meeting per option is
+        # recorded; subsequent clashes in the same option are
+        # noise (the option is already out of the candidate set).
+        if instructor_clash_on:
+            section_full_cur = f"{code}|{sec_label}"
+            my_instrs = section_instructors.get(section_full_cur, set())
+            if my_instrs:
+                clash_ctx: dict | None = None
+                for m in option:
+                    m_day_up = m["day"].upper()
+                    m_start_min = _to_min(m["start"])
+                    m_end_min = _to_min(m["end"])
+                    for my_instr in my_instrs:
+                        for (
+                            other_section,
+                            bd,
+                            bs,
+                            be,
+                        ) in instructor_schedule_full.get(my_instr, set()):
+                            if other_section == section_full_cur:
+                                continue
+                            # Interval overlap on the same day (half-open):
+                            # catches a 10:30-11:45 vs 10:45-12:25 clash the
+                            # old start-equality (bs == m_start_min) missed.
+                            if bd == m_day_up and bs < m_end_min and m_start_min < be:
+                                clash_ctx = {
+                                    "clashing_section": other_section,
+                                    "clashing_instructor_id": my_instr,
+                                }
+                                break
+                        if clash_ctx is not None:
+                            break
+                    if clash_ctx is not None:
+                        break
+                if clash_ctx is not None:
+                    return INSTRUCTOR_CLASH, clash_ctx
+
+        # INSTRUCTOR_DAILY_CAP filter (flag-gated, hard): reject any
+        # option that would give one of this section's instructors more
+        # than ``daily_cap`` sessions on a single day. Counts EXISTING
+        # same-day sessions for that instructor (from other sections, via
+        # instructor_schedule_full — which is updated within-run at the
+        # commit site below) PLUS this option's own meetings that day.
+        # Lectures and labs both count. Pre-score hard filter, like the
+        # clash above.
+        if daily_cap_on:
+            section_full_cap = f"{code}|{sec_label}"
+            my_instrs_cap = section_instructors.get(section_full_cap, set())
+            if my_instrs_cap:
+                cap_ctx: dict | None = None
+                opt_day_counts: dict[str, int] = {}
+                for m in option:
+                    opt_day_counts[m["day"].upper()] = opt_day_counts.get(m["day"].upper(), 0) + 1
+                for my_instr in my_instrs_cap:
+                    existing_by_day: dict[str, int] = {}
+                    for other_section, bd, _bs, _be in instructor_schedule_full.get(
+                        my_instr, set()
+                    ):
+                        if other_section == section_full_cap:
+                            continue
+                        existing_by_day[bd] = existing_by_day.get(bd, 0) + 1
+                    for day_up, add_cnt in opt_day_counts.items():
+                        if existing_by_day.get(day_up, 0) + add_cnt > daily_cap:
+                            cap_ctx = {
+                                "instructor_id": my_instr,
+                                "day": day_up,
+                                "existing": existing_by_day.get(day_up, 0),
+                                "adding": add_cnt,
+                                "cap": daily_cap,
+                            }
+                            break
+                    if cap_ctx is not None:
+                        break
+                if cap_ctx is not None:
+                    return INSTRUCTOR_DAILY_CAP, cap_ctx
+
+        # Same-course instructor clash: two sections of the same
+        # course cannot overlap because the same instructor
+        # typically teaches all sections of a course.
+        # This is independent of the INSTRUCTOR_CLASH filter above
+        # (which requires the ``instructor_id`` field to be set) —
+        # here we rely on the registrar's convention that course
+        # code → instructor. Rejected options are logged to the
+        # same trace bucket as INSTRUCTOR_CLASH.
+        # Interval-overlap detection (catches e.g. 10:30-11:45 vs
+        # 10:50-12:05) via the shared same-course window helper.
+        same_course_ctx = (
+            None if meeting_policy else _same_course_overlap_context(option, placed_schedule, code)
+        )
+        if same_course_ctx is not None:
+            return SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx
+        return None
+
+    def _complete_legal(cd: dict, display_code: str, ids: tuple[int, ...]) -> list:
+        """Every legal week of ``cd``'s course for ``ids`` (fix plan D-C, cached per
+        board). An online-window course's and a meeting-policy course's
+        per-teacher options are complete already (filters of their own lists)."""
+        cache_key = (cd["code"], ids)
+        if cache_key not in av_complete_cache:
+            av_complete_cache[cache_key] = (
+                []
+                if cd["online_windows"] or cd.get("meeting_policy")
+                else availability_complete_options(
+                    availability,
+                    ids,
+                    display_code,
+                    cd["credit_hours"],
+                    slot_config,
+                    lab_slot_config,
+                    scenario.blocked_slots if scenario.blocked_slots else [],
+                    course_key=cd["code"],
+                    meeting_pattern=cd["budget"].meeting_pattern,
+                    course_options=cd["all_options"],
+                )
+            )
+        return av_complete_cache[cache_key]
+
+    def _av_online_everywhere(code: str, sec_label: str) -> bool:
+        """The section, about to be placed on this board where its course is
+        online, is exempt from its teachers' rules (fix plan D-A,
+        ``section_online_exempt``): online here, on every board it already sits
+        on (one scan per board) and on every board of its course's term, so a
+        section a later board places on campus is bound on this board too."""
+        nonlocal av_exemption, av_placed_online
+        if av_exemption is None or av_placed_online is None:
+            av_exemption = online_exemption(scenario.id)
+            av_placed_online = av_exemption.placed_by_section()
+        return av_exemption.exempt(code, (True, *av_placed_online.get((code, sec_label), ())))
+
     # ── 5. Round-robin placement: all S1s, then all S2s, ... ──────────
     # By placing all sections of the same group index together, we ensure
     # that S1 of different courses (which serve the *same* primary student
@@ -1784,6 +2172,59 @@ def auto_place_board(
             my_students = cd["students"]
             all_options = cd["all_options"]
 
+            # Teaching-time rules: the section's ruled charged teachers (none for
+            # a section online on every board it is placed on) and the options
+            # they may teach, generated per teacher so mixed-period weeks exist.
+            # An ENGINE teacher's section gets only those (the course list when
+            # there is none: the filter below then rejects every option); a FIXED
+            # teacher's gets them first and then the rest, so the rank-last
+            # fallback still has an option when every legal one is taken.
+            av_key = f"{code}|{sec_label}"
+            av_ids: tuple[int, ...] = ()
+            av_exempt = False
+            av_is_fixed = False
+            # (released teachers, binding) once the section is released (D-B).
+            av_released: tuple[tuple[int, ...], bool] | None = None
+            if availability:
+                av_exempt = bool(cd["is_online"]) and _av_online_everywhere(code, sec_label)
+                av_ids = () if av_exempt else av_charged.get(av_key, ())
+            if av_ids:
+                av_is_fixed = av_key in av_fixed
+                legal = av_legal_cache.get((code, av_ids))
+                if legal is None:
+                    if cd["online_windows"]:
+                        legal = [
+                            option
+                            for option in cd["all_options"]
+                            if not option_blocked(availability, av_ids, option)
+                        ]
+                    else:
+                        legal = availability_section_options(
+                            availability,
+                            av_ids,
+                            display_code,
+                            cd["credit_hours"],
+                            slot_config,
+                            lab_slot_config,
+                            scenario.blocked_slots if scenario.blocked_slots else [],
+                            course_key=code,
+                            meeting_pattern=cd["budget"].meeting_pattern,
+                            course_options=cd["all_options"],
+                        )
+                    av_legal_cache[(code, av_ids)] = legal
+                if av_is_fixed:
+                    signatures = {_meeting_signature(option) for option in legal}
+                    all_options = [
+                        *legal,
+                        *(
+                            option
+                            for option in cd["all_options"]
+                            if _meeting_signature(option) not in signatures
+                        ),
+                    ]
+                elif legal:
+                    all_options = legal
+
             # Per-course gap weight based on real overlap load
             overlap_load = _col(overlap_matrix, code)
             gap_weight = max(1, min(gap_base, overlap_load // 5))
@@ -1826,6 +2267,9 @@ def auto_place_board(
                     f"{code}|{sec_label}",
                     section_instructors.get(f"{code}|{sec_label}", ()),
                     instructor_schedule_full,
+                    # Passed only when it says something: without rules the call
+                    # is exactly the one the guard always had.
+                    **({"availability_exempt": True} if av_exempt else {}),
                 )
                 if teacher_guard is not None
                 else None
@@ -1855,127 +2299,83 @@ def auto_place_board(
             room_check_interval = meeting_policy is None and (
                 shape_for(budget.meeting_pattern, cd["credit_hours"]) is not None
             )
-            for option in all_options:
-                # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
-                # Reject any option that would double-book the current
-                # section's instructor at a (day, start_time) already
-                # held by a different section with the same normalised
-                # instructor id. This is a pre-score hard filter: options
-                # that fail this check never reach the
-                # scoring step. The first clashing meeting per option is
-                # recorded; subsequent clashes in the same option are
-                # noise (the option is already out of the candidate set).
-                if instructor_clash_on:
-                    section_full_cur = f"{code}|{sec_label}"
-                    my_instrs = section_instructors.get(section_full_cur, set())
-                    if my_instrs:
-                        clash_ctx: dict | None = None
-                        for m in option:
-                            m_day_up = m["day"].upper()
-                            m_start_min = _to_min(m["start"])
-                            m_end_min = _to_min(m["end"])
-                            for my_instr in my_instrs:
-                                for (
-                                    other_section,
-                                    bd,
-                                    bs,
-                                    be,
-                                ) in instructor_schedule_full.get(my_instr, set()):
-                                    if other_section == section_full_cur:
-                                        continue
-                                    # Interval overlap on the same day (half-open):
-                                    # catches a 10:30-11:45 vs 10:45-12:25 clash the
-                                    # old start-equality (bs == m_start_min) missed.
-                                    if bd == m_day_up and bs < m_end_min and m_start_min < be:
-                                        clash_ctx = {
-                                            "clashing_section": other_section,
-                                            "clashing_instructor_id": my_instr,
-                                        }
-                                        break
-                                if clash_ctx is not None:
-                                    break
-                            if clash_ctx is not None:
-                                break
-                        if clash_ctx is not None:
-                            _count_filter_rejection(filter_rejections, INSTRUCTOR_CLASH, clash_ctx)
-                            if trace_enabled:
-                                pr4_instructor_rejected.append(
-                                    (option, INSTRUCTOR_CLASH, clash_ctx)
-                                )
-                            continue
 
-                # INSTRUCTOR_DAILY_CAP filter (flag-gated, hard): reject any
-                # option that would give one of this section's instructors more
-                # than ``daily_cap`` sessions on a single day. Counts EXISTING
-                # same-day sessions for that instructor (from other sections, via
-                # instructor_schedule_full — which is updated within-run at the
-                # commit site below) PLUS this option's own meetings that day.
-                # Lectures and labs both count. Pre-score hard filter, like the
-                # clash above.
-                if daily_cap_on:
-                    section_full_cap = f"{code}|{sec_label}"
-                    my_instrs_cap = section_instructors.get(section_full_cap, set())
-                    if my_instrs_cap:
-                        cap_ctx: dict | None = None
-                        opt_day_counts: dict[str, int] = {}
-                        for m in option:
-                            opt_day_counts[m["day"].upper()] = (
-                                opt_day_counts.get(m["day"].upper(), 0) + 1
-                            )
-                        for my_instr in my_instrs_cap:
-                            existing_by_day: dict[str, int] = {}
-                            for other_section, bd, _bs, _be in instructor_schedule_full.get(
-                                my_instr, set()
-                            ):
-                                if other_section == section_full_cap:
-                                    continue
-                                existing_by_day[bd] = existing_by_day.get(bd, 0) + 1
-                            for day_up, add_cnt in opt_day_counts.items():
-                                if existing_by_day.get(day_up, 0) + add_cnt > daily_cap:
-                                    cap_ctx = {
-                                        "instructor_id": my_instr,
-                                        "day": day_up,
-                                        "existing": existing_by_day.get(day_up, 0),
-                                        "adding": add_cnt,
-                                        "cap": daily_cap,
-                                    }
-                                    break
-                            if cap_ctx is not None:
-                                break
-                        if cap_ctx is not None:
-                            _count_filter_rejection(
-                                filter_rejections, INSTRUCTOR_DAILY_CAP, cap_ctx
-                            )
-                            if trace_enabled:
-                                pr4_instructor_rejected.append(
-                                    (option, INSTRUCTOR_DAILY_CAP, cap_ctx)
-                                )
-                            continue
-
-                # Same-course instructor clash: two sections of the same
-                # course cannot overlap because the same instructor
-                # typically teaches all sections of a course.
-                # This is independent of the INSTRUCTOR_CLASH filter above
-                # (which requires the ``instructor_id`` field to be set) —
-                # here we rely on the registrar's convention that course
-                # code → instructor. Rejected options are logged to the
-                # same trace bucket as INSTRUCTOR_CLASH.
-                # Interval-overlap detection (catches e.g. 10:30-11:45 vs
-                # 10:50-12:05) via the shared same-course window helper.
-                same_course_ctx = (
-                    None
-                    if meeting_policy
-                    else _same_course_overlap_context(option, placed_schedule, code)
-                )
-                if same_course_ctx is not None:
-                    _count_filter_rejection(
-                        filter_rejections, SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx
-                    )
-                    if trace_enabled:
-                        pr4_instructor_rejected.append(
-                            (option, SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx)
+            # Teaching-time rules: the options above are tier 1. A marker after
+            # them is met once tier 1 is scored; only when tier 1 left no LEGAL
+            # placeable option (none placed, or a fixed teacher's best one is
+            # forbidden) does it append every other legal week of the complete
+            # set (tier 2, fix plan D-C). A section tier 1 places legally is
+            # placed exactly as before. Without a ruled teacher: the list itself.
+            # An ENGINE teacher's section that tier 2 cannot place either is
+            # RELEASED (fix plan D-B): charged to nobody for the rest of the run
+            # (no clash or cap ledger, no rule; the run's map shows it TBD), and
+            # placed from the course's ordinary options under the filters that do
+            # not depend on a teacher. A fixed teacher is never released.
+            candidates = [*all_options, _NEXT_TIER] if av_ids else all_options
+            av_tier = 1
+            for option in candidates:
+                if option is _NEXT_TIER:
+                    if av_tier == 1 and (
+                        best_option is None
+                        or (av_is_fixed and option_blocked(availability, av_ids, best_option))
+                    ):
+                        av_tier = 2
+                        tried = {_meeting_signature(o) for o in all_options}
+                        candidates.extend(
+                            o
+                            for o in _complete_legal(cd, display_code, av_ids)
+                            if _meeting_signature(o) not in tried
                         )
+                        if not av_is_fixed:
+                            candidates.append(_NEXT_TIER)
+                    elif av_tier == 2 and best_option is None:
+                        av_tier = 3
+                        # Would the section have been placed under its teacher
+                        # without the rule? (kept for the report; a section placed
+                        # teacher-less below never is unplaced, see there).
+                        av_binding = any(
+                            option_blocked(availability, av_ids, o)
+                            and _hard_rejection(o, code, sec_label, meeting_policy) is None
+                            for o in cd["all_options"]
+                        )
+                        av_released = (av_ids, av_binding)
+                        from core.services.section_teacher_assignment import release_in_run
+
+                        release_in_run(scenario.id, f"{code}_{sec_label}", av_ids)
+                        av_ids = ()
+                        section_instructors[av_key] = set()
+                        if teacher_guard is not None:
+                            teacher_guard.release(av_key)
+                            guard_check = teacher_guard.check(av_key, (), instructor_schedule_full)
+                        candidates.extend(cd["all_options"])
                     continue
+                rejection = _hard_rejection(option, code, sec_label, meeting_policy)
+                if rejection is not None:
+                    rejection_code, rejection_ctx = rejection
+                    _count_filter_rejection(filter_rejections, rejection_code, rejection_ctx)
+                    if trace_enabled:
+                        pr4_instructor_rejected.append((option, rejection_code, rejection_ctx))
+                    continue
+
+                # Teaching-time rules (the 4th hard filter): an option the
+                # section's ENGINE teacher may not teach is rejected; a FIXED
+                # teacher's ranks after every other option (still placed). An
+                # engine teacher's feed is legal-only whenever he has a legal
+                # week, so the filter fires only when he has none and every
+                # option goes (never traced); the section is then released.
+                av_rank = 0
+                if av_ids and option_blocked(availability, av_ids, option):
+                    if av_is_fixed:
+                        av_rank = AVAILABILITY_GUARD_RANK * _forbidden_meetings(
+                            availability, av_ids, option
+                        )
+                    else:
+                        _count_filter_rejection(
+                            filter_rejections,
+                            INSTRUCTOR_UNAVAILABLE,
+                            _availability_context(availability, av_ids, option),
+                        )
+                        continue
 
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
@@ -2100,7 +2500,7 @@ def auto_place_board(
                 if day_spread_on and not meeting_policy and _option_is_day_run(option):
                     guard_rank += DAY_RUN_GUARD_RANK
                 score = (
-                    raw_score[0] + guard_rank,
+                    raw_score[0] + guard_rank + av_rank,
                     raw_score[1],
                     raw_score[5] + same_course_adjacency_penalty,
                     raw_score[2] * gap_weight
@@ -2144,7 +2544,11 @@ def auto_place_board(
                 if baseline_option_matched is not None:
                     # Was it feasibility-clean (i.e. it was scored)?
                     feasible = any(opt is baseline_option_matched for _s, opt in pr3_scored_options)
-                    if feasible:
+                    # Never retained at a time its fixed teacher may not teach (an
+                    # engine teacher's such options are filtered before scoring).
+                    if feasible and not (
+                        av_ids and option_blocked(availability, av_ids, baseline_option_matched)
+                    ):
                         best_option = baseline_option_matched
                         warm_start_retained = True
                     # else: the baseline option was filtered out pre-score
@@ -2153,6 +2557,19 @@ def auto_place_board(
 
             if best_option is None:
                 total_skipped += 1
+                # Teaching-time rules: a section left off the board even with
+                # its teacher released, that its teacher would have placed had
+                # the rule not existed ("binding"). A released section is placed
+                # by any option its teacher would pass the other filters with,
+                # so this list stays empty; the key is kept (fix plan D-B).
+                if av_released is not None and av_released[1]:
+                    availability_unplaced.append(
+                        {
+                            "section": av_key,
+                            "instructor_ids": list(av_released[0]),
+                            "binding": True,
+                        }
+                    )
                 # Room fit is only ever a penalty, so an option that reaches
                 # scoring always wins something: no best option means the hard
                 # filters (instructor clash, daily cap, same-course overlap)
@@ -2230,6 +2647,28 @@ def auto_place_board(
                         else "no_eligible_teacher_free",
                     }
                 )
+            if av_is_fixed and option_blocked(availability, av_ids, best_option):
+                availability_ranked_last.append(
+                    {
+                        "section": av_key,
+                        "instructor_ids": list(av_ids),
+                        "reason": "rule_cannot_be_met",
+                    }
+                )
+            if av_released is not None:
+                availability_released.append(
+                    {"section": av_key, "instructor_ids": list(av_released[0])}
+                )
+            elif av_dropped and f"{code}_{sec_label}" in av_dropped:
+                # The map in force ignored this section's stored engine row for a
+                # rule alone: record it like a release, so the stored row is
+                # replaced by the teacher the layout allows (RR-1). Only a section
+                # placed here: a row of an already placed one is left alone.
+                from core.services.section_teacher_assignment import release_in_run
+
+                dropped_id = av_dropped[f"{code}_{sec_label}"]
+                availability_released.append({"section": av_key, "instructor_ids": [dropped_id]})
+                release_in_run(scenario.id, f"{code}_{sec_label}", (dropped_id,))
 
             # ── Persist the chosen placement ──────────────────────────
             # TermSection: the logical section record (e.g. "MATH101 S1").
@@ -2449,7 +2888,21 @@ def auto_place_board(
             # primary CourseInstructor for this scenario's gender + program and
             # fan its name into the section's meeting rows, so the default
             # INSTRUCTOR_CLASH path works with zero scenario coupling.
-            _apply_course_instructor(ts, scenario, board, display_code)
+            if av_released is None:
+                _apply_course_instructor(ts, scenario, board, display_code)
+            else:
+                # Released: the run's map charges nobody, so no name (D-B).
+                from core.services.section_teacher_assignment import released_view
+
+                _apply_course_instructor(
+                    ts,
+                    scenario,
+                    board,
+                    display_code,
+                    assignment=released_view(
+                        _av_assignment, {f"{code}_{sec_label}": av_released[0]}
+                    ),
+                )
 
             total_placed += 1
             placement_results.append(
@@ -2623,6 +3076,22 @@ def auto_place_board(
         **(
             {"teacher_guard": {"ranked_last": teacher_guard_ranked_last}}
             if teacher_guard is not None
+            else {}
+        ),
+        # Teaching-time rules only (a teacher this scenario can charge has one):
+        # the fixed-teacher sections placed at a time their teacher may not teach
+        # ("rule cannot be met"), the sections the rule kept off the board even
+        # teacher-less ("unplaced", empty in practice), and the sections placed
+        # with their engine teacher released ("released", fix plan D-B).
+        **(
+            {
+                "instructor_availability": {
+                    "ranked_last": availability_ranked_last,
+                    "unplaced": availability_unplaced,
+                    "released": availability_released,
+                }
+            }
+            if availability
             else {}
         ),
     }
@@ -2829,6 +3298,19 @@ def _build_scenario_result(scenario_id: int) -> dict:
     }
 
 
+def _with_greedy_availability_reports(result: dict, greedy: dict) -> dict:
+    """``result`` (rebuilt from the database) with each board's greedy
+    ``instructor_availability`` report carried over (fix plan D-N): the sections
+    placed against a fixed teacher's rule, and those released from an engine
+    teacher, are reported by every strategy. A board whose greedy carried no
+    report (no rule binds a teacher of the scenario) gains nothing."""
+    for label, board_result in greedy.items():
+        report = board_result.get("instructor_availability")
+        if report is not None and label in result["boards"]:
+            result["boards"][label]["instructor_availability"] = report
+    return result
+
+
 def _merge_board_decision_traces(boards_result: dict) -> dict:
     """Merge per-board ``decision_trace`` dicts into a scenario-level dict.
 
@@ -2890,7 +3372,9 @@ def auto_place_scenario(
         if current_run_seed() is not None
         else nullcontext()
     )
-    with context:
+    # One teaching-time rule read for the whole placement (every board, solve and
+    # pass below); re-entrant under a run's own scope.
+    with context, availability_scope(scenario_id):
         return _auto_place_scenario(
             scenario_id,
             strategy=strategy,
@@ -2997,20 +3481,18 @@ def _auto_place_scenario(
     # Load-balanced: greedy build + redistribution
     if strategy == "load_balanced":
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
-        for board in boards:
-            auto_place_board(board.id, strategy="compact")
+        greedy = {board.label: auto_place_board(board.id, strategy="compact") for board in boards}
         from core.services.timetable_load_balanced import rebalance_scenario
 
         rebalance_scenario(scenario_id, max_seconds_per_board=_cap(5.0))
         # Re-query actual DB state after rebalancing
-        return _build_scenario_result(scenario_id)
+        return _with_greedy_availability_reports(_build_scenario_result(scenario_id), greedy)
 
     # Hybrid: greedy build + simulated annealing improvement
     if strategy == "hybrid":
         # Phase 1: greedy (compact) — build feasible solution
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
-        for board in boards:
-            auto_place_board(board.id, strategy="compact")
+        greedy = {board.label: auto_place_board(board.id, strategy="compact") for board in boards}
 
         # Phase 2: simulated annealing improvement
         from core.services.timetable_local_search import optimize_scenario
@@ -3018,7 +3500,7 @@ def _auto_place_scenario(
         sa_result = optimize_scenario(scenario_id, max_seconds_per_board=_cap(5.0))
 
         # Re-query actual DB state after SA optimization
-        result = _build_scenario_result(scenario_id)
+        result = _with_greedy_availability_reports(_build_scenario_result(scenario_id), greedy)
         result["optimization"] = sa_result
         return result
 

@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from itertools import product
 
+from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.timetable_assignment_models import (
     CanonicalPattern,
     RoomOccupancy,
@@ -29,6 +30,7 @@ from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
     before_meetings_of,
+    move_adds_availability_violation,
     move_exceeds_instructor_daily_cap,
     move_introduces_day_run,
     move_introduces_instructor_clash,
@@ -362,8 +364,15 @@ def chain_local_search(
     chain_time_limit_seconds: float | None = None,
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
     course_tiers: dict[str, str] | None = None,
+    *,
+    instructor_availability: InstructorAvailability = EMPTY_AVAILABILITY,
 ) -> TimetableEvaluationResult:
     """Chain-2 local search — runs AFTER single-move search exhausts.
+
+    ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a chain
+    that leaves a moved section with a meeting its charged teacher may not teach
+    and the section did not already have is rejected (fix plan D-D, strict),
+    judged against the section's FIRST snapshot.
 
     For each iteration:
       1. Generate chain-2 moves from current diagnostics
@@ -479,6 +488,18 @@ def chain_local_search(
             # of a section both legs moved is its first snapshot's.
             if day_spread_on and move_introduces_day_run(
                 sections_by_id,
+                before_meetings_of([*snap_a.snapshots, *snap_b.snapshots]),
+            ):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                chains_tried += 1
+                continue
+
+            # Teaching-time rules: neither leg may leave a moved section with a
+            # forbidden meeting it did not already have (its first snapshot).
+            if instructor_availability and move_adds_availability_violation(
+                sections_by_id,
+                section_instructor_ids or {},
+                instructor_availability,
                 before_meetings_of([*snap_a.snapshots, *snap_b.snapshots]),
             ):
                 _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)

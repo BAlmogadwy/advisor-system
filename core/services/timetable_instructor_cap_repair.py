@@ -56,6 +56,13 @@ from core.services.timetable_board_persistence import (
 from core.services.timetable_constraints import days_form_day_run
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_flags import is_section_day_spread_enabled
+from core.services.timetable_instructor_availability import (
+    availability_for,
+    meetings_blocked,
+    online_exemption,
+    rule_ids,
+    section_online_exempt,
+)
 from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_online_windows import active_online_windows
 from core.services.timetable_pr4_instructor import (
@@ -125,6 +132,50 @@ def _repair_slot_domain(
             if _to_min(slot["end"]) - _to_min(slot["start"]) == duration
         )
     )
+
+
+def _availability_guard(availability, online_lookup, copies_by_id, instr_ids, course_online=None):
+    """``(placement, day, start, end) -> True`` when moving ``placement`` there
+    would put it in a cell its charged teacher may not teach
+    (``TIMETABLE_INSTRUCTOR_AVAILABILITY``); None while no rule binds.
+
+    The one online exemption (fix plan D-A, ``section_online_exempt``): a
+    meeting online on every board it sits on AND, for a budgeted course, on
+    every board of its term (``course_online``: planner course key -> bool, None
+    without a budget; the scope's ``online_exemption(...).course_online_everywhere``)
+    is never bound. The ruled ids of a placement are worked out once (its
+    teachers do not change in a repair).
+    """
+    if not availability:
+        return None
+    ruled_by_pk: dict[object, tuple[int, ...]] = {}
+
+    def ruled(placement) -> tuple[int, ...]:
+        key = placement.pk
+        if key not in ruled_by_pk:
+            copies = copies_by_id.get(placement.pk) or [placement]
+            section = placement.term_section
+            exempt = section_online_exempt(
+                [
+                    online_lookup.is_online_course_for_board(
+                        copy.board, _display_code(copy.term_section)
+                    )
+                    for copy in copies
+                ],
+                course_online(section.course_key or section.course_code)
+                if course_online is not None
+                else None,
+            )
+            ruled_by_pk[key] = () if exempt else rule_ids(availability, instr_ids(placement))
+        return ruled_by_pk[key]
+
+    def into_blocked(placement, day: str, start: str, end: str) -> bool:
+        ids = ruled(placement)
+        return bool(ids) and meetings_blocked(
+            availability, ids, [(_day_idx(day), _to_min(start), _to_min(end))]
+        )
+
+    return into_blocked
 
 
 def _display_code(section: TermSection) -> str:
@@ -315,6 +366,16 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     def _instr_ids(p) -> frozenset:
         return cap_map.get(_sid(p), frozenset())
 
+    # Teaching-time rules: never relocate a session INTO a cell its teacher may
+    # not teach, and never unplace one because of a rule (owner decision G.2).
+    into_blocked = _availability_guard(
+        availability_for(scenario_id),
+        online_lookup,
+        copies_by_id,
+        _instr_ids,
+        course_online=online_exemption(scenario_id).course_online_everywhere,
+    )
+
     # ── Scenario-wide occupancy, kept in sync as we apply moves ──
     count: dict[tuple[object, str], int] = {}
     section_days: dict[int, set[str]] = {}
@@ -371,8 +432,9 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     touched: dict[int, object] = {}
     touched_boards: set[int] = set()
 
-    def _candidate_slots(p, iid_set):
-        """Yield structurally-feasible (day2, s2, e2) targets for ``p``."""
+    def _candidate_slots(p, iid_set, *, honour_availability: bool = True):
+        """Yield structurally-feasible (day2, s2, e2) targets for ``p`` (never a
+        cell its teacher may not teach unless ``honour_availability`` is off)."""
         from core.services.timetable_assignment_models import SectionMeeting  # noqa: F401
 
         slots = _repair_slot_domain(scenario, p, online_lookup)
@@ -386,6 +448,8 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 continue
             for s2, e2 in slots:
                 if (day2, s2) in blocked:
+                    continue
+                if honour_availability and into_blocked and into_blocked(p, day2, s2, e2):
                     continue
                 if any((day2, s2) in instr_slots.get(iid, set()) for iid in iid_set):
                     continue
@@ -402,6 +466,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
             iid, day = entry["instructor_id"], entry["day"]
             excess = count.get((iid, day), 0) - cap
             online_blocked = False
+            availability_blocked = False
             day_ps = sorted(
                 (
                     p
@@ -456,6 +521,21 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         break
 
                 if best is None:
+                    if into_blocked and any(
+                        True for _slot in _candidate_slots(p, iid_set, honour_availability=False)
+                    ):
+                        # Every cap-relieving relocation is a time its teacher may
+                        # not teach: keep the session and report the over-cap day,
+                        # never unplace a class because of a rule.
+                        report.setdefault("availability_blocked", []).append(
+                            {
+                                "section": f"{p.term_section.course_code} {p.term_section.section}",
+                                "slot": f"{old[0]} {old[1]}",
+                                "instructor_id": iid,
+                            }
+                        )
+                        availability_blocked = True
+                        continue
                     if online_lookup.is_online_course_for_board(
                         p.board, _display_code(p.term_section)
                     ):
@@ -463,6 +543,19 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         # Keep the session and report the remaining violation rather
                         # than changing modality or silently deleting its teaching.
                         online_blocked = True
+                        continue
+                    if availability_blocked:
+                        # A rule already kept a session of this over-cap day
+                        # (fix plan D-E): without that rule it would have been
+                        # relocated and this one never tried, so never unplace
+                        # here either. Keep it and report it with the first.
+                        report["availability_blocked"].append(
+                            {
+                                "section": f"{p.term_section.course_code} {p.term_section.section}",
+                                "slot": f"{old[0]} {old[1]}",
+                                "instructor_id": iid,
+                            }
+                        )
                         continue
                     # No cap-satisfying, clash-free slot exists on ANY other day
                     # (all at cap, blocked, or overlapping). Only now unplace, as
@@ -523,6 +616,8 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         **(
                             {"reason": "no_online_slot_preserving_duration"}
                             if online_blocked
+                            else {"reason": "instructor_unavailable_elsewhere"}
+                            if availability_blocked
                             else {}
                         ),
                     }
@@ -620,6 +715,17 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
 
     def _physical_key(p: SectionPlacement) -> tuple[int, str, str, str]:
         return p.term_section_id, p.day.upper(), p.start_time, p.end_time
+
+    # Teaching-time rules: no generator ever offers a cell the mover's teacher
+    # may not teach; a mover left without a target stays a reported clash
+    # (owner decision G.3).
+    into_blocked = _availability_guard(
+        availability_for(scenario_id),
+        online_lookup,
+        copies_by_id,
+        _instr_ids,
+        course_online=online_exemption(scenario_id).course_online_everywhere,
+    )
 
     locked_physical = {_physical_key(p) for p in placements if p.is_locked}
     locked_sections = {p.term_section_id for p in placements if p.is_locked} | divergent_sections
@@ -803,6 +909,7 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 if (day, start) not in blocked
                 and (day, start, end)
                 != (placement.day.upper(), placement.start_time, placement.end_time)
+                and not (into_blocked and into_blocked(placement, day, start, end))
             ]
 
         def check(changes: list[tuple[SectionPlacement, str, str, str]]) -> tuple[int, ...] | None:
@@ -986,6 +1093,8 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 continue
             for s2, e2 in slots:
                 if (day2, s2) in blocked:
+                    continue
+                if into_blocked and into_blocked(p, day2, s2, e2):
                     continue
                 if any(slot_count.get((iid, day2, s2), 0) > 0 for iid in iid_set):
                     continue  # clash-free target

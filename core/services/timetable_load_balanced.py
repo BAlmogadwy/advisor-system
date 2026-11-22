@@ -47,6 +47,11 @@ from core.services.timetable_board_persistence import (
 )
 from core.services.timetable_course_policy import get_course_meeting_policy
 from core.services.timetable_flags import is_section_day_spread_enabled
+from core.services.timetable_instructor_availability import (
+    availability_for,
+    online_exempt_sections,
+    prune_relocate_domains,
+)
 from core.services.timetable_local_search import (
     _apply_move,
     _capture_persist_guard,
@@ -378,6 +383,18 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         i: [valid_opts.get((i, m), []) for m in range(len(meetings))]
         for i, meetings in schedule.items()
     }
+    # Teaching-time rules (TIMETABLE_INSTRUCTOR_AVAILABILITY): the relocate cells
+    # and policy bundles a ruled charged teacher may not teach leave the domains,
+    # before the first draw (every other section keeps its very list).
+    availability = availability_for(board.scenario_id)
+    if availability:
+        prune_relocate_domains(
+            availability,
+            sections,
+            valid_options,
+            {f"{s['course_key']}|{s['label']}": s["instructor_ids"] for s in sections},
+            exempt=online_exempt_sections(board.scenario_id),
+        )
 
     # Iterative improvement
     current_score = score_before

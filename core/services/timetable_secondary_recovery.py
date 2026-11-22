@@ -15,6 +15,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
+from core.services.instructor_availability import EMPTY_AVAILABILITY, InstructorAvailability
 from core.services.timetable_assignment_models import (
     CanonicalPattern,
     SectionState,
@@ -25,6 +26,7 @@ from core.services.timetable_assignment_models import (
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_constraints import (
     before_meetings_of,
+    move_adds_availability_violation,
     move_exceeds_instructor_daily_cap,
     move_introduces_day_run,
     move_introduces_instructor_clash,
@@ -40,6 +42,7 @@ from core.services.timetable_local_search_v2 import (
     generate_swap_moves,
 )
 from core.services.timetable_optimisation_policy import (
+    availability_violation_count,
     instructor_schedule_metrics,
     instructor_schedule_regressions,
     schedule_metrics_of,
@@ -68,6 +71,7 @@ def _student_safety_ok(
         len(old) == len(new)
         and all(a <= b for a, b in zip(new[:4], old[:4], strict=True))
         and candidate.instructor_overload_count <= incumbent.instructor_overload_count
+        and availability_violation_count(candidate) <= availability_violation_count(incumbent)
     )
 
 
@@ -150,8 +154,14 @@ def recover_secondary_quality(
     first_improvement: bool = True,
     max_polish_iterations: int = 4,
     room_shortage_target: int | None = None,
+    instructor_availability: InstructorAvailability = EMPTY_AVAILABILITY,
 ) -> dict[str, Any]:
     """Return a Pareto improvement in soft seats and physical room shortages.
+
+    ``instructor_availability`` (``TIMETABLE_INSTRUCTOR_AVAILABILITY``): a move
+    that takes any meeting of a moved section into a time its charged teacher
+    may not teach is a structural rejection (fix plan D-D, strict: a forbidden
+    meeting the section already had may stay where it is).
 
     Input sections and the database remain unchanged. Every committed move
     ratchets both secondary counts and each teacher's days/idle. The deadline is
@@ -291,6 +301,15 @@ def recover_secondary_quality(
                         and is_instructor_daily_cap_enabled()
                         and move_exceeds_instructor_daily_cap(
                             sections, section_instructor_ids, get_instructor_daily_cap(), moved
+                        )
+                    )
+                    or (
+                        instructor_availability
+                        and move_adds_availability_violation(
+                            sections,
+                            section_instructor_ids or {},
+                            instructor_availability,
+                            before_meetings_of(snapshot.snapshots),
                         )
                     )
                 ):

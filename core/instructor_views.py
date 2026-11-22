@@ -137,17 +137,12 @@ def _time_rules_enforced() -> bool:
 
     The rules editor tells staff the truth either way: the builder honours a
     rule only when its setting is on and one teacher per section is active (a
-    rule binds the one teacher a section is charged to). The setting is
-    declared by the engine change that reads it; until then it reads as off.
+    rule binds the one teacher a section is charged to). This asks the engine's
+    own switch, so the sentence on the page can never disagree with the builder.
     """
-    from django.conf import settings
+    from core.services.timetable_instructor_availability import rules_enabled
 
-    from core.services.timetable_flags import is_one_teacher_active
-
-    return (
-        bool(getattr(settings, "TIMETABLE_INSTRUCTOR_AVAILABILITY", False))
-        and is_one_teacher_active()
-    )
+    return rules_enabled()
 
 
 # ── Roster CRUD ──────────────────────────────────────────────────
