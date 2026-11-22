@@ -544,6 +544,19 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         # than changing modality or silently deleting its teaching.
                         online_blocked = True
                         continue
+                    if availability_blocked:
+                        # A rule already kept a session of this over-cap day
+                        # (fix plan D-E): without that rule it would have been
+                        # relocated and this one never tried, so never unplace
+                        # here either. Keep it and report it with the first.
+                        report["availability_blocked"].append(
+                            {
+                                "section": f"{p.term_section.course_code} {p.term_section.section}",
+                                "slot": f"{old[0]} {old[1]}",
+                                "instructor_id": iid,
+                            }
+                        )
+                        continue
                     # No cap-satisfying, clash-free slot exists on ANY other day
                     # (all at cap, blocked, or overlapping). Only now unplace, as
                     # the documented last resort, so the hard cap still holds.

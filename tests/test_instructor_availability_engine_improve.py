@@ -310,3 +310,53 @@ def test_the_english_bundle_search_never_trades_a_forbidden_bundle_for_another(
     assert report["evaluated"] >= 1
     assert starts == ({"09:00"} if afternoon_thu else {"13:00"})
     assert report["accepted"] == (0 if afternoon_thu else 1)
+
+
+# ── D-E: the cap repair never unplaces because of a rule ─────────────────
+
+
+def _cap_board(name: str):
+    """repairs:R1's fixture. Cap 3, one teacher (Dr Run). THU holds C2 09:00,
+    C3 10:30, C4 13:00-13:50 (a 50-minute meeting no slot fits: it has no
+    relocation at all) and C1 14:30 (C1 also meets SUN and TUE, so it may only go
+    to MON or WED). Sessions are tried latest first: C1, then C4."""
+    return _instructor_board(
+        name,
+        [
+            ("C2", "S1", [("THU", "09:00", "10:15")]),
+            ("C3", "S1", [("THU", "10:30", "11:45")]),
+            ("C4", "S1", [("THU", "13:00", "13:50")]),
+            (
+                "C1",
+                "S1",
+                [("SUN", "09:00", "10:15"), ("TUE", "09:00", "10:15"), ("THU", "14:30", "15:45")],
+            ),
+        ],
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@RULES_OR_EMPTY
+def test_cap_repair_never_unplaces_a_session_because_a_rule_kept_another(
+    repair_flags, monkeypatch, rules
+) -> None:
+    """D-E: Dr Run may not teach on MON or WED, so C1 is kept on THU (reported).
+    C4 has no relocation at all; without the rule C1 would have relieved the day
+    and C4 would never have been tried, so C4 is kept and reported too, never
+    unplaced. Control: an empty availability moves C1 to MON and unplaces nothing."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_daily_overloads
+    from tests.test_instructor_availability_engine import _course_days, _unavailable
+
+    scenario = _cap_board(f"d-e {rules}")
+    _inject(monkeypatch, _unavailable(_dr(), "MON", "WED") if rules else EMPTY_AVAILABILITY)
+
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["unplaced"] == []
+    assert _course_days(scenario, "C4") == ["THU"]
+    if rules:
+        assert [row["section"] for row in report["availability_blocked"]] == ["C1 S1", "C4 S1"]
+        assert "THU" in _course_days(scenario, "C1")
+    else:
+        assert "availability_blocked" not in report
+        assert _course_days(scenario, "C1") == ["SUN", "MON", "TUE"]
