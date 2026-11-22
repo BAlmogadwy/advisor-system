@@ -4147,19 +4147,99 @@ def test_a_rule_edit_changes_the_repair_analysis_fingerprint(av_on, flag) -> Non
 # ── D + H10: a rule on a teacher the run never charges ────────────────
 
 
-def _uncharged_rule() -> None:
-    """Dr Fahd may teach AI124 (AI2) but the corpus charges Dr Amal with every
-    AI124 section: a rule for him binds no charged section (H10)."""
-    rule(Instructor.objects.get(full_name="Dr Fahd"), KIND_UNAVAILABLE)
+#: Eligible for DS210 (a co-lecturer link) but never charged: every DS210
+#: section is pinned to Dr Hani, so no stage may pick Dr Nour.
+UNCHARGED = "Dr Nour"
+
+
+def _uncharged_rule(scenario) -> None:
+    """D-I (construction:CON-6, improvement:F3, identity:F7): Dr Nour may teach
+    DS210 and has an all-week rule, but every DS210 section is pinned to Dr Hani,
+    so with the flag OFF he is provably never charged (the test asserts it)."""
+    from core.models import CourseInstructor, SectionInstructor
+    from core.services.course_identity import planner_course_key
+
+    nour = ots.instructor(UNCHARGED)
+    CourseInstructor.objects.create(
+        program="DS", course_code="DS210", section="M", instructor=nour, role="co"
+    )
+    hani = Instructor.objects.get(full_name="Dr Hani")
+    key = planner_course_key("DS210", "DATA VISUALISATION")
+    for label in ("S1", "S2"):
+        SectionInstructor.objects.create(
+            scenario=scenario,
+            course_key=key,
+            section=label,
+            instructor=hani,
+            role=sta.ROLE_PRIMARY,
+            source=sta.SOURCE_DEPARTMENT,
+        )
+    rule(nour, KIND_UNAVAILABLE)
+
+
+def _leaves(value, prefix: str = ""):
+    """``(path, leaf)`` for every leaf of a JSON-like value (paths as ``_key_paths``)."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            name = "#" if str(key).lstrip("-").isdigit() else str(key)
+            yield from _leaves(inner, f"{prefix}.{name}")
+    elif isinstance(value, list | tuple):
+        for inner in value:
+            yield from _leaves(inner, f"{prefix}[]")
+        if not value:
+            yield prefix, value
+    else:
+        yield prefix, value
+
+
+def _h10_run(settings, flag: bool) -> dict:
+    """Build, Optimise Current, roll back. Returns the persisted board, the result
+    and who the map charged and could charge at each stage."""
+    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+    from tests.test_one_teacher_flag_parity import build_corpus, capture_board
+
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    out: dict = {"charged": [], "universe": []}
+
+    def read(scenario) -> None:
+        assignment = sta.load_assignment(scenario.id, incomplete="collect")
+        out["charged"].append({t for ts in assignment.v2_map().values() for t in ts})
+        out["universe"].append(set(assignment.universe))
+
+    try:
+        with transaction.atomic():
+            scenario = build_corpus(11)
+            _uncharged_rule(scenario)
+            read(scenario)
+            auto_place_scenario(scenario.id, strategy="compact")
+            read(scenario)
+            result = run_v2_optimisation_guarded(
+                scenario.id, mode="current", max_iterations=2, run_chain=False, run_cpsat=False
+            )
+            read(scenario)
+            out["board"] = json.loads(json.dumps(capture_board(scenario), default=str))
+            out["result"] = json.loads(json.dumps(result, default=str))
+            out["nour"] = Instructor.objects.get(full_name=UNCHARGED).pk
+            raise _Rollback
+    except _Rollback:
+        pass
+    return out
 
 
 @pytest.mark.django_db
 def test_a_rule_on_a_never_charged_teacher_leaves_the_board_and_the_catalogue_alone(
     day_spread_golden_flags,
 ) -> None:
-    """H10 / D.1: Optimise Current persists the very board of the flag-off run, and
-    the catalogue built for the run's map is the plain one (additive report keys
-    may appear: the rule binds a teacher of the universe)."""
+    """H10 / fix plan D-I (owner decision): a rule on a teacher who is ELIGIBLE for
+    a course of the scenario is not an inert state (it may change who is picked),
+    so it is owed no byte identity of the RESULT: additive report keys ARE
+    accepted. Byte identity is owed only to the flag off, the flag on with no
+    rule row, rules only for instructors outside the universe, and the one
+    teacher switch off (T-P1a-c). What IS owed here, for a teacher eligible but
+    provably never charged (asserted with the flag off): the persisted board is
+    identical, every key of the flag-off result is still there, every additive
+    key carries a zero, and the catalogue built for the run's map is the plain one."""
     from core.services.timetable_autoplace import auto_place_scenario
     from core.services.timetable_optimizer_v2 import (
         _build_pattern_catalog_for_scenario,
@@ -4167,20 +4247,28 @@ def test_a_rule_on_a_never_charged_teacher_leaves_the_board_and_the_catalogue_al
     )
     from tests.test_one_teacher_flag_parity import build_corpus
 
-    off_board, _keys = _current_run(
-        day_spread_golden_flags, False, _no_rules, after_corpus=_uncharged_rule
-    )
-    on_board, _keys = _current_run(
-        day_spread_golden_flags, True, _no_rules, after_corpus=_uncharged_rule
-    )
-    assert on_board == off_board
+    off = _h10_run(day_spread_golden_flags, False)
+    on = _h10_run(day_spread_golden_flags, True)
+
+    # Precondition: eligible at every read, charged at none (flag off and on).
+    for run in (off, on):
+        assert all(run["nour"] in universe for universe in run["universe"])
+        assert not any(run["nour"] in charged for charged in run["charged"])
+    assert on["board"] == off["board"]
+    off_keys, on_keys = _key_paths(off["result"]), _key_paths(on["result"])
+    assert off_keys <= on_keys
+    additive = on_keys - off_keys
+    assert ".quality_score.instructor_availability.violations" in additive
+    assert all("availability" in path for path in additive), sorted(additive)
+    carried = {path: leaf for path, leaf in _leaves(on["result"]) if path in additive}
+    assert carried and all(leaf in (0, [], {}) for leaf in carried.values()), carried
 
     scenario = build_corpus(11)
-    _uncharged_rule()
+    _uncharged_rule(scenario)
     auto_place_scenario(scenario.id, strategy="compact")
     charged = sta.load_assignment(scenario.id, incomplete="collect").v2_map()
     availability = helper.availability_for(scenario.id)
-    assert availability  # the rule IS loaded: Dr Fahd is in the teacher universe
+    assert availability  # the rule IS loaded: Dr Nour is in the teacher universe
     assert _build_pattern_catalog_for_scenario(
         scenario.id, **_catalog_rules(availability, charged)
     ) == _build_pattern_catalog_for_scenario(scenario.id)
