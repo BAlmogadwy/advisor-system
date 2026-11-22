@@ -1099,6 +1099,36 @@ def test_when_every_ruled_instructors_own_week_fails_the_ladder_has_one_rung(mon
     assert len(calls) == 2  # the first pass and ONE retry, not the same release twice
 
 
+def test_a_release_that_cannot_help_is_tried_once_per_attempt_not_twice(monkeypatch):
+    """Every ruled instructor fails his own probe (stubbed), so the one rung is
+    'release all'; the problem is infeasible for a reason no instructor has anything
+    to do with (two sections, one cell), so it never helps: one retry per attempt."""
+    import scheduler.solve as solve_module
+
+    calls = []
+    real = solve_module.solve
+
+    def spy(snap, **kwargs):
+        if kwargs.get("alpha") != 1.0:
+            calls.append(1)
+        return real(snap, **kwargs)
+
+    monkeypatch.setattr(solve_module, "solve", spy)
+    monkeypatch.setattr(solve_module, "has_legal_week", lambda *a, **k: False)
+    one_cell = Grid.from_spec(lecture_starts={"09:00": 75}, lab_starts={"09:00": 100}, days=(SUN,))
+    snap = snapshot(
+        [offering("o1")],
+        [Section("o1#S1", "o1", 1, 30, instructor_id=1), Section("o1#S2", "o1", 2, 30)],
+        [person(1, "Dr R", {"o1"}, QUIET)],
+        grid=one_cell,
+    )
+
+    result = plan(snap, time_limit_seconds=8, workers=1)
+
+    assert result.released_instructors == ()
+    assert len(calls) == 4  # the first attempt and the relaxed one, each with ONE retry
+
+
 def test_the_ladder_judges_each_instructor_under_the_options_the_caller_asked_for():
     """No same-hour ceiling was asked for, so Dr Narrow's week is fine and only the
     shut instructor is released; under the default ceiling he would fail too."""
