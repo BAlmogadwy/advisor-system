@@ -988,3 +988,54 @@ def test_the_replacement_changes_nothing_without_an_active_rule(settings, flag) 
     )
     if not flag:
         assert rule_queries(captured.captured_queries) == []
+
+
+def _every_cell_taken(name: str, *, pinned: bool):
+    """Dr A teaches CS101 S1 (pinned, or an engine pick), may not teach on Thursday
+    afternoon, and his pinned CS200 S1 already holds EVERY lecture cell SUN-THU,
+    so every option of CS101 fails the greedy's clash filter."""
+    from core.services.course_identity import planner_course_key
+    from core.services.timetable_autoplace import DEFAULT_SLOTS
+
+    sc, board, key, (a,) = _greedy_scenario(name, pin=pinned)
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="CS200", course_name="OTHER", programme_term=2, credit_hours=3
+    )
+    other = planner_course_key("CS200", "OTHER")
+    ots.budget(sc, other, 1, code="CS200")
+    ots.link("AI", "CS200", a)
+    ots.place(
+        board,
+        ots.section(sc, other, "S1"),
+        [(day, slot["start"], slot["end"]) for day in ALL_DAYS for slot in DEFAULT_SLOTS],
+    )
+    _pin(sc, other, "S1", a)
+    rule(a, KIND_UNAVAILABLE, ("THU",), "13:00", "17:00")
+    return sc, key, a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("pinned", [True, False], ids=["fixed", "engine"])
+def test_only_an_engine_teacher_is_released_when_every_option_clashes(av_on, pinned) -> None:
+    """fix plan D-B, F1: a FIXED teacher (pinned here) is never released, whatever
+    the clash filter leaves him: nothing is reported released and the section stays
+    unplaced (a release would place it teacher-less while the map still charges the
+    pin, a clash for a pinned teacher). Control: the same board with Dr A as an
+    ENGINE pick releases him and places the section."""
+    sc, key, a = _every_cell_taken(f"f1 {pinned}", pinned=pinned)
+
+    with helper.availability_scope(sc.id):
+        if pinned:
+            result = _greedy(sc)
+        else:
+            with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+                result = _greedy(sc)
+
+    report = _board_result(result)["instructor_availability"]
+    if pinned:
+        assert report["released"] == []
+        assert _placed_meetings(sc, key) == []
+    else:
+        assert report["released"] == [{"section": f"{key}|S1", "instructor_ids": [a.pk]}]
+        assert len(_placed_meetings(sc, key)) == 2
+    assert report["ranked_last"] == []
