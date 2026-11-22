@@ -457,3 +457,135 @@ def test_the_display_door_never_touches_the_writers_checker_and_sees_a_write(av_
         assert [r["instructor_id"] for r in second["teacher_rule_violations"]] == [a.pk]
         holder = helper._holder(sc.id)
         assert holder is not None and holder.checker is None and holder.display is not None
+
+
+# ── Commit 3: publish readiness ───────────────────────────────────────────
+
+RULE_CODE = "board_teacher_rule_violations"
+
+
+def readiness(http, sc) -> dict:
+    response = http.get(f"/ops/tw/scenarios/{sc.id}/readiness/")
+    assert response.status_code == 200, response.content
+    return response.json()["readiness"]
+
+
+def rule_items(report: dict) -> list[dict]:
+    return [i for i in report["warning_items"] if i["code"] == RULE_CODE]
+
+
+@pytest.mark.django_db
+def test_readiness_warns_once_per_physical_meeting_and_never_blocks(av_on, http, settings) -> None:
+    """R-1: a meeting shared by two boards is one warning, on the first board, and
+    nothing about it blocks."""
+    sc, _board, _key, s1, s2, _a, _b = build_ruled()
+    other = second_board(sc, s1)
+    ots.place(other, s2, [("MON", "09:00", "10:15")])  # a second, board-4-only violation
+    SectionPlacement.objects.filter(term_section=s1, day="SUN").update(
+        start_time="09:00", end_time="10:15"
+    )
+
+    on = readiness(http, sc)
+    item, later = rule_items(on)
+    assert (later["board_label"], later["count"]) == ("Term 4", 1)
+
+    assert item["board_label"] == "Term 2"
+    assert item["count"] == 1
+    assert item["params"] == {"teachers": ["Dr A"]}
+    text = "Board “Term 2”: 1 meeting(s) outside the teacher’s teaching times."
+    assert on["warnings"][on["warning_items"].index(item)] == text
+    assert on["warning_items"][-2:] == [item, later]  # after every other stage, in board order
+
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    off = readiness(http, sc)
+    assert rule_items(off) == []
+    assert [i["code"] for i in on["blocker_items"]] == [i["code"] for i in off["blocker_items"]]
+    assert on["ready"] == off["ready"]
+    assert [i for i in on["warning_items"] if i["code"] != RULE_CODE] == off["warning_items"]
+
+
+@pytest.mark.django_db
+def test_board_warnings_count_only_conflict_warnings(av_on, http, monkeypatch) -> None:
+    """R-2: a non-blocking overlap warning plus one violation: ``board_warnings``
+    counts the overlap only; with the violation alone there is no such item."""
+    sc, board, _key, s1, _s2, _a, _b = build_ruled()
+    SectionPlacement.objects.filter(term_section=s1, day="SUN").update(
+        start_time="09:00", end_time="10:15"
+    )
+    assert [i for i in readiness(http, sc)["warning_items"] if i["code"] == "board_warnings"] == []
+
+    real = tws.detect_board_conflicts
+
+    def with_an_overlap_warning(board_id):
+        result = real(board_id)
+        result["overlaps"].append({"ids": [1, 2], "severity": "warning", "same_course": False})
+        result["summary"]["warning"] += 1
+        return result
+
+    monkeypatch.setattr(tws, "detect_board_conflicts", with_an_overlap_warning)
+    [item] = [i for i in readiness(http, sc)["warning_items"] if i["code"] == "board_warnings"]
+    assert item["count"] == 1
+    assert len(rule_items(readiness(http, sc))) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("state", STATES)
+def test_readiness_is_byte_identical_while_no_rule_binds(av_on, http, state) -> None:
+    """R-3."""
+    sc, _board, _key, _s1, _s2, a, b = build_ruled(ruled=None)
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    url = f"/ops/tw/scenarios/{sc.id}/readiness/"
+    base_json, base_queries = fetch(http, url)
+    enter_state(av_on, state, a, b)
+    state_json, state_queries = fetch(http, url)
+
+    assert state_json == base_json
+    assert RULE_CODE not in state_json
+    if state == "flag_off_with_rules":
+        assert state_queries == base_queries
+
+
+@pytest.mark.django_db
+def test_publish_reads_each_thing_once_and_adds_a_fixed_cost(av_on, http, monkeypatch) -> None:
+    """C-5 (publish half): a refused publish (a board without placements blocks it)
+    reads the rule table, the teacher rows and the names once, and the door adds the
+    same fixed number of reads as for the readiness view."""
+    sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    DeliveryBoard.objects.create(
+        scenario=sc, label="Empty", nominal_term=6, program="AI", display_order=3
+    )
+    SectionPlacement.objects.filter(term_section=s1).update(start_time="09:00", end_time="10:15")
+    url = f"/ops/tw/scenarios/{sc.id}/publish/"
+
+    def publish():
+        with CaptureQueriesContext(connection) as captured:
+            response = http.post(url, data="{}", content_type="application/json")
+        assert response.status_code == 400, response.content
+        return captured
+
+    publish()  # warm up
+    captured = publish()
+    monkeypatch.setattr(tws, "_display_rule_checker", lambda _sid: None)
+    patched = publish()
+
+    assert sql_reads(captured, '"instructor_time_rules"') == 1
+    assert sql_reads(captured, '"section_instructors"') == 1
+    assert (
+        sql_reads(captured, 'AS "pk", "instructors"."full_name" AS "full_name" FROM "instructors"')
+        == 1
+    )
+    assert len(captured) - len(patched) == DISPLAY_COST
+
+
+@pytest.mark.django_db
+def test_a_forbidden_move_leaves_readiness_ready_and_shows_the_item(av_on, http) -> None:
+    """C-6 (readiness half, owner ruling): the move is saved; readiness is as ready as
+    before and now carries the warning."""
+    sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    before = readiness(http, sc)
+    assert move(http, placement_of(s1, "SUN"), "SUN", "09:00", "10:15").status_code == 200
+    after = readiness(http, sc)
+
+    assert after["ready"] == before["ready"]
+    assert after["blocker_items"] == before["blocker_items"]
+    assert len(rule_items(after)) == 1 and rule_items(before) == []

@@ -6002,6 +6002,9 @@ def check_publish_readiness(
           online-only window (the owner's rule: only online courses meet
           there; nothing in the estate is open in the evening). Never a
           blocker, and no write is refused for it.
+        - A meeting at a time its charged teacher's teaching-time rules forbid
+          (only with TIMETABLE_INSTRUCTOR_AVAILABILITY and a rule binding a
+          charged teacher; never a blocker, no write refuses it).
         - A course the scenario teaches in a weekly shape of its own (two
           100-minute meetings) has a placed section of another shape, or has
           no in-person 100-minute column for its in-person sections. Never a
@@ -6060,7 +6063,8 @@ def check_publish_readiness(
         Warning codes:
 
         ``board_warnings``
-            board / conflict warnings on the board / {}.
+            board / conflict warnings on the board (the teaching-time rows below
+            are not counted here) / {}.
         ``cross_board_conflicts``
             no board / cross-board pairs at or over the threshold /
             ``threshold``: ``HARD_OVERLAP_THRESHOLD`` (shared students).
@@ -6107,6 +6111,10 @@ def check_publish_readiness(
             checks above decide it). English bundles have their own table and
             are never in one. After the stages above, in board order, then
             day, start, course and section.
+        ``board_teacher_rule_violations``
+            board of the section's first placement / meetings (each physical
+            meeting once) / ``teachers``: sorted names. After every other
+            stage, in board order.
     """
     from django.db.models import Q
 
@@ -6151,6 +6159,7 @@ def check_publish_readiness(
     for _day, _start in blocked_set:
         blocked_q |= Q(day=_day, start_time=_start)
 
+    rows_by_board: dict[int, list[dict]] = {}
     for board in board_list:
         placed = SectionPlacement.objects.filter(board=board).count()
         if placed == 0:
@@ -6165,6 +6174,9 @@ def check_publish_readiness(
             if conflicts_by_board is not None
             else detect_board_conflicts(board.id)
         )
+        rule_rows = conflicts.get("teacher_rule_violations")
+        if rule_rows is not None:
+            rows_by_board[board.id] = rule_rows
         if conflicts["summary"]["critical"] > 0:
             block(
                 f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts",
@@ -6220,10 +6232,13 @@ def check_publish_readiness(
                 _readiness_item("board_sections_without_rooms", board, count=unassigned_rooms),
             )
 
-        if conflicts["summary"]["warning"] > 0 and not (room_clashes > 0 and has_rooms):
+        # The teaching-time rows have a warning of their own below; while the key
+        # is absent ``plain`` is exactly ``summary.warning``.
+        plain = conflicts["summary"]["warning"] - len(rule_rows or ())
+        if plain > 0 and not (room_clashes > 0 and has_rooms):
             warn(
-                f"Board '{board.label}': {conflicts['summary']['warning']} warnings",
-                _readiness_item("board_warnings", board, count=conflicts["summary"]["warning"]),
+                f"Board '{board.label}': {plain} warnings",
+                _readiness_item("board_warnings", board, count=plain),
             )
 
     # Cross-board conflicts: high-overlap pairs are warnings
@@ -6445,5 +6460,32 @@ def check_publish_readiness(
                 end=window["end"],
             ),
         )
+
+    # Teaching-time rules (slice C): a meeting its charged teacher's rules forbid is
+    # a warning, never a blocker. Each physical meeting counts ONCE, on the board of
+    # the section's first placement (as the section pattern checks attribute it).
+    if rows_by_board:
+        home: dict[int, int] = {}
+        for placement in scenario_placements:
+            home.setdefault(placement.term_section_id, placement.board_id)
+        meetings_by_board: dict[int, dict[tuple, str]] = {}
+        for board_id, rows in rows_by_board.items():
+            for row in rows:
+                key = (row["term_section_id"], row["day"], row["start"], row["end"])
+                meetings_by_board.setdefault(home.get(row["term_section_id"], board_id), {})[
+                    key
+                ] = row["instructor"]
+        for board in sorted(board_list, key=lambda b: (b.display_order, b.id)):
+            meetings = meetings_by_board.get(board.id)
+            if not meetings:
+                continue
+            count = len(meetings)
+            teachers = sorted({name for name in meetings.values() if name})
+            warn(
+                f"Board “{board.label}”: {count} meeting(s) outside the teacher’s teaching times.",
+                _readiness_item(
+                    "board_teacher_rule_violations", board, count=count, teachers=teachers
+                ),
+            )
 
     return outcome()
