@@ -4536,7 +4536,11 @@ def test_the_switch_the_hot_path_read_and_the_loaders_are_opened_only_where_pinn
 
 #: Who may ask the workspace's display door (slice C): the conflict check and the
 #: slot previews; never a write path, validation or a view.
-DISPLAY_DOOR_USERS = {"detect_board_conflicts"}
+DISPLAY_DOOR_USERS = {
+    "detect_board_conflicts",
+    "preview_placement_slot_candidates",
+    "preview_planned_section_slot_candidates",
+}
 
 
 def _top_level_functions_naming(path: str, name: str) -> set[str]:
@@ -4563,3 +4567,6 @@ def test_only_the_conflict_check_and_the_previews_use_the_display_door() -> None
         _top_level_functions_naming("core/timetable_workspace_views.py", "_display_rule_checker")
         == set()
     )
+    assert _top_level_functions_naming(
+        "core/services/timetable_move_outcome.py", "_display_rule_checker"
+    ) == {"preview_placement_student_outcome_candidates"}

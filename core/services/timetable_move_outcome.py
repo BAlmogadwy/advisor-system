@@ -95,6 +95,12 @@ def preview_placement_student_outcome_candidates(
         )
     }
 
+    # Teaching-time rules (slice C), shown only: the automatic pickers read this
+    # field. None while no rule binds a charged teacher: nothing is added.
+    from core.services.timetable_workspace import _display_rule_checker
+
+    rule_checker = _display_rule_checker(scenario_id)
+
     enriched = []
     for row in source_candidates:
         explicit_moves = row.get("moves") if isinstance(row.get("moves"), list) else []
@@ -130,6 +136,15 @@ def preview_placement_student_outcome_candidates(
                         "end": str(pair["end"]),
                     }
                 )
+        # A pair's companion and any explicit move move a SIBLING section too:
+        # judged by the writers' check (the whole bundle of an English section).
+        rule_hit = rule_checker is not None and any(
+            placements_by_id.get(move["placement_id"]) is not None
+            and rule_checker.blocked(
+                placements_by_id[move["placement_id"]], move["day"], move["start"], move["end"]
+            )
+            for move in moves
+        )
         candidate_sections = apply_candidate_moves(
             sections,
             placements_by_id,
@@ -161,6 +176,7 @@ def preview_placement_student_outcome_candidates(
                     (candidate_eval.quality_score or {}).get("penalty") or 0
                 )
                 - int(baseline_quality.get("penalty") or 0),
+                **({"teacher_rule_blocked": True} if rule_hit else {}),
             }
         )
 

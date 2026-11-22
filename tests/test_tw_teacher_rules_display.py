@@ -589,3 +589,358 @@ def test_a_forbidden_move_leaves_readiness_ready_and_shows_the_item(av_on, http)
     assert after["ready"] == before["ready"]
     assert after["blocker_items"] == before["blocker_items"]
     assert len(rule_items(after)) == 1 and rule_items(before) == []
+
+
+# ── Commit 4: the two previews and the student-outcome preview ────────────
+
+
+def move_preview(http, placement, query: str = "verdict=1&offer=manual") -> dict:
+    response = http.get(f"/ops/tw/placements/{placement.id}/slot-candidates/?{query}")
+    assert response.status_code == 200, response.content
+    return response.json()
+
+
+def by_slot(preview: dict) -> dict[tuple[str, str], dict]:
+    return {(c["day"], c["start"]): c for c in preview["candidates"]}
+
+
+def rule_kinds(candidate: dict) -> list[dict]:
+    return [i for i in candidate["verdict"]["items"] if i["issue_kind"] == "teacherRule"]
+
+
+@pytest.mark.django_db
+def test_the_move_verdict_flags_a_forbidden_slot_as_a_warning_and_keeps_it(
+    av_on, http, settings
+) -> None:
+    """V-1."""
+    _sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    sun = placement_of(s1, "SUN")
+    on = move_preview(http, sun)
+    slots = by_slot(on)
+
+    forbidden = slots[("SUN", "09:00")]
+    assert rule_kinds(forbidden) == [
+        {
+            "issue_kind": "teacherRule",
+            "severity": "warning",
+            "source": "teacher_rule",
+            "meeting": None,
+            "other": None,
+            "room": None,
+            "teacher": "Dr A",
+            "students": None,
+            "blocked_students": None,
+        }
+    ]
+    assert forbidden["verdict"]["severity"] == "warning"
+    assert forbidden["teacher_rule_blocked"] is True
+    assert rule_kinds(slots[("SUN", "14:30")]) == [] or ("SUN", "14:30") not in slots
+    assert all("teacher_rule_blocked" not in c for c in on["candidates"] if not rule_kinds(c))
+
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    off = move_preview(http, sun)
+    assert set(by_slot(off)) == set(slots)  # flagged, never removed
+
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = True
+    assert move(http, sun, "SUN", "09:00", "10:15").status_code == 200
+    moved = move_preview(http, placement_of(s1, "SUN"))
+    assert [i["issue_kind"] for i in moved["current_verdict"]["items"]] == ["teacherRule"]
+
+
+@pytest.mark.django_db
+def test_a_forbidden_slot_ranks_below_an_otherwise_equal_slot(av_on, http) -> None:
+    """V-2."""
+    _sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    slots = by_slot(move_preview(http, placement_of(s1, "SUN")))
+    allowed = [c for (d, s), c in slots.items() if d == "WED" and s >= "13:00"]
+    forbidden = slots[("WED", "09:00")]
+    assert allowed and rule_kinds(forbidden)
+    assert all(forbidden["verdict_rank"] > c["verdict_rank"] for c in allowed)
+
+
+def planned_preview(http, board, section: str, key: str, extra: str = "verdict=1") -> dict:
+    response = http.get(
+        f"/ops/tw/boards/{board.id}/planned-slot-candidates/"
+        f"?course_code=AI111&course_key={key}&section_label={section}&{extra}&limit=400"
+    )
+    assert response.status_code == 200, response.content
+    return response.json()
+
+
+def morning_meetings(candidate: dict) -> list[int]:
+    return [i for i, m in enumerate(candidate["meetings"]) if m["start"] < "13:00"]
+
+
+@pytest.mark.django_db
+def test_the_place_verdict_tags_the_forbidden_meeting_of_a_pattern(av_on, http) -> None:
+    """V-3: S2 (an existing section with a stored teacher) offered whole patterns."""
+    _sc, board, key, _s1, _s2, _a, _b = build_ruled()
+    patterns = [
+        c for c in planned_preview(http, board, "S2", key)["candidates"] if c.get("meetings")
+    ]
+    assert patterns
+    flagged = [c for c in patterns if morning_meetings(c)]
+    clean = [c for c in patterns if not morning_meetings(c)]
+    assert flagged and clean
+    for candidate in flagged:
+        items = rule_kinds(candidate)
+        assert sorted(i["meeting"] for i in items) == morning_meetings(candidate)
+        assert candidate["teacher_rule_blocked"] is True
+    for candidate in clean:
+        assert rule_kinds(candidate) == [] and "teacher_rule_blocked" not in candidate
+
+
+@pytest.mark.django_db
+def test_a_new_label_gets_no_teacher_rule_item_and_no_field(av_on, http) -> None:
+    """V-3b (R2): creation re-derives the teacher, so the label's current pick is
+    not who the created section will be charged to."""
+    _sc, board, key, _s1, _s2, _a, _b = build_ruled()
+    preview = planned_preview(http, board, "S9", key)
+    assert preview["candidates"]
+    assert all(
+        rule_kinds(c) == [] and "teacher_rule_blocked" not in c for c in preview["candidates"]
+    )
+
+
+@pytest.mark.django_db
+def test_a_created_section_is_judged_like_its_verdict(av_on, http) -> None:
+    """P-2: create S2 at a forbidden morning; the conflicts list shows it (its stored
+    teacher is Dr A), exactly where the verdict said so."""
+    _sc, board, key, _s1, s2, _a, _b = build_ruled()
+    patterns = [
+        c for c in planned_preview(http, board, "S2", key)["candidates"] if c.get("meetings")
+    ]
+    target = next(c for c in patterns if morning_meetings(c))
+    assert rule_kinds(target)
+
+    response = http.post(
+        "/ops/tw/placements/create-planned/",
+        json.dumps(
+            {
+                "board_id": board.id,
+                "course_code": "AI111",
+                "course_key": key,
+                "section_label": "S2",
+                "capacity": 30,
+                "meetings": [
+                    {"day": m["day"], "start_time": m["start"], "end_time": m["end"]}
+                    for m in target["meetings"]
+                ],
+            }
+        ),
+        content_type="application/json",
+    )
+    assert response.status_code == 201, response.content
+    rows = [
+        r for r in conflicts(http, board)["teacher_rule_violations"] if r["section"] == "AI111-S2"
+    ]
+    assert len(rows) == len(morning_meetings(target))
+
+
+@pytest.mark.django_db
+def test_an_online_course_is_not_flagged_where_it_would_be_exempt(av_on, http) -> None:
+    """V-4: S2's course is online for the board and S2 has no copy elsewhere: it is not
+    bound there; with a campus copy on a board where the course is not online it is."""
+    sc, board, key, _s1, _s2, a, _b = build_ruled()
+    ProgrammeRequirement.objects.filter(course_code="AI111").update(is_online=True)
+    preview = planned_preview(http, board, "S2", key)
+    assert all(
+        rule_kinds(c) == [] and "teacher_rule_blocked" not in c for c in preview["candidates"]
+    )
+
+
+@pytest.mark.django_db
+def test_the_legacy_field_is_the_writers_check(av_on, http) -> None:
+    """V-5: for every candidate of the plain move preview, the field is exactly what the
+    bulk writers' ``checker.blocked`` says."""
+    sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    sun = SectionPlacement.objects.select_related("board", "term_section").get(
+        term_section=s1, day="SUN"
+    )
+    checker = helper.display_rule_checker(sc.id)
+    plain = move_preview(http, sun, "")
+    assert plain["candidates"]
+    for candidate in plain["candidates"]:
+        expected = bool(
+            checker.blocked(sun, candidate["day"], candidate["start"], candidate["end"])
+        )
+        assert ("teacher_rule_blocked" in candidate) == expected
+    assert any("teacher_rule_blocked" in c for c in plain["candidates"])
+
+
+# ── V-6: while no rule binds the previews answer the recorded oracle ──────
+
+from tests.test_tw_slot_verdict import ORACLE, _teacher_mode  # noqa: E402
+from tests.test_tw_slot_verdict import flags as slot_flags  # noqa: E402,F401
+from tests.tw_slot_verdict_support import (  # noqa: E402
+    build_rich_fixture,
+    legacy_requests,
+    normalise_ids,
+)
+
+#: The reads a flag-on state adds to the recorded flag-off count, MEASURED, per
+#: request: the engine's own rule read (one SELECT of ``instructor_time_rules``)
+#: for the move preview, and that plus the layout fingerprint read the planned
+#: preview's new request scope makes at its first map read for the planned one.
+ORACLE_EXTRA = {
+    "flag_on_no_rules": {"move": 1, "planned_single": 2, "planned_pattern": 2},
+    "flag_on_rules_outside_the_universe": {"move": 1, "planned_single": 2, "planned_pattern": 2},
+    # The spare teacher is one more eligible teacher the ENGINE reads (not the door):
+    # that state is compared with the door patched out instead (DOOR_COST 0).
+    "flag_on_rule_on_an_uncharged_teacher": None,
+}
+
+
+def _rich_state(settings, state: str) -> None:
+    _teacher_mode(settings, "one_teacher_on")
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = state != "flag_off_with_rules"
+    if state == "flag_off_with_rules":
+        rule(Instructor.objects.get(full_name="Dr A"), KIND_UNAVAILABLE, end="13:00")
+    elif state == "flag_on_rules_outside_the_universe":
+        _rules_outside_the_universe()
+    elif state == "flag_on_rule_on_an_uncharged_teacher":
+        spare = ots.instructor("Dr Spare")  # eligible for AI333 (taught by Dr D), never charged
+        ots.link("AI", "AI333", spare, role="co")
+        rule(spare, KIND_UNAVAILABLE, end="13:00")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("state", STATES)
+def test_previews_answer_the_recorded_oracle_while_no_rule_binds(
+    slot_flags,  # noqa: F811
+    http,
+    monkeypatch,
+    state,
+) -> None:
+    """V-6 (and F13): JSON byte for byte as recorded; flag off costs exactly the
+    recorded queries; flag on costs the measured extra (``ORACLE_EXTRA``)."""
+    rich = build_rich_fixture()
+    _rich_state(slot_flags, state)
+    oracle = ORACLE["one_teacher_on"]
+    if state == "flag_on_rule_on_an_uncharged_teacher":
+        assert helper.display_rule_checker(rich.sc.id) is None  # nothing charged binds
+    verdict = {}
+    for name, url in legacy_requests(rich).items():
+        with CaptureQueriesContext(connection) as captured:
+            response = http.get(url)
+        assert response.status_code == 200
+        got = normalise_ids(json.loads(response.content), rich.ids())
+        assert json.dumps(got, ensure_ascii=False) == json.dumps(oracle[name], ensure_ascii=False)
+        if ORACLE_EXTRA.get(state, 0) is None:
+            with monkeypatch.context() as patch:
+                patch.setattr(tws, "_display_rule_checker", lambda _sid: None)
+                with CaptureQueriesContext(connection) as patched:
+                    http.get(url)
+            assert len(captured) == len(patched)  # the door adds nothing
+        else:
+            extra = ORACLE_EXTRA[state][name] if state in ORACLE_EXTRA else 0
+            assert len(captured) == oracle["queries"][name] + extra
+        verdict[name] = http.get(f"{url}{'&' if '?' in url else '?'}verdict=1").json()
+    VERDICTS.setdefault(state, verdict)
+    if len(VERDICTS) == len(STATES):  # every state answered: the verdicts are equal
+        first = json.dumps(normalise_ids(VERDICTS[STATES[0]], rich.ids()), sort_keys=True)
+        assert all(
+            json.dumps(normalise_ids(v, rich.ids()), sort_keys=True) == first
+            for v in VERDICTS.values()
+        )
+
+
+VERDICTS: dict[str, dict] = {}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("target", [("SUN", "09:00", "10:15"), ("SUN", "14:30", "15:45")])
+def test_the_verdict_matches_conflicts_and_readiness_after_a_manual_move(
+    av_on, http, target
+) -> None:
+    """P-1: the preview's verdict, the conflicts list and the readiness warning agree,
+    and a warning kind never becomes a blocker."""
+    sc, board, _key, s1, _s2, _a, _b = build_ruled()
+    sun = placement_of(s1, "SUN")
+    day, start, end = target
+    candidate = by_slot(move_preview(http, sun))[(day, start)]
+    in_verdict = bool(rule_kinds(candidate))
+    blockers_before = readiness(http, sc)["blocker_items"]
+
+    assert move(http, sun, day, start, end).status_code == 200
+
+    in_conflicts = any(
+        r["ids"] == [sun.id] for r in conflicts(http, board)["teacher_rule_violations"]
+    )
+    after = readiness(http, sc)
+    in_readiness = bool(rule_items(after))
+    assert in_verdict == in_conflicts == in_readiness == (start == "09:00")
+    assert after["blocker_items"] == blockers_before
+
+
+def _outcome_stubs(monkeypatch) -> None:
+    """The student-outcome pipeline needs real student data; the rule enrichment is
+    independent of it, so the heavy evaluator calls are stubbed."""
+    from types import SimpleNamespace
+
+    from core.services import timetable_move_outcome as tmo
+
+    stubs = {
+        "build_student_profiles_for_scenario": lambda _sid: ["profile"],
+        "build_section_states_for_scenario": lambda _sid: [object()],
+        "build_course_rigidity_for_scenario": lambda _sid: {},
+        "evaluate_generated_timetable_candidate": lambda **_k: SimpleNamespace(quality_score={}),
+        "apply_candidate_moves": lambda sections, _placements, _moves: sections,
+        "student_statuses": lambda *_a, **_k: {},
+        "summarise_evaluation": lambda *_a, **_k: {},
+        "compare_evaluations": lambda **_k: {},
+        "outcome_tone": lambda _outcome: "neutral",
+        "outcome_badge": lambda _outcome: "neutral",
+    }
+    for name, stub in stubs.items():
+        monkeypatch.setattr(tmo, name, stub)
+    monkeypatch.setattr(tmo.ssa, "build_sections_by_id", lambda _sections: {})
+
+
+@pytest.mark.django_db
+def test_the_outcome_preview_marks_a_pair_whose_companion_slot_is_forbidden(
+    av_on, monkeypatch
+) -> None:
+    """R3: a pair candidate moves a SIBLING section too; the anchor's slot is legal
+    but the companion lands in a forbidden morning, so the row is marked. With the
+    door returning None the rows carry no such key."""
+    from core.services import timetable_move_outcome as tmo
+
+    _sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    sun, tue = placement_of(s1, "SUN"), placement_of(s1, "TUE")
+    _outcome_stubs(monkeypatch)
+    pair = {"placement_id": tue.id, "day": "TUE", "start": "09:00", "end": "10:15"}
+    moves = [
+        {"day": "SUN", "start": "13:00", "end": "14:15", "pair": pair},
+        {"day": "SUN", "start": "14:30", "end": "15:45"},
+    ]
+
+    rows = tmo.preview_placement_student_outcome_candidates(sun.id, candidate_moves=moves)[
+        "candidates"
+    ]
+    marked = {(r["day"], r["start"]): r.get("teacher_rule_blocked") for r in rows}
+    assert marked == {("SUN", "13:00"): True, ("SUN", "14:30"): None}
+
+    monkeypatch.setattr(tws, "_display_rule_checker", lambda _sid: None)
+    rows = tmo.preview_placement_student_outcome_candidates(sun.id, candidate_moves=moves)[
+        "candidates"
+    ]
+    assert all("teacher_rule_blocked" not in r for r in rows)
+
+
+@pytest.mark.django_db
+def test_an_english_section_previews_judge_the_move_by_its_whole_bundle(av_on, http) -> None:
+    """V-5 (policy path): the move preview of an English section answers through the
+    planned preview's patterns; each candidate's field is exactly the writers'
+    ``checker.blocked`` of the anchor's move."""
+    sc, key, a = _english_board("v-5 english")
+    sunday = _sunday(sc, key)
+    checker = helper.display_rule_checker(sc.id)
+    preview = move_preview(http, sunday, "")
+    assert preview["candidates"]
+    for candidate in preview["candidates"]:
+        expected = bool(
+            checker.blocked(sunday, candidate["day"], candidate["start"], candidate["end"])
+        )
+        assert ("teacher_rule_blocked" in candidate) == expected
+    assert any("teacher_rule_blocked" in c for c in preview["candidates"])

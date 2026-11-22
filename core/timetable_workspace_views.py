@@ -2403,6 +2403,7 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 @preview_lane
+@_teaching_rules_request
 def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -> JsonResponse:
     """Return ranked read-only target slots for a missing planned section.
 

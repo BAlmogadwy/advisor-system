@@ -1248,6 +1248,8 @@ def validate_placement(
 #     check's keys (_publish_teacher_keys) from the publish check's own map
 #     (_VerdictTeachers): the one-teacher map, or, with the links on and one
 #     teacher per section off, every teacher linked to a course;
+#   - a time the section's charged teacher may not teach (teaching-time rules):
+#     a warning, as the publish check warns (``teacher_rule_violations``);
 #   - cross-board students: a warning at the threshold, where the publish check
 #     warns (cross_board_conflicts), and info below it, as Issues lists them;
 #   - a teacher or room also booked on another board: a warning, the teacher by
@@ -1271,6 +1273,7 @@ _VERDICT_KINDS = (
     "instructor",
     "room",
     "blocked",
+    "teacherRule",
     "softOverlap",
     "instructorElsewhere",
     "roomElsewhere",
@@ -1315,7 +1318,7 @@ def _verdict_item(
     """One verdict item. ``source`` names the check: the legacy evidence kind
     of the same check (``same_course``, ``students``, ``instructor``, ``room``,
     ``cross_board_room``, ``cross_board_students``), or ``cross_board_instructor``,
-    ``blocked_slot`` and ``h15_effect``, which have none. The verdict judges
+    ``blocked_slot``, ``teacher_rule`` and ``h15_effect``, which have none. The verdict judges
     by its own rules, so an item need not have a legacy evidence row: an
     ``instructor`` item follows the publish check's teachers, while the
     legacy ``instructor`` evidence keeps its own test. ``meeting`` is the
@@ -1714,6 +1717,14 @@ def preview_placement_slot_candidates(
         new_teacher = teacher_of(
             placement.term_section_id, f"{course_key}_{placement.term_section.section}"
         )
+    # Teaching-time rules (slice C), shown only: the charged teachers of this
+    # section whose rules bind it (None/() while no rule binds: nothing changes).
+    rule_checker = _display_rule_checker(scenario.id)
+    own_rule_ids = (
+        rule_checker.section_ids(course_key, placement.term_section.section)
+        if rule_checker is not None
+        else ()
+    )
     days = ["SUN", "MON", "TUE", "WED", "THU"]
     base_day_counts = Counter(
         _DAY_INDEX.get(str(other.day).upper(), 99)
@@ -2109,11 +2120,23 @@ def preview_placement_slot_candidates(
                 cell.items.append(_cross_board_student_item(len(shared), elsewhere))
 
         affected_students = affected_same_board | affected_cross_board
+        rule_blocked = (
+            rule_checker.meeting_blocked(own_rule_ids, day, start, end) if own_rule_ids else ()
+        )
         if cell is not None:
             cell.students = affected_students
             # Flagged, never removed: a blocked time blocks publishing.
             if (day, start) in blocked_slots:
                 cell.items.append(_verdict_item("blocked", "critical", "blocked_slot"))
+            for iid in rule_blocked:
+                cell.items.append(
+                    _verdict_item(
+                        "teacherRule",
+                        "warning",
+                        "teacher_rule",
+                        teacher=rule_checker.teacher_name(iid),
+                    )
+                )
         critical = overlap_critical + instructor_critical + cross_critical
         warning = overlap_warning + room_warning + cross_warning
         impact_score = critical * 1000 + warning * 140 + len(affected_students) * 4
@@ -2125,7 +2148,7 @@ def preview_placement_slot_candidates(
             affected_students=len(affected_students),
         )
 
-        return {
+        result = {
             "tone": tone,
             "critical_count": critical,
             "warning_count": warning,
@@ -2138,7 +2161,10 @@ def preview_placement_slot_candidates(
             "evidence": candidate_evidence[:5],
             "ranking_reasons": ranking_reasons,
             "primary_reason": _slot_primary_reason(ranking_reasons),
-        }, cell
+        }
+        if rule_blocked:  # present only when forbidden, never False
+            result["teacher_rule_blocked"] = True
+        return result, cell
 
     current_impact, current_cell = score_slot(
         placement.day, placement.start_time, placement.end_time
@@ -2299,6 +2325,62 @@ def validate_budget_meeting_pattern(
     return pattern
 
 
+def _planned_section_rule_ids(
+    checker,
+    scenario,
+    board: DeliveryBoard,
+    existing_section: TermSection | None,
+    exclude_term_section_id: int | None,
+    scenario_placements: list,
+) -> tuple[int, ...]:
+    """The charged teachers whose rules a planned preview judges its section by.
+
+    A brand-new label has none: creation re-derives the closure, which never newly
+    picks a teacher at a forbidden time, so the label's current pick is not who the
+    created section will be charged to. An existing section counts only when its
+    teacher is fixed (a stored engine row, a pin or a frozen teacher). The online
+    exemption: a section already placed is judged by the writers' set; one not
+    placed yet by the board it would sit on (``unplaced_section_exempt``)."""
+    if existing_section is None:
+        return ()
+    from core.services.course_identity import course_display_code
+    from core.services.section_teacher_assignment import load_assignment
+    from core.services.timetable_instructor_availability import unplaced_section_exempt
+
+    own_key = (
+        existing_section.course_key or existing_section.course_code,
+        existing_section.section,
+    )
+    slot = next(
+        (
+            slot
+            for slot in load_assignment(scenario.id, incomplete="collect").slots
+            if slot.key == f"{own_key[0]}_{own_key[1]}"
+        ),
+        None,
+    )
+    if slot is None or not (slot.stored is not None or slot.fixed is not None or slot.frozen_name):
+        return ()
+    placed = exclude_term_section_id is not None or any(
+        p.term_section_id == existing_section.id for p in scenario_placements
+    )
+    exempt = (
+        None
+        if placed
+        else unplaced_section_exempt(
+            scenario.id,
+            board,
+            own_key,
+            course_display_code(
+                existing_section.course_key,
+                existing_section.course_code,
+                existing_section.course_number,
+            ),
+        )
+    )
+    return checker.section_ids(*own_key, exempt=exempt)
+
+
 def preview_planned_section_slot_candidates(
     board_id: int,
     *,
@@ -2414,6 +2496,21 @@ def preview_planned_section_slot_candidates(
         .exclude(term_section_id=exclude_term_section_id)
         .select_related("board", "term_section")
         .prefetch_related("term_section__meetings")
+    )
+    # Teaching-time rules (slice C), shown only; None while no rule binds, and
+    # then nothing below runs (no lookup, no query).
+    rule_checker = _display_rule_checker(scenario.id)
+    own_rule_ids = (
+        _planned_section_rule_ids(
+            rule_checker,
+            scenario,
+            board,
+            existing_section,
+            exclude_term_section_id,
+            scenario_placements,
+        )
+        if rule_checker is not None
+        else ()
     )
     all_courses = {key}
     all_courses.update(item.course_key for item in board_items)
@@ -2733,11 +2830,23 @@ def preview_planned_section_slot_candidates(
                 cell.items.append(_cross_board_student_item(len(shared), elsewhere))
 
         affected_students = affected_same_board | affected_cross_board
+        rule_blocked = (
+            rule_checker.meeting_blocked(own_rule_ids, day, start, end) if own_rule_ids else ()
+        )
         if cell is not None:
             cell.students = affected_students
             # Flagged per meeting, never removed: a blocked time blocks publishing.
             if (day, start) in blocked_slots:
                 cell.items.append(_verdict_item("blocked", "critical", "blocked_slot"))
+            for iid in rule_blocked:
+                cell.items.append(
+                    _verdict_item(
+                        "teacherRule",
+                        "warning",
+                        "teacher_rule",
+                        teacher=rule_checker.teacher_name(iid),
+                    )
+                )
         critical = overlap_critical + instructor_critical + cross_critical
         warning = overlap_warning + cross_warning
         impact_score = critical * 1000 + warning * 140 + len(affected_students) * 4
@@ -2750,7 +2859,7 @@ def preview_planned_section_slot_candidates(
             quality=quality,
             affected_students=len(affected_students),
         )
-        return {
+        result = {
             "kind": slot_kind,
             "day": day,
             "start": start,
@@ -2768,7 +2877,10 @@ def preview_planned_section_slot_candidates(
             "evidence": candidate_evidence[:6],
             "ranking_reasons": ranking_reasons,
             "primary_reason": _slot_primary_reason(ranking_reasons),
-        }, cell
+        }
+        if rule_blocked:  # present only when forbidden, never False
+            result["teacher_rule_blocked"] = True
+        return result, cell
 
     def candidate_verdict(meetings: list[dict], *, per_meeting: bool) -> dict:
         """The verdict of placing the section at ``meetings`` (each with its
@@ -2904,7 +3016,7 @@ def preview_planned_section_slot_candidates(
             ]
 
         first = meetings[0]
-        return {
+        result = {
             "candidate_id": f"pattern-{index}",
             "kind": first["kind"],
             "is_pattern": True,
@@ -2945,6 +3057,9 @@ def preview_planned_section_slot_candidates(
             "ranking_reasons": ranking_reasons[:7],
             "primary_reason": _slot_primary_reason(ranking_reasons),
         }
+        if any(row.get("teacher_rule_blocked") for row in slot_scores):
+            result["teacher_rule_blocked"] = True  # some meeting of the whole pattern
+        return result
 
     if required_meetings > 1:
         pattern = meeting_pattern_for_request()

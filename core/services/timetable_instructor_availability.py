@@ -587,6 +587,18 @@ def display_rule_checker(scenario_id: int) -> RuleChecker | None:
     return checker
 
 
+def unplaced_section_exempt(
+    scenario_id: int, board: Any, section_key: tuple[str, str], display_code: str
+) -> bool:
+    """The online exemption of a section NOT placed yet that a preview would put on
+    ``board`` (:func:`section_online_exempt`: the copies it already has plus that
+    board). ``section_key`` is ``(course_key or course_code, label)``."""
+    exemption = online_exemption(scenario_id)
+    online_here = exemption.lookup().is_online_course_for_board(board, display_code)
+    placed = exemption.placed_by_section().get(section_key, ())
+    return exemption.exempt(section_key[0], (*placed, online_here))
+
+
 def fixed_section_keys(assignment: Any) -> frozenset[str]:
     """Placer keys (``"course|label"``) of the sections whose teacher the engine
     may not change (a pin or a teacher-frozen section): a rule never leaves them
@@ -824,5 +836,6 @@ __all__ = [
     "rules_enabled",
     "section_online_exempt",
     "section_rule_checker",
+    "unplaced_section_exempt",
     "teaching_rules_request",
 ]
