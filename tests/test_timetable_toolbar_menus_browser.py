@@ -273,6 +273,10 @@ class ToolbarMenusBrowserTests(StaticLiveServerTestCase):
             self._turn(page, *PORTRAIT)
             for name, trigger, menu, group in MENUS:
                 page.click(f"#{trigger}")
+                # Opening re-lays the bars out (a wide font rewraps them for a
+                # frame or two); read the menu once they hold still, not
+                # mid-reflow, when it can sit 1-2px off its buttons.
+                page.evaluate(SETTLED)
                 found = page.evaluate(SEEN, [trigger, menu, group])
                 page.keyboard.press("Escape")
                 if found:

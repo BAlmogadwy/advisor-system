@@ -313,7 +313,9 @@ class StudentTimetableFeedbackBrowserTests(StaticLiveServerTestCase):
         page.goto(f"{self.live_server_url}/student/timetable-feedback/{case.reference}/")
         # A text link, still a 44px target on a phone.
         box = page.locator(".ttf-point-action").first.bounding_box()
-        self.assertGreaterEqual(box["height"], 44)
+        # Chromium lays out in 1/64px units, so min-height: 44px can measure
+        # 43.99997; allow that rounding, nothing a user could feel.
+        self.assertGreaterEqual(box["height"], 44 - 1 / 64)
         page.locator(".ttf-point-action").first.click()
         page.wait_for_url("**/points/*/withdraw/")
         self._check(page, "11-confirm-point-en")
