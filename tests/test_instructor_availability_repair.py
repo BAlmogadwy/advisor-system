@@ -1305,3 +1305,60 @@ def test_a_rollback_does_not_write_a_remaining_count_from_a_failed_read(
     else:
         assert report["remaining_violations"] is None
         assert report["remaining_unmeasured"] is True
+
+
+# ── A re-pick of a section the PLACER released passes the week gate ──────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("gate", ["passes", "trips", "no-release-control"])
+def test_the_placers_release_is_repicked_through_the_week_gate(av_on, monkeypatch, gate) -> None:
+    """B2-4 end to end: the placer RELEASES Dr A from CS101 S1 (his one legal week
+    clashes with his pinned CS200), then ``resolve_released_sections`` re-picks it.
+    The re-pick goes through ``_gate_released`` with the released section: Dr B is
+    charged when the week gate passes; when it trips the section stays to be decided
+    (no engine row). Control: without the rule nothing is released, so nothing is
+    resolved and the gate is never asked about the section."""
+    from core.models import InstructorTimeRule
+    from core.services import timetable_instructor_availability as tia
+    from core.services import timetable_optimisation_policy as policy
+    from tests.test_instructor_availability_engine import (
+        _board_result,
+        _clash_taken,
+        _engine_map,
+        _greedy,
+        _person,
+    )
+
+    sc, key, a = _clash_taken(f"fx4 {gate}", pinned=False)
+    b = _person("Dr B")
+    ots.link("AI", "CS101", b, role="co")
+    if gate == "no-release-control":
+        InstructorTimeRule.objects.filter(instructor=a).delete()
+    asked: list[list[str]] = []
+    real = sta._gate_released
+    monkeypatch.setattr(
+        sta,
+        "_gate_released",
+        lambda assignment, released: asked.append(list(released)) or real(assignment, released),
+    )
+    if gate == "trips":
+        monkeypatch.setattr(policy, "week_move_breaks_gate", lambda *_a: True)
+
+    with tia.availability_scope(sc.id), sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+        board = _board_result(_greedy(sc))
+    released = (board.get("instructor_availability") or {}).get("released", [])
+    asked.clear()
+    sta.resolve_released_sections(sc.id, released)
+
+    rows = ots.engine_rows(sc)
+    section = f"{key}_S1"
+    if gate == "no-release-control":
+        assert released == [] and not any(section in call for call in asked)
+        return
+    assert [row["section"] for row in released] == [f"{key}|S1"]
+    assert any(section in call for call in asked), asked
+    if gate == "passes":
+        assert rows[(key, "S1")] == "Dr B"
+    else:
+        assert (key, "S1") not in rows
