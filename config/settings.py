@@ -1030,7 +1030,9 @@ TIMETABLE_ONLINE_EVENING_WINDOWS = os.getenv(
 # the previews never read it. All of it goes through
 # ``core.services.timetable_instructor_availability``.
 # Off -- or on with no rule for any teacher of the scenario -- every engine is
-# byte-identical. Default OFF until the owner turns it on.
+# byte-identical. Optimise Current also tries to move an existing violation to an
+# allowed time (``repair_instructor_availability``); one it cannot move stays and is
+# reported. Default OFF here; production turns it on in render.yaml (2026-11-22).
 TIMETABLE_INSTRUCTOR_AVAILABILITY = os.getenv(
     "TIMETABLE_INSTRUCTOR_AVAILABILITY", "false"
 ).lower() in ("1", "true", "yes", "on")

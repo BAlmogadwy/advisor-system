@@ -4587,3 +4587,19 @@ def test_only_the_conflict_check_and_the_previews_use_the_display_door() -> None
     assert _top_level_functions_naming(
         "core/services/timetable_move_outcome.py", "_display_rule_checker"
     ) == {"preview_placement_student_outcome_candidates"}
+
+
+def test_production_turns_the_rules_on_and_the_local_default_stays_off() -> None:
+    """Off unless asked for; production asks for it with one entry in render.yaml."""
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    settings_source = (repo / "config" / "settings.py").read_text(encoding="utf-8")
+    assert re.search(
+        r"TIMETABLE_INSTRUCTOR_AVAILABILITY = os\.getenv\(\s*"
+        r'"TIMETABLE_INSTRUCTOR_AVAILABILITY",\s*"false"',
+        settings_source,
+    )
+    render = (repo / "render.yaml").read_text(encoding="utf-8")
+    assert re.search(r'key: TIMETABLE_INSTRUCTOR_AVAILABILITY\s+value: "true"', render)
