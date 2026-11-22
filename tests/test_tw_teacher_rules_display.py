@@ -505,6 +505,30 @@ def test_readiness_warns_once_per_physical_meeting_and_never_blocks(av_on, http,
 
 
 @pytest.mark.django_db
+def test_one_meeting_with_two_blocked_teachers_is_one_warning_naming_both(
+    av_on, http, monkeypatch
+) -> None:
+    """R-1b: two charged teachers both blocked at one meeting (the display door sends
+    one row per teacher): counted once, both named."""
+    sc, _board, _key, s1, _s2, _a, _b = build_ruled()
+    SectionPlacement.objects.filter(term_section=s1, day="SUN").update(
+        start_time="09:00", end_time="10:15"
+    )
+    real = tws.detect_board_conflicts
+
+    def with_a_second_teacher(board_id):
+        result = real(board_id)
+        rows = result["teacher_rule_violations"]
+        rows.extend({**row, "instructor": "Dr B", "instructor_id": -1} for row in list(rows))
+        return result
+
+    monkeypatch.setattr(tws, "detect_board_conflicts", with_a_second_teacher)
+    [item] = rule_items(readiness(http, sc))
+    assert item["count"] == 1
+    assert item["params"] == {"teachers": ["Dr A", "Dr B"]}
+
+
+@pytest.mark.django_db
 def test_board_warnings_count_only_conflict_warnings(av_on, http, monkeypatch) -> None:
     """R-2: a non-blocking overlap warning plus one violation: ``board_warnings``
     counts the overlap only; with the violation alone there is no such item."""
@@ -697,6 +721,22 @@ def test_a_new_label_gets_no_teacher_rule_item_and_no_field(av_on, http) -> None
     _sc, board, key, _s1, _s2, _a, _b = build_ruled()
     preview = planned_preview(http, board, "S9", key)
     assert preview["candidates"]
+    assert all(
+        rule_kinds(c) == [] and "teacher_rule_blocked" not in c for c in preview["candidates"]
+    )
+
+
+@pytest.mark.django_db
+def test_an_existing_section_with_an_unfixed_teacher_gets_no_item_and_no_field(av_on, http) -> None:
+    """V-3c: S2 exists, is unplaced and its teacher is not fixed (no engine row, pin
+    or frozen teacher): the preview cannot say who will teach it, so it flags nothing."""
+    from core.models import SectionInstructor
+
+    _sc, board, key, _s1, _s2, _a, b = build_ruled()
+    rule(b, KIND_UNAVAILABLE, end="13:00")  # whoever the closure derives is ruled
+    SectionInstructor.objects.filter(course_key=key, section="S2").delete()
+    preview = planned_preview(http, board, "S2", key)
+    assert any(morning_meetings(c) for c in preview["candidates"] if c.get("meetings"))
     assert all(
         rule_kinds(c) == [] and "teacher_rule_blocked" not in c for c in preview["candidates"]
     )

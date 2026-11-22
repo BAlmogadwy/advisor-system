@@ -2147,8 +2147,6 @@ const READINESS_ITEM_TEXT = {
       ? `تجتمع ${name} بواقع ${placed}، لكن المقرر مضبوط على ${expected}. انقل لقاءاتها إلى أعمدة مدتها ١٠٠ دقيقة، أو احذفها ثم شغّل «تحسين».`
       : `${name} meets ${placed} but the course is set to ${expected}. Move its meetings into 100-minute columns, or remove it and run Optimise.`;
   },
-  // A course set to 2 × 100 min in a scenario with no 100-minute column an
-  // in-person class may use: no engine can place its in-person sections.
   // A meeting at a time its teacher's rules forbid: a warning, never a blocker.
   board_teacher_rule_violations: p => {
     const names = (p.teachers || []).map(isolatedText).join(IS_AR ? '، ' : ', ');
@@ -2157,6 +2155,8 @@ const READINESS_ITEM_TEXT = {
       ? `اللوحة «${p.board_label}»: ${pluralAr(n, { one: 'لقاء واحد', two: 'لقاءان', few: '{n} لقاءات', many: '{n} لقاءً', other: '{n} لقاء' })} خارج أوقات تدريس المدرّس${names ? ` (${names})` : ''}.`
       : `Board “${p.board_label}”: ${n} meeting${n === 1 ? '' : 's'} outside the teacher’s teaching times${names ? ` (${names})` : ''}.`;
   },
+  // A course set to 2 × 100 min in a scenario with no 100-minute column an
+  // in-person class may use: no engine can place its in-person sections.
   meeting_pattern_no_window: p => {
     const course = isolatedText(p.course_code || '');
     const expected = meetingLengthsText(p.expected_durations);

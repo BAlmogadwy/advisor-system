@@ -6583,19 +6583,19 @@ def check_publish_readiness(
         home: dict[int, int] = {}
         for placement in scenario_placements:
             home.setdefault(placement.term_section_id, placement.board_id)
-        meetings_by_board: dict[int, dict[tuple, str]] = {}
+        meetings_by_board: dict[int, dict[tuple, set[str]]] = {}
         for board_id, rows in rows_by_board.items():
             for row in rows:
                 key = (row["term_section_id"], row["day"], row["start"], row["end"])
-                meetings_by_board.setdefault(home.get(row["term_section_id"], board_id), {})[
-                    key
-                ] = row["instructor"]
+                meetings_by_board.setdefault(
+                    home.get(row["term_section_id"], board_id), {}
+                ).setdefault(key, set()).add(row["instructor"])
         for board in sorted(board_list, key=lambda b: (b.display_order, b.id)):
             meetings = meetings_by_board.get(board.id)
             if not meetings:
                 continue
             count = len(meetings)
-            teachers = sorted({name for name in meetings.values() if name})
+            teachers = sorted({name for names in meetings.values() for name in names if name})
             warn(
                 f"Board “{board.label}”: {count} meeting(s) outside the teacher’s teaching times.",
                 _readiness_item(
