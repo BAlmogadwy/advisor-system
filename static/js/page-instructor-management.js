@@ -717,6 +717,7 @@ const ca = {
   searchSeq: 0,           // request token: drop stale typeahead responses
   pendingFocus: null,     // {code, selector} to focus after the next render
   queue: Promise.resolve(), // saves of the table run one at a time, in order
+  stale: false,             // a refresh after a save failed: reload before the next save
 
   // Run `task` after every earlier one has finished (a failure never breaks the chain).
   enqueue(task) {
@@ -753,6 +754,7 @@ const ca = {
 
       if (data.ok) {
         this.courses = data.courses || [];
+        this.stale = false;
         this.renderTable();
         this.updateStatusPills();
       } else {
@@ -760,7 +762,13 @@ const ca = {
       }
     } catch (error) {
       notify.error(T.failedLoadCourses + ': ' + error.message);
-      if (quiet) this.renderTable(); else this.renderEmptyTable();
+      if (quiet) {
+        // The table on screen may lack the save that asked for this refresh.
+        this.stale = true;
+        this.renderTable();
+      } else {
+        this.renderEmptyTable();
+      }
     }
   },
 
@@ -887,7 +895,9 @@ const ca = {
     }
     if (!selector) return null;
     const code = row.dataset.course;
-    const keepText = el.hasAttribute('data-ca-limit')
+    // Only text the user typed and has not saved: an untouched box takes the
+    // refreshed value.
+    const keepText = el.hasAttribute('data-ca-limit') && el.value !== el.defaultValue
       && !(discardTyped && discardTyped.code === code && discardTyped.selector === selector);
     return {
       code, selector,
@@ -1197,14 +1207,28 @@ const ca = {
     const program = this.currentProgram;
     const section = this.currentSection;
     return this.enqueue(async () => {
-      if (program !== this.currentProgram || section !== this.currentSection) return;
-      const course = this.courses.find(c => c.course_code === code);
-      const list = course ? build(this.teacherPayload(this.teachersOf(course))) : null;
-      if (!list) {
+      const stored = { discardTyped: focusSelector ? { code, selector: focusSelector } : null };
+      if (program !== this.currentProgram || section !== this.currentSection) {
         if (closePopover) this.hideAssignPopover();
         return;
       }
+      // Never build a list from a table that failed to refresh: it may lack an
+      // earlier save, and posting it would undo that save.
+      if (this.stale) {
+        await this.loadCourses({ quiet: true });   // reports its own failure
+        if (this.stale) {
+          if (closePopover) this.hideAssignPopover();
+          this.renderTable(stored);
+          return;
+        }
+      }
       try {
+        const course = this.courses.find(c => c.course_code === code);
+        const list = course ? build(this.teacherPayload(this.teachersOf(course))) : null;
+        if (!list) {
+          if (closePopover) this.hideAssignPopover();
+          return;
+        }
         const data = await imApiCall('/ops/instructors/course-assignments/set/', {
           method: 'POST',
           body: JSON.stringify({ program, course_code: code, section, instructors: list })
@@ -1218,7 +1242,7 @@ const ca = {
       } catch (error) {
         notify.error(error.message);
         // put back what the server still holds
-        this.renderTable({ discardTyped: focusSelector ? { code, selector: focusSelector } : null });
+        this.renderTable(stored);
       }
     });
   },

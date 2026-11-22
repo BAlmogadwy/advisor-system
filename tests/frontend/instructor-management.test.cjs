@@ -448,6 +448,7 @@ function liveServer() {
   server.answer = async (url, opts) => {
     if (url.startsWith('/ops/instructors/course-assignments/?')) {
       if (server.getGate) await server.getGate.promise;
+      if (server.getFail) return { ok: false, error: { message: 'Down' } };
       return { ok: true, courses: JSON.parse(JSON.stringify(server.courses)) };
     }
     if (url === '/ops/instructors/course-assignments/set/') {
@@ -560,4 +561,74 @@ test('a failed save reports the error and the box shows what is stored', async t
   change(h, limitBox(h, 1), '3');   // the queue still works after a failure
   await settle();
   assert.deepEqual(setPosts(h).at(-1).body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: null }]);
+});
+
+test('after a refresh fails, the next save reloads first and does not undo the earlier save', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getFail = true;
+  change(h, limitBox(h, 1), '3');   // saved; its refresh fails, so the table still holds 2
+  await settle();
+  assert.equal(setPosts(h).length, 1);
+  server.getFail = false;
+  change(h, limitBox(h, 2), '4');
+  await settle();
+  assert.deepEqual(setPosts(h).at(-1).body.instructors, [{ id: 1, max_sections: 3 }, { id: 2, max_sections: 4 }], 'the first save is kept');
+  assert.deepEqual([limitBox(h, 1).value, limitBox(h, 2).value], ['3', '4']);
+});
+
+test('while the table cannot be refreshed a change is not posted and the box shows what is stored', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  server.getFail = true;
+  change(h, limitBox(h, 1), '3');
+  await settle();
+  const box = limitBox(h, 2);
+  box.focus();
+  change(h, box, '4');              // the reload before this save fails again
+  await settle();
+  assert.equal(setPosts(h).length, 1, 'no list is built from a table that may be out of date');
+  assert.equal(limitBox(h, 2).value, '', 'the typed 4 is gone: it was not saved');
+  assert.equal(h.notices.filter(n => n.type === 'error').length, 2, 'each failed refresh is reported once');
+});
+
+test('a focused box the user did not edit takes the refreshed value', async t => {
+  const server = liveServer();
+  server.courses.push({
+    course_code: 'CS113', course_name: 'Programming II', programme_term: 3, credit_hours: 3,
+    instructor: { id: 3, full_name: 'Dr Old Name', role: 'primary', max_sections: null }, co_instructors: [],
+  });
+  const h = await livePage(t, server);
+  server.courses[1].instructor.max_sections = 5;   // changed elsewhere since the page loaded
+  limitBox(h, 3).focus();           // focused, nothing typed
+  const first = limitBox(h, 1);
+  first.value = '3';
+  first.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  await settle();
+  assert.equal(h.d.activeElement, limitBox(h, 3), 'the keyboard stays where it was');
+  assert.equal(limitBox(h, 3).value, '5', 'not the old blank');
+});
+
+test('a queued add is dropped when the programme is switched, and its picker closes', async t => {
+  const server = liveServer();
+  const h = await livePage(t, server);
+  const gate = deferred();
+  server.gates.push(gate.promise);
+  change(h, limitBox(h, 1), '3');   // held by the server
+  await settle();
+  h.d.querySelector('#caTable [data-ca-assign]').click();
+  const search = h.$('caPopSearch');
+  search.value = 'old';
+  search.dispatchEvent(new h.w.Event('input'));
+  await new Promise(r => setTimeout(r, 400));
+  [...h.d.querySelectorAll('#caPopResults .ca-pop-opt')].find(o => o.dataset.id === '3').click();   // queued
+  await settle();
+  h.$('caProgram').value = 'AI';                 // the user moves to another programme
+  h.$('caProgram').dispatchEvent(new h.w.Event('change'));
+  await settle();
+  assert.equal(h.$('caProgram').value, 'AI');
+  gate.release();
+  await settle();
+  assert.equal(setPosts(h).length, 1, 'the add meant for the first list is not posted to the other one');
+  assert.equal(h.$('caPop').style.display, 'none');
 });
