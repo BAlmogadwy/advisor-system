@@ -283,3 +283,65 @@ def test_s9_an_attempts_score_is_the_one_it_reached() -> None:
     assert _attempt_score(blocked) == [1, 2]
     assert _attempt_score(kept) == [3, 4]
     assert _attempt_score({"error": "x"}) is None
+
+
+@pytest.mark.django_db
+def test_s10_an_exception_the_second_run_lets_escape_leaves_the_first_attempt_standing(
+    flags, monkeypatch
+) -> None:
+    from core.services import timetable_v2_runner
+
+    board = _Board(monkeypatch)
+    real = timetable_v2_runner._attempt_evaluation
+    calls: list[int] = []
+
+    def evaluation(scenario_id, teachers):
+        calls.append(1)
+        if len(calls) == 2:  # the second attempt's board, after it kept its changes
+            raise RuntimeError("evaluating the second attempt failed")
+        return real(scenario_id, teachers)
+
+    monkeypatch.setattr(timetable_v2_runner, "_attempt_evaluation", evaluation)
+
+    result = board.run()
+
+    assert result["second_try"]["kept"] == "first"
+    assert result["second_try"]["second_outcome"] == "error"
+    assert _x_day(board.sc, board.x) == "SUN"  # the first attempt's board, not the second's
+    assert len(board.restores) == 2  # once for the second run, once after it failed
+    assert board.restores[1] is not board.restores[0]  # the first attempt's, not the start's
+    assert result["safety_blocked"] is False
+
+
+@pytest.mark.django_db
+def test_s11_a_cancellation_during_a_failed_second_run_is_not_swallowed(flags, monkeypatch) -> None:
+    import sys
+
+    from core.services import timetable_v2_runner
+
+    class Cancelled(Exception):
+        pass
+
+    seen: list[int] = []
+
+    def checkpoint():
+        if sys._getframe(1).f_code.co_name == "_second_try":
+            seen.append(1)
+            if len(seen) == 2:  # the call made after the second run raised
+                raise Cancelled
+
+    def evaluation(scenario_id, teachers):
+        raise RuntimeError("the second attempt failed")
+
+    board = _Board(monkeypatch)
+    real = timetable_v2_runner._attempt_evaluation
+    calls: list[int] = []
+
+    def flaky(scenario_id, teachers):
+        calls.append(1)
+        return real(scenario_id, teachers) if len(calls) == 1 else evaluation(scenario_id, teachers)
+
+    monkeypatch.setattr(timetable_v2_runner, "_attempt_evaluation", flaky)
+
+    with pytest.raises(Cancelled):
+        board.run(checkpoint=checkpoint)

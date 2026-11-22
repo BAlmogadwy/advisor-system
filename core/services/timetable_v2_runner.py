@@ -844,23 +844,34 @@ def _second_try(scenario_id: int, first: dict, capture: dict, options: dict) -> 
     if first_kept:
         restore_scenario(scenario_id, capture["snapshot"])  # the board the run began with
     second_capture: dict = {}
-    second = _run_v2_optimisation_guarded(
-        scenario_id, **options, _skip_run_start=True, _capture=second_capture
-    )
-    if "error" in second:
-        outcome = "error"
-    elif not _attempt_kept(second):
-        outcome = "blocked"
-    elif not first_kept:
-        outcome = "kept"
-    elif _second_is_better(
-        _attempt_evaluation(scenario_id, second_capture["teachers"]), first_eval, second
-    ):
-        outcome = "kept"
-    else:
-        outcome = "not_better"
+    restored = False
+    try:
+        second = _run_v2_optimisation_guarded(
+            scenario_id, **options, _skip_run_start=True, _capture=second_capture
+        )
+        if "error" in second:
+            outcome = "error"
+        elif not _attempt_kept(second):
+            outcome = "blocked"
+        elif not first_kept:
+            outcome = "kept"
+        elif _second_is_better(
+            _attempt_evaluation(scenario_id, second_capture["teachers"]), first_eval, second
+        ):
+            outcome = "kept"
+        else:
+            outcome = "not_better"
+    except Exception:
+        # Anything the second run lets escape must not cost the first attempt's board; a
+        # cancellation is the hook's to raise (as in the run itself), and propagates.
+        if checkpoint:
+            checkpoint()
+        logger.exception("Second try failed for scenario %d", scenario_id)
+        restore_scenario(scenario_id, first_snapshot if first_kept else capture["snapshot"])
+        restored = True
+        second, outcome = {"error": "second try raised"}, "error"
     keep_second = outcome == "kept"
-    if not keep_second and first_kept:
+    if not keep_second and first_kept and not restored:
         restore_scenario(scenario_id, first_snapshot)
     kept = second if keep_second else first
     kept["second_try"] = {
