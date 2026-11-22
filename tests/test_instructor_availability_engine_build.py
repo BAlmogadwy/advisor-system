@@ -21,12 +21,18 @@ from dataclasses import replace
 
 import pytest
 
-from core.models import DeliveryBoard, Instructor, ProgrammeRequirement, TermSectionMeeting
+from core.models import (
+    DeliveryBoard,
+    Instructor,
+    ProgrammeRequirement,
+    TermSection,
+    TermSectionMeeting,
+)
 from core.services import section_teacher_assignment as sta
 from core.services import timetable_instructor_availability as helper
 from core.services.instructor_availability import KIND_AVAILABLE_ONLY, KIND_UNAVAILABLE
 from tests import one_teacher_support as ots
-from tests._instructor_availability_fixture import AVAILABILITY_FLAGS, rule
+from tests._instructor_availability_fixture import ALL_DAYS, AVAILABILITY_FLAGS, rule
 from tests.test_instructor_availability_engine import (
     _blocked,
     _board_result,
@@ -791,3 +797,194 @@ def test_with_the_flag_off_no_rule_entry_point_runs_and_no_key_appears(
             placement_id=placement.id, blocked_student_ids=[student], limits={"max_candidates": 2}
         )
         assert created["run"]["id"]
+
+
+# â”€â”€ RR-1: a stored engine teacher the read dropped for a rule â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+def _stored_teacher_board(name: str, *, ruled: bool):
+    """CS101 (budget 2), Dr A its only linked teacher. S1 is placed SUN/TUE 09:00,
+    S2 is missing; the map is stored (Dr A holds both). Then Dr A may teach only on
+    Monday: he has no legal week, so an engine read drops his stored rows."""
+    from core.services.course_identity import planner_course_key
+
+    sc, board = ots.scenario(name, programs=("AI",))
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="CS101", course_name="INTRO", programme_term=2, credit_hours=3
+    )
+    key = planner_course_key("CS101", "INTRO")
+    ots.budget(sc, key, 2)
+    a = ots.instructor("Dr A")
+    ots.link("AI", "CS101", a)
+    ots.place(
+        board, ots.section(sc, key, "S1"), [("SUN", "09:00", "10:15"), ("TUE", "09:00", "10:15")]
+    )
+    ots.section(sc, key, "S2")
+    sta.prepare_section_teachers(sc.id, phase="ensure")
+    assert ots.engine_rows(sc) == {(key, "S1"): "Dr A", (key, "S2"): "Dr A"}
+    if ruled:
+        rule(a, KIND_AVAILABLE_ONLY, ("MON",))
+    return sc, key, a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_an_unpinned_reinstatement_replaces_the_row_of_a_teacher_the_read_dropped(
+    av_on, ruled
+) -> None:
+    """RR-1 path (i): ``reinstate_missing_required_sections`` outside a run places
+    S2 teacher-less (the engine read dropped Dr A, who has no legal week), so his
+    stored row of S2 is replaced: the stored map charges nobody at a time his rule
+    forbids on a section the engine just placed. S1, already placed, keeps its row
+    (its violation was there before)."""
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, key, a = _stored_teacher_board(f"rr1 reinstate {ruled}", ruled=ruled)
+    before = _board_violations(sc)[0]
+
+    report = reinstate_missing_required_sections(sc.id)
+
+    assert _missing(sc) == {} and report["after_missing"] == []
+    assert _placed_meetings(sc, key, "S2")
+    assert _board_violations(sc)[0] == before
+    rows = ots.engine_rows(sc)
+    assert rows[(key, "S1")] == "Dr A"
+    if ruled:
+        assert rows.get((key, "S2")) != "Dr A"  # TBD: he is the only linked teacher
+        assert report["instructor_availability"]["released"] == [
+            {"section": f"{key}|S2", "instructor_ids": [a.pk]}
+        ]
+    else:
+        assert rows[(key, "S2")] == "Dr A"
+
+
+def _corpus_with_two_missing_sections(ruled: bool):
+    """The parity corpus built by compact Generate with CS112 PROGRAMMING I S3 and S4
+    taken off the board. Dr Amal may then teach only 11:00-13:00 (no legal week)."""
+    from core.models import SectionPlacement
+    from core.services.course_identity import planner_course_key
+    from core.services.timetable_autoplace import auto_place_scenario
+    from core.services.timetable_run_seed import seeded_timetable_run
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    sc = build_corpus(11)
+    with seeded_timetable_run(11):
+        sta.run_placer(
+            sc.id,
+            lambda: auto_place_scenario(sc.id, strategy="compact", candidate_gen_budget=1.0),
+            rebuild=True,
+        )
+    key = planner_course_key("CS112", "PROGRAMMING I")
+    victims = TermSection.objects.filter(scenario=sc, course_key=key, section__in=("S3", "S4"))
+    assert victims.count() == 2
+    SectionPlacement.objects.filter(term_section__in=victims).delete()
+    TermSectionMeeting.objects.filter(term_section__in=victims).delete()
+    amal = Instructor.objects.get(full_name="Dr Amal")
+    if ruled:
+        rule(amal, KIND_AVAILABLE_ONLY, tuple(ALL_DAYS), "11:00", "13:00")
+    return sc, key
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+@pytest.mark.parametrize("ending", ["error", "safety-rollback"])
+def test_optimise_current_that_ends_after_its_pre_step_leaves_a_consistent_map(
+    av_on, monkeypatch, ending, ruled
+) -> None:
+    """RR-1 path (ii): the Optimise Current pre-step reinstates S3 and S4 under a map
+    that dropped Dr Amal, then the run errors or the safety gate rolls it back to the
+    snapshot. The snapshot is taken after the pre-step, so it must hold a map that
+    matches the reinstated board: no new forbidden meeting under the stored map."""
+    from core.services import timetable_v2_runner as runner
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    sc, key = _corpus_with_two_missing_sections(ruled)
+    before = _board_violations(sc)[0]
+    if ending == "error":
+        monkeypatch.setattr(
+            "core.services.timetable_optimizer_v2.optimise_current_timetable",
+            lambda **_kwargs: {"error": "simulated"},
+        )
+    else:
+        monkeypatch.setattr(
+            runner,
+            "optimiser_safety_regression",
+            lambda *_args, **_kwargs: {
+                "blocked": True,
+                "regressions": [{"metric": "forced", "label": "forced"}],
+            },
+        )
+
+    result = run_v2_optimisation_guarded(
+        sc.id, mode="current", max_iterations=2, run_chain=False, run_cpsat=False
+    )
+
+    if ending == "error":
+        assert result.get("error") == "simulated"
+    else:
+        assert result.get("safety_blocked") is True, result.get("error")
+    assert _placed_meetings(sc, key, "S3") and _placed_meetings(sc, key, "S4")
+    assert _board_violations(sc)[0] == before
+    if ruled:
+        amal = Instructor.objects.get(full_name="Dr Amal")
+        stored = sta.load_assignment(sc.id, incomplete="collect")
+        assert stored.teacher.get(f"{key}_S3") != amal.pk
+        assert stored.teacher.get(f"{key}_S4") != amal.pk
+
+
+@pytest.mark.django_db
+def test_a_stored_row_of_an_already_placed_section_is_left_alone(av_on) -> None:
+    """RR-1 design point 3: only the sections the call newly placed lose their stored
+    row. S1 (already placed, Dr A without a legal week) keeps it, though the read
+    drops it; so does a row of a placed section of another course."""
+    from core.services.course_identity import planner_course_key
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+    sc, key, a = _stored_teacher_board("rr1 left alone", ruled=False)
+    board = DeliveryBoard.objects.get(scenario=sc)
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="CS200", course_name="OTHER", programme_term=2, credit_hours=3
+    )
+    other = planner_course_key("CS200", "OTHER")
+    ots.budget(sc, other, 1, code="CS200")
+    ots.link("AI", "CS200", a)
+    ots.place(
+        board, ots.section(sc, other, "S1"), [("MON", "09:00", "10:15"), ("WED", "09:00", "10:15")]
+    )
+    sta.prepare_section_teachers(sc.id, phase="ensure")
+    assert ots.engine_rows(sc)[(other, "S1")] == "Dr A"
+    rule(a, KIND_AVAILABLE_ONLY, ("MON",))  # no legal week for either course
+
+    reinstate_missing_required_sections(sc.id)
+
+    rows = ots.engine_rows(sc)
+    assert rows[(key, "S1")] == "Dr A" and rows[(other, "S1")] == "Dr A"
+    assert rows.get((key, "S2")) != "Dr A"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on-no-rule"])
+def test_the_replacement_changes_nothing_without_an_active_rule(settings, flag) -> None:
+    """RR-1 design point 4: flag off, or on with no rule, the reinstatement keeps
+    Dr A's stored rows exactly, reports no release, and (flag off) never reads the
+    rules table."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from core.services.timetable_required_sections import reinstate_missing_required_sections
+    from tests._instructor_availability_fixture import rule_queries
+
+    for name, value in AVAILABILITY_FLAGS.items():
+        setattr(settings, name, value)
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, key, _a = _stored_teacher_board(f"rr1 inert {flag}", ruled=False)
+    with CaptureQueriesContext(connection) as captured:
+        report = reinstate_missing_required_sections(sc.id)
+
+    assert _missing(sc) == {}
+    assert ots.engine_rows(sc) == {(key, "S1"): "Dr A", (key, "S2"): "Dr A"}
+    assert "instructor_availability" not in report or (
+        report["instructor_availability"]["released"] == []
+    )
+    if not flag:
+        assert rule_queries(captured.captured_queries) == []
