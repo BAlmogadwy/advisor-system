@@ -1793,6 +1793,7 @@ def auto_place_board(
     av_placed_online: dict[tuple[str, str], tuple[bool, ...]] | None = None
     availability_ranked_last: list[dict] = []
     availability_unplaced: list[dict] = []
+    availability_released: list[dict] = []
     if availability and _av_assignment is not None:
         av_charged = {
             key: ids
@@ -2177,6 +2178,8 @@ def auto_place_board(
             av_ids: tuple[int, ...] = ()
             av_exempt = False
             av_is_fixed = False
+            # (released teachers, binding) once the section is released (D-B).
+            av_released: tuple[tuple[int, ...], bool] | None = None
             if availability:
                 av_exempt = bool(cd["is_online"]) and _av_online_everywhere(code, sec_label)
                 av_ids = () if av_exempt else av_charged.get(av_key, ())
@@ -2298,6 +2301,11 @@ def auto_place_board(
             # forbidden) does it append every other legal week of the complete
             # set (tier 2, fix plan D-C). A section tier 1 places legally is
             # placed exactly as before. Without a ruled teacher: the list itself.
+            # An ENGINE teacher's section that tier 2 cannot place either is
+            # RELEASED (fix plan D-B): charged to nobody for the rest of the run
+            # (no clash or cap ledger, no rule; the run's map shows it TBD), and
+            # placed from the course's ordinary options under the filters that do
+            # not depend on a teacher. A fixed teacher is never released.
             candidates = [*all_options, _NEXT_TIER] if av_ids else all_options
             av_tier = 1
             for option in candidates:
@@ -2313,6 +2321,28 @@ def auto_place_board(
                             for o in _complete_legal(cd, display_code, av_ids)
                             if _meeting_signature(o) not in tried
                         )
+                        if not av_is_fixed:
+                            candidates.append(_NEXT_TIER)
+                    elif av_tier == 2 and best_option is None:
+                        av_tier = 3
+                        # Would the section have been placed under its teacher
+                        # without the rule? (kept for the report; a section placed
+                        # teacher-less below never is unplaced, see there).
+                        av_binding = any(
+                            option_blocked(availability, av_ids, o)
+                            and _hard_rejection(o, code, sec_label, meeting_policy) is None
+                            for o in cd["all_options"]
+                        )
+                        av_released = (av_ids, av_binding)
+                        from core.services.section_teacher_assignment import release_in_run
+
+                        release_in_run(scenario.id, f"{code}_{sec_label}", av_ids)
+                        av_ids = ()
+                        section_instructors[av_key] = set()
+                        if teacher_guard is not None:
+                            teacher_guard.release(av_key)
+                            guard_check = teacher_guard.check(av_key, (), instructor_schedule_full)
+                        candidates.extend(cd["all_options"])
                     continue
                 rejection = _hard_rejection(option, code, sec_label, meeting_policy)
                 if rejection is not None:
@@ -2327,7 +2357,7 @@ def auto_place_board(
                 # teacher's ranks after every other option (still placed). An
                 # engine teacher's feed is legal-only whenever he has a legal
                 # week, so the filter fires only when he has none and every
-                # option goes: the section is unplaced and never traced.
+                # option goes (never traced); the section is then released.
                 av_rank = 0
                 if av_ids and option_blocked(availability, av_ids, option):
                     if av_is_fixed:
@@ -2522,25 +2552,16 @@ def auto_place_board(
 
             if best_option is None:
                 total_skipped += 1
-                # Teaching-time rules: the options the ENGINE teacher's feed left
-                # out are re-tested against the other hard filters; one that passes
-                # them means the rule, not clash, cap or same-course, kept the
-                # section off the board ("binding").
-                if av_ids and not av_is_fixed and all_options is not cd["all_options"]:
-                    for option in cd["all_options"]:
-                        if option_blocked(availability, av_ids, option) and (
-                            _hard_rejection(option, code, sec_label, meeting_policy) is None
-                        ):
-                            _count_filter_rejection(
-                                filter_rejections,
-                                INSTRUCTOR_UNAVAILABLE,
-                                _availability_context(availability, av_ids, option),
-                            )
-                if av_ids and INSTRUCTOR_UNAVAILABLE in filter_rejections:
+                # Teaching-time rules: a section left off the board even with
+                # its teacher released, that its teacher would have placed had
+                # the rule not existed ("binding"). A released section is placed
+                # by any option its teacher would pass the other filters with,
+                # so this list stays empty; the key is kept (fix plan D-B).
+                if av_released is not None and av_released[1]:
                     availability_unplaced.append(
                         {
                             "section": av_key,
-                            "instructor_ids": list(av_ids),
+                            "instructor_ids": list(av_released[0]),
                             "binding": True,
                         }
                     )
@@ -2628,6 +2649,10 @@ def auto_place_board(
                         "instructor_ids": list(av_ids),
                         "reason": "rule_cannot_be_met",
                     }
+                )
+            if av_released is not None:
+                availability_released.append(
+                    {"section": av_key, "instructor_ids": list(av_released[0])}
                 )
 
             # ── Persist the chosen placement ──────────────────────────
@@ -2848,7 +2873,21 @@ def auto_place_board(
             # primary CourseInstructor for this scenario's gender + program and
             # fan its name into the section's meeting rows, so the default
             # INSTRUCTOR_CLASH path works with zero scenario coupling.
-            _apply_course_instructor(ts, scenario, board, display_code)
+            if av_released is None:
+                _apply_course_instructor(ts, scenario, board, display_code)
+            else:
+                # Released: the run's map charges nobody, so no name (D-B).
+                from core.services.section_teacher_assignment import released_view
+
+                _apply_course_instructor(
+                    ts,
+                    scenario,
+                    board,
+                    display_code,
+                    assignment=released_view(
+                        _av_assignment, {f"{code}_{sec_label}": av_released[0]}
+                    ),
+                )
 
             total_placed += 1
             placement_results.append(
@@ -3026,12 +3065,15 @@ def auto_place_board(
         ),
         # Teaching-time rules only (a teacher this scenario can charge has one):
         # the fixed-teacher sections placed at a time their teacher may not teach
-        # ("rule cannot be met"), and the sections the rule kept off the board.
+        # ("rule cannot be met"), the sections the rule kept off the board even
+        # teacher-less ("unplaced", empty in practice), and the sections placed
+        # with their engine teacher released ("released", fix plan D-B).
         **(
             {
                 "instructor_availability": {
                     "ranked_last": availability_ranked_last,
                     "unplaced": availability_unplaced,
+                    "released": availability_released,
                 }
             }
             if availability

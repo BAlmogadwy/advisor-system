@@ -86,8 +86,11 @@ from core.services.timetable_instructor_availability import (
     OnlineExemption,
     availability_for,
     availability_scope,
+    clear_released,
     meetings_blocked,
     online_exemption,
+    record_release,
+    released_sections,
     rule_ids,
     rules_enabled,
     section_online_exempt,
@@ -340,6 +343,53 @@ def pinned_assignment(scenario_id: int, assignment: TeacherAssignment) -> Iterat
 
 def current_pin(scenario_id: int) -> TeacherAssignment | None:
     return (_PINNED.get() or {}).get(scenario_id)
+
+
+# ── Sections a run released from their engine teacher (fix plan D-B) ─────
+
+
+def release_in_run(scenario_id: int, section_id: str, instructor_ids) -> None:
+    """The placer could give ``section_id`` (V2 id) no option its ENGINE teachers
+    ``instructor_ids`` may teach that passes the clash, cap and same-course
+    filters, so it RELEASES them for the rest of the run: the section is charged
+    to nobody (TBD, reason ``availability``) and placed from its ordinary
+    options. Every later read of the run sees it: the pinned map it was released
+    under (:func:`load_assignment`), the unpinned engine reads (the stored row is
+    ignored, ``_validated_rows``) and every re-pick's kept rule
+    (:func:`propose_layout_assignment`, :func:`close_on_layout`), until a map
+    closure-complete on the real layout is stored (``_persist``) and chooses the
+    section's teacher there: another eligible teacher with a legal free option,
+    else TBD. Kept on the run's teaching-time rule scope."""
+    record_release(scenario_id, section_id, instructor_ids, current_pin(scenario_id))
+
+
+def released_view(assignment: TeacherAssignment, released: Mapping[str, Iterable[int]]):
+    """``assignment`` with each section of ``released`` (V2 id -> released
+    teachers) still charged to one of them as an ENGINE pick shown released: no
+    teacher, TBD, reason ``availability``. ``assignment`` itself when none is."""
+    keys = {
+        key
+        for key, ids in released.items()
+        if assignment.status.get(key) == STATUS_ENGINE and assignment.teacher.get(key) in set(ids)
+    }
+    if not keys:
+        return assignment
+    return replace(
+        assignment,
+        teacher={**assignment.teacher, **dict.fromkeys(keys)},
+        status={**assignment.status, **dict.fromkeys(keys, STATUS_TBD)},
+        tbd_reason={**assignment.tbd_reason, **dict.fromkeys(keys, AVAILABILITY_REASON)},
+    )
+
+
+def _run_released(scenario_id: int) -> dict[str, tuple[int, ...]]:
+    """The run's released sections and the teachers each was released from."""
+    return {key: ids for key, (ids, _pin) in released_sections(scenario_id).items()}
+
+
+def _without_released(seed: Mapping[str, int], released: Mapping[str, tuple[int, ...]]):
+    """``seed`` (key -> teacher) without the pairs the run released."""
+    return {key: teacher for key, teacher in seed.items() if teacher not in released.get(key, ())}
 
 
 @contextmanager
@@ -2193,14 +2243,19 @@ def teacher_bounds(before_metrics: Mapping) -> dict[str, tuple[int, int, int]]:
 
 
 def _validated_rows(
-    slots: list[Slot], info: Mapping[str, Any], *, release_unteachable: bool = False
+    slots: list[Slot],
+    info: Mapping[str, Any],
+    *,
+    release_unteachable: bool = False,
+    released: Mapping[str, tuple[int, ...]] | None = None,
 ) -> tuple[dict[str, int], list]:
     """The stored engine rows that still hold, every check layout-free (1.4).
 
     ``release_unteachable`` (an engine read): a row whose teacher's
     teaching-time rules leave no legal week for the course is ignored too, so
-    the run re-picks that section. A display read or a manual create never
-    drops a stored row for a rule."""
+    the run re-picks that section; so is the row of a section the run itself
+    RELEASED from that teacher (``released``, fix plan D-B). A display read or a
+    manual create never drops a stored row for a rule."""
     by_key = {s.key: s for s in slots}
     ignored: list[list[str]] = [list(k) for k in info.get("stale_row_keys", [])]
     valid: dict[str, int] = {}
@@ -2214,6 +2269,9 @@ def _validated_rows(
             ignored.append(list(slot.row_key) if slot else [key, ""])
             continue
         if release_unteachable and not slot.has_legal_week(teacher):
+            ignored.append(list(slot.row_key))
+            continue
+        if released and teacher in released.get(key, ()):
             ignored.append(list(slot.row_key))
             continue
         valid[key] = teacher
@@ -2312,21 +2370,34 @@ def load_assignment(
     release = release_unteachable
     pinned = None if ignore_pin else current_pin(scenario_id)
     if pinned is not None:
-        return pinned
+        # A section the run released under this very map reads released (D-B).
+        released_here = {
+            key: ids for key, (ids, pin) in released_sections(scenario_id).items() if pin is pinned
+        }
+        return released_view(pinned, released_here) if released_here else pinned
+    # An engine read ignores the stored row of a section the run released.
+    run_released = _run_released(scenario_id) if release else {}
+    released_token = tuple(sorted(run_released.items()))
     cache = _scope_cache(scenario_id)
     fingerprint = None
     if cache is not None:
         fingerprint = _layout_fingerprint(scenario_id)
         if release:
             released = cache.get("assignment_released")
-            if released is not None and released[0] == fingerprint:
+            if (
+                released is not None
+                and released[0] == fingerprint
+                and released[2] == released_token
+            ):
                 return _in_mode(released[1], incomplete)
         hit = cache.get("assignment")
-        if hit is not None and hit[0] == fingerprint and not (release and hit[2]):
+        if hit is not None and hit[0] == fingerprint and not (release and (hit[2] or run_released)):
             return _in_mode(hit[1], incomplete)
     slots, info = _collect(scenario_id, incomplete=incomplete)
     unteachable = _unteachable_rows(slots, info)
-    valid, ignored = _validated_rows(slots, info, release_unteachable=release)
+    valid, ignored = _validated_rows(
+        slots, info, release_unteachable=release, released=run_released
+    )
     filled, added = _closure(slots, valid)
     report = dict(filled.report)
     report.update(
@@ -2350,8 +2421,8 @@ def load_assignment(
         incomplete=tuple(info["incomplete"]),
     )
     if cache is not None:
-        if release and unteachable:
-            cache["assignment_released"] = (fingerprint, assignment)
+        if release and (unteachable or run_released):
+            cache["assignment_released"] = (fingerprint, assignment, released_token)
         else:
             cache["assignment"] = (fingerprint, assignment, unteachable)
     return assignment
@@ -2367,6 +2438,9 @@ def close_on_layout(scenario_id: int, assignment: TeacherAssignment, *, bounds=N
         for key, teacher in assignment.teacher.items()
         if teacher is not None and assignment.status.get(key) == STATUS_ENGINE
     }
+    released = _run_released(scenario_id)
+    if released:  # a teacher the run released is not kept as a seed (D-B)
+        seed = _without_released(seed, released)
     closed = greedy_assign(slots, seed=seed, bounds=bounds)
     closed.report.update(engine="closure", programmes_source=info["programmes_source"])
     return closed
@@ -2390,7 +2464,11 @@ def propose_layout_assignment(
     cur = _current_map(slots, current) if current is not None else None
     kept: set[str] = set()
     if keep_violations_of is not None:
-        kept = _violating_keys(slots, _current_map(slots, keep_violations_of))
+        in_force = _current_map(slots, keep_violations_of)
+        released = _run_released(scenario_id)
+        if released:  # the kept rule never keeps a teacher the run released (D-B)
+            in_force = _without_released(in_force, released)
+        kept = _violating_keys(slots, in_force)
     result = solve_layout_aware(
         slots, current=cur if cur is not None else None, bounds=bounds, kept=kept
     )
@@ -2465,6 +2543,12 @@ class PlacerGuard:
             )
             if free:
                 self.open[slot.pr4_key] = free
+
+    def release(self, key: str) -> None:
+        """The placer released ``key`` (``course|label``) from its engine teacher
+        (fix plan D-B): no teacher keeps an option of it free any more."""
+        for teacher, pending in self.pending.items():
+            self.pending[teacher] = [(other, options) for other, options in pending if other != key]
 
     def _meetings(self, option) -> list[tuple[int, int, int]]:
         return [
@@ -2666,6 +2750,9 @@ def _persist(
         if new_rows:
             SectionInstructor.objects.bulk_create(new_rows, batch_size=500)
     invalidate_scope(scenario_id)
+    # The stored map is closure-complete on the real layout: it chose a teacher
+    # (or none) for every section the run released (D-B).
+    clear_released(scenario_id)
     if skipped:
         logger.warning("One-teacher persist skipped pinned sections %s", skipped[:10])
     stored = TeacherAssignment(

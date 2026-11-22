@@ -1744,16 +1744,22 @@ def test_the_greedy_feed_places_an_engine_teachers_section_in_a_mixed_period_wee
     meetings = _placed_meetings(sc, key)
     assert [day for day, _s, _e in meetings] == ["SUN", "TUE"], meetings
     assert not _blocked(meetings, a, _rules_of(a))
-    assert _board_result(result)["instructor_availability"] == {"ranked_last": [], "unplaced": []}
+    assert _board_result(result)["instructor_availability"] == {
+        "ranked_last": [],
+        "unplaced": [],
+        "released": [],
+    }
 
 
 @pytest.mark.django_db
 def test_without_the_feed_the_same_section_is_left_unplaced_by_the_rule(av_on, monkeypatch) -> None:
     """T-G2's control: the same engine map, with the greedy's feed reduced to the
     course list and its complete legal set (tier 2, fix plan D-C) taken out,
-    leaves the section unplaced with ``INSTRUCTOR_UNAVAILABLE``."""
+    finds no option Dr A may teach, so the section is placed with Dr A RELEASED
+    (fix plan D-B: nothing is left unplaced because of a rule) at a time his rule
+    forbids, and nobody's name is written on it."""
+    from core.models import TermSectionMeeting
     from core.services import timetable_autoplace as autoplace
-    from core.services.timetable_decision_trace import INSTRUCTOR_UNAVAILABLE
 
     sc, _board, key, (a,) = _greedy_scenario("t-g2 control")
     _mixed_only(a)
@@ -1769,14 +1775,19 @@ def test_without_the_feed_the_same_section_is_left_unplaced_by_the_rule(av_on, m
     with sta.pinned_assignment(sc.id, engine):
         result = _greedy(sc)
 
-    assert _placed_meetings(sc, key) == []
+    meetings = _placed_meetings(sc, key)
+    assert len(meetings) == 2 and _blocked(meetings, a, _rules_of(a)), meetings
     board = _board_result(result)
-    (failure,) = board["room_failures"]
-    assert failure["reason"] == INSTRUCTOR_UNAVAILABLE
-    assert failure["context"]["instructor_id"] == a.pk
-    assert board["instructor_availability"]["unplaced"] == [
-        {"section": f"{key}|S1", "instructor_ids": [a.pk], "binding": True}
-    ]
+    assert board["room_failures"] == []
+    assert board["instructor_availability"] == {
+        "ranked_last": [],
+        "unplaced": [],
+        "released": [{"section": f"{key}|S1", "instructor_ids": [a.pk]}],
+    }
+    names = TermSectionMeeting.objects.filter(
+        term_section__scenario=sc, term_section__course_key=key
+    ).values_list("instructor", flat=True)
+    assert set(names) == {""}
 
 
 @pytest.mark.django_db
@@ -1815,9 +1826,9 @@ def test_the_placer_guard_and_the_greedy_ask_for_the_same_legal_options(av_on, m
 def test_a_fixed_teacher_without_a_legal_week_is_placed_and_reported(av_on, pinned) -> None:
     """T-G5: "only Thursday" leaves a 2 x 75 course no week. A pinned teacher's
     section is placed anyway, at an option with as few forbidden meetings as
-    possible, and reported; the same teacher
-    charged as an ENGINE pick (pinned map) leaves it unplaced."""
-    from core.services.timetable_decision_trace import INSTRUCTOR_UNAVAILABLE
+    possible, and reported; the same teacher charged as an ENGINE pick (pinned
+    map) is released instead (fix plan D-B): the section is placed, charged to
+    nobody, and reported released."""
 
     sc, _board, key, (a,) = _greedy_scenario("t-g5", pin=pinned)
     rule(a, KIND_AVAILABLE_ONLY, ("THU",))
@@ -1840,12 +1851,16 @@ def test_a_fixed_teacher_without_a_legal_week_is_placed_and_reported(av_on, pinn
                 {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
             ],
             "unplaced": [],
+            "released": [],
         }
     else:
-        assert meetings == []
-        assert _board_result(result)["room_failures"][0]["reason"] == INSTRUCTOR_UNAVAILABLE
-        assert report["ranked_last"] == []
-        assert [row["section"] for row in report["unplaced"]] == [f"{key}|S1"]
+        assert len(meetings) == 2
+        assert _board_result(result)["room_failures"] == []
+        assert report == {
+            "ranked_last": [],
+            "unplaced": [],
+            "released": [{"section": f"{key}|S1", "instructor_ids": [a.pk]}],
+        }
 
 
 @pytest.mark.django_db
@@ -2012,26 +2027,40 @@ def test_a_fixed_teacher_whose_legal_weeks_are_all_taken_is_still_placed(av_on) 
 
 
 @pytest.mark.django_db
-def test_an_engine_teacher_whose_legal_weeks_are_all_taken_is_reported_binding(av_on) -> None:
-    """T-G11 (H1): as an ENGINE pick the same section is left unplaced; the options
-    the feed left out pass clash, cap and same-course, so the rule was binding:
-    listed, and counted under ``INSTRUCTOR_UNAVAILABLE`` beside the clash."""
-    from core.services.timetable_decision_trace import INSTRUCTOR_CLASH, INSTRUCTOR_UNAVAILABLE
+@pytest.mark.parametrize("ruled", [True, False], ids=["rule", "no-rule-control"])
+def test_an_engine_teacher_whose_legal_weeks_are_all_taken_is_released(av_on, ruled) -> None:
+    """T-G11, rewritten for fix plan D-B: as an ENGINE pick the same section's one
+    legal week clashes with Dr A's pinned CS200, so the placer RELEASES Dr A for
+    the run and places the section teacher-less (nothing is left unplaced
+    because of a rule), and reports it. The run's map charges nobody with it
+    afterwards. Control: without the rule Dr A keeps it and nothing is released."""
+    from core.models import InstructorTimeRule
+    from core.services import timetable_instructor_availability as tia
 
     sc, key, a = _clash_taken("t-g11", pinned=False)
+    if not ruled:
+        InstructorTimeRule.objects.filter(instructor=a).delete()
+    engine = _engine_map(sc, key, a)
 
-    with sta.pinned_assignment(sc.id, _engine_map(sc, key, a)):
+    with tia.availability_scope(sc.id), sta.pinned_assignment(sc.id, engine):
         result = _greedy(sc)
+        in_force = sta.load_assignment(sc.id, release_unteachable=True)
 
-    assert _placed_meetings(sc, key) == []
+    meetings = _placed_meetings(sc, key)
+    assert len(meetings) == 2, meetings
     board = _board_result(result)
-    (failure,) = board["room_failures"]
-    assert failure["context"]["rejected_by"][INSTRUCTOR_CLASH] >= 1
-    assert failure["context"]["rejected_by"][INSTRUCTOR_UNAVAILABLE] >= 1
-    assert board["instructor_availability"] == {
-        "ranked_last": [],
-        "unplaced": [{"section": f"{key}|S1", "instructor_ids": [a.pk], "binding": True}],
-    }
+    assert board["room_failures"] == []
+    if ruled:
+        assert board["instructor_availability"] == {
+            "ranked_last": [],
+            "unplaced": [],
+            "released": [{"section": f"{key}|S1", "instructor_ids": [a.pk]}],
+        }
+        assert in_force.status[f"{key}_S1"] == sta.STATUS_TBD
+        assert in_force.tbd_reason[f"{key}_S1"] == sta.AVAILABILITY_REASON
+    else:
+        assert "instructor_availability" not in board
+        assert in_force.teacher[f"{key}_S1"] == a.pk
 
 
 @pytest.mark.django_db
@@ -2051,6 +2080,7 @@ def test_a_reinstated_section_of_a_pinned_teacher_without_a_legal_week_is_listed
             {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
         ],
         "unplaced": [],
+        "released": [],
     }
 
 

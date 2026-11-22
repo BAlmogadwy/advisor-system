@@ -64,9 +64,20 @@ class _Holder:
     writers' :class:`RuleChecker` and the :class:`OnlineExemption`'s static half.
 
     ``universe``: the teacher ids whose rules are loaded; ``everyone``: the rule
-    table held no row at all when it was read, so every universe is covered."""
+    table held no row at all when it was read, so every universe is covered.
+    ``released``: the sections the scope's run released from their engine
+    teachers (:func:`record_release`, fix plan D-B)."""
 
-    __slots__ = ("checker", "everyone", "loaded", "online", "pending_rules", "universe", "value")
+    __slots__ = (
+        "checker",
+        "everyone",
+        "loaded",
+        "online",
+        "pending_rules",
+        "released",
+        "universe",
+        "value",
+    )
 
     def __init__(self) -> None:
         self.loaded = False
@@ -78,6 +89,9 @@ class _Holder:
         # Every stored rule, read by the universe-less path while its collect
         # works out the universe (so that collect needs no second rule query).
         self.pending_rules: list[TimeRule] | None = None
+        # V2 section id -> (the engine teachers it was released from, the run's
+        # pinned map it was released under, or None).
+        self.released: dict[str, tuple[tuple[int, ...], Any]] = {}
 
     def store(
         self, value: InstructorAvailability, universe: Iterable[int], *, everyone: bool = False
@@ -213,6 +227,41 @@ def bound_availability(scenario_id: int | None = None) -> InstructorAvailability
         return holder.value if holder is not None and holder.loaded else EMPTY_AVAILABILITY
     loaded = [h for key, h in scopes.items() if key is not _EVERY_SCENARIO and h.loaded]
     return loaded[0].value if len(loaded) == 1 else EMPTY_AVAILABILITY
+
+
+# ── Sections a run released from their engine teacher (fix plan D-B) ─────
+
+
+def record_release(
+    scenario_id: int, section_id: str, instructor_ids: Iterable[int], pin: Any = None
+) -> None:
+    """The run of the open scope released ``section_id`` (a V2 id) from its ENGINE
+    teachers ``instructor_ids``: their rules leave it no legal placeable option, so
+    for the rest of the run it is charged to nobody (like a TBD section) and is
+    placed from its ordinary options. ``pin``: the run's pinned map it was
+    released under (``section_teacher_assignment.current_pin``), whose reads
+    then show it released. Without a scope nothing is kept (the release stays
+    the caller's own)."""
+    holder = _holder(scenario_id)
+    if holder is not None:
+        holder.released[section_id] = (tuple(sorted(set(instructor_ids))), pin)
+
+
+def released_sections(scenario_id: int) -> dict[str, tuple[tuple[int, ...], Any]]:
+    """``{V2 section id: (released teachers, pin)}`` of the open scope's run, until
+    a layout-aware re-pick stores the map that resolves them
+    (:func:`clear_released`). Empty without a scope or a release."""
+    holder = _holder(scenario_id)
+    return dict(holder.released) if holder is not None else {}
+
+
+def clear_released(scenario_id: int) -> None:
+    """A map closure-complete on the real layout was stored: every release of the
+    scope's run is resolved (its section has the teacher the layout allows, or
+    none)."""
+    holder = _holder(scenario_id)
+    if holder is not None:
+        holder.released.clear()
 
 
 # ── Predicates ───────────────────────────────────────────────────────────
@@ -627,6 +676,7 @@ __all__ = [
     "availability_scope",
     "bound_availability",
     "cell_predicate",
+    "clear_released",
     "fixed_section_keys",
     "meetings_blocked",
     "online_everywhere",
@@ -638,6 +688,8 @@ __all__ = [
     "placed_online_by_section",
     "placed_online_flags",
     "prune_relocate_domains",
+    "record_release",
+    "released_sections",
     "RuleChecker",
     "rule_ids",
     "rules_enabled",
