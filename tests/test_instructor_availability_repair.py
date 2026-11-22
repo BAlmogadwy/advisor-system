@@ -324,11 +324,23 @@ def test_the_week_gate_blocks_a_fifth_day_and_allows_a_spare_day() -> None:
 
 from core.models import SectionInstructor  # noqa: E402
 from core.services import section_teacher_assignment as sta  # noqa: E402
+from core.services.timetable_instructor_availability_report import (  # noqa: E402
+    pair_counts,
+    scenario_instructor_availability_report,
+)
 from tests import one_teacher_support as ots  # noqa: E402
 from tests._instructor_availability_fixture import AVAILABILITY_FLAGS, rule  # noqa: E402
 from tests.test_one_teacher_day_off_policy import _enrol  # noqa: E402
 
 RUN = {"max_iterations": 3, "run_chain": False, "run_cpsat": False, "max_chain_iterations": 2}
+
+
+@pytest.fixture
+def av_on(settings):
+    """Production's engine flags with the rules ON."""
+    for name, value in AVAILABILITY_FLAGS.items():
+        setattr(settings, name, value)
+    return settings
 
 
 @pytest.fixture
@@ -461,3 +473,96 @@ def test_a_gated_released_pick_stays_to_be_decided_for_the_week_gate() -> None:
     # A section that is not released is never touched.
     x, four_days = board(4)
     assert _gate_released(four_days, []) is four_days
+
+
+# ── B2-7: the final report ───────────────────────────────────────────────
+
+
+def _online_somewhere(name: str, *, ds_online: bool):
+    """GS101 is online on the AI board and, on the DS board where its one section
+    S1 sits at MON 09:00, a campus course (``ds_online``: online there too). Dr A
+    may not teach mornings."""
+    from tests.test_instructor_availability_engine import _online_here, _pin
+
+    sc, _ai_board, key, a = _online_here(elsewhere=True, ds_online=ds_online)
+    _pin(sc, key, "S1", a)  # a charged teacher: the closure never charges a forbidden time
+    SectionPlacement.objects.filter(board__scenario=sc, term_section__course_key=key).exclude(
+        day="MON"
+    ).delete()
+    SectionPlacement.objects.filter(board__scenario=sc, term_section__course_key=key).update(
+        start_time="09:00", end_time="10:15"
+    )
+    return sc, key, a
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ds_online", [False, True], ids=["campus-on-one-board", "online-control"])
+def test_the_report_counts_a_campus_meeting_of_a_course_that_is_online_elsewhere(
+    av_on, ds_online
+) -> None:
+    """B2-7: GS101 is online on one board and on campus on the other; its campus
+    meeting (MON 09:00) breaks Dr A's no-mornings rule, so the report counts 1 row,
+    keyed by course, label, day, start, end and teacher. Control: online on every
+    board it sits on, the section is exempt (the one online predicate) and counts 0."""
+    sc, key, a = _online_somewhere(f"b2-7 {ds_online}", ds_online=ds_online)
+
+    report = scenario_instructor_availability_report(sc.id)
+
+    assert report["checked"] is True and report["unchecked"] == []
+    if ds_online:
+        assert report["count"] == 0 and report["rows"] == []
+        return
+    assert report["count"] == 1
+    row = report["rows"][0]
+    assert (row["course_key"], row["label"], row["day"], row["start"], row["end"]) == (
+        key,
+        "S1",
+        "MON",
+        "09:00",
+        "10:15",
+    )
+    assert row["instructor_id"] == a.pk
+    assert pair_counts(report) == {(f"{key}_S1", a.pk): 1}
+
+
+@pytest.mark.django_db
+def test_the_report_is_unchecked_without_a_rule_and_never_raises(av_on, monkeypatch) -> None:
+    """B2-7: no rule binds a teacher: ``checked`` is False (not a clean board); a
+    failing read is logged and reported unchecked, never raised."""
+    from core.services import timetable_instructor_availability_report as report_module
+
+    sc, _board, _key, _a = _greedy_scenario_for_report()
+    unchecked = scenario_instructor_availability_report(sc.id)
+    assert unchecked["checked"] is False and unchecked["reason"] == "no_rules"
+
+    def boom(_scenario_id):
+        raise RuntimeError("unreadable")
+
+    monkeypatch.setattr(report_module, "availability_for", boom)
+    failed = scenario_instructor_availability_report(sc.id)
+    assert failed["checked"] is False and failed["reason"] == "report_error"
+
+
+def _greedy_scenario_for_report():
+    from tests.test_instructor_availability_engine import _greedy_scenario
+
+    return _greedy_scenario("b2-7 plain")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+def test_run_placer_attaches_the_persisted_board_report(av_on, flag) -> None:
+    """B2-7: ``run_placer`` attaches the report under a NEW key while a rule binds a
+    teacher; the flag off adds no key."""
+    from tests.test_instructor_availability_engine import _online_here
+
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _ai_board, _key, _a = _online_here(elsewhere=True, ds_online=False)
+
+    result = sta.run_placer(sc.id, dict, rebuild=False)
+
+    if flag:
+        assert result["instructor_availability_report"]["checked"] is True
+        assert result["instructor_availability_report"]["count"] == 0
+    else:
+        assert "instructor_availability_report" not in result

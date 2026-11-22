@@ -107,7 +107,11 @@ def evaluate_generated_timetable_candidate(
     # meetings a charged teacher may not teach, which every acceptance relation
     # that vetoes a rise in overloads also vetoes. The sections each improvement
     # stage locks as online never move there, so they are left out. Absent when
-    # no rule binds a teacher of the run (no key, no cost).
+    # no rule binds a teacher of the run (no key, no cost). This is a delta net
+    # over the sections a stage can move, NOT the count of the board: the
+    # authoritative number staff see is ``result["instructor_availability_report"]``
+    # (``scenario_instructor_availability_report``: the persisted board under the
+    # map in force, every section, the one online predicate).
     availability = bound_availability() if section_instructor_ids else None
     if availability:
         quality_score["instructor_availability"] = {

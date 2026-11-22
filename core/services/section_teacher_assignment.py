@@ -3026,6 +3026,17 @@ def run_placer(scenario_id: int, place, *, rebuild: bool):
             final = prepare_section_teachers(scenario_id, phase="ensure", release_unteachable=True)[
                 "assignment"
             ]
+        if isinstance(result, dict) and availability_for(scenario_id):
+            # The authoritative count of the persisted board under the map just
+            # stored (B2-7); a NEW key, only while a rule binds a teacher.
+            from core.services.timetable_instructor_availability_report import (
+                attachable,
+                scenario_instructor_availability_report,
+            )
+
+            result["instructor_availability_report"] = attachable(
+                scenario_instructor_availability_report(scenario_id)
+            )
     if isinstance(result, dict):
         result["section_teachers"] = {"enabled": True, "final": stage_report(final)}
     return result

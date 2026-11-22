@@ -4365,9 +4365,11 @@ def test_only_the_flags_module_and_the_helper_read_the_flag() -> None:
 
 def test_only_the_automatic_stages_and_the_semi_automatic_writers_ask_for_the_rules() -> None:
     """Manual moves, validation, the previews, the views, exports and the
-    scheduler package never ask (B2 adds the runner and the backstop)."""
+    scheduler package never ask. B2 adds the persisted-board report (the runner's
+    gate and its final report read through it)."""
     assert _av_sources_matching(ASKS) == {
         "core/services/timetable_instructor_availability.py",
+        "core/services/timetable_instructor_availability_report.py",
         "core/services/timetable_autoplace.py",
         "core/services/timetable_solver.py",
         "core/services/timetable_local_search.py",
