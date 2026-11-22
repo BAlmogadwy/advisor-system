@@ -457,6 +457,18 @@ def test_institutional_patterns_exclude_a_bundle_that_touches_forbidden_time():
     assert not rule_violations(snap, result.board)
 
 
+def test_an_online_meeting_of_a_pattern_course_does_not_rule_a_bundle_out():
+    from scheduler.meeting_patterns import allowed_patterns
+
+    policy = get_course_meeting_policy("ENG101")
+    online = offering("eng", policy=policy, delivery=DeliveryMode.ONLINE)
+    face_to_face = offering("eng", policy=policy)
+    no_afternoons = tuple((d, 780, 960) for d in range(5))
+
+    assert len(allowed_patterns(online, no_afternoons)) == 2
+    assert len(allowed_patterns(face_to_face, no_afternoons)) == 1
+
+
 def test_a_pattern_section_with_no_legal_bundle_is_reported_unplaced_not_infeasible():
     policy = get_course_meeting_policy("ENG101")
     forbidden = ((0, 600, 610), (0, 800, 810))  # nicks both bundles on Sunday
@@ -535,6 +547,33 @@ def test_a_ruled_instructor_holds_exactly_as_many_courses_as_he_has_open_cells(o
     got = assign_instructors(snap)
 
     assert sum(1 for s in got.sections if s.instructor_id == 1) == open_cells
+
+
+QUIET = ((0, 1200, 1300),)  # 20:00-21:40: no declared window comes near it
+
+
+def test_a_ruled_instructor_keeps_the_weekly_session_ceiling():
+    """The derived 15-session ceiling binds him exactly as it binds anybody."""
+    courses = [offering(f"c{i}", meetings=3) for i in range(6)]
+    sections = [Section(f"c{i}#S1", f"c{i}", 1, 30) for i in range(6)]
+    snap = snapshot(courses, sections, [person(1, "Dr R", {c.id for c in courses}, QUIET)])
+
+    got = assign_instructors(snap)
+
+    assert sum(1 for s in got.sections if s.instructor_id == 1) == 5
+
+
+def test_a_ruled_instructor_keeps_the_per_course_section_cap():
+    """D10: once a course runs more than three sections, one person holds two."""
+    snap = snapshot(
+        [offering("o1")],
+        [Section(f"o1#S{i}", "o1", i, 30) for i in range(1, 5)],
+        [person(1, "Dr R", {"o1"}, QUIET)],
+    )
+
+    got = assign_instructors(snap)
+
+    assert [s.instructor_id for s in got.sections] == [1, 1, None, None]
 
 
 def test_a_section_he_cannot_hold_goes_to_the_next_eligible_instructor():
@@ -828,6 +867,38 @@ def test_a_rule_that_empties_even_the_relaxed_problem_still_releases_the_instruc
     assert any("teaching-time rules" in w for w in result.warnings)
 
 
+def test_a_ruled_but_harmless_instructor_costs_the_plan_no_extra_solve(monkeypatch):
+    import scheduler.solve as solve_module
+
+    calls = []
+    real = solve_module.solve
+
+    def spy(snap, **kwargs):
+        calls.append(1)
+        return real(snap, **kwargs)
+
+    monkeypatch.setattr(solve_module, "solve", spy)
+
+    result = plan(_two_meeting_section(QUIET), time_limit_seconds=6, workers=1)
+
+    assert result.released_instructors == () and len(calls) == 2
+
+
+def test_the_portfolio_prefers_the_run_that_kept_its_instructors(monkeypatch):
+    import scheduler.solve as solve_module
+
+    snap = _jointly_infeasible()
+    board = solved(release_instructors(snap, (1, 2))).board
+    let_go = solve_module.SolveResult(board, "OPTIMAL", True, 0.0, 0.0, released_instructors=(1, 2))
+    kept = solve_module.SolveResult(board, "OPTIMAL", True, 0.0, 0.0)
+    answers = iter([let_go, kept])  # the released run is tried first and ties on all else
+    monkeypatch.setattr(solve_module, "plan", lambda *args, **kwargs: next(answers))
+
+    chosen = plan_portfolio(snap, seeds=(1, 2), confirmation_seconds=0)
+
+    assert chosen is kept
+
+
 def test_the_portfolio_carries_the_release_of_the_run_it_keeps():
     snap = _jointly_infeasible()
 
@@ -1033,7 +1104,7 @@ def test_through_the_bridge_a_rule_that_costs_a_section_is_warned_about_and_the_
 def test_through_the_bridge_a_release_is_reported_and_nothing_is_credited_to_the_released(
     monkeypatch, settings
 ):
-    from core.models import TermSectionMeeting
+    from core.models import SectionInstructor, TermSectionMeeting
 
     only = allowed_only(cell(SUN, W9))
 
@@ -1060,6 +1131,8 @@ def test_through_the_bridge_a_release_is_reported_and_nothing_is_credited_to_the
     assert summary["meetings_written"] == 2 and summary["meetings_unplaced"] == 0
     assert any("released" in w and "Dr Ruled" in w for w in summary["warnings"])
     assert summary["meetings_with_an_instructor"] == 0
+    # ...and the classic side is not told the released teacher holds anything
+    assert not SectionInstructor.objects.filter(scenario=sc).exists()
     assert set(
         TermSectionMeeting.objects.filter(term_section__scenario=sc).values_list(
             "instructor", flat=True
