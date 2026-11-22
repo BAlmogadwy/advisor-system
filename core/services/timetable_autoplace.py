@@ -3283,6 +3283,19 @@ def _build_scenario_result(scenario_id: int) -> dict:
     }
 
 
+def _with_greedy_availability_reports(result: dict, greedy: dict) -> dict:
+    """``result`` (rebuilt from the database) with each board's greedy
+    ``instructor_availability`` report carried over (fix plan D-N): the sections
+    placed against a fixed teacher's rule, and those released from an engine
+    teacher, are reported by every strategy. A board whose greedy carried no
+    report (no rule binds a teacher of the scenario) gains nothing."""
+    for label, board_result in greedy.items():
+        report = board_result.get("instructor_availability")
+        if report is not None and label in result["boards"]:
+            result["boards"][label]["instructor_availability"] = report
+    return result
+
+
 def _merge_board_decision_traces(boards_result: dict) -> dict:
     """Merge per-board ``decision_trace`` dicts into a scenario-level dict.
 
@@ -3453,20 +3466,18 @@ def _auto_place_scenario(
     # Load-balanced: greedy build + redistribution
     if strategy == "load_balanced":
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
-        for board in boards:
-            auto_place_board(board.id, strategy="compact")
+        greedy = {board.label: auto_place_board(board.id, strategy="compact") for board in boards}
         from core.services.timetable_load_balanced import rebalance_scenario
 
         rebalance_scenario(scenario_id, max_seconds_per_board=_cap(5.0))
         # Re-query actual DB state after rebalancing
-        return _build_scenario_result(scenario_id)
+        return _with_greedy_availability_reports(_build_scenario_result(scenario_id), greedy)
 
     # Hybrid: greedy build + simulated annealing improvement
     if strategy == "hybrid":
         # Phase 1: greedy (compact) — build feasible solution
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
-        for board in boards:
-            auto_place_board(board.id, strategy="compact")
+        greedy = {board.label: auto_place_board(board.id, strategy="compact") for board in boards}
 
         # Phase 2: simulated annealing improvement
         from core.services.timetable_local_search import optimize_scenario
@@ -3474,7 +3485,7 @@ def _auto_place_scenario(
         sa_result = optimize_scenario(scenario_id, max_seconds_per_board=_cap(5.0))
 
         # Re-query actual DB state after SA optimization
-        result = _build_scenario_result(scenario_id)
+        result = _with_greedy_availability_reports(_build_scenario_result(scenario_id), greedy)
         result["optimization"] = sa_result
         return result
 

@@ -647,3 +647,147 @@ def test_the_persist_guard_forgives_only_a_fixed_teachers_unavoidable_meetings(
 
     expected = {f"{key}_S1": 1} if (pinned and rule_kind == "only-thursday") else {}
     assert forgiven == expected
+
+
+# ── D-N: hybrid and load_balanced keep the greedy boards' report ──────────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [True, False], ids=["rules", "flag-off-control"])
+@pytest.mark.parametrize("strategy", ["hybrid", "load_balanced", "compact"])
+def test_every_strategy_reports_a_fixed_teacher_placed_against_his_rule(
+    av_on, strategy, flag
+) -> None:
+    """adversary:ADV-3 / fix plan D-N: hybrid and load_balanced rebuild their
+    result from the database; they now carry the greedy boards' report, so the
+    pinned "only Thursday" section placed against its rule is listed by them as
+    by compact. Control: with the flag off no strategy has the key."""
+    av_on.TIMETABLE_INSTRUCTOR_AVAILABILITY = flag
+    sc, _board, key, (a,) = _greedy_scenario(f"d-n {strategy} {flag}", pin=True)
+    rule(a, KIND_AVAILABLE_ONLY, ("THU",))
+
+    board = _board_result(_greedy(sc, strategy, candidate_gen_budget=0.5))
+
+    if flag:
+        assert board["instructor_availability"]["ranked_last"] == [
+            {"section": f"{key}|S1", "instructor_ids": [a.pk], "reason": "rule_cannot_be_met"}
+        ]
+    else:
+        assert "instructor_availability" not in board
+
+
+# ── D-O: with the flag OFF no rule entry point runs and no key appears ─────
+
+
+def _tripwires(monkeypatch) -> None:
+    """Every door to the stored rules and the placed-online scan raises."""
+    from core.services import instructor_availability as rules_module
+
+    def tripped(*_args, **_kwargs):
+        raise AssertionError("a teaching-time rule entry point ran with the flag off")
+
+    for module in (helper, rules_module):
+        for name in ("load_time_rules", "load_instructor_availability", "compile_rules"):
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, tripped)
+    monkeypatch.setattr(helper, "_availability_of_the_scenario", tripped)
+    monkeypatch.setattr(helper.OnlineExemption, "placed_rows", tripped)
+
+
+def _flag_off_corpus(settings):
+    """The parity corpus placed by compact with the rules flag OFF (one teacher on)
+    and a rule stored for Dr Amal, so loading it would make a difference."""
+    from core.services.timetable_autoplace import auto_place_scenario
+    from tests.test_one_teacher_flag_parity import build_corpus
+
+    for name, value in AVAILABILITY_FLAGS.items():
+        setattr(settings, name, value)
+    settings.TIMETABLE_INSTRUCTOR_AVAILABILITY = False
+    sc = build_corpus(11)
+    rule(Instructor.objects.get(full_name="Dr Amal"), KIND_UNAVAILABLE, start="12:00")
+    first = auto_place_scenario(sc.id, strategy="compact")
+    return sc, first
+
+
+FLAG_OFF_PATHS = (
+    "greedy",
+    "reinstatement",
+    "annealing",
+    "balancer",
+    "solver",
+    "persist_guard",
+    "optimise_current",
+    "repair_analysis",
+)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("path", FLAG_OFF_PATHS)
+def test_with_the_flag_off_no_rule_entry_point_runs_and_no_key_appears(
+    settings, monkeypatch, path
+) -> None:
+    """identity:F2 / fix plan D-O, pinned absolutely (not relative to flag on):
+    with the flag OFF every rule loader and the placed-online scan are
+    tripwires, and each automatic path completes without touching them; the
+    greedy board result, the reinstatement report, the persist guard's capture
+    and the evaluator's quality score carry no availability key."""
+    from core.models import ScenarioStudentCourseRequest, SectionPlacement, TermSectionMeeting
+    from core.services.timetable_autoplace import auto_place_scenario
+
+    sc, first = _flag_off_corpus(settings)
+    _tripwires(monkeypatch)
+    board = DeliveryBoard.objects.filter(scenario=sc).order_by("display_order").first()
+
+    if path == "greedy":
+        result = auto_place_scenario(sc.id, strategy="compact")
+        for one in (first, result):
+            assert all("instructor_availability" not in b for b in one["boards"].values())
+    elif path == "reinstatement":
+        from core.services.timetable_required_sections import reinstate_missing_required_sections
+
+        victim = SectionPlacement.objects.filter(board=board).first().term_section
+        SectionPlacement.objects.filter(term_section=victim).delete()
+        TermSectionMeeting.objects.filter(term_section=victim).delete()
+        report = reinstate_missing_required_sections(sc.id)
+        assert report["attempted"] >= 1 and report["after_missing"] == []
+        assert "instructor_availability" not in report
+    elif path == "annealing":
+        from core.services.timetable_local_search import optimize_and_persist_board
+
+        optimize_and_persist_board(board.id, max_seconds=0.3)
+    elif path == "balancer":
+        from core.services.timetable_load_balanced import rebalance_and_persist_board
+
+        rebalance_and_persist_board(board.id, max_seconds=0.3)
+    elif path == "solver":
+        from core.services.timetable_solver import solve_and_persist_board
+
+        result = solve_and_persist_board(board.id, time_limit_seconds=1.0)
+        assert "instructor_availability" not in result
+    elif path == "persist_guard":
+        from core.services.timetable_local_search import _capture_persist_guard
+
+        assert "availability" not in _capture_persist_guard(board)
+    elif path == "optimise_current":
+        from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+        result = run_v2_optimisation_guarded(
+            sc.id, mode="current", max_iterations=2, run_chain=False, run_cpsat=False
+        )
+        assert "error" not in result, result.get("error")
+        assert "instructor_availability" not in (result.get("quality_score") or {})
+    else:
+        from core.services.timetable_repair import analyse_timetable_repair
+
+        placement = SectionPlacement.objects.filter(board=board).order_by("id").first()
+        student = (
+            ScenarioStudentCourseRequest.objects.filter(
+                scenario=sc, course_key=placement.term_section.course_key
+            )
+            .values_list("student_id", flat=True)
+            .first()
+        )
+        created = analyse_timetable_repair(
+            placement_id=placement.id, blocked_student_ids=[student], limits={"max_candidates": 2}
+        )
+        assert created["run"]["id"]
