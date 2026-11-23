@@ -308,6 +308,9 @@ def test_o_a_run_whose_search_was_ended_by_the_ceiling_is_not_called_repeatable(
     )
 
 
+POLISH = "TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND"
+
+
 # ── annealing, the load balancer, the chain search, CP-SAT ─────────────────
 
 
@@ -407,20 +410,20 @@ def test_s_a_chain_search_ended_by_its_deadline_is_reported(settings, monkeypatc
 def test_t_a_cpsat_solve_gets_a_deterministic_limit_only_when_one_is_configured(settings):
     from ortools.sat.python import cp_model
 
-    settings.TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND = 0.5
+    settings.TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND = 0.5
     solver = cp_model.CpSolver()
     solver.parameters.num_workers = 1
-    assert wb.deterministic_limit(solver, 8.0) == 4.0
+    assert wb.deterministic_limit(solver, 8.0, POLISH) == 4.0
     assert solver.parameters.max_deterministic_time == 4.0
     several = cp_model.CpSolver()
     several.parameters.num_workers = 8  # not repeatable whatever the limit: no limit is set
-    settings.TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND = 0.5
-    assert wb.deterministic_limit(several, 8.0) is None
+    settings.TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND = 0.5
+    assert wb.deterministic_limit(several, 8.0, POLISH) is None
     assert several.parameters.max_deterministic_time > 1e100
-    settings.TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND = 0
+    settings.TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND = 0
     plain = cp_model.CpSolver()
     plain.parameters.num_workers = 1
-    assert wb.deterministic_limit(plain, 8.0) is None
+    assert wb.deterministic_limit(plain, 8.0, POLISH) is None
     assert plain.parameters.max_deterministic_time > 1e100
 
 
@@ -428,14 +431,49 @@ def test_u_a_cpsat_solve_that_stopped_short_of_proof_is_classified_by_what_ended
     from ortools.sat.python import cp_model
 
     class _Solver:
-        def __init__(self, det):
+        def __init__(self, det, wall=0.0):
             self.deterministic_time = det
+            self.wall_time = wall
 
-    assert wb.cpsat_stop_reason(cp_model.OPTIMAL, _Solver(9.0), 1.0) == wb.COMPLETED
-    assert wb.cpsat_stop_reason(cp_model.INFEASIBLE, _Solver(9.0), 1.0) == wb.COMPLETED
-    assert wb.cpsat_stop_reason(cp_model.FEASIBLE, _Solver(1.0), 1.0) == wb.WORK_LIMIT
-    assert wb.cpsat_stop_reason(cp_model.UNKNOWN, _Solver(0.2), 1.0) == wb.WALL_CEILING
-    assert wb.cpsat_stop_reason(cp_model.FEASIBLE, _Solver(0.2), None) == wb.WALL_CEILING
+    assert wb.cpsat_stop_reason(cp_model.OPTIMAL, _Solver(9.0), 1.0, 1.0) == wb.COMPLETED
+    assert wb.cpsat_stop_reason(cp_model.INFEASIBLE, _Solver(9.0), 1.0, 1.0) == wb.COMPLETED
+    assert wb.cpsat_stop_reason(cp_model.FEASIBLE, _Solver(1.0), 1.0, 1.0) == wb.WORK_LIMIT
+    # no deterministic limit: it ran to its wall limit (within 5 %) -> the ceiling ended it
+    assert wb.cpsat_stop_reason(cp_model.UNKNOWN, _Solver(0.2, 5.0), None, 5.0) == wb.WALL_CEILING
+    assert wb.cpsat_stop_reason(cp_model.FEASIBLE, _Solver(0.2, 4.8), None, 5.0) == wb.WALL_CEILING
+    # it gave up well inside its wall limit, as it does on every machine: not the clock
+    assert wb.cpsat_stop_reason(cp_model.UNKNOWN, _Solver(2.0, 0.9), None, 1.5) == wb.COMPLETED
+    # no wall limit known: the conservative answer
+    assert wb.cpsat_stop_reason(cp_model.UNKNOWN, _Solver(0.2, 0.1), None) == wb.WALL_CEILING
+
+
+def test_w_a_search_stop_carries_the_detail_the_cap_was_sized_on():
+    with capture_search_stops() as stops:
+        budget = WorkBudget(
+            "search",
+            max_work=10,
+            ceiling_seconds=None,
+            clock=_Clock(0.0),
+            detail={"sections": 12, "evaluation_cost": 144},
+        )
+        budget.spend(10)
+        budget.exhausted()
+        budget.finish()
+    assert stops[0]["sections"] == 12 and stops[0]["evaluation_cost"] == 144
+
+
+def test_x_the_local_search_stop_says_how_many_sections_one_evaluation_cost(settings):
+    layout, _score, stops = _search(settings, cap=25, ceiling=1000)
+    assert stops[0]["sections"] == 12 and stops[0]["evaluation_cost"] == EVALUATION_COST
+
+
+def test_y_the_placement_solves_have_no_deterministic_limit_by_default_and_the_polish_one_has_one(
+    settings,
+):
+    from django.conf import settings as live
+
+    assert live.TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND == 0
+    assert live.TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND > 0
 
 
 def test_v_the_recovery_calls_own_evaluation_cap_is_a_work_limit_not_a_completion(

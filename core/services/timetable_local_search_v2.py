@@ -271,12 +271,13 @@ def diagnostic_driven_local_search(
     # stays as the hard ceiling and is reported when it is what ended the search. One evaluation
     # costs about the square of the section count, so the unit is that cost: the same cap is
     # worth the same seconds on a small board and on a large one.
+    evaluation_cost = max(1, len(sections_by_id)) ** 2
     budget = WorkBudget(
         "search",
         max_work=getattr(settings, "TIMETABLE_LOCAL_SEARCH_MAX_WORK", 0),
         ceiling_seconds=time_budget_seconds,
+        detail={"sections": len(sections_by_id), "evaluation_cost": evaluation_cost},
     )
-    evaluation_cost = max(1, len(sections_by_id)) ** 2
     # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
     day_spread_on = is_section_day_spread_enabled()
 

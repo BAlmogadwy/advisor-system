@@ -1052,7 +1052,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = seed_for(f"classic:cpsat-board:{_board_seed_scope(board)}")
-    det_limit = deterministic_limit(solver, time_limit_seconds)
+    det_limit = deterministic_limit(
+        solver, time_limit_seconds, "TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND"
+    )
 
     status = solver.solve(model)
     record_cpsat_stop(
@@ -1649,7 +1651,9 @@ def solve_board_with_hints(
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = seed_for(f"classic:cpsat-hinted:{_board_seed_scope(board)}")
-    det_limit = deterministic_limit(solver, time_limit_seconds)
+    det_limit = deterministic_limit(
+        solver, time_limit_seconds, "TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND"
+    )
 
     status = solver.solve(model)
     record_cpsat_stop(

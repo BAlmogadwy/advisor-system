@@ -50,6 +50,7 @@ def record_search_stop(
     work_limit: int | None,
     seconds: float,
     ceiling_seconds: float | None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Note how one search ended; kept only while a run is capturing (see above).
 
@@ -71,6 +72,7 @@ def record_search_stop(
             "ceiling_seconds": None
             if ceiling_seconds is None
             else round(float(ceiling_seconds), 3),
+            **(detail or {}),
         }
         if stops is not None:
             stops.append(row)
@@ -101,8 +103,10 @@ class WorkBudget:
         max_work: int | None,
         ceiling_seconds: float | None,
         clock: Callable[[], float] | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         self.stage = stage
+        self.detail = detail
         self.max_work = int(max_work) if max_work and max_work > 0 else None
         # None: no ceiling. 0 is a real ceiling: a zero budget stops the search at once.
         self.ceiling_seconds = None if ceiling_seconds is None else max(0.0, float(ceiling_seconds))
@@ -136,19 +140,25 @@ class WorkBudget:
             work_limit=self.max_work,
             seconds=self.elapsed,
             ceiling_seconds=self.ceiling_seconds,
+            detail=self.detail,
         )
 
 
-def cpsat_stop_reason(status: int, solver: Any, det_limit: float | None) -> str:
+def cpsat_stop_reason(
+    status: int, solver: Any, det_limit: float | None, wall_limit: float | None = None
+) -> str:
     """How a CP-SAT solve ended: proven (optimal or infeasible), on its deterministic-time limit,
-    or, when it stopped short of both, on the wall-clock limit."""
+    on the wall-clock limit (it ran to within 5 % of it), or by itself before either (the solver
+    gave up early, which it does the same way on every machine: COMPLETED)."""
     from ortools.sat.python import cp_model
 
     if status in (cp_model.OPTIMAL, cp_model.INFEASIBLE):
         return COMPLETED
     if det_limit and solver.deterministic_time >= det_limit * 0.999:
         return WORK_LIMIT
-    return WALL_CEILING
+    if wall_limit is None or solver.wall_time >= wall_limit * 0.95:
+        return WALL_CEILING
+    return COMPLETED
 
 
 def record_cpsat_stop(
@@ -160,7 +170,7 @@ def record_cpsat_stop(
     det_limit: float | None = None,
 ) -> str:
     """Record how one CP-SAT solve ended under ``stage`` (see :func:`cpsat_stop_reason`)."""
-    reason = cpsat_stop_reason(status, solver, det_limit)
+    reason = cpsat_stop_reason(status, solver, det_limit, wall_limit)
     record_search_stop(
         stage,
         reason,
@@ -172,9 +182,9 @@ def record_cpsat_stop(
     return reason
 
 
-def deterministic_limit(solver: Any, wall_seconds: float) -> float | None:
-    """Give a CP-SAT solve a deterministic-time limit worth ``wall_seconds`` of this project's
-    solves (TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND of deterministic time per wall second;
+def deterministic_limit(solver: Any, wall_seconds: float, setting: str) -> float | None:
+    """Give a CP-SAT solve a deterministic-time limit worth ``wall_seconds`` of its kind of model
+    (the ``setting`` named: deterministic time per wall second, calibrated per kind of model;
     0 = none, the wall clock alone ends it). With one worker, which is what production runs, a
     solve that stops on this limit returns the same solution on every machine; with several the
     solver is not repeatable whatever the limit (and its deterministic time adds up across
@@ -182,7 +192,7 @@ def deterministic_limit(solver: Any, wall_seconds: float) -> float | None:
     None."""
     from django.conf import settings
 
-    per_second = float(getattr(settings, "TIMETABLE_CPSAT_DETERMINISTIC_PER_SECOND", 0) or 0)
+    per_second = float(getattr(settings, setting, 0) or 0)
     if per_second <= 0 or wall_seconds <= 0 or solver.parameters.num_workers != 1:
         return None
     limit = per_second * wall_seconds

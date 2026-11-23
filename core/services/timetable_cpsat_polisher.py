@@ -648,7 +648,9 @@ def polish_scenario_with_cpsat(
     solver.parameters.max_time_in_seconds = time_limit_seconds
     solver.parameters.num_workers = cpsat_workers()
     solver.parameters.random_seed = seed_for("classic:cpsat-polish")
-    det_limit = deterministic_limit(solver, time_limit_seconds)
+    det_limit = deterministic_limit(
+        solver, time_limit_seconds, "TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND"
+    )
 
     # PR6 commit 5 — stage-boundary timing. Guardrail: iterations==1 means
     # the polisher was actually invoked (solver.solve() reached), not
