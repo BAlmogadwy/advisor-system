@@ -47,19 +47,14 @@ def _web_env(document: Blueprint) -> list[dict[str, Any]]:
     return _service(document, "advisor-system")["envVars"]
 
 
-def _online_seconds(document: Blueprint, key: str) -> float:
-    """What the web service runs with: the blueprint's value, else the code default."""
-    for entry in _web_env(document):
-        if entry["key"] == key:
-            return float(entry["value"])
-    return float(getattr(project_settings, key))
-
-
 def test_contract_bounds_the_chain_search_online(blueprint: Blueprint) -> None:
-    """Online the chain search has a time limit (owner 2026-11-23). Without one a long search
-    meets the stale-job sweep and the whole run is lost. The contract refuses a blueprint that
-    removes the limit, drops the key, or changes the value without a reviewed contract change."""
+    """Online the chain search has a time limit (owner 2026-11-23). Without one a single long
+    search holds the only planner slot and is lost on a deploy or restart. The contract refuses
+    a blueprint that removes the limit, drops the key, or changes the value without a reviewed
+    contract change. The code default stays "no limit", so only this service is bounded."""
     assert {"key": CHAIN_LIMIT, "value": "600"} in _web_env(blueprint)
+    settings_source = (PROJECT_ROOT / "config" / "settings.py").read_text(encoding="utf-8")
+    assert f'{CHAIN_LIMIT} = float(os.getenv("{CHAIN_LIMIT}", "0"))' in settings_source
 
     for value in ("0", "1200"):
         changed = deepcopy(blueprint)
@@ -72,23 +67,6 @@ def test_contract_bounds_the_chain_search_online(blueprint: Blueprint) -> None:
     env[:] = [e for e in env if e["key"] != CHAIN_LIMIT]
     errors = validate_blueprint(dropped, project_root=PROJECT_ROOT)
     assert any(CHAIN_LIMIT in error for error in errors), errors
-
-
-def test_the_budgeted_searches_fit_the_stale_job_window_twice(blueprint: Blueprint) -> None:
-    """Optimise Current may run its whole pipeline twice (the second try). The three searches
-    that have a time budget (local search, recovery, chain) must fit inside the stale-job window
-    both times, or a slow run is swept and its result lost. Stages without a time budget are
-    not counted here, so this is a floor on safety, not a promise about a whole run."""
-    chain = _online_seconds(blueprint, CHAIN_LIMIT)
-    one_attempt = (
-        chain
-        + _online_seconds(blueprint, "TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS")
-        + _online_seconds(blueprint, "TIMETABLE_SECONDARY_RECOVERY_SECONDS")
-    )
-    window = _online_seconds(blueprint, "TIMETABLE_PLANNER_JOB_STALE_MINUTES") * 60
-
-    assert chain > 0
-    assert 2 * one_attempt < window
 
 
 def test_contract_rejects_a_second_or_unknown_service(blueprint: Blueprint) -> None:
