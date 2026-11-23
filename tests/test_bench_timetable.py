@@ -587,6 +587,14 @@ def test_f_the_command_runs_the_repeats_and_writes_json(flags, monkeypatch, tmp_
     settings_in_force = data["meta"]["effective_settings"]
     assert settings_in_force["TIMETABLE_ONE_TEACHER_PER_SECTION"] is True
     assert "TIMETABLE_INSTRUCTOR_DAILY_CAP" in settings_in_force
+    # the teaching-time rules flag is covered by this dump, not by a named read of its own
+    assert isinstance(settings_in_force["TIMETABLE_INSTRUCTOR_AVAILABILITY"], bool)
+    assert set(data["meta"]["effective_flags"]) == {
+        "one_teacher_per_section",
+        "day_off_policy",
+        "instructor_priority",
+        "tiered_objective",
+    }
     assert _x_day(sc, x) == "SUN"  # both repeats were undone
     # production flags are render.yaml's, applied to the run; --set wins over them
     call_command(
