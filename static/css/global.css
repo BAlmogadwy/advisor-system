@@ -5550,9 +5550,6 @@ pre, .pre-output {
   /* Table-wrap: full viewport height scrollable */
   .table-wrap { max-height: 60vh !important; overflow-y: auto; }
 
-  /* Planner command bar: compress */
-  .command-bar .row.g-2 > * { flex: 0 0 100%; }
-
   /* High-priority filter: grid stacks */
   .hp-advanced .row > * { flex: 0 0 100%; max-width: 100%; }
 
@@ -7661,6 +7658,34 @@ html[data-theme="dark"] .sp-adv-wrap {
 html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 /* status markers: planned = dashed accent; conflict = red outline + corner dot */
 .wg-blocks .wg-filled.wg-planned { border-inline-start-style: dashed; }
+/* The planner's two week grids: a code and its time wrap instead of being cut.
+   An ellipsis removed the START of a code in an RTL line and the end of one in
+   English; a phone's ~60px columns cut both. Scoped here because the base rules
+   above also draw the student timetable. */
+#baselineWeekly .wg-blocks .wg-filled .wg-cid,
+#visualGrid .wg-blocks .wg-filled .wg-cid,
+#baselineWeekly .wg-blocks .wg-filled .wg-meta,
+#visualGrid .wg-blocks .wg-filled .wg-meta {
+  white-space:      normal;
+  overflow:         visible;
+  text-overflow:    clip;
+  overflow-wrap:    anywhere;
+}
+/* A code and a time are Latin data, so in the Arabic UI they keep the Latin steps
+   (the Arabic ones are for Arabic letters): at the Arabic size a six-letter code
+   no longer fitted a phone's ~60px column and broke mid-word. The day headings
+   above the blocks keep the Arabic scale. */
+html[dir="rtl"] #baselineWeekly .wg-blocks .wg-filled,
+html[dir="rtl"] #visualGrid .wg-blocks .wg-filled {
+  --text-micro:     max(11px, 0.6875rem);
+  --text-xs:        max(12px, 0.75rem);
+}
+/* On a phone the day columns are ~60px: less padding keeps a code on two lines
+   so a 75-minute block does not run out of height. */
+@media (max-width: 576px) {
+  #baselineWeekly .wg-blocks .wg-filled,
+  #visualGrid .wg-blocks .wg-filled { padding: 1px 2px; }
+}
 .wg-blocks .wg-filled.wg-clash {
   outline:          2px solid var(--pl-conflict-cell);
   outline-offset:   -2px;
@@ -7677,16 +7702,14 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   box-shadow:       0 0 5px #ef4444;
 }
 
-/* Workflow stepper */
+/* Workflow stepper. Flat: it sits on the page like the session above it (the
+   rule under the row, .planner-steps, is the only line); it was the last glass
+   strip in the product. */
 .wf-stepper {
   display:         flex;
   align-items:     center;
   gap:             0;
-  padding:         6px 8px;
-  border:          var(--border-subtle);
-  border-radius:   var(--radius);
-  background:      var(--glass-bg);
-  backdrop-filter: blur(16px);
+  padding-block:   6px;
 }
 .wf-step {
   display:      flex;
@@ -7757,63 +7780,117 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 .wf-nav .wf-next        { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }
 .wf-nav .wf-next:hover  { filter: brightness(1.08); }
 
-/* Sticky control bar */
-.sticky-head { position: static; padding-block: 10px; }
-/* The Timetable Builder's session bar reads as two lines on a desktop: who and
-   when (student, year, semester, registration mode), then how and the action
-   (eligibility, swaps, Fetch). A zero-height line-break item between them keeps
-   Fetch with its options whatever the font measures, instead of wrapping alone
-   when the fields above happen to fit one line. Visual order = DOM order. */
-@media (min-width: 769px) {
-  .command-bar .filter-bar.fb-fit > * { order: 1; }
-  .command-bar .filter-bar.fb-fit > .fb-search:has(> #eligibilityMode),
-  .command-bar .filter-bar.fb-fit > .fb-search:has(> #eligibilityMode) ~ * { order: 3; }
-  .command-bar .filter-bar.fb-fit::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+/* ── Session: who and when, then how; one status line ────────────────────
+   A flat section under the page intro, like Instructor Management's top bar
+   (it was a glass card repeating the page title, with a quality strip and a
+   whole bar folded away on a phone). Row one is a .filter-bar.fb-fit: student,
+   year, semester and Fetch, on ONE line from 769px. Row two (.planner-options)
+   is quieter: the same capsules, no bar of its own. A phone keeps row one on
+   screen and folds only row two behind the Options toggle. */
+.planner-session { margin: 0 0 var(--space-6); }
+.planner-session-bar {
+  margin-bottom: 0;
+  padding-block: 0 var(--space-4);
+  border-block-end: 0;
 }
-.command-bar {
-  padding:                 14px 18px;
-  border:                  var(--border-mid);
-  border-radius:           var(--radius-lg);
-  background:              var(--glass-bg);
-  backdrop-filter:         blur(24px) saturate(130%);
-  -webkit-backdrop-filter: blur(24px) saturate(130%);
-  box-shadow:              var(--shadow-neu);
-}
-.cb-header {
-  display:           flex;
-  align-items:       center;
-  justify-content:   space-between;
-  margin-bottom:     10px;
-  padding-bottom:    10px;
-  border-bottom:     var(--border-subtle);
-}
-.cb-title {
-  font-family:     var(--font-body);
-  font-size:       var(--text-md);
-  font-weight:     700;
-  color:           var(--navy);
-  letter-spacing:  -0.01em;
-}
-.cb-status {
+/* Fetch is a default-tier control beside default-tier capsules (it was 30px
+   beside 38px); the compact .pl-btn tier is for panel buttons. */
+.planner-session-bar .pl-btn { min-height: var(--control-h); }
+.planner-options {
   display:     flex;
+  flex-wrap:   wrap;
   align-items: center;
-  gap:         6px;
-  font-family: var(--font-body);
-  font-size:   var(--text-xs);
+  gap:         var(--space-4) var(--space-6);
+  padding-block: var(--space-2);
+}
+.planner-swap {
+  display:     inline-flex;
+  align-items: center;
+  gap:         var(--space-4);
+  min-height:  var(--control-h);
+  color:       var(--t2);
+  font-size:   var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor:      pointer;
+}
+.planner-swap input { width: 16px; height: 16px; accent-color: var(--btn-primary-bg); }
+.planner-options-help {
+  flex:        1 1 100%;
   color:       var(--t3);
+  font-size:   var(--text-xs);
+  line-height: 1.5;
 }
-.cb-dot {
-  flex-shrink:   0;
-  width:         7px;
-  height:        7px;
-  border-radius: 50%;
-  background:    var(--t5);
+/* The phone's toggle: a real button at the control height; its arrow is the
+   shared disclosure chevron (the closed rotation of .ux-disclosure-toggle is
+   mirrored here, as that class is bound to ux-controls.js behaviour). */
+.planner-options-toggle { display: none; }
+.planner-options-toggle[aria-expanded="false"] .ux-disclosure-chevron { transform: rotate(-45deg); }
+[dir="rtl"] .planner-options-toggle[aria-expanded="false"] .ux-disclosure-chevron { transform: rotate(135deg); }
+@media (max-width: 768px) {
+  .planner-options-toggle {
+    display:     flex;
+    align-items: center;
+    gap:         var(--space-4);
+    width:       100%;
+    min-height:  var(--control-h);
+    margin:      0;
+    padding:     0 var(--space-2);
+    border:      0;
+    border-radius: var(--radius-sm);
+    background:  transparent;
+    color:       var(--t2);
+    font:        inherit;
+    font-size:   var(--text-sm);
+    font-weight: 600;
+    text-align:  start;
+    cursor:      pointer;
+  }
+  .planner-options-toggle:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  .planner-options { display: none; }
+  .planner-options.is-open { display: flex; }
+  /* Student ID takes its own line; Year, Semester and Fetch share the next, so
+     Fetch is never left alone on a line. */
+  .planner-session-bar > .fb-search:first-child { flex: 1 1 100%; }
+  .planner-session-bar > .fb-search:first-child > input { flex: 1 1 auto; }
+  .planner-session-bar > .pl-btn { flex: 1 1 auto; padding-inline: var(--space-4); }
+  /* The second line is 328px at 360: two labelled capsules and the button fit
+     it with a little less padding and a year/semester field as wide as its
+     four-letter placeholder, in a wide font too. */
+  .planner-session-bar > .fb-search:not(:first-child) { gap: var(--space-2); padding-inline: var(--space-5); }
+  .planner-session-bar .fb-search > .fb-w-6ch { width: 5ch; }
 }
-.cb-dot.ready { background: var(--teal);  box-shadow: var(--shadow-glow); }
-.cb-dot.busy  { background: var(--amber); animation: pulse-dot 1.2s var(--ease) infinite; }
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.4; }
+/* One status line: the message at the start, the fetch state at the end.
+   A calm state is a plain line (icon and ink, no box); a state that needs
+   attention keeps its tinted box. Other .planner-banner uses are unchanged. */
+.planner-status {
+  display:         flex;
+  flex-wrap:       wrap;
+  align-items:     center;
+  justify-content: space-between;
+  gap:             var(--space-2) var(--space-6);
+  margin-top:      var(--space-4);
+}
+.planner-status .planner-banner { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+.planner-status .planner-banner-info,
+.planner-status .planner-banner-ok,
+.planner-status .planner-banner-neutral {
+  padding-inline: 0;
+  border:         0;
+  background:     transparent;
+}
+.planner-fetch-state {
+  flex:        none;
+  color:       var(--t3);
+  font-size:   var(--text-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* The workflow row: the stepper and the Simplified switch, flat, one rule under. */
+.planner-steps {
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--rule);
 }
 
 /* Status banners */
@@ -7833,24 +7910,6 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 .planner-banner-ok { background: var(--brand-soft);     color: var(--pl-ok-text);      border: 1px solid var(--teal-border); }
 .planner-banner-err { background: var(--pl-danger-btn);  color: var(--pl-danger-text);  border: 1px solid var(--pl-danger-border); }
 .planner-banner-neutral { background: var(--pl-overlay-1);   color: var(--t3);              border: 1px solid var(--pl-overlay-4); }
-
-/* Trust / quality strip */
-.trust-strip {
-  display:       flex;
-  flex-wrap:     wrap;
-  align-items:   center;
-  gap:           14px;
-  margin-top:    8px;
-  padding:       7px 14px;
-  border:        var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background:    var(--pl-overlay-6);
-  color:         var(--t3);
-  font-family:   var(--font-body);
-  font-size:     var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-.trust-strip .i { width: 13px; height: 13px; opacity: 0.5; }
 
 /* Mode toggle */
 .mode-toggle {
@@ -7899,12 +7958,15 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 /* Planner panels */
 .planner-grid {
   display:               grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...): a bare 1fr track cannot be narrower than its widest item,
+     so ONE wide table widened every panel past a phone's screen */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap:                   10px;
 }
+.planner-grid > * { min-width: 0; }
 .pg-full { grid-column: 1 / -1; }
 @media (max-width: 992px) {
-  .planner-grid { grid-template-columns: 1fr; }
+  .planner-grid { grid-template-columns: minmax(0, 1fr); }
   .pg-full      { grid-column: auto; }
 }
 .pane-head {
@@ -7933,6 +7995,37 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
 /* .pane-title base styling now comes from the canonical card-heading rule.
    (Previously 15px serif navy; unified to 14px teal body-font.) */
 .pane-sub { margin-top: 1px; color: var(--t4); font-size: var(--text-xs); }
+/* The planner's panel titles sit one step above body text (--text-md, 700): the
+   page title is 28px and a panel title was 14px, the same size as the text under
+   it. Scoped here: the shared .pane-title (exam rosters, the workspace) is as
+   it was. They are <h2> now; the shared rule sets every property an element rule
+   could leak into, the visual timetable's title is the one without a subtitle. */
+.planner-grid .pane-title { font-size: var(--text-md); font-weight: 700; }
+#visualCard .pane-head .pane-title { margin: 0; }
+
+/* Before a student is loaded the page shows ONE placeholder, not nine empty
+   panels; data-loaded flips on the first successful fetch and stays (a later
+   failed fetch keeps the panels). */
+.planner-stage[data-loaded="false"] > .planner-grid { display: none; }
+.planner-stage[data-loaded="true"] > .planner-placeholder { display: none; }
+
+/* The student summary: who, then three figures as a stat strip. */
+.planner-student {
+  display:     flex;
+  flex-wrap:   wrap;
+  align-items: center;
+  gap:         var(--space-6) var(--space-7);
+  justify-content: space-between;
+}
+.planner-student-who { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+.planner-student-name { color: var(--t0); font-size: var(--text-md); font-weight: 700; }
+.planner-student-meta { color: var(--t3); font-size: var(--text-sm); }
+
+/* Beside the results: when the last build ran, and mapping quality when partial. */
+.planner-last-build { margin-top: var(--space-4); color: var(--t3); font-size: var(--text-xs); }
+.planner-last-build:empty { display: none; }
+#baselineQuality:empty { display: none; }
+#baselineQuality.planner-banner { margin-bottom: var(--space-4); }
 
 /* Plan color chips */
 .plan-chip {
@@ -7981,7 +8074,6 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   cursor:        pointer;
   transition:    all 0.15s var(--ease);
 }
-.command-bar .pl-btn { min-height: var(--control-h); }
 .pl-btn .i            { width: 13px; height: 13px; }
 .pl-btn-teal { background: var(--teal-dim);      color: var(--text-brand); }
 .pl-btn-teal:hover { background: var(--teal-border); }
@@ -8007,6 +8099,11 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   font-size:   var(--text-xs);
 }
 .pl-checks label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+/* The programme filter sits in the Available panel's heading row: where the row
+   is too narrow it drops under the title instead of running past the screen,
+   and its label may wrap. */
+#availableCard .pane-head { flex-wrap: wrap; }
+#availableCard .pane-head .pl-checks label { white-space: normal; }
 .pl-checks input[type="checkbox"] { accent-color: var(--btn-primary-bg); width: 16px; height: 16px; }
 
 /* Empty state (planner-specific) */
@@ -8059,6 +8156,25 @@ html[data-theme="dark"] .wg-blocks .wg-filled .wg-meta { color: var(--t1); }
   font-size:      var(--text-sm);
 }
 .planner-panel .table tbody tr:last-child td { border-bottom: none; }
+/* The full-plan tables are wide by nature (one column per term): on a phone they
+   scroll inside their own frame instead of pushing the whole page sideways. */
+#planPalette { overflow-x: auto; }
+/* The screen-reader copy of a grid is a table, and a table ignores width:1px, so
+   its content width stuck out past the panel (scrollable, though invisible). */
+.planner-panel table.sr-only { table-layout: fixed; }
+/* Suggested to add: all four columns, including Add, must fit a half panel as
+   narrow as a phone (two columns from 993px, one from a phone down), so headings,
+   the badge and the long course name wrap at every width (harmless where there is
+   room) and only the tighter padding is limited to the widths where a half panel
+   is that narrow (the sidebar takes 252px, so two columns stay narrow to ~1280px). */
+#recCard .table thead th { white-space: normal; }
+#recCard .table .badge { white-space: normal; }
+#recCard .table tbody td:first-child { overflow-wrap: anywhere; }
+@media (max-width: 1280px) {
+  #recCard .table thead th,
+  #recCard .table tbody td { padding-inline: 4px; }
+  #recCard .table .pl-btn { padding-inline: var(--space-2); }
+}
 
 /* Details chevron */
 details[open] > summary .i                  { transform: rotate(90deg); }
@@ -8072,16 +8188,16 @@ details > summary::-webkit-details-marker   { display: none; }
 /* Inline visual style utility classes */
 .pl-text-xs { font-size: var(--text-xs); }
 .pl-summary-label { color: var(--t3); font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
-.pl-diag-heading { margin-bottom: 6px; color: var(--navy); font-size: var(--text-sm); font-weight: 600; }
-.pl-legend-dot-black { background: var(--ink); }
-.pl-legend-dot-red { background: var(--danger); }
-.pl-legend-dot-green { background: var(--teal); }
-.pl-legend-dot-purple { background: var(--royal); }
+.pl-diag-heading { margin: 0 0 6px; color: var(--navy); font-size: var(--text-sm); font-weight: 600; }
+/* the four availability states of the plan palette: each dot is the colour of its
+   .pl-offer chip's text (black = none, red = full, green = open, purple = prereq) */
+.pl-legend-dot-black { background: var(--t3); }
+.pl-legend-dot-red { background: var(--sev-critical); }
+.pl-legend-dot-green { background: var(--text-brand); }
+.pl-legend-dot-purple { background: var(--sev-info); }
 
 /* Planner — mobile */
 @media (max-width: 768px) {
-  .sticky-head { position: static; }
-  .command-bar { margin: 0 -1rem; padding: 0.75rem 1rem !important; border-radius: 0; }
   .wf-stepper  {
     flex-wrap:                  nowrap;
     gap:                        0;
@@ -8093,38 +8209,17 @@ details > summary::-webkit-details-marker   { display: none; }
   .wf-step                  { padding: 8px 10px; }
   .wf-sep                   { width: 12px; }
   .wf-nav                   { padding-inline-start: 6px; }
-  .command-bar-controls     { display: none; }
-  .command-bar-controls.expanded { display: block; }
-  .command-bar-toggle {
-    display:         flex;
-    align-items:     center;
-    justify-content: space-between;
-    width:           100%;
-    /* the phone's only way to the Student ID field: a full touch target, not a
-       28px text row */
-    min-height:      var(--control-h);
-    padding:         0.4rem 0;
-    border:          none;
-    background:      none;
-    color:           var(--muted);
-    font-size:       var(--text-sm);
-    font-weight:     600;
-    cursor:          pointer;
-  }
   .dock-card                { position: static; }
-}
-@media (min-width: 769px) {
-  .command-bar-toggle       { display: none; }
-  .command-bar-controls     { display: block !important; }
 }
 
 /* Available courses & sections grid */
 .avail-grid {
   display:               grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...) so a wide row cannot push the second column out of the panel */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap:                   10px;
 }
-@media (max-width: 768px) { .avail-grid { grid-template-columns: 1fr; } }
+@media (max-width: 768px) { .avail-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .avail-course-card {
   padding:       12px 14px;
@@ -8154,8 +8249,11 @@ details > summary::-webkit-details-marker   { display: none; }
 
 .avail-sec-row {
   display:        flex;
+  /* a row with many meetings and programmes wraps onto a second line rather
+     than outgrowing its half of the panel */
+  flex-wrap:      wrap;
   align-items:    center;
-  gap:            8px;
+  gap:            4px 8px;
   width:          100%;
   margin-bottom:  4px;
   padding:        6px 8px;
@@ -8216,8 +8314,13 @@ details > summary::-webkit-details-marker   { display: none; }
 
 .sec-id { min-width: 40px; font-weight: 700; }
 .sec-time { color: var(--t3); font-size: var(--text-xs); }
-.sec-program { color: var(--t3); font-size: var(--text-micro); white-space: nowrap; }
+/* one meeting's HH:MM-HH:MM never splits across lines; the list wraps between meetings */
+.sec-time .sec-range { white-space: nowrap; }
+/* the programme list wraps (seven programmes were ~400px on one line) */
+.sec-program { color: var(--t3); font-size: var(--text-micro); overflow-wrap: anywhere; }
 .sec-capacity { margin-inline-start: auto; font-size: var(--text-xs); font-weight: 600; }
+/* a wrapped row shares its free space once: the status chip stays next to the capacity */
+.sec-capacity + .sec-status { margin-inline-start: 0; }
 
 .avail-summary-bar {
   display:         flex;
@@ -8253,6 +8356,95 @@ details > summary::-webkit-details-marker   { display: none; }
 }
 .avail-search input:focus { border-color: var(--teal); }
 
+/* ── Planner lists and results ────────────────────────────────────────────
+   Status chips (text clears 4.5:1 on its own tint in both themes), the
+   shortlist rows, grouped meeting lines, option cards and the reason lines.
+   Nothing here is clickable unless it is a button; the palette's availability
+   chip is a status, not the shared .plan-chip (the split view owns that). */
+.rec-status,
+.pl-offer {
+  display:       inline-block;
+  padding:       1px 8px;
+  border-radius: var(--radius-sm);
+  font-size:     var(--text-micro);
+  font-weight:   700;
+}
+.pl-offer { white-space: nowrap; }
+.rec-status[data-tone="ok"]      { background: var(--sev-ok-bg);       color: var(--text-brand); }
+.rec-status[data-tone="blocked"] { background: var(--sev-critical-bg); color: var(--sev-critical); }
+.pl-offer[data-state="open"]     { background: var(--sev-ok-bg);       color: var(--text-brand); }
+.pl-offer[data-state="full"]     { background: var(--sev-critical-bg); color: var(--sev-critical); }
+.pl-offer[data-state="prereq"]   { background: var(--sev-info-bg);    color: var(--sev-info); }
+.pl-offer[data-state="none"]     { background: var(--pl-overlay-2);    color: var(--t3); }
+/* a row that can be added keeps its mouse-convenience click (its Add button is
+   the keyboard route) */
+#planPalette tr.is-addable { cursor: pointer; }
+
+.avail-course-credits[data-tone="high"] { background: var(--teal-dim);      color: var(--text-brand); }
+.avail-course-credits[data-tone="mid"]  { background: var(--sev-warning-bg); color: var(--sev-warning-ink); }
+.avail-course-credits[data-tone="low"]  { background: var(--pl-overlay-2);  color: var(--t3); }
+
+/* Shortlist: one rule-separated row per course */
+.sl-row {
+  display:       flex;
+  flex-wrap:     wrap;
+  align-items:   center;
+  gap:           4px 12px;
+  padding:       6px 0;
+  border-bottom: var(--border-subtle);
+}
+.sl-row:last-child { border-bottom: 0; }
+.sl-main { flex: 1 1 220px; min-width: 0; }
+.sl-pin  { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sl-must { display: inline-flex; align-items: center; gap: 6px; }
+.sl-must .form-check-input { float: none; margin: 0; }
+.sl-must .form-check-label { margin: 0; }
+.sl-pin-badge {
+  display:       inline-flex;
+  align-items:   center;
+  gap:           3px;
+  padding:       1px 7px;
+  border:        0;
+  border-radius: var(--radius-xs);
+  background:    var(--teal-dim);
+  color:         var(--text-brand);
+  cursor:        pointer;
+}
+.sl-pin-x { font-size: var(--text-micro); opacity: 0.7; }
+
+/* A section's meetings: one line per distinct time */
+.sec-time-line { display: block; }
+
+/* Option cards: only the Select button is clickable */
+.option-card {
+  margin-bottom: 0;
+  padding:       12px 14px;
+  border:        2px solid transparent;
+}
+.option-card.is-selected {
+  border-color: var(--teal);
+  box-shadow:   0 0 0 2px var(--brand-glow);
+}
+.opt-name   { color: var(--navy); font-size: var(--text-sm); }
+.opt-method { margin-top: 2px; color: var(--t3); font-size: var(--text-xs); }
+.opt-count  { margin-top: 4px; }
+.option-card.is-selected .opt-select {
+  background: var(--btn-primary-bg);
+  color:      var(--btn-primary-ink);
+  cursor:     default;
+}
+.opt-select .i { width: 13px; height: 13px; }
+
+/* Why courses were not scheduled: neutral ink, one line per reason */
+.opt-reason {
+  display:     flex;
+  align-items: flex-start;
+  gap:         6px;
+  margin-top:  4px;
+  color:       var(--t2);
+}
+.opt-reason .i { width: 14px; height: 14px; margin-top: 2px; color: var(--sev-warning); }
+
 /* Dark-mode overrides — planner */
 html[data-theme="dark"] {
   --pl-overlay-1:     rgba(255,255,255,0.03);
@@ -8270,11 +8462,6 @@ html[data-theme="dark"] {
   --pl-warn-border:   rgba(245,158,11,0.20);
   --pl-ok-text:       #2ec9a0;
   --pl-conflict-cell: hsl(0 40% 22%);
-}
-html[data-theme="dark"] .command-bar {
-  background:   rgba(255,255,255,0.04) !important;
-  border-color: rgba(10,142,110,0.2) !important;
-  box-shadow:   0 2px 8px rgba(0,0,0,0.25) !important;
 }
 html[data-theme="dark"] .pl-btn-red               { color: var(--pl-danger-text); }
 html[data-theme="dark"] .avail-course-card        { box-shadow: 0 1px 4px rgba(0,0,0,0.15); }

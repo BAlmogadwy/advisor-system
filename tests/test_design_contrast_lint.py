@@ -366,9 +366,9 @@ def test_status_pills_take_severity_inks_and_lie_flat_in_a_toolbar() -> None:
 # ── Inline styles in templates and scripts ──────────────────────────────────
 # C1 changes stylesheets; an inline style is a page's own. White on a brand fill
 # must not come back anywhere (section planning's "Save" was the last, 4.11:1).
-# Text in a fill colour is left in seven script lines for D6 (docs/stage3/C1.md,
-# "What C1 deliberately left"), and may only fall:
-#   page-planner.js: the importance chip (--teal on --teal-dim, --warning);
+# Text in a fill colour is left in six script lines for D6 (docs/stage3/C1.md,
+# "What C1 deliberately left"), and may only fall (the planner's importance chip
+# left the list in slice 4: it is data-tone="high|mid|low" in global.css):
 #   page-timetable-workspace.js: the instructor outcome's heading, the classic
 #   Optimise result (unresolved count, zero scores, its chip), Reserve Pressure.
 
@@ -377,7 +377,7 @@ ROOT = CSS_DIR.parents[1]
 #: template: they no longer carry a palette of their own, but global.css's tokens
 #: (tests/test_error_pages.py).
 INLINE_EXCLUDED = ("mri", "split")
-INLINE_FILL_AS_TEXT_CAP = 7
+INLINE_FILL_AS_TEXT_CAP = 6
 INLINE_FILL_AS_TEXT = re.compile(
     r"(?<![\w-])color:\s*var\(--(?:teal|teal-bright|teal-pale|teal-deep|brand|success|amber"
     r"|warning|t5)\s*[,)]",
