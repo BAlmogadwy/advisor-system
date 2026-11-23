@@ -159,7 +159,9 @@ NAMED = ", ".join(
 #: sit on a gradient of the primary pair, measured at both of its stops.
 MEASURED = {
     "workspace": ("#twValidationBadge", "tw-english-heading", "div.avatar"),
-    "planner": ("wf-step.active", "span.wf-num", "pl-btn-primary", "wf-next", "pl-btn-teal"),
+    # pl-btn-teal (Add, Add selected) lives in the panels, which stay hidden until a
+    # student is loaded (planner first-screen slice, D8): not drawn on first load.
+    "planner": ("wf-step.active", "span.wf-num", "pl-btn-primary", "wf-next"),
     "user-management": ("um-create-btn",),
     "graph": ("#tgSync",),
     "login": ("neu-btn-text",),

@@ -28,8 +28,15 @@ const T = {
   savedMappings: (n)=> IS_AR ? `تم حفظ ${n} ربط شعبة ويتم تحديث الأساس.` : `Saved ${n} section mappings and refreshing baseline.`,
   noMappableInOption: (name)=> IS_AR ? `الخيار ${name} لا يحتوي شعبًا قابلة للربط. استورد أحدث الشعب أو اختر خيارًا آخر.` : `Option ${name} has no mappable sections. Import latest sections or choose another option.`,
   appliedOption: (name,n)=> IS_AR ? `تم تطبيق الخيار ${name}. تم حفظ ${n} عملية ربط.` : `Applied Option ${name}. Saved ${n} mappings.`,
-  trustUpdated: (name)=> IS_AR ? `جودة الربط: تم التحديث | غير المحلول: - | آخر بناء: تطبيق الخيار ${name}` : `Mapping quality: updated | Unresolved: - | Last build: applied option ${name}`,
-  trustBuilt: (mapped,unresolved,time)=> IS_AR ? `جودة الربط: ${mapped?'ربط متاح':'اعتماد على الاحتياطي'} | غير المحلول: ${unresolved} | آخر بناء: ${time}` : `Mapping quality: ${mapped?'mapped available':'fallback only'} | Unresolved: ${unresolved} | Last build: ${time}`,
+  /* The status line's right end, the build time beside the results, and the one
+     mapping-quality state that is still shown (a partial one). */
+  fetchIdle: IS_AR ? 'في الانتظار' : 'Idle',
+  fetchLoading: IS_AR ? 'جارٍ التحميل…' : 'Loading…',
+  fetchError: IS_AR ? 'خطأ' : 'Error',
+  fetchedAt: IS_AR ? 'تم الجلب' : 'Fetched',
+  lastBuildAt: IS_AR ? 'آخر بناء' : 'Last build',
+  appliedOptionShort: (name)=> IS_AR ? `تم تطبيق الخيار ${name}` : `Applied option ${name}`,
+  qualityPartial: (n)=> IS_AR ? `جودة الربط: جزئي (${n} احتياطي)` : `Mapping quality: partial (${n} fallback)`,
   noCoursesFoundStudentPlan: IS_AR ? 'لم يتم العثور على مقررات في خطة الطالب.' : 'No courses found in student plan.',
   failedLoadStudentPlanPanel: IS_AR ? 'فشل تحميل لوحة خطة الطالب.' : 'Failed to load student plan panel.',
   noRunYet: IS_AR ? 'لم يتم التشغيل بعد.' : 'No run yet.',
@@ -72,9 +79,39 @@ function setBanner(kind, text){
   };
   b.className=`planner-banner planner-banner-${cls}`;
   b.innerHTML=`<span class="i">${icons[cls]||icons.info}</span>${text}`;
-  /* Update fetch dot */
-  const dot=q('fetchDot');
-  if(dot) dot.className='cb-dot'+(cls==='ok'?' ready':cls==='warn'||cls==='err'?'':' ready');
+}
+
+/* A clock time as Latin digits, 24 hours: the Arabic locale draws Arabic-Indic
+   digits and a "ص"/"م" suffix, and next to Arabic letters the bidi algorithm
+   would then reorder the groups. Always inside a left-to-right <bdi>. */
+function clockTime(){
+  return new Date().toLocaleTimeString('en-GB',{hour12:false});
+}
+function timeNode(){
+  const bdi=document.createElement('bdi');
+  bdi.dir='ltr';
+  bdi.textContent=clockTime();
+  return bdi;
+}
+/* "Fetched 11:21:23": the label, then the time in its own isolate. */
+function setFetchState(kind){
+  const el=q('fetchState');
+  if(!el) return;
+  el.textContent='';
+  if(kind==='fetched'){
+    el.append(`${T.fetchedAt} `, timeNode());
+  } else {
+    el.textContent={loading:T.fetchLoading, error:T.fetchError}[kind] || T.fetchIdle;
+  }
+}
+/* The build time under the build summary: "Last build 11:21:31" or the applied option. */
+function setLastBuildAt(label, withTime){
+  const el=q('lastBuildAt');
+  if(!el) return;
+  el.textContent='';
+  if(!label) return;
+  el.append(withTime ? `${label} ` : label);
+  if(withTime) el.append(timeNode());
 }
 
 let currentStep='1';
@@ -171,6 +208,7 @@ function invalidateBuilderResults(){
   if(swaps) swaps.innerHTML=`<span class="text-secondary">${T.noSwaps}</span>`;
   const summary=q('builderSummary');
   if(summary) summary.textContent=T.noRunYet;
+  setLastBuildAt('');
   const selectedBar=q('selectedOptionBar');
   if(selectedBar){
     selectedBar.className='planner-banner planner-banner-neutral';
@@ -973,9 +1011,11 @@ Any previously planned courses not in this option will be removed. Continue?`)
       clashes.map(x=>`${x.course_code} ${x.section} @ ${x.slot} vs ${x.clashes_with}`).join('; ')
     );
   }
-  q('trustStrip').textContent=T.trustUpdated(name);
   setStep('3');
   q('fetchBtn').click();
+  /* After the click: the re-fetch it starts empties this line first (it
+     invalidates the build results), so the applied option is written after. */
+  setLastBuildAt(T.appliedOptionShort(name), false);
 };
 
 q('runBuilder').onclick=async()=>{
@@ -1072,8 +1112,7 @@ q('runBuilder').onclick=async()=>{
       : T.noFeasibleHardConstraints
   );
 
-  const unresolved=Number(s.conflicts ?? Math.max(0, Number(s.target||0)-Number(s.scheduled||0)));
-  q('trustStrip').textContent=T.trustBuilt(!!currentBaseline.length, unresolved, new Date().toLocaleTimeString());
+  setLastBuildAt(T.lastBuildAt, true);
 
   const wrap=q('builderOptions');
   wrap.innerHTML='';
@@ -1186,7 +1225,9 @@ q('fetchBtn').onclick=async()=>{
   invalidatePlanCache();
   const fetchBtnEl = q('fetchBtn');
   if(fetchBtnEl) fetchBtnEl.disabled = true;   // removes the easy double-click trigger
-  q('fetchState').textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...';
+  setFetchState('loading');
+  const qualityEl=q('baselineQuality');
+  if(qualityEl){ qualityEl.className=''; qualityEl.textContent=''; }
   setBanner('info', IS_AR ? 'جارٍ جلب بيانات الطالب...' : 'Fetching student context...');
 
   let r, data;
@@ -1205,7 +1246,7 @@ q('fetchBtn').onclick=async()=>{
   }catch(err){
     if(runFetch!==fetchGeneration) return;          // a newer fetch owns the page
     if(fetchBtnEl) fetchBtnEl.disabled = false;
-    q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
+    setFetchState('error');
     setBanner('danger', IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context');
     notify.error(IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context', err.message||String(err));
     return;
@@ -1215,12 +1256,15 @@ q('fetchBtn').onclick=async()=>{
   if(runFetch!==fetchGeneration) return;
   if(fetchBtnEl) fetchBtnEl.disabled = false;
   if(data.error){
-    q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
+    setFetchState('error');
     setBanner('danger', errMsg(data));
     return;
   }
 
-  q('fetchState').textContent = (IS_AR ? 'تم الجلب @ ' : 'Fetched @ ') + new Date().toLocaleTimeString();
+  setFetchState('fetched');
+  /* A student is loaded: the panels replace the one placeholder, and stay even
+     if a later fetch fails. */
+  document.querySelector('.planner-stage')?.setAttribute('data-loaded','true');
 
   currentCtx={
     student_id:String(data.student?.student_id||q('studentId').value),
@@ -1233,20 +1277,36 @@ q('fetchBtn').onclick=async()=>{
   currentBaseline=(data.baseline||[]);
 
   const st=data.student||{};
-  q('studentSummary').innerHTML=`
-    <div><strong>${IS_AR ? 'المعرّف' : 'ID'}:</strong> ${st.student_id||''}</div>
-    <div><strong>${IS_AR ? 'الاسم' : 'Name'}:</strong> ${st.name||''}</div>
-    <div><strong>${IS_AR ? 'البرنامج' : 'Program'}:</strong> ${st.program||''}</div>
-    <div><strong>${IS_AR ? 'المرشد' : 'Advisor'}:</strong> ${st.advisor_id||''}</div>
-    <div><strong>${IS_AR ? 'المعدل التراكمي' : 'GPA'}:</strong> ${st.gpa??''}</div>
-    <div><strong>${IS_AR ? 'الساعات المسجلة' : 'Registered credits'}:</strong> ${st.registered_credits||0}</div>
-    <div><strong>${IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap'}:</strong> ${st.credit_cap||0}${
-      st.regulatory_max_credits && Number(st.regulatory_max_credits)>Number(st.credit_cap||0)
-        ? ` <span class="fs-11 text-t4">(${IS_AR
-            ? `إرشادي — الحد النظامي ${st.regulatory_max_credits}`
-            : `advisory — regulatory limit ${st.regulatory_max_credits}`})</span>`
-        : ''
-    }</div>`;
+  /* The student's figures as a stat strip. Every value comes from the response
+     goes through safeHtml, which escapes it (the name used to be written as
+     markup). */
+  const gpaNumber=Number(st.gpa);
+  const gpaText=(st.gpa===null || st.gpa===undefined || st.gpa==='' || !Number.isFinite(gpaNumber))
+    ? '—' : gpaNumber.toFixed(2);
+  const capUnit=(st.regulatory_max_credits && Number(st.regulatory_max_credits)>Number(st.credit_cap||0))
+    ? safeHtml` <span class="ux-stat-unit">${IS_AR
+        ? safeHtml`إرشادي · النظامي ${st.regulatory_max_credits}`
+        : safeHtml`advisory · regulatory ${st.regulatory_max_credits}`}</span>`
+    : '';
+  const advisorPart=st.advisor_id
+    ? safeHtml` · ${IS_AR ? 'المرشد' : 'Advisor'}: <bdi>${st.advisor_id}</bdi>`
+    : '';
+  q('studentSummary').innerHTML=String(safeHtml`
+    <div class="planner-student">
+      <div class="planner-student-who">
+        <strong class="planner-student-name">${st.name||''}</strong>
+        <span class="planner-student-meta"><bdi>${st.student_id||''}</bdi> · ${st.program||''}${advisorPart}</span>
+      </div>
+      <section class="ux-stat-strip" aria-label="${IS_AR ? 'أرقام الطالب' : 'Student figures'}">
+        <div class="ux-stat-group">
+          <dl>
+            <div class="ux-stat"><dt>${IS_AR ? 'المعدل التراكمي' : 'GPA'}</dt><dd>${gpaText}</dd></div>
+            <div class="ux-stat"><dt>${IS_AR ? 'الساعات المسجلة' : 'Registered credits'}</dt><dd>${st.registered_credits||0}</dd></div>
+            <div class="ux-stat"><dt>${IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap'}</dt><dd>${st.credit_cap||0}${capUnit}</dd></div>
+          </dl>
+        </div>
+      </section>
+    </div>`);
 
   /* Auto-fill max credits box from student credit cap */
   if(st.credit_cap && Number(st.credit_cap)>0) q('maxCredits').value=Number(st.credit_cap);
@@ -1264,15 +1324,6 @@ q('fetchBtn').onclick=async()=>{
 
   q('baselineTotals').textContent=`${IS_AR ? 'المقررات' : 'Courses'}: ${data.baseline_totals.courses} | ${IS_AR ? 'الساعات' : 'Credits'}: ${data.baseline_totals.credits}`;
 
-  const srcCounts={};
-  (data.baseline||[]).forEach(x=>{
-    const s=(x.source||'mapped');
-    const key=x.term_section_id || `${courseKey(x)}|${x.section||''}`;
-    (srcCounts[s] ||= new Set()).add(String(key));
-  });
-  const srcText=Object.entries(srcCounts).map(([k,v])=>`${k}:${v.size}`).join(' | ');
-  if(srcText){ q('baselineTotals').textContent += IS_AR ? ` | المصدر: ${srcText}` : ` | Source: ${srcText}`; }
-
   const fallbackKeys=new Set();
   (data.baseline||[]).forEach(x=>{
     if(String(x.source||'').toLowerCase().includes('fallback')){
@@ -1280,13 +1331,11 @@ q('fetchBtn').onclick=async()=>{
     }
   });
   const fallbackRows=fallbackKeys.size;
-  const quality=fallbackRows
-    ? (IS_AR ? `جزئي (${fallbackRows} احتياطي)` : `partial (${fallbackRows} fallback)`)
-    : (IS_AR ? 'جيد' : 'good');
-
-  q('trustStrip').textContent = IS_AR
-    ? `جودة الربط: ${quality} | غير المحلول: - | آخر بناء: -`
-    : `Mapping quality: ${quality} | Unresolved: - | Last build: -`;
+  /* Mapping quality is only worth a line when it is NOT good. */
+  if(qualityEl && fallbackRows){
+    qualityEl.className='planner-banner planner-banner-warn';
+    qualityEl.textContent=T.qualityPartial(fallbackRows);
+  }
 
   setBanner('success', IS_AR ? 'تم تحميل بيانات الطالب بنجاح.' : 'Student context loaded successfully.');
   setStep('2');
@@ -1386,3 +1435,17 @@ if (_origFetchBtn) {
     }
   });
 }
+
+/* ── Options toggle (a phone folds the settings under the session bar) ──────
+   From 769px the CSS shows them whatever state this left; the toggle only
+   keeps aria-expanded true to what a phone shows. */
+(function initOptionsToggle(){
+  const toggle=document.querySelector('.planner-options-toggle');
+  const options=q('plannerOptions');
+  if(!toggle || !options) return;
+  toggle.addEventListener('click',()=>{
+    const open=toggle.getAttribute('aria-expanded')!=='true';
+    toggle.setAttribute('aria-expanded', String(open));
+    options.classList.toggle('is-open', open);
+  });
+})();
