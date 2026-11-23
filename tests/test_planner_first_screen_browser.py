@@ -123,8 +123,10 @@ STYLE = """(sel) => {
   return { bg: s.backgroundColor, border: s.borderTopWidth, shadow: s.boxShadow };
 }"""
 
+# `allowGround`: the step bar is sticky (slice 5), so it carries the page's own ground colour
+# (opaque, so content never shows through) and nothing else: no glass, no shadow, no gradient.
 FLAT = r"""(args) => {
-  const [sel, allowRuleBelow] = args;
+  const [sel, allowRuleBelow, allowGround] = args;
   const el = document.querySelector(sel);
   if (!el) return [`${sel}: missing`];
   const s = getComputedStyle(el);
@@ -132,7 +134,14 @@ FLAT = r"""(args) => {
   const blur = s.backdropFilter || s.webkitBackdropFilter || 'none';
   if (blur !== 'none') bad.push(`${sel}: backdrop-filter ${blur}`);
   if (s.boxShadow !== 'none') bad.push(`${sel}: box-shadow ${s.boxShadow}`);
-  if (s.backgroundColor !== 'rgba(0, 0, 0, 0)') bad.push(`${sel}: background ${s.backgroundColor}`);
+  let ground = 'rgba(0, 0, 0, 0)';
+  if (allowGround) {
+    const probe = document.createElement('i'); document.body.append(probe);
+    probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    ground = getComputedStyle(probe).color; probe.remove();
+  }
+  if (s.backgroundColor !== 'rgba(0, 0, 0, 0)' && s.backgroundColor !== ground)
+    bad.push(`${sel}: background ${s.backgroundColor}`);
   if (s.backgroundImage !== 'none') bad.push(`${sel}: background-image`);
   for (const side of ['Top', 'Left', 'Right', 'Bottom']) {
     if (side === 'Bottom' && allowRuleBelow) continue;
@@ -307,7 +316,7 @@ class PlannerFirstScreenBrowserTests(StaticLiveServerTestCase):
             found = page.evaluate(FLAT, [".planner-session", False])
             found += page.evaluate(FLAT, [".wf-stepper", False])
             # the stepper row itself may carry a rule under it, nothing around it
-            found += page.evaluate(FLAT, [".planner-steps", True])
+            found += page.evaluate(FLAT, [".planner-steps", True, True])
             for gone in (".command-bar", ".cb-header", ".sticky-head", "#trustStrip", "#fetchDot"):
                 if page.locator(gone).count():
                     found.append(f"{gone} still exists")
@@ -447,11 +456,14 @@ class PlannerFirstScreenBrowserTests(StaticLiveServerTestCase):
         for language in LANGUAGES:
             found = []
             page = self._loaded(language)
+            # the one status line lives in the sticky step bar (slice 5), not in the session
             count = page.evaluate(
-                "document.querySelectorAll('.planner-session [role=status]').length"
+                "document.querySelectorAll('.planner-steps [role=status]').length"
             )
             if count != 1:
-                found.append(f"{count} role=status elements in the session")
+                found.append(f"{count} role=status elements in the step bar")
+            if page.evaluate("document.querySelectorAll('.planner-session [role=status]').length"):
+                found.append("a role=status element is still in the session")
             banner = page.locator("#statusBanner").inner_text()
             if SUCCESS[language] not in banner:
                 found.append(f"status line reads {banner!r}")
@@ -514,6 +526,7 @@ class PlannerFirstScreenBrowserTests(StaticLiveServerTestCase):
                 and page.locator("#lastBuildAt").inner_text().strip()
             ):
                 found.append("a last-build time before any build")
+            page.click("#nextStep")  # Build is on the second step (slice 5)
             page.click("#runBuilder")
             page.wait_for_function(
                 f"() => new RegExp('{TIME}').test(document.getElementById('lastBuildAt').textContent)",
@@ -680,7 +693,7 @@ class PlannerFirstScreenBrowserTests(StaticLiveServerTestCase):
                   return [n.tagName, s.fontSize, s.fontWeight, n.textContent.trim().slice(0, 24)];
                 })"""
             )
-            if len(titles) < 8:
+            if len(titles) < 6:  # the student strip lost its title and the two timetables merged
                 found.append(f"only {len(titles)} panel titles")
             for tag, size, weight, text in titles:
                 if tag != "H2":
@@ -690,7 +703,7 @@ class PlannerFirstScreenBrowserTests(StaticLiveServerTestCase):
                 if weight != "700":
                     found.append(f"{text!r} has weight {weight}")
             found += page.evaluate(
-                LIKE_CLASS, [".planner-grid > :not(#visualCard) h2.pane-title", "pane-title"]
+                LIKE_CLASS, [".planner-grid > :not(#timetableCard) h2.pane-title", "pane-title"]
             )
             found += page.evaluate(
                 LIKE_CLASS, ["#advancedDiag .pl-diag-heading", "pl-diag-heading"]

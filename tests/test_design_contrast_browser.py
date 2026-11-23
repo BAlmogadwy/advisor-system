@@ -136,8 +136,8 @@ NAMED = ", ".join(
     (
         ".wf-step.active",
         ".wf-step.active .wf-num",
-        ".wf-nav .wf-next",
-        ".pl-btn-primary",
+        "#nextStep .wf-nav-label",
+        "#fetchBtn",
         ".um-create-btn",
         ".um-act-btn.um-act-save",
         ".pf-submit-primary",
@@ -150,7 +150,6 @@ NAMED = ", ".join(
         ".avatar",
         ".neu-btn-text",
         ".va-avatar",
-        ".pl-btn-teal",
         ".tg-btn-primary",
     )
 )
@@ -159,9 +158,9 @@ NAMED = ", ".join(
 #: sit on a gradient of the primary pair, measured at both of its stops.
 MEASURED = {
     "workspace": ("#twValidationBadge", "tw-english-heading", "div.avatar"),
-    # pl-btn-teal (Add, Add selected) lives in the panels, which stay hidden until a
+    # The Add buttons (.btn-neutral) live in the panels, which stay hidden until a
     # student is loaded (planner first-screen slice, D8): not drawn on first load.
-    "planner": ("wf-step.active", "span.wf-num", "pl-btn-primary", "wf-next"),
+    "planner": ("#step1", "span.wf-num", "#fetchBtn", "span.wf-nav-label"),
     "user-management": ("um-create-btn",),
     "graph": ("#tgSync",),
     "login": ("neu-btn-text",),
