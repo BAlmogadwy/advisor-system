@@ -483,8 +483,8 @@ PHONE_FIT = (
     if (el.scrollWidth > el.clientWidth + 1 && !el.closest('.wg-blocks'))
       note('clipped, not scrollable', `${sketch(el)} scrollWidth ${el.scrollWidth} > ${el.clientWidth}`);
   }
-  // Both week grids: all five day columns on screen, nothing scrolling.
-  for (const id of ['baselineWeekly', 'visualGrid']) {
+  // The week grid: all five day columns on screen, nothing scrolling.
+  for (const id of ['visualGrid']) {
     const host = document.getElementById(id);
     const blocks = [...host.querySelectorAll('.wg-blocks')];
     if (!blocks.length) { note('no week grid', '#' + id); continue; }
@@ -597,7 +597,7 @@ BLOCKS_FIT = (
   };
   const W = innerWidth;
   let tag = 0, total = 0;
-  for (const id of ['baselineWeekly', 'visualGrid']) {
+  for (const id of ['visualGrid']) {
     const host = document.getElementById(id);
     for (const block of host.querySelectorAll('.wg-blocks')) {
       const r = R(block);
@@ -671,7 +671,7 @@ BLOCK_CONTRAST = r"""() => {
   const lum = c => c.slice(0, 3).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; })
     .reduce((s, x, i) => s + x * [0.2126, 0.7152, 0.0722][i], 0);
   const out = [];
-  for (const id of ['baselineWeekly', 'visualGrid'])
+  for (const id of ['visualGrid'])
     for (const cell of document.querySelectorAll(`#${id} .wg-filled`)) {
       const bg = rgba(getComputedStyle(cell).backgroundColor);
       for (const part of ['.wg-cid', '.wg-meta']) {
@@ -721,7 +721,6 @@ PALETTE_RING = r"""() => {
 
 READY = (
     "() => document.querySelectorAll('.avail-course-card').length >= __CARDS__"
-    " && document.querySelector('#baselineWeekly .wg-filled')"
     " && document.querySelector('#visualGrid .wg-filled')"
     " && document.querySelectorAll('#recTable button').length >= 5"
     " && document.querySelector('#planPalette table')"
@@ -758,8 +757,14 @@ class PlannerLayoutBrowserTests(StaticLiveServerTestCase):
     def _no_page_errors(self) -> None:
         self.assertEqual(self.page_errors, [], "the planner threw while loading")
 
-    def _open(self, language: str, width: int, height: int, font: str = "app"):
-        """The planner with the made-up student loaded, as the page loads it."""
+    def _open(
+        self, language: str, width: int, height: int, font: str = "app", show_all: bool = True
+    ):
+        """The planner with the made-up student loaded, as the page loads it.
+
+        The earlier slices measure every panel, so the page opens with "Show everything"
+        on (slice 5, tests/test_planner_flow_browser.py measures the one-step default).
+        """
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},
@@ -781,6 +786,10 @@ class PlannerLayoutBrowserTests(StaticLiveServerTestCase):
             ]
         )
         context.add_init_script("try { localStorage.setItem('theme', 'light'); } catch (e) {}")
+        if show_all:
+            context.add_init_script(
+                "try { localStorage.setItem('plannerShowAll', '1'); } catch (e) {}"
+            )
         if font == "wide":
             context.add_init_script(WIDE_FONT)
         # The three data requests, answered from the made-up student.
@@ -991,8 +1000,8 @@ class PlannerLayoutBrowserTests(StaticLiveServerTestCase):
                     if page.eval_on_selector(sel, "n => n.innerHTML") != html:
                         found.append(f"{theme}: {sel} was redrawn")
                 blocks = page.evaluate(BLOCK_CONTRAST)
-                if len(blocks) < 68:
-                    found.append(f"{theme}: only {len(blocks)} texts (code, time) in the two grids")
+                if len(blocks) < 34:
+                    found.append(f"{theme}: only {len(blocks)} texts (code, time) in the grid")
                 low = [b for b in blocks if b["ratio"] < 4.5]
                 if low:
                     first = low[0]

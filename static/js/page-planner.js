@@ -45,6 +45,8 @@ const T = {
     ? 'لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المثبّتة ضمن القيود الحالية.'
     : 'No valid result satisfies every must-take course and exact pinned section under the current constraints.',
   builderRunning: IS_AR ? 'جارٍ بناء خيارات الجدول...' : 'Building timetable options...',
+  building: IS_AR ? 'جارٍ البناء…' : 'Building…',
+  sourceRegistered: IS_AR ? 'المسجّل' : 'Registered',
   crossProgramApplyDisabled: IS_AR
     ? 'الخطة التي تسمح بشُعب برامج أخرى مخصصة للمقارنة فقط. فعّل «شُعب برنامج الطالب فقط» قبل الحفظ الداخلي.'
     : 'Cross-programme options are comparison-only. Enable “Student programme sections only” before internal saving.',
@@ -78,7 +80,18 @@ function setBanner(kind, text){
     neutral:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
   };
   b.className=`planner-banner planner-banner-${cls}`;
-  b.innerHTML=`<span class="i">${icons[cls]||icons.info}</span>${text}`;
+  /* One line in the sticky step bar: the text is its own span (so it can end in
+     an ellipsis) and its full text is the tooltip. textContent, not markup. */
+  const icon=document.createElement('span');
+  icon.className='i';
+  icon.setAttribute('aria-hidden','true');
+  icon.innerHTML=icons[cls]||icons.info;
+  const label=document.createElement('span');
+  label.className='planner-status-text';
+  label.textContent=text;
+  b.textContent='';
+  b.append(icon,label);
+  b.title=String(text);
 }
 
 /* A clock time as Latin digits, 24 hours: the Arabic locale draws Arabic-Indic
@@ -114,13 +127,67 @@ function setLastBuildAt(label, withTime){
   if(withTime) el.append(timeNode());
 }
 
-let currentStep='1';
-const stepOrder=['1','2','3'];
-function setStep(step){
+/* Two working steps. A panel names the step(s) it belongs to in data-step
+   ("courses build" for the one timetable, shown in both). The student step is
+   the session bar above, so it has no panel. */
+let currentStep='courses';
+const stepOrder=['courses','build'];
+/* The first panel of each step, where the content scrolls to when the step
+   changes (the timetable belongs to both steps, so it is never the first). */
+const STEP_FIRST_PANEL={courses:'recCard', build:'builderCard'};
+const SHOW_ALL_KEY='plannerShowAll';
+
+function showAllOn(){
+  return !!q('showAll')?.checked;
+}
+function studentLoaded(){
+  return !!(currentCtx && currentCtx.student_id);
+}
+function readShowAll(){
+  try{ return localStorage.getItem(SHOW_ALL_KEY)==='1'; }catch(e){ return false; }
+}
+function writeShowAll(on){
+  try{
+    if(on) localStorage.setItem(SHOW_ALL_KEY,'1'); else localStorage.removeItem(SHOW_ALL_KEY);
+  }catch(e){ /* the page works without storage */ }
+}
+
+/* What scrolls the page: the nearest scrolling ancestor of the step bar (the
+   main column; the document when nothing in between scrolls). */
+function plannerScroller(){
+  for(let el=q('plannerSteps')?.parentElement; el && el!==document.body; el=el.parentElement){
+    const oy=getComputedStyle(el).overflowY;
+    if((oy==='auto' || oy==='scroll') && el.scrollHeight>el.clientHeight) return el;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+/* Scroll so a step's first panel starts just under the sticky bar. */
+function scrollToStep(step){
+  const bar=q('plannerSteps');
+  const panel=q(STEP_FIRST_PANEL[step]);
+  if(!bar || !panel || !panel.getClientRects().length) return;
+  const delta=panel.getBoundingClientRect().top-(bar.getBoundingClientRect().bottom+8);
+  if(Math.abs(delta)<1) return;
+  const box=plannerScroller();
+  box.scrollTo({top:box.scrollTop+delta, behavior:'instant'});
+}
+
+function updateStepControls(){
+  const loaded=studentLoaded();
+  const idx=stepOrder.indexOf(currentStep);
+  stepOrder.forEach((s)=>{ const el=document.querySelector(`.wf-step[data-step="${s}"]`); if(el) el.disabled=!loaded; });
+  const prev=q('prevStep'), next=q('nextStep');
+  if(prev) prev.disabled=!loaded || idx<=0;
+  if(next) next.disabled=!loaded || idx>=stepOrder.length-1;
+}
+
+function setStep(step, opts){
+  if(!stepOrder.includes(step)) step='courses';
   currentStep=step;
   const idx=stepOrder.indexOf(step);
   stepOrder.forEach((s,i)=>{
-    const el=q('step'+s);
+    const el=document.querySelector(`.wf-step[data-step="${s}"]`);
     if(!el) return;
     el.classList.remove('active','done');
     /* The classes are the only thing that changed before, so assistive tech had
@@ -138,12 +205,16 @@ function setStep(step){
       : i<idx  ? (IS_AR?'مكتملة':'completed')
                : (IS_AR?'لم تبدأ':'not started')}`);
   });
-  const simple=!!q('simpleMode')?.checked;
+  const all=showAllOn();
   document.querySelectorAll('.step-panel').forEach(el=>{
-    const s=el.getAttribute('data-step');
-    el.classList.toggle('d-none', simple && s!==step);
+    const steps=(el.getAttribute('data-step')||'').split(/\s+/);
+    el.classList.toggle('d-none', !all && !steps.includes(step));
   });
-  if(simple){ q('advancedDiag')?.removeAttribute('open'); }
+  const grid=document.querySelector('.planner-grid');
+  if(grid) grid.setAttribute('data-view', all ? 'all' : step);
+  if(!all){ q('advancedDiag')?.removeAttribute('open'); }
+  updateStepControls();
+  if(!opts || opts.scroll!==false) scrollToStep(step);
 }
 
 function enforceBuilderProcessLayout(){
@@ -317,7 +388,7 @@ function invalidateBuilderResults(){
     source.innerHTML='';
     const baseline=document.createElement('option');
     baseline.value='baseline';
-    baseline.textContent=IS_AR?'الأساس':'Baseline';
+    baseline.textContent=T.sourceRegistered;
     source.appendChild(baseline);
     source.value='baseline';
   }
@@ -362,57 +433,31 @@ function courseLabel(row){
 
 /* _isDark and colorForCourse now in shared-utils.js */
 
-function renderBaselineWeeklyCompact(baseline){
-  const host=q('baselineWeekly');
-  const rows=(baseline||[]).filter(r=>r.day&&r.start_time&&r.end_time);
+/* The ONE week on the page: the registered timetable, or a built option on top of
+   it. What belonged to the registered view (the totals line, the mapping-quality
+   strip, the note about courses without slots) is shown only for that source. */
+function registeredNoteHtml(){
   const unmappedByCode={};
-  (baseline||[]).filter(r=>!(r.day&&r.start_time&&r.end_time)).forEach(r=>{
+  (currentBaseline||[]).filter(r=>!(r.day&&r.start_time&&r.end_time)).forEach(r=>{
     const code=courseKey(r);
     if(code) unmappedByCode[code]=r;
   });
   const unmapped=Object.values(unmappedByCode);
-  const unmappedHtml=unmapped.length
-    ? `<div class="planner-banner planner-banner-warn mt-2 fs-12">
+  if(!unmapped.length) return '';
+  return `<div class="planner-banner planner-banner-warn mt-2 fs-12">
         <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
         ${IS_AR
           ? `${unmapped.length} مقرر مسجّل بدون مواعيد في الجدول:`
           : `${unmapped.length} registered course${unmapped.length===1?'':'s'} have no mapped timetable slots:`}
         ${unmapped.map(r=>`<strong>${courseKey(r)}</strong>`).join(', ')}
-      </div>`
-    : '';
-
-  const blocks=rows.map(r=>({
-    day: normalizeDay(r.day),
-    start: r.start_time,
-    end: r.end_time,
-    label: courseLabel(r),
-    room: r.room||'',
-    source: r.source||'',
-  }));
-  const grid=WeekGrid.renderWeekGrid({
-    mode: 'blocks',
-    blocks,
-    timeLabel: UI.time,
-    dayLabels: UI.dayShort,
-    a11yLabel: IS_AR ? 'الجدول المسجّل' : 'Registered timetable',
-    a11yHeadings: IS_AR ? ['اليوم','المقرر','الوقت','القاعة'] : ['Day','Course','Time','Room'],
-    /* A registered week is rarely continuous: morning classes and a single
-       evening one stretched this card to ~11 empty-ish hours, pushing the
-       Suggested-to-add pane against a wall of blank grid. The shared renderer
-       already splits on a fully-empty span and PRINTS the omitted interval
-       between segments, so compression can never read as adjacent classes. */
-    compressGaps: true,
-    empty: `<span class="text-secondary">${T.noMappedSlots}</span>`,
-    pick: (cur,inc)=>inc, // last write wins
-    bg: m=>colorForCourse(m.label),
-    accent: m=>colorForCourseBorder(m.label),
-    cellHtml: m=>safeHtml`<span class="wg-cid">${m.label}</span><span class="wg-meta">${timeRangeHtml(m.start,m.end,true)}</span>`,
-  });
-  host.innerHTML=grid+unmappedHtml;
+      </div>`;
 }
 
 function renderVisualTimetable(source='baseline'){
   const host=q('visualGrid');
+  const registeredView=(source==='baseline');
+  q('baselineTotals')?.classList.toggle('d-none', !registeredView);
+  q('baselineQuality')?.classList.toggle('d-none', !registeredView);
 
   const baseline=(currentBaseline||[])
     .filter(x=>x.day&&x.start_time&&x.end_time)
@@ -420,7 +465,7 @@ function renderVisualTimetable(source='baseline'){
       day: normalizeDay(x.day),
       start:x.start_time,
       end:x.end_time,
-      label:`${x.course_code||''} ${x.section||''}`.trim(),
+      label:courseLabel(x),
       room:x.room||'',
       kind:'baseline'
     }));
@@ -469,32 +514,41 @@ function renderVisualTimetable(source='baseline'){
   }
 
   const conflictBg=(getComputedStyle(document.documentElement).getPropertyValue('--pl-conflict-cell').trim() || '#fecaca');
-  host.innerHTML=WeekGrid.renderWeekGrid({
+  const grid=WeekGrid.renderWeekGrid({
     mode: 'blocks',
     blocks: enriched,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
-    a11yLabel: IS_AR ? 'الجدول المقترح' : 'Proposed timetable',
+    a11yLabel: registeredView
+      ? (IS_AR ? 'الجدول المسجّل' : 'Registered timetable')
+      : (IS_AR ? 'الجدول المقترح' : 'Proposed timetable'),
     a11yHeadings: IS_AR ? ['اليوم','المقرر','الوقت','القاعة'] : ['Day','Course','Time','Room'],
-    /* Same treatment as the registered card above — and it matters more here,
-       because a proposed plan is compared against it side by side. Two grids
-       on one page must not use different vertical scales. */
+    /* A registered week is rarely continuous: morning classes and a single
+       evening one stretched the card to ~11 empty-ish hours. The shared renderer
+       splits on a fully-empty span and PRINTS the omitted interval between
+       segments, so compression can never read as adjacent classes. */
     compressGaps: true,
-    empty: `<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`,
+    /* Beside the suggestions the week is half the page: on a wide screen the day
+       columns are wide enough for a code and a time on one line each, so a
+       labelled half hour needs less height (the default is 42px). */
+    majorHeight: (window.matchMedia && window.matchMedia('(min-width: 1200px)').matches) ? 28 : undefined,
+    empty: registeredView
+      ? `<span class="text-secondary">${T.noMappedSlots}</span>`
+      : `<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`,
     pick: (cur,inc)=>(inc.conflict?inc:cur), // keep first unless incoming is a conflict
     bg: m=>(m.conflict?conflictBg:colorForCourse(m.label)),
     accent: m=>(m.conflict?'#ef4444':colorForCourseBorder(m.label)),
     cellClass: m=>(m.conflict?'wg-clash':(m.kind==='planned'?'wg-planned':'')),
     cellHtml: m=>safeHtml`<span class="wg-cid">${m.label}</span><span class="wg-meta">${timeRangeHtml(m.start,m.end,true)}</span>`,
   });
+  host.innerHTML=grid+(registeredView ? registeredNoteHtml() : '');
 }
 
 /* The sidebar's theme toggle only sets data-theme on <html>. The grid blocks
    carry inline colours chosen at render time, so a switch left them in the old
-   theme (light text on a light block, 1.15:1). Redraw just the two grids. */
+   theme (light text on a light block, 1.15:1). Redraw the grid. */
 new MutationObserver(()=>{
   if(!currentCtx?.student_id) return;
-  renderBaselineWeeklyCompact(currentBaseline);
   renderVisualTimetable(q('visualSource').value || 'baseline');
 }).observe(document.documentElement,{attributes:true, attributeFilter:['data-theme']});
 
@@ -549,10 +603,30 @@ q('maxCredits')?.addEventListener('change',invalidateBuilderResults);
 q('swap')?.addEventListener('change',invalidateBuilderResults);
 
 q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
-['1','2','3'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
-q('simpleMode')?.addEventListener('change',()=>setStep(currentStep));
-q('prevStep')?.addEventListener('click',()=>{ const order=['1','2','3']; const i=Math.max(0,order.indexOf(currentStep)-1); setStep(order[i]); });
-q('nextStep')?.addEventListener('click',()=>{ const order=['1','2','3']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
+document.querySelectorAll('.wf-step[data-step]').forEach(btn=>
+  btn.addEventListener('click',()=>setStep(btn.getAttribute('data-step'))));
+q('prevStep')?.addEventListener('click',()=>{ const i=Math.max(0,stepOrder.indexOf(currentStep)-1); setStep(stepOrder[i]); });
+q('nextStep')?.addEventListener('click',()=>{ const i=Math.min(stepOrder.length-1,stepOrder.indexOf(currentStep)+1); setStep(stepOrder[i]); });
+/* Show everything: every panel of both steps in reading order. The choice is
+   kept in this browser; nothing depends on storage. */
+(function initShowAll(){
+  const box=q('showAll');
+  if(!box) return;
+  box.checked=readShowAll();
+  box.addEventListener('change',()=>{
+    writeShowAll(box.checked);
+    setStep(currentStep, {scroll:false});
+  });
+  /* A phone folds the switch into the options under the session bar, so the
+     sticky bar keeps two rows; from 769px it sits in the bar. */
+  const label=q('showAllToggle'), slot=q('showAllSlot'), options=q('plannerOptions');
+  if(label && slot && options && window.matchMedia){
+    const phone=window.matchMedia('(max-width: 768px)');
+    const place=()=>{ (phone.matches ? options : slot).appendChild(label); };
+    place();
+    if(phone.addEventListener) phone.addEventListener('change',place);
+  }
+})();
 
 function renderShortlist(){
   invalidateBuilderResults();
@@ -749,7 +823,7 @@ async function renderPlanPalette(studentId){
             must_take:false, score:Math.round(Number(c.importance_score||0)*20)
           });
           renderShortlist();
-          setStep('2');
+          setStep('courses',{scroll:false});
         };
 
         tr.querySelector('button').onclick=(e)=>{ e.stopPropagation(); addCourse(); };
@@ -1007,9 +1081,9 @@ async function renderAvailableSections(){
 
 q('resetShortlist').onclick=()=>{
   shortlist=currentRecommendations.filter(x=>x.status==='Eligible').map(x=>({...x,must_take:false}));
-  renderShortlist(); setStep('2');
+  renderShortlist(); setStep('courses',{scroll:false});
 };
-q('clearShortlist').onclick=()=>{shortlist=[];renderShortlist(); setStep('2');};
+q('clearShortlist').onclick=()=>{shortlist=[];renderShortlist(); setStep('courses',{scroll:false});};
 
 ['fltNotTaken','fltGreen','fltHighImp'].forEach(id=>
   q(id)?.addEventListener('change',()=>{ if(currentCtx.student_id) renderPlanPalette(currentCtx.student_id); })
@@ -1027,7 +1101,7 @@ q('addSelectedPlan').onclick=()=>{
   });
   renderShortlist();
   setBanner('info', T.addedSelected(added));
-  setStep('2');
+  setStep('courses',{scroll:false});
 };
 
 q('applyOption').onclick=async()=>{
@@ -1103,15 +1177,33 @@ q('applyOption').onclick=async()=>{
       clashes.map(x=>`${x.course_code} ${x.section} @ ${x.slot} vs ${x.clashes_with}`).join('; ')
     );
   }
-  setStep('3');
+  setStep('build');
   q('fetchBtn').click();
   /* After the click: the re-fetch it starts empties this line first (it
      invalidates the build results), so the applied option is written after. */
   setLastBuildAt(T.appliedOptionShort(name), false);
 };
 
+/* The Build button while a request is in flight: disabled, busy, and says so.
+   A counter, not a flag: a superseded run still ends, and the button is free
+   again only when the last run has. */
+let buildRunsInFlight=0;
+function setBuildBusy(on){
+  buildRunsInFlight=Math.max(0, buildRunsInFlight+(on?1:-1));
+  const busy=buildRunsInFlight>0;
+  const btn=q('runBuilder');
+  if(!btn) return;
+  btn.disabled=busy;
+  if(busy) btn.setAttribute('aria-busy','true'); else btn.removeAttribute('aria-busy');
+  const label=btn.querySelector('.pl-run-label');
+  if(label){
+    if(!label.dataset.idle) label.dataset.idle=label.textContent;
+    label.textContent=busy ? T.building : label.dataset.idle;
+  }
+}
+
 q('runBuilder').onclick=async()=>{
-  setStep('3');
+  setStep('build');
   const applyButton=q('applyOption');
   if(applyButton) applyButton.disabled=true;
 
@@ -1122,7 +1214,12 @@ q('runBuilder').onclick=async()=>{
   invalidateBuilderResults();
   const runGeneration=builderGeneration;
   setBanner('info', T.builderRunning);
+  setBuildBusy(true);
+  try{ await runBuilderRequest(runGeneration); }
+  finally{ setBuildBusy(false); }
+};
 
+async function runBuilderRequest(runGeneration){
   let r, data;
   try{
     r=await fetch('/ops/planner/build/',{
@@ -1211,7 +1308,7 @@ q('runBuilder').onclick=async()=>{
     const prev=vs.value;
     vs.innerHTML='';
     const mk=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;vs.appendChild(o);};
-    mk('baseline', IS_AR ? 'الأساس' : 'Baseline');
+    mk('baseline', T.sourceRegistered);
     options.forEach(o=>mk(String(o.name||''), IS_AR ? `الخيار ${o.name||''}` : `Option ${o.name||''}`));
     mk('overlay', IS_AR ? 'تراكب (الأساس + المحدد)' : 'Overlay (Baseline + Selected)');
     if([...vs.options].some(o=>o.value===prev)) vs.value=prev;
@@ -1298,12 +1395,19 @@ q('runBuilder').onclick=async()=>{
   q('swapSuggestions').innerHTML=(data.swap_suggestions||[]).map(s=>`<div>• ${escapeHtml(s.course_code)}: ${escapeHtml(s.from_section)} → ${escapeHtml(s.to_section)} (${escapeHtml(s.reason)})</div>`).join('') || `<span class="text-secondary">${T.noSwaps}</span>`;
 
   renderVisualTimetable(q('visualSource').value || 'baseline');
-};
+}
+
+/* The panels while a student is being fetched: stale content is inactive. */
+function setFetchBusy(on){
+  const grid=document.querySelector('.planner-grid');
+  if(!grid) return;
+  if(on) grid.setAttribute('aria-busy','true'); else grid.removeAttribute('aria-busy');
+}
 
 q('fetchBtn').onclick=async()=>{
   invalidateBuilderResults();
-  setStep('1');
   const runFetch = ++fetchGeneration;
+  setFetchBusy(true);
   invalidatePlanCache();
   const fetchBtnEl = q('fetchBtn');
   if(fetchBtnEl) fetchBtnEl.disabled = true;   // removes the easy double-click trigger
@@ -1327,6 +1431,7 @@ q('fetchBtn').onclick=async()=>{
     data=await r.json();
   }catch(err){
     if(runFetch!==fetchGeneration) return;          // a newer fetch owns the page
+    setFetchBusy(false);
     if(fetchBtnEl) fetchBtnEl.disabled = false;
     setFetchState('error');
     setBanner('danger', IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context');
@@ -1336,6 +1441,7 @@ q('fetchBtn').onclick=async()=>{
   /* Everything past this point WRITES page state, so a superseded response must
      stop here — before it touches currentCtx, the baseline or the shortlist. */
   if(runFetch!==fetchGeneration) return;
+  setFetchBusy(false);
   if(fetchBtnEl) fetchBtnEl.disabled = false;
   if(data.error){
     setFetchState('error');
@@ -1347,6 +1453,8 @@ q('fetchBtn').onclick=async()=>{
   /* A student is loaded: the panels replace the one placeholder, and stay even
      if a later fetch fails. */
   document.querySelector('.planner-stage')?.setAttribute('data-loaded','true');
+  const summaryCard=q('studentSummaryCard');
+  if(summaryCard) summaryCard.hidden=false;
 
   currentCtx={
     student_id:String(data.student?.student_id||q('studentId').value),
@@ -1420,9 +1528,8 @@ q('fetchBtn').onclick=async()=>{
   }
 
   setBanner('success', IS_AR ? 'تم تحميل بيانات الطالب بنجاح.' : 'Student context loaded successfully.');
-  setStep('2');
+  setStep('courses');
 
-  renderBaselineWeeklyCompact(data.baseline||[]);
   renderVisualTimetable(q('visualSource').value || 'baseline');
 
   currentRecommendations=data.recommendations||[];
@@ -1456,7 +1563,7 @@ q('fetchBtn').onclick=async()=>{
 };
 
 enforceBuilderProcessLayout();
-setStep('1');
+setStep('courses', {scroll:false});
 
 /* ── Available sections search filter ──────────────────────── */
 q('availSearch')?.addEventListener('input',function(){

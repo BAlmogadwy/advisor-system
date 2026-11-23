@@ -381,7 +381,6 @@
       "dotClass": 1,
       "failureHtml": 1,
       "feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة تحقق جميع القيود الإلزامية':'No plan satisfies all hard constraints')": 1,
-      "icons[cls]||icons.info": 1,
       "idx": 3,
       "label": 1,
       "opt.scheduled||0": 1,
@@ -402,7 +401,6 @@
       "secHtml": 1,
       "statusLabel": 1,
       "t.term": 1,
-      "text": 1,
       "total": 1
     },
     "page-section-planning.js": {

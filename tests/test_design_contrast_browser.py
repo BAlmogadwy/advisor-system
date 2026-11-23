@@ -136,7 +136,7 @@ NAMED = ", ".join(
     (
         ".wf-step.active",
         ".wf-step.active .wf-num",
-        "#nextStep",
+        "#nextStep .wf-nav-label",
         "#fetchBtn",
         ".um-create-btn",
         ".um-act-btn.um-act-save",
@@ -160,7 +160,7 @@ MEASURED = {
     "workspace": ("#twValidationBadge", "tw-english-heading", "div.avatar"),
     # The Add buttons (.btn-neutral) live in the panels, which stay hidden until a
     # student is loaded (planner first-screen slice, D8): not drawn on first load.
-    "planner": ("wf-step.active", "span.wf-num", "#fetchBtn", "#nextStep"),
+    "planner": ("#step1", "span.wf-num", "#fetchBtn", "span.wf-nav-label"),
     "user-management": ("um-create-btn",),
     "graph": ("#tgSync",),
     "login": ("neu-btn-text",),
