@@ -1192,6 +1192,11 @@ TIMETABLE_ENFORCE_LOCKS = os.getenv("TIMETABLE_ENFORCE_LOCKS", "true").lower() i
 # only ever advances current_best to a strictly-improving, fully re-evaluated
 # board, so an early stop returns the best-so-far, never a worse board than the
 # chain started from. (0 / negative / unset ⇒ no deadline.)
+#
+# Production sets 600 in render.yaml (owner 2026-11-23, pinned by
+# scripts/validate_render_blueprint.py): a planner job is swept as stale after
+# TIMETABLE_PLANNER_JOB_STALE_MINUTES, so an unbounded chain there can lose the
+# whole run. The default here stays 0.
 TIMETABLE_CHAIN_TIME_LIMIT_SECONDS = float(os.getenv("TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", "0"))
 
 # ── Timetable CP-SAT memory and CPU ─────────────────────────────

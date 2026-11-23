@@ -98,6 +98,18 @@ services:
       # 575k-element board model peaked at 800 MB and OOM-killed this instance.
       - key: TIMETABLE_CPSAT_MAX_MODEL_ELEMENTS
         value: "40000"
+      # The chain search stops after 10 minutes here (owner 2026-11-23). It has no
+      # limit by default, and on one hand-made board it ran for 23 minutes of a
+      # 27-minute Optimise Current on a much faster machine. A planner job is
+      # swept as stale after 45 minutes, which loses the whole run; with this
+      # limit the three time-budgeted searches (local search, recovery, chain)
+      # fit inside that even when Optimise Current makes its second try (pinned
+      # by tests/test_render_blueprint_contract.py; stages without a budget are
+      # not counted). The stop is safe: the chain only keeps a strictly better, fully
+      # re-evaluated board. A board whose chain search needs longer may end with
+      # more unresolved students than an unlimited run. "0" restores no limit.
+      - key: TIMETABLE_CHAIN_TIME_LIMIT_SECONDS
+        value: "600"
       # Each section is charged to exactly one of its linked teachers (owner
       # rulings 2026-10-19), not to every linked teacher at once. "false"
       # restores the old charging; nothing stored has to change either way.
