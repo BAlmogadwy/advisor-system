@@ -82,8 +82,8 @@ MAX_EVALUATIONS = 300
 MAX_CONSIDERED = 20_000
 #: Candidates of one size kept per teacher, smallest disturbance first (bounds memory).
 MAX_CANDIDATES = 20_000
-#: Hard ceiling on the pass for a machine too slow to finish; production's job sweep marks a
-#: planner job stale after 45 minutes.
+#: Hard ceiling on the pass for a machine too slow to finish. Production runs one planner job
+#: at a time and never stops a running job, so every stage needs a limit of its own.
 CEILING_SECONDS = 120.0
 #: The checkpoint (job cancellation) and the clock are looked at every this many candidates.
 CHECK_EVERY = 25
