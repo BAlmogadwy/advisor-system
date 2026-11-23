@@ -44,6 +44,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from django.test import override_settings
 from ortools.sat.python import cp_model
 
 from core.models import (
@@ -131,6 +132,9 @@ def run_greedy_case(strategy: str, seed: int | None) -> dict:
     with (
         seeded_timetable_run(seed),
         mock.patch.object(timetable_load_balanced, "time", step_clock),
+        # The recorded workload ends the load balancer on its step clock (30,000 iterations);
+        # the iteration cap that now ends it in production is off here, so the golden stays.
+        override_settings(TIMETABLE_SA_MAX_ITERATIONS=0),
     ):
         first = auto_place_scenario(scenario.id, strategy=strategy)
         SectionPlacement.objects.filter(

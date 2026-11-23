@@ -72,6 +72,7 @@ from core.services.timetable_pr4_instructor import (
 )
 from core.services.timetable_rooming import assign_rooms_to_board
 from core.services.timetable_validation import is_lock_enforcement_enabled
+from core.services.timetable_work_budget import WALL_CEILING, record_search_stop
 
 logger = logging.getLogger(__name__)
 
@@ -1020,6 +1021,14 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
         for slot in primary_domain:
             if time.monotonic() >= safe_deadline:
                 report["safe_search_budget_exhausted"] = True
+                record_search_stop(
+                    "cap_repair",
+                    WALL_CEILING,
+                    work=0,
+                    work_limit=None,
+                    seconds=5.0,
+                    ceiling_seconds=5.0,
+                )
                 return None
             changes = [(mover, *slot)]
             score = check(changes)
@@ -1050,6 +1059,14 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 for second in partner_domain:
                     if time.monotonic() >= safe_deadline:
                         report["safe_search_budget_exhausted"] = True
+                        record_search_stop(
+                            "cap_repair",
+                            WALL_CEILING,
+                            work=0,
+                            work_limit=None,
+                            seconds=5.0,
+                            ceiling_seconds=5.0,
+                        )
                         return None
                     changes = [(mover, *first), (partner, *second)]
                     score = check(changes)
@@ -1074,6 +1091,14 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 for slot in domains(blocker):
                     if time.monotonic() >= safe_deadline:
                         report["safe_search_budget_exhausted"] = True
+                        record_search_stop(
+                            "cap_repair",
+                            WALL_CEILING,
+                            work=0,
+                            work_limit=None,
+                            seconds=5.0,
+                            ceiling_seconds=5.0,
+                        )
                         return None
                     changes = [*first_changes, (blocker, *slot)]
                     score = check(changes)

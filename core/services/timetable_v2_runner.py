@@ -744,16 +744,24 @@ def run_v2_optimisation_guarded(
         "max_chain_iterations": max_chain_iterations,
         "checkpoint": checkpoint,
     }
+    from core.services.timetable_work_budget import capture_search_stops, repeatability_report
+
     with (
         availability_scope(scenario_id),
         saved_week_scope(preserve_saved_week),
         week_closure_scope(mode == "current"),
+        capture_search_stops() as stops,
     ):
         capture: dict = {}
-        first = _run_v2_optimisation_guarded(scenario_id, **options, _capture=capture)
-        if mode == "current" and _search_dropped_after_run_start(first, capture):
-            return _second_try(scenario_id, first, capture, options)
-        return first
+        result = _run_v2_optimisation_guarded(scenario_id, **options, _capture=capture)
+        if mode == "current" and _search_dropped_after_run_start(result, capture):
+            result = _second_try(scenario_id, result, capture, options)
+    # How every search of the run ended: ``repeatable`` is False when a wall-clock ceiling (a
+    # machine too slow for the work budget) ended one, so a run that another run would not
+    # reproduce is visible on its result.
+    if isinstance(result, dict):
+        result["repeatability"] = repeatability_report(stops)
+    return result
 
 
 def _search_dropped_after_run_start(result: dict, capture: dict) -> bool:

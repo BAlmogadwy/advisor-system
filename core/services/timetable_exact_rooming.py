@@ -84,6 +84,7 @@ from core.services.timetable_rooming import (
     _build_rooming_budget_maps,
     get_capacity_buffer,
 )
+from core.services.timetable_work_budget import record_cpsat_stop
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +412,17 @@ def _solve_relaxed(
 
     from ortools.sat.python import cp_model
 
+    # A bounded solve stops on deterministic solver work first (TIMETABLE_ROOM_SOLVE_
+    # DETERMINISTIC_PER_SECOND of its nominal limit), so the assignment it returns does not
+    # depend on machine speed; the wall deadline stays as the ceiling and is reported when it
+    # ends a solve. With the deterministic limit on, the nominal limit is counted from the end of
+    # the model build (the build used to eat part of it), so a slow machine can spend at most the
+    # nominal limit plus its own build time; with it off nothing here changes.
+    det_per_second = (
+        float(getattr(settings, "TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND", 0) or 0)
+        if strict_budget
+        else 0.0
+    )
     deadline = monotonic() + max(0.0, time_limit_seconds) if strict_budget else None
 
     # demand_id keys every variable dict below; a duplicate would silently drop a
@@ -532,6 +544,10 @@ def _solve_relaxed(
             if solver.value(assign[(d.demand_id, room)])
         }
 
+    det_budget = max(0.0, time_limit_seconds) * det_per_second
+    det_spent = 0.0
+    if strict_budget and det_budget > 0:
+        deadline = monotonic() + max(0.0, time_limit_seconds)  # the build is done: count from here
     last_assignment: dict[str, str] = {}
     for expr in phases:
         # Recovery evaluates many candidates. Its opt-in budget has no one-second
@@ -549,8 +565,21 @@ def _solve_relaxed(
         )
         solver.parameters.num_search_workers = 1
         solver.parameters.random_seed = 0
+        if det_budget > 0:
+            solver.parameters.max_deterministic_time = max(1e-6, det_budget - det_spent)
         status = solver.solve(model)
         total_wall += solver.wall_time
+        det_spent += solver.deterministic_time
+        if strict_budget:
+            record_cpsat_stop(
+                "room_solve",
+                status,
+                solver,
+                wall_limit=solver.parameters.max_time_in_seconds,
+                det_limit=det_budget - (det_spent - solver.deterministic_time)
+                if det_budget
+                else None,
+            )
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             # This phase found nothing in budget. Keep the best solution proven so
             # far (or the greedy warm start for phase 1) and stop refining.

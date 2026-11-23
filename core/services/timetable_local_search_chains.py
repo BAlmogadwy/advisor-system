@@ -61,6 +61,7 @@ from core.services.timetable_stage_telemetry import (
     record_stage_iterations,
     record_stage_ms,
 )
+from core.services.timetable_work_budget import COMPLETED, WALL_CEILING, record_search_stop
 
 logger = logging.getLogger(__name__)
 
@@ -407,9 +408,11 @@ def chain_local_search(
     # TIMETABLE_SECTION_DAY_SPREAD: read once per run (never by manual moves).
     day_spread_on = is_section_day_spread_enabled()
 
+    ceiling_hit = False
     for iteration in range(max_iterations):
         if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
             logger.info("Chain search: time budget reached before iteration %d", iteration)
+            ceiling_hit = True
             break
         iterations_attempted = iteration + 1
         hotspot_courses = current_best.hotspot_courses
@@ -431,6 +434,8 @@ def chain_local_search(
 
         if not chains:
             logger.info("Chain search: no chain moves available at iteration %d", iteration)
+            if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
+                ceiling_hit = True  # the generator returned early on the deadline
             break
 
         rng = random_for(f"classic:current:chains:{iteration}")
@@ -455,6 +460,7 @@ def chain_local_search(
         for chain in chains:
             if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
                 _timed_out = True
+                ceiling_hit = True
                 break
             try:
                 snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
@@ -557,6 +563,7 @@ def chain_local_search(
             # bank the best improving chain found in the partial scan.
             if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
                 _timed_out = True
+                ceiling_hit = True
                 break
 
         if best_chain is not None and best_chain_result is not None:
@@ -641,6 +648,14 @@ def chain_local_search(
             break
 
     logger.info("Chain search complete: %d improvements", total_improvements)
+    record_search_stop(
+        "chain",
+        WALL_CEILING if ceiling_hit else COMPLETED,
+        work=iterations_attempted,
+        work_limit=None,
+        seconds=0.0,
+        ceiling_seconds=chain_time_limit_seconds,
+    )
 
     if _telemetry_on:
         record_stage_ms(stage_telemetry, "chain", int((time.perf_counter() - _chain_t0) * 1000))

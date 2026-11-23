@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import importlib
 import statistics
 import time
@@ -138,6 +139,29 @@ def board_slots(scenario_id: int) -> frozenset[tuple]:
             "board_id", "term_section_id", "day", "start_time", "room"
         )
     )
+
+
+def digest_of(value: object) -> str:
+    """A short stable fingerprint of a board (a set of slots) or a score tuple.
+
+    Two runs ended on the same board exactly when their digests are equal; the digest is what
+    "repeatable" is judged on, so it covers every column of a slot, room included.
+    """
+    if isinstance(value, set | frozenset):
+        value = sorted(value, key=repr)
+    return hashlib.sha256(repr(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _stable(value: object) -> object:
+    """A value with every set and mapping put in sorted order, so equal maps digest equally
+    whatever the hash order of their members."""
+    if isinstance(value, dict):
+        return tuple(sorted((repr(k), _stable(v)) for k, v in value.items()))
+    if isinstance(value, set | frozenset):
+        return tuple(sorted(repr(_stable(v)) for v in value))
+    if isinstance(value, list | tuple):
+        return tuple(_stable(v) for v in value)
+    return repr(value)
 
 
 def _times(slots: frozenset[tuple]) -> frozenset[tuple]:
@@ -359,6 +383,7 @@ class StageRecorder:
             recorder._active = stage
             changed: bool | None = None
             seconds = 0.0
+            digest: str | None = None
             try:
                 before = recorder._probe(recorder._before, probe, args, kwargs)
                 started = time.perf_counter()
@@ -369,10 +394,14 @@ class StageRecorder:
                 if before is not _UNJUDGED:
                     changed = recorder._probe(recorder._changed, probe, before, out)
                     changed = None if changed is _UNJUDGED else changed
+                digest = recorder._probe(recorder._digest, probe, out)
+                digest = None if digest is _UNJUDGED else digest
                 return out
             finally:
                 recorder._active = None
-                recorder.calls.append({"stage": stage, "seconds": seconds, "changed": changed})
+                recorder.calls.append(
+                    {"stage": stage, "seconds": seconds, "changed": changed, "digest": digest}
+                )
 
         return wrapper
 
@@ -393,6 +422,18 @@ class StageRecorder:
         if probe == "cpsat":
             current = kwargs.get("current_eval")
             return tuple(current.lexicographic_score) if current is not None else None
+        return None
+
+    def _digest(self, probe: str, out: Any) -> str | None:
+        """What the stage left behind: the stored board, or the score it ended on."""
+        if probe in ("board", "time"):
+            return digest_of(board_slots(self.scenario_id))
+        if probe == "score":
+            return digest_of(tuple(out.lexicographic_score))
+        if probe == "cpsat":
+            return None if out is None else digest_of(tuple(out["eval"].lexicographic_score))
+        if probe == "returns":
+            return None if out is None else digest_of(_stable(out))
         return None
 
     def _changed(self, probe: str, before: Any, out: Any) -> bool | None:
@@ -452,6 +493,10 @@ def _result_fields(result: dict) -> dict[str, Any]:
         "error": str(result["error"])[:300] if "error" in result else None,
         "blocking_reasons": [r.get("metric") for r in regressions],
         "stages_dropped": [d.get("stage") for d in dropped],
+        # How each search ended (work budget / completed / wall-clock ceiling): a run a wall-clock
+        # ceiling ended is one another run would not reproduce.
+        "repeatable": (result.get("repeatability") or {}).get("repeatable"),
+        "search_stops": (result.get("repeatability") or {}).get("searches"),
         "second_try": (
             {"kept": second.get("kept"), "second_outcome": second.get("second_outcome")}
             if isinstance(second, dict)
@@ -585,6 +630,13 @@ def run_once(
         stage_seconds={k: v["seconds"] for k, v in totals.items()},
         stage_changed={k: v["changed"] for k, v in totals.items()},
         stage_calls={k: v["calls"] for k, v in totals.items()},
+        # Every stage call in order with what it left behind: the first call whose digest differs
+        # between two runs is where they diverged.
+        stage_trace=[
+            {"stage": c["stage"], "seconds": round(c["seconds"], 3), "digest": c["digest"]}
+            for c in recorder.calls
+        ],
+        board_digest=digest_of(slots_after),
         other_seconds=round(max(0.0, wall - staged), 3),
         before=before,
         after=after,

@@ -812,6 +812,60 @@ TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME = float(
     os.getenv("TIMETABLE_ONE_TEACHER_STAGE_DETERMINISTIC_TIME", "1.0")
 )
 
+# Repeatable searches: the same stored board, flags and seed give the same final board because the
+# searches stop on WORK (a count), not on the clock. The wall-clock limits
+# (TIMETABLE_LOCAL_SEARCH_TIME_LIMIT_SECONDS, TIMETABLE_SECONDARY_RECOVERY_SECONDS, the room
+# solver's own limit, the annealing seconds) stay as the hard ceiling for a machine too slow to do
+# the work in time; a run reports every search a ceiling ended (``result["repeatability"]``).
+# 0 = no work cap: the clock alone decides, exactly as before. Each cap below says what it was
+# sized on (this development machine, 2026-11-23, benchmark boards 662-666); none of them is
+# "the clock's work" in general, and on a much slower machine (Render) the ceiling ends a search
+# first and the run says so.
+#
+# Local search: evaluated candidates x (sections squared), the cost of one evaluation. 45 M ends
+# the benchmark boards' searches well inside their 180 s ceiling on this machine (per-board
+# numbers in the PR that introduced it); it is a cap sized to leave room for load, not the
+# clock's own count.
+TIMETABLE_LOCAL_SEARCH_MAX_WORK = int(os.getenv("TIMETABLE_LOCAL_SEARCH_MAX_WORK", "45000000"))
+# Secondary recovery: student evaluations plus room solves. The 45 s clock allowed about 1,600-
+# 1,850 of them on 665/666 under load; 1500 ends it inside the ceiling.
+TIMETABLE_SECONDARY_RECOVERY_MAX_WORK = int(
+    os.getenv("TIMETABLE_SECONDARY_RECOVERY_MAX_WORK", "1500")
+)
+# Simulated annealing and the load balancer, iterations per board (candidate generation, 1.5 s
+# per board). NOT the clock's count: the clock allowed 6,000-16,000 iterations on 663's boards and
+# 70,000-205,000 on the others, and both anneals cool per iteration, so 4000 stops at a
+# temperature of ~68 (SA) / ~41 (load balancer), not cold. It is the largest round number below
+# 663's slowest boards (a larger cap would hit the 1.5 s ceiling there and the run would stop
+# being repeatable). Measured per board, same seed: best score at 4000 equals the best at the
+# clock's own count on 39 of 40 board/anneal pairs; the one loss is 663 Term 5's balancer
+# (215 vs 200 after 4000 iterations, equal at 8000). Cost: none in seconds, it saves them
+# (4000 iterations is 0.04-0.7 s of the 1.5 s).
+TIMETABLE_SA_MAX_ITERATIONS = int(os.getenv("TIMETABLE_SA_MAX_ITERATIONS", "4000"))
+# CP-SAT deterministic-time limits, per second of the solve's wall limit (one worker only, as
+# production runs; with several workers the solver is not repeatable whatever the limit). The
+# ratio differs by kind of model, so each kind has its own:
+#  - polish: measured 0.92 and 1.10 on the two long polishes (n = 2: weak), 1.0 ends it within
+#    about 10 % of the clock. Production refuses most polish models by size.
+#  - placement (solve_board / solve_board_with_hints): NOT calibrated, 0 = the clock alone ends
+#    it. Their wall time is mostly model build and presolve, so deterministic time per wall
+#    second ranged 0.0-2.2 in the 20 measured solves, and every one returned UNKNOWN (no
+#    placement, the greedy board is kept); no ratio would make the limit bind in a meaningful way.
+TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND = float(
+    os.getenv("TIMETABLE_CPSAT_POLISH_DETERMINISTIC_PER_SECOND", "1.0")
+)
+TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND = float(
+    os.getenv("TIMETABLE_CPSAT_PLACEMENT_DETERMINISTIC_PER_SECOND", "0")
+)
+# A bounded room solve's deterministic-time limit, per second of its nominal wall limit. Solves
+# that the 0.15 s clock ended had spent 0.009-0.0105 deterministic seconds (mean over ~250 solves;
+# the model build had used about half of the 0.15 s), and 0.07 x 0.15 s = 0.0105 stops a solve at
+# that work. With it on, the nominal wall limit counts from the end of the model build; set to 0
+# the solve is exactly what it was.
+TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND = float(
+    os.getenv("TIMETABLE_ROOM_SOLVE_DETERMINISTIC_PER_SECOND", "0.07")
+)
+
 # TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED: gates a soft objective that minimises
 # idle time gaps in each instructor's daily schedule. When True, the canonical
 # candidate evaluator appends a lowest-priority term (instructor idle minutes,
