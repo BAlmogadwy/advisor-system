@@ -20,6 +20,7 @@ Algorithm:
 from __future__ import annotations
 
 import random
+import time
 from collections import defaultdict
 
 from django.conf import settings
@@ -410,6 +411,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         "load_balance",
         max_work=getattr(settings, "TIMETABLE_SA_MAX_ITERATIONS", 0),
         ceiling_seconds=max_seconds,
+        clock=lambda: time.time(),  # this module's clock, so a test can step it
     )
     while not budget.exhausted():
         budget.spend()

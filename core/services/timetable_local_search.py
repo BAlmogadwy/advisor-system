@@ -946,6 +946,7 @@ def optimize_board(
         "sa",
         max_work=getattr(settings, "TIMETABLE_SA_MAX_ITERATIONS", 0),
         ceiling_seconds=max_seconds,
+        clock=lambda: time.time(),  # this module's clock, so a test can step it
     )
     while not budget.exhausted():
         budget.spend()

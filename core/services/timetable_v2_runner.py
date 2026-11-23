@@ -759,7 +759,8 @@ def run_v2_optimisation_guarded(
     # How every search of the run ended: ``repeatable`` is False when a wall-clock ceiling (a
     # machine too slow for the work budget) ended one, so a run that another run would not
     # reproduce is visible on its result.
-    result["repeatability"] = repeatability_report(stops)
+    if isinstance(result, dict):
+        result["repeatability"] = repeatability_report(stops)
     return result
 
 
