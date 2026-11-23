@@ -436,3 +436,24 @@ def test_u_a_cpsat_solve_that_stopped_short_of_proof_is_classified_by_what_ended
     assert wb.cpsat_stop_reason(cp_model.FEASIBLE, _Solver(1.0), 1.0) == wb.WORK_LIMIT
     assert wb.cpsat_stop_reason(cp_model.UNKNOWN, _Solver(0.2), 1.0) == wb.WALL_CEILING
     assert wb.cpsat_stop_reason(cp_model.FEASIBLE, _Solver(0.2), None) == wb.WALL_CEILING
+
+
+def test_v_the_recovery_calls_own_evaluation_cap_is_a_work_limit_not_a_completion(
+    settings, monkeypatch
+):
+    from tests.test_timetable_secondary_recovery import pattern, room_result, run, section
+
+    settings.TIMETABLE_SECONDARY_RECOVERY_MAX_WORK = 0
+    settings.TIMETABLE_TIERED_OBJECTIVE_ENABLED = True
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=_Clock(0.0001)))
+    sections = {"core": section("core", "CORE", 540), "soft": section("soft", "SOFT", 780)}
+    with capture_search_stops() as stops:
+        result = run(
+            sections,
+            [pattern(540), pattern(600), pattern(660), pattern(720), pattern(780)],
+            lambda _states: room_result(0),
+            teachers={"core": frozenset({7})},
+            max_evaluations=1,
+        )
+    assert result["report"]["stop_reason"] == "evaluation_limit"
+    assert [s["reason"] for s in stops if s["stage"] == "recovery"] == [wb.WORK_LIMIT]
