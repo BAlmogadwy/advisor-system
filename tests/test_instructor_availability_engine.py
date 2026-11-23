@@ -4411,6 +4411,7 @@ def test_only_the_in_memory_searches_use_the_move_delta() -> None:
         "core/services/timetable_local_search_chains.py",
         "core/services/timetable_secondary_recovery.py",
         "core/services/timetable_fixed_pattern_search.py",
+        "core/services/timetable_five_day_repair.py",
     }
 
 
@@ -4419,6 +4420,7 @@ def test_only_the_in_memory_searches_use_the_move_delta() -> None:
 #: modules, plus the teacher choice and the whole-bundle search.
 TIME_CHOOSERS = {
     "core/services/timetable_autoplace.py",
+    "core/services/timetable_five_day_repair.py",
     "core/services/timetable_solver.py",
     "core/services/timetable_local_search.py",
     "core/services/timetable_local_search_v2.py",

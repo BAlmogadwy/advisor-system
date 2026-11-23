@@ -627,6 +627,7 @@ ALLOWED_READERS = {
     "core/services/timetable_secondary_recovery.py",
     "core/services/timetable_instructor_cap_repair.py",
     "core/services/timetable_instructor_compaction.py",
+    "core/services/timetable_five_day_repair.py",
 }
 FLAG_NAMES = re.compile(
     r"is_section_day_spread_enabled|get_section_day_spread_weight"
