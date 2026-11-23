@@ -12,8 +12,9 @@ already persisted every section it could place, so
   a crowded board did not change that), burning its whole budget;
 - the warm-start hints name the greedy's placements, which are not in the model at all;
 - the keep test compares the sections the solve placed with ALL the sections the greedy
-  placed, and ``persist_solver_result`` would then clear every auto-placed section of the
-  board and write back only the solve's: it could only ever lose sections.
+  placed, and a kept result would have had ``persist_solver_result`` clear every auto-placed
+  section of the board and write back only the solve's (the greedy's placements replaced by
+  the leftovers); it was never kept in 60 measured solves.
 
 So the placer no longer calls it. ``solve_board_with_hints`` itself is untouched.
 """
@@ -94,5 +95,5 @@ def test_adaptive_never_runs_the_hinted_solve_when_sections_are_left_unplaced(
     assert phase["greedy"]["skipped"] > 0, "the board must leave sections unplaced"
     assert hinted_calls == []
     assert phase["cpsat"]["status"] == "skipped"
-    # What the greedy placed is still on the board: nothing cleared it.
+    # What the greedy placed is still on the board.
     assert _placed_sections(scenario) == phase["greedy"]["placed"]

@@ -710,8 +710,8 @@ STRATEGIES: dict[str, dict] = {
         "slot_preference": 0,
     },
     "adaptive": {
-        "label": "Adaptive (Greedy + CP-SAT + SA)",
-        "description": "Greedy baseline → per-board CP-SAT improvement → simulated-annealing polish",
+        "label": "Adaptive (Greedy + SA)",
+        "description": "Greedy baseline → simulated-annealing polish",
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
@@ -3215,8 +3215,9 @@ def _adaptive_scenario(scenario_id: int, candidate_gen_budget: float | None = No
         # all, and otherwise "place every one of the sections the greedy could not",
         # which the solver does not finish (UNKNOWN after the whole 3-8 s budget,
         # and after 30 s on a crowded board). Its hints name placements that are
-        # not in its model, and a kept result would have cleared the greedy's
-        # placements (``persist_solver_result``) to write back only its own.
+        # not in its model, and it was never kept in any measured solve: a kept
+        # result would have replaced the greedy's placements
+        # (``persist_solver_result`` clears them all) with its own leftovers.
         # ``solve_board_with_hints`` stays in ``timetable_solver`` for its own
         # callers; see tests/test_adaptive_no_hinted_solve.py.
         phase_info["cpsat"] = {
@@ -3483,7 +3484,7 @@ def _auto_place_scenario(
             return min(seconds, candidate_gen_budget)
         return seconds
 
-    # Adaptive: greedy baseline → CP-SAT improvement → local search polish
+    # Adaptive: greedy baseline → local search polish
     if strategy == "adaptive":
         result = _adaptive_scenario(scenario_id, candidate_gen_budget=candidate_gen_budget)
         result.setdefault("decision_trace", _merge_board_decision_traces(result.get("boards", {})))

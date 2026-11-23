@@ -87,7 +87,7 @@ def _cells(options) -> set[tuple[tuple[int, int, int], ...]]:
     ("compact", "morning", "balanced", "load_balanced", "hybrid", "adaptive", "optimal"),
 )
 def test_every_greedy_strategy_places_x_as_two_100_minute_lectures(flags, strategy) -> None:
-    """Greedy, its annealing / load-balancing polish and adaptive's CP-SAT step:
+    """Greedy, its annealing / load-balancing polish and the "optimal" CP-SAT strategy:
     X is 2 x 100 in lecture rooms, its twin 2 x 75, AI201's lab in a lab room."""
     from core.services.timetable_autoplace import auto_place_scenario
     from core.services.timetable_run_seed import seeded_timetable_run
